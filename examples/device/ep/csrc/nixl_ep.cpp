@@ -282,22 +282,26 @@ void Buffer::_nixl_agents_connect(const std::vector<int>& ranks, const std::vect
         }
     }
 
-    // Wait for all remote metadata to be available
-    std::vector<bool> peer_ready(max_num_ranks, false);
-    int peers_remaining = static_cast<int>(ranks.size());
+    // Wait for all remote metadata to be available (only needed for etcd path)
+    // When pre-fetched metadata is provided via TCPStore, loadRemoteMD() already
+    // loaded it synchronously, so polling is unnecessary.
+    if (remote_mds.empty()) {
+        std::vector<bool> peer_ready(max_num_ranks, false);
+        int peers_remaining = static_cast<int>(ranks.size());
 
-    while (peers_remaining > 0) {
-        for (int remote_rank : ranks) {
-            if (peer_ready[remote_rank]) continue;
+        while (peers_remaining > 0) {
+            for (int remote_rank : ranks) {
+                if (peer_ready[remote_rank]) continue;
 
-            nixl_xfer_dlist_t empty_descs(VRAM_SEG);
-            if (nixl_agent_info->agent->checkRemoteMD(std::to_string(remote_rank), empty_descs) == NIXL_SUCCESS) {
-                peer_ready[remote_rank] = true;
-                peers_remaining--;
+                nixl_xfer_dlist_t empty_descs(VRAM_SEG);
+                if (nixl_agent_info->agent->checkRemoteMD(std::to_string(remote_rank), empty_descs) == NIXL_SUCCESS) {
+                    peer_ready[remote_rank] = true;
+                    peers_remaining--;
+                }
             }
-        }
-        if (peers_remaining > 0) {
-            sleep_ms(10);
+            if (peers_remaining > 0) {
+                sleep_ms(10);
+            }
         }
     }
 }
