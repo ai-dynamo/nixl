@@ -125,6 +125,7 @@ def get_gpu_nic_mapping(local_rank: int) -> Optional[str]:
 def setup_worker_environment(
     torch_rank: int,
     etcd_server: str = "http://127.0.0.1:2379",
+    use_tcp_store: bool = False,
 ):
     """Set up GPU, UCX, and NIXL environment for a worker process."""
     cuda_device = torch_rank % 8
@@ -136,7 +137,10 @@ def setup_worker_environment(
     if ucx_devices:
         os.environ["UCX_NET_DEVICES"] = ucx_devices
 
-    os.environ["NIXL_ETCD_ENDPOINTS"] = etcd_server
+    # Only set NIXL_ETCD_ENDPOINTS when NOT using TCPStore
+    # This prevents C++ code from activating etcd path when we want TCPStore
+    if not use_tcp_store:
+        os.environ["NIXL_ETCD_ENDPOINTS"] = etcd_server
 
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
@@ -153,6 +157,7 @@ def worker_fn(
     gpu_nic_topology: Dict[int, str],
     extra_kwargs: Optional[Dict[Any, Any]],
     rank_server_port: int,
+    use_tcp_store: bool,
 ):
     """Worker function executed by each spawned process."""
     global _GPU_NIC_TOPOLOGY, _RANK_SERVER_ADDR, _RANK_SERVER_PORT
@@ -171,7 +176,7 @@ def worker_fn(
         rank_client = RankClient(rank_server_addr, rank_server_port)
         local_rank, global_rank = rank_client.get_rank()
 
-        setup_worker_environment(torch_rank, etcd_server)
+        setup_worker_environment(torch_rank, etcd_server, use_tcp_store)
 
         start_time = time.perf_counter()
         result = test_fn(
@@ -375,6 +380,7 @@ def run_multiprocess_test(
                 gpu_nic_topology,
                 kwargs,
                 rank_server_port,
+                use_tcp_store,
             ),
             nprocs=num_processes,
             join=False,
