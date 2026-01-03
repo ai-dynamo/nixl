@@ -19,16 +19,20 @@
 #define OBJ_BACKEND_H
 
 #include "obj_executor.h"
-#include "obj_s3_client.h"
+#include "s3/client.h"
+#include "s3_crt/client.h"
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <limits>
 #include "backend/backend_engine.h"
 
 class nixlObjEngine : public nixlBackendEngine {
 public:
     nixlObjEngine(const nixlBackendInitParams *init_params);
-    nixlObjEngine(const nixlBackendInitParams *init_params, std::shared_ptr<iS3Client> s3_client);
+    nixlObjEngine(const nixlBackendInitParams *init_params,
+                  std::shared_ptr<iS3Client> s3_client,
+                  std::shared_ptr<awsS3CrtClient> s3_crt_client = nullptr);
     virtual ~nixlObjEngine();
 
     bool
@@ -104,8 +108,10 @@ public:
 
 private:
     std::shared_ptr<asioThreadPoolExecutor> executor_;
-    std::shared_ptr<iS3Client> s3Client_;
+    std::shared_ptr<iS3Client> s3Client_; // Standard S3 client for small objects
+    std::shared_ptr<awsS3CrtClient> s3CrtClient_; // S3 CRT client for large objects
     std::unordered_map<uint64_t, std::string> devIdToObjKey_;
+    size_t crtMinLimit_; // Minimum size threshold to use CRT client
 };
 
 #endif // OBJ_BACKEND_H

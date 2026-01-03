@@ -22,7 +22,7 @@
 #include <vector>
 #include <functional>
 
-#include "obj_s3_client.h"
+#include "s3/client.h"
 #include "obj_backend.h"
 #include "obj_executor.h"
 

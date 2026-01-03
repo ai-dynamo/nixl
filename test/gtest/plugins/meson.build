@@ -23,8 +23,13 @@ if not enabled_plugins.get('OBJ')
 endif
 
 aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
+aws_s3_crt = dependency('aws-cpp-sdk-s3-crt', static: false, required: false)
 if not aws_s3.found()
     message('aws-cpp-sdk-s3 not found, skipping plugins_gtest build')
+    subdir_done()
+endif
+if not aws_s3_crt.found()
+    message('aws-cpp-sdk-s3-crt not found, skipping plugins_gtest build')
     subdir_done()
 endif
 
