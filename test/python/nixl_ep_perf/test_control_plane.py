@@ -149,6 +149,10 @@ def _run_single_op(
                 explicitly_destroy=True,
                 enable_shrink=True,
             )
+            # CRITICAL FIX: Restore RDMA transports after buffer.__init__() but before update_memory_buffers()
+            if nvlink_backend != "nixl" and world_size > 1:
+                import os
+                os.environ["UCX_TLS"] = "rc_mlx5,dc_mlx5,tcp,^cuda_ipc"
             buffer.update_memory_buffers(
                 num_ranks=world_size,
                 num_experts_per_rank=num_experts_per_rank,
@@ -179,6 +183,12 @@ def _run_single_op(
             
             # DEBUG: Log after Buffer creation
             logger.info(f"[AFTER Buffer()] Rank {rank}: UCX_TLS={os.environ.get('UCX_TLS', 'NOT SET')}")
+            
+            # CRITICAL FIX: buffer.__init__() sets UCX_TLS="^cuda_ipc" when nvlink_backend!="nixl"
+            # We need to restore RDMA transports BEFORE update_memory_buffers() initializes UCX
+            if nvlink_backend != "nixl" and world_size > 1:
+                os.environ["UCX_TLS"] = "rc_mlx5,dc_mlx5,tcp,^cuda_ipc"
+                logger.info(f"[FIX] Rank {rank}: Restored UCX_TLS for multi-node: {os.environ['UCX_TLS']}")
             
             buffer.update_memory_buffers(
                 num_ranks=world_size,
@@ -212,6 +222,10 @@ def _run_single_op(
                 explicitly_destroy=True,
                 enable_shrink=True,
             )
+            # CRITICAL FIX: Restore RDMA transports after buffer.__init__() but before update_memory_buffers()
+            if nvlink_backend != "nixl" and world_size > 1:
+                import os
+                os.environ["UCX_TLS"] = "rc_mlx5,dc_mlx5,tcp,^cuda_ipc"
             buffer.update_memory_buffers(
                 num_ranks=world_size,
                 num_experts_per_rank=num_experts_per_rank,
@@ -246,6 +260,10 @@ def _run_single_op(
                 explicitly_destroy=True,
                 enable_shrink=True,
             )
+            # CRITICAL FIX: Restore RDMA transports after buffer.__init__() but before update_memory_buffers()
+            if nvlink_backend != "nixl" and world_size > 1:
+                import os
+                os.environ["UCX_TLS"] = "rc_mlx5,dc_mlx5,tcp,^cuda_ipc"
             buffer.update_memory_buffers(
                 num_ranks=world_size,
                 num_experts_per_rank=num_experts_per_rank,
@@ -320,6 +338,10 @@ def _run_full_cycle(
             explicitly_destroy=True,
             enable_shrink=True,
         )
+        # CRITICAL FIX: Restore RDMA transports after buffer.__init__() but before update_memory_buffers()
+        if nvlink_backend != "nixl" and world_size > 1:
+            import os
+            os.environ["UCX_TLS"] = "rc_mlx5,dc_mlx5,tcp,^cuda_ipc"
         buffer.update_memory_buffers(
             num_ranks=world_size,
             num_experts_per_rank=num_experts_per_rank,
