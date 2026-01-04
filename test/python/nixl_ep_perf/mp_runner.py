@@ -178,10 +178,17 @@ def worker_fn(
 
     try:
         rank_client = RankClient(rank_server_addr, rank_server_port)
-        # Calculate global rank: rank (node rank) * procs_per_node + local_rank
-        global_rank = rank * num_processes + local_rank
-        # Register with rank server for barrier synchronization
-        rank_client.register_rank(local_rank, global_rank)
+        
+        # Get rank from server (for barrier synchronization)
+        # In multi-node mode, we'll override global_rank with our calculation
+        _, server_global_rank = rank_client.get_rank()
+        
+        if world_size > 1:
+            # Multi-node: Calculate deterministic global rank
+            global_rank = rank * num_processes + local_rank
+        else:
+            # Single-node: Use server's assignment
+            global_rank = server_global_rank
 
         setup_worker_environment(torch_rank, etcd_server, use_tcp_store)
 
