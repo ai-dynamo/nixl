@@ -137,6 +137,12 @@ def setup_worker_environment(
     if ucx_devices:
         os.environ["UCX_NET_DEVICES"] = ucx_devices
 
+    # Set UCX_TLS for RDMA support (inherit from parent or use default)
+    # This is critical for multi-node communication
+    if "UCX_TLS" not in os.environ:
+        # Default: try RDMA first, fall back to TCP
+        os.environ["UCX_TLS"] = "rc_mlx5,dc_mlx5,tcp"
+
     # Only set NIXL_ETCD_ENDPOINTS when NOT using TCPStore
     # This prevents C++ code from activating etcd path when we want TCPStore
     if not use_tcp_store:
