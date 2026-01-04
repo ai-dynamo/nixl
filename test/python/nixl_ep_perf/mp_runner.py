@@ -140,10 +140,11 @@ def setup_worker_environment(
     # Don't set UCX_TLS here - buffer.py will set it to "^cuda_ipc" when nvlink_backend != "nixl"
     # which tells UCX to auto-detect all transports except cuda_ipc (including RDMA)
 
-    # Only set NIXL_ETCD_ENDPOINTS when NOT using TCPStore
+    # Only set NIXL_ETCD_ENDPOINTS when NOT using TCPStore (copy elastic.py pattern)
     # This prevents C++ code from activating etcd path when we want TCPStore
     if not use_tcp_store:
         os.environ["NIXL_ETCD_ENDPOINTS"] = etcd_server
+        logger.info(f"Worker torch_rank={torch_rank}: Set NIXL_ETCD_ENDPOINTS={etcd_server}")
 
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
@@ -327,10 +328,11 @@ def run_multiprocess_test(
     Returns:
         List of TestResult, one per local rank on this node
     """
-    # Use master_addr for etcd in multi-node setup (critical for cross-node!)
+    # Use master_addr for etcd in multi-node setup (copy elastic.py pattern!)
     if etcd_server == "http://127.0.0.1:2379" and master_addr != "127.0.0.1":
         etcd_server = f"http://{master_addr}:2379"
-        logger.info(f"Multi-node: Using etcd at {etcd_server}")
+    
+    logger.info(f"etcd_server={etcd_server}, master_addr={master_addr}, world_size={world_size}, num_processes={num_processes}")
     
     # Calculate total ranks and set master address
     total_ranks = num_processes * world_size
