@@ -148,6 +148,7 @@ def setup_worker_environment(
     # This prevents C++ code from activating etcd path when we want TCPStore
     if not use_tcp_store:
         os.environ["NIXL_ETCD_ENDPOINTS"] = etcd_server
+        logger.info(f"[SETUP_ENV] Rank {torch_rank}: Set NIXL_ETCD_ENDPOINTS={etcd_server}")
 
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
@@ -190,6 +191,11 @@ def worker_fn(
         # This ensures unique global ranks across all nodes
         local_rank_from_server, global_rank = rank_client.get_rank()
 
+        # Debug: log etcd_server before setup
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[WORKER_FN] torch_rank={torch_rank}: calling setup_worker_environment with etcd_server={etcd_server}")
+        
         setup_worker_environment(torch_rank, etcd_server, use_tcp_store)
         
         # Debug: log UCX_TLS setting
@@ -425,6 +431,9 @@ def run_multiprocess_test(
 
     spawn_ctx = mp.get_context("spawn")
     result_queue = spawn_ctx.Queue()
+
+    # Debug: log what we're passing to workers
+    logger.info(f"[RUN_MULTIPROCESS_TEST] Spawning {num_processes} workers with etcd_server={etcd_server}, master_addr={master_addr}")
 
     try:
         ctx = mp.spawn(
