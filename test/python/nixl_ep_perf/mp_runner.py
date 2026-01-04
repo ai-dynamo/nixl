@@ -198,6 +198,11 @@ def worker_fn(
             global_rank = server_global_rank
 
         setup_worker_environment(torch_rank, etcd_server, use_tcp_store)
+        
+        # Debug: log UCX_TLS setting
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Rank {global_rank}: UCX_TLS={os.environ.get('UCX_TLS', 'NOT SET')}")
 
         start_time = time.perf_counter()
         result = test_fn(
