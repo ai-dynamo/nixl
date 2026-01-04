@@ -186,29 +186,22 @@ def worker_fn(
     try:
         rank_client = RankClient(rank_server_addr, rank_server_port)
         
-        # Get rank from server (for barrier synchronization)
-        # In multi-node mode, we'll override global_rank with our calculation
-        _, server_global_rank = rank_client.get_rank()
-        
-        if world_size > 1:
-            # Multi-node: Calculate deterministic global rank
-            global_rank = rank * num_processes + local_rank
-        else:
-            # Single-node: Use server's assignment
-            global_rank = server_global_rank
+        # Always use rank server's assignment (like elastic.py)
+        # This ensures unique global ranks across all nodes
+        local_rank_from_server, global_rank = rank_client.get_rank()
 
         setup_worker_environment(torch_rank, etcd_server, use_tcp_store)
         
         # Debug: log UCX_TLS setting
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"Rank {global_rank}: UCX_TLS={os.environ.get('UCX_TLS', 'NOT SET')}")
+        logger.info(f"Rank {global_rank}: torch_rank={torch_rank}, local_rank_from_server={local_rank_from_server}, UCX_TLS={os.environ.get('UCX_TLS', 'NOT SET')}")
 
         start_time = time.perf_counter()
         result = test_fn(
             rank=global_rank,
             world_size=total_ranks,
-            local_rank=local_rank,
+            local_rank=torch_rank,  # Use torch_rank (0-7 per node) for CUDA device
             **extra_kwargs,
         )
         duration_ms = (time.perf_counter() - start_time) * 1000
