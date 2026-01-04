@@ -336,6 +336,11 @@ def run_multiprocess_test(
     Returns:
         List of TestResult, one per local rank on this node
     """
+    # Use master_addr for etcd in multi-node setup (critical for cross-node!)
+    if etcd_server == "http://127.0.0.1:2379" and master_addr != "127.0.0.1":
+        etcd_server = f"http://{master_addr}:2379"
+        logger.info(f"Multi-node: Using etcd at {etcd_server}")
+    
     # Calculate total ranks and set master address
     total_ranks = num_processes * world_size
     os.environ["MASTER_ADDR"] = master_addr
