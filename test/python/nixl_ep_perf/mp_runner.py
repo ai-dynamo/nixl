@@ -331,6 +331,15 @@ def run_multiprocess_test(
     os.environ["RANK"] = str(rank)  # This node's rank
     is_master = (rank == 0)
     
+    if world_size > 1:
+        logger.info(
+            "Multi-node mode: This is %s node (RANK=%d/%d, MASTER_ADDR=%s)",
+            "MASTER" if is_master else "WORKER",
+            rank,
+            world_size - 1,
+            master_addr,
+        )
+    
     # Start TCPStore server if requested (master node only)
     tcp_store_process = None
     if use_tcp_store:
@@ -351,12 +360,16 @@ def run_multiprocess_test(
             time.sleep(2.0)  # Give master node time to start
         kwargs["tcp_store_port"] = tcp_store_port
     else:
-        # Only check etcd when not using TCPStore
-        if not check_etcd_running(etcd_server):
-            raise RuntimeError(f"etcd is not running at {etcd_server}")
+        # Only check/clean etcd on master node when not using TCPStore
+        if is_master:
+            if not check_etcd_running(etcd_server):
+                raise RuntimeError(f"etcd is not running at {etcd_server}")
 
-        if clean_etcd:
-            clean_etcd_state(etcd_server)
+            if clean_etcd:
+                clean_etcd_state(etcd_server)
+                logger.info("Cleaned etcd state")
+        else:
+            logger.info("Worker node: skipping etcd check (master handles it)")
 
     # Pass use_tcp_store to the test function via kwargs
     kwargs["use_tcp_store"] = use_tcp_store
