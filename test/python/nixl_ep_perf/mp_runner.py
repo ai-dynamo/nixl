@@ -137,18 +137,13 @@ def setup_worker_environment(
     if ucx_devices:
         os.environ["UCX_NET_DEVICES"] = ucx_devices
 
-    # Set UCX_TLS for RDMA support (inherit from parent or use default)
-    # This is critical for multi-node communication
-    # Note: buffer.py may append "^cuda_ipc" if nvlink_backend != "nixl"
-    if "UCX_TLS" not in os.environ:
-        # Default: try RDMA first, fall back to TCP, exclude cuda_ipc
-        os.environ["UCX_TLS"] = "rc_mlx5,dc_mlx5,tcp,^cuda_ipc"
+    # Don't set UCX_TLS here - buffer.py will set it to "^cuda_ipc" when nvlink_backend != "nixl"
+    # which tells UCX to auto-detect all transports except cuda_ipc (including RDMA)
 
     # Only set NIXL_ETCD_ENDPOINTS when NOT using TCPStore
     # This prevents C++ code from activating etcd path when we want TCPStore
     if not use_tcp_store:
         os.environ["NIXL_ETCD_ENDPOINTS"] = etcd_server
-        logger.info(f"[SETUP_ENV] Rank {torch_rank}: Set NIXL_ETCD_ENDPOINTS={etcd_server}")
 
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
@@ -191,17 +186,7 @@ def worker_fn(
         # This ensures unique global ranks across all nodes
         local_rank_from_server, global_rank = rank_client.get_rank()
 
-        # Debug: log etcd_server before setup
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"[WORKER_FN] torch_rank={torch_rank}: calling setup_worker_environment with etcd_server={etcd_server}")
-        
         setup_worker_environment(torch_rank, etcd_server, use_tcp_store)
-        
-        # Debug: log UCX_TLS setting
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"Rank {global_rank}: torch_rank={torch_rank}, local_rank_from_server={local_rank_from_server}, UCX_TLS={os.environ.get('UCX_TLS', 'NOT SET')}")
 
         start_time = time.perf_counter()
         result = test_fn(
@@ -431,9 +416,6 @@ def run_multiprocess_test(
 
     spawn_ctx = mp.get_context("spawn")
     result_queue = spawn_ctx.Queue()
-
-    # Debug: log what we're passing to workers
-    logger.info(f"[RUN_MULTIPROCESS_TEST] Spawning {num_processes} workers with etcd_server={etcd_server}, master_addr={master_addr}")
 
     try:
         ctx = mp.spawn(
