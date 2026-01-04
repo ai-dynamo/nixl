@@ -520,8 +520,43 @@ def main():
         action="store_true",
         help="Use TCPStore for metadata exchange instead of etcd",
     )
+    parser.add_argument(
+        "--world-size",
+        type=int,
+        default=None,
+        help="Total number of nodes (overrides WORLD_SIZE env var, default: 1)",
+    )
+    parser.add_argument(
+        "--rank",
+        type=int,
+        default=None,
+        help="Rank of this node 0=master (overrides RANK env var, default: 0)",
+    )
+    parser.add_argument(
+        "--master-addr",
+        type=str,
+        default=None,
+        help="Master node address (overrides MASTER_ADDR env var)",
+    )
 
     args = parser.parse_args()
+    
+    # Get multi-node configuration from environment or command line
+    # CLI args override environment variables
+    world_size = args.world_size if args.world_size is not None else int(os.environ.get("WORLD_SIZE", "1"))
+    rank = args.rank if args.rank is not None else int(os.environ.get("RANK", "0"))
+    master_addr = args.master_addr if args.master_addr is not None else os.environ.get("MASTER_ADDR", "127.0.0.1")
+    
+    # Validation
+    if world_size < 1:
+        raise ValueError(f"WORLD_SIZE must be >= 1, got {world_size}")
+    if rank < 0 or rank >= world_size:
+        raise ValueError(f"RANK must be in [0, {world_size-1}], got {rank}")
+    if world_size > 1 and rank > 0 and master_addr == "127.0.0.1":
+        raise ValueError(
+            "MASTER_ADDR must be set (not 127.0.0.1) for worker nodes in multi-node setup. "
+            "Set MASTER_ADDR environment variable or use --master-addr flag."
+        )
 
     # Parse expert counts
     if args.experts_per_rank:
@@ -530,11 +565,22 @@ def main():
         expert_counts = DEFAULT_EXPERT_COUNTS
 
     metadata_exchange = "TCPStore" if args.use_tcp_store else "etcd"
+    
+    # Calculate total rank count (processes per node * number of nodes)
+    total_ranks = args.num_processes * world_size
 
     logger.info("=" * 70)
     logger.info("NIXL EP Control Plane Performance Test")
     logger.info("=" * 70)
-    logger.info("Ranks: %d", args.num_processes)
+    if world_size > 1:
+        logger.info("Multi-node setup:")
+        logger.info("  Nodes (WORLD_SIZE): %d", world_size)
+        logger.info("  This node (RANK): %d %s", rank, "(master)" if rank == 0 else "(worker)")
+        logger.info("  Processes per node: %d", args.num_processes)
+        logger.info("  Total ranks: %d", total_ranks)
+        logger.info("  Master address: %s", master_addr)
+    else:
+        logger.info("Single-node setup: %d processes", args.num_processes)
     logger.info("NVLink backend: %s", args.nvlink_backend)
     logger.info("Metadata exchange: %s", metadata_exchange)
     logger.info("Experts/rank: %s", expert_counts)
@@ -545,7 +591,7 @@ def main():
     all_passed = True
 
     for num_experts in expert_counts:
-        total_experts = num_experts * args.num_processes
+        total_experts = num_experts * total_ranks
         logger.info(
             "\nRunning: %s (%d experts/rank, %d total)",
             args.test,
@@ -564,6 +610,9 @@ def main():
             measure_rounds=args.rounds,
             nvlink_backend=args.nvlink_backend,
             use_tcp_store=args.use_tcp_store,
+            world_size=world_size,
+            rank=rank,
+            master_addr=master_addr,
         )
 
         passed = sum(1 for r in results if r.passed)
@@ -571,10 +620,10 @@ def main():
 
         if passed == total:
             if args.test == "cycle":
-                log_cycle_results(results, num_experts, args.num_processes)
+                log_cycle_results(results, num_experts, total_ranks)
             else:
                 log_single_op_results(
-                    results, args.test, num_experts, args.num_processes
+                    results, args.test, num_experts, total_ranks
                 )
         else:
             logger.info("FAILED: %d/%d ranks passed", passed, total)

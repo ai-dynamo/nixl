@@ -158,6 +158,8 @@ def worker_fn(
     extra_kwargs: Optional[Dict[Any, Any]],
     rank_server_port: int,
     use_tcp_store: bool,
+    world_size: int = 1,
+    rank: int = 0,
 ):
     """Worker function executed by each spawned process."""
     global _GPU_NIC_TOPOLOGY, _RANK_SERVER_ADDR, _RANK_SERVER_PORT
@@ -171,17 +173,22 @@ def worker_fn(
 
     rank_client = None
     global_rank = None
+    local_rank = torch_rank
+    total_ranks = num_processes * world_size
 
     try:
         rank_client = RankClient(rank_server_addr, rank_server_port)
-        local_rank, global_rank = rank_client.get_rank()
+        # Calculate global rank: rank (node rank) * procs_per_node + local_rank
+        global_rank = rank * num_processes + local_rank
+        # Register with rank server for barrier synchronization
+        rank_client.register_rank(local_rank, global_rank)
 
         setup_worker_environment(torch_rank, etcd_server, use_tcp_store)
 
         start_time = time.perf_counter()
         result = test_fn(
             rank=global_rank,
-            world_size=num_processes,
+            world_size=total_ranks,
             local_rank=local_rank,
             **extra_kwargs,
         )
@@ -295,36 +302,53 @@ def run_multiprocess_test(
     tcp_store_port: int = 9999,
     skip_nic_discovery: bool = False,
     use_tcp_store: bool = False,
+    world_size: int = 1,
+    rank: int = 0,
+    master_addr: str = "127.0.0.1",
     **kwargs,
 ) -> List[TestResult]:
     """
-    Run a test function across multiple GPU processes.
+    Run a test function across multiple GPU processes (single or multi-node).
 
     Args:
         test_fn: Function receiving (rank, world_size, local_rank, **kwargs)
-        num_processes: Number of processes to spawn
+        num_processes: Number of processes to spawn per node
         timeout: Timeout in seconds
         use_tcp_store: If True, skip etcd check (using TCPStore instead)
         tcp_store_port: Port for TCPStore server (default: 9999)
+        world_size: Total number of nodes (env: WORLD_SIZE, default: 1 for single-node)
+        rank: This node's rank 0=master (env: RANK, default: 0)
+        master_addr: Master node address (env: MASTER_ADDR, for TCPStore and rank server)
         **kwargs: Passed to test_fn
 
     Returns:
-        List of TestResult, one per rank
+        List of TestResult, one per local rank on this node
     """
-    # Start TCPStore server if requested
+    # Calculate total ranks and set master address
+    total_ranks = num_processes * world_size
+    os.environ["MASTER_ADDR"] = master_addr
+    os.environ["WORLD_SIZE"] = str(total_ranks)  # Total ranks, not nodes
+    os.environ["RANK"] = str(rank)  # This node's rank
+    is_master = (rank == 0)
+    
+    # Start TCPStore server if requested (master node only)
     tcp_store_process = None
     if use_tcp_store:
-        logger.info(f"Starting TCPStore server on port {tcp_store_port}")
+        if is_master:
+            logger.info(f"Starting TCPStore server on port {tcp_store_port}")
 
-        def run_tcp_store_server():
-            _store = store_group.create_master_store(port=tcp_store_port)
-            # Keep server alive
-            import signal
-            signal.pause()
+            def run_tcp_store_server():
+                _store = store_group.create_master_store(port=tcp_store_port)
+                # Keep server alive
+                import signal
+                signal.pause()
 
-        tcp_store_process = mp.Process(target=run_tcp_store_server, daemon=True)
-        tcp_store_process.start()
-        time.sleep(1.0)
+            tcp_store_process = mp.Process(target=run_tcp_store_server, daemon=True)
+            tcp_store_process.start()
+            time.sleep(1.0)
+        else:
+            logger.info(f"Connecting to TCPStore server at {master_addr}:{tcp_store_port}")
+            time.sleep(2.0)  # Give master node time to start
         kwargs["tcp_store_port"] = tcp_store_port
     else:
         # Only check etcd when not using TCPStore
@@ -352,18 +376,22 @@ def run_multiprocess_test(
                 "Or use --skip-nic-discovery to let UCX auto-select."
             )
 
-    rank_server_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
-
-    # Start rank server
-    server_process = start_server(port=rank_server_port)
-    time.sleep(1.0)
-
-    try:
-        client = RankClient(rank_server_addr, rank_server_port)
-        client.clear_barriers()
-        client.reset()
-    except Exception as e:
-        raise RuntimeError(f"Failed to connect to rank server: {e}")
+    # Start rank server (master node only)
+    server_process = None
+    if is_master:
+        logger.info(f"Starting rank server on port {rank_server_port}")
+        server_process = start_server(port=rank_server_port)
+        time.sleep(1.0)
+        
+        try:
+            client = RankClient(master_addr, rank_server_port)
+            client.clear_barriers()
+            client.reset()
+        except Exception as e:
+            raise RuntimeError(f"Failed to connect to rank server: {e}")
+    else:
+        logger.info(f"Connecting to rank server at {master_addr}:{rank_server_port}")
+        time.sleep(2.0)  # Give master node time to start
 
     spawn_ctx = mp.get_context("spawn")
     result_queue = spawn_ctx.Queue()
@@ -376,11 +404,13 @@ def run_multiprocess_test(
                 test_fn,
                 result_queue,
                 etcd_server,
-                rank_server_addr,
+                master_addr,
                 gpu_nic_topology,
                 kwargs,
                 rank_server_port,
                 use_tcp_store,
+                world_size,
+                rank,
             ),
             nprocs=num_processes,
             join=False,
