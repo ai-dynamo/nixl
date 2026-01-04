@@ -165,12 +165,21 @@ def _run_single_op(
             sync_all_ranks(rank, world_size, f"init_cleanup_{i}")
 
         elif operation == "connect":
+            # DEBUG: Log parameters before Buffer creation
+            import os
+            logger = logging.getLogger(__name__)
+            logger.info(f"[BEFORE Buffer()] Rank {rank}: nvlink_backend={nvlink_backend}, UCX_TLS={os.environ.get('UCX_TLS', 'NOT SET')}")
+            
             buffer = nixl_ep.Buffer(
                 rank=rank,
                 nvlink_backend=nvlink_backend,
                 explicitly_destroy=True,
                 enable_shrink=True,
             )
+            
+            # DEBUG: Log after Buffer creation
+            logger.info(f"[AFTER Buffer()] Rank {rank}: UCX_TLS={os.environ.get('UCX_TLS', 'NOT SET')}")
+            
             buffer.update_memory_buffers(
                 num_ranks=world_size,
                 num_experts_per_rank=num_experts_per_rank,
@@ -184,6 +193,8 @@ def _run_single_op(
             start = time.perf_counter()
 
             if other_ranks:
+                # DEBUG: Log before connect_ranks
+                logger.info(f"[BEFORE connect_ranks()] Rank {rank}: connecting to {other_ranks}, UCX_TLS={os.environ.get('UCX_TLS', 'NOT SET')}")
                 buffer.connect_ranks(other_ranks)
 
             torch.cuda.synchronize()
