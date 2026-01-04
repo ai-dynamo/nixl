@@ -85,16 +85,51 @@ Latency (μs):     avg=519.3, min=519.1, max=519.5
 
 Measures latency of control plane operations (init, connect, disconnect, destroy).
 
+### Single-Node (Default)
+
 ```bash
 # Full cycle (init → connect → disconnect → reconnect → destroy)
-python3 test_control_plane.py --num-processes=8
+python3 test_control_plane.py --num-processes=8 --use-tcp-store
 
 # Specific expert counts
-python3 test_control_plane.py --num-processes=8 --experts-per-rank=8,32
+python3 test_control_plane.py --num-processes=8 --experts-per-rank=8,32 --use-tcp-store
 
 # Single operation
-python3 test_control_plane.py --num-processes=8 --test=connect
+python3 test_control_plane.py --num-processes=8 --test=connect --use-tcp-store
 ```
+
+### Multi-Node Setup
+
+Use environment variables `WORLD_SIZE`, `RANK`, and `MASTER_ADDR` for multi-node testing:
+
+**Master Node (RANK=0):**
+```bash
+WORLD_SIZE=2 RANK=0 MASTER_ADDR=node0.example.com \
+  python3 test_control_plane.py --num-processes=8 --use-tcp-store
+```
+
+**Worker Node (RANK=1):**
+```bash
+WORLD_SIZE=2 RANK=1 MASTER_ADDR=node0.example.com \
+  python3 test_control_plane.py --num-processes=8 --use-tcp-store
+```
+
+**Or use CLI flags:**
+```bash
+# Master
+python3 test_control_plane.py --num-processes=8 --world-size=2 --rank=0 --master-addr=node0 --use-tcp-store
+
+# Worker
+python3 test_control_plane.py --num-processes=8 --world-size=2 --rank=1 --master-addr=node0 --use-tcp-store
+```
+
+**Key points:**
+- `WORLD_SIZE` = number of nodes (not total ranks)
+- `--num-processes` = GPUs per node
+- Total ranks = WORLD_SIZE × num-processes
+- RANK=0 is master (runs TCPStore/rank server)
+- RANK>0 are workers (connect to master)
+- Use `--use-tcp-store` to avoid etcd dependency
 
 ### Example Output
 
