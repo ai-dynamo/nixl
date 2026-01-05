@@ -36,7 +36,9 @@ BreakBeforeBinaryOperators: None
 BreakBeforeTernaryOperators: false
 BreakConstructorInitializers: BeforeColon
 BreakStringLiterals: true
-ColumnLimit: 120
+ColumnLimit: 100
+# Ignore formatting for lines starting with 'SPDX'
+CommentPragmas: '^ SPDX'
 CompactNamespaces: false
 ConstructorInitializerIndentWidth: 4
 ContinuationIndentWidth: 4
