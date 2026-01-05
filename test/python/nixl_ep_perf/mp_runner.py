@@ -178,7 +178,7 @@ def worker_fn(
     rank_server_port: int,
     use_tcp_store: bool,
     world_size: int = 1,
-    rank: int = 0,
+    node_rank: int = 0,
 ):
     """Worker function executed by each spawned process."""
     global _GPU_NIC_TOPOLOGY, _RANK_SERVER_ADDR, _RANK_SERVER_PORT
@@ -190,17 +190,17 @@ def worker_fn(
     if extra_kwargs is None:
         extra_kwargs = {}
 
-    rank_client = None
     total_ranks = num_processes * world_size
 
-    try:
-        rank_client = RankClient(rank_server_addr, rank_server_port)
-        
-        # Get rank assignment from server (like elastic.py)
-        # local_rank = GPU index on this node (0-7)
-        # global_rank = unique rank across all nodes (0-15 for 2 nodes)
-        local_rank, global_rank = rank_client.get_rank()
+    # Compute ranks deterministically based on node_rank and process index
+    # This ensures predictable assignment:
+    #   Node 0: global ranks 0-7
+    #   Node 1: global ranks 8-15
+    #   etc.
+    local_rank = torch_rank  # Process index within this node (0-7)
+    global_rank = node_rank * num_processes + local_rank
 
+    try:
         # Setup environment using local_rank for GPU/NIC selection
         setup_worker_environment(local_rank, etcd_server, use_tcp_store)
 
@@ -239,26 +239,18 @@ def worker_fn(
             )
 
         result_queue.put(test_result)
-        if rank_client:
-            rank_client.release_rank()
 
     except Exception as e:
         import traceback
 
-        report_rank = global_rank if global_rank is not None else torch_rank
         result_queue.put(
             TestResult(
-                rank=report_rank,
+                rank=global_rank,
                 test_name=test_fn.__name__,
                 passed=False,
                 error=f"{type(e).__name__}: {e}\n{traceback.format_exc()}",
             )
         )
-        if rank_client:
-            try:
-                rank_client.release_rank()
-            except Exception:
-                pass
 
 
 def wait_for_tcp_port(
