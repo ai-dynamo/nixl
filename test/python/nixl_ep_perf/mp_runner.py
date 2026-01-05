@@ -114,7 +114,7 @@ def discover_gpu_nic_topology() -> Optional[Dict[int, str]]:
 
 def get_gpu_nic_mapping(local_rank: int) -> Optional[str]:
     """Get UCX_NET_DEVICES string for a GPU.
-    
+
     Format matches elastic.py: RDMA NIC + TCP fallback interfaces
     """
     if _GPU_NIC_TOPOLOGY is None:
@@ -122,11 +122,13 @@ def get_gpu_nic_mapping(local_rank: int) -> Optional[str]:
 
     if local_rank in _GPU_NIC_TOPOLOGY:
         rdma_nic = f"cuda0-{_GPU_NIC_TOPOLOGY[local_rank]}:1"
-        
+
         # Add TCP fallback interfaces (like elastic.py) for cross-node communication
         # These are IPoIB (InfiniBand) interfaces used as TCP fallback
-        tcp_nics = ",ibp26s0,ibp44s0,ibp64s0,ibp101s0,ibp156s0,ibp173s0,ibp192s0,ibp227s0"
-        
+        tcp_nics = (
+            ",ibp26s0,ibp44s0,ibp64s0,ibp101s0,ibp156s0,ibp173s0,ibp192s0,ibp227s0"
+        )
+
         return rdma_nic + tcp_nics
     return None
 
@@ -137,7 +139,7 @@ def setup_worker_environment(
     use_tcp_store: bool = False,
 ):
     """Set up GPU, UCX, and NIXL environment for a worker process.
-    
+
     Args:
         local_rank: Local GPU index on this node (0-7), like elastic.py
         etcd_server: etcd server URL (only used if not use_tcp_store)
@@ -159,7 +161,9 @@ def setup_worker_environment(
     # This prevents C++ code from activating etcd path when we want TCPStore
     if not use_tcp_store:
         os.environ["NIXL_ETCD_ENDPOINTS"] = etcd_server
-        logger.info(f"Worker local_rank={local_rank}: Set NIXL_ETCD_ENDPOINTS={etcd_server}")
+        logger.info(
+            f"Worker local_rank={local_rank}: Set NIXL_ETCD_ENDPOINTS={etcd_server}"
+        )
 
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
@@ -209,9 +213,9 @@ def worker_fn(
 
         start_time = time.perf_counter()
         result = test_fn(
-            rank=global_rank,        # Global rank for Buffer
+            rank=global_rank,  # Global rank for Buffer
             world_size=total_ranks,
-            local_rank=local_rank,   # Local rank for GPU index
+            local_rank=local_rank,  # Local rank for GPU index
             **extra_kwargs,
         )
         duration_ms = (time.perf_counter() - start_time) * 1000
@@ -398,7 +402,7 @@ def run_multiprocess_test(
     os.environ["MASTER_ADDR"] = master_addr
     os.environ["WORLD_SIZE"] = str(total_ranks)  # Total ranks, not nodes
     os.environ["RANK"] = str(rank)  # This node's rank
-    is_master = (rank == 0)
+    is_master = rank == 0
 
     logger.info(
         f"etcd_server={etcd_server}, master_addr={master_addr}, "
@@ -413,7 +417,7 @@ def run_multiprocess_test(
             world_size - 1,
             master_addr,
         )
-    
+
     # Start TCPStore server if requested (master node only)
     tcp_store_process = None
     if use_tcp_store:
@@ -421,7 +425,7 @@ def run_multiprocess_test(
             logger.info(f"Starting TCPStore server on port {tcp_store_port}")
 
             def run_tcp_store_server():
-                _store = store_group.create_master_store(port=tcp_store_port)
+                store_group.create_master_store(port=tcp_store_port)
                 # Keep server alive
                 import signal
 
@@ -432,15 +436,9 @@ def run_multiprocess_test(
             time.sleep(1.0)
         else:
             # Worker node: wait for master's TCPStore to be ready
-            logger.info(
-                f"Waiting for TCPStore at {master_addr}:{tcp_store_port}..."
-            )
-            wait_for_tcp_port(
-                master_addr, tcp_store_port, timeout=60.0
-            )
-            logger.info(
-                f"✓ TCPStore ready at {master_addr}:{tcp_store_port}"
-            )
+            logger.info(f"Waiting for TCPStore at {master_addr}:{tcp_store_port}...")
+            wait_for_tcp_port(master_addr, tcp_store_port, timeout=60.0)
+            logger.info(f"✓ TCPStore ready at {master_addr}:{tcp_store_port}")
         kwargs["tcp_store_port"] = tcp_store_port
     else:
         # Only check/clean etcd on master node when not using TCPStore
@@ -461,8 +459,7 @@ def run_multiprocess_test(
     gpu_nic_topology = None
     if skip_nic_discovery:
         logger.info(
-            "Skipping GPU-NIC discovery (--skip-nic-discovery), "
-            "UCX will auto-select"
+            "Skipping GPU-NIC discovery (--skip-nic-discovery), " "UCX will auto-select"
         )
     else:
         gpu_nic_topology = discover_gpu_nic_topology()
@@ -491,9 +488,7 @@ def run_multiprocess_test(
         # Worker node: wait for master's rank server to be ready
         # NOTE: Do NOT call clear_barriers() here - only master should do that
         # to avoid clearing barriers that master's processes are already using
-        logger.info(
-            f"Waiting for rank server at {master_addr}:{rank_server_port}..."
-        )
+        logger.info(f"Waiting for rank server at {master_addr}:{rank_server_port}...")
         client = RankClient(master_addr, rank_server_port)
         client.wait_for_server(timeout=60.0)
         logger.info(
@@ -544,7 +539,7 @@ def run_multiprocess_test(
         start_rank = rank * num_processes
         end_rank = start_rank + num_processes
         expected_ranks = set(range(start_rank, end_rank))
-        
+
         result_ranks = {r.rank for r in results}
         for expected_rank in expected_ranks:
             if expected_rank not in result_ranks:

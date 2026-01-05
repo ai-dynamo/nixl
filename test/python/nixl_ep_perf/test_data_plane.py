@@ -26,14 +26,12 @@ import os
 import sys
 from typing import Any, Dict, List
 
+import store_group
 from mp_runner import TestResult, run_multiprocess_test, sync_all_ranks
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
-
-# Import store_group for TCPStore support
-import store_group
 
 # Defaults
 DEFAULT_WARMUP = 10
@@ -68,7 +66,6 @@ def _run_data_plane_test(
     import nixl_ep
     import numpy as np
     import torch
-    import torch.distributed as dist
 
     # Configure logger with node prefix
     for handler in logging.root.handlers:
@@ -302,7 +299,9 @@ def log_results(test_name: str, results: List[TestResult]):
 
 def main():
     parser = argparse.ArgumentParser(description="NIXL EP Data Plane Performance Test")
-    parser.add_argument("--num-processes", type=int, default=8, help="Number of processes per node")
+    parser.add_argument(
+        "--num-processes", type=int, default=8, help="Number of processes per node"
+    )
     parser.add_argument(
         "--mode",
         type=str,
@@ -360,9 +359,17 @@ def main():
     args = parser.parse_args()
 
     # Get multi-node configuration from environment or command line
-    world_size = args.world_size if args.world_size is not None else int(os.environ.get("WORLD_SIZE", "1"))
+    world_size = (
+        args.world_size
+        if args.world_size is not None
+        else int(os.environ.get("WORLD_SIZE", "1"))
+    )
     rank = args.rank if args.rank is not None else int(os.environ.get("RANK", "0"))
-    master_addr = args.master_addr if args.master_addr is not None else os.environ.get("MASTER_ADDR", "127.0.0.1")
+    master_addr = (
+        args.master_addr
+        if args.master_addr is not None
+        else os.environ.get("MASTER_ADDR", "127.0.0.1")
+    )
 
     # Configure logger with node prefix for multi-node debugging
     for handler in logging.root.handlers:
@@ -390,7 +397,9 @@ def main():
     if world_size > 1:
         logger.info("Multi-node setup:")
         logger.info("  Nodes (WORLD_SIZE): %d", world_size)
-        logger.info("  This node (RANK): %d %s", rank, "(master)" if rank == 0 else "(worker)")
+        logger.info(
+            "  This node (RANK): %d %s", rank, "(master)" if rank == 0 else "(worker)"
+        )
         logger.info("  Processes per node: %d", args.num_processes)
         logger.info("  Total ranks: %d", total_ranks)
         logger.info("  Master address: %s", master_addr)
