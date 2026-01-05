@@ -40,6 +40,37 @@ _RANK_SERVER_ADDR: Optional[str] = None
 _RANK_SERVER_PORT: int = 9998
 
 
+def _wait_for_tcp_service(host: str, port: int, timeout: float = 60.0) -> bool:
+    """Wait for a TCP service to become available.
+    
+    Args:
+        host: Hostname or IP address
+        port: Port number
+        timeout: Maximum time to wait in seconds
+        
+    Returns:
+        True if service became available, False if timeout
+    """
+    import socket
+    start_time = time.time()
+    retry_interval = 1.0
+    
+    while time.time() - start_time < timeout:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2.0)
+            sock.connect((host, port))
+            sock.close()
+            return True
+        except (socket.error, socket.timeout):
+            time.sleep(retry_interval)
+        except Exception as e:
+            logger.debug(f"Unexpected error while waiting for {host}:{port}: {e}")
+            time.sleep(retry_interval)
+    
+    return False
+
+
 def discover_gpu_nic_topology() -> Optional[Dict[int, str]]:
     """Discover GPU-NIC topology using nvidia-smi topo -m."""
     try:
@@ -381,8 +412,9 @@ def run_multiprocess_test(
             tcp_store_process.start()
             time.sleep(1.0)
         else:
-            logger.info(f"Connecting to TCPStore server at {master_addr}:{tcp_store_port}")
-            time.sleep(2.0)  # Give master node time to start
+            logger.info(f"Waiting for TCPStore server at {master_addr}:{tcp_store_port} (timeout: 60s)")
+            if not _wait_for_tcp_service(master_addr, tcp_store_port, timeout=60):
+                raise RuntimeError(f"TCPStore server at {master_addr}:{tcp_store_port} did not become available within 60 seconds")
         kwargs["tcp_store_port"] = tcp_store_port
     else:
         # Only check/clean etcd on master node when not using TCPStore
@@ -429,8 +461,9 @@ def run_multiprocess_test(
         except Exception as e:
             raise RuntimeError(f"Failed to connect to rank server: {e}")
     else:
-        logger.info(f"Connecting to rank server at {master_addr}:{rank_server_port}")
-        time.sleep(2.0)  # Give master node time to start
+        logger.info(f"Waiting for rank server at {master_addr}:{rank_server_port} (timeout: 60s)")
+        if not _wait_for_tcp_service(master_addr, rank_server_port, timeout=60):
+            raise RuntimeError(f"Rank server at {master_addr}:{rank_server_port} did not become available within 60 seconds")
 
     spawn_ctx = mp.get_context("spawn")
     result_queue = spawn_ctx.Queue()
