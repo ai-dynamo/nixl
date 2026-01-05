@@ -59,6 +59,7 @@ def _run_control_plane_test(
     measure_rounds: int = DEFAULT_ROUNDS,
     nvlink_backend: str = "ipc",
     use_tcp_store: bool = False,
+    node_rank: int = 0,
     **kwargs,
 ) -> Dict[str, Any]:
     """
@@ -69,7 +70,13 @@ def _run_control_plane_test(
         warmup_rounds: Number of warmup rounds (default: 0 due to repeated cycle bug)
         measure_rounds: Number of measurement rounds (default: 1)
         use_tcp_store: Use TCPStore for metadata exchange instead of etcd
+        node_rank: Node rank for log message prefix
     """
+    # Configure logger with node prefix
+    global logger
+    for handler in logging.root.handlers:
+        handler.setFormatter(logging.Formatter(f"[Node {node_rank}] %(message)s"))
+
     import nixl_ep
 
     # Setup TCPStore if requested

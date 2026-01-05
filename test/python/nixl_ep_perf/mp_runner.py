@@ -190,6 +190,9 @@ def worker_fn(
     if extra_kwargs is None:
         extra_kwargs = {}
 
+    # Pass node_rank to test function for logging prefix
+    extra_kwargs["node_rank"] = node_rank
+
     total_ranks = num_processes * world_size
 
     # Compute ranks deterministically based on node_rank and process index
