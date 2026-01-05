@@ -113,12 +113,21 @@ def discover_gpu_nic_topology() -> Optional[Dict[int, str]]:
 
 
 def get_gpu_nic_mapping(local_rank: int) -> Optional[str]:
-    """Get UCX_NET_DEVICES string for a GPU."""
+    """Get UCX_NET_DEVICES string for a GPU.
+    
+    Format matches elastic.py: RDMA NIC + TCP fallback interfaces
+    """
     if _GPU_NIC_TOPOLOGY is None:
         return None  # Topology not set - let UCX auto-select
 
     if local_rank in _GPU_NIC_TOPOLOGY:
-        return f"cuda0-{_GPU_NIC_TOPOLOGY[local_rank]}:1"
+        rdma_nic = f"cuda0-{_GPU_NIC_TOPOLOGY[local_rank]}:1"
+        
+        # Add TCP fallback interfaces (like elastic.py) for cross-node communication
+        # These are IPoIB (InfiniBand) interfaces used as TCP fallback
+        tcp_nics = ",ibp26s0,ibp44s0,ibp64s0,ibp101s0,ibp156s0,ibp173s0,ibp192s0,ibp227s0"
+        
+        return rdma_nic + tcp_nics
     return None
 
 
