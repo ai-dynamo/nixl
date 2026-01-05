@@ -613,8 +613,9 @@ def main():
 
     for num_experts in expert_counts:
         total_experts = num_experts * total_ranks
+        logger.info("")  # Blank line for readability
         logger.info(
-            "\nRunning: %s (%d experts/rank, %d total)",
+            "Running: %s (%d experts/rank, %d total)",
             args.test,
             num_experts,
             total_experts,
