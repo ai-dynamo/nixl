@@ -261,7 +261,6 @@ def wait_for_tcp_port(
     port: int,
     timeout: float = 60.0,
     poll_interval: float = 0.5,
-    log_prefix: str = "",
 ) -> bool:
     """Wait for a TCP port to accept connections.
 
@@ -270,14 +269,12 @@ def wait_for_tcp_port(
         port: Port number
         timeout: Maximum time to wait in seconds
         poll_interval: Initial interval between connection attempts
-        log_prefix: Prefix for log messages (e.g., "[Node 1]")
 
     Returns:
         True if port is ready, raises TimeoutError otherwise
     """
     import socket
 
-    prefix = f"{log_prefix} " if log_prefix else ""
     start_time = time.time()
     attempt = 0
     current_interval = poll_interval
@@ -288,16 +285,16 @@ def wait_for_tcp_port(
             s = socket.create_connection((host, port), timeout=2.0)
             s.close()
             logger.info(
-                f"{prefix}TCP port {host}:{port} is ready "
+                f"TCP port {host}:{port} is ready "
                 f"(attempt {attempt}, waited {time.time() - start_time:.1f}s)"
             )
             return True
         except (ConnectionRefusedError, socket.timeout, OSError):
             if attempt == 1:
-                logger.info(f"{prefix}Waiting for TCP port {host}:{port}...")
+                logger.info(f"Waiting for TCP port {host}:{port}...")
             elif attempt % 10 == 0:
                 logger.info(
-                    f"{prefix}Still waiting for {host}:{port}... "
+                    f"Still waiting for {host}:{port}... "
                     f"(attempt {attempt}, {time.time() - start_time:.1f}s)"
                 )
             time.sleep(current_interval)
@@ -392,8 +389,9 @@ def run_multiprocess_test(
     if etcd_server == "http://127.0.0.1:2379" and master_addr != "127.0.0.1":
         etcd_server = f"http://{master_addr}:2379"
 
-    # Create log prefix for this node
-    log_prefix = f"[Node {rank}]"
+    # Configure logger with node prefix for multi-node debugging
+    for handler in logging.root.handlers:
+        handler.setFormatter(logging.Formatter(f"[Node {rank}] %(message)s"))
 
     # Calculate total ranks and set master address
     total_ranks = num_processes * world_size
@@ -403,13 +401,13 @@ def run_multiprocess_test(
     is_master = (rank == 0)
 
     logger.info(
-        f"{log_prefix} etcd_server={etcd_server}, master_addr={master_addr}, "
+        f"etcd_server={etcd_server}, master_addr={master_addr}, "
         f"world_size={world_size}, num_processes={num_processes}"
     )
 
     if world_size > 1:
         logger.info(
-            f"{log_prefix} Multi-node mode: This is %s node (RANK=%d/%d, MASTER_ADDR=%s)",
+            "Multi-node mode: This is %s node (RANK=%d/%d, MASTER_ADDR=%s)",
             "MASTER" if is_master else "WORKER",
             rank,
             world_size - 1,
@@ -420,7 +418,7 @@ def run_multiprocess_test(
     tcp_store_process = None
     if use_tcp_store:
         if is_master:
-            logger.info(f"{log_prefix} Starting TCPStore server on port {tcp_store_port}")
+            logger.info(f"Starting TCPStore server on port {tcp_store_port}")
 
             def run_tcp_store_server():
                 _store = store_group.create_master_store(port=tcp_store_port)
@@ -435,13 +433,13 @@ def run_multiprocess_test(
         else:
             # Worker node: wait for master's TCPStore to be ready
             logger.info(
-                f"{log_prefix} Waiting for TCPStore at {master_addr}:{tcp_store_port}..."
+                f"Waiting for TCPStore at {master_addr}:{tcp_store_port}..."
             )
             wait_for_tcp_port(
-                master_addr, tcp_store_port, timeout=60.0, log_prefix=log_prefix
+                master_addr, tcp_store_port, timeout=60.0
             )
             logger.info(
-                f"{log_prefix} ✓ TCPStore ready at {master_addr}:{tcp_store_port}"
+                f"✓ TCPStore ready at {master_addr}:{tcp_store_port}"
             )
         kwargs["tcp_store_port"] = tcp_store_port
     else:
@@ -452,9 +450,9 @@ def run_multiprocess_test(
 
             if clean_etcd:
                 clean_etcd_state(etcd_server)
-                logger.info(f"{log_prefix} Cleaned etcd state")
+                logger.info("Cleaned etcd state")
         else:
-            logger.info(f"{log_prefix} Skipping etcd check (master handles it)")
+            logger.info("Skipping etcd check (master handles it)")
 
     # Pass use_tcp_store to the test function via kwargs
     kwargs["use_tcp_store"] = use_tcp_store
@@ -463,7 +461,7 @@ def run_multiprocess_test(
     gpu_nic_topology = None
     if skip_nic_discovery:
         logger.info(
-            f"{log_prefix} Skipping GPU-NIC discovery (--skip-nic-discovery), "
+            "Skipping GPU-NIC discovery (--skip-nic-discovery), "
             "UCX will auto-select"
         )
     else:
@@ -474,12 +472,12 @@ def run_multiprocess_test(
                 "Ensure nvidia-smi is available and GPUs are present. "
                 "Or use --skip-nic-discovery to let UCX auto-select."
             )
-        logger.info(f"{log_prefix} Discovered GPU-NIC topology: {gpu_nic_topology}")
+        logger.info(f"Discovered GPU-NIC topology: {gpu_nic_topology}")
 
     # Start rank server (master node only)
     server_process = None
     if is_master:
-        logger.info(f"{log_prefix} Starting rank server on port {rank_server_port}")
+        logger.info(f"Starting rank server on port {rank_server_port}")
         server_process = start_server(port=rank_server_port)
         time.sleep(1.0)
 
@@ -494,12 +492,12 @@ def run_multiprocess_test(
         # NOTE: Do NOT call clear_barriers() here - only master should do that
         # to avoid clearing barriers that master's processes are already using
         logger.info(
-            f"{log_prefix} Waiting for rank server at {master_addr}:{rank_server_port}..."
+            f"Waiting for rank server at {master_addr}:{rank_server_port}..."
         )
         client = RankClient(master_addr, rank_server_port)
-        client.wait_for_server(timeout=60.0, log_prefix=log_prefix)
+        client.wait_for_server(timeout=60.0)
         logger.info(
-            f"{log_prefix} ✓ Master is alive! "
+            f"✓ Master is alive! "
             f"Connected to rank server at {master_addr}:{rank_server_port}"
         )
 
