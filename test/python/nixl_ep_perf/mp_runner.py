@@ -132,17 +132,23 @@ def get_gpu_nic_mapping(local_rank: int) -> Optional[str]:
 
 
 def setup_worker_environment(
-    torch_rank: int,
+    local_rank: int,
     etcd_server: str = "http://127.0.0.1:2379",
     use_tcp_store: bool = False,
 ):
-    """Set up GPU, UCX, and NIXL environment for a worker process."""
-    cuda_device = torch_rank % 8
+    """Set up GPU, UCX, and NIXL environment for a worker process.
+    
+    Args:
+        local_rank: Local GPU index on this node (0-7), like elastic.py
+        etcd_server: etcd server URL (only used if not use_tcp_store)
+        use_tcp_store: If True, use TCPStore instead of etcd
+    """
+    cuda_device = local_rank % 8
     os.environ["CUDA_VISIBLE_DEVICES"] = str(cuda_device)
 
-    # Set UCX_NET_DEVICES if topology was discovered
-    # If --skip-nic-discovery was used, ucx_devices is None and UCX auto-selects
-    ucx_devices = get_gpu_nic_mapping(cuda_device)
+    # Set UCX_NET_DEVICES using local_rank (like elastic.py)
+    # Maps to the optimal RDMA NIC for this GPU + TCP fallback interfaces
+    ucx_devices = get_gpu_nic_mapping(local_rank)
     if ucx_devices:
         os.environ["UCX_NET_DEVICES"] = ucx_devices
 
@@ -153,7 +159,7 @@ def setup_worker_environment(
     # This prevents C++ code from activating etcd path when we want TCPStore
     if not use_tcp_store:
         os.environ["NIXL_ETCD_ENDPOINTS"] = etcd_server
-        logger.info(f"Worker torch_rank={torch_rank}: Set NIXL_ETCD_ENDPOINTS={etcd_server}")
+        logger.info(f"Worker local_rank={local_rank}: Set NIXL_ETCD_ENDPOINTS={etcd_server}")
 
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
@@ -185,24 +191,24 @@ def worker_fn(
         extra_kwargs = {}
 
     rank_client = None
-    global_rank = None
-    local_rank = torch_rank
     total_ranks = num_processes * world_size
 
     try:
         rank_client = RankClient(rank_server_addr, rank_server_port)
         
-        # Always use rank server's assignment (like elastic.py)
-        # This ensures unique global ranks across all nodes
-        local_rank_from_server, global_rank = rank_client.get_rank()
+        # Get rank assignment from server (like elastic.py)
+        # local_rank = GPU index on this node (0-7)
+        # global_rank = unique rank across all nodes (0-15 for 2 nodes)
+        local_rank, global_rank = rank_client.get_rank()
 
-        setup_worker_environment(torch_rank, etcd_server, use_tcp_store)
+        # Setup environment using local_rank for GPU/NIC selection
+        setup_worker_environment(local_rank, etcd_server, use_tcp_store)
 
         start_time = time.perf_counter()
         result = test_fn(
-            rank=global_rank,
+            rank=global_rank,        # Global rank for Buffer
             world_size=total_ranks,
-            local_rank=torch_rank,  # Use torch_rank (0-7 per node) for CUDA device
+            local_rank=local_rank,   # Local rank for GPU index
             **extra_kwargs,
         )
         duration_ms = (time.perf_counter() - start_time) * 1000
