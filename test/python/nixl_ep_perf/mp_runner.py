@@ -261,6 +261,50 @@ def worker_fn(
                 pass
 
 
+def wait_for_tcp_port(
+    host: str, port: int, timeout: float = 60.0, poll_interval: float = 0.5
+) -> bool:
+    """Wait for a TCP port to accept connections.
+
+    Args:
+        host: Hostname or IP to connect to
+        port: Port number
+        timeout: Maximum time to wait in seconds
+        poll_interval: Initial interval between connection attempts
+
+    Returns:
+        True if port is ready, raises TimeoutError otherwise
+    """
+    import socket
+
+    start_time = time.time()
+    attempt = 0
+    current_interval = poll_interval
+
+    while time.time() - start_time < timeout:
+        attempt += 1
+        try:
+            s = socket.create_connection((host, port), timeout=2.0)
+            s.close()
+            logger.info(
+                f"TCP port {host}:{port} is ready "
+                f"(attempt {attempt}, waited {time.time() - start_time:.1f}s)"
+            )
+            return True
+        except (ConnectionRefusedError, socket.timeout, OSError):
+            if attempt == 1:
+                logger.info(f"Waiting for TCP port {host}:{port}...")
+            elif attempt % 10 == 0:
+                logger.info(
+                    f"Still waiting for {host}:{port}... "
+                    f"(attempt {attempt}, {time.time() - start_time:.1f}s)"
+                )
+            time.sleep(current_interval)
+            current_interval = min(current_interval * 1.2, 2.0)
+
+    raise TimeoutError(f"TCP port {host}:{port} not ready after {timeout}s")
+
+
 def check_etcd_running(etcd_endpoints: str = "http://127.0.0.1:2379") -> bool:
     """Check if etcd is running."""
     try:
@@ -375,14 +419,18 @@ def run_multiprocess_test(
                 _store = store_group.create_master_store(port=tcp_store_port)
                 # Keep server alive
                 import signal
+
                 signal.pause()
 
             tcp_store_process = mp.Process(target=run_tcp_store_server, daemon=True)
             tcp_store_process.start()
             time.sleep(1.0)
         else:
-            logger.info(f"Connecting to TCPStore server at {master_addr}:{tcp_store_port}")
-            time.sleep(2.0)  # Give master node time to start
+            # Worker node: wait for master's TCPStore to be ready
+            logger.info(
+                f"Waiting for TCPStore server at {master_addr}:{tcp_store_port}..."
+            )
+            wait_for_tcp_port(master_addr, tcp_store_port, timeout=60.0)
         kwargs["tcp_store_port"] = tcp_store_port
     else:
         # Only check/clean etcd on master node when not using TCPStore
@@ -421,7 +469,7 @@ def run_multiprocess_test(
         logger.info(f"Starting rank server on port {rank_server_port}")
         server_process = start_server(port=rank_server_port)
         time.sleep(1.0)
-        
+
         try:
             client = RankClient(master_addr, rank_server_port)
             client.clear_barriers()
@@ -429,8 +477,11 @@ def run_multiprocess_test(
         except Exception as e:
             raise RuntimeError(f"Failed to connect to rank server: {e}")
     else:
-        logger.info(f"Connecting to rank server at {master_addr}:{rank_server_port}")
-        time.sleep(2.0)  # Give master node time to start
+        # Worker node: wait for master's rank server to be ready
+        logger.info(f"Waiting for rank server at {master_addr}:{rank_server_port}...")
+        client = RankClient(master_addr, rank_server_port)
+        client.wait_for_server(timeout=60.0)
+        client.clear_barriers()  # Ensure clean state after master reset
 
     spawn_ctx = mp.get_context("spawn")
     result_queue = spawn_ctx.Queue()

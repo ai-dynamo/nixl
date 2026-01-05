@@ -151,6 +151,57 @@ class RankClient:
         self.global_rank: Optional[int] = None
         self.local_rank: Optional[int] = None
 
+    def wait_for_server(
+        self, timeout: float = 60.0, poll_interval: float = 0.5
+    ) -> bool:
+        """Wait for the rank server to be ready.
+
+        Polls the server until it responds, with exponential backoff.
+
+        Args:
+            timeout: Maximum time to wait in seconds
+            poll_interval: Initial interval between connection attempts
+
+        Returns:
+            True if server is ready, raises TimeoutError otherwise
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        start_time = time.time()
+        attempt = 0
+        current_interval = poll_interval
+
+        while time.time() - start_time < timeout:
+            attempt += 1
+            try:
+                # Try to connect and send a simple command
+                s = socket.create_connection((self.server, self.port), timeout=2.0)
+                s.close()
+                logger.info(
+                    f"Rank server at {self.server}:{self.port} is ready "
+                    f"(attempt {attempt}, waited {time.time() - start_time:.1f}s)"
+                )
+                return True
+            except (ConnectionRefusedError, socket.timeout, OSError):
+                if attempt == 1:
+                    logger.info(
+                        f"Waiting for rank server at {self.server}:{self.port}..."
+                    )
+                elif attempt % 10 == 0:
+                    logger.info(
+                        f"Still waiting for rank server... "
+                        f"(attempt {attempt}, {time.time() - start_time:.1f}s)"
+                    )
+                time.sleep(current_interval)
+                # Exponential backoff up to 2 seconds
+                current_interval = min(current_interval * 1.2, 2.0)
+
+        raise TimeoutError(
+            f"Rank server at {self.server}:{self.port} not ready after {timeout}s"
+        )
+
     def _send(self, command: str, timeout: float = 10.0) -> str:
         """Send command and return response."""
         s = socket.create_connection((self.server, self.port), timeout=timeout)
