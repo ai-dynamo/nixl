@@ -423,6 +423,9 @@ def run_multiprocess_test(
                 f"Waiting for TCPStore server at {master_addr}:{tcp_store_port}..."
             )
             wait_for_tcp_port(master_addr, tcp_store_port, timeout=60.0)
+            logger.info(
+                f"Node {rank}: ✓ TCPStore ready at {master_addr}:{tcp_store_port}"
+            )
         kwargs["tcp_store_port"] = tcp_store_port
     else:
         # Only check/clean etcd on master node when not using TCPStore
@@ -475,6 +478,10 @@ def run_multiprocess_test(
         logger.info(f"Waiting for rank server at {master_addr}:{rank_server_port}...")
         client = RankClient(master_addr, rank_server_port)
         client.wait_for_server(timeout=60.0)
+        logger.info(
+            f"Node {rank}: ✓ Master is alive! "
+            f"Connected to rank server at {master_addr}:{rank_server_port}"
+        )
 
     spawn_ctx = mp.get_context("spawn")
     result_queue = spawn_ctx.Queue()
