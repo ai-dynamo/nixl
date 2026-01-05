@@ -22,6 +22,7 @@ Usage:
 
 import argparse
 import logging
+import os
 import sys
 from typing import Any, Dict, List
 
@@ -30,6 +31,12 @@ from mp_runner import TestResult, run_multiprocess_test, sync_all_ranks
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
+
+# Import store_group for TCPStore support
+try:
+    from store_group import store_group
+except ImportError:
+    store_group = None
 
 # Defaults
 DEFAULT_WARMUP = 10
@@ -48,6 +55,8 @@ def _run_data_plane_test(
     nvlink_backend: str = "ipc",
     warmup_iters: int = DEFAULT_WARMUP,
     measure_iters: int = DEFAULT_ITERS,
+    use_tcp_store: bool = False,
+    node_rank: int = 0,
     **kwargs,
 ) -> Dict[str, Any]:
     """
@@ -56,12 +65,30 @@ def _run_data_plane_test(
     Args:
         mode: "dispatch" (only dispatch), "combine" (1 dispatch + N combines),
               or "e2e" (N dispatch+combine cycles)
+        use_tcp_store: Use TCPStore for metadata exchange instead of etcd
+        node_rank: Node rank for log message prefix
     """
     import nixl_ep
     import numpy as np
     import torch
+    import torch.distributed as dist
+
+    # Configure logger with node prefix
+    for handler in logging.root.handlers:
+        handler.setFormatter(logging.Formatter(f"[Node {node_rank}] %(message)s"))
 
     total_experts = num_experts_per_rank * world_size
+
+    # Setup TCPStore if requested
+    tcp_store = None
+    if use_tcp_store and store_group is not None:
+        master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
+        tcp_store_port = kwargs.get("tcp_store_port", 9999)
+        tcp_store = store_group.create_client_store(
+            master_addr=master_addr,
+            port=tcp_store_port,
+            timeout_sec=60.0,
+        )
 
     # Create buffer
     num_rdma_bytes = nixl_ep.Buffer.get_rdma_size_hint(
@@ -72,6 +99,7 @@ def _run_data_plane_test(
         nvlink_backend=nvlink_backend,
         explicitly_destroy=True,
         enable_shrink=True,
+        tcp_store_group=tcp_store,
     )
     buffer.update_memory_buffers(
         num_ranks=world_size,
@@ -277,7 +305,7 @@ def log_results(test_name: str, results: List[TestResult]):
 
 def main():
     parser = argparse.ArgumentParser(description="NIXL EP Data Plane Performance Test")
-    parser.add_argument("--num-processes", type=int, default=8, help="Number of ranks")
+    parser.add_argument("--num-processes", type=int, default=8, help="Number of processes per node")
     parser.add_argument(
         "--mode",
         type=str,
@@ -308,31 +336,74 @@ def main():
         action="store_true",
         help="Skip GPU-NIC topology discovery (let UCX auto-select)",
     )
+    parser.add_argument(
+        "--use-tcp-store",
+        action="store_true",
+        help="Use TCPStore for metadata exchange instead of etcd",
+    )
+    # Multi-node parameters
+    parser.add_argument(
+        "--world-size",
+        type=int,
+        default=None,
+        help="Total number of nodes (overrides WORLD_SIZE env var, default: 1)",
+    )
+    parser.add_argument(
+        "--rank",
+        type=int,
+        default=None,
+        help="Rank of this node 0=master (overrides RANK env var, default: 0)",
+    )
+    parser.add_argument(
+        "--master-addr",
+        type=str,
+        default=None,
+        help="Master node address (overrides MASTER_ADDR env var)",
+    )
     args = parser.parse_args()
 
-    total_experts = args.experts_per_rank * args.num_processes
+    # Get multi-node configuration from environment or command line
+    world_size = args.world_size if args.world_size is not None else int(os.environ.get("WORLD_SIZE", "1"))
+    rank = args.rank if args.rank is not None else int(os.environ.get("RANK", "0"))
+    master_addr = args.master_addr if args.master_addr is not None else os.environ.get("MASTER_ADDR", "127.0.0.1")
+
+    # Configure logger with node prefix for multi-node debugging
+    for handler in logging.root.handlers:
+        handler.setFormatter(logging.Formatter(f"[Node {rank}] %(message)s"))
+
+    # Validation
+    if world_size < 1:
+        raise ValueError(f"WORLD_SIZE must be >= 1, got {world_size}")
+    if rank < 0 or rank >= world_size:
+        raise ValueError(f"RANK must be in [0, {world_size-1}], got {rank}")
+    if world_size > 1 and rank > 0 and master_addr == "127.0.0.1":
+        raise ValueError(
+            "MASTER_ADDR must be set (not 127.0.0.1) for worker nodes in multi-node setup. "
+            "Set MASTER_ADDR environment variable or use --master-addr flag."
+        )
+
+    # Calculate total ranks
+    total_ranks = args.num_processes * world_size
+    total_experts = args.experts_per_rank * total_ranks
+    metadata_exchange = "TCPStore" if args.use_tcp_store else "etcd"
 
     logger.info("=" * 70)
     logger.info("NIXL EP Data Plane Performance Test")
     logger.info("=" * 70)
+    if world_size > 1:
+        logger.info("Multi-node setup:")
+        logger.info("  Nodes (WORLD_SIZE): %d", world_size)
+        logger.info("  This node (RANK): %d %s", rank, "(master)" if rank == 0 else "(worker)")
+        logger.info("  Processes per node: %d", args.num_processes)
+        logger.info("  Total ranks: %d", total_ranks)
+        logger.info("  Master address: %s", master_addr)
+    else:
+        logger.info("Single-node setup: %d processes", args.num_processes)
     logger.info("Mode: %s", args.mode)
-    logger.info(
-        "Ranks: %d, Tokens: %d, Hidden: %d",
-        args.num_processes,
-        args.tokens,
-        args.hidden,
-    )
-    logger.info(
-        "Experts: %d/rank (%d total), TopK: %d",
-        args.experts_per_rank,
-        total_experts,
-        args.topk,
-    )
-    logger.info(
-        "Backend: %s%s",
-        args.nvlink_backend,
-        " (RDMA forced)" if args.nvlink_backend == "none" else "",
-    )
+    logger.info("Tokens: %d, Hidden: %d, TopK: %d", args.tokens, args.hidden, args.topk)
+    logger.info("Experts: %d/rank (%d total)", args.experts_per_rank, total_experts)
+    logger.info("NVLink backend: %s", args.nvlink_backend)
+    logger.info("Metadata exchange: %s", metadata_exchange)
     logger.info("Warmup: %d, Measure: %d iterations", args.warmup, args.iters)
     logger.info("=" * 70)
 
@@ -341,6 +412,10 @@ def main():
         num_processes=args.num_processes,
         timeout=args.timeout,
         skip_nic_discovery=args.skip_nic_discovery,
+        use_tcp_store=args.use_tcp_store,
+        world_size=world_size,
+        rank=rank,
+        master_addr=master_addr,
         mode=args.mode,
         num_experts_per_rank=args.experts_per_rank,
         num_tokens=args.tokens,
