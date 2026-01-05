@@ -33,10 +33,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 # Import store_group for TCPStore support
-try:
-    from store_group import store_group
-except ImportError:
-    store_group = None
+import store_group
 
 # Defaults
 DEFAULT_WARMUP = 10
@@ -81,7 +78,7 @@ def _run_data_plane_test(
 
     # Setup TCPStore if requested
     tcp_store = None
-    if use_tcp_store and store_group is not None:
+    if use_tcp_store:
         master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
         tcp_store_port = kwargs.get("tcp_store_port", 9999)
         tcp_store = store_group.create_client_store(
