@@ -564,6 +564,10 @@ def main():
     rank = args.rank if args.rank is not None else int(os.environ.get("RANK", "0"))
     master_addr = args.master_addr if args.master_addr is not None else os.environ.get("MASTER_ADDR", "127.0.0.1")
     
+    # Configure logger with node prefix for multi-node debugging
+    for handler in logging.root.handlers:
+        handler.setFormatter(logging.Formatter(f"[Node {rank}] %(message)s"))
+    
     # Validation
     if world_size < 1:
         raise ValueError(f"WORLD_SIZE must be >= 1, got {world_size}")
