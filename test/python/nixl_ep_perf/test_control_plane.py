@@ -114,6 +114,7 @@ def _run_control_plane_test(
             measure_rounds,
             nvlink_backend,
             tcp_store,
+            local_rank,
         )
 
 
@@ -128,6 +129,7 @@ def _run_single_op(
     measure_rounds: int,
     nvlink_backend: str,
     tcp_store: Optional[dist.TCPStore] = None,
+    local_rank: int = 0,
 ) -> Dict[str, Any]:
     """Run a single control plane operation test."""
     import nixl_ep
