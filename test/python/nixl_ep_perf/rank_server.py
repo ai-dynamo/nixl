@@ -152,7 +152,10 @@ class RankClient:
         self.local_rank: Optional[int] = None
 
     def wait_for_server(
-        self, timeout: float = 60.0, poll_interval: float = 0.5
+        self,
+        timeout: float = 60.0,
+        poll_interval: float = 0.5,
+        log_prefix: str = "",
     ) -> bool:
         """Wait for the rank server to be ready.
 
@@ -161,6 +164,7 @@ class RankClient:
         Args:
             timeout: Maximum time to wait in seconds
             poll_interval: Initial interval between connection attempts
+            log_prefix: Prefix for log messages (e.g., "[Node 1]")
 
         Returns:
             True if server is ready, raises TimeoutError otherwise
@@ -168,6 +172,7 @@ class RankClient:
         import logging
 
         logger = logging.getLogger(__name__)
+        prefix = f"{log_prefix} " if log_prefix else ""
 
         start_time = time.time()
         attempt = 0
@@ -180,18 +185,18 @@ class RankClient:
                 s = socket.create_connection((self.server, self.port), timeout=2.0)
                 s.close()
                 logger.info(
-                    f"Rank server at {self.server}:{self.port} is ready "
+                    f"{prefix}Rank server at {self.server}:{self.port} is ready "
                     f"(attempt {attempt}, waited {time.time() - start_time:.1f}s)"
                 )
                 return True
             except (ConnectionRefusedError, socket.timeout, OSError):
                 if attempt == 1:
                     logger.info(
-                        f"Waiting for rank server at {self.server}:{self.port}..."
+                        f"{prefix}Waiting for rank server at {self.server}:{self.port}..."
                     )
                 elif attempt % 10 == 0:
                     logger.info(
-                        f"Still waiting for rank server... "
+                        f"{prefix}Still waiting for rank server... "
                         f"(attempt {attempt}, {time.time() - start_time:.1f}s)"
                     )
                 time.sleep(current_interval)

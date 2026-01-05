@@ -254,7 +254,11 @@ def worker_fn(
 
 
 def wait_for_tcp_port(
-    host: str, port: int, timeout: float = 60.0, poll_interval: float = 0.5
+    host: str,
+    port: int,
+    timeout: float = 60.0,
+    poll_interval: float = 0.5,
+    log_prefix: str = "",
 ) -> bool:
     """Wait for a TCP port to accept connections.
 
@@ -263,12 +267,14 @@ def wait_for_tcp_port(
         port: Port number
         timeout: Maximum time to wait in seconds
         poll_interval: Initial interval between connection attempts
+        log_prefix: Prefix for log messages (e.g., "[Node 1]")
 
     Returns:
         True if port is ready, raises TimeoutError otherwise
     """
     import socket
 
+    prefix = f"{log_prefix} " if log_prefix else ""
     start_time = time.time()
     attempt = 0
     current_interval = poll_interval
@@ -279,16 +285,16 @@ def wait_for_tcp_port(
             s = socket.create_connection((host, port), timeout=2.0)
             s.close()
             logger.info(
-                f"TCP port {host}:{port} is ready "
+                f"{prefix}TCP port {host}:{port} is ready "
                 f"(attempt {attempt}, waited {time.time() - start_time:.1f}s)"
             )
             return True
         except (ConnectionRefusedError, socket.timeout, OSError):
             if attempt == 1:
-                logger.info(f"Waiting for TCP port {host}:{port}...")
+                logger.info(f"{prefix}Waiting for TCP port {host}:{port}...")
             elif attempt % 10 == 0:
                 logger.info(
-                    f"Still waiting for {host}:{port}... "
+                    f"{prefix}Still waiting for {host}:{port}... "
                     f"(attempt {attempt}, {time.time() - start_time:.1f}s)"
                 )
             time.sleep(current_interval)
@@ -428,7 +434,9 @@ def run_multiprocess_test(
             logger.info(
                 f"{log_prefix} Waiting for TCPStore at {master_addr}:{tcp_store_port}..."
             )
-            wait_for_tcp_port(master_addr, tcp_store_port, timeout=60.0)
+            wait_for_tcp_port(
+                master_addr, tcp_store_port, timeout=60.0, log_prefix=log_prefix
+            )
             logger.info(
                 f"{log_prefix} ✓ TCPStore ready at {master_addr}:{tcp_store_port}"
             )
@@ -486,7 +494,7 @@ def run_multiprocess_test(
             f"{log_prefix} Waiting for rank server at {master_addr}:{rank_server_port}..."
         )
         client = RankClient(master_addr, rank_server_port)
-        client.wait_for_server(timeout=60.0)
+        client.wait_for_server(timeout=60.0, log_prefix=log_prefix)
         logger.info(
             f"{log_prefix} ✓ Master is alive! "
             f"Connected to rank server at {master_addr}:{rank_server_port}"
