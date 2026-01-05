@@ -38,7 +38,7 @@ BreakConstructorInitializers: BeforeColon
 BreakStringLiterals: true
 ColumnLimit: 100
 # Ignore formatting for lines starting with 'SPDX'
-CommentPragmas: '^ SPDX'
+CommentPragmas: '^ *SPDX'
 CompactNamespaces: false
 ConstructorInitializerIndentWidth: 4
 ContinuationIndentWidth: 4
