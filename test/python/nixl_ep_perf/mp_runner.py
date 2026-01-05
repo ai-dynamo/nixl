@@ -407,6 +407,7 @@ def run_multiprocess_test(
                 "Ensure nvidia-smi is available and GPUs are present. "
                 "Or use --skip-nic-discovery to let UCX auto-select."
             )
+        logger.info(f"Node {rank}: Discovered GPU-NIC topology: {gpu_nic_topology}")
 
     # Start rank server (master node only)
     server_process = None
@@ -464,12 +465,17 @@ def run_multiprocess_test(
             except Exception:
                 break
 
+        # Calculate expected global rank range for this node
+        start_rank = rank * num_processes
+        end_rank = start_rank + num_processes
+        expected_ranks = set(range(start_rank, end_rank))
+        
         result_ranks = {r.rank for r in results}
-        for i in range(num_processes):
-            if i not in result_ranks:
+        for expected_rank in expected_ranks:
+            if expected_rank not in result_ranks:
                 results.append(
                     TestResult(
-                        rank=i,
+                        rank=expected_rank,
                         test_name=test_fn.__name__,
                         passed=False,
                         error="Timeout or process died",
