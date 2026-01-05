@@ -411,13 +411,18 @@ def _run_full_cycle(
 
 def log_cycle_results(results: List[TestResult], num_experts: int, world_size: int):
     """Log full cycle results."""
-    rank0 = next((r for r in results if r.rank == 0), None)
-    if not rank0 or not rank0.metrics:
-        logger.info("No results from rank 0")
+    # Use the first available rank instead of requiring rank 0
+    first_rank_result = next((r for r in results if r.metrics), None)
+    if not first_rank_result or not first_rank_result.metrics:
+        logger.info("No results with metrics available")
         return
 
-    m = rank0.metrics
+    m = first_rank_result.metrics
     total_experts = num_experts * world_size
+    
+    # Get rank range for this node
+    rank_list = sorted([r.rank for r in results])
+    rank_range = f"ranks {rank_list[0]}-{rank_list[-1]}" if rank_list else "no ranks"
 
     logger.info("=" * 70)
     logger.info(
@@ -426,6 +431,7 @@ def log_cycle_results(results: List[TestResult], num_experts: int, world_size: i
         world_size,
         total_experts,
     )
+    logger.info("Node results: %s (%d processes)", rank_range, len(rank_list))
     logger.info("=" * 70)
     logger.info(
         "%-15s %-12s %-12s %-12s", "Operation", "Avg (ms)", "Min (ms)", "Max (ms)"
