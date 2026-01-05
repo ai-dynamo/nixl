@@ -148,14 +148,13 @@ def _run_single_op(
                 nvlink_backend=nvlink_backend,
                 explicitly_destroy=True,
                 enable_shrink=True,
+                tcp_store_group=tcp_store,
             )
             buffer.update_memory_buffers(
                 num_ranks=world_size,
                 num_experts_per_rank=num_experts_per_rank,
                 num_rdma_bytes=num_rdma_bytes,
             )
-            if tcp_store is not None:
-                buffer.set_tcp_store_group(tcp_store)
 
             torch.cuda.synchronize()
             if is_measure:
@@ -177,14 +176,13 @@ def _run_single_op(
                 nvlink_backend=nvlink_backend,
                 explicitly_destroy=True,
                 enable_shrink=True,
+                tcp_store_group=tcp_store,
             )
             buffer.update_memory_buffers(
                 num_ranks=world_size,
                 num_experts_per_rank=num_experts_per_rank,
                 num_rdma_bytes=num_rdma_bytes,
             )
-            if tcp_store is not None:
-                buffer.set_tcp_store_group(tcp_store)
             sync_all_ranks(rank, world_size, f"connect_pre_{i}")
 
             torch.cuda.synchronize()
@@ -207,14 +205,13 @@ def _run_single_op(
                 nvlink_backend=nvlink_backend,
                 explicitly_destroy=True,
                 enable_shrink=True,
+                tcp_store_group=tcp_store,
             )
             buffer.update_memory_buffers(
                 num_ranks=world_size,
                 num_experts_per_rank=num_experts_per_rank,
                 num_rdma_bytes=num_rdma_bytes,
             )
-            if tcp_store is not None:
-                buffer.set_tcp_store_group(tcp_store)
             sync_all_ranks(rank, world_size, f"disconnect_pre_connect_{i}")
             if other_ranks:
                 buffer.connect_ranks(other_ranks)
@@ -241,14 +238,13 @@ def _run_single_op(
                 nvlink_backend=nvlink_backend,
                 explicitly_destroy=True,
                 enable_shrink=True,
+                tcp_store_group=tcp_store,
             )
             buffer.update_memory_buffers(
                 num_ranks=world_size,
                 num_experts_per_rank=num_experts_per_rank,
                 num_rdma_bytes=num_rdma_bytes,
             )
-            if tcp_store is not None:
-                buffer.set_tcp_store_group(tcp_store)
             sync_all_ranks(rank, world_size, f"destroy_pre_connect_{i}")
             if other_ranks:
                 buffer.connect_ranks(other_ranks)
@@ -315,14 +311,13 @@ def _run_full_cycle(
             nvlink_backend=nvlink_backend,
             explicitly_destroy=True,
             enable_shrink=True,
+            tcp_store_group=tcp_store,
         )
         buffer.update_memory_buffers(
             num_ranks=world_size,
             num_experts_per_rank=num_experts_per_rank,
             num_rdma_bytes=num_rdma_bytes,
         )
-        if tcp_store is not None:
-            buffer.set_tcp_store_group(tcp_store)
 
         torch.cuda.synchronize()
         if is_measure:
