@@ -167,9 +167,9 @@ def _run_single_op(
             # DEBUG: Copy elastic.py pattern - log environment before Buffer creation
             import os
             logger = logging.getLogger(__name__)
-            logger.info(f"Rank {rank}: UCX_NET_DEVICES={os.environ.get('UCX_NET_DEVICES', 'NOT SET')}")
-            logger.info(f"Rank {rank}: NIXL_ETCD_ENDPOINTS={os.environ.get('NIXL_ETCD_ENDPOINTS', 'NOT SET')}")
-            logger.info(f"Rank {rank}: Creating Buffer with nvlink_backend={nvlink_backend}")
+            logger.info(f"Rank {rank} (local_rank={local_rank}): UCX_NET_DEVICES={os.environ.get('UCX_NET_DEVICES', 'NOT SET')}")
+            logger.info(f"Rank {rank} (local_rank={local_rank}): NIXL_ETCD_ENDPOINTS={os.environ.get('NIXL_ETCD_ENDPOINTS', 'NOT SET')}")
+            logger.info(f"Rank {rank} (local_rank={local_rank}): Creating Buffer with nvlink_backend={nvlink_backend}")
             
             buffer = nixl_ep.Buffer(
                 rank=rank,
