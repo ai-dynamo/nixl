@@ -478,10 +478,11 @@ def run_multiprocess_test(
             raise RuntimeError(f"Failed to connect to rank server: {e}")
     else:
         # Worker node: wait for master's rank server to be ready
+        # NOTE: Do NOT call clear_barriers() here - only master should do that
+        # to avoid clearing barriers that master's processes are already using
         logger.info(f"Waiting for rank server at {master_addr}:{rank_server_port}...")
         client = RankClient(master_addr, rank_server_port)
         client.wait_for_server(timeout=60.0)
-        client.clear_barriers()  # Ensure clean state after master reset
 
     spawn_ctx = mp.get_context("spawn")
     result_queue = spawn_ctx.Queue()
