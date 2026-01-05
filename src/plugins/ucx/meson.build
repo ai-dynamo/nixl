@@ -16,26 +16,20 @@
 ucx_utils_dep = declare_dependency(link_with: ucx_utils_lib, include_directories: utils_inc_dirs )
 asio_dep = [dependency('asio', required: true)]
 
-compile_flags = []
-if cuda_dep.found()
-    compile_flags = [ '-DHAVE_CUDA' ]
-endif
-
 if 'UCX' in static_plugins
     ucx_backend_lib = static_library('UCX',
                'ucx_backend.cpp', 'ucx_backend.h', 'ucx_plugin.cpp',
-               dependencies: [nixl_infra, ucx_utils_dep, serdes_interface, cuda_dep, ucx_dep, thread_dep, nixl_common_dep, asio_dep],
+               dependencies: [nixl_infra, ucx_utils_dep, serdes_interface, ucx_dep, thread_dep, nixl_common_dep, asio_dep],
                include_directories: nixl_inc_dirs,
                install: false,
-               cpp_args : compile_flags,
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
     ucx_backend_lib = shared_library('UCX',
                'ucx_backend.cpp', 'ucx_backend.h', 'ucx_plugin.cpp',
-               dependencies: [nixl_infra, ucx_utils_dep, serdes_interface, cuda_dep, ucx_dep, thread_dep, nixl_common_dep, asio_dep],
+               dependencies: [nixl_infra, ucx_utils_dep, serdes_interface, ucx_dep, thread_dep, nixl_common_dep, asio_dep],
                include_directories: nixl_inc_dirs,
                install: true,
-               cpp_args : compile_flags + ['-fPIC'],
+               cpp_args : ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                install_dir: plugin_install_dir,
                build_rpath: get_option('ucx_path') != '' ? get_option('ucx_path') + '/lib' : '',
