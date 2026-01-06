@@ -28,10 +28,11 @@ import time
 from functools import partial
 from typing import cast
 
-import nixl_ep
 import rank_server
 import torch
 from plan import Plan
+
+import nixl_ep
 
 # Add tests directory to path to import test utils
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
