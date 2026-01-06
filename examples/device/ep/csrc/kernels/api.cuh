@@ -67,11 +67,11 @@ struct gpu_nixl_ctx {
         return &local_counters[local_expert_idx * num_ranks + src_rank];
     }
 
-    __device__ inline nixlGpuXferReqH remote_counter_get(int local_expert_idx, int dest_rank) {
+    __device__ inline nixlGpuXferReqH remote_counter_get(int dest_rank) {
         return remote_counter_reqs[dest_rank];
     }
 
-    __device__ inline size_t remote_counter_offset_get(int local_expert_idx, int dest_rank) {
+    __device__ inline size_t remote_counter_offset_get(int local_expert_idx) {
         return (local_expert_idx * num_ranks + rank) * sizeof(uint64_t);
     }
 
