@@ -1117,7 +1117,7 @@ __forceinline__ __device__ void barrier(int thread_id, int rank, int num_ranks,
         const auto dst_rank = thread_id;
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
             nixlGpuXferReqH barrier_req = nixl_ctx.remote_barrier_get(dst_rank);
-            nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::THREAD>(barrier_req, 0, rank*sizeof(int), dst_rank*sizeof(int), sizeof(int), 0);
+            nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::THREAD>(barrier_req, 0, rank*sizeof(int), rank*sizeof(int), sizeof(int), 0);
 
             auto start_time = clock64();
             uint64_t wait_recv_cost = 0;
