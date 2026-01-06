@@ -161,7 +161,7 @@ private:
     void _nixl_ep_counters_cleanup(const std::vector<int>& ranks_to_remove);
     void _nixl_ep_batches_cleanup(const std::vector<int>& ranks_to_remove);
     void _nixl_ep_p2p_ptrs_cleanup(const std::vector<int>& ranks_to_remove);
-    void _nixl_ep_barrier_buffer_clear(int rank);
+    void _nixl_ep_barrier_buffer_clear();
 
 public:
     Buffer(int rank, bool explicitly_destroy, bool enable_shrink);

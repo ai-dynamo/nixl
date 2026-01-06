@@ -334,10 +334,6 @@ void Buffer::_nixl_ep_barrier_buffer_clear() {
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, max_num_ranks * sizeof(int)));
 }
 
-void Buffer::_nixl_ep_barrier_buffer_clear(int rank) {
-    CUDA_CHECK(cudaMemset(sync_buffer_ptr + rank, 0, sizeof(int)));
-}
-
 void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds) {
     EP_HOST_ASSERT(!remote_ranks_list.empty());
     EP_HOST_ASSERT(!remote_mds.has_value() || remote_mds->size() == remote_ranks_list.size());
@@ -359,7 +355,6 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std:
 
         if (enable_shrink) {
             CUDA_CHECK(cudaMemset(mask_buffer_ptr + remote_rank, 0, sizeof(int))); // Reset mask buffer for new ranks
-            _nixl_ep_barrier_buffer_clear(remote_rank);
         }
     }
 
