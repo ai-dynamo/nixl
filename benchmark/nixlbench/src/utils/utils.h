@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,8 @@
 #include <variant>
 #include <vector>
 #include <optional>
+#include <cxxopts.hpp>
+#include <toml++/toml.hpp>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
 
@@ -36,22 +38,22 @@
 #define CHECK_CUDA_ERROR(result, message)                                           \
     do {                                                                            \
         if (result != cudaSuccess) {                                                \
-            std::cerr << "CUDA: " << message << " (Error code: " << result          \
-                      << " - " << cudaGetErrorString(result) << ")" << std::endl;   \
+            std::cerr << "CUDA: " << message << " (Error code: " << result << " - " \
+                      << cudaGetErrorString(result) << ")" << std::endl;            \
             exit(EXIT_FAILURE);                                                     \
         }                                                                           \
-    } while(0)
+    } while (0)
 
-#define CHECK_CUDA_DRIVER_ERROR(result, message)                                    \
-    do {                                                                            \
-        if (result != CUDA_SUCCESS) {                                               \
-            const char *error_str;                                                  \
-            cuGetErrorString(result, &error_str);                                   \
-            std::cerr << "CUDA Driver: " << message << " (Error code: "             \
-                      << result << " - " << error_str << ")" << std::endl;          \
-            exit(EXIT_FAILURE);                                                     \
-        }                                                                           \
-    } while(0)
+#define CHECK_CUDA_DRIVER_ERROR(result, message)                                           \
+    do {                                                                                   \
+        if (result != CUDA_SUCCESS) {                                                      \
+            const char *error_str;                                                         \
+            cuGetErrorString(result, &error_str);                                          \
+            std::cerr << "CUDA Driver: " << message << " (Error code: " << result << " - " \
+                      << error_str << ")" << std::endl;                                    \
+            exit(EXIT_FAILURE);                                                            \
+        }                                                                                  \
+    } while (0)
 #endif
 
 // TODO: This is true for CX-7, need support for other CX cards and NVLink
@@ -97,18 +99,18 @@
 #define XFERBENCH_OBJ_REQ_CHECKSUM_REQUIRED "required"
 
 // Scheme types for transfer patterns
-#define XFERBENCH_SCHEME_PAIRWISE     "pairwise"
-#define XFERBENCH_SCHEME_ONE_TO_MANY  "onetomany"
-#define XFERBENCH_SCHEME_MANY_TO_ONE  "manytoone"
-#define XFERBENCH_SCHEME_TP           "tp"
+#define XFERBENCH_SCHEME_PAIRWISE "pairwise"
+#define XFERBENCH_SCHEME_ONE_TO_MANY "onetomany"
+#define XFERBENCH_SCHEME_MANY_TO_ONE "manytoone"
+#define XFERBENCH_SCHEME_TP "tp"
 
 // Operation types
-#define XFERBENCH_OP_READ  "READ"
+#define XFERBENCH_OP_READ "READ"
 #define XFERBENCH_OP_WRITE "WRITE"
 
 // Mode types
-#define XFERBENCH_MODE_SG  "SG"
-#define XFERBENCH_MODE_MG  "MG"
+#define XFERBENCH_MODE_SG "SG"
+#define XFERBENCH_MODE_MG "MG"
 
 // Segment types
 #define XFERBENCH_SEG_TYPE_DRAM "DRAM"
@@ -116,80 +118,92 @@
 #define XFERBENCH_SEG_TYPE_BLK "BLK"
 
 // Worker types
-#define XFERBENCH_WORKER_NIXL     "nixl"
-#define XFERBENCH_WORKER_NVSHMEM  "nvshmem"
+#define XFERBENCH_WORKER_NIXL "nixl"
+#define XFERBENCH_WORKER_NVSHMEM "nvshmem"
 
-#define IS_PAIRWISE_AND_SG() (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
-                              XFERBENCH_MODE_SG == xferBenchConfig::mode)
-#define IS_PAIRWISE_AND_MG() (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
-                              XFERBENCH_MODE_MG == xferBenchConfig::mode)
+#define IS_PAIRWISE_AND_SG()                                 \
+    (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
+     XFERBENCH_MODE_SG == xferBenchConfig::mode)
+#define IS_PAIRWISE_AND_MG()                                 \
+    (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
+     XFERBENCH_MODE_MG == xferBenchConfig::mode)
+
 class xferBenchConfig {
-    public:
-        static std::string runtime_type;
-        static std::string worker_type;
-        static std::string backend;
-        static std::string initiator_seg_type;
-        static std::string target_seg_type;
-        static std::string scheme;
-        static std::string mode;
-        static std::string op_type;
-        static bool check_consistency;
-        static size_t total_buffer_size;
-        static int num_initiator_dev;
-        static int num_target_dev;
-        static size_t start_block_size;
-        static size_t max_block_size;
-        static size_t start_batch_size;
-        static size_t max_batch_size;
-        static int num_iter;
-        static int large_blk_iter_ftr;
-        static int warmup_iter;
-        static int num_threads;
-        static bool enable_pt;
-        static size_t progress_threads;
-        static std::string device_list;
-        static std::string etcd_endpoints;
-        static std::string benchmark_group;
-        static std::string filepath;
-        static bool enable_vmm;
-        static int num_files;
-        static std::string posix_api_type;
-        static bool storage_enable_direct;
-        static int gds_batch_pool_size;
-        static int gds_batch_limit;
-        static int gds_mt_num_threads;
-        static std::string gpunetio_device_list;
-        static std::string gpunetio_oob_list;
-        static long page_size;
-        static std::string obj_access_key;
-        static std::string obj_secret_key;
-        static std::string obj_session_token;
-        static std::string obj_bucket_name;
-        static std::string obj_scheme;
-        static std::string obj_region;
-        static bool obj_use_virtual_addressing;
-        static std::string obj_endpoint_override;
-        static std::string obj_req_checksum;
-        static std::string obj_ca_bundle;
-        static int hf3fs_iopool_size;
-        static std::string gusli_client_name;
-        static int gusli_max_simultaneous_requests;
-        static std::string gusli_config_file;
-        static uint64_t gusli_bdev_byte_offset;
-        static std::string gusli_device_security;
+public:
+    static std::string runtime_type;
+    static std::string worker_type;
+    static std::string backend;
+    static std::string initiator_seg_type;
+    static std::string target_seg_type;
+    static std::string scheme;
+    static std::string mode;
+    static std::string op_type;
+    static bool check_consistency;
+    static size_t total_buffer_size;
+    static int num_initiator_dev;
+    static int num_target_dev;
+    static size_t start_block_size;
+    static size_t max_block_size;
+    static size_t start_batch_size;
+    static size_t max_batch_size;
+    static int num_iter;
+    static int large_blk_iter_ftr;
+    static int warmup_iter;
+    static int num_threads;
+    static bool enable_pt;
+    static size_t progress_threads;
+    static std::string device_list;
+    static std::string etcd_endpoints;
+    static std::string benchmark_group;
+    static std::string filepath;
+    static bool enable_vmm;
+    static int num_files;
+    static std::string posix_api_type;
+    static bool storage_enable_direct;
+    static int gds_batch_pool_size;
+    static int gds_batch_limit;
+    static int gds_mt_num_threads;
+    static std::string gpunetio_device_list;
+    static std::string gpunetio_oob_list;
+    static long page_size;
+    static std::string obj_access_key;
+    static std::string obj_secret_key;
+    static std::string obj_session_token;
+    static std::string obj_bucket_name;
+    static std::string obj_scheme;
+    static std::string obj_region;
+    static bool obj_use_virtual_addressing;
+    static std::string obj_endpoint_override;
+    static std::string obj_req_checksum;
+    static std::string obj_ca_bundle;
+    static int hf3fs_iopool_size;
+    static std::string gusli_client_name;
+    static int gusli_max_simultaneous_requests;
+    static std::string gusli_config_file;
+    static uint64_t gusli_bdev_byte_offset;
+    static std::string gusli_device_security;
 
-        static int
-        loadFromFlags();
-        static void
-        printConfig();
-        static void
-        printOption(const std::string &desc, const std::string &value);
-        static void
-        printSeparator(const char sep = '-');
-        static std::vector<std::string>
-        parseDeviceList();
-        static bool
-        isStorageBackend();
+    static int
+    parseConfig(int argc, char *argv[]);
+    static void
+    printConfig();
+    static void
+    printOption(const std::string &desc, const std::string &value);
+    static void
+    printSeparator(const char sep = '-');
+    static std::vector<std::string>
+    parseDeviceList();
+    static bool
+    isStorageBackend();
+
+protected:
+    static int
+    loadParams(cxxopts::ParseResult &results);
+    template<class T>
+    static T
+    getParamValue(const std::unique_ptr<toml::table> &tbl,
+                  const cxxopts::ParseResult &result,
+                  const std::string_view name);
 };
 
 // Shared GUSLI device config used by utils and nixl_worker
@@ -281,8 +295,12 @@ public:
           padded_size(len),
           handle(0) {}
 
-    xferBenchIOV(uintptr_t a, size_t l, int d, size_t p, unsigned long long h) :
-        addr(a), len(l), devId(d), padded_size(p), handle(h) {}
+    xferBenchIOV(uintptr_t a, size_t l, int d, size_t p, unsigned long long h)
+        : addr(a),
+          len(l),
+          devId(d),
+          padded_size(p),
+          handle(h) {}
 
     xferBenchIOV(uintptr_t a, size_t l, int d, std::string m)
         : addr(a),
@@ -294,28 +312,32 @@ public:
 };
 
 class xferBenchUtils {
-    private:
-        static xferBenchRT *rt;
-        static std::string dev_to_use;
-    public:
-        static void setRT(xferBenchRT *rt);
-        static void setDevToUse(std::string dev);
-        static std::string getDevToUse();
-        static std::string
-        buildAwsCredentials();
-        static bool
-        putObjS3(size_t buffer_size, const std::string &name);
-        static bool
-        getObjS3(const std::string &name);
-        static bool
-        rmObjS3(const std::string &name);
+private:
+    static xferBenchRT *rt;
+    static std::string dev_to_use;
 
-        static void
-        checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
-        static void
-        printStatsHeader();
-        static void
-        printStats(bool is_target, size_t block_size, size_t batch_size, xferBenchStats stats);
+public:
+    static void
+    setRT(xferBenchRT *rt);
+    static void
+    setDevToUse(std::string dev);
+    static std::string
+    getDevToUse();
+    static std::string
+    buildAwsCredentials();
+    static bool
+    putObjS3(size_t buffer_size, const std::string &name);
+    static bool
+    getObjS3(const std::string &name);
+    static bool
+    rmObjS3(const std::string &name);
+
+    static void
+    checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
+    static void
+    printStatsHeader();
+    static void
+    printStats(bool is_target, size_t block_size, size_t batch_size, xferBenchStats stats);
 };
 
 #endif // __UTILS_H
