@@ -40,6 +40,8 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     gcc-c++ \
     libaio \
     libaio-devel \
+    liburing \
+    liburing-devel \
     libtool-ltdl \
     ninja-build \
     openssl \
