@@ -424,7 +424,9 @@ def run_multiprocess_test(
 
             def run_tcp_store_server():
                 # Keep reference to prevent garbage collection
-                store = store_group.create_master_store(port=tcp_store_port)  # noqa: F841
+                _store = store_group.create_master_store(  # noqa: F841
+                    port=tcp_store_port
+                )
                 # Keep server alive
                 import signal
 
