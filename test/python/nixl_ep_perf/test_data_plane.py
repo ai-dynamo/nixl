@@ -63,10 +63,9 @@ def _run_data_plane_test(
         use_tcp_store: Use TCPStore for metadata exchange instead of etcd
         node_rank: Node rank for log message prefix
     """
+    import nixl_ep
     import numpy as np
     import torch
-
-    import nixl_ep
 
     # Configure logger with node prefix
     for handler in logging.root.handlers:
