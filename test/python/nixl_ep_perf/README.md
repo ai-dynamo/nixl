@@ -49,7 +49,8 @@ python3 test_data_plane.py --num-processes=8 --mode=combine
 | `--nvlink-backend` | ipc | Backend: ipc, nixl, none (RDMA only) |
 | `--warmup` | 10 | Warmup iterations |
 | `--iters` | 100 | Measurement iterations |
-| `--skip-nic-discovery` | false | Skip GPU-NIC discovery (let UCX auto-select) |
+| `--discover-nics` | false | Enable GPU-NIC topology discovery (default: disabled, UCX auto-selects) |
+| `--use-etcd` | false | Use etcd for metadata exchange (default: TCPStore) |
 
 ## Example Output
 
@@ -89,13 +90,16 @@ Measures latency of control plane operations (init, connect, disconnect, destroy
 
 ```bash
 # Full cycle (init → connect → disconnect → reconnect → destroy)
-python3 test_control_plane.py --num-processes=8 --use-tcp-store
+python3 test_control_plane.py --num-processes=8
 
 # Specific expert counts
-python3 test_control_plane.py --num-processes=8 --experts-per-rank=8,32 --use-tcp-store
+python3 test_control_plane.py --num-processes=8 --experts-per-rank=8,32
 
 # Single operation
-python3 test_control_plane.py --num-processes=8 --test=connect --use-tcp-store
+python3 test_control_plane.py --num-processes=8 --test=connect
+
+# Use etcd instead of TCPStore (if needed)
+python3 test_control_plane.py --num-processes=8 --use-etcd
 ```
 
 ### Multi-Node Setup
@@ -105,22 +109,22 @@ Use environment variables `WORLD_SIZE`, `RANK`, and `MASTER_ADDR` for multi-node
 **Master Node (RANK=0):**
 ```bash
 WORLD_SIZE=2 RANK=0 MASTER_ADDR=node0.example.com \
-  python3 test_control_plane.py --num-processes=8 --use-tcp-store
+  python3 test_control_plane.py --num-processes=8
 ```
 
 **Worker Node (RANK=1):**
 ```bash
 WORLD_SIZE=2 RANK=1 MASTER_ADDR=node0.example.com \
-  python3 test_control_plane.py --num-processes=8 --use-tcp-store
+  python3 test_control_plane.py --num-processes=8
 ```
 
 **Or use CLI flags:**
 ```bash
 # Master
-python3 test_control_plane.py --num-processes=8 --world-size=2 --rank=0 --master-addr=node0 --use-tcp-store
+python3 test_control_plane.py --num-processes=8 --world-size=2 --rank=0 --master-addr=node0
 
 # Worker
-python3 test_control_plane.py --num-processes=8 --world-size=2 --rank=1 --master-addr=node0 --use-tcp-store
+python3 test_control_plane.py --num-processes=8 --world-size=2 --rank=1 --master-addr=node0
 ```
 
 **Key points:**
@@ -129,7 +133,7 @@ python3 test_control_plane.py --num-processes=8 --world-size=2 --rank=1 --master
 - Total ranks = WORLD_SIZE × num-processes
 - RANK=0 is master (runs TCPStore/rank server)
 - RANK>0 are workers (connect to master)
-- Use `--use-tcp-store` to avoid etcd dependency
+- TCPStore is used by default (no etcd dependency); use `--use-etcd` to switch to etcd
 
 ### Example Output
 

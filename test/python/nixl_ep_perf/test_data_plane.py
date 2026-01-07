@@ -106,9 +106,7 @@ def _run_data_plane_test(
     # Connect to all other ranks
     other_ranks = [r for r in range(world_size) if r != rank]
     if other_ranks:
-        torch.cuda.synchronize()
         buffer.connect_ranks(other_ranks)
-        torch.cuda.synchronize()
 
     sync_all_ranks(rank, world_size, f"{mode}_connected")
 
@@ -328,14 +326,14 @@ def main():
     )
     parser.add_argument("--timeout", type=int, default=300, help="Timeout (seconds)")
     parser.add_argument(
-        "--skip-nic-discovery",
+        "--discover-nics",
         action="store_true",
-        help="Skip GPU-NIC topology discovery (let UCX auto-select)",
+        help="Enable GPU-NIC topology discovery (default: disabled, UCX auto-selects)",
     )
     parser.add_argument(
-        "--use-tcp-store",
+        "--use-etcd",
         action="store_true",
-        help="Use TCPStore for metadata exchange instead of etcd",
+        help="Use etcd for metadata exchange instead of TCPStore (default: TCPStore)",
     )
     # Multi-node parameters
     parser.add_argument(
@@ -389,7 +387,7 @@ def main():
     # Calculate total ranks
     total_ranks = args.num_processes * world_size
     total_experts = args.experts_per_rank * total_ranks
-    metadata_exchange = "TCPStore" if args.use_tcp_store else "etcd"
+    metadata_exchange = "etcd" if args.use_etcd else "TCPStore"
 
     logger.info("=" * 70)
     logger.info("NIXL EP Data Plane Performance Test")
@@ -417,8 +415,8 @@ def main():
         test_fn=_run_data_plane_test,
         num_processes=args.num_processes,
         timeout=args.timeout,
-        skip_nic_discovery=args.skip_nic_discovery,
-        use_tcp_store=args.use_tcp_store,
+        skip_nic_discovery=not args.discover_nics,
+        use_tcp_store=not args.use_etcd,
         world_size=world_size,
         rank=rank,
         master_addr=master_addr,

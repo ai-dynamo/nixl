@@ -337,22 +337,21 @@ def check_etcd_running(etcd_endpoints: str = "http://127.0.0.1:2379") -> bool:
 
 
 def clean_etcd_state(etcd_endpoints: str = "http://127.0.0.1:2379"):
-    """Clean NIXL-related keys from etcd."""
+    """Clean all keys from etcd."""
     try:
         env = os.environ.copy()
         env["ETCDCTL_API"] = "3"
 
-        for prefix in ["/nixl", "nixl"]:
-            result = subprocess.run(
-                ["etcdctl", "--endpoints", etcd_endpoints, "del", "--prefix", prefix],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                env=env,
-            )
-            if result.returncode == 0 and result.stdout.strip() not in ["", "0"]:
-                time.sleep(1.0)
-                break
+        # Delete all keys (empty prefix = all keys)
+        result = subprocess.run(
+            ["etcdctl", "--endpoints", etcd_endpoints, "del", "--prefix", ""],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=env,
+        )
+        if result.returncode == 0:
+            time.sleep(1.0)
     except Exception:
         pass
 
@@ -365,8 +364,8 @@ def run_multiprocess_test(
     clean_etcd: bool = True,
     rank_server_port: int = 9998,
     tcp_store_port: int = 9999,
-    skip_nic_discovery: bool = False,
-    use_tcp_store: bool = False,
+    skip_nic_discovery: bool = True,
+    use_tcp_store: bool = True,
     world_size: int = 1,
     rank: int = 0,
     master_addr: str = "127.0.0.1",
@@ -379,7 +378,7 @@ def run_multiprocess_test(
         test_fn: Function receiving (rank, world_size, local_rank, **kwargs)
         num_processes: Number of processes to spawn per node
         timeout: Timeout in seconds
-        use_tcp_store: If True, skip etcd check (using TCPStore instead)
+        use_tcp_store: If True (default), use TCPStore; if False, use etcd
         tcp_store_port: Port for TCPStore server (default: 9999)
         world_size: Total number of nodes (env: WORLD_SIZE, default: 1 for single-node)
         rank: This node's rank 0=master (env: RANK, default: 0)
@@ -389,9 +388,8 @@ def run_multiprocess_test(
     Returns:
         List of TestResult, one per local rank on this node
     """
-    # Use master_addr for etcd in multi-node setup (copy elastic.py pattern!)
-    if etcd_server == "http://127.0.0.1:2379" and master_addr != "127.0.0.1":
-        etcd_server = f"http://{master_addr}:2379"
+    # Always use master_addr for etcd (works for both single-node and multi-node)
+    etcd_server = f"http://{master_addr}:2379"
 
     # Configure logger with node prefix for multi-node debugging
     for handler in logging.root.handlers:
@@ -435,10 +433,8 @@ def run_multiprocess_test(
             tcp_store_process.start()
             time.sleep(1.0)
         else:
-            # Worker node: wait for master's TCPStore to be ready
-            logger.info(f"Waiting for TCPStore at {master_addr}:{tcp_store_port}...")
-            wait_for_tcp_port(master_addr, tcp_store_port, timeout=60.0)
-            logger.info(f"✓ TCPStore ready at {master_addr}:{tcp_store_port}")
+            # Worker node: TCPStore client will use built-in timeout to connect
+            logger.info(f"Will connect to TCPStore at {master_addr}:{tcp_store_port}")
         kwargs["tcp_store_port"] = tcp_store_port
     else:
         # Only check/clean etcd on master node when not using TCPStore
@@ -455,19 +451,17 @@ def run_multiprocess_test(
     # Pass use_tcp_store to the test function via kwargs
     kwargs["use_tcp_store"] = use_tcp_store
 
-    # Discover topology once (skip if --skip-nic-discovery is set)
+    # Discover topology once (skipped by default unless --discover-nics is set)
     gpu_nic_topology = None
     if skip_nic_discovery:
-        logger.info(
-            "Skipping GPU-NIC discovery (--skip-nic-discovery), " "UCX will auto-select"
-        )
+        logger.info("Skipping GPU-NIC discovery (default), UCX will auto-select")
     else:
         gpu_nic_topology = discover_gpu_nic_topology()
         if gpu_nic_topology is None:
             raise RuntimeError(
                 "Failed to discover GPU-NIC topology. "
                 "Ensure nvidia-smi is available and GPUs are present. "
-                "Or use --skip-nic-discovery to let UCX auto-select."
+                "Or omit --discover-nics to let UCX auto-select (default)."
             )
         logger.info(f"Discovered GPU-NIC topology: {gpu_nic_topology}")
 
