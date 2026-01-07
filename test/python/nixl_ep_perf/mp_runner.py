@@ -431,10 +431,11 @@ def run_multiprocess_test(
 
             tcp_store_process = mp.Process(target=run_tcp_store_server, daemon=True)
             tcp_store_process.start()
-            time.sleep(1.0)
-        else:
-            # Worker node: TCPStore client will use built-in timeout to connect
-            logger.info(f"Will connect to TCPStore at {master_addr}:{tcp_store_port}")
+
+        # Wait for TCPStore to be ready (both master and worker nodes)
+        logger.info(f"Waiting for TCPStore at {master_addr}:{tcp_store_port}...")
+        wait_for_tcp_port(master_addr, tcp_store_port, timeout=60.0)
+        logger.info(f"✓ TCPStore ready at {master_addr}:{tcp_store_port}")
         kwargs["tcp_store_port"] = tcp_store_port
     else:
         # Only check/clean etcd on master node when not using TCPStore
