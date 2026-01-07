@@ -423,7 +423,8 @@ def run_multiprocess_test(
             logger.info(f"Starting TCPStore server on port {tcp_store_port}")
 
             def run_tcp_store_server():
-                store_group.create_master_store(port=tcp_store_port)
+                # Keep reference to prevent garbage collection
+                store = store_group.create_master_store(port=tcp_store_port)  # noqa: F841
                 # Keep server alive
                 import signal
 
