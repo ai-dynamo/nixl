@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
 Data plane performance test for NIXL EP Buffer.
@@ -63,9 +63,10 @@ def _run_data_plane_test(
         use_tcp_store: Use TCPStore for metadata exchange instead of etcd
         node_rank: Node rank for log message prefix
     """
-    import nixl_ep
     import numpy as np
     import torch
+
+    import nixl_ep
 
     # Configure logger with node prefix
     for handler in logging.root.handlers:
@@ -377,7 +378,7 @@ def main():
     if world_size < 1:
         raise ValueError(f"WORLD_SIZE must be >= 1, got {world_size}")
     if rank < 0 or rank >= world_size:
-        raise ValueError(f"RANK must be in [0, {world_size-1}], got {rank}")
+        raise ValueError(f"RANK must be in [0, {world_size - 1}], got {rank}")
     if world_size > 1 and rank > 0 and master_addr == "127.0.0.1":
         raise ValueError(
             "MASTER_ADDR must be set (not 127.0.0.1) for worker nodes in multi-node setup. "
