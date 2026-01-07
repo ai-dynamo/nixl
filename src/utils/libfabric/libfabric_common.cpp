@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -96,12 +96,11 @@ getAvailableNetworkDevices() {
 }
 
 std::string
-hexdump(const void *data) {
-    static constexpr uint HEXDUMP_MAX_LENGTH = 56;
+hexdump(const void *data, size_t size) {
     std::stringstream ss;
-    ss.str().reserve(HEXDUMP_MAX_LENGTH * 3);
+    ss.str().reserve(size * 3);
     const unsigned char *bytes = static_cast<const unsigned char *>(data);
-    for (size_t i = 0; i < HEXDUMP_MAX_LENGTH; ++i) {
+    for (size_t i = 0; i < size; ++i) {
         ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytes[i]) << " ";
     }
     return ss.str();

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -148,8 +148,12 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     const std::vector<size_t> &remote_selected_endpoints,
     const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
     uint16_t agent_idx,
+    uint16_t xfer_id,
     std::function<void()> completion_callback,
-    BinaryNotification *binary_notif) {
+    size_t &submitted_count_out) {
+    // Initialize output parameter
+    submitted_count_out = 0;
+
     if (selected_rails.empty()) {
         NIXL_ERROR << "No rails selected for transfer";
         return NIXL_ERR_INVALID_PARAM;
@@ -166,7 +170,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             remote_selected_endpoints[counter_value % remote_selected_endpoints.size()];
         NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
-        nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type);
+        nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
         if (!req) {
             NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
             return NIXL_ERR_BACKEND;
@@ -179,13 +183,12 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 
         // For TCP providers, use offset 0 instead of virtual address
         // TCP providers don't support FI_MR_VIRT_ADDR and expect offset-based addressing
-        if (data_rails_[rail_id]->provider_name == "tcp" ||
-            data_rails_[rail_id]->provider_name == "sockets") {
+        if (data_rails_[rail_id]->getRailInfo()->domain_attr->mr_mode & FI_MR_VIRT_ADDR) {
+            req->remote_addr = remote_base_addr; // Use virtual address for EFA and other providers
+        } else {
             req->remote_addr = 0; // Use offset 0 for TCP providers
             NIXL_DEBUG << "TCP provider detected: using offset 0 instead of virtual address "
                        << (void *)remote_base_addr << " for rail " << rail_id;
-        } else {
-            req->remote_addr = remote_base_addr; // Use virtual address for EFA and other providers
         }
 
         req->local_mr = local_mrs[rail_id];
@@ -196,8 +199,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         if (op_type == nixlLibfabricReq::WRITE) {
             // Generate next SEQ_ID for this specific write operation
             uint8_t seq_id = LibfabricUtils::getNextSeqId();
-            uint64_t imm_data = NIXL_MAKE_IMM_DATA(
-                NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, binary_notif->xfer_id, seq_id);
+            uint64_t imm_data =
+                NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
             status = data_rails_[rail_id]->postWrite(req->local_addr,
                                                      req->chunk_size,
                                                      fi_mr_desc(req->local_mr),
@@ -224,7 +227,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             return status;
         }
 
-        binary_notif->expected_completions++;
+        // Track submitted request
+        submitted_count_out = 1;
 
         NIXL_DEBUG << "Round-robin: submitted single request on rail " << rail_id << " for "
                    << transfer_size << " bytes, XFER_ID=" << req->xfer_id;
@@ -242,7 +246,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             size_t current_chunk_size = chunk_size + (i == num_rails - 1 ? remainder : 0);
             if (current_chunk_size == 0) break;
             // Allocate request
-            nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type);
+            nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
             if (!req) {
                 NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
                 return NIXL_ERR_BACKEND;
@@ -258,15 +262,14 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 
             // For TCP providers, use offset instead of virtual address
             // TCP providers don't support FI_MR_VIRT_ADDR and expect offset-based addressing
-            if (data_rails_[rail_id]->provider_name == "tcp" ||
-                data_rails_[rail_id]->provider_name == "sockets") {
+            if (data_rails_[rail_id]->getRailInfo()->domain_attr->mr_mode & FI_MR_VIRT_ADDR) {
+                req->remote_addr = remote_base_addr +
+                    chunk_offset; // Use virtual address for EFA and other providers
+            } else {
                 req->remote_addr = chunk_offset; // Use chunk offset for TCP providers
                 NIXL_DEBUG << "TCP provider detected: using chunk offset " << chunk_offset
                            << " instead of virtual address "
                            << (void *)(remote_base_addr + chunk_offset) << " for rail " << rail_id;
-            } else {
-                req->remote_addr = remote_base_addr +
-                    chunk_offset; // Use virtual address for EFA and other providers
             }
 
             req->local_mr = local_mrs[rail_id];
@@ -276,8 +279,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             if (op_type == nixlLibfabricReq::WRITE) {
                 // Generate next SEQ_ID for this specific transfer operation
                 uint8_t seq_id = LibfabricUtils::getNextSeqId();
-                uint64_t imm_data = NIXL_MAKE_IMM_DATA(
-                    NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, binary_notif->xfer_id, seq_id);
+                uint64_t imm_data =
+                    NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
                 status = data_rails_[rail_id]->postWrite(req->local_addr,
                                                          req->chunk_size,
                                                          fi_mr_desc(req->local_mr),
@@ -304,16 +307,14 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                 return status;
             }
 
-            binary_notif->expected_completions++;
+            // Track submitted request
+            submitted_count_out++;
         }
-        NIXL_DEBUG << "Striping: submitted "
-                   << (binary_notif ? binary_notif->expected_completions : 0) << " requests for "
+        NIXL_DEBUG << "Striping: submitted " << submitted_count_out << " requests for "
                    << transfer_size << " bytes";
     }
 
-    NIXL_DEBUG << "Successfully submitted "
-               << (binary_notif ? binary_notif->expected_completions : 0) << " requests for "
-               << transfer_size << " bytes";
+    NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
 
     return NIXL_SUCCESS;
 }
