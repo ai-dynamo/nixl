@@ -30,6 +30,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/pytypes.h>
 #include <torch/types.h>
+#include <optional>
 #include <tuple>
 #include <vector>
 #include <string>
@@ -59,7 +60,6 @@ struct NixlPeerInfo {
     ino_t ipc_namespace_inode;
     void *rdma_buffer_ptr;
     uint64_t *counters_buffer_ptr;
-    uint64_t *wireup_ptr;
     cudaIpcMemHandle_t rdma_ipc_handle;
     cudaIpcMemHandle_t counters_ipc_handle;
     int* sync_buffer_ptr;
@@ -134,7 +134,6 @@ private:
     std::unique_ptr<NixlAgentInfo> nixl_agent_info;
     std::vector<NixlPeerInfo> nixl_peer_info;
     uint64_t *counters_buffer_ptr = nullptr;
-    uint64_t *wireup_buffer_ptr = nullptr;
     NixlPeerInfo my_peer_info;
     uint64_t num_counters;
     uint64_t max_num_ranks;
@@ -144,11 +143,10 @@ private:
 
     /* Common private funcs */
     void _nixl_agent_init();
-    void _nixl_agents_connect(const std::vector<int>& ranks);
+    void _nixl_agents_connect(const std::vector<int>& ranks, const std::vector<nixl_blob_t>& remote_mds = {});
     void _nixl_agents_disconnect(const std::vector<int>& ranks);
     void _nixl_agents_peer_info_gather(std::vector<int>& ranks);
     void _nixl_agents_peer_info_cleanup(const std::vector<int>& ranks);
-    void _nixl_agents_wireup(std::vector<int>& ranks);
 
     /* NIXL EP private funcs */
     void _nixl_ep_init(const std::vector<int>& ranks);
@@ -170,7 +168,7 @@ public:
 
     void update_memory_buffers(int num_ranks, int64_t num_rdma_bytes);
 
-    void connect_ranks(const std::vector<int>& remote_ranks_list);
+    void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt);
 
     void disconnect_ranks(const std::vector<int>& remote_ranks_list);
 
@@ -216,6 +214,8 @@ public:
     void query_mask_buffer(const torch::Tensor& mask_status);
 
     void clean_mask_buffer();
+
+    std::string get_local_metadata() const;
 };
 
 } // namespace nixl_ep

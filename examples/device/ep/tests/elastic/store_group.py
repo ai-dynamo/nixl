@@ -13,37 +13,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-worker_sources = [
-  'worker.cpp',
-  'worker.h',
-]
+from datetime import timedelta
 
-worker_deps = [
-  cuda_dep,
-  openmp_dep,
-  etcd_dep,
-  cxxopts_dep,
-  tomlplusplus_dep
-]
+import torch.distributed as dist
 
-worker_lib = static_library('worker',
-  worker_sources,
-  dependencies: [worker_deps],
-  include_directories: inc_dir
-)
 
-worker_dep = declare_dependency(
-  link_with: worker_lib,
-  dependencies: [worker_deps],
-  include_directories: inc_dir
-)
+def create_master_store(
+    port: int = 9999,
+    timeout_sec: float = 300.0,
+) -> dist.TCPStore:
+    return dist.TCPStore(
+        host_name="0.0.0.0",
+        port=port,
+        is_master=True,
+        wait_for_workers=False,
+        timeout=timedelta(seconds=timeout_sec),
+    )
 
-# Include subdirectories
-subdir('nixl')
-subdir('nvshmem')
 
-# Combine all worker libraries
-worker_libs = [worker_lib, nixl_worker_lib]
-if nvshmem_available
-  worker_libs += [nvshmem_worker_lib]
-endif
+def create_client_store(
+    master_addr: str = "127.0.0.1",
+    port: int = 9999,
+    timeout_sec: float = 300.0,
+) -> dist.TCPStore:
+    return dist.TCPStore(
+        host_name=master_addr,
+        port=port,
+        is_master=False,
+        wait_for_workers=False,
+        timeout=timedelta(seconds=timeout_sec),
+    )

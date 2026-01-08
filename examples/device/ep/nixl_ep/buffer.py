@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # This file incorporates material from the DeepSeek project, licensed under the MIT License.
 # The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -19,6 +19,8 @@
 # limitations under the License.
 
 import os
+from contextlib import contextmanager
+from datetime import timedelta
 from typing import TYPE_CHECKING, Callable, List, Literal, Optional, Tuple, Union
 
 import torch
@@ -56,6 +58,7 @@ class Buffer:
         enable_shrink: bool = False,
         group: Optional[dist.ProcessGroup] = None,
         comm: Optional["mpi4py.MPI.Comm"] = None,
+        tcp_store_group: Optional[dist.TCPStore] = None,
     ) -> None:
         """
         Initialize the nixl communication buffer.
@@ -68,12 +71,14 @@ class Buffer:
             rank: the rank number.
             group: the communication group (optional).
             comm: the mpi4py.MPI.Comm communicator to use in case the group parameter is absent (optional).
+            tcp_store_group: TCPStore for metadata exchange (optional).
         """
         self.rank = rank
         self.group_size = 0  # Will be updated by `update_memory_buffers`
         self.explicitly_destroy = explicitly_destroy
         self.group = group
         self.comm = comm
+        self.tcp_store_group = tcp_store_group
         assert not (group and comm)
 
         # Configure NVLINK backend
@@ -457,6 +462,34 @@ class Buffer:
         os.environ["NIXL_EP_NUM_CHANNELS"] = str(num_experts_per_rank)
         self.runtime.update_memory_buffers(num_ranks, num_rdma_bytes)
 
+    def set_tcp_store_group(self, tcp_store_group: Optional[dist.TCPStore]) -> None:
+        """
+        Update the TCP Store group for metadata exchange.
+
+        Arguments:
+            tcp_store_group: Optional TCPStore for metadata exchange.
+        """
+        self.tcp_store_group = tcp_store_group
+
+    @contextmanager
+    def _fetch_remote_metadata_from_tcp_store(self, remote_ranks: List[int]):
+        assert self.tcp_store_group is not None, "TCPStore group is not set"
+        md_key = f"NIXL_EP/{self.rank}"
+        nixl_metadata_bytes = self.runtime.get_local_metadata()
+        self.tcp_store_group.set(md_key, nixl_metadata_bytes)
+
+        remote_md_keys = [f"NIXL_EP/{rank}" for rank in remote_ranks]
+        if remote_md_keys:
+            self.tcp_store_group.wait(remote_md_keys, timedelta(seconds=300))
+            remote_mds = self.tcp_store_group.multi_get(remote_md_keys)
+        else:
+            remote_mds = []
+
+        try:
+            yield remote_mds
+        finally:
+            self.tcp_store_group.delete_key(md_key)
+
     def connect_ranks(self, remote_ranks: List[int]) -> None:
         """
         Add connections to remote ranks.
@@ -465,7 +498,11 @@ class Buffer:
             remote_ranks: List of remote rank IDs to establish connections with.
                          The current rank will be automatically filtered out.
         """
-        self.runtime.connect_ranks(remote_ranks)
+        if self.tcp_store_group is not None:
+            with self._fetch_remote_metadata_from_tcp_store(remote_ranks) as remote_mds:
+                self.runtime.connect_ranks(remote_ranks, remote_mds)
+        else:
+            self.runtime.connect_ranks(remote_ranks)
 
     def disconnect_ranks(self, remote_ranks: List[int]) -> None:
         """

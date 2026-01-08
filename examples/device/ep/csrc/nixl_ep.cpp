@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * This file incorporates material from the DeepSeek project, licensed under the MIT License.
  * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <cuda_runtime.h>
 #include <memory>
+#include <optional>
 #include <pybind11/functional.h>
 #include <torch/python.h>
 
@@ -154,8 +155,6 @@ void Buffer::init(int num_ranks, int64_t num_rdma_bytes)
     CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
     CUDA_CHECK(cudaMalloc(&counters_buffer_ptr, num_counters * sizeof(uint64_t)));
     CUDA_CHECK(cudaMemset(counters_buffer_ptr, 0, num_counters * sizeof(uint64_t)));
-    CUDA_CHECK(cudaMalloc(&wireup_buffer_ptr, sizeof(uint64_t)));
-    CUDA_CHECK(cudaMemset(wireup_buffer_ptr, 0, sizeof(uint64_t)));
 
     /* Initialize dummy src dlist with a dummy device address */
     dummy_src_dlist.addDesc(nixlBlobDesc((uintptr_t)counters_buffer_ptr, sizeof(uint64_t), device_id, ""));
@@ -177,7 +176,6 @@ void Buffer::init(int num_ranks, int64_t num_rdma_bytes)
     my_peer_info.ip[MAX_IP_LENGTH - 1] = '\0';
     my_peer_info.rdma_buffer_ptr = rdma_buffer_ptr;
     my_peer_info.counters_buffer_ptr = counters_buffer_ptr;
-    my_peer_info.wireup_ptr = wireup_buffer_ptr;
     my_peer_info.device_id = get_local_device_id();
     my_peer_info.sync_buffer_ptr = sync_buffer_ptr;
     my_peer_info.rank = rank;
@@ -233,10 +231,9 @@ void Buffer::destroy() {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     cudaFree(counters_buffer_ptr);
-    cudaFree(wireup_buffer_ptr);
     cudaFree(rdma_buffer_ptr);
 
-    if (nixl_agent_info and nixl_agent_info->agent != nullptr) {
+    if (nixl_agent_info and nixl_agent_info->agent != nullptr and getenv("NIXL_ETCD_ENDPOINTS")) {
         nixl_agent_info->agent->invalidateLocalMD();
     }
 
@@ -260,8 +257,9 @@ void Buffer::barrier() {
     ep_kernels::barrier(nixl_ctx->gpu[0],mask_buffer_ptr, sync_buffer_ptr, compute_stream);
 }
 
-void Buffer::_nixl_agents_connect(const std::vector<int>& ranks) {
+void Buffer::_nixl_agents_connect(const std::vector<int>& ranks, const std::vector<nixl_blob_t>& remote_mds) {
     EP_HOST_ASSERT(!ranks.empty());
+    EP_HOST_ASSERT(remote_mds.empty() || remote_mds.size() == ranks.size());
 
     // Assuming ranks vector does not include current rank and has only new ranks
     remote_ranks.insert(remote_ranks.end(), ranks.begin(), ranks.end());
@@ -269,16 +267,36 @@ void Buffer::_nixl_agents_connect(const std::vector<int>& ranks) {
         nixl_agent_info->remote_agent_names[remote_rank] = std::to_string(remote_rank);
     }
 
-    for (int remote_rank : ranks) {
-        nixl_status_t fetch_status = nixl_agent_info->agent->fetchRemoteMD(nixl_agent_info->remote_agent_names[remote_rank]);
-        if (fetch_status != NIXL_SUCCESS) {
-            throw std::runtime_error("Failed to fetch metadata for remote agent " + std::to_string(remote_rank) +
-                                    ", status: " + std::to_string(fetch_status));
-        }
+    // Fire all get metadata requests in parallel
+    for (size_t i = 0; i < ranks.size(); i++) {
+        int remote_rank = ranks[i];
+        std::string agent_name;
 
-        // Wait for remote metadata to be available
-        nixl_xfer_dlist_t empty_descs(VRAM_SEG);
-        while (nixl_agent_info->agent->checkRemoteMD(std::to_string(remote_rank), empty_descs) != NIXL_SUCCESS) {
+        nixl_status_t status = remote_mds.empty()
+            ? nixl_agent_info->agent->fetchRemoteMD(nixl_agent_info->remote_agent_names[remote_rank])
+            : nixl_agent_info->agent->loadRemoteMD(remote_mds[i], agent_name);
+
+        if (status != NIXL_SUCCESS) {
+            throw std::runtime_error("Failed to get metadata for remote agent " +
+                                    std::to_string(remote_rank) + ", status: " + std::to_string(status));
+        }
+    }
+
+    // Wait for all remote metadata to be available
+    std::vector<bool> peer_ready(max_num_ranks, false);
+    int peers_remaining = static_cast<int>(ranks.size());
+
+    while (peers_remaining > 0) {
+        for (int remote_rank : ranks) {
+            if (peer_ready[remote_rank]) continue;
+
+            nixl_xfer_dlist_t empty_descs(VRAM_SEG);
+            if (nixl_agent_info->agent->checkRemoteMD(std::to_string(remote_rank), empty_descs) == NIXL_SUCCESS) {
+                peer_ready[remote_rank] = true;
+                peers_remaining--;
+            }
+        }
+        if (peers_remaining > 0) {
             sleep_ms(10);
         }
     }
@@ -305,50 +323,29 @@ void Buffer::_nixl_agents_peer_info_gather(std::vector<int>& ranks) {
     }
 }
 
-// This is a workaround to NIXL/UCX wireup issue and should be removed once it is fixed
-void Buffer::_nixl_agents_wireup(std::vector<int>& ranks) {
-    for (int worker_id = 0; worker_id < env_num_channels; worker_id++) {
-        for (int remote_rank : ranks) {
-            nixl_opt_args_t wireup_params = {};
-            wireup_params.backends.push_back(nixl_agent_info->backend);
-            wireup_params.customParam = "worker_id=" + std::to_string(worker_id);
-
-            nixlXferReqH *wireup_req = nullptr;
-            nixl_xfer_dlist_t dummy_dst_dlist(VRAM_SEG);
-            dummy_dst_dlist.addDesc(nixlBlobDesc((uintptr_t)nixl_peer_info[remote_rank].wireup_ptr, sizeof(uint64_t), nixl_peer_info[remote_rank].device_id, ""));
-            EP_HOST_ASSERT(nixl_agent_info->agent->createXferReq(
-                NIXL_WRITE, dummy_src_dlist, dummy_dst_dlist,
-                nixl_agent_info->remote_agent_names[remote_rank], wireup_req, &wireup_params) == NIXL_SUCCESS);
-
-            nixl_status_t status = nixl_agent_info->agent->postXferReq(wireup_req);
-            EP_HOST_ASSERT(status == NIXL_SUCCESS || status == NIXL_IN_PROG);
-
-            while ((status = nixl_agent_info->agent->getXferStatus(wireup_req)) == NIXL_IN_PROG) {
-                sleep_ms(1);
-            }
-
-            EP_HOST_ASSERT(status == NIXL_SUCCESS);
-            EP_HOST_ASSERT(nixl_agent_info->agent->releaseXferReq(wireup_req) == NIXL_SUCCESS);
-        }
-    }
-}
-
 void Buffer::_nixl_ep_barrier_buffer_clear() {
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, max_num_ranks * sizeof(int)));
 }
 
-void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list) {
+void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds) {
     EP_HOST_ASSERT(!remote_ranks_list.empty());
+    EP_HOST_ASSERT(!remote_mds.has_value() || remote_mds->size() == remote_ranks_list.size());
+
     std::vector<int> new_ranks;
+    std::vector<nixl_blob_t> new_ranks_mds;
     int max_added_rank = std::max(rank, *std::max_element(remote_ranks_list.begin(), remote_ranks_list.end()));
     num_ranks = std::max(num_ranks, max_added_rank + 1);
 
-    for (int remote_rank : remote_ranks_list) {
+    for (size_t i = 0; i < remote_ranks_list.size(); i++) {
+        int remote_rank = remote_ranks_list[i];
         // Skip self and ranks we are already connected to
         if (remote_rank == rank or std::find(remote_ranks.begin(), remote_ranks.end(), remote_rank) != remote_ranks.end())
             continue;
 
         new_ranks.push_back(remote_rank);
+        if (remote_mds.has_value())
+            new_ranks_mds.push_back((*remote_mds)[i]);
+
         CUDA_CHECK(cudaMemset(mask_buffer_ptr + remote_rank, 0, sizeof(int))); // Reset mask buffer for new ranks
     }
 
@@ -357,11 +354,9 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list) {
 
     _nixl_ep_barrier_buffer_clear();
 
-    _nixl_agents_connect(new_ranks);
+    _nixl_agents_connect(new_ranks, new_ranks_mds);
 
     _nixl_agents_peer_info_gather(new_ranks);
-
-    _nixl_agents_wireup(new_ranks);
 
     _nixl_ep_init(new_ranks);
 
@@ -659,6 +654,16 @@ void Buffer::clean_mask_buffer() {
     ep_kernels::clean_mask_buffer(mask_buffer_ptr, max_num_ranks, at::cuda::getCurrentCUDAStream());
 }
 
+std::string Buffer::get_local_metadata() const {
+    EP_HOST_ASSERT(nixl_agent_info != nullptr && nixl_agent_info->agent != nullptr);
+    nixl_blob_t metadata_blob;
+    nixl_status_t status = nixl_agent_info->agent->getLocalMD(metadata_blob);
+    if (status != NIXL_SUCCESS) {
+        throw std::runtime_error("Failed to get local metadata, status: " + std::to_string(status));
+    }
+    return metadata_blob;
+}
+
 void Buffer::_nixl_ep_gpu_ctx_update() {
     int num_local_experts = env_num_channels;
 
@@ -809,16 +814,12 @@ void Buffer::_nixl_agent_init() {
     EP_HOST_ASSERT(signal_size == sizeof(uint64_t));
     EP_HOST_ASSERT(agent->prepGpuSignal(counters_dlist, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
 
-    /* Register wireup buffer */
-    nixl_reg_dlist_t wireup_dlist(VRAM_SEG);
-    wireup_dlist.addDesc(nixlBlobDesc((uintptr_t)(wireup_buffer_ptr), sizeof(uint64_t), get_local_device_id(), ""));
-    EP_HOST_ASSERT(agent->registerMem(wireup_dlist) == NIXL_SUCCESS);
-
-    // Send local metadata
-    status = nixl_agent_info->agent->sendLocalMD();
-    if (status != NIXL_SUCCESS) {
-        throw std::runtime_error("Failed to send local metadata for agent " +
-                                nixl_agent_info->agent_name + ", status: " + std::to_string(status));
+    if (getenv("NIXL_ETCD_ENDPOINTS")) {
+        status = nixl_agent_info->agent->sendLocalMD();
+        if (status != NIXL_SUCCESS) {
+            throw std::runtime_error("Failed to send local metadata for agent " +
+                                    nixl_agent_info->agent_name + ", status: " + std::to_string(status));
+        }
     }
 }
 
@@ -1024,6 +1025,18 @@ void Buffer::_nixl_ep_p2p_ptrs_cleanup(const std::vector<int>& ranks) {
     }
 }
 
+static std::optional<std::vector<nixl_blob_t>> convert_mds(const std::optional<std::vector<pybind11::bytes>>& remote_mds) {
+    if (!remote_mds.has_value()) {
+        return std::nullopt;
+    }
+    std::vector<nixl_blob_t> md_blobs;
+    md_blobs.reserve(remote_mds->size());
+    for (const auto& md_bytes : *remote_mds) {
+        md_blobs.push_back(nixl_blob_t(md_bytes));
+    }
+    return md_blobs;
+}
+
 } // namespace nixl_ep
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
@@ -1038,7 +1051,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def(pybind11::init<int, bool, bool>())
         .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers)
         .def("barrier", &nixl_ep::Buffer::barrier)
-        .def("connect_ranks", &nixl_ep::Buffer::connect_ranks, py::arg("remote_ranks"))
+        .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds) {
+            buffer.connect_ranks(remote_ranks, nixl_ep::convert_mds(remote_mds));
+        }, py::arg("remote_ranks"), py::arg("remote_mds") = std::nullopt)
         .def("disconnect_ranks", &nixl_ep::Buffer::disconnect_ranks)
         .def("is_available", &nixl_ep::Buffer::is_available)
         .def("get_local_device_id", &nixl_ep::Buffer::get_local_device_id)
@@ -1050,6 +1065,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("update_mask_buffer", &nixl_ep::Buffer::update_mask_buffer)
         .def("query_mask_buffer", &nixl_ep::Buffer::query_mask_buffer)
         .def("clean_mask_buffer", &nixl_ep::Buffer::clean_mask_buffer)
-        .def("get_next_combine_buffer", &nixl_ep::Buffer::get_next_combine_buffer);
+        .def("get_next_combine_buffer", &nixl_ep::Buffer::get_next_combine_buffer)
+        .def("get_local_metadata", [](const nixl_ep::Buffer &buffer) -> pybind11::bytes {
+            return pybind11::bytes(buffer.get_local_metadata());
+        });
     m.def("is_sm90_compiled", nixl_ep::is_sm90_compiled);
 }
