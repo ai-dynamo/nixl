@@ -138,9 +138,8 @@ def _run_single_op(
     local_rank: int = 0,
 ) -> Dict[str, Any]:
     """Run a single control plane operation test."""
-    import torch
-
     import nixl_ep
+    import torch
 
     latencies = []
 
@@ -305,9 +304,8 @@ def _run_full_cycle(
     tcp_store: Optional[dist.TCPStore] = None,
 ) -> Dict[str, Any]:
     """Run full control plane cycle: init → connect → disconnect → reconnect → destroy."""
-    import torch
-
     import nixl_ep
+    import torch
 
     init_latencies = []
     connect_latencies = []
@@ -588,7 +586,7 @@ def main():
     if world_size < 1:
         raise ValueError(f"WORLD_SIZE must be >= 1, got {world_size}")
     if rank < 0 or rank >= world_size:
-        raise ValueError(f"RANK must be in [0, {world_size-1}], got {rank}")
+        raise ValueError(f"RANK must be in [0, {world_size - 1}], got {rank}")
     if world_size > 1 and rank > 0 and master_addr == "127.0.0.1":
         raise ValueError(
             "MASTER_ADDR must be set (not 127.0.0.1) for worker nodes in multi-node setup. "
