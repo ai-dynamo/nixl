@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # This file incorporates material from the DeepSeek project, licensed under the MIT License.
 # The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -478,20 +478,12 @@ class Buffer:
         nixl_metadata_bytes = self.runtime.get_local_metadata()
         self.tcp_store_group.set(md_key, nixl_metadata_bytes)
 
-        remote_md_keys = [
-            f"NIXL_EP/{rank}" for rank in remote_ranks if rank != self.rank
-        ]
+        remote_md_keys = [f"NIXL_EP/{rank}" for rank in remote_ranks]
         if remote_md_keys:
-            self.tcp_store_group.wait(remote_md_keys, timedelta(seconds=30))
-
-        remote_mds = []
-        for rank in remote_ranks:
-            if rank != self.rank:
-                remote_md_key = f"NIXL_EP/{rank}"
-                remote_md_bytes = self.tcp_store_group.get(remote_md_key)
-                remote_mds.append(remote_md_bytes)
-            else:
-                remote_mds.append(b"")
+            self.tcp_store_group.wait(remote_md_keys, timedelta(seconds=300))
+            remote_mds = self.tcp_store_group.multi_get(remote_md_keys)
+        else:
+            remote_mds = []
 
         try:
             yield remote_mds

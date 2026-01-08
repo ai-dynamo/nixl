@@ -4,8 +4,7 @@
 ```bash
 python3 tests/elastic/elastic.py \
     --plan tests/elastic/single_expansion.json \
-    --num-processes 8 \
-    --etcd-server http://127.0.0.1:2379
+    --num-processes 8
 ```
 
 #### Multi-Node Setup:
@@ -14,7 +13,7 @@ python3 tests/elastic/elastic.py \
 ```bash
 python3 tests/elastic/elastic.py \
     --plan tests/elastic/single_expansion.json \
-    --num-processes 4 \
+    --num-processes 4
 ```
 
 **Node 2** (will join the second phase with additional 4 ranks):
@@ -22,8 +21,7 @@ python3 tests/elastic/elastic.py \
 python3 tests/elastic/elastic.py \
     --plan tests/elastic/single_expansion.json \
     --num-processes 4 \
-    --rank-server $MASTER_IP \
-    --etcd-server http://$MASTER_IP:2379
+    --tcp-server $MASTER_IP
 ```
 
 ### Available Test Plans

@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * This file incorporates material from the DeepSeek project, licensed under the MIT License.
  * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -233,7 +233,7 @@ void Buffer::destroy() {
     cudaFree(counters_buffer_ptr);
     cudaFree(rdma_buffer_ptr);
 
-    if (nixl_agent_info and nixl_agent_info->agent != nullptr) {
+    if (nixl_agent_info and nixl_agent_info->agent != nullptr and getenv("NIXL_ETCD_ENDPOINTS")) {
         nixl_agent_info->agent->invalidateLocalMD();
     }
 
