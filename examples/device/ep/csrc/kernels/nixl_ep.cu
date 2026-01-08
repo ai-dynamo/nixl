@@ -760,6 +760,7 @@ combine(void* combined_x,
                     }
 
                     // Flush all stores
+                    tma_store_wait<0>();
                     __syncwarp();
                 }
 
@@ -972,9 +973,6 @@ combine(void* combined_x,
                 __syncwarp();
             }
         }
-
-        // Flush all stores
-        tma_store_wait<0>();
     }
 }
 
