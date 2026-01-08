@@ -112,10 +112,10 @@ static ino_t ipc_namespace_inode_get() {
     return st.st_ino;
 }
 
-void Buffer::update_memory_buffers(int num_ranks, int64_t num_rdma_bytes)
+void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes)
 {
     if (!available) {
-        init(num_ranks, num_rdma_bytes);
+        init(num_ranks, num_experts_per_rank, num_rdma_bytes);
         available = true;
     } else {
         throw std::runtime_error("Multiple calls to update_memory_buffers are not supported");
@@ -129,10 +129,11 @@ Buffer::Buffer(int rank, bool explicitly_destroy, bool enable_shrink):
         dummy_src_dlist(VRAM_SEG),
         enable_shrink(enable_shrink) {}
 
-void Buffer::init(int num_ranks, int64_t num_rdma_bytes)
+void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes)
 {
     // Update buffer attributes
     this->max_num_ranks = num_ranks;
+    this->max_experts_per_rank = num_experts_per_rank;
     this->num_rdma_bytes = num_rdma_bytes;
 
     // Common checks
@@ -155,9 +156,8 @@ void Buffer::init(int num_ranks, int64_t num_rdma_bytes)
     CUDA_CHECK(cudaMalloc(&workspace, NUM_WORKSPACE_BYTES));
     CUDA_CHECK(cudaMemsetAsync(workspace, 0, NUM_WORKSPACE_BYTES, comm_stream));
 
-    env_num_channels = std::getenv("NIXL_EP_NUM_CHANNELS") ? std::stoi(std::getenv("NIXL_EP_NUM_CHANNELS")) : 1;
-    EP_HOST_ASSERT(env_num_channels > 0);
-    num_counters = env_num_channels * max_num_ranks * 2 + max_num_ranks;
+    EP_HOST_ASSERT(max_experts_per_rank > 0);
+    num_counters = max_experts_per_rank * max_num_ranks * 2 + max_num_ranks;
     CUDA_CHECK(cudaMalloc(&rdma_buffer_ptr, num_rdma_bytes));
     CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
     CUDA_CHECK(cudaMalloc(&counters_buffer_ptr, num_counters * sizeof(uint64_t)));
@@ -674,13 +674,12 @@ std::string Buffer::get_local_metadata() const {
 }
 
 void Buffer::_nixl_ep_gpu_ctx_update() {
-    int num_local_experts = env_num_channels;
     assert(getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr);
     int num_ucx_channels = std::stoi(std::getenv("UCX_RC_GDA_NUM_CHANNELS"));
 
     /* Initialize local counter arrays */
     nixl_ctx->gpu[0].local_counters = counters_buffer_ptr;
-    nixl_ctx->gpu[1].local_counters = counters_buffer_ptr + max_num_ranks * num_local_experts;
+    nixl_ctx->gpu[1].local_counters = counters_buffer_ptr + max_num_ranks * max_experts_per_rank;
 
     /* Each context cleans the counters of the other context */
     nixl_ctx->gpu[0].clean_counters = nixl_ctx->gpu[1].local_counters;
@@ -718,9 +717,9 @@ void Buffer::_nixl_ep_gpu_ctx_update() {
         CUDA_CHECK(cudaMalloc(&nixl_ctx->gpu[1].counters_p2p_ptrs, max_num_ranks * sizeof(uint64_t *)));
 
     CUDA_CHECK(cudaMemcpy(nixl_ctx->gpu[0].counters_p2p_ptrs, nixl_ctx->counters_p2p_ptrs.data(), num_ranks * sizeof(uint64_t *), cudaMemcpyHostToDevice));
-    for (int i = 0; i < num_ranks; i++) if (nixl_ctx->counters_p2p_ptrs[i] != 0) nixl_ctx->counters_p2p_ptrs[i] += max_num_ranks * num_local_experts;
+    for (int i = 0; i < num_ranks; i++) if (nixl_ctx->counters_p2p_ptrs[i] != 0) nixl_ctx->counters_p2p_ptrs[i] += max_num_ranks * max_experts_per_rank;
     CUDA_CHECK(cudaMemcpy(nixl_ctx->gpu[1].counters_p2p_ptrs, nixl_ctx->counters_p2p_ptrs.data(), num_ranks * sizeof(uint64_t *), cudaMemcpyHostToDevice));
-    for (int i = 0; i < num_ranks; i++) if (nixl_ctx->counters_p2p_ptrs[i] != 0) nixl_ctx->counters_p2p_ptrs[i] -= max_num_ranks * num_local_experts;
+    for (int i = 0; i < num_ranks; i++) if (nixl_ctx->counters_p2p_ptrs[i] != 0) nixl_ctx->counters_p2p_ptrs[i] -= max_num_ranks * max_experts_per_rank;
 
     /* Initialize RDMA P2P pointers */
     if (nixl_ctx->gpu[0].rdma_p2p_ptrs == nullptr)
@@ -735,8 +734,8 @@ void Buffer::_nixl_ep_gpu_ctx_update() {
     /* Initialize info fields */
     nixl_ctx->gpu[0].rdma_buffer_ptr = rdma_buffer_ptr;
     nixl_ctx->gpu[1].rdma_buffer_ptr = rdma_buffer_ptr;
-    nixl_ctx->gpu[0].num_local_experts = num_local_experts;
-    nixl_ctx->gpu[1].num_local_experts = num_local_experts;
+    nixl_ctx->gpu[0].num_local_experts = max_experts_per_rank;
+    nixl_ctx->gpu[1].num_local_experts = max_experts_per_rank;
     nixl_ctx->gpu[0].local_barrier_buffer = sync_buffer_ptr;
     nixl_ctx->gpu[1].local_barrier_buffer = sync_buffer_ptr;
     nixl_ctx->gpu[0].num_ranks = max_num_ranks;
@@ -748,8 +747,6 @@ void Buffer::_nixl_ep_gpu_ctx_update() {
 }
 
 void Buffer::_nixl_ep_context_init() {
-    int num_local_experts = env_num_channels;
-
     nixl_ctx = std::make_unique<nixl_ep_ctx>();
     nixl_ctx->cpu_remote_counter_reqs_0.resize(max_num_ranks);
     nixl_ctx->cpu_remote_counter_reqs_1.resize(max_num_ranks);
@@ -876,7 +873,6 @@ void Buffer::_nixl_ep_p2p_ptrs_prepare(const std::vector<int>& ranks) {
 }
 
 void Buffer::_nixl_ep_counters_prepare(const std::vector<int>& ranks) {
-    int num_local_experts = env_num_channels;
     for (int remote_rank : ranks) {
         if (remote_rank == rank)
             continue;
@@ -892,7 +888,7 @@ void Buffer::_nixl_ep_counters_prepare(const std::vector<int>& ranks) {
         EP_HOST_ASSERT(nixl_agent_info->agent->createGpuXferReq(*nixl_ctx->cpu_remote_counter_reqs_0[remote_rank], nixl_ctx->gpu_remote_counter_reqs_0[remote_rank]) == NIXL_SUCCESS);
 
         // Fetch the second counter (double buffering)
-        remote_counter_addr += max_num_ranks * num_local_experts;
+        remote_counter_addr += max_num_ranks * max_experts_per_rank;
         nixl_xfer_dlist_t dst_dlist_2(VRAM_SEG);
         dst_dlist_2.addDesc(nixlBlobDesc((uintptr_t)remote_counter_addr, sizeof(uint64_t), nixl_peer_info[remote_rank].device_id, ""));
         EP_HOST_ASSERT(nixl_agent_info->agent->createXferReq(NIXL_WRITE, dummy_src_dlist, dst_dlist_2, nixl_agent_info->remote_agent_names[remote_rank], nixl_ctx->cpu_remote_counter_reqs_1[remote_rank], &eparams) == NIXL_SUCCESS);

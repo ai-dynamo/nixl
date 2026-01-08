@@ -137,7 +137,7 @@ private:
     NixlPeerInfo my_peer_info;
     uint64_t num_counters;
     uint64_t max_num_ranks;
-    int env_num_channels;
+    int max_experts_per_rank;
     nixl_xfer_dlist_t dummy_src_dlist; // TODO: Remove once NIXL supports null src dlist for signals
     std::unique_ptr<nixl_ep_ctx> nixl_ctx = nullptr;
 
@@ -166,13 +166,13 @@ private:
 public:
     Buffer(int rank, bool explicitly_destroy, bool enable_shrink);
 
-    void update_memory_buffers(int num_ranks, int64_t num_rdma_bytes);
+    void update_memory_buffers(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes);
 
     void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt);
 
     void disconnect_ranks(const std::vector<int>& remote_ranks_list);
 
-    void init(int num_ranks, int64_t num_rdma_bytes);
+    void init(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes);
 
     ~Buffer() noexcept(false);
 
