@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # This file incorporates material from the DeepSeek project, licensed under the MIT License.
 # The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -18,7 +18,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
+
+from . import nixl_ep_cpp as _nixl_ep_cpp
 from .buffer import Buffer
 from .utils import EventOverlap
+
+topk_idx_t = getattr(_nixl_ep_cpp, "topk_idx_t", torch.int64)
 
 __all__ = ["Buffer", "EventOverlap"]

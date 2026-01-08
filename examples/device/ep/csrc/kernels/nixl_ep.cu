@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * This file incorporates material from the DeepSeek project, licensed under the MIT License.
  * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -55,7 +55,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
          int* cumulative_local_expert_recv_stats,
          int64_t* dispatch_wait_recv_cost_stats,
          void* rdma_recv_x, int* rdma_recv_count, void* rdma_x,
-         const void* x, const int64_t* topk_idx,
+         const void* x, const topk_idx_t* topk_idx,
          int* atomic_counter_per_expert, int* atomic_finish_counter_per_expert,
          int* next_clean, int num_next_clean_int,
          int num_tokens, int num_max_dispatch_tokens_per_rank,
@@ -173,10 +173,10 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
                 const auto dst_p2p_ptr = nixl_ctx.rdma_p2p_ptr_get(dst_ptr, dst_rank);
                 if (not is_rank_masked<true>(mask_buffer_ptr, dst_rank)) {
                     if (dst_p2p_ptr == 0) {
-                        nixlGpuXferReqH batch_req = nixl_ctx.batch_get(dst_expert_local_idx, dst_rank);
+                        nixlGpuXferReqH batch_req = nixl_ctx.batch_get(dst_rank);
                         size_t src_offset = nixl_ctx.batch_offset_get(src_ptr);
                         size_t dst_offset = nixl_ctx.batch_offset_get(dst_ptr);
-                        EP_DEVICE_ASSERT(nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::WARP>(batch_req, 0, src_offset, dst_offset, num_bytes_per_msg, 0, (slot_idx + 1) % 4 == 0) == NIXL_IN_PROG);
+                        EP_DEVICE_ASSERT(nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::WARP>(batch_req, 0, src_offset, dst_offset, num_bytes_per_msg, dst_expert_local_idx % nixl_ctx.num_channels, (slot_idx + 1) % 4 == 0) == NIXL_IN_PROG);
                     } else {
                         // NOTES: only 2 load iterations for 7K hidden with 8 unrolls
                         const auto* src_int4_ptr = reinterpret_cast<const int4*>(src_ptr);
@@ -238,9 +238,9 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
             uint64_t *p2p_counter = nixl_ctx.counter_p2p_ptr_get(dst_expert_local_idx, dst_rank);
             if (p2p_counter == nullptr) {
-                nixlGpuXferReqH remote_counter = nixl_ctx.remote_counter_get(dst_expert_local_idx, dst_rank);
+                nixlGpuXferReqH remote_counter = nixl_ctx.remote_counter_get(dst_rank);
                 /* WARNING: original counter value is negative, I chose different encoding since our counters are uint64_ts */
-                EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, num_tokens_sent + 1, 0) == NIXL_IN_PROG);
+                EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, num_tokens_sent + 1, nixl_ctx.remote_counter_offset_get(dst_expert_local_idx), dst_expert_local_idx % nixl_ctx.num_channels) == NIXL_IN_PROG);
             } else {
                 /* WARNING: original counter value is negative, I chose different encoding since our counters are uint64_ts */
                 st_release_sys_global(p2p_counter, static_cast<uint64_t>(num_tokens_sent + 1));
@@ -301,7 +301,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
                                rank, local_expert_idx, src_rank, poll_count, current_value);
                     }
                 }
-                num_recv_tokens = current_value - 1;
+                current_value == 0 ? num_recv_tokens = 0 : num_recv_tokens = current_value - 1;
             }
 
             // Mask rank if timeout
@@ -375,14 +375,14 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               int* cumulative_local_expert_recv_stats,
               int64_t* dispatch_wait_recv_cost_stats,
               void* rdma_recv_x, int* rdma_recv_count, void* rdma_x,
-              const void* x, const int64_t* topk_idx,
+              const void* x, const topk_idx_t* topk_idx,
               int* next_clean, int num_next_clean_int,
               int num_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
               int num_topk, int num_experts, int rank, int num_ranks,
               bool use_fp8, bool round_scale, bool use_ue8m0,
               void* workspace, int num_device_sms,
               cudaStream_t stream, int phases, ep_kernels::gpu_nixl_ctx nixl_ctx) {
-    constexpr int kNumMaxTopK = 9;
+    constexpr int kNumMaxTopK = 11;
     const int num_warp_groups = ceil_div(num_experts, num_device_sms);
     const int num_warps_per_group = 32 / num_warp_groups;
     EP_HOST_ASSERT(num_warp_groups > 0 and num_warps_per_group > 0);
@@ -591,7 +591,7 @@ template <bool kUseLogFMT, int kHidden, int kNumMaxTopk, int kNumMaxUnrolls>
 __global__ __launch_bounds__(1024, 1) void
 combine(void* combined_x,
         void* rdma_recv_x, int* rdma_recv_flag, void* rdma_send_x,
-        const void* x, const int64_t* topk_idx, const float* topk_weights,
+        const void* x, const topk_idx_t* topk_idx, const float* topk_weights,
         const int* src_info, const int64_t* layout_range,
         int* mask_buffer_ptr,
         int64_t* combine_wait_recv_cost_stats,
@@ -680,7 +680,6 @@ combine(void* combined_x,
         // Initialize m-barriers
         if (lane_id < kNumStages) {
             mbarrier_init(full_barriers[lane_id], 1);
-            fence_view_async_shared();
             fence_barrier_init();
         }
         __syncwarp();
@@ -714,7 +713,7 @@ combine(void* combined_x,
                     const auto cpy_dst_int4_ptr = dst_p2p_ptr == 0 ? reinterpret_cast<int4*>(buf_ptr) : reinterpret_cast<int4*>(dst_p2p_ptr);
 
                     // Prefetch
-                    if (elect_one_sync(lane_id))
+                    if (elect_one_sync())
                         tma_load_and_arrive(0, cpy_src_int4_ptr, get_num_tma_bytes(0));
                     __syncwarp();
 
@@ -724,7 +723,7 @@ combine(void* combined_x,
                         // Load the next iteration
                         const int& stage_idx = iter_idx % kNumStages;
                         const int& next_stage_idx = (iter_idx + 1) % kNumStages;
-                        if (iter_idx + 1 < kNumIters and elect_one_sync(lane_id)) {
+                        if (iter_idx + 1 < kNumIters and elect_one_sync()) {
                             tma_store_wait<kNumStages - kNumPrefetch - 1>();
                             const auto& offset_int4 = i + 32 * kNumSendUnrolls;
                             tma_load_and_arrive(next_stage_idx, cpy_src_int4_ptr + offset_int4, get_num_tma_bytes(offset_int4));
@@ -742,12 +741,12 @@ combine(void* combined_x,
                                 // NOTES: only the leader lane will write the result
                                 (i % kNumInt4PerDivision == 0) ? meta_buffers + i / kNumInt4PerDivision : nullptr,
                                 lane_id);
-                            if (elect_one_sync(lane_id))
+                            if (elect_one_sync())
                                 tma_store_1d(tma_buffers[stage_idx], reinterpret_cast<uint8_t*>(cpy_dst_int4_ptr) + tma_offset_bytes, num_tma_bytes);
                             tma_offset_bytes += num_tma_bytes;
                         } else {
                             // BF16 original values
-                            if (elect_one_sync(lane_id))
+                            if (elect_one_sync())
                                 tma_store_1d(tma_buffers[stage_idx], cpy_dst_int4_ptr + i, get_num_tma_bytes(i));
                         }
                         __syncwarp();
@@ -756,22 +755,21 @@ combine(void* combined_x,
                     // Store metadata (min/max values) for LogFMT
                     if constexpr (kUseLogFMT) {
                         num_send_bytes = tma_offset_bytes;
-                        if (elect_one_sync(lane_id))
+                        if (elect_one_sync())
                             tma_store_1d(meta_buffers, cpy_dst_int4_ptr, kNumMetaBytes);
                     }
 
                     // Flush all stores
-                    tma_store_wait();
                     __syncwarp();
                 }
 
                 // Issue RDMA
                 // NOTES: for zero-copy mode, we assume the data is already in the send buffer
                 if (dst_p2p_ptr == 0) {
-                    nixlGpuXferReqH batch_req = nixl_ctx.batch_get(local_expert_idx, dst_rank);
+                    nixlGpuXferReqH batch_req = nixl_ctx.batch_get(dst_rank);
                     size_t src_offset = nixl_ctx.batch_offset_get(buf_ptr);
                     size_t dst_offset = nixl_ctx.batch_offset_get(dst_ptr);
-                    EP_DEVICE_ASSERT(nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::WARP>(batch_req, 0, src_offset, dst_offset, num_send_bytes, 0, (token_idx - offset + 1) % 4 == 0) == NIXL_IN_PROG);
+                    EP_DEVICE_ASSERT(nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::WARP>(batch_req, 0, src_offset, dst_offset, num_send_bytes, local_expert_idx % nixl_ctx.num_channels, (token_idx - offset + 1) % 4 == 0) == NIXL_IN_PROG);
                 }
             }
         }
@@ -784,8 +782,8 @@ combine(void* combined_x,
             if (not is_rank_masked<false>(mask_buffer_ptr, dst_rank)) {
                 uint64_t *p2p_counter = nixl_ctx.counter_p2p_ptr_get(local_expert_idx, dst_rank);
                 if (p2p_counter == nullptr) {
-                    nixlGpuXferReqH remote_counter = nixl_ctx.remote_counter_get(local_expert_idx, dst_rank);
-                    EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, 1, 0) == NIXL_IN_PROG);
+                    nixlGpuXferReqH remote_counter = nixl_ctx.remote_counter_get(dst_rank);
+                    EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, 1, nixl_ctx.remote_counter_offset_get(local_expert_idx), local_expert_idx % nixl_ctx.num_channels) == NIXL_IN_PROG);
                 } else {
                     st_release_sys_global(p2p_counter, 1);
                 }
@@ -797,7 +795,6 @@ combine(void* combined_x,
         // Destroy m-barriers
         if (lane_id < kNumStages) {
             mbarrier_inval(full_barriers[lane_id]);
-            fence_view_async_shared();
             fence_barrier_init();
         }
         __syncwarp();
@@ -909,7 +906,7 @@ combine(void* combined_x,
                             buffer, reinterpret_cast<float2*>(log_amax_buffers[stage_idx]),
                             reinterpret_cast<float2*>(log_amin_buffers[stage_idx]), cast_info_buffers[stage_idx], lane_id);
                     }
-                    if (elect_one_sync(lane_id)) {
+                    if (elect_one_sync()) {
                         int num_casted = 0;
                         if constexpr (kUseLogFMT) {
                             const auto& info = cast_info_buffers[stage_idx][num_decode_warps - 1];
@@ -961,7 +958,7 @@ combine(void* combined_x,
                         );
                     }
 
-                    if (elect_one_sync(lane_id))
+                    if (elect_one_sync())
                         mbarrier_arrive(empty_barriers[stage_idx]);
                     stage_idx = (stage_idx + 1) % kNumStages;
                 }
@@ -973,7 +970,7 @@ combine(void* combined_x,
                     tma_st_buffers[decode_warp_idx][kNumRecvUnrolls * 4 * lane_id + k] = *reinterpret_cast<uint32_t*>(&combined_pack);
                 }
                 tma_store_fence();
-                if (elect_one_sync(lane_id)) {
+                if (elect_one_sync()) {
                     tma_store_1d(tma_st_buffers[decode_warp_idx],
                                  static_cast<int4*>(combined_x) + token_idx * hidden_bf16_int4 + decode_warp_idx * kNumRecvUnrolls * 32,
                                  kNumBF16PerWarpBytes);
@@ -989,7 +986,7 @@ combine(void* combined_x,
 
 void combine(void* combined_x,
              void* rdma_recv_x, int* rdma_recv_flag, void* rdma_send_x,
-             const void* x, const int64_t* topk_idx, const float* topk_weights,
+             const void* x, const topk_idx_t* topk_idx, const float* topk_weights,
              const int* src_info, const int64_t* layout_range,
              int* mask_buffer_ptr,
              int64_t* combine_wait_recv_cost_stats,
@@ -999,7 +996,7 @@ void combine(void* combined_x,
              bool use_logfmt,
              void* workspace, int num_device_sms,
              cudaStream_t stream, int phases, bool zero_copy, ep_kernels::gpu_nixl_ctx nixl_ctx) {
-    constexpr int kNumMaxTopk = 9;
+    constexpr int kNumMaxTopk = 11;
     const int num_warp_groups = ceil_div(num_experts, num_device_sms);
     const int num_warps_per_group = 32 / num_warp_groups;
     const int num_recv_per_sm = ceil_div(num_combined_tokens, num_device_sms);
@@ -1119,7 +1116,7 @@ __forceinline__ __device__ void barrier(int thread_id, int rank, int num_ranks,
     if (thread_id < num_ranks && thread_id != rank) {
         const auto dst_rank = thread_id;
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
-            nixlGpuXferReqH barrier_req = nixl_ctx.remote_barrier_get(0, dst_rank);
+            nixlGpuXferReqH barrier_req = nixl_ctx.remote_barrier_get(dst_rank);
             nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::THREAD>(barrier_req, 0, rank*sizeof(int), rank*sizeof(int), sizeof(int), 0);
 
             auto start_time = clock64();

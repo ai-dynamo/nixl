@@ -131,6 +131,7 @@ def test_main(
         + 1
     )
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=True)[1]
+    topk_idx = topk_idx.to(nixl_ep.topk_idx_t)
     topk_weights = torch.randn(
         (num_tokens, num_topk), dtype=torch.float32, device="cuda"
     ).abs()
@@ -158,6 +159,7 @@ def test_main(
         r_topk_idx = torch.topk(r_scores, num_topk, dim=-1, largest=True, sorted=True)[
             1
         ]
+        r_topk_idx = r_topk_idx.to(nixl_ep.topk_idx_t)
         # Apply same random masking
         for i in range(10):
             r_topk_idx[
@@ -344,7 +346,7 @@ def test_main(
                                 )
                                 failed_topk_idx[valid_topk_idx] = (
                                     fail_owner_mask.index_select(
-                                        0, topk_idx[valid_topk_idx]
+                                        0, topk_idx[valid_topk_idx].to(torch.int64)
                                     )
                                 )
                                 topk_idx[failed_topk_idx] = -1

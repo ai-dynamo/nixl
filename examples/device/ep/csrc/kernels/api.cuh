@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * This file incorporates material from the DeepSeek project, licensed under the MIT License.
  * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -26,6 +26,7 @@
 #include <iostream>
 #include "nixl_types.h"
 #include "exception.cuh"
+#include "configs.cuh"
 
 namespace nixl_ep {
 
@@ -34,14 +35,15 @@ namespace ep_kernels {
 struct gpu_nixl_ctx {
     uint64_t *local_counters; // [local_expert_id][src_rank]
     uint64_t *clean_counters; // Counters to be cleaned for the next iteration
-    nixlGpuXferReqH *remote_counter_reqs; // [local_expert_id,dest_rank]
-    nixlGpuXferReqH *batch_reqs; // [local_expert_id,dest_rank]
+    nixlGpuXferReqH *remote_counter_reqs; // [dest_rank]
+    nixlGpuXferReqH *batch_reqs; // [dest_rank]
     int *local_barrier_buffer; // [src_rank]
-    nixlGpuXferReqH *remote_barrier_reqs; // [local_expert_idx,dest_rank]
+    nixlGpuXferReqH *remote_barrier_reqs; // [dest_rank]
     void **rdma_p2p_ptrs; // [num_ranks]
     uint64_t **counters_p2p_ptrs; // [num_ranks]
     void *rdma_buffer_ptr;
     int num_local_experts;
+    int num_channels;
     int num_ranks;
     int rank;
 
@@ -65,20 +67,24 @@ struct gpu_nixl_ctx {
         return &local_counters[local_expert_idx * num_ranks + src_rank];
     }
 
-    __device__ inline nixlGpuXferReqH remote_counter_get(int local_expert_idx, int dest_rank) {
-        return remote_counter_reqs[local_expert_idx * num_ranks + dest_rank];
+    __device__ inline nixlGpuXferReqH remote_counter_get(int dest_rank) {
+        return remote_counter_reqs[dest_rank];
     }
 
-    __device__ inline nixlGpuXferReqH remote_barrier_get(int local_expert_idx, int dest_rank) {
-        return remote_barrier_reqs[local_expert_idx * num_ranks + dest_rank];
+    __device__ inline size_t remote_counter_offset_get(int local_expert_idx) {
+        return (local_expert_idx * num_ranks + rank) * sizeof(uint64_t);
+    }
+
+    __device__ inline nixlGpuXferReqH remote_barrier_get(int dest_rank) {
+        return remote_barrier_reqs[dest_rank];
     }
 
     __device__ inline int* local_barrier_buffer_get(int src_rank) {
         return &local_barrier_buffer[src_rank];
     }
 
-    __device__ inline nixlGpuXferReqH batch_get(int local_expert_idx, int dest_rank) {
-        return batch_reqs[local_expert_idx * num_ranks + dest_rank];
+    __device__ inline nixlGpuXferReqH batch_get(int dest_rank) {
+        return batch_reqs[dest_rank];
     }
 
     __device__ inline size_t batch_offset_get(uint64_t ptr) {
@@ -106,7 +112,7 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               int* cumulative_local_expert_recv_stats,
               int64_t* dispatch_wait_recv_cost_stats,
               void* rdma_recv_x, int* rdma_recv_count, void* rdma_x,
-              const void* x, const int64_t* topk_idx,
+              const void* x, const topk_idx_t* topk_idx,
               int* next_clean, int num_next_clean_int,
               int num_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
               int num_topk, int num_experts, int rank, int num_ranks,
@@ -116,7 +122,7 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
 
 void combine(void* combined_x,
              void* rdma_recv_x, int* rdma_recv_flag, void* rdma_send_x,
-             const void* x, const int64_t* topk_idx, const float* topk_weights,
+             const void* x, const topk_idx_t* topk_idx, const float* topk_weights,
              const int* src_info, const int64_t* layout_range,
              int* mask_buffer,
              int64_t* combine_wait_recv_cost_stats,
