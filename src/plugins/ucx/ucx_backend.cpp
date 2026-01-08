@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,14 +30,6 @@
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_join.h"
 #include <asio.hpp>
-
-#ifdef HAVE_CUDA
-
-#include <cuda.h>
-#include <cuda_runtime.h>
-
-#endif
-
 namespace {
     void moveNotifList(notif_list_t &src, notif_list_t &tgt)
     {
@@ -46,223 +38,6 @@ namespace {
             src.clear();
         }
     }
-}
-
-/****************************************
- * CUDA related code
- *****************************************/
-
-class nixlUcxCudaCtx {
-public:
-#ifdef HAVE_CUDA
-    CUcontext pthrCudaCtx;
-    int myDevId;
-
-    nixlUcxCudaCtx() {
-        pthrCudaCtx = NULL;
-        myDevId = -1;
-    }
-#endif
-    void cudaResetCtxPtr();
-    int cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated);
-    int cudaSetCtx();
-};
-
-class nixlUcxCudaDevicePrimaryCtx {
-#ifndef HAVE_CUDA
-public:
-    bool push() { return false; }
-    void pop() {};
-#else
-    static constexpr int defaultCudaDeviceOrdinal = 0;
-    int m_ordinal{defaultCudaDeviceOrdinal};
-    CUdevice m_device{CU_DEVICE_INVALID};
-    CUcontext m_context{nullptr};
-public:
-
-    bool push() {
-        CUcontext context;
-
-        const auto res = cuCtxGetCurrent(&context);
-        if (res != CUDA_SUCCESS || context != nullptr) {
-            return false;
-        }
-
-        if (m_context == nullptr) {
-            CUresult res = cuDeviceGet(&m_device, m_ordinal);
-            if (res != CUDA_SUCCESS) {
-                return false;
-            }
-
-            res = cuDevicePrimaryCtxRetain(&m_context, m_device);
-            if (res != CUDA_SUCCESS) {
-                m_context = nullptr;
-                return false;
-            }
-        }
-
-        return cuCtxPushCurrent(m_context) == CUDA_SUCCESS;
-    }
-
-    void pop() {
-        cuCtxPopCurrent(nullptr);
-    }
-
-    ~nixlUcxCudaDevicePrimaryCtx() {
-        if (m_context != nullptr) {
-            cuDevicePrimaryCtxRelease(m_device);
-        }
-    }
-#endif
-};
-
-class nixlUcxCudaCtxGuard {
-    nixlUcxCudaDevicePrimaryCtxPtr m_primary;
-public:
-    nixlUcxCudaCtxGuard(nixl_mem_t nixl_mem,
-                        nixlUcxCudaDevicePrimaryCtxPtr primary) {
-        if (nixl_mem == VRAM_SEG && primary && primary->push()) {
-            m_primary = primary;
-        }
-    }
-    ~nixlUcxCudaCtxGuard() {
-        if (m_primary) {
-            m_primary->pop();
-        }
-    }
-};
-
-#ifdef HAVE_CUDA
-
-static int cudaQueryAddr(void *address, bool &is_dev,
-                         CUdevice &dev, CUcontext &ctx)
-{
-    CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
-    uint32_t is_managed = 0;
-#define NUM_ATTRS 4
-    CUpointer_attribute attr_type[NUM_ATTRS];
-    void *attr_data[NUM_ATTRS];
-    CUresult result;
-
-    attr_type[0] = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
-    attr_data[0] = &mem_type;
-    attr_type[1] = CU_POINTER_ATTRIBUTE_IS_MANAGED;
-    attr_data[1] = &is_managed;
-    attr_type[2] = CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
-    attr_data[2] = &dev;
-    attr_type[3] = CU_POINTER_ATTRIBUTE_CONTEXT;
-    attr_data[3] = &ctx;
-
-    result = cuPointerGetAttributes(4, attr_type, attr_data, (CUdeviceptr)address);
-
-    is_dev = (mem_type == CU_MEMORYTYPE_DEVICE);
-
-    return (CUDA_SUCCESS != result);
-}
-
-// This routine finds the CUDA context matching for the given input address.
-int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated)
-{
-    bool is_dev;
-    CUdevice dev;
-    CUcontext ctx;
-    int ret;
-
-    was_updated = false;
-
-    /* TODO: proper error codes and log outputs through this method */
-    if (expected_dev == -1) {
-        return -1;
-    }
-
-    ret = cudaQueryAddr(address, is_dev, dev, ctx);
-    if (ret) {
-        return ret;
-    }
-
-    if (!is_dev) {
-        return 0;
-    }
-
-    if (dev != expected_dev) {
-        // User provided address that does not match dev_id
-        return -1;
-    }
-
-    pthrCudaCtx = ctx;
-    was_updated = true;
-    myDevId = expected_dev;
-
-    return 0;
-}
-
-int nixlUcxCudaCtx::cudaSetCtx()
-{
-    CUresult result;
-    if (NULL == pthrCudaCtx) {
-        return 0;
-    }
-
-    result = cuCtxSetCurrent(pthrCudaCtx);
-
-    return (CUDA_SUCCESS == result);
-}
-
-#else
-
-int nixlUcxCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &was_updated)
-{
-    was_updated = false;
-    return 0;
-}
-
-int nixlUcxCudaCtx::cudaSetCtx() {
-    return 0;
-}
-
-#endif
-
-
-void nixlUcxEngine::vramInitCtx()
-{
-    cudaCtx = std::make_unique<nixlUcxCudaCtx>();
-}
-
-int
-nixlUcxEngine::vramUpdateCtx(void *address, uint64_t dev_id, bool &restart_reqd) {
-    int ret;
-    bool was_updated;
-
-    restart_reqd = false;
-
-    if(!cuda_addr_wa) {
-        // Nothing to do
-        return 0;
-    }
-
-    ret = cudaCtx->cudaUpdateCtxPtr(address, dev_id, was_updated);
-    if (ret) {
-        return ret;
-    }
-
-    restart_reqd = was_updated;
-
-    return 0;
-}
-
-int nixlUcxEngine::vramApplyCtx()
-{
-    if(!cuda_addr_wa) {
-        // Nothing to do
-        return 0;
-    }
-
-    return cudaCtx->cudaSetCtx();
-}
-
-void nixlUcxEngine::vramFiniCtx()
-{
-    cudaCtx.reset();
 }
 
 /****************************************
@@ -312,17 +87,18 @@ public:
     void
     reserve(size_t size) {
         requests_.reserve(size);
+        NIXL_ASSERT(connections_.empty());
     }
 
     nixl_status_t
     append(nixl_status_t status, nixlUcxReq req, ucx_connection_ptr_t conn) {
-        connections_.insert(conn);
         switch (status) {
         case NIXL_IN_PROG:
             requests_.push_back(req);
+            connections_.insert(conn);
             break;
         case NIXL_SUCCESS:
-            // Nothing to do
+            connections_.insert(conn);
             break;
         default:
             // Error. Release all previously initiated ops and exit:
@@ -363,6 +139,7 @@ public:
     status() {
         if (requests_.empty()) {
             /* No pending transmissions */
+            connections_.clear();
             return NIXL_SUCCESS;
         }
 
@@ -400,6 +177,9 @@ public:
         }
 
         requests_.resize(incomplete_reqs);
+        if (requests_.empty()) {
+            connections_.clear();
+        }
         return out_ret;
     }
 
@@ -429,9 +209,7 @@ public:
  */
 class nixlUcxThread {
 public:
-    nixlUcxThread(const nixlUcxEngine *engine, std::function<void()> init, size_t num_workers)
-        : engine_(engine),
-          init_(std::move(init)) {
+    nixlUcxThread(const nixlUcxEngine *engine, size_t num_workers) : engine_(engine) {
         workers_.reserve(num_workers);
     }
 
@@ -477,7 +255,6 @@ public:
     void
     operator()() {
         tlsThread() = this;
-        init_();
         threadActive_->set_value();
         run();
     }
@@ -506,7 +283,6 @@ protected:
 
 private:
     const nixlUcxEngine *engine_;
-    std::function<void()> init_;
     std::vector<nixlUcxWorker *> workers_;
     std::vector<size_t> workerIds_;
     std::unique_ptr<std::thread> thread_;
@@ -515,11 +291,8 @@ private:
 
 class nixlUcxSharedThread : public nixlUcxThread {
 public:
-    nixlUcxSharedThread(const nixlUcxEngine *engine,
-                        std::function<void()> init,
-                        size_t num_workers,
-                        nixlTime::us_t delay)
-        : nixlUcxThread(engine, std::move(init), num_workers) {
+    nixlUcxSharedThread(const nixlUcxEngine *engine, size_t num_workers, nixlTime::us_t delay)
+        : nixlUcxThread(engine, num_workers) {
         if (pipe(controlPipe_) < 0) {
             throw std::runtime_error("Couldn't create progress thread control pipe");
         }
@@ -607,8 +380,7 @@ nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_param
     }
 
     size_t num_workers = getWorkers().size();
-    thread_ = std::make_unique<nixlUcxSharedThread>(
-        this, [this]() { nixlUcxEngine::vramApplyCtx(); }, num_workers, init_params.pthrDelay);
+    thread_ = std::make_unique<nixlUcxSharedThread>(this, num_workers, init_params.pthrDelay);
     for (size_t i = 0; i < num_workers; i++) {
         thread_->addWorker(getWorkers()[i].get(), i);
     }
@@ -617,13 +389,6 @@ nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_param
 
 nixlUcxThreadEngine::~nixlUcxThreadEngine() {
     thread_->join();
-}
-
-int
-nixlUcxThreadEngine::vramApplyCtx() {
-    thread_->join();
-    thread_->start();
-    return nixlUcxEngine::vramApplyCtx();
 }
 
 void
@@ -827,8 +592,8 @@ private:
 
 class nixlUcxDedicatedThread : public nixlUcxThread {
 public:
-    nixlUcxDedicatedThread(nixlUcxEngine *engine, std::function<void()> init, asio::io_context &io)
-        : nixlUcxThread(engine, std::move(init), 1),
+    nixlUcxDedicatedThread(nixlUcxEngine *engine, asio::io_context &io)
+        : nixlUcxThread(engine, 1),
           io_(io) {}
 
     static nixlUcxDedicatedThread *
@@ -898,11 +663,9 @@ nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &in
 
     splitBatchSize_ = nixl_b_params_get(init_params.customParams, "split_batch_size", 1024);
 
-    auto init = [this]() { nixlUcxEngine::vramApplyCtx(); };
-
     if (init_params.enableProgTh) {
-        sharedThread_ = std::make_unique<nixlUcxSharedThread>(
-            this, init, numSharedWorkers_, init_params.pthrDelay);
+        sharedThread_ =
+            std::make_unique<nixlUcxSharedThread>(this, numSharedWorkers_, init_params.pthrDelay);
         for (size_t i = 0; i < numSharedWorkers_; i++) {
             sharedThread_->addWorker(getWorkers()[i].get(), i);
         }
@@ -914,8 +677,7 @@ nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &in
         dedicatedThreads_.reserve(num_threads);
         for (size_t i = 0; i < num_threads; ++i) {
             size_t worker_id = numSharedWorkers_ + i;
-            dedicatedThreads_.emplace_back(
-                std::make_unique<nixlUcxDedicatedThread>(this, init, *io_));
+            dedicatedThreads_.emplace_back(std::make_unique<nixlUcxDedicatedThread>(this, *io_));
             dedicatedThreads_.back()->addWorker(getWorker(worker_id).get(), worker_id);
             dedicatedThreads_.back()->start();
         }
@@ -1014,25 +776,6 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     return status.load();
 }
 
-int
-nixlUcxThreadPoolEngine::vramApplyCtx() {
-    if (sharedThread_) {
-        sharedThread_->join();
-        sharedThread_->start();
-    }
-    if (io_) {
-        io_->stop();
-        for (auto &thread : dedicatedThreads_) {
-            thread->join();
-        }
-        io_->restart();
-        for (auto &thread : dedicatedThreads_) {
-            thread->start();
-        }
-    }
-    return nixlUcxEngine::vramApplyCtx();
-}
-
 void
 nixlUcxThreadPoolEngine::appendNotif(std::string remote_name, std::string msg) {
     if (nixlUcxThread::isProgressThread(this)) {
@@ -1077,7 +820,8 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     : nixlBackendEngine(&init_params),
-      sharedWorkerIndex_(1) {
+      sharedWorkerIndex_(1),
+      progressThreadEnabled_(init_params.enableProgTh) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
@@ -1101,8 +845,12 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
         err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
     }
 
+    const auto engine_config_it = custom_params->find("engine_config");
+    const auto engine_config =
+        (engine_config_it != custom_params->end()) ? engine_config_it->second : "";
+
     uc = std::make_unique<nixlUcxContext>(
-        devs, init_params.enableProgTh, num_workers, init_params.syncMode);
+        devs, init_params.enableProgTh, num_workers, init_params.syncMode, engine_config);
 
     for (size_t i = 0; i < num_workers; i++) {
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
@@ -1111,17 +859,6 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     auto &uw = uws.front();
     workerAddr = uw->epAddr();
     uw->regAmCallback(NOTIF_STR, notifAmCb, this);
-
-    // Temp fixup
-    if (getenv("NIXL_DISABLE_CUDA_ADDR_WA")) {
-        NIXL_INFO << "disabling CUDA address workaround";
-        cuda_addr_wa = false;
-    } else {
-        cuda_addr_wa = true;
-    }
-
-    m_cudaPrimaryCtx = std::make_shared<nixlUcxCudaDevicePrimaryCtx>();
-    vramInitCtx();
 }
 
 nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
@@ -1139,7 +876,6 @@ tlsSharedWorkerMap() {
 
 // Through parent destructor the unregister will be called.
 nixlUcxEngine::~nixlUcxEngine() {
-    vramFiniCtx();
     tlsSharedWorkerMap().erase(this);
 }
 
@@ -1217,17 +953,6 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
                                           nixlBackendMD* &out)
 {
     auto priv = std::make_unique<nixlUcxPrivateMetadata>();
-
-    if (nixl_mem == VRAM_SEG) {
-        bool need_restart;
-        if (vramUpdateCtx((void*)mem.addr, mem.devId, need_restart)) {
-            return NIXL_ERR_NOT_SUPPORTED;
-            //TODO Add to logging
-        }
-        if (need_restart) {
-            vramApplyCtx();
-        }
-    }
 
     // TODO: Add nixl_mem check?
     const int ret = uc->memReg((void*) mem.addr, mem.len, priv->mem, nixl_mem);
@@ -1307,8 +1032,6 @@ nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
                                            const std::string &remote_agent,
                                            nixlBackendMD* &output)
 {
-    // Set CUDA context of first device, UCX will anyways detect proper device when sending
-    nixlUcxCudaCtxGuard guard(nixl_mem, m_cudaPrimaryCtx);
     return internalMDHelper(input.metaInfo, remote_agent, output);
 }
 
@@ -1652,6 +1375,10 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    if (!progressThreadEnabled_) {
+        NIXL_WARN << "Progress thread must be enabled for GPU transfer requests";
+    }
+
     auto remoteMd = static_cast<nixlUcxPublicMetadata *>(remote_descs[0].metadataP);
     if (!remoteMd || !remoteMd->conn) {
         NIXL_ERROR << "No connection found in remote metadata";
@@ -1678,7 +1405,8 @@ nixlUcxEngine::createGpuXferReq(const nixlBackendReqH &req_hndl,
     }
 
     try {
-        gpu_req_hndl = nixl::ucx::createGpuXferReq(*ep, local_mems, remote_rkeys, remote_addrs);
+        gpu_req_hndl = nixl::ucx::createGpuXferReq(
+            *ep, *getWorker(workerId), local_mems, remote_rkeys, remote_addrs);
         NIXL_TRACE << "Created device memory list: ep=" << ep->getEp() << " handle=" << gpu_req_hndl
                    << " worker_id=" << workerId << " num_elements=" << local_mems.size();
         return NIXL_SUCCESS;

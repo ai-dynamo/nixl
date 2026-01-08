@@ -506,6 +506,10 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
     auto sleep_time = std::chrono::seconds(3);
     nixl_blob_t md;
 
+    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name), NIXL_SUCCESS);
+    std::this_thread::sleep_for(sleep_time);
+    ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+
     ASSERT_EQ(src.agent->sendLocalMD(), NIXL_SUCCESS);
 
     ASSERT_EQ(dst.agent->fetchRemoteMD(src.name), NIXL_SUCCESS);
@@ -519,6 +523,8 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
     std::this_thread::sleep_for(sleep_time);
 
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
+
+    ASSERT_NE(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
 
     // Fetch invalid agent name. This should not block the commWorker thread forever
     ASSERT_EQ(dst.agent->fetchRemoteMD("invalid_agent_name"), NIXL_SUCCESS);

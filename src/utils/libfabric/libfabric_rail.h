@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -109,7 +109,7 @@ public:
 protected:
     /** Common allocation logic shared by both pool types */
     nixlLibfabricReq *
-    allocateReq();
+    allocateReq(uint32_t req_id);
 
 public:
     // Non-copyable and non-movable since we use unique_ptr for management
@@ -162,7 +162,7 @@ public:
 
     /** Allocate control request with size validation */
     nixlLibfabricReq *
-    allocate(size_t needed_size);
+    allocate(size_t needed_size, uint32_t req_id);
 
     /** Expand pool by adding new buffer chunk - implements pure virtual */
     nixl_status_t
@@ -205,7 +205,7 @@ public:
 
     /** Allocate data request for specified operation type */
     nixlLibfabricReq *
-    allocate(nixlLibfabricReq::OpType op_type);
+    allocate(nixlLibfabricReq::OpType op_type, uint32_t req_id);
 
     /** Expand pool by doubling request count - implements pure virtual */
     nixl_status_t
@@ -361,11 +361,11 @@ public:
     // Optimized resource management methods
     /** Allocate control request with size validation */
     [[nodiscard]] nixlLibfabricReq *
-    allocateControlRequest(size_t needed_size) const;
+    allocateControlRequest(size_t needed_size, uint32_t req_id) const;
 
     /** Allocate data request for specified operation */
     [[nodiscard]] nixlLibfabricReq *
-    allocateDataRequest(nixlLibfabricReq::OpType op_type) const;
+    allocateDataRequest(nixlLibfabricReq::OpType op_type, uint32_t req_id) const;
 
     /** Release request back to appropriate pool */
     void
@@ -374,6 +374,9 @@ public:
     /** Find request from libfabric context pointer */
     nixlLibfabricReq *
     findRequestFromContext(void *context) const;
+
+    fi_info *
+    getRailInfo() const;
 
 private:
     // Core libfabric resources

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,16 +92,6 @@ public:
 private:
     std::vector<std::unique_ptr<nixl::ucx::rkey>> rkeys_;
 };
-
-// Forward declaration of CUDA context
-// It is only visible in ucx_backend.cpp to ensure that
-// HAVE_CUDA works properly
-// Once we will introduce static config (i.e. config.h) that
-// will be part of NIXL installation - we can have
-// HAVE_CUDA in h-files
-class nixlUcxCudaCtx;
-class nixlUcxCudaDevicePrimaryCtx;
-using nixlUcxCudaDevicePrimaryCtxPtr = std::shared_ptr<nixlUcxCudaDevicePrimaryCtx>;
 
 class nixlUcxEngine : public nixlBackendEngine {
 public:
@@ -247,9 +237,6 @@ protected:
     void
     getNotifsImpl(notif_list_t &notif_list);
 
-    virtual int
-    vramApplyCtx();
-
     virtual void
     appendNotif(std::string remote_name, std::string msg);
 
@@ -265,13 +252,6 @@ protected:
     nixlUcxEngine(const nixlBackendInitParams &init_params);
 
 private:
-    void
-    vramInitCtx();
-    void
-    vramFiniCtx();
-    int
-    vramUpdateCtx(void *address, uint64_t dev_id, bool &restart_reqd);
-
     // Memory management helpers
     nixl_status_t
     internalMDHelper(const nixl_blob_t &blob, const std::string &agent, nixlBackendMD *&output);
@@ -315,13 +295,9 @@ private:
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
 
-    /* CUDA data*/
-    std::unique_ptr<nixlUcxCudaCtx> cudaCtx; // Context matching specific device
-    bool cuda_addr_wa;
     mutable std::optional<size_t> gpuSignalSize_;
 
-    // Context to use when current context is missing
-    nixlUcxCudaDevicePrimaryCtxPtr m_cudaPrimaryCtx;
+    const bool progressThreadEnabled_;
 
     /* Notifications */
     notif_list_t notifMainList;
@@ -345,9 +321,6 @@ public:
     getNotifs(notif_list_t &notif_list) override;
 
 protected:
-    int
-    vramApplyCtx() override;
-
     void
     appendNotif(std::string remote_name, std::string msg) override;
 
@@ -383,9 +356,6 @@ public:
     getNotifs(notif_list_t &notif_list) override;
 
 protected:
-    int
-    vramApplyCtx() override;
-
     void
     appendNotif(std::string remote_name, std::string msg) override;
 

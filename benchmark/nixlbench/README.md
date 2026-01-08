@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -300,8 +300,8 @@ make -j$(nproc) && sudo make install
 **DOCA (Optional):**
 ```bash
 # Add Mellanox repository and install DOCA
-wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.1.0/host/doca-host_3.1.0-091000-25.07-ubuntu2404_amd64.deb
-sudo dpkg -i doca-host_3.1.0-091000-25.07-ubuntu2404_amd64.deb
+wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-ubuntu2404_amd64.deb -O doca-host.deb
+sudo dpkg -i doca-host.deb
 sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
 ```
 
@@ -418,6 +418,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 
 #### Core Configuration
 ```
+--config_file PATH         # Configuraion file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
 --backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] (default: UCX)
@@ -515,6 +516,34 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 Note: storage_enable_direct is automatically enabled for GUSLI backend
 ```
 
+### Configuration File
+
+The name of a config file can be specified using the `--config_file` command line parameter. The config file is in TOML format.
+
+Each existing command-line parameter can also be placed in the global scope (no sections) of the configuration file, so the following invocations:
+
+```
+nixlbench --etcd_endpoints http://localhost:2379 --backend POSIX --filepath /mnt/test --posix_api_type AIO --max_block_size 2097152
+```
+and
+
+```
+nixlbench --config_file /tmp/nixlbench.config
+```
+
+where `/tmp/nixlbench.config` contains:
+
+```
+etcd_endpoints="http://localhost:2379"
+backend="POSIX"
+filepath="/mnt/test"
+posix_api_type="AIO"
+max_block_size=2097152
+``
+are identical.
+
+If a parameter exists in the config file and is also explicitly specified on the command line, the latter takes precedence.
+
 ### Using ETCD for Coordination
 
 NIXL Benchmark uses an ETCD key-value store for coordination between benchmark workers. This is useful in containerized or cloud-native environments.
@@ -528,6 +557,7 @@ NIXL Benchmark uses an ETCD key-value store for coordination between benchmark w
 
 1. Ensure ETCD server is running (e.g., `docker run -p 2379:2379 quay.io/coreos/etcd`
 2. Launch multiple nixlbench instances pointing to the same ETCD server
+3. Multiple instances should be launched within the default timeout of 60s.
 
 **For single-instance storage benchmarks:**
 ```bash
@@ -538,12 +568,7 @@ NIXL Benchmark uses an ETCD key-value store for coordination between benchmark w
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile
 ```
 
-Note: etcd can be installed directly on host as well:
-```bash
-apt install etcd-server
-```
-
-Example:
+**For multi-instance storage benchmarks where ETCD is required:**
 ```bash
 # On host 1
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
@@ -551,8 +576,7 @@ Example:
 # On host 2
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 ```
-
-The workers automatically coordinate ranks through ETCD as they connect.
+The workers automatically coordinate ranks through ETCD as they connect. Note, the second nixlbench should be started within 60s, otherwise the first instance will stop with an error in the barrier.
 
 ### Backend-Specific Examples
 
@@ -562,9 +586,11 @@ The workers automatically coordinate ranks through ETCD as they connect.
 ```bash
 # Basic UCX benchmark
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX
+sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX
 
 # UCX with specific devices
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
+$ host1 > ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
+$ host2 > sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --device_list mlx5_0,mlx5_1
 ```
 
 **GPUNETIO Backend:**
@@ -706,20 +732,6 @@ Transfer times are higher than local storage, so consider reducing iterations:
 - Test read operations: `--op_type READ`
 - Validate data consistency: `--check_consistency`
 
-### Multi-Node Coordination
-
-Launch multiple nixlbench instances pointing to the same ETCD server:
-
-```bash
-# On host 1
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
-
-# On host 2
-./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
-```
-
-The workers automatically coordinate ranks through ETCD as they connect.
-
 ## Troubleshooting
 
 ### Common Build Issues
@@ -812,6 +824,12 @@ ucx_info -d  # List UCX devices
 export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging
 
 export UCX_PROTO_INFO=y # See transport used by UCX
+```
+
+#### ETCD Cleanup
+```bash
+# If a nixlbench instance failed you need to cleanup the etcd instance before starting nixlbench again
+ETCDCTL_API=3 etcdctl del "xferbench" --prefix=true
 ```
 
 ### Performance Tuning

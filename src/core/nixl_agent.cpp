@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,7 +32,6 @@
 #include "telemetry_event.h"
 
 constexpr char TELEMETRY_ENABLED_VAR[] = "NIXL_TELEMETRY_ENABLE";
-constexpr char TELEMETRY_DIR_VAR[] = "NIXL_TELEMETRY_DIR";
 static const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
 };
@@ -119,6 +118,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
         NIXL_DEBUG << "NIXL ETCD is disabled";
     }
 #else
+    useEtcd = false;
     NIXL_DEBUG << "NIXL ETCD is excluded";
 #endif // HAVE_ETCD
     if (name.empty())
@@ -126,19 +126,12 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
 
     memorySection = new nixlLocalSection();
     const char *telemetry_env_val = std::getenv(TELEMETRY_ENABLED_VAR);
-    const char *telemetry_env_dir = std::getenv(TELEMETRY_DIR_VAR);
 
     if (telemetry_env_val != nullptr) {
         if (!strcasecmp(telemetry_env_val, "y") || !strcasecmp(telemetry_env_val, "1") ||
             !strcasecmp(telemetry_env_val, "yes") || !strcasecmp(telemetry_env_val, "on")) {
             telemetryEnabled = true;
-            if (telemetry_env_dir != nullptr) {
-                std::string telemetry_file = std::string(telemetry_env_dir) + "/" + name;
-                telemetry_ = std::make_unique<nixlTelemetry>(telemetry_file, backendEngines);
-                NIXL_DEBUG << "NIXL telemetry is enabled with output file: " << telemetry_file;
-            } else {
-                NIXL_DEBUG << "NIXL telemetry is enabled without an output file";
-            }
+            telemetry_ = std::make_unique<nixlTelemetry>(name, backendEngines);
         } else if (cfg.captureTelemetry) {
             telemetryEnabled = true;
             NIXL_WARN << "NIXL telemetry is enabled through config, "
@@ -168,7 +161,7 @@ nixlAgentData::~nixlAgentData() {
 
     for (auto & elm: backendEngines) {
         auto& plugin_manager = nixlPluginManager::getInstance();
-        auto plugin_handle = plugin_manager.getPlugin(elm.second->getType());
+        auto plugin_handle = plugin_manager.getBackendPlugin(elm.second->getType());
 
         if (plugin_handle) {
             // If we have a plugin handle, use it to destroy the engine
@@ -233,7 +226,7 @@ nixlAgent::~nixlAgent() {
 nixl_status_t
 nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
     auto& plugin_manager = nixlPluginManager::getInstance();
-    plugins = plugin_manager.getLoadedPluginNames();
+    plugins = plugin_manager.getLoadedBackendPluginNames();
     return NIXL_SUCCESS;
 }
 
@@ -246,7 +239,7 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
 
     // First try to get options from a loaded plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
-    auto plugin_handle = plugin_manager.getPlugin(type);
+    auto plugin_handle = plugin_manager.getBackendPlugin(type);
 
     if (plugin_handle) {
       // If the plugin is already loaded, get options directly
@@ -256,7 +249,7 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
     }
 
     // If plugin isn't loaded yet, try to load it temporarily
-    plugin_handle = plugin_manager.loadPlugin(type);
+    plugin_handle = plugin_manager.loadBackendPlugin(type);
     if (plugin_handle) {
         params = plugin_handle->getBackendOptions();
         mems   = plugin_handle->getBackendMems();
@@ -265,7 +258,7 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
 
         // We don't keep the plugin loaded if we didn't have it before
         if (data->backendEngines.count(type) == 0) {
-            plugin_manager.unloadPlugin(type);
+            plugin_manager.unloadBackendPlugin(type);
         }
         return NIXL_SUCCESS;
     }
@@ -332,7 +325,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
-    auto plugin_handle = plugin_manager.loadPlugin(type);
+    auto plugin_handle = plugin_manager.loadBackendPlugin(type);
 
     if (plugin_handle) {
         // Plugin found, use it to create the backend
@@ -1696,7 +1689,10 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
         ret = NIXL_SUCCESS;
     }
 
-    if (ret != NIXL_SUCCESS)
+    if (ret == NIXL_ERR_NOT_FOUND)
+        NIXL_INFO << __FUNCTION__ << ": remote metadata for agent '" << remote_agent
+                  << "' not found.";
+    else if (ret != NIXL_SUCCESS)
         NIXL_ERROR_FUNC << "error invalidating remote metadata for agent '" << remote_agent
                         << "' with status " << ret;
     return ret;

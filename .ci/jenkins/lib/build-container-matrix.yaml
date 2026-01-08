@@ -11,12 +11,12 @@ timeout_minutes: 240
 # Infrastructure
 kubernetes:
   cloud: il-ipp-blossom-prod
-  namespace: swx-media
+  namespace: nbu-swx-nixl
   limits: "{memory: 16Gi, cpu: 8000m}"
   requests: "{memory: 8Gi, cpu: 4000m}"
 
 runs_on_dockers:
-  - { name: "podman-v5.0.2", url: "quay.io/podman/stable:v5.0.2", privileged: true }
+  - { name: "podman-v5.7.1", url: "quay.io/podman/stable:v5.7.1", privileged: true }
 
 # Build matrix
 matrix:
@@ -27,7 +27,7 @@ matrix:
 
 # Configuration
 env:
-  REGISTRY_HOSTESS: "urm.nvidia.com"
+  REGISTRY_HOSTESS: "artifactory.nvidia.com"
   REGISTRY_REPO: "sw-nbu-swx-nixl-docker-local/verification"
   LOCAL_TAG_BASE: "nixl-ci:build-"
   MAIL_FROM: "jenkins@nvidia.com"
@@ -35,7 +35,7 @@ env:
 taskName: "${BUILD_TARGET}/${arch}/${axis_index}"
 
 credentials:
-  - credentialsId: 'svc-nixl-artifactory-token'
+  - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USERNAME'
     passwordVariable: 'ARTIFACTORY_PASSWORD'
 
@@ -51,16 +51,19 @@ pipeline_start:
     echo "ENABLE_NIXL_BUILD: ${env.ENABLE_NIXL_BUILD}"
     echo "ENABLE_NIXLBENCH_BUILD: ${env.ENABLE_NIXLBENCH_BUILD}"
     echo "BUILD_TARGET: ${params.BUILD_TARGET}"
+    echo "BUILD_NIXL_EP: ${params.BUILD_NIXL_EP}"
 
 # Build pipeline
 steps:
   - name: Prepare
     run: |
       # Setup podman and dependencies
-      rm -f /etc/containers/storage.conf
+      set -x
+      rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
       podman system reset -f || true
+      podman info
       ln -sfT $(type -p podman) /usr/bin/docker
-      yum install -y git gettext
+      yum install -y gettext
 
   - name: Build NIXLBench
     enable: ${ENABLE_NIXLBENCH_BUILD}
@@ -83,16 +86,23 @@ steps:
     run: |
       export UCX_REF="${UCX_VERSION}"
 
+      NIXL_EP_FLAG=""
+      if [[ "${BUILD_NIXL_EP}" == "true" ]]; then
+          NIXL_EP_FLAG="--build-nixl-ep"
+      fi
+
       "contrib/build-container.sh" \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_IMAGE_TAG}" \
         --tag "${LOCAL_TAG_BASE}${arch}" \
         --arch "${arch}" \
         --build-type debug \
-        --no-cache
+        --no-cache \
+        ${NIXL_EP_FLAG}
 
   - name: Add Version Info
     run: |
+      git config --global --add safe.directory '*'
       # Extract standardized 8-char commit hash for UCX version info:
       if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
         CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
@@ -128,7 +138,7 @@ steps:
       docker rm -f tempcontainer || true
 
   - name: Push
-    credentialsId: 'svc-nixl-artifactory-token'
+    credentialsId: 'svc-nixl-new-artifactory-token'
     run: |
       source version-info
       ARTIFACTORY_REGISTRY="${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}"
@@ -174,8 +184,12 @@ steps:
         echo "git clone https://github.com/openucx/ucx.git ucx-src && (cd ucx-src && git checkout ${UCX_VERSION})"
         echo "benchmark/nixlbench/contrib/build.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache --nixl \$WORKSPACE --ucx \$WORKSPACE/ucx-src"
       else
+        NIXL_EP_FLAG=""
+        if [[ "${BUILD_NIXL_EP}" == "true" ]]; then
+            NIXL_EP_FLAG="--build-nixl-ep"
+        fi
         echo "export UCX_REF=${UCX_VERSION}"
-        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache"
+        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache ${NIXL_EP_FLAG}"
       fi
 
 pipeline_stop:
@@ -205,6 +219,7 @@ pipeline_stop:
                 <p>Base Image: <b>${params.BASE_IMAGE}:${params.BASE_IMAGE_TAG}</b></p>
                 <p>Architectures: <b>x86_64, aarch64</b></p>
                 ${params.UPDATE_LATEST ? '<p>Latest tag updated: <b>Yes</b></p>' : ''}
+                ${params.BUILD_NIXL_EP ? "<p>Build NIXL EP: <b>Yes</b></p>" : ''}
             """
         )
     }

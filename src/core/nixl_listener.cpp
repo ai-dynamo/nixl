@@ -307,7 +307,8 @@ public:
                            << " (rev " << response.value().modified_index() << ")";
                 return NIXL_SUCCESS;
             } else {
-                NIXL_ERROR << "Failed to fetch key: " << metadata_key << " from etcd: " << response.error_message();
+                NIXL_INFO << "Failed to fetch key: " << metadata_key
+                          << " from etcd: " << response.error_message();
                 return NIXL_ERR_NOT_FOUND;
             }
         }
@@ -408,8 +409,9 @@ public:
                 std::lock_guard<std::mutex> lock(invalidated_agents_mutex);
                 invalidated_agents.push_back(agent_name);
             } else {
-                NIXL_ERROR << "Watcher for " << event.kv().key() << " received unexpected event from etcd: "
-                           << event.event_type();
+                NIXL_ERROR << "Watcher for " << event.kv().key()
+                           << " received unexpected event from etcd: "
+                           << static_cast<int>(event.event_type());
             }
         };
 
@@ -508,8 +510,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
             nixl_socket_peer_t req_sock = std::make_pair(req_ip, req_port);
 
             // use remote IP for socket lookup
-            const auto client = remoteSockets.find(req_sock);
-            int client_fd;
+            auto client = remoteSockets.find(req_sock);
 
             // not connected
             if (req_command < SOCK_MAX) {
@@ -521,23 +522,40 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                         continue;
                     }
                     remoteSockets[req_sock] = new_client;
-                    client_fd = new_client;
-                } else {
-                    client_fd = client->second;
+                    client = remoteSockets.find(req_sock);
                 }
             }
 
+            bool needs_disconnect = false;
             switch(req_command) {
             case SOCK_SEND: {
-                sendCommMessage(client_fd, "NIXLCOMM:LOAD" + my_MD);
+                try {
+                    sendCommMessage(client->second, "NIXLCOMM:LOAD" + my_MD);
+                }
+                catch (const std::runtime_error &e) {
+                    NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
+                    needs_disconnect = true;
+                }
                 break;
             }
             case SOCK_FETCH: {
-                sendCommMessage(client_fd, "NIXLCOMM:SEND");
+                try {
+                    sendCommMessage(client->second, "NIXLCOMM:SEND");
+                }
+                catch (const std::runtime_error &e) {
+                    NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
+                    needs_disconnect = true;
+                }
                 break;
             }
             case SOCK_INVAL: {
-                sendCommMessage(client_fd, "NIXLCOMM:INVL" + name);
+                try {
+                    sendCommMessage(client->second, "NIXLCOMM:INVL" + name);
+                }
+                catch (const std::runtime_error &e) {
+                    NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
+                    needs_disconnect = true;
+                }
                 break;
             }
 #if HAVE_ETCD
@@ -610,6 +628,10 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                     break;
                 }
             }
+            if (needs_disconnect) {
+                close(client->second);
+                client = remoteSockets.erase(client);
+            }
         }
 
         // third, do remote commands
@@ -618,9 +640,21 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
             std::string commands;
             std::vector<std::string> command_list;
             nixl_status_t ret;
+            bool disconnected = false;
 
-            if (!recvCommMessage(socket_iter->second, commands)) {
-                socket_iter++;
+            try {
+                const bool received = recvCommMessage(socket_iter->second, commands);
+                if (!received) {
+                    // No message received, but without error condition.
+                    // Skip to the next peer
+                    socket_iter++;
+                    continue;
+                }
+            }
+            catch (const std::runtime_error &e) {
+                NIXL_ERROR << "Failed to receive message from peer, disconnecting: " << e.what();
+                close(socket_iter->second);
+                socket_iter = remoteSockets.erase(socket_iter);
                 continue;
             }
 
@@ -648,7 +682,14 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                     nixl_blob_t my_MD;
                     myAgent->getLocalMD(my_MD);
 
-                    sendCommMessage(socket_iter->second, std::string("NIXLCOMM:LOAD" + my_MD));
+                    try {
+                        sendCommMessage(socket_iter->second, std::string("NIXLCOMM:LOAD" + my_MD));
+                    }
+                    catch (const std::runtime_error &e) {
+                        NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
+                        disconnected = true;
+                        break;
+                    }
                 } else if(header == "INVL") {
                     std::string remote_agent = command.substr(4);
                     myAgent->invalidateRemoteMD(remote_agent);
@@ -659,7 +700,12 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                 }
             }
 
-            socket_iter++;
+            if (disconnected) {
+                close(socket_iter->second);
+                socket_iter = remoteSockets.erase(socket_iter);
+            } else {
+                socket_iter++;
+            }
         }
 
 #if HAVE_ETCD
