@@ -54,10 +54,10 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
          int* mask_buffer_ptr,
          int* cumulative_local_expert_recv_stats,
          int64_t* dispatch_wait_recv_cost_stats,
-         void* rdma_recv_x, int* rdma_recv_count, void* rdma_x,
+         void* rdma_recv_x, uint64_t* rdma_recv_count, void* rdma_x,
          const void* x, const topk_idx_t* topk_idx,
          int* atomic_counter_per_expert, int* atomic_finish_counter_per_expert,
-         int* next_clean, int num_next_clean_int,
+         uint64_t* next_clean, int num_next_clean_int,
          int num_tokens, int num_max_dispatch_tokens_per_rank,
          int num_topk, int num_experts, int rank, int num_ranks,
          int num_warp_groups, int num_warps_per_group,
@@ -193,7 +193,9 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
         EP_DEVICE_ASSERT(num_sms > 1);
         if (sm_id == 0) {
             // The first SM is responsible for cleaning the next buffer
-            nixl_ctx.clean_counters_warp(lane_id);
+            #pragma unroll
+            for (int i = lane_id; i < num_next_clean_int; i += 32)
+                next_clean[i] = 0;
 
             // Notify before executing `int_p`
             __syncwarp();
@@ -235,15 +237,14 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
 
         // Wait local sends issued and send expert counts
         while (ld_acquire_global(atomic_finish_counter_per_expert + responsible_expert_idx) != FINISHED_SUM_TAG * 2);
+        auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_count + dst_expert_local_idx * num_ranks + rank);
+        auto dst_p2p_ptr = nixl_ctx.rdma_p2p_ptr_get(dst_ptr, dst_rank);
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
-            uint64_t *p2p_counter = nixl_ctx.counter_p2p_ptr_get(dst_expert_local_idx, dst_rank);
-            if (p2p_counter == nullptr) {
-                nixlGpuXferReqH remote_counter = nixl_ctx.remote_counter_get(dst_rank);
-                /* WARNING: original counter value is negative, I chose different encoding since our counters are uint64_ts */
-                EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, num_tokens_sent + 1, nixl_ctx.remote_counter_offset_get(dst_expert_local_idx), dst_expert_local_idx) == NIXL_IN_PROG);
+            if (dst_p2p_ptr == 0) {
+                nixlGpuXferReqH xfer = nixl_ctx.batch_get(dst_rank);
+                EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(xfer, 0, num_tokens_sent + 1, nixl_ctx.batch_offset_get(dst_ptr), dst_expert_local_idx) == NIXL_IN_PROG);
             } else {
-                /* WARNING: original counter value is negative, I chose different encoding since our counters are uint64_ts */
-                st_release_sys_global(p2p_counter, static_cast<uint64_t>(num_tokens_sent + 1));
+                st_release_sys_global(static_cast<uint64_t*>(dst_p2p_ptr), static_cast<uint64_t>(num_tokens_sent + 1));
             }
         }
 
@@ -291,19 +292,15 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
             auto start_time = clock64();
             uint64_t wait_recv_cost = 0;
             if (not is_rank_masked(mask_buffer_ptr, src_rank)) {
-                uint64_t *local_counter = nixl_ctx.local_counter_get(local_expert_idx, src_rank);
-                int poll_count = 0;
-                uint64_t current_value = 0;
-                while ((current_value = ld_acquire_sys_global(local_counter)) == 0 && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES) {
-                    poll_count++;
-                    if (poll_count % 10000000 == 0) {
-                        printf("[NIXL_EP-LL-DISPATCH] RANK %2d | POLL_HANG: expert[%d] from rank[%d] still waiting after %d polls, counter_val=%lu\n",
-                               rank, local_expert_idx, src_rank, poll_count, current_value);
-                    }
-                }
-                current_value == 0 ? num_recv_tokens = 0 : num_recv_tokens = current_value - 1;
+                while ((num_recv_tokens = ld_acquire_sys_global(rdma_recv_count + local_expert_idx * num_ranks + src_rank)) ==
+                           0                                                               // data not arrived
+                       && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES  // not timeout
+                )
+                    ;
             }
-
+            // Do not receive tokens if rank timeout or masked
+            if (num_recv_tokens == 0)
+                num_recv_tokens = -1;
             // Mask rank if timeout
             if (wait_recv_cost > NUM_TIMEOUT_CYCLES) {
                 printf("Warning: NIXL_EP timeout for dispatch receive, rank %d, local_expert_idx %d, src_rank %d\n", rank, local_expert_idx, src_rank);
@@ -312,6 +309,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
                 atomicExch(mask_buffer_ptr + src_rank, 1);
             }
 
+            num_recv_tokens = num_recv_tokens - 1;
             recv_token_begin_idx = atomicAdd(packed_recv_count + local_expert_idx, num_recv_tokens);
             shared_num_recv_tokens[warp_group_id] = num_recv_tokens;
             shared_recv_token_begin_idx[warp_group_id] = recv_token_begin_idx;
@@ -640,7 +638,9 @@ combine(void* combined_x,
 
     // Clean up next buffer
     if (sm_id == 0 and warp_group_id == 0 and sub_warp_id == 0) {
-        nixl_ctx.clean_counters_warp(lane_id);
+        #pragma unroll
+        for (int i = lane_id; i < num_next_clean_int; i += 32)
+            next_clean[i] = 0;
 
         // Notify before executing `int_p`
         __syncwarp();
@@ -779,13 +779,14 @@ combine(void* combined_x,
         asm volatile("bar.sync %0, %1;" :: "r"(warp_group_id + 1), "r"(num_warps_per_group * 32));
         if (sub_warp_id == 1 and lane_id == 0) {
             while (ld_acquire_global(atomic_clean_flag) == 0);
-            if (not is_rank_masked<false>(mask_buffer_ptr, dst_rank)) {
-                uint64_t *p2p_counter = nixl_ctx.counter_p2p_ptr_get(local_expert_idx, dst_rank);
-                if (p2p_counter == nullptr) {
-                    nixlGpuXferReqH remote_counter = nixl_ctx.remote_counter_get(dst_rank);
-                    EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(remote_counter, 0, 1, nixl_ctx.remote_counter_offset_get(local_expert_idx), local_expert_idx) == NIXL_IN_PROG);
+            auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_flag + global_expert_idx);
+            auto dst_p2p_ptr = nixl_ctx.rdma_p2p_ptr_get(dst_ptr, dst_rank);
+            if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
+                if (dst_p2p_ptr == 0) {
+                    nixlGpuXferReqH xfer = nixl_ctx.batch_get(dst_rank);
+                    EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(xfer, 0, 1, nixl_ctx.batch_offset_get(dst_ptr), local_expert_idx) == NIXL_IN_PROG);
                 } else {
-                    st_release_sys_global(p2p_counter, 1);
+                    st_release_sys_global(static_cast<uint64_t*>(dst_p2p_ptr), 1);
                 }
             }
             atomic_add_release_global(atomic_clean_flag, -1);
@@ -815,17 +816,10 @@ combine(void* combined_x,
             auto start_time = clock64();
             uint64_t wait_recv_cost = 0;
             if (not is_rank_masked(mask_buffer_ptr, src_rank)) {
-                auto local_expert_idx = responsible_expert_idx % num_local_experts;
-                uint64_t *local_counter = nixl_ctx.local_counter_get(local_expert_idx, src_rank);
-                int poll_count = 0;
-                uint64_t current_value = 0;
-                while ((current_value = ld_acquire_sys_global(local_counter)) == 0 && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES) {
-                    poll_count++;
-                    if (poll_count % 10000000 == 0) {
-                        printf("[NIXL_EP-LL-COMBINE] RANK %2d | POLL_HANG: expert[%d] from rank[%d] still waiting after %d polls, counter_val=%lu\n",
-                                rank, local_expert_idx, src_rank, poll_count, current_value);
-                    }
-                }
+                while (ld_acquire_sys_global(rdma_recv_flag + responsible_expert_idx) == 0  // recv not ready
+                       && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES   // not timeout
+                )
+                    ;
             }
             // Mask rank if timeout
             if (wait_recv_cost > NUM_TIMEOUT_CYCLES) {
@@ -985,12 +979,12 @@ combine(void* combined_x,
 }
 
 void combine(void* combined_x,
-             void* rdma_recv_x, int* rdma_recv_flag, void* rdma_send_x,
+             void* rdma_recv_x, uint64_t* rdma_recv_flag, void* rdma_send_x,
              const void* x, const topk_idx_t* topk_idx, const float* topk_weights,
              const int* src_info, const int64_t* layout_range,
              int* mask_buffer_ptr,
              int64_t* combine_wait_recv_cost_stats,
-             int* next_clean, int num_next_clean_int,
+             uint64_t* next_clean, int num_next_clean_int,
              int num_combined_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
              int num_topk, int num_experts, int rank, int num_ranks,
              bool use_logfmt,
