@@ -129,8 +129,8 @@ agent.createBackend("obj", params);
 
 ```bash
 export AWS_DEFAULT_BUCKET=my-inference-bucket
-export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
-export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+export AWS_ACCESS_KEY_ID=EXAMPLE_KEY_ID
+export AWS_SECRET_ACCESS_KEY=EXAMPLE_SECRET_ACCESS_KEY
 export AWS_REGION=us-west-2
 ```
 
