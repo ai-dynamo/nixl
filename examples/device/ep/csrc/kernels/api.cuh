@@ -34,9 +34,9 @@ namespace nixl_ep {
 namespace ep_kernels {
 struct gpu_nixl_ctx {
     nixlGpuXferReqH *batch_reqs; // [dest_rank]
+    nixlGpuXferReqH *remote_barrier_reqs; // [dest_rank]
     int *local_barrier_buffer; // [src_rank]
     int *local_barrier_cnt; // [dst_rank]
-    nixlGpuXferReqH *remote_barrier_reqs; // [dest_rank]
     void **rdma_p2p_ptrs; // [num_ranks]
     void *rdma_buffer_ptr;
     int num_ranks;
