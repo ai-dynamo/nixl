@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,14 +44,31 @@ main() {
             NIXL_INFO << "3. Testing GPU-specific queries (detected " << num_gpus << " GPUs)...";
             int test_gpus = std::min(num_gpus, 3); // Test up to 3 GPUs or all available
             for (int gpu_id = 0; gpu_id < test_gpus; ++gpu_id) {
-                auto gpu_devices = topology.getEfaDevicesForGpu(gpu_id);
+#ifdef CUDA_FOUND
+                // Get PCI bus ID for this GPU
+                cudaDeviceProp prop;
+                cudaGetDeviceProperties(&prop, gpu_id);
+
+                char pci_bus_id[32];
+                snprintf(pci_bus_id,
+                         sizeof(pci_bus_id),
+                         "%04x:%02x:%02x.0",
+                         prop.pciDomainID,
+                         prop.pciBusID,
+                         prop.pciDeviceID);
+
+                auto gpu_devices = topology.getEfaDevicesForGPUPci(pci_bus_id);
+
                 std::string device_list;
                 for (const auto &device : gpu_devices) {
                     if (!device_list.empty()) device_list += " ";
                     device_list += device;
                 }
-                NIXL_INFO << "   GPU " << gpu_id << " mapped to " << gpu_devices.size()
-                          << " EFA devices: " << device_list;
+                NIXL_INFO << "   GPU " << gpu_id << " (PCI: " << pci_bus_id << ") mapped to "
+                          << gpu_devices.size() << " EFA devices: " << device_list;
+#else
+                NIXL_INFO << "   Skipping GPU " << gpu_id << " (CUDA not available)";
+#endif
             }
         } else {
             NIXL_INFO << "3. Skipping GPU-specific tests (no GPUs detected)";

@@ -56,7 +56,7 @@
 
 #ifdef HAVE_CUDA
 static int
-cudaQueryAddr(void *address, bool &is_dev, CUdevice &dev, CUcontext &ctx) {
+cudaQueryAddr(void *address, bool &is_dev, CUdevice &dev, CUcontext &ctx, std::string &pci_bus_id) {
     CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
     uint32_t is_managed = 0;
     CUpointer_attribute attr_type[4];
@@ -75,6 +75,19 @@ cudaQueryAddr(void *address, bool &is_dev, CUdevice &dev, CUcontext &ctx) {
     result = cuPointerGetAttributes(4, attr_type, attr_data, (CUdeviceptr)address);
     is_dev = (mem_type == CU_MEMORYTYPE_DEVICE);
 
+    // Get PCI bus ID if device memory
+    if (result == CUDA_SUCCESS && is_dev) {
+        char pci_buf[32];
+        CUresult pci_result = cuDeviceGetPCIBusId(pci_buf, sizeof(pci_buf), dev);
+        if (pci_result == CUDA_SUCCESS) {
+            pci_bus_id = std::string(pci_buf);
+        } else {
+            pci_bus_id = "";
+        }
+    } else {
+        pci_bus_id = "";
+    }
+
     return (CUDA_SUCCESS != result);
 }
 
@@ -89,6 +102,7 @@ nixlLibfabricCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &wa
     bool is_dev;
     CUdevice dev;
     CUcontext ctx;
+    std::string pci_bus_id; // Not used here, but required by cudaQueryAddr
     int ret;
 
     was_updated = false;
@@ -96,7 +110,7 @@ nixlLibfabricCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &wa
     if (expected_dev == -1) return -1;
     if (myDevId_ != -1 && expected_dev != myDevId_) return -1;
 
-    ret = cudaQueryAddr(address, is_dev, dev, ctx);
+    ret = cudaQueryAddr(address, is_dev, dev, ctx, pci_bus_id);
     if (ret) return ret;
     if (!is_dev) return 0;
     if (dev != expected_dev) return -1;
@@ -736,6 +750,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
     priv->length_ = mem.len;
     priv->gpu_device_id_ = mem.devId; // Store GPU device ID
 
+    std::string pci_bus_id = "";
 #ifdef HAVE_CUDA
     // Handle CUDA memory registration with GPU Direct RDMA support
     if (nixl_mem == VRAM_SEG) {
@@ -762,6 +777,19 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
             }
             NIXL_DEBUG << "Set CUDA device context to GPU " << mem.devId;
         }
+
+        // Query PCI bus ID from memory address (AFTER setting context)
+        bool is_dev;
+        CUdevice dev;
+        CUcontext ctx;
+
+        int ret = cudaQueryAddr((void *)mem.addr, is_dev, dev, ctx, pci_bus_id);
+        if (ret || !is_dev) {
+            NIXL_ERROR << "Failed to query device from memory " << (void *)mem.addr;
+            return NIXL_ERR_BACKEND;
+        }
+
+        NIXL_DEBUG << "Queried PCI bus ID: " << pci_bus_id << " for GPU " << mem.devId;
     }
 #endif
 
@@ -779,12 +807,14 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
 
     // Use Rail Manager for centralized memory registration with GPU Direct RDMA support
     NIXL_TRACE << "Registering memory: addr=" << (void *)mem.addr << " len=" << mem.len
-               << " mem_type=" << nixl_mem << " devId=" << mem.devId;
+               << " mem_type=" << nixl_mem << " devId=" << mem.devId
+               << (nixl_mem == VRAM_SEG ? " pci_bus_id=" + pci_bus_id : "");
 
     nixl_status_t status = rail_manager.registerMemory((void *)mem.addr,
                                                        mem.len,
                                                        nixl_mem,
                                                        mem.devId,
+                                                       pci_bus_id,
                                                        priv->rail_mr_list_,
                                                        priv->rail_key_list_,
                                                        priv->selected_rails_);
