@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef OBJ_EXECUTOR_H
-#define OBJ_EXECUTOR_H
+#ifndef S3_EXECUTOR_H
+#define S3_EXECUTOR_H
 
 #include <aws/core/utils/threading/Executor.h>
 #include <asio.hpp>
@@ -48,4 +48,4 @@ private:
     asio::thread_pool pool_;
 };
 
-#endif // OBJ_EXECUTOR_H
+#endif // S3_EXECUTOR_H

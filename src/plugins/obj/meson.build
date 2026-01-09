@@ -17,9 +17,9 @@ obj_sources = [
     'obj_backend.cpp',
     'obj_backend.h',
     'obj_plugin.cpp',
-    'obj_s3_client.cpp',
-    'obj_s3_client.h',
 ]
+
+plugin_deps = [nixl_infra, nixl_common_dep, s3_client_interface]
 
 aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
 aws_core = dependency('aws-cpp-sdk-core', required: false, static: false)
