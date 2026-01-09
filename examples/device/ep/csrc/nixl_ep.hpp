@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * This file incorporates material from the DeepSeek project, licensed under the MIT License.
  * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -87,10 +87,10 @@ struct nixl_ep_ctx {
     std::vector<nixlXferReqH *> cpu_remote_counter_reqs_1; // [dest_expert_id,remote_rank], cpu ptrs to nixlXferReqH
     std::vector<nixlGpuXferReqH> gpu_remote_counter_reqs_0; // [dest_expert_id,remote_rank], gpu ptrs to nixlGpuXferReqH
     std::vector<nixlGpuXferReqH> gpu_remote_counter_reqs_1; // [dest_expert_id,remote_rank], gpu ptrs to nixlGpuXferReqH
-    std::vector<std::vector<nixlXferReqH*>> cpu_batch_reqs; // [num_local_experts][num_peers]
-    std::vector<std::vector<nixlGpuXferReqH>> gpu_batch_reqs; // [num_local_experts][num_peers]
-    std::vector<std::vector<nixlXferReqH*>> cpu_barrier_reqs;
-    std::vector<std::vector<nixlGpuXferReqH>> gpu_barrier_reqs;
+    std::vector<nixlXferReqH*> cpu_batch_reqs; // [num_peers]
+    std::vector<nixlGpuXferReqH> gpu_batch_reqs; // [num_peers]
+    std::vector<nixlXferReqH*> cpu_barrier_reqs; // [num_peers]
+    std::vector<nixlGpuXferReqH> gpu_barrier_reqs; // [num_peers]
 
     std::vector<void *> rdma_p2p_ptrs; // [num_ranks]
     std::vector<uint64_t *> counters_p2p_ptrs; // [num_ranks]
@@ -137,7 +137,7 @@ private:
     NixlPeerInfo my_peer_info;
     uint64_t num_counters;
     uint64_t max_num_ranks;
-    int env_num_channels;
+    int max_experts_per_rank;
     nixl_xfer_dlist_t dummy_src_dlist; // TODO: Remove once NIXL supports null src dlist for signals
     std::unique_ptr<nixl_ep_ctx> nixl_ctx = nullptr;
 
@@ -161,18 +161,18 @@ private:
     void _nixl_ep_counters_cleanup(const std::vector<int>& ranks_to_remove);
     void _nixl_ep_batches_cleanup(const std::vector<int>& ranks_to_remove);
     void _nixl_ep_p2p_ptrs_cleanup(const std::vector<int>& ranks_to_remove);
-    void _nixl_ep_barrier_buffer_clear();
+    void _nixl_ep_barrier_buffer_clear(int rank);
 
 public:
     Buffer(int rank, bool explicitly_destroy, bool enable_shrink);
 
-    void update_memory_buffers(int num_ranks, int64_t num_rdma_bytes);
+    void update_memory_buffers(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes);
 
     void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt);
 
     void disconnect_ranks(const std::vector<int>& remote_ranks_list);
 
-    void init(int num_ranks, int64_t num_rdma_bytes);
+    void init(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes);
 
     ~Buffer() noexcept(false);
 
