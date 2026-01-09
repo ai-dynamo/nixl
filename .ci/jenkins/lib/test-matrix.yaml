@@ -92,7 +92,9 @@ steps:
           done
         fi
       fi
-
+      # print environment
+      set
+      env
 
   - name: Build GPU Test Environment
     parallel: false
