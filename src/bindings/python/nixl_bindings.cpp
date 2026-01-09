@@ -673,7 +673,8 @@ PYBIND11_MODULE(_bindings, m) {
                 return ret;
             },
             py::arg("reqh"),
-            py::arg("notif_msg") = std::string(""))
+            py::arg("notif_msg") = std::string(""),
+            py::call_guard<py::gil_scoped_release>())
         .def("getXferStatus",
              [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
                  nixl_status_t ret = agent.getXferStatus((nixlXferReqH *)reqh);
