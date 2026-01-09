@@ -3,36 +3,34 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef OBJ_PLUGIN_S3_CRT_CLIENT_H
-#define OBJ_PLUGIN_S3_CRT_CLIENT_H
+#ifndef OBJ_PLUGIN_S3_ACCEL_CLIENT_H
+#define OBJ_PLUGIN_S3_ACCEL_CLIENT_H
 
 #include <memory>
 #include <string_view>
 #include <cstdint>
 #include <aws/s3-crt/S3CrtClient.h>
 #include <aws/core/utils/memory/stl/AWSString.h>
-#include <aws/core/Aws.h>
 #include "s3/client.h"
 #include "nixl_types.h"
-#include "obj_backend.h"
 
 /**
- * S3 CRT Object Client - Inherits from S3 Vanilla and uses AWS CRT for high-performance transfers.
- * The S3 CRT (Common Runtime) client uses AWS Common Runtime for improved performance with
- * large objects, providing better throughput and lower CPU utilization.
- * This client overrides the vanilla S3 client methods with CRT implementations.
+ * S3 Accelerated Object Client - Inherits from S3 Vanilla and uses CRT for accelerated transfers.
+ * This client uses the same high-performance CRT implementation as S3CrtClient but represents
+ * a separate acceleration path from the standard CRT client. This is the base class for
+ * vendor-specific accelerated implementations.
  */
-class awsS3CrtClient : public awsS3Client {
+class awsS3AccelClient : public awsS3Client {
 public:
     /**
-     * Constructor that creates an AWS S3CrtClient from custom parameters.
+     * Constructor that creates an AWS S3 Accelerated client from custom parameters.
      * @param custom_params Custom parameters containing S3 configuration
      * @param executor Optional executor for async operations
      */
-    awsS3CrtClient(nixl_b_params_t *custom_params,
-                   std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr);
+    awsS3AccelClient(nixl_b_params_t *custom_params,
+                     std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr);
 
-    virtual ~awsS3CrtClient() = default;
+    virtual ~awsS3AccelClient() = default;
 
     void
     setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) override;
@@ -54,8 +52,8 @@ public:
     bool
     checkObjectExists(std::string_view key) override;
 
-private:
+protected:
     std::unique_ptr<Aws::S3Crt::S3CrtClient> s3CrtClient_;
 };
 
-#endif // OBJ_PLUGIN_S3_CRT_CLIENT_H
+#endif // OBJ_PLUGIN_S3_ACCEL_CLIENT_H

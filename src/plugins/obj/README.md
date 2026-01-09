@@ -241,3 +241,186 @@ The client selection happens transparently during transfer operations, requiring
 - Operation completion is tracked through the request handle
 - The `checkXfer` function can be used to poll for operation completion
 - The request handle must be released using `releaseReqH` after the operation is complete
+
+## Extending with Vendor-Specific Implementations
+
+The object plugin uses a modular, inheritance-based architecture that makes it easy to add vendor-specific backends without modifying core engine logic.
+
+### Architecture Overview
+
+The plugin separates concerns into:
+
+- **Clients**: Handle S3-compatible storage operations (inheriting from `awsS3Client` or `awsS3AccelClient`)
+- **Engine Implementations**: Manage NIXL backend operations (inheriting from `DefaultObjEngineImpl` or `S3AccelObjEngineImpl`)
+
+#### Current Hierarchy
+
+```
++----------------------+
+|   nixlObjEngine      |
++----------------------+
+           |
+           v
++------------------------------------+
+| DefaultObjEngineImpl               |
+| uses: awsS3Client                  |
++------------------------------------+
+      |
+      |--+------------------------------+
+      |  | S3CrtObjEngineImpl           |
+      |  | uses: awsS3CrtClient         |
+      |  +------------------------------+
+      |
+      +-->+------------------------------+
+          | S3AccelObjEngineImpl         |
+          | uses: awsS3AccelClient       |
+          +------------------------------+
+```
+
+### Adding a Vendor Implementation
+
+Follow these steps to add a vendor-specific client and engine:
+
+#### 1. Create Vendor Client
+
+Create a new directory under `s3_accel/` for your vendor (e.g., `s3_accel/vendor_name/`).
+
+**client.h**
+```cpp
+#pragma once
+#include "s3_accel/client.h"
+
+class awsVendorClient : public awsS3AccelClient {
+public:
+    awsVendorClient(nixl_b_params_t *custom_params,
+                    std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr);
+    virtual ~awsVendorClient() = default;
+
+    // Override methods for vendor-specific behavior if needed
+};
+```
+
+**client.cpp**
+```cpp
+#include "client.h"
+#include "common/nixl_log.h"
+
+awsVendorClient::awsVendorClient(nixl_b_params_t *custom_params,
+                                 std::shared_ptr<Aws::Utils::Threading::Executor> executor)
+    : awsS3AccelClient(custom_params, executor) {
+    NIXL_INFO << "Initialized Vendor-specific Object Client";
+}
+```
+
+#### 2. Create Vendor Engine Implementation
+
+**engine_impl.h**
+```cpp
+#pragma once
+#include "s3_accel/engine_impl.h"
+
+class VendorObjEngineImpl : public S3AccelObjEngineImpl {
+public:
+    explicit VendorObjEngineImpl(const nixlBackendInitParams *init_params);
+    VendorObjEngineImpl(const nixlBackendInitParams *init_params,
+                        std::shared_ptr<iS3Client> s3_client,
+                        std::shared_ptr<iS3Client> s3_client_crt);
+
+    // Override engine methods for vendor-specific behavior if needed
+    nixl_status_t registerMem(const nixlBlobDesc &mem,
+                             const nixl_mem_t &nixl_mem,
+                             nixlBackendMD *&out) override;
+};
+```
+
+**engine_impl.cpp**
+```cpp
+#include "engine_impl.h"
+#include "s3_accel/vendor_name/client.h"
+#include "common/nixl_log.h"
+
+VendorObjEngineImpl::VendorObjEngineImpl(const nixlBackendInitParams *init_params)
+    : S3AccelObjEngineImpl(init_params) {
+    s3ClientCrt_ = std::make_shared<awsVendorClient>(init_params->customParams, executor_);
+    NIXL_INFO << "Object storage backend initialized with Vendor client";
+}
+
+VendorObjEngineImpl::VendorObjEngineImpl(const nixlBackendInitParams *init_params,
+                                         std::shared_ptr<iS3Client> s3_client,
+                                         std::shared_ptr<iS3Client> s3_client_crt)
+    : S3AccelObjEngineImpl(init_params, s3_client, s3_client_crt) {
+    if (!s3ClientCrt_) {
+        s3ClientCrt_ = std::make_shared<awsVendorClient>(init_params->customParams, executor_);
+    }
+}
+
+nixl_status_t
+VendorObjEngineImpl::registerMem(const nixlBlobDesc &mem,
+                                const nixl_mem_t &nixl_mem,
+                                nixlBackendMD *&out) {
+    NIXL_INFO << "Vendor-specific registerMem called";
+    return S3AccelObjEngineImpl::registerMem(mem, nixl_mem, out);
+}
+```
+
+#### 3. Add Selection Logic
+
+Add a helper function in `src/utils/object/engine_utils.h`:
+
+```cpp
+inline bool
+isVendorRequested(nixl_b_params_t *custom_params) {
+    if (!isAcceleratedRequested(custom_params)) return false;
+    auto type_it = custom_params->find("type");
+    return type_it != custom_params->end() && type_it->second == "vendor_name";
+}
+```
+
+Update `obj_backend.cpp` to include your engine:
+
+```cpp
+#include "s3_accel/vendor_name/engine_impl.h"
+
+std::unique_ptr<nixlObjEngine::Impl>
+createObjEngineImpl(const nixlBackendInitParams *init_params) {
+    if (isVendorRequested(init_params->customParams)) {
+        return std::make_unique<VendorObjEngineImpl>(init_params);
+    }
+    // ... existing selection logic
+}
+```
+
+#### 4. Update Build Configuration
+
+Add your sources to `meson.build`:
+
+```python
+obj_sources = [
+    # ... existing sources
+    's3_accel/vendor_name/client.cpp',
+    's3_accel/vendor_name/client.h',
+    's3_accel/vendor_name/engine_impl.cpp',
+    's3_accel/vendor_name/engine_impl.h',
+]
+```
+
+#### 5. Usage
+
+```cpp
+nixl_b_params_t params = {
+    {"bucket", "my-bucket"},
+    {"accelerated", "true"},
+    {"type", "vendor_name"}
+};
+agent.createBackend("obj", params);
+```
+
+### Engine Method Overrides
+
+Common methods to override for vendor-specific behavior:
+
+- `registerMem()` - Custom memory registration logic
+- `deregisterMem()` - Custom cleanup logic
+- `queryMem()` - Vendor-specific object existence checks
+- `prepXfer()` / `postXfer()` - Custom transfer logic
+- `getClient()` - Return vendor-specific client

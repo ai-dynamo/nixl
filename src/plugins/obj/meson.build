@@ -17,10 +17,19 @@ obj_sources = [
     'obj_backend.cpp',
     'obj_backend.h',
     'obj_plugin.cpp',
+    '../../utils/object/engine_utils.h',
     's3/client.cpp',
     's3/client.h',
+    's3/engine_impl.cpp',
+    's3/engine_impl.h',
+    's3_crt/engine_impl.cpp',
+    's3_crt/engine_impl.h',
     's3_crt/client.cpp',
     's3_crt/client.h',
+    's3_accel/client.cpp',
+    's3_accel/client.h',
+    's3_accel/engine_impl.cpp',
+    's3_accel/engine_impl.h',
 ]
 
 # Check if obj_utils library is available
