@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,7 +43,7 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 | `secret_key` | AWS secret access key for authentication | - | No* |
 | `session_token` | AWS session token for temporary credentials | - | No |
 | `bucket` | S3 bucket name for operations | - | Yes** |
-| `endpoint_override` | Custom S3 endpoint URL | - | No |
+| `endpoint_override` | Custom S3 endpoint URL | - | No*** |
 | `scheme` | HTTP scheme (`http` or `https`) | `https` | No |
 | `region` | AWS region for the S3 service | `us-east-1` | No |
 | `use_virtual_addressing` | Use virtual-hosted-style addressing (`true`/`false`) | `false` | No |
@@ -54,6 +54,8 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 
 \** If `bucket` parameter is not provided, the `AWS_DEFAULT_BUCKET` environment variable will be used as fallback.
 
+\*** If `endpoint_override` parameter is not provided, the `AWS_ENDPOINT_OVERRIDE` environment variable will be used as fallback.
+
 ### Environment Variables
 
 The following environment variables are supported for Object Storage configuration:
@@ -61,6 +63,7 @@ The following environment variables are supported for Object Storage configurati
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `AWS_DEFAULT_BUCKET` | Default S3 bucket name when not specified in parameters | `my-default-bucket` |
+| `AWS_ENDPOINT_OVERRIDE` | Custom S3 endpoint URL when not specified in parameters | `http://localhost:9000` |
 
 Standard AWS SDK environment variables are also supported when credentials are not provided via backend parameters. For a complete list and detailed documentation, see the [AWS CLI Environment Variables](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html) documentation.
 
@@ -126,14 +129,29 @@ agent.createBackend("obj", params);
 
 ```bash
 export AWS_DEFAULT_BUCKET=my-inference-bucket
-export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
-export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+export AWS_ACCESS_KEY_ID=EXAMPLE_KEY_ID
+export AWS_SECRET_ACCESS_KEY=EXAMPLE_SECRET_ACCESS_KEY
 export AWS_REGION=us-west-2
 ```
 
 ```cpp
 // Minimal parameter map when using environment variables
 nixl_b_params_t params = {{"use_virtual_addressing", "true"}};
+agent.createBackend("obj", params);
+```
+
+#### Custom S3-Compatible Endpoint via Environment Variable
+
+```bash
+export AWS_DEFAULT_BUCKET=test-bucket
+export AWS_ENDPOINT_OVERRIDE=http://localhost:9000
+export AWS_ACCESS_KEY_ID=EXAMPLE_KEY_ID
+export AWS_SECRET_ACCESS_KEY=EXAMPLE_SECRET_ACCESS_KEY
+```
+
+```cpp
+// Backend will use AWS_ENDPOINT_OVERRIDE for the S3 endpoint
+nixl_b_params_t params = {{"use_virtual_addressing", "false"}};
 agent.createBackend("obj", params);
 ```
 
