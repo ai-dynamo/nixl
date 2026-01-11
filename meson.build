@@ -342,11 +342,15 @@ if get_option('install_headers')
   install_headers('src/api/cpp/nixl_descriptors.h', install_dir: prefix_inc)
   install_headers('src/utils/serdes/serdes.h', install_dir: prefix_inc + '/utils/serdes')
   install_headers('src/utils/common/nixl_time.h', install_dir: prefix_inc + '/utils/common')
+  install_headers('src/utils/common/nixl_log.h', install_dir: prefix_inc + '/utils/common')
   install_headers('src/api/cpp/backend/backend_engine.h', install_dir: prefix_inc + '/backend')
   install_headers('src/api/cpp/backend/backend_aux.h', install_dir: prefix_inc + '/backend')
+  install_headers('src/api/cpp/backend/backend_plugin.h', install_dir: prefix_inc + '/backend')
   install_headers('src/core/transfer_request.h', install_dir: prefix_inc)
   install_headers('src/core/agent_data.h', install_dir: prefix_inc)
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
+  install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
+
   if ucx_gpu_device_api_available
     install_headers('src/api/gpu/ucx/nixl_device.cuh', install_dir: prefix_inc + '/gpu/ucx')
   endif
