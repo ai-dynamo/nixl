@@ -461,7 +461,6 @@ doca_kernel_write(cudaStream_t stream,
 
     return DOCA_SUCCESS;
 }
-
 doca_error_t
 doca_kernel_read(cudaStream_t stream,
                  doca_gpu_dev_verbs_qp *qp,
@@ -516,4 +515,3 @@ doca_kernel_progress(cudaStream_t stream,
 
     return DOCA_SUCCESS;
 }
-
