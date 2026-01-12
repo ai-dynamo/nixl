@@ -71,10 +71,10 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
     const char *env_dbg = std::getenv("NIXL_GPUNETIO_DEBUG_DUMP");
     if (env_dbg && (std::string(env_dbg) == "1" || std::string(env_dbg) == "true")) debug_dump = true;
-    NIXL_INFO << "GPUNETIO key byte-order swap (htonl): "
-              << (swap_keys_config ? "enabled" : "disabled")
-              << ", device expects swapped: " << (device_mkey_swapped >= 0 ? device_mkey_swapped : -1)
-              << ", debug_dump: " << (debug_dump ? 1 : 0);
+    NIXL_DEBUG << "GPUNETIO key byte-order swap (htonl): "
+               << (swap_keys_config ? "enabled" : "disabled")
+               << ", device expects swapped: " << (device_mkey_swapped >= 0 ? device_mkey_swapped : -1)
+               << ", debug_dump: " << (debug_dump ? 1 : 0);
 
     NIXL_INFO << "DOCA network devices ";
     // Temporary: will extend to more GPUs in a dedicated PR
@@ -487,7 +487,6 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
     // Ensure notif list is not added twice for the same peer
     notifMap[remote_agent] = notif;
     ((volatile struct docaNotif *)notif_fill_cpu)->msg_buf = (uintptr_t)notif->recv_addr;
-//    ((volatile struct docaNotif *)notif_fill_cpu)->msg_lkey = notif->recv_mr->get_lkey();
     ((volatile struct docaNotif *)notif_fill_cpu)->msg_lkey =
         swap_keys_config ? htonl(notif->recv_mr->get_lkey()) : notif->recv_mr->get_lkey();
     ((volatile struct docaNotif *)notif_fill_cpu)->keys_are_swapped = swap_keys_config ? 1 : 0;
@@ -558,7 +557,7 @@ nixlDocaEngine::progressThreadStart() {
         server_addr.sin_port = htons(DOCA_RDMA_CM_LOCAL_PORT_SERVER);
 //        server_addr.sin_addr.s_addr = INADDR_ANY;
          /* listen on any interface */
-std::memcpy(&server_addr.sin_addr.s_addr, ipv4_addr, sizeof(ipv4_addr));
+        std::memcpy(&server_addr.sin_addr.s_addr, ipv4_addr, sizeof(ipv4_addr));
         if (server_addr.sin_addr.s_addr == 0) server_addr.sin_addr.s_addr = INADDR_ANY;
         /* Bind to the set port and IP: */
         if (bind(oob_sock_server, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
@@ -974,7 +973,7 @@ nixlDocaEngine::getConnInfo(std::string &str) const {
     ss << (int)ipv4_addr[0] << "." << (int)ipv4_addr[1] << "." << (int)ipv4_addr[2] << "."
        << (int)ipv4_addr[3];
     str = ss.str();
-    std::cout << "getConnInfo DOCA: " << str << std::endl;
+    NIXL_DEBUG << "getConnInfo DOCA: " << str;
 
     return NIXL_SUCCESS;
 }
@@ -1084,7 +1083,7 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
             << (uintptr_t)priv->mr->get_addr() << " len_dec="
             << (uint64_t)priv->mr->get_tot_size() << " lkey_dec=" << lkey << " rkey_dec="
             << rkey;
-        NIXL_INFO << oss.str();
+        NIXL_DEBUG << oss.str();
     }
     out = (nixlBackendMD *)priv;
 
@@ -1104,7 +1103,7 @@ nixl_status_t
 nixlDocaEngine::getPublicData(const nixlBackendMD *meta, std::string &str) const {
     const nixlDocaPrivateMetadata *priv = (nixlDocaPrivateMetadata *)meta;
     str = priv->remoteMrStr;
-    if (debug_dump) NIXL_INFO << "[dbg] getPublicData remoteMrStr=" << str;
+    if (debug_dump) NIXL_DEBUG << "[dbg] getPublicData remoteMrStr=" << str;
 
     return NIXL_SUCCESS;
 }
@@ -1134,11 +1133,7 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     std::stringstream ss(input.metaInfo.data());
     while (std::getline(ss, token, info_delimiter))
         tokens.push_back(token);
-/*    uint32_t rkey = static_cast<uint32_t>(atoi(tokens[0].c_str()));
-    uintptr_t addr = static_cast<uintptr_t>(atol(tokens[1].c_str()));
-    size_t tot_size = static_cast<size_t>(atol(tokens[2].c_str()));
-*/
-        // Parse as unsigned to avoid overflow/truncation (rkeys often exceed INT_MAX)
+    // Parse as unsigned to avoid overflow/truncation (rkeys often exceed INT_MAX)
     if (debug_dump) {
         NIXL_INFO << "[dbg] loadRemoteMD tokens size=" << tokens.size();
         for (size_t i = 0; i < tokens.size(); ++i) NIXL_INFO << "[dbg] token[" << i << "]=" << tokens[i];
@@ -1231,7 +1226,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     pos = treq->start_pos;
 
     do {
-	            xferReqRingCpu[pos].keys_are_swapped = swap_keys_config ? 1 : 0;
+        xferReqRingCpu[pos].keys_are_swapped = swap_keys_config ? 1 : 0;
 
         for (uint32_t idx = 0; idx < lcnt && idx < DOCA_XFER_REQ_SIZE; idx++) {
             size_t lsize = local[idx].len;
@@ -1257,8 +1252,6 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             xferReqRingCpu[pos].size[idx] = lsize;
             xferReqRingCpu[pos].num++;
 
-            //uint32_t lkey = xferReqRingCpu[pos].lkey[idx];
-            //uint32_t rkey = xferReqRingCpu[pos].rkey[idx];
             NIXL_INFO << "GPUNETIO prepXfer queue_pos " << pos << " idx " << idx << " laddr "
                       << format_hex(xferReqRingCpu[pos].lbuf[idx]) << " lkey "
                       << format_hex(lkey_host) << " lkey_be " << format_hex(lkey_be) << " raddr "
@@ -1266,11 +1259,11 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                       << format_hex(rkey_host) << " rkey_be " << format_hex(rkey_be) << " size "
                       << format_hex((uint64_t)xferReqRingCpu[pos].size[idx]);
             if (debug_dump) {
-                NIXL_INFO << "[dbg] remote_desc_addr=" << format_hex(dbg_rbuf_desc)
-                          << " remote_mr_addr=" << format_hex(dbg_rbuf_mr)
-                          << " used=mr_addr";
+                NIXL_TRACE << "[dbg] remote_desc_addr=" << format_hex(dbg_rbuf_desc)
+                           << " remote_mr_addr=" << format_hex(dbg_rbuf_mr)
+                           << " used=mr_addr";
             }
-	}
+        }
 
         xferReqRingCpu[pos].last_rsvd = last_rsvd_flags;
         xferReqRingCpu[pos].last_posted = last_posted_flags;
@@ -1311,7 +1304,6 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         xferReqRingCpu[treq->end_pos - 1].msg_sz = newMsg.size();
         xferReqRingCpu[treq->end_pos - 1].lbuf_notif = notif_addr;
         uint32_t notif_lkey_host = notif->send_mr->get_lkey();
-//        xferReqRingCpu[treq->end_pos - 1].lkey_notif = notif_lkey_host;
         uint32_t notif_lkey_be = swap_keys_config ? htonl(notif_lkey_host) : notif_lkey_host;
         xferReqRingCpu[treq->end_pos - 1].lkey_notif = notif_lkey_be;
 
@@ -1492,12 +1484,11 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
 
     std::lock_guard<std::mutex> lock(notifSendLock);
     ((volatile struct docaNotif *)notif_send_cpu)->msg_buf = msg_buf;
-//    ((volatile struct docaNotif *)notif_send_cpu)->msg_lkey =notif->send_mr->get_lkey();
     ((volatile struct docaNotif *)notif_send_cpu)->msg_lkey =
         swap_keys_config ? htonl(notif->send_mr->get_lkey()) : notif->send_mr->get_lkey();
     ((volatile struct docaNotif *)notif_send_cpu)->keys_are_swapped = swap_keys_config ? 1 : 0;
 
-     ((volatile struct docaNotif *)notif_send_cpu)->msg_size = newMsg.size();
+    ((volatile struct docaNotif *)notif_send_cpu)->msg_size = newMsg.size();
     std::atomic_thread_fence(std::memory_order_seq_cst);
     ((volatile struct docaNotif *)notif_send_cpu)->qp_gpu =
         searchQp->second->qp_notif->get_qp_gpu_dev();
