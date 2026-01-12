@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -184,6 +184,10 @@ private:
     std::unordered_map<std::string, struct nixlDocaRdmaQp *> qpMap;
     std::unordered_map<std::string, int> connMap;
     std::unordered_map<std::string, struct nixlDocaNotif *> notifMap;
+
+    // Whether to swap (htonl) mkeys before handing to GPU. Default: true.
+    bool swap_keys_config = true;
+    // Extra debug dump controls (env-driven)
 
     pthread_t server_thread_id;
 

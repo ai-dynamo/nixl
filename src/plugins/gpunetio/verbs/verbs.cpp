@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -463,8 +463,14 @@ mr::mr(doca_gpu *gpu_dev_, void *addr_, uint32_t elem_num_, size_t elem_size_, s
         if (ibmr == nullptr) throw std::invalid_argument("Failed to create mr");
     }
 
-    lkey = htobe32(ibmr->lkey);
-    rkey = htobe32(ibmr->rkey);
+    lkey = ibmr->lkey;
+    rkey = ibmr->rkey;
+
+    NIXL_DEBUG << "[dbg] MR path: " << (dmabuf_fd >= 0 ? "dmabuf" : "peermem/ibv_reg_mr")
+               << ", addr 0x" << std::hex << std::uppercase << (uintptr_t)addr << std::dec
+               << " len 0x" << std::hex << (uint64_t)tot_size << std::dec << " lkey 0x" << std::hex
+               << (uint32_t)lkey << std::dec << " rkey 0x" << std::hex << (uint32_t)rkey
+               << std::dec;
 }
 
 mr::mr(void *addr_, size_t tot_size_, uint32_t rkey_)
