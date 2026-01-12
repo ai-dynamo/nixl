@@ -186,7 +186,7 @@ int main() {
     nixl_exit_on_failure(status, "Failed to send local MD", AGENT2_NAME);
 
     // Give etcd time to process
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // 2. Fetch Remote Metadata from etcd
     std::cout << "\n2. Fetching remote metadata from etcd...\n";
@@ -224,7 +224,7 @@ int main() {
               << " to " << std::hex << (void*)req_dst.addr << std::endl;
     nixlXferReqH *req_handle;
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     extra_params1.notifMsg = "notification";
     extra_params1.hasNotif = true;
@@ -299,7 +299,7 @@ int main() {
     status = A2.fetchRemoteMD(AGENT1_NAME, &fetch_params);
     nixl_exit_on_failure(status, "Failed to fetch remote MD", AGENT2_NAME);
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // 4. Invalidate Metadata
     std::cout << "\n4. Invalidating metadata in etcd...\n";
@@ -308,27 +308,27 @@ int main() {
     status = A1.invalidateLocalMD();
     nixl_exit_on_failure(status, "Failed to invalidate local MD", AGENT1_NAME);
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // Try fetching the invalidated metadata
     std::cout << "\nTrying to fetch invalidated metadata for Agent1...\n";
     status = A2.fetchRemoteMD(AGENT1_NAME, &extra_params2);
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // Try invalidating again, this should log a debug message
     std::cout << "Trying to invalidate again...\n";
     status = A1.invalidateLocalMD();
     nixl_exit_on_failure(status, "Failed to invalidate local MD", AGENT1_NAME);
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // 5. Fetch metadata with invalid label. This should not block forever and print error message.
     std::cout << "\n5. Fetching metadata with invalid label...\n";
     status = A2.fetchRemoteMD("INVALID_AGENT", &fetch_params);
     nixl_exit_on_failure(status, "Failed to fetch remote MD", AGENT2_NAME);
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     free(addr1);
     free(addr2);

@@ -116,3 +116,17 @@ if [ -z "$NPROC" ]; then
     fi
     export NPROC=$nproc
 fi
+
+wait_for_etcd() {
+    local timeout=30
+    echo "Waiting for etcd to be ready (timeout: ${timeout}s)..."
+    while ! curl -s "${NIXL_ETCD_ENDPOINTS}/health" | grep -q 'true'; do
+        timeout=$((timeout - 1))
+        if [ $timeout -eq 0 ]; then
+            echo "Etcd failed to start"
+            exit 1
+        fi
+        sleep 1
+    done
+    echo "Etcd is ready"
+}

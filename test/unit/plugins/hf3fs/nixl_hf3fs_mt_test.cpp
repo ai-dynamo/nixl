@@ -166,7 +166,7 @@ namespace {
             // Wait for completion
             status = agent.getXferStatus(req);
             while (status == NIXL_IN_PROG) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 status = agent.getXferStatus(req);
             }
 
