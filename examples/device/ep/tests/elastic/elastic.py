@@ -622,8 +622,8 @@ def main():
     parser.add_argument("--kineto", action="store_true", help="Enable kineto profiling")
     parser.add_argument(
         "--nvlink-backend",
-        choices=["nixl", "ipc", "none"],
-        default="ipc",
+        choices=["nixl", "none"],
+        default="nixl",
         help="NVLink backend to use",
     )
 
