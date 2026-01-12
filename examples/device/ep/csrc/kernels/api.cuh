@@ -38,6 +38,7 @@ struct gpu_nixl_ctx {
     nixlGpuXferReqH *remote_counter_reqs; // [dest_rank]
     nixlGpuXferReqH *batch_reqs; // [dest_rank]
     int *local_barrier_buffer; // [src_rank]
+    int *local_barrier_cnt; // [dst_rank]
     nixlGpuXferReqH *remote_barrier_reqs; // [dest_rank]
     void **rdma_p2p_ptrs; // [num_ranks]
     uint64_t **counters_p2p_ptrs; // [num_ranks]
@@ -77,10 +78,6 @@ struct gpu_nixl_ctx {
 
     __device__ inline nixlGpuXferReqH remote_barrier_get(int dest_rank) {
         return remote_barrier_reqs[dest_rank];
-    }
-
-    __device__ inline int* local_barrier_buffer_get(int src_rank) {
-        return &local_barrier_buffer[src_rank];
     }
 
     __device__ inline nixlGpuXferReqH batch_get(int dest_rank) {

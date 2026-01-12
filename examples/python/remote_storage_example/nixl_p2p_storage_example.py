@@ -84,7 +84,7 @@ def connect_to_agents(my_agent, agents_file):
 
                 while my_agent.check_remote_metadata(parts[0]) is False:
                     logger.info("Waiting for remote metadata for %s...", parts[0])
-                    time.sleep(0.2)
+                    time.sleep(1.0)
 
                 logger.info("Remote metadata for %s fetched", parts[0])
             else:
