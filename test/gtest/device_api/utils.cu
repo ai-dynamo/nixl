@@ -108,7 +108,7 @@ void DeviceApiTestBase::completeWireup(size_t from_agent, size_t to_agent) {
     do {
         nixl_status_t ret = getAgent(to_agent).getNotifs(notifs);
         ASSERT_EQ(ret, NIXL_SUCCESS) << "Failed to get notifications during wireup";
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     } while (notifs.size() == 0);
 }
 

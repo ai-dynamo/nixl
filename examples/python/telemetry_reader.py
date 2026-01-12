@@ -287,7 +287,7 @@ def main():
                 print_telemetry_event(event)
             else:
                 # No events available, sleep briefly
-                time.sleep(0.1)
+                time.sleep(0.5)
 
         logger.info("\nTotal events read: %d", event_count)
         logger.info("Final buffer size: %d events", buffer.size())

@@ -143,7 +143,7 @@ int xferBenchEtcdRT::sendInt(int* buffer, int dest_rank) {
                 client->rm(ack_key);
             } else {
                 // Wait and retry
-                std::this_thread::sleep_for(std::chrono::seconds(1));
+                std::this_thread::sleep_for(std::chrono::seconds(3));
                 retries++;
             }
         }
@@ -184,7 +184,7 @@ int xferBenchEtcdRT::recvInt(int* buffer, int src_rank) {
                 data_received = true;
 
                 // Delete the message after we've acknowledged it
-                std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Brief delay
+                std::this_thread::sleep_for(std::chrono::seconds(1)); // Brief delay
                 client->rm(msg_key);
 
                 return 0;
@@ -195,7 +195,7 @@ int xferBenchEtcdRT::recvInt(int* buffer, int src_rank) {
             }
         } else {
             // Wait and retry
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            std::this_thread::sleep_for(std::chrono::seconds(3));
             retries++;
         }
     }
@@ -236,7 +236,7 @@ int xferBenchEtcdRT::sendChar(char* buffer, size_t count, int dest_rank) {
                 client->rm(ack_key);
             } else {
                 // Wait and retry
-                std::this_thread::sleep_for(std::chrono::seconds(1));
+                std::this_thread::sleep_for(std::chrono::seconds(3));
                 retries++;
             }
         }
@@ -282,7 +282,7 @@ int xferBenchEtcdRT::recvChar(char* buffer, size_t count, int src_rank) {
                 data_received = true;
 
                 // Delete the message after we've acknowledged it
-                std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Brief delay
+                std::this_thread::sleep_for(std::chrono::seconds(1)); // Brief delay
                 client->rm(data_key);
                 client->rm(msg_key);
 
@@ -291,7 +291,7 @@ int xferBenchEtcdRT::recvChar(char* buffer, size_t count, int src_rank) {
         }
 
         // Wait and retry
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::this_thread::sleep_for(std::chrono::seconds(3));
         retries++;
     }
 
@@ -362,7 +362,7 @@ int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, 
                 }
 
                 if (received < expected) {
-                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                    std::this_thread::sleep_for(std::chrono::seconds(3));
                     retries++;
                 }
             }
@@ -377,7 +377,7 @@ int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, 
             }
         } else {
             // Non-destination ranks just wait a bit to ensure their contribution is processed
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            std::this_thread::sleep_for(std::chrono::seconds(1));
         }
 
         return 0;
@@ -415,7 +415,7 @@ int xferBenchEtcdRT::barrier(const std::string& barrier_id) {
                 return 0;
             }
 
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            std::this_thread::sleep_for(std::chrono::seconds(3));
         }
 
         throw std::runtime_error("wait");
@@ -472,7 +472,7 @@ int xferBenchEtcdRT::broadcastInt(int* buffer, size_t count, int root_rank) {
                         return -1;
                     }
                 } else {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
                     retries++;
                 }
             }
