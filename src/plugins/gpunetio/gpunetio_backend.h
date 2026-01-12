@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -188,7 +188,6 @@ private:
     // Whether to swap (htonl) mkeys before handing to GPU. Default: true.
     bool swap_keys_config = true;
     // Extra debug dump controls (env-driven)
-    bool debug_dump = false;
 
     pthread_t server_thread_id;
 

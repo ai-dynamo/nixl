@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,6 @@
 
 #include "gpunetio_backend.h"
 #include "serdes/serdes.h"
-#include <arpa/inet.h>
 #include <cassert>
 #include <stdexcept>
 #include <cstdlib>
@@ -27,14 +26,6 @@
 #include <arpa/inet.h>
 
 const char info_delimiter = '-';
-namespace {
-std::string
-format_hex(uint64_t value) {
-    std::ostringstream oss;
-    oss << "0x" << std::hex << std::uppercase << value;
-    return oss.str();
-}
-} // namespace
 
 extern "C" int doca_query_mkey_swapped();
 /****************************************
@@ -69,12 +60,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         else
             swap_keys_config = true;
     }
-    const char *env_dbg = std::getenv("NIXL_GPUNETIO_DEBUG_DUMP");
-    if (env_dbg && (std::string(env_dbg) == "1" || std::string(env_dbg) == "true")) debug_dump = true;
     NIXL_DEBUG << "GPUNETIO key byte-order swap (htonl): "
                << (swap_keys_config ? "enabled" : "disabled")
-               << ", device expects swapped: " << (device_mkey_swapped >= 0 ? device_mkey_swapped : -1)
-               << ", debug_dump: " << (debug_dump ? 1 : 0);
+               << ", device expects swapped: " << (device_mkey_swapped >= 0 ? device_mkey_swapped : -1);
 
     NIXL_INFO << "DOCA network devices ";
     // Temporary: will extend to more GPUs in a dedicated PR
@@ -1074,17 +1062,16 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
     uint32_t lkey = priv->mr->get_lkey();
     uint32_t rkey = priv->mr->get_rkey();
     NIXL_INFO << "GPUNETIO registerMem publish dev " << priv->devId << " addr "
-              << format_hex((uintptr_t)priv->mr->get_addr()) << " len "
-              << format_hex((uint64_t)priv->mr->get_tot_size()) << " lkey "
-              << format_hex(lkey) << " rkey " << format_hex(rkey);
-    if (debug_dump) {
-        std::ostringstream oss;
-        oss << " [dbg] publish raw: dev=" << priv->devId << " addr_dec="
-            << (uintptr_t)priv->mr->get_addr() << " len_dec="
-            << (uint64_t)priv->mr->get_tot_size() << " lkey_dec=" << lkey << " rkey_dec="
-            << rkey;
-        NIXL_DEBUG << oss.str();
-    }
+              << std::showbase << std::hex << std::uppercase << (uintptr_t)priv->mr->get_addr()
+              << " len " << (uint64_t)priv->mr->get_tot_size()
+              << " lkey " << lkey
+              << " rkey " << rkey
+              << std::noshowbase << std::dec;
+    NIXL_DEBUG << "[dbg] publish raw: dev=" << priv->devId
+               << " addr_dec=" << (uintptr_t)priv->mr->get_addr()
+               << " len_dec=" << (uint64_t)priv->mr->get_tot_size()
+               << " lkey_dec=" << lkey
+               << " rkey_dec=" << rkey;
     out = (nixlBackendMD *)priv;
 
     return NIXL_SUCCESS;
@@ -1103,7 +1090,7 @@ nixl_status_t
 nixlDocaEngine::getPublicData(const nixlBackendMD *meta, std::string &str) const {
     const nixlDocaPrivateMetadata *priv = (nixlDocaPrivateMetadata *)meta;
     str = priv->remoteMrStr;
-    if (debug_dump) NIXL_DEBUG << "[dbg] getPublicData remoteMrStr=" << str;
+    NIXL_TRACE << "[dbg] getPublicData remoteMrStr=" << str;
 
     return NIXL_SUCCESS;
 }
@@ -1134,10 +1121,8 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     while (std::getline(ss, token, info_delimiter))
         tokens.push_back(token);
     // Parse as unsigned to avoid overflow/truncation (rkeys often exceed INT_MAX)
-    if (debug_dump) {
-        NIXL_INFO << "[dbg] loadRemoteMD tokens size=" << tokens.size();
-        for (size_t i = 0; i < tokens.size(); ++i) NIXL_INFO << "[dbg] token[" << i << "]=" << tokens[i];
-    }
+    NIXL_TRACE << "[dbg] loadRemoteMD tokens size=" << tokens.size();
+    for (size_t i = 0; i < tokens.size(); ++i) NIXL_TRACE << "[dbg] token[" << i << "]=" << tokens[i];
     const char *p0 = tokens[0].c_str();
     const char *p1 = tokens[1].c_str();
     const char *p2 = tokens[2].c_str();
@@ -1152,10 +1137,10 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     uint32_t rkey = static_cast<uint32_t>(rkey_ul);
     uintptr_t addr = static_cast<uintptr_t>(addr_ull);
     size_t tot_size = static_cast<size_t>(size_ull);
-    if (debug_dump) {
-        NIXL_INFO << "[dbg] parsed remote MD rkey=" << format_hex(rkey) << " addr=" << format_hex(addr)
-                  << " size=" << format_hex((uint64_t)tot_size);
-    }
+    NIXL_TRACE << "[dbg] parsed remote MD rkey=" << std::showbase << std::hex << std::uppercase << rkey
+               << " addr=" << addr
+               << " size=" << (uint64_t)tot_size
+               << std::noshowbase << std::dec;
 
     // Empty mmap, filled with imported data
     try {
@@ -1253,16 +1238,16 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             xferReqRingCpu[pos].num++;
 
             NIXL_INFO << "GPUNETIO prepXfer queue_pos " << pos << " idx " << idx << " laddr "
-                      << format_hex(xferReqRingCpu[pos].lbuf[idx]) << " lkey "
-                      << format_hex(lkey_host) << " lkey_be " << format_hex(lkey_be) << " raddr "
-                      << format_hex(xferReqRingCpu[pos].rbuf[idx]) << " rkey "
-                      << format_hex(rkey_host) << " rkey_be " << format_hex(rkey_be) << " size "
-                      << format_hex((uint64_t)xferReqRingCpu[pos].size[idx]);
-            if (debug_dump) {
-                NIXL_TRACE << "[dbg] remote_desc_addr=" << format_hex(dbg_rbuf_desc)
-                           << " remote_mr_addr=" << format_hex(dbg_rbuf_mr)
-                           << " used=mr_addr";
-            }
+                      << std::showbase << std::hex << std::uppercase
+                      << xferReqRingCpu[pos].lbuf[idx] << " lkey " << lkey_host
+                      << " lkey_be " << lkey_be << " raddr " << xferReqRingCpu[pos].rbuf[idx]
+                      << " rkey " << rkey_host << " rkey_be " << rkey_be
+                      << " size " << (uint64_t)xferReqRingCpu[pos].size[idx]
+                      << std::noshowbase << std::dec;
+            NIXL_TRACE << "[dbg] remote_desc_addr=" << std::showbase << std::hex << std::uppercase
+                       << dbg_rbuf_desc << " remote_mr_addr=" << dbg_rbuf_mr
+                       << " used=mr_addr"
+                       << std::noshowbase << std::dec;
         }
 
         xferReqRingCpu[pos].last_rsvd = last_rsvd_flags;

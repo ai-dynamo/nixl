@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -466,17 +466,11 @@ mr::mr(doca_gpu *gpu_dev_, void *addr_, uint32_t elem_num_, size_t elem_size_, s
     lkey = ibmr->lkey;
     rkey = ibmr->rkey;
 
-    const char *env_dbg = getenv("NIXL_GPUNETIO_DEBUG_DUMP");
-    //bool dbg = (env_dbg && (!strcmp(env_dbg, "1") || !strcmp(env_dbg, "true")));
-    if (env_dbg) {
-        std::ostringstream oss;
-        oss << "[dbg] MR path: " << (dmabuf_fd >= 0 ? "dmabuf" : "peermem/ibv_reg_mr")
-            << ", addr 0x" << std::hex << std::uppercase << (uintptr_t)addr << std::dec
-            << " len 0x" << std::hex << (uint64_t)tot_size << std::dec
-            << " lkey 0x" << std::hex << (uint32_t)lkey << std::dec
-            << " rkey 0x" << std::hex << (uint32_t)rkey << std::dec;
-        NIXL_DEBUG << oss.str();
-    }
+    NIXL_DEBUG << "[dbg] MR path: " << (dmabuf_fd >= 0 ? "dmabuf" : "peermem/ibv_reg_mr")
+               << ", addr 0x" << std::hex << std::uppercase << (uintptr_t)addr << std::dec
+               << " len 0x" << std::hex << (uint64_t)tot_size << std::dec
+               << " lkey 0x" << std::hex << (uint32_t)lkey << std::dec
+               << " rkey 0x" << std::hex << (uint32_t)rkey << std::dec;
 
 }
 
