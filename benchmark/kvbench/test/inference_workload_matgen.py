@@ -238,7 +238,7 @@ def gen_matrices_and_compute_time(
             decode_worker_config,
         )
 
-        compute_time = estimate_compute_time(batch, model_config)
+        compute_time = estimate_compute_time(batch, model_config, prefill_worker_config)
         matrix_obj = TransferMatrix(
             matrix=mat, compute_time=compute_time, isl=batch.total_isl
         )
@@ -285,21 +285,39 @@ def gen_matrix(
 def estimate_compute_time(
     batch: Batch,
     model_config: ModelConfig,
-    flops: float = 36 * 1e12,  # 36 TFlops (h100)
+    worker_config: WorkerConfig,
+    flops_per_gpu: float = 36 * 1e12,  # 36 TFlops (h100)
 ):
-    """Estimate the compute time of a batch, in seconds
-    Very approximative and assumes 36 TFlops (h100)
-    The formula comes from:
+    """Estimate the compute time of a batch, in seconds.
+
+    Accounts for:
+    - Attention FLOPs: O(S²) per layer
+    - MLP FLOPs: O(S × H) per layer (assumes intermediate_size = 4*H)
+    - TP parallelism: divides compute across TP GPUs
+
+    Formula based on:
     https://medium.com/@plienhar/llm-inference-series-3-kv-caching-unveiled-048152e461c8
     """
-    flop = (
-        2
-        * batch.size
-        * model_config.num_layers
-        * model_config.hidden_size
-        * batch.total_isl**2
-    )
-    return flop / flops
+    B = batch.size
+    S = batch.total_isl
+    H = model_config.hidden_size
+    L = model_config.num_layers
+
+    # Attention score computation: 4 * B * S² * H per layer (Q·Kᵀ and Attn·V)
+    # Note: excludes QKV and output projections (8 * B * S * H² per layer).
+    # These are linear ops like MLP but omitted here for simplicity since
+    # they are relatively small compared to MLP (8H² vs 16H²).
+    attn_flop = 4 * B * S**2 * H * L
+
+    # MLP: 16 * B * S * H² per layer (H→4H and 4H→H projections)
+    mlp_flop = 16 * B * S * H**2 * L
+
+    total_flop = attn_flop + mlp_flop
+
+    # TP divides compute across GPUs
+    effective_flops = flops_per_gpu * worker_config.tp
+
+    return total_flop / effective_flops
 
 
 def format_size(nbytes: float, precision=2) -> str:

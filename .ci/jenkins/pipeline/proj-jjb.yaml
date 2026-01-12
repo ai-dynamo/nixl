@@ -9,7 +9,6 @@
 - job-template:
     name: "{jjb_proj}-dispatcher"  # Will be expanded to 'nixl-ci-dispatcher'
     project-type: pipeline
-    folder: "{jjb_folder}"
     properties:
         # GitHub integration settings
         - github:
@@ -51,54 +50,43 @@
     dsl: |
         @Library('blossom-github-lib@master')  // Use custom GitHub library
         import ipp.blossom.*
+
         // Authenticate with GitHub using stored credentials
-        withCredentials([usernamePassword(credentialsId: 'github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {{
+        withCredentials([usernamePassword(credentialsId: 'svc-nixl-github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {{
           githubHelper = GithubHelper.getInstance("${{GIT_PASSWORD}}", VARIABLE_FROM_POST)
         }}
-        // Update GitHub commit status
-        githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher started", GitHubCommitState.PENDING)
-        currentBuild.description = githubHelper.getBuildDescription()
-        try {{
-            // Trigger the actual build and test jobs in parallel
-            parallel build: {{
-                def buildJob = 'nixl-ci-build'
-                def build = build job: buildJob, parameters: [
-                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
-                    string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ], propagate: false
-                currentBuild.description += "<br>Job: <a href='${{JENKINS_URL}}blue/organizations/jenkins/NIXL%2F${{buildJob}}/detail/${{buildJob}}/${{build.number}}/pipeline/'>${{buildJob}}</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
-                if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
-                  currentBuild.result = build.result
-                  error("Job ${{buildJob}} failed")
-                }}
-            }}, test: {{
-                def buildJob = 'nixl-ci-test'
-                def build = build job: buildJob, parameters: [
-                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
-                    string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ], propagate: false
-                currentBuild.description += "<br>Job: <a href='${{JENKINS_URL}}blue/organizations/jenkins/NIXL%2F${{buildJob}}/detail/${{buildJob}}/${{build.number}}/pipeline/'>${{buildJob}}</a> Result: <b style='color:${{build.result == 'SUCCESS' ? 'green' : 'red'}}'>${{build.result}}</b>"
-                if (!build.resultIsBetterOrEqualTo('SUCCESS')) {{
-                  currentBuild.result = build.result
-                  error("Job ${{buildJob}} failed")
-                }}
-            }},
-            failFast: false  // Continue even if some parallel jobs fail
 
-            githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher successeded", GitHubCommitState.SUCCESS)
+        def blueOceanUrl = "${{JENKINS_URL}}blue/organizations/jenkins/${{env.JOB_BASE_NAME}}/detail/${{env.JOB_BASE_NAME}}/${{env.BUILD_NUMBER}}/pipeline/"
+        // Update GitHub commit status
+        githubHelper.updateCommitStatus(blueOceanUrl, "NIXL CI started", GitHubCommitState.PENDING)
+        currentBuild.description = githubHelper.getBuildDescription()
+
+        try {{
+            parallel 'non-gpu': {{
+                def jobName = 'nixl-ci-non-gpu'
+                build job: jobName, parameters: [
+                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
+                    string(name: 'githubData', value: VARIABLE_FROM_POST)
+                ], propagate: false, wait: true
+            }}, 'gpu': {{
+                def jobName = 'nixl-ci-gpu'
+                build job: jobName, parameters: [
+                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
+                    string(name: 'githubData', value: VARIABLE_FROM_POST)
+                ], propagate: false, wait: true
+            }}
+
+            githubHelper.updateCommitStatus(blueOceanUrl, "NIXL CI ended", GitHubCommitState.SUCCESS)
         }} catch(Exception ex) {{
-            // Handle build failures
-            currentBuild.result = 'FAILURE'
             println ex
-            githubHelper.updateCommitStatus("$BUILD_URL", "CI Dispatcher failed", GitHubCommitState.FAILURE)
-            error("failed")
+            githubHelper.updateCommitStatus(blueOceanUrl, "NIXL CI ended", GitHubCommitState.FAILURE)
+            throw ex
         }}
 
 # Template for the main build job that performs the actual build process
 - job-template:
-    name: "{jjb_proj}-build"      # Will be expanded to 'nixl-ci-build'
+    name: "{jjb_proj}-non-gpu"      # Will be expanded to 'nixl-ci-non-gpu'
     project-type: pipeline
-    folder: "{jjb_folder}"
     disabled: false
     properties:
         # Similar properties as dispatcher job
@@ -110,7 +98,7 @@
         - inject:
             keep-system-variables: true
             properties-content: |
-              jjb_proj={jjb_proj}-build
+              jjb_proj={jjb_proj}-non-gpu
     description: Do NOT edit this job through the Web GUI !
     concurrent: true
     sandbox: true
@@ -141,7 +129,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
-                credentials-id: 'swx-jenkins_ssh_key'
+                credentials-id: 'svc-nixl-ssh_key'
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -159,9 +147,8 @@
 
 # Template for the main test job that performs the actual test process
 - job-template:
-    name: "{jjb_proj}-test"      # Will be expanded to 'nixl-ci-test'
+    name: "{jjb_proj}-gpu"      # Will be expanded to 'nixl-ci-gpu'
     project-type: pipeline
-    folder: "{jjb_folder}"
     disabled: false
     properties:
         # Similar properties as dispatcher job
@@ -173,7 +160,7 @@
         - inject:
             keep-system-variables: true
             properties-content: |
-              jjb_proj={jjb_proj}-test
+              jjb_proj={jjb_proj}-gpu
     description: Do NOT edit this job through the Web GUI !
     concurrent: true
     sandbox: true
@@ -204,7 +191,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
-                credentials-id: 'swx-jenkins_ssh_key'
+                credentials-id: 'svc-nixl-ssh_key'
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -226,7 +213,6 @@
 - job-template:
     name: "{jjb_proj}-build-container"
     project-type: pipeline
-    folder: "{jjb_folder}"
     disabled: false
     properties:
       - build-discarder:
@@ -242,7 +228,11 @@
       • Builds and pushes x86_64 &amp; aarch64 images with any NIXL/UCX version combination<br/>
       • Choose between <b>nixlbench</b> or <b>nixl</b> build targets<br/>
       • Optional latest tag update via <code>UPDATE_LATEST</code> parameter<br/>
-      • Images pushed to: <code>verification/nixlbench/</code> or <code>verification/nixl/</code> based on target<br/>
+      • Images pushed to both registries:<br/>
+      &nbsp;&nbsp;- https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/<br/>
+      &nbsp;&nbsp;- https://urm.nvidia.com/sw-nbu-swx-nixl-docker-local/<br/>
+      &nbsp;&nbsp;Use <code>verification/nixlbench/</code> or <code>verification/nixl/</code> based on target<br/>
+      • You must be part of access-artifactory-nbu-swx-nixl-users DL group in order to work with these images
       <br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: true
@@ -269,18 +259,18 @@
       - string:
           name: "NIXL_VERSION"
           default: "{jjb_branch}"
-          description: "NIXL version to use (tag like 0.7.0, branch name, or commit hash)"
+          description: "NIXL version to use (tag like 0.9.0, branch name, or commit hash)"
       - string:
           name: "UCX_VERSION"
-          default: "v1.19.0"
-          description: "UCX version to use (tag like v1.19.0, branch name, or commit hash)"
+          default: "v1.20.x"
+          description: "UCX version to use (tag like v1.20.x, branch name, or commit hash)"
       - string:
           name: "BASE_IMAGE"
           default: "nvcr.io/nvidia/cuda-dl-base"
           description: "Base Docker image for the container build"
       - string:
           name: "BASE_IMAGE_TAG"
-          default: "25.03-cuda12.8-devel-ubuntu24.04"
+          default: "25.10-cuda13.0-devel-ubuntu24.04"
           description: "Tag for the base Docker image"
       - string:
           name: "TAG_SUFFIX"
@@ -294,7 +284,11 @@
           description: >
             Update the latest tag for this architecture.<br/>
             When enabled, also creates: <code>&lt;base-image-tag&gt;-&lt;arch&gt;-latest</code><br/>
-            Example: <code>25.03-cuda12.8-devel-ubuntu24.04-aarch64-latest</code><br/>
+            Example: <code>25.10-cuda13.0-devel-ubuntu24.04-aarch64-latest</code><br/>
+      - bool:
+          name: "BUILD_NIXL_EP"
+          default: false
+          description: "Build NIXL with EP example support (pass --build-nixl-ep)"
       - string:
           name: "MAIL_TO"
           default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
@@ -304,7 +298,7 @@
       scm:
         - git:
             url: "{jjb_git}"
-            credentials-id: "swx-jenkins_ssh_key"
+            credentials-id: "svc-nixl-ssh_key"
             branches: ['$NIXL_VERSION']
             shallow-clone: false
             do-not-fetch-tags: false
@@ -325,11 +319,10 @@
     jjb_proj: 'nixl-ci'           # Project prefix for job names
     jjb_git: 'git@github.com:ai-dynamo/nixl.git'  # Repository URL
     jjb_jenkinsfile: '.ci/jenkins/pipeline/Jenkinsfile'  # Main pipeline definition
-    jjb_folder: 'NIXL'
     jjb_branch: 'main'            # Default branch
     jjb_gh_url: 'https://github.com/ai-dynamo/nixl'  # GitHub web URL
     jobs:
         - "{jjb_proj}-dispatcher"  # Create dispatcher job
-        - "{jjb_proj}-build"       # Create build job
+        - "{jjb_proj}-non-gpu"       # Create non-gpu job
         - "{jjb_proj}-build-container"  # Create container builder job
-        - "{jjb_proj}-test"        # Create test job
+        - "{jjb_proj}-gpu"        # Create gpu job

@@ -13,11 +13,23 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 ## Pre-build Distributions
 ### PyPI Wheel
 
-The nixl python API and libraries, including UCX, are available directly through PyPI:
+The nixl python API and libraries, including UCX, are available directly through PyPI.
+
+It can be installed for CUDA 12 with:
 
 ```
-pip install nixl
+pip install nixl[cu12]
 ```
+
+For CUDA 13 with:
+
+```
+pip install nixl[cu13]
+```
+
+For backwards compatibility, `pip install nixl` installs automatically `nixl[cu12]`, continuing to work seamlessly for CUDA 12 users without requiring changes to downstream project dependencies.
+
+If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environment, `nixl-cu13` takes precedence.
 
 ## Prerequisites for source build
 ### Ubuntu:
@@ -30,19 +42,20 @@ pip install nixl
 
 ### Python
 
-`$ pip3 install meson ninja pybind11`
+`$ pip3 install meson ninja pybind11 tomlkit`
 
 ### UCX
 
-NIXL was tested with UCX version 1.19.0.
+NIXL was tested with UCX version 1.20.x.
 
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
-$ wget https://github.com/openucx/ucx/releases/download/v1.19.0/ucx-1.19.0.tar.gz
-$ tar xzf ucx-1.19.0.tar.gz
-$ cd ucx-1.19.0
-$ ./configure                          \
+$ git clone https://github.com/openucx/ucx.git
+$ cd ucx
+$ git checkout v1.20.x
+$ ./autogen.sh
+$ ./contrib/configure-release-mt       \
     --enable-shared                    \
     --disable-static                   \
     --disable-doxygen-doc              \
@@ -52,8 +65,7 @@ $ ./configure                          \
     --with-cuda=<cuda install>         \
     --with-verbs                       \
     --with-dm                          \
-    --with-gdrcopy=<gdrcopy install>   \
-    --enable-mt
+    --with-gdrcopy=<gdrcopy install>
 $ make -j
 $ make -j install-strip
 $ ldconfig
@@ -102,16 +114,16 @@ $ ninja install
 
 ### Build Options
 
-#### Release build
-
-```bash
-$ meson setup <name_of_build_dir> --buildtype=release
-```
-
-#### Debug build (default)
+#### Release build (default)
 
 ```bash
 $ meson setup <name_of_build_dir>
+```
+
+#### Debug build
+
+```bash
+$ meson setup <name_of_build_dir> --buildtype=debug
 ```
 
 #### NIXL-specific build options
@@ -132,6 +144,13 @@ Common build options:
 - `disable_gds_backend`: Disable GDS backend (default: false)
 - `cudapath_inc`, `cudapath_lib`: Custom CUDA paths
 - `static_plugins`: Comma-separated list of plugins to build statically
+- `enable_plugins`: Comma-separated list of plugins to build (e.g. `-Denable_plugins=UCX,POSIX`). Cannot be used with `disable_plugins`.
+- `disable_plugins`: Comma-separated list of plugins to exclude (e.g. `-Ddisable_plugins=GDS`). Cannot be used with `enable_plugins`.
+
+#### Environment Variables
+
+There are a few environment variables that can be set to configure the build:
+- `NIXL_NO_STUBS_FALLBACK`: If not set or 0, build NIXL stub library if the library build fails
 
 ### Building Documentation
 
@@ -151,18 +170,37 @@ $ ninja
 
 NIXL provides Python bindings through pybind11. For detailed Python API documentation, see [docs/python_api.md](docs/python_api.md).
 
-The preferred way to install the Python bindings is through pip:
+The preferred way to install the Python bindings is through pip from PyPI:
 
 ```bash
-pip install nixl
+pip install nixl[cu12]
 ```
 
-Or build from source:
+Or for CUDA 13 with:
 
 ```bash
-# From the root nixl directory
+pip install nixl[cu13]
+```
+
+To build and install the Python bindings from source, you have to build and install separately the platform-specific package and the `nixl` meta-package:
+
+On CUDA 12:
+
+```
 pip install .
-pip install <name_of_build_dir>/src/bindings/python/nixl-meta/nixl-*.whl
+meson setup build
+ninja -C build
+pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
+```
+
+On CUDA 13:
+
+```
+pip install .
+./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
+meson setup build
+ninja -C build
+pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
 ```
 
 For Python examples, see [examples/python/](examples/python/).
@@ -170,7 +208,7 @@ For Python examples, see [examples/python/](examples/python/).
 ### Rust Bindings
 #### Build
 - Use `-Drust=true` meson option to build rust bindings.
-- Use `-Ddebug=false` for a release build.
+- Use `--buildtype=debug` for a debug build (default is release).
 - Or build manually:
     ```bash
     $ cargo build --release

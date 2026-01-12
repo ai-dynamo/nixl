@@ -113,10 +113,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     agent->getAvailPlugins(plugins);
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL) ||
         xferBenchConfig::isStorageBackend()) {
         backend_name = xferBenchConfig::backend;
     } else {
@@ -126,8 +126,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     agent->getPluginParams(backend_name, mems, backend_params);
 
-    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
+    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
         backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
 
         // No need to set device_list if all is specified
@@ -135,14 +134,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         if (devices[0] != "all" && devices.size() >= 1) {
             if (isInitiator()) {
                 backend_params["device_list"] = devices[rank];
-                if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
-                    backend_params["num_ucx_engines"] = xferBenchConfig::num_initiator_dev;
-                }
             } else {
                 backend_params["device_list"] = devices[rank - xferBenchConfig::num_initiator_dev];
-                if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX_MO)) {
-                    backend_params["num_ucx_engines"] = xferBenchConfig::num_target_dev;
-                }
             }
         }
 
@@ -181,9 +174,15 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
             backend_params["use_aio"] = "true";
             backend_params["use_uring"] = "false";
+            backend_params["use_posix_aio"] = "false";
         } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
             backend_params["use_aio"] = "false";
             backend_params["use_uring"] = "true";
+            backend_params["use_posix_aio"] = "false";
+        } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_POSIXAIO) {
+            backend_params["use_aio"] = "false";
+            backend_params["use_uring"] = "false";
+            backend_params["use_posix_aio"] = "true";
         }
         std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
                   << std::endl;
@@ -260,12 +259,16 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             std::cout << "    Device " << dev.device_id << " [" << dev.device_type
                       << "]: " << dev.device_path << " (" << dev.security_flags << ")" << std::endl;
         }
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
+        std::cout << "UCCL backend" << std::endl;
+        backend_params["in_python"] = "0";
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
     }
 
-    agent->createBackend(backend_name, backend_params, backend_engine);
+    CHECK_NIXL_ERROR(agent->createBackend(backend_name, backend_params, backend_engine),
+                     "createBackend failed!");
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
@@ -310,15 +313,8 @@ iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list, nixl_xfer_dlis
     }
 }
 
-
-enum class AllocationType { POSIX_MEMALIGN, CALLOC, MALLOC };
-
 static bool
-allocateXferMemory(size_t buffer_size,
-                   void **addr,
-                   std::optional<AllocationType> allocation_type = std::nullopt,
-                   std::optional<size_t> num = 1) {
-
+allocateXferMemory(size_t buffer_size, void **addr) {
     if (!addr) {
         std::cerr << "Invalid address" << std::endl;
         return false;
@@ -327,38 +323,18 @@ allocateXferMemory(size_t buffer_size,
         std::cerr << "Invalid buffer size" << std::endl;
         return false;
     }
-    AllocationType type = allocation_type.value_or(AllocationType::MALLOC);
-
-    if (type == AllocationType::POSIX_MEMALIGN) {
-        if (xferBenchConfig::page_size == 0) {
-            std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
-            return false;
-        }
-        int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
-        if (rc != 0 || !*addr) {
-            std::cerr << "Failed to allocate " << buffer_size
-                      << " bytes of page-aligned DRAM memory" << std::endl;
-            return false;
-        }
-        memset(*addr, 0, buffer_size);
-    } else if (type == AllocationType::CALLOC) {
-        *addr = calloc(num.value_or(1), buffer_size);
-        if (!*addr) {
-            std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory"
-                      << std::endl;
-            return false;
-        }
-    } else if (type == AllocationType::MALLOC) {
-        *addr = malloc(buffer_size);
-        if (!*addr) {
-            std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory"
-                      << std::endl;
-            return false;
-        }
-    } else {
-        std::cerr << "Invalid allocation type" << std::endl;
+    if (xferBenchConfig::page_size == 0) {
+        std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
         return false;
     }
+
+    int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
+    if (rc != 0 || !*addr) {
+        std::cerr << "Failed to allocate " << buffer_size << " bytes of page-aligned DRAM memory"
+                  << std::endl;
+        return false;
+    }
+    memset(*addr, 0, buffer_size);
     return true;
 }
 
@@ -366,12 +342,7 @@ std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
     void *addr;
 
-    AllocationType type = AllocationType::CALLOC;
-    if (xferBenchConfig::storage_enable_direct) {
-        type = AllocationType::POSIX_MEMALIGN;
-    }
-
-    if (!allocateXferMemory(buffer_size, &addr, type)) {
+    if (!allocateXferMemory(buffer_size, &addr)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
         return std::nullopt;
     }
@@ -578,13 +549,7 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
     // Fill up with data
     void *buf;
-    AllocationType type = AllocationType::MALLOC;
-
-    if (xferBenchConfig::storage_enable_direct) {
-        type = AllocationType::POSIX_MEMALIGN;
-    }
-
-    if (!allocateXferMemory(buffer_size, &buf, type) || !buf) {
+    if (!allocateXferMemory(buffer_size, &buf)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
         return std::nullopt;
     }
@@ -633,7 +598,17 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
         CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree(iov.addr, iov.padded_size),
                                 "Failed to free reserved address");
     } else {
-        CHECK_CUDA_ERROR(cudaFree((void *)iov.addr), "Failed to deallocate CUDA buffer");
+        /*
+         * CUDA streams allow for concurrent execution of kernels and memory operations. However,
+         * memory management functions like cudaFree are implicitly synchronized with all streams to
+         * guarantee safety. This means cudaFree will wait for all kernels (in any stream) that
+         * might use the memory to finish before actually freeing it.
+         * If the application hangs on cudaFree due to kernels running in other streams, switching
+         * to cudaFreeAsync can allow the host to proceed without waiting for the entire device
+         * synchronization.
+         */
+        CHECK_CUDA_ERROR(cudaFreeAsync((void *)iov.addr, 0), "Failed to deallocate CUDA buffer");
+        CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize stream 0");
     }
 }
 #endif /* HAVE_CUDA */
@@ -852,8 +827,12 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
         iov_lists.push_back(iov_list);
 
-        /* Workaround for a GUSLI registration bug which resets memory to 0 */
-        if (seg_type == DRAM_SEG) {
+        /*
+         * Workaround for a GUSLI registration bug which resets memory to 0, this initialization
+         * is only needed when validating data. It was moved from the initBasicDescDram function to
+         * here to avoid memsetting the memory again.
+         */
+        if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
             for (auto &iov : iov_list) {
                 if (isInitiator()) {
                     memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);

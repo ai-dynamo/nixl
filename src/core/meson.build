@@ -29,10 +29,6 @@ if 'UCX' in static_plugins
     nixl_lib_deps += [ ucx_backend_interface, asio_dep, cuda_dep ]
 endif
 
-if 'UCX_MO' in static_plugins
-    nixl_lib_deps += [ ucx_mo_backend_interface, cuda_dep ]
-endif
-
 if 'POSIX' in static_plugins
     nixl_lib_deps += [ posix_backend_interface ]
 endif
@@ -61,10 +57,13 @@ nixl_lib = library('nixl',
                    'nixl_agent.cpp',
                    'nixl_plugin_manager.cpp',
                    'nixl_listener.cpp',
-                   'telemetry.cpp',
+                   'telemetry/telemetry.cpp',
+                   'telemetry/buffer_exporter.cpp',
+                   'telemetry/buffer_plugin.cpp',
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
                    link_args: ['-lstdc++fs'],
                    dependencies: nixl_lib_deps,
-                   install: true)
+                   install: true,
+                   install_rpath: join_paths(get_option('prefix'), get_option('libdir')))
 
 nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs)

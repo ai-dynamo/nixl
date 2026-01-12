@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,7 +50,7 @@ getAvailableNetworkDevices() {
     hints->mode = FI_CONTEXT;
     hints->ep_attr->type = FI_EP_RDM;
 
-    int ret = fi_getinfo(FI_VERSION(1, 9), NULL, NULL, 0, hints, &info);
+    int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
     if (ret) {
         NIXL_ERROR << "fi_getinfo failed " << fi_strerror(-ret);
         fi_freeinfo(hints);
@@ -65,9 +65,9 @@ getAvailableNetworkDevices() {
             std::string device_name = cur->domain_attr->name;
             std::string provider_name = cur->fabric_attr->prov_name;
 
-            NIXL_TRACE << "Found device - domain: " << device_name
-                       << ", provider: " << provider_name << ", ep_type: " << cur->ep_attr->type
-                       << ", caps: 0x" << std::hex << cur->caps << std::dec;
+            NIXL_TRACE << "Found device - domain: " << device_name << ", provider=" << provider_name
+                       << ", ep_type=" << cur->ep_attr->type << ", caps=" << std::hex << cur->caps
+                       << std::dec;
 
             if (provider_device_map.find(provider_name) == provider_device_map.end()) {
                 provider_device_map[provider_name] = {};
@@ -81,7 +81,7 @@ getAvailableNetworkDevices() {
 
     for (auto device_list : provider_device_map) {
         for (auto device : device_list.second) {
-            NIXL_TRACE << "Provider: " << device_list.first << ", Device: " << device;
+            NIXL_TRACE << "provider=" << device_list.first << ", device=" << device;
         }
     }
 
@@ -96,12 +96,11 @@ getAvailableNetworkDevices() {
 }
 
 std::string
-hexdump(const void *data) {
-    static constexpr uint HEXDUMP_MAX_LENGTH = 56;
+hexdump(const void *data, size_t size) {
     std::stringstream ss;
-    ss.str().reserve(HEXDUMP_MAX_LENGTH * 3);
+    ss.str().reserve(size * 3);
     const unsigned char *bytes = static_cast<const unsigned char *>(data);
-    for (size_t i = 0; i < HEXDUMP_MAX_LENGTH; ++i) {
+    for (size_t i = 0; i < size; ++i) {
         ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytes[i]) << " ";
     }
     return ss.str();

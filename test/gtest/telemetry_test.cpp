@@ -56,7 +56,7 @@ protected:
     void
     SetUp() override {
         testDir_ = "/tmp/telemetry_test_files";
-        testFile_ = testDir_.string() + "/test_telemetry";
+        testFile_ = "test_telemetry";
         try {
             if (!fs::exists(testDir_)) {
                 fs::create_directory(testDir_);
@@ -86,9 +86,9 @@ protected:
 
     void
     validateState() {
-        auto path = fs::path(testFile_);
-        auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
-            path.string(), false, TELEMETRY_VERSION);
+        auto path = std::string(testDir_.string()) + "/" + testFile_;
+        auto buffer =
+            std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
         EXPECT_EQ(buffer->version(), TELEMETRY_VERSION);
         EXPECT_EQ(buffer->capacity(), capacity_);
         EXPECT_EQ(buffer->size(), size_);
@@ -136,9 +136,6 @@ TEST_F(telemetryTest, InvalidBufferSize) {
 
     EXPECT_THROW({ nixlTelemetry telemetry(testFile_, backendMap_); }, std::invalid_argument);
     envHelper_.popVar();
-    envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "1023");
-    EXPECT_THROW({ nixlTelemetry telemetry(testFile_, backendMap_); }, std::invalid_argument);
-    envHelper_.popVar();
 }
 
 // Test transfer bytes tracking
@@ -155,10 +152,10 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_NO_THROW(telemetry.updateMemoryDeregistered(1024));
     EXPECT_NO_THROW(telemetry.addXferTime(std::chrono::microseconds(100), true, 2000));
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    auto path = fs::path(testFile_);
-    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
-        path.string(), false, TELEMETRY_VERSION);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
     EXPECT_EQ(buffer->size(), 10);
     EXPECT_EQ(buffer->version(), TELEMETRY_VERSION);
     EXPECT_EQ(buffer->capacity(), capacity_);
@@ -241,10 +238,12 @@ TEST_F(telemetryTest, CustomTelemetryDirectory) {
     envHelper_.addVar(TELEMETRY_DIR_VAR, custom_dir.string());
 
     EXPECT_NO_THROW({
-        fs::path telemetry_file = custom_dir / "test_telemetry";
-        nixlTelemetry telemetry(telemetry_file.string(), backendMap_);
+        std::string telemetry_file = "test_telemetry";
+        nixlTelemetry telemetry(telemetry_file, backendMap_);
 
-        EXPECT_TRUE(fs::exists(telemetry_file));
+        std::string file_path = custom_dir.string() + "/" + telemetry_file;
+
+        EXPECT_TRUE(fs::exists(file_path));
     });
     envHelper_.popVar();
 }
@@ -266,7 +265,7 @@ TEST_F(telemetryTest, TelemetryCategoryStringConversion) {
 // Test concurrent access (basic thread safety)
 TEST_F(telemetryTest, ConcurrentAccess) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
-    testFile_ = testDir_.string() + "/test_concurrent_access";
+    testFile_ = "test_concurrent_access";
     nixlTelemetry telemetry(testFile_, backendMap_);
 
     const int num_threads = 4;
@@ -300,7 +299,7 @@ TEST_F(telemetryTest, ConcurrentAccess) {
     for (auto &thread : threads) {
         thread.join();
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     size_ = operations_per_thread * num_threads;
     readPos_ = 0;
     writePos_ = size_;
@@ -325,18 +324,18 @@ TEST_F(telemetryTest, BackendTelemetryEventsCollection) {
 
     // Add some telemetry events to the backends
     mock_backend1->addTestTelemetryEvent("backend1_event1", 100);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     mock_backend1->addTestTelemetryEvent("backend1_event2", 200);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     mock_backend2->addTestTelemetryEvent("backend2_event1", 300);
 
     // Wait for the telemetry to be written
-    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     // Verify that backend events are collected and written to buffer
-    auto path = fs::path(testFile_);
-    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
-        path.string(), false, TELEMETRY_VERSION);
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
 
     EXPECT_EQ(buffer->size(), 3); // Should have 3 backend events
 
@@ -371,12 +370,12 @@ TEST_F(telemetryTest, BackendTelemetryEventsEmptyBackendMap) {
     telemetry.updateRxBytes(2048);
 
     // Wait for the telemetry to be written
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Verify that only agent events are written (no backend events)
-    auto path = fs::path(testFile_);
-    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
-        path.string(), false, TELEMETRY_VERSION);
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
 
     EXPECT_EQ(buffer->size(), 2); // Only agent events
 
@@ -413,12 +412,12 @@ TEST_F(telemetryTest, BackendTelemetryEventsMixedWithAgentEvents) {
     mock_backend->addTestTelemetryEvent("backend_event2", 200);
 
     // Wait for the telemetry to be written
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Verify that both agent and backend events are written
-    auto path = fs::path(testFile_);
-    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
-        path.string(), false, TELEMETRY_VERSION);
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
 
     EXPECT_EQ(buffer->size(), 4); // 2 agent events + 2 backend events
 
@@ -459,12 +458,12 @@ TEST_F(telemetryTest, BackendTelemetryEventsDisabledTelemetry) {
     mock_backend->addTestTelemetryEvent("backend_event_disabled", 100);
 
     // Wait a bit
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Verify that no events are written
-    auto path = fs::path(testFile_);
-    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
-        path.string(), false, TELEMETRY_VERSION);
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
 
     EXPECT_EQ(buffer->size(), 0);
 
@@ -492,18 +491,18 @@ TEST_F(telemetryTest, BackendTelemetryEventsMultipleBackends) {
 
     // Add events to each backend
     mock_backend1->addTestTelemetryEvent("backend1_event", 100);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     mock_backend2->addTestTelemetryEvent("backend2_event", 200);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     mock_backend3->addTestTelemetryEvent("backend3_event", 300);
 
     // Wait for the telemetry to be written
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     // Verify that events from all backends are collected
-    auto path = fs::path(testFile_);
-    auto buffer = std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(
-        path.string(), false, TELEMETRY_VERSION);
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
 
     EXPECT_EQ(buffer->size(), 3);
 

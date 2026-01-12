@@ -423,9 +423,6 @@ TEST_P(TestErrorHandling, XferPostThenFail) {
 }
 
 INSTANTIATE_TEST_SUITE_P(ucx, TestErrorHandling, testing::Values(std::make_tuple("UCX", 1, 0)));
-INSTANTIATE_TEST_SUITE_P(ucx_mo,
-                         TestErrorHandling,
-                         testing::Values(std::make_tuple("UCX_MO", 1, 0)));
 INSTANTIATE_TEST_SUITE_P(ucx_threadpool,
                          TestErrorHandling,
                          testing::Values(std::make_tuple("UCX", 2, 1)));

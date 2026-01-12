@@ -17,7 +17,6 @@
 absl_log_dep = abseil_proj.get_variable('absl_log_dep')
 absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
 absl_status_dep = abseil_proj.get_variable('absl_status_dep')
-absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
 absl_synchronization_dep = abseil_proj.get_variable('absl_synchronization_dep')
 
 nixl_common_inc = include_directories('.')
@@ -26,10 +25,13 @@ nixl_common_deps = [
     absl_log_dep,
     absl_strings_dep,
     absl_status_dep,
-    absl_strings_dep,
     absl_synchronization_dep,
     dependency('asio', required: true),
 ]
+
+# Get git commit hash
+git_hash = run_command('git', 'rev-parse', '--short=8', 'HEAD', check: false, capture: true)
+git_commit = git_hash.returncode() == 0 ? git_hash.stdout().strip() : 'unknown'
 
 # Define a shared library for common utilities
 nixl_common_lib = shared_library('nixl_common',
@@ -37,6 +39,10 @@ nixl_common_lib = shared_library('nixl_common',
     'uuid_v4.cpp',
     dependencies: nixl_common_deps,
     include_directories: nixl_common_inc,
+    cpp_args: [
+        '-DNIXL_VERSION="' + meson.project_version() + '"',
+        '-DNIXL_GIT_HASH="' + git_commit + '"'
+    ],
     install: true,
 )
 

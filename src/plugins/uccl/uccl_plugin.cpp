@@ -16,32 +16,32 @@
  */
 
 #include "backend/backend_plugin.h"
-#include "ucx_mo_backend.h"
-#include "ucx_utils.h"
+#include "uccl_backend.h"
 
 namespace {
 nixl_b_params_t
-get_ucx_mo_options() {
-    nixl_b_params_t params = get_ucx_backend_common_options();
-    params["num_ucx_engines"] = "8";
+get_uccl_options() {
+    nixl_b_params_t params;
+    params["in_python"] = "";
+    params["num_cpus"] = "";
     return params;
 }
 } // namespace
 
 // Plugin type alias for convenience
-using ucx_mo_plugin_t = nixlBackendPluginCreator<nixlUcxMoEngine>;
+using uccl_plugin_t = nixlBackendPluginCreator<nixlUcclEngine>;
 
-#ifdef STATIC_PLUGIN_UCX_MO
+#ifdef STATIC_PLUGIN_UCCL
 nixlBackendPlugin *
-createStaticUCX_MOPlugin() {
-    return ucx_mo_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "UCX_MO", "0.1.0", get_ucx_mo_options(), {DRAM_SEG, VRAM_SEG});
+createStaticUCCLPlugin() {
+    return uccl_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "UCCL", "0.1.0", get_uccl_options(), {DRAM_SEG, VRAM_SEG});
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return ucx_mo_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "UCX_MO", "0.1.0", get_ucx_mo_options(), {DRAM_SEG, VRAM_SEG});
+    return uccl_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "UCCL", "0.1.0", get_uccl_options(), {DRAM_SEG, VRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

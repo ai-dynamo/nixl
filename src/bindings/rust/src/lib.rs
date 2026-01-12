@@ -58,21 +58,17 @@ use bindings::{
     nixl_capi_opt_args_set_notif_msg, nixl_capi_opt_args_set_skip_desc_merge,
     nixl_capi_params_create_iterator, nixl_capi_params_destroy_iterator, nixl_capi_params_is_empty,
     nixl_capi_params_iterator_next, nixl_capi_post_xfer_req, nixl_capi_reg_dlist_add_desc,
-    nixl_capi_reg_dlist_clear, nixl_capi_reg_dlist_len,
-    nixl_capi_reg_dlist_resize, nixl_capi_register_mem, nixl_capi_string_list_get,
+    nixl_capi_reg_dlist_clear, nixl_capi_register_mem, nixl_capi_string_list_get,
     nixl_capi_string_list_size, nixl_capi_xfer_dlist_add_desc, nixl_capi_xfer_dlist_clear,
-    nixl_capi_xfer_dlist_len, nixl_capi_xfer_dlist_resize,
-    nixl_capi_agent_make_connection, nixl_capi_reg_dlist_get_type, nixl_capi_reg_dlist_desc_count,
-    nixl_capi_reg_dlist_trim, nixl_capi_reg_dlist_rem_desc, nixl_capi_reg_dlist_print,
-    nixl_capi_xfer_dlist_get_type, nixl_capi_xfer_dlist_desc_count,
-    nixl_capi_xfer_dlist_trim, nixl_capi_xfer_dlist_rem_desc,
-    nixl_capi_xfer_dlist_print, nixl_capi_gen_notif, nixl_capi_estimate_xfer_cost,
+    nixl_capi_agent_make_connection,
+    nixl_capi_reg_dlist_print, nixl_capi_xfer_dlist_print, nixl_capi_gen_notif, nixl_capi_estimate_xfer_cost,
     nixl_capi_query_mem, nixl_capi_create_query_resp_list, nixl_capi_destroy_query_resp_list,
     nixl_capi_query_resp_list_size, nixl_capi_query_resp_list_has_value,
     nixl_capi_query_resp_list_get_params, nixl_capi_prep_xfer_dlist, nixl_capi_release_xfer_dlist_handle,
     nixl_capi_make_xfer_req, nixl_capi_get_local_partial_md,
     nixl_capi_send_local_partial_md, nixl_capi_query_xfer_backend, nixl_capi_opt_args_set_ip_addr,
-    nixl_capi_opt_args_set_port, nixl_capi_get_xfer_telemetry
+    nixl_capi_opt_args_set_port, nixl_capi_get_xfer_telemetry,
+    nixl_capi_create_params, nixl_capi_params_add, nixl_capi_is_stub
 };
 
 // Re-export status codes
@@ -164,7 +160,7 @@ impl RegistrationHandle {
             );
             let mut reg_dlist = RegDescList::new(self.mem_type)?;
             unsafe {
-                reg_dlist.add_desc(self.ptr, self.size, self.dev_id)?;
+                reg_dlist.add_desc(self.ptr, self.size, self.dev_id);
                 let _opt_args = OptArgs::new().unwrap();
                 nixl_capi_deregister_mem(
                     agent.write().unwrap().handle.as_ptr(),
@@ -563,4 +559,8 @@ impl NixlRegistration for SystemStorage {
         self.handle = Some(handle);
         Ok(())
     }
+}
+
+pub fn is_stub() -> bool {
+    unsafe { nixl_capi_is_stub() }
 }

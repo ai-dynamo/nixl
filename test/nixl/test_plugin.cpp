@@ -45,7 +45,7 @@ int verify_plugin(std::string name, nixlPluginManager& plugin_manager)
     std::cout << "\nLoading " << name << " plugin..." << std::endl;
 
     // Load the plugin
-    auto plugin_ = plugin_manager.loadPlugin(name);
+    auto plugin_ = plugin_manager.loadBackendPlugin(name);
     if (!plugin_) {
         std::cerr << "Failed to load " << name << " plugin" << std::endl;
         return -1;
@@ -68,13 +68,13 @@ int main(int argc, char** argv) {
     std::set<std::string> plugins = {"UCX",
                                      "GDS",
                                      "POSIX",
-                                     "UCX_MO",
                                      "MOCK_BACKEND",
                                      "GPUNETIO",
                                      "OBJ",
                                      "GDS_MT",
                                      "LIBFABRIC",
-                                     "GUSLI"};
+                                     "GUSLI",
+                                     "UCCL"};
 
     if (argc > 1 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
         print_usage(argv[0]);
@@ -95,14 +95,14 @@ int main(int argc, char** argv) {
 
     // Print list of static plugins available
     std::cout << "Available static plugins:" << std::endl;
-    for (const auto& plugin : plugin_manager.getStaticPlugins()) {
+    for (const auto &plugin : plugin_manager.getBackendStaticPlugins()) {
         std::cout << " - " << plugin.name << std::endl;
         staticPlugs.insert(plugin.name);
     }
 
     // First make sure tested plugins are not already loaded
     for (const auto& plugin : plugins) {
-        plugin_manager.unloadPlugin(plugin);
+        plugin_manager.unloadBackendPlugin(plugin);
     }
 
     for (const auto& plugin : plugins) {
@@ -111,23 +111,25 @@ int main(int argc, char** argv) {
 
     // List all loaded plugins
     std::cout << "\nLoaded plugins:" << std::endl;
-    for (const auto& name : plugin_manager.getLoadedPluginNames()) {
+    for (const auto &name : plugin_manager.getLoadedBackendPluginNames()) {
         std::cout << " - " << name << std::endl;
     }
 
     for (const auto& plugin : plugins) {
-        plugin_manager.unloadPlugin(plugin);
+        plugin_manager.unloadBackendPlugin(plugin);
     }
 
     // List all loaded plugins and make sure static plugins are present
     std::cout << "Loaded plugins after unload:" << std::endl;
-    for (const auto& name : plugin_manager.getLoadedPluginNames()) {
+    for (const auto &name : plugin_manager.getLoadedBackendPluginNames()) {
         std::cout << " - " << name << std::endl;
     }
 
-    // Plugins loaded should only be the static plugins
-    if (plugin_manager.getLoadedPluginNames().size() !=
-        staticPlugs.size()) {
+    // Plugins loaded should only be the static plugins + Mooncake which doesn't unload
+    auto loaded_plugins = plugin_manager.getLoadedBackendPluginNames();
+    loaded_plugins.erase(std::remove(loaded_plugins.begin(), loaded_plugins.end(), "Mooncake"),
+                         loaded_plugins.end());
+    if (loaded_plugins.size() != staticPlugs.size()) {
         std::cerr << "TEST FAILED: Dynamic Plugins are still loaded." << std::endl;
         return -1;
     }

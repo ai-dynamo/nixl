@@ -196,6 +196,10 @@ nixl_capi_status_t
 nixl_capi_opt_args_set_port(nixl_capi_opt_args_t args, uint16_t port);
 
 // Parameter access functions
+nixl_capi_status_t
+nixl_capi_create_params(nixl_capi_params_t *params);
+nixl_capi_status_t
+nixl_capi_params_add(nixl_capi_params_t params, const char *key, const char *value);
 nixl_capi_status_t nixl_capi_params_is_empty(nixl_capi_params_t params, bool* is_empty);
 nixl_capi_status_t nixl_capi_params_create_iterator(nixl_capi_params_t params, nixl_capi_param_iter_t* iter);
 nixl_capi_status_t nixl_capi_params_iterator_next(
@@ -308,7 +312,6 @@ nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist,
                              uint64_t dev_id,
                              const void *metadata,
                              size_t metadata_len);
-nixl_capi_status_t nixl_capi_reg_dlist_len(nixl_capi_reg_dlist_t dlist, size_t* len);
 nixl_capi_status_t nixl_capi_reg_dlist_desc_count(nixl_capi_reg_dlist_t dlist, size_t* count);
 nixl_capi_status_t nixl_capi_reg_dlist_is_empty(nixl_capi_reg_dlist_t dlist, bool* is_empty);
 nixl_capi_status_t nixl_capi_reg_dlist_trim(nixl_capi_reg_dlist_t dlist);
@@ -355,6 +358,8 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
                              nixl_capi_xfer_req_t req_hndl,
                              nixl_capi_xfer_telemetry_t telemetry);
 
+bool
+nixl_capi_is_stub();
 
 #ifdef __cplusplus
 }

@@ -22,15 +22,19 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 /src/utils/ucx @brminich @yosefe @gleon99
 
 # Storage Plugins
-/src/plugins/posix @w1ldptr @barneuman @etoledano @vvenkates27
-/src/plugins/hf3fs @w1ldptr @barneuman @etoledano @vvenkates27
-/src/plugins/cuda_gds @w1ldptr @barneuman @etoledano @vvenkates27
-/src/plugins/obj @w1ldptr @barneuman @etoledano @vvenkates27
+/src/plugins/posix @w1ldptr @vvenkates27 @brminich
+/src/plugins/hf3fs @w1ldptr @vvenkates27 @brminich
+/src/plugins/cuda_gds @w1ldptr @vvenkates27 @brminich
+/src/plugins/obj @w1ldptr @vvenkates27 @brminich
+/src/plugins/gds_mt @w1ldptr @vvenkates27 @brminich
 
 # Benchmarks
 /benchmark @aranadive @ovidiusm @brminich
 
 # Libfabric Plugins
-/src/plugins/libfabric* @yexiang-aws @akkart-aws
-/src/utils/libfabric @yexiang-aws @akkart-aws
-/test/unit/utils/libfabric @yexiang-aws @akkart-aws
+/src/plugins/libfabric* @amitrad-aws @yexiang-aws @akkart-aws @fengjica
+/src/utils/libfabric @amitrad-aws @yexiang-aws @akkart-aws @fengjica
+/test/unit/utils/libfabric @amitrad-aws @yexiang-aws @akkart-aws @fengjica
+
+# NIXL EP example
+/examples/device/ep @itayalroy @ebarilanM @ai-dynamo/nixl-maintainers

@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@
 #include "libfabric/libfabric_topology.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
+#include <sstream>
 
 // Forward declaration for LibfabricUtils namespace
 namespace LibfabricUtils {
@@ -46,10 +47,11 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
 
     // Get network devices from topology and create rails automatically
     std::vector<std::string> all_devices = topology->getAllDevices();
+
     std::string selected_provider_name = topology->getProviderName();
 
     NIXL_DEBUG << "Got " << all_devices.size()
-               << " network devices from topology for provider: " << selected_provider_name;
+               << " network devices from topology for provider=" << selected_provider_name;
 
     // Create data rails with selected provider - throw on failure
     nixl_status_t rail_status = createDataRails(all_devices, selected_provider_name);
@@ -66,7 +68,7 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
 
     NIXL_DEBUG << "Successfully created " << data_rails_.size() << " data rails and "
                << control_rails_.size()
-               << " control rails using provider: " << selected_provider_name;
+               << " control rails using provider=" << selected_provider_name;
 }
 
 nixlLibfabricRailManager::~nixlLibfabricRailManager() {
@@ -94,8 +96,8 @@ nixlLibfabricRailManager::createDataRails(const std::vector<std::string> &efa_de
             // Initialize EFA device mapping
             efa_device_to_rail_map[efa_devices[i]] = i;
 
-            NIXL_DEBUG << "Created data rail " << i << " (device: " << efa_devices[i]
-                       << ", provider: " << provider_name << ")";
+            NIXL_DEBUG << "Created data rail " << i << " (device=" << efa_devices[i]
+                       << ", provider=" << provider_name << ")";
         }
     }
     catch (const std::exception &e) {
@@ -120,8 +122,8 @@ nixlLibfabricRailManager::createControlRails(const std::vector<std::string> &efa
         for (size_t i = 0; i < num_control_rails_; ++i) {
             control_rails_.emplace_back(std::make_unique<nixlLibfabricRail>(
                 efa_devices[i], provider_name, static_cast<uint16_t>(i)));
-            NIXL_DEBUG << "Created control rail " << i << " (device: " << efa_devices[i]
-                       << ", provider: " << provider_name << ")";
+            NIXL_DEBUG << "Created control rail " << i << " (device=" << efa_devices[i]
+                       << ", provider=" << provider_name << ")";
         }
     }
     catch (const std::exception &e) {
@@ -148,8 +150,12 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     const std::vector<size_t> &remote_selected_endpoints,
     const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
     uint16_t agent_idx,
+    uint16_t xfer_id,
     std::function<void()> completion_callback,
-    BinaryNotification *binary_notif) {
+    size_t &submitted_count_out) {
+    // Initialize output parameter
+    submitted_count_out = 0;
+
     if (selected_rails.empty()) {
         NIXL_ERROR << "No rails selected for transfer";
         return NIXL_ERR_INVALID_PARAM;
@@ -157,7 +163,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 
     // Determine striping strategy
     bool use_striping = shouldUseStriping(transfer_size) && selected_rails.size() > 1;
-    NIXL_DEBUG << "use_striping: " << use_striping;
+    NIXL_DEBUG << "use_striping=" << use_striping;
     if (!use_striping) {
         // Round-robin: use one rail for entire transfer
         const auto counter_value = round_robin_counter.fetch_add(1);
@@ -166,7 +172,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             remote_selected_endpoints[counter_value % remote_selected_endpoints.size()];
         NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
-        nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type);
+        nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
         if (!req) {
             NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
             return NIXL_ERR_BACKEND;
@@ -179,13 +185,12 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 
         // For TCP providers, use offset 0 instead of virtual address
         // TCP providers don't support FI_MR_VIRT_ADDR and expect offset-based addressing
-        if (data_rails_[rail_id]->provider_name == "tcp" ||
-            data_rails_[rail_id]->provider_name == "sockets") {
+        if (data_rails_[rail_id]->getRailInfo()->domain_attr->mr_mode & FI_MR_VIRT_ADDR) {
+            req->remote_addr = remote_base_addr; // Use virtual address for EFA and other providers
+        } else {
             req->remote_addr = 0; // Use offset 0 for TCP providers
             NIXL_DEBUG << "TCP provider detected: using offset 0 instead of virtual address "
                        << (void *)remote_base_addr << " for rail " << rail_id;
-        } else {
-            req->remote_addr = remote_base_addr; // Use virtual address for EFA and other providers
         }
 
         req->local_mr = local_mrs[rail_id];
@@ -196,8 +201,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         if (op_type == nixlLibfabricReq::WRITE) {
             // Generate next SEQ_ID for this specific write operation
             uint8_t seq_id = LibfabricUtils::getNextSeqId();
-            uint64_t imm_data = NIXL_MAKE_IMM_DATA(
-                NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, binary_notif->xfer_id, seq_id);
+            uint64_t imm_data =
+                NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
             status = data_rails_[rail_id]->postWrite(req->local_addr,
                                                      req->chunk_size,
                                                      fi_mr_desc(req->local_mr),
@@ -224,10 +229,11 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             return status;
         }
 
-        binary_notif->expected_completions++;
+        // Track submitted request
+        submitted_count_out = 1;
 
         NIXL_DEBUG << "Round-robin: submitted single request on rail " << rail_id << " for "
-                   << transfer_size << " bytes, XFER_ID: " << req->xfer_id;
+                   << transfer_size << " bytes, XFER_ID=" << req->xfer_id;
 
     } else {
         // Striping: distribute across multiple rails
@@ -242,7 +248,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             size_t current_chunk_size = chunk_size + (i == num_rails - 1 ? remainder : 0);
             if (current_chunk_size == 0) break;
             // Allocate request
-            nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type);
+            nixlLibfabricReq *req = data_rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
             if (!req) {
                 NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
                 return NIXL_ERR_BACKEND;
@@ -258,15 +264,14 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 
             // For TCP providers, use offset instead of virtual address
             // TCP providers don't support FI_MR_VIRT_ADDR and expect offset-based addressing
-            if (data_rails_[rail_id]->provider_name == "tcp" ||
-                data_rails_[rail_id]->provider_name == "sockets") {
+            if (data_rails_[rail_id]->getRailInfo()->domain_attr->mr_mode & FI_MR_VIRT_ADDR) {
+                req->remote_addr = remote_base_addr +
+                    chunk_offset; // Use virtual address for EFA and other providers
+            } else {
                 req->remote_addr = chunk_offset; // Use chunk offset for TCP providers
                 NIXL_DEBUG << "TCP provider detected: using chunk offset " << chunk_offset
                            << " instead of virtual address "
                            << (void *)(remote_base_addr + chunk_offset) << " for rail " << rail_id;
-            } else {
-                req->remote_addr = remote_base_addr +
-                    chunk_offset; // Use virtual address for EFA and other providers
             }
 
             req->local_mr = local_mrs[rail_id];
@@ -276,8 +281,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             if (op_type == nixlLibfabricReq::WRITE) {
                 // Generate next SEQ_ID for this specific transfer operation
                 uint8_t seq_id = LibfabricUtils::getNextSeqId();
-                uint64_t imm_data = NIXL_MAKE_IMM_DATA(
-                    NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, binary_notif->xfer_id, seq_id);
+                uint64_t imm_data =
+                    NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
                 status = data_rails_[rail_id]->postWrite(req->local_addr,
                                                          req->chunk_size,
                                                          fi_mr_desc(req->local_mr),
@@ -304,16 +309,14 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                 return status;
             }
 
-            binary_notif->expected_completions++;
+            // Track submitted request
+            submitted_count_out++;
         }
-        NIXL_DEBUG << "Striping: submitted "
-                   << (binary_notif ? binary_notif->expected_completions : 0) << " requests for "
+        NIXL_DEBUG << "Striping: submitted " << submitted_count_out << " requests for "
                    << transfer_size << " bytes";
     }
 
-    NIXL_DEBUG << "Successfully submitted "
-               << (binary_notif ? binary_notif->expected_completions : 0) << " requests for "
-               << transfer_size << " bytes";
+    NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
 
     return NIXL_SUCCESS;
 }
@@ -321,16 +324,25 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 std::vector<size_t>
 nixlLibfabricRailManager::selectRailsForMemory(void *mem_addr,
                                                nixl_mem_t mem_type,
-                                               int gpu_id) const {
+                                               int gpu_id,
+                                               const std::string &gpu_pci_bus_id) const {
     if (mem_type == VRAM_SEG) {
 #ifdef HAVE_CUDA
         if (gpu_id < 0) {
             NIXL_ERROR << "Invalid GPU ID " << gpu_id << " for VRAM memory " << mem_addr;
             return {}; // Return empty vector to indicate failure
         }
-        std::vector<std::string> gpu_efa_devices = topology->getEfaDevicesForGpu(gpu_id);
+
+        // Use PCI bus ID provided by caller (queried in backend layer)
+        if (gpu_pci_bus_id.empty()) {
+            NIXL_ERROR << "Empty PCI bus ID provided for VRAM memory " << mem_addr;
+            return {}; // Return empty vector to indicate failure
+        }
+
+        // Get EFA devices for this PCI bus ID
+        std::vector<std::string> gpu_efa_devices = topology->getEfaDevicesForGPUPci(gpu_pci_bus_id);
         if (gpu_efa_devices.empty()) {
-            NIXL_ERROR << "No EFA devices found for GPU " << gpu_id;
+            NIXL_ERROR << "No EFA devices found for PCI " << gpu_pci_bus_id;
             return {}; // Return empty vector to indicate failure
         }
         std::vector<size_t> gpu_rails;
@@ -340,26 +352,26 @@ nixlLibfabricRailManager::selectRailsForMemory(void *mem_addr,
                 // Bounds check: ensure rail index is valid
                 if (it->second < data_rails_.size()) {
                     gpu_rails.push_back(it->second);
-                    NIXL_DEBUG << "VRAM memory " << mem_addr << " on GPU " << gpu_id
-                               << " mapped to rail " << it->second << " (EFA device: " << efa_device
+                    NIXL_DEBUG << "VRAM memory " << mem_addr << " on GPU-PCI " << gpu_pci_bus_id
+                               << " mapped to rail " << it->second << " (EFA device=" << efa_device
                                << ")";
                 } else {
                     NIXL_WARN << "EFA device " << efa_device << " maps to rail " << it->second
                               << " but only " << data_rails_.size() << " rails available";
                 }
             } else {
-                NIXL_WARN << "EFA device " << efa_device << " not found in rail mapping for GPU "
-                          << gpu_id;
+                NIXL_WARN << "EFA device " << efa_device
+                          << " not found in rail mapping for GPU-PCI " << gpu_pci_bus_id;
             }
         }
 
         if (gpu_rails.empty()) {
-            NIXL_ERROR << "No valid rail mapping found for GPU " << gpu_id << " (checked "
-                       << gpu_efa_devices.size() << " EFA devices)";
+            NIXL_ERROR << "No valid rail mapping found for GPU-PCI " << gpu_pci_bus_id
+                       << " (checked " << gpu_efa_devices.size() << " EFA devices)";
             return {};
         }
 
-        NIXL_DEBUG << "VRAM memory " << mem_addr << " on GPU " << gpu_id << " will use "
+        NIXL_DEBUG << "VRAM memory " << mem_addr << " on GPU-PCI " << gpu_pci_bus_id << " will use "
                    << gpu_rails.size() << " rails total";
         return gpu_rails;
 #else
@@ -390,6 +402,7 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
                                          size_t length,
                                          nixl_mem_t mem_type,
                                          int gpu_id,
+                                         const std::string &gpu_pci_bus_id,
                                          std::vector<struct fid_mr *> &mr_list_out,
                                          std::vector<uint64_t> &key_list_out,
                                          std::vector<size_t> &selected_rails_out) {
@@ -398,8 +411,11 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Use internal rail selection with explicit GPU ID
-    std::vector<size_t> selected_rails = selectRailsForMemory(buffer, mem_type, gpu_id);
+    // Select rails based on memory type and PCI bus ID
+    // For VRAM: uses PCI bus ID provided by backend to map to topology-aware rails
+    // For DRAM: uses all available rails
+    std::vector<size_t> selected_rails =
+        selectRailsForMemory(buffer, mem_type, gpu_id, gpu_pci_bus_id);
     if (selected_rails.empty()) {
         NIXL_ERROR << "No rails selected for memory type " << mem_type;
         return NIXL_ERR_NOT_SUPPORTED;
@@ -407,7 +423,8 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
 
     // Resize output vectors to match all rails
     mr_list_out.resize(data_rails_.size(), nullptr);
-    key_list_out.resize(data_rails_.size(), 0);
+    key_list_out.clear();
+    key_list_out.resize(data_rails_.size(), FI_KEY_NOTAVAIL);
     selected_rails_out = selected_rails; // Return which rails were selected
 
     // Register memory on each selected rail
@@ -428,7 +445,9 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
 
         struct fid_mr *mr;
         uint64_t key;
-        nixl_status_t status = data_rails_[rail_idx]->registerMemory(buffer, length, &mr, &key);
+        // Pass gpu_id parameter to individual rail's registerMemory calls
+        nixl_status_t status =
+            data_rails_[rail_idx]->registerMemory(buffer, length, mem_type, gpu_id, &mr, &key);
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to register memory on rail " << rail_idx;
             // Cleanup already registered MRs
@@ -449,7 +468,7 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         markRailActive(rail_idx);
 
         NIXL_DEBUG << "Registered memory on rail " << rail_idx
-                   << " (mr: " << static_cast<const void *>(mr) << ", key: " << key << ")";
+                   << " (mr=" << static_cast<const void *>(mr) << ", key=" << key << ")";
     }
 
     return NIXL_SUCCESS;
@@ -511,7 +530,7 @@ nixlLibfabricRailManager::insertAllAddresses(
             }
             fi_addrs_out[rail_id].push_back(fi_addr);
             NIXL_DEBUG << "Processed " << rail_type_str << " rail " << rail_id
-                       << " (fi_addr: " << fi_addr << ")";
+                       << " (fi_addr=" << fi_addr << ")";
         }
 
         ep_names_out.push_back(
@@ -543,12 +562,12 @@ nixlLibfabricRailManager::cleanupConnection(RailType rail_type,
             nixl_status_t status = rails[rail_id]->removeAddress(fi_addrs_to_remove[rail_id]);
             if (status != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed to remove address from " << rail_type_str << " rail "
-                           << rail_id << ", fi_addr: " << fi_addrs_to_remove[rail_id];
+                           << rail_id << ", fi_addr=" << fi_addrs_to_remove[rail_id];
                 overall_status = status;
                 // Continue cleanup for other rails even if one fails
             } else {
                 NIXL_DEBUG << "Successfully removed address from " << rail_type_str << " rail "
-                           << rail_id << ", fi_addr: " << fi_addrs_to_remove[rail_id];
+                           << rail_id << ", fi_addr=" << fi_addrs_to_remove[rail_id];
             }
         } else {
             NIXL_DEBUG << "Skipping FI_ADDR_UNSPEC for " << rail_type_str << " rail " << rail_id;
@@ -606,7 +625,7 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     }
 
     NIXL_DEBUG << "Sending control message type " << msg_type_value << " agent_idx=" << agent_idx
-               << " XFER_ID=" << xfer_id << " imm_data=0x" << std::hex << imm_data << std::dec;
+               << " XFER_ID=" << xfer_id << " imm_data=" << imm_data;
 
     // Rail postSend
     nixl_status_t status = control_rails_[control_rail_id]->postSend(imm_data, dest_addr, req);
@@ -713,8 +732,8 @@ nixlLibfabricRailManager::serializeMemoryKeys(const std::vector<uint64_t> &keys,
     ser_des.addBuf("addr", &buffer, sizeof(buffer));
     str = ser_des.exportStr();
 
-    NIXL_DEBUG << "Serialized memory keys for " << keys.size() << " rails" << " (buffer: " << buffer
-               << ", size: " << str.length() << " bytes)";
+    NIXL_DEBUG << "Serialized memory keys for " << keys.size() << " rails" << " (buffer=" << buffer
+               << ", size=" << str.length() << " bytes)";
     return NIXL_SUCCESS;
 }
 
@@ -762,7 +781,7 @@ nixlLibfabricRailManager::serializeConnectionInfo(const std::string &user_prefix
     serializeRailEndpoints(ser_des, control_prefix, RailType::CONTROL);
     str = ser_des.exportStr();
     NIXL_DEBUG << "Connection info serialized with prefix " << user_prefix
-               << ", size: " << str.length();
+               << ", size=" << str.length();
     return NIXL_SUCCESS;
 }
 
@@ -852,7 +871,7 @@ nixlLibfabricRailManager::deserializeRailEndpoints(
         // First check if the key exists and get its length
         ssize_t actual_len = ser_des.getBufLen(rail_key);
         if (actual_len <= 0) {
-            NIXL_ERROR << "Key " << rail_key << " not found or has invalid length: " << actual_len;
+            NIXL_ERROR << "Key " << rail_key << " not found or has invalid length=" << actual_len;
             return NIXL_ERR_BACKEND;
         }
 
@@ -866,7 +885,7 @@ nixlLibfabricRailManager::deserializeRailEndpoints(
         nixl_status_t status = ser_des.getBuf(rail_key, endpoints_out[rail_id].data(), actual_len);
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to get endpoint address for rail " << rail_id
-                       << " with key: " << rail_key << ", status: " << status;
+                       << " with key=" << rail_key << ", status: " << status;
             return NIXL_ERR_BACKEND;
         }
     }
