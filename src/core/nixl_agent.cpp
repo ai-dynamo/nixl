@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -118,6 +118,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
         NIXL_DEBUG << "NIXL ETCD is disabled";
     }
 #else
+    useEtcd = false;
     NIXL_DEBUG << "NIXL ETCD is excluded";
 #endif // HAVE_ETCD
     if (name.empty())
