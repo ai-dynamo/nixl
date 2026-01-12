@@ -1109,24 +1109,23 @@ template <int kNumThreads>
 __forceinline__ __device__ void barrier(int thread_id, int rank, int num_ranks,
                                         int* mask_buffer_ptr, int* sync_buffer_ptr, ep_kernels::gpu_nixl_ctx nixl_ctx) {
     EP_DEVICE_ASSERT(kNumThreads >= num_ranks);
-    if (thread_id == 0) atomicAdd(sync_buffer_ptr + rank, -1);
-    __syncthreads();
 
-    int cnt = sync_buffer_ptr[rank];
     if (thread_id < num_ranks && thread_id != rank) {
         const auto dst_rank = thread_id;
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
+            int expected_cnt = atomicAdd(nixl_ctx.local_barrier_cnt + dst_rank, -1) - 1;
+
             nixlGpuXferReqH barrier_req = nixl_ctx.remote_barrier_get(dst_rank);
-            nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::THREAD>(barrier_req, 0, rank*sizeof(int), rank*sizeof(int), sizeof(int), 0);
+            nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::THREAD>(barrier_req, 0, dst_rank * sizeof(int), rank * sizeof(int), sizeof(int), 0);
 
             auto start_time = clock64();
             uint64_t wait_recv_cost = 0;
-            while (ld_acquire_sys_global(reinterpret_cast<int*>(sync_buffer_ptr + dst_rank)) != cnt // remote is not ready
-                   && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES               // not timeout
-            );
-            // Mask rank if timeout
+            while (ld_acquire_sys_global(sync_buffer_ptr + dst_rank) != expected_cnt
+                   && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES);
+
             if (wait_recv_cost > NUM_TIMEOUT_CYCLES) {
-                printf("Warning: NixlEP timeout for barrier, rank %d, dst_rank %d, expected value %d, actual value %d\n", rank, dst_rank, cnt, ld_acquire_global(sync_buffer_ptr + dst_rank));
+                printf("Warning: NixlEP timeout for barrier, rank %d, dst_rank %d, expected value %d, actual value %d\n",
+                       rank, dst_rank, expected_cnt, ld_acquire_global(sync_buffer_ptr + dst_rank));
                 if (mask_buffer_ptr == nullptr)
                     trap();
                 atomicExch(mask_buffer_ptr + dst_rank, 1);

@@ -177,6 +177,8 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     int num_sync_buffer_bytes = max_num_ranks * sizeof(int);
     CUDA_CHECK(cudaMalloc(&sync_buffer_ptr, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
+    CUDA_CHECK(cudaMalloc(&local_barrier_cnt_ptr, num_sync_buffer_bytes));
+    CUDA_CHECK(cudaMemset(local_barrier_cnt_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaDeviceSynchronize());
 
     strncpy(my_peer_info.ip, _get_local_ip().c_str(), MAX_IP_LENGTH - 1);
@@ -249,8 +251,10 @@ void Buffer::destroy() {
 
     if (enable_shrink) {
         cudaFree(mask_buffer_ptr);
-        cudaFree(sync_buffer_ptr);
     }
+
+    cudaFree(sync_buffer_ptr);
+    cudaFree(local_barrier_cnt_ptr);
 
     // Free workspace
     CUDA_CHECK(cudaFree(workspace));
@@ -330,10 +334,6 @@ void Buffer::_nixl_agents_peer_info_gather(std::vector<int>& ranks) {
     }
 }
 
-void Buffer::_nixl_ep_barrier_buffer_clear(int rank) {
-    CUDA_CHECK(cudaMemset(sync_buffer_ptr + rank, 0, sizeof(int)));
-}
-
 void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds) {
     EP_HOST_ASSERT(!remote_ranks_list.empty());
     EP_HOST_ASSERT(!remote_mds.has_value() || remote_mds->size() == remote_ranks_list.size());
@@ -351,13 +351,11 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std:
 
         new_ranks.push_back(remote_rank);
         CUDA_CHECK(cudaMemset(mask_buffer_ptr + remote_rank, 0, sizeof(int)));
+        CUDA_CHECK(cudaMemset(local_barrier_cnt_ptr + remote_rank, 0, sizeof(int)));
+        CUDA_CHECK(cudaMemset(sync_buffer_ptr + remote_rank, 0, sizeof(int)));
 
         if (remote_mds.has_value())
             new_ranks_mds.push_back((*remote_mds)[i]);
-
-        if (enable_shrink) {
-            _nixl_ep_barrier_buffer_clear(remote_rank);
-        }
     }
 
     if (new_ranks.empty())
@@ -738,6 +736,8 @@ void Buffer::_nixl_ep_gpu_ctx_update() {
     nixl_ctx->gpu[1].num_local_experts = max_experts_per_rank;
     nixl_ctx->gpu[0].local_barrier_buffer = sync_buffer_ptr;
     nixl_ctx->gpu[1].local_barrier_buffer = sync_buffer_ptr;
+    nixl_ctx->gpu[0].local_barrier_cnt = local_barrier_cnt_ptr;
+    nixl_ctx->gpu[1].local_barrier_cnt = local_barrier_cnt_ptr;
     nixl_ctx->gpu[0].num_ranks = max_num_ranks;
     nixl_ctx->gpu[1].num_ranks = max_num_ranks;
     nixl_ctx->gpu[0].num_channels = num_ucx_channels;
@@ -810,11 +810,13 @@ void Buffer::_nixl_agent_init() {
     EP_HOST_ASSERT(agent->registerMem(counters_dlist) == NIXL_SUCCESS);
 
     /* Register sync buffer */
-    if (sync_buffer_ptr) {
-        nixl_reg_dlist_t sync_dlist(VRAM_SEG);
-        sync_dlist.addDesc(nixlBlobDesc((uintptr_t)(sync_buffer_ptr), max_num_ranks * sizeof(int), get_local_device_id(), ""));
-        EP_HOST_ASSERT(agent->registerMem(sync_dlist) == NIXL_SUCCESS);
-    }
+    nixl_reg_dlist_t sync_dlist(VRAM_SEG);
+    sync_dlist.addDesc(nixlBlobDesc((uintptr_t)(sync_buffer_ptr), max_num_ranks * sizeof(int), get_local_device_id(), ""));
+    EP_HOST_ASSERT(agent->registerMem(sync_dlist) == NIXL_SUCCESS);
+
+    nixl_reg_dlist_t barrier_cnt_dlist(VRAM_SEG);
+    barrier_cnt_dlist.addDesc(nixlBlobDesc((uintptr_t)(local_barrier_cnt_ptr), max_num_ranks * sizeof(int), get_local_device_id(), ""));
+    EP_HOST_ASSERT(agent->registerMem(barrier_cnt_dlist) == NIXL_SUCCESS);
 
     size_t signal_size = 0;
     EP_HOST_ASSERT(nixl_agent_info->agent->getGpuSignalSize(signal_size, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
@@ -847,7 +849,7 @@ void Buffer::_nixl_ep_batches_prepare(const std::vector<int>& ranks) {
         EP_HOST_ASSERT(nixl_agent_info->agent->createGpuXferReq(*nixl_ctx->cpu_batch_reqs[j], nixl_ctx->gpu_batch_reqs[j]) == NIXL_SUCCESS);
 
         nixl_xfer_dlist_t src_vram_ll(VRAM_SEG);
-        src_vram_ll.addDesc(nixlBlobDesc((uintptr_t)(sync_buffer_ptr), max_num_ranks * sizeof(int), get_local_device_id(), ""));
+        src_vram_ll.addDesc(nixlBlobDesc((uintptr_t)(local_barrier_cnt_ptr), max_num_ranks * sizeof(int), get_local_device_id(), ""));
         nixl_xfer_dlist_t dst_vram_ll(VRAM_SEG);
         dst_vram_ll.addDesc(nixlBlobDesc((uintptr_t)(nixl_peer_info[j].sync_buffer_ptr), max_num_ranks * sizeof(int), nixl_peer_info[j].device_id, ""));
         EP_HOST_ASSERT(nixl_agent_info->agent->createXferReq(NIXL_WRITE, src_vram_ll, dst_vram_ll, nixl_agent_info->remote_agent_names[j], nixl_ctx->cpu_barrier_reqs[j], &extra_params) == NIXL_SUCCESS);

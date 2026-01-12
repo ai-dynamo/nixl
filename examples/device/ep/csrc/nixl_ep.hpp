@@ -109,6 +109,7 @@ private:
     bool enable_shrink = false;
     int *mask_buffer_ptr = nullptr;
     int *sync_buffer_ptr = nullptr;
+    int *local_barrier_cnt_ptr = nullptr;
 
     // Device info and communication
     int device_id;
@@ -161,7 +162,6 @@ private:
     void _nixl_ep_counters_cleanup(const std::vector<int>& ranks_to_remove);
     void _nixl_ep_batches_cleanup(const std::vector<int>& ranks_to_remove);
     void _nixl_ep_p2p_ptrs_cleanup(const std::vector<int>& ranks_to_remove);
-    void _nixl_ep_barrier_buffer_clear(int rank);
 
 public:
     Buffer(int rank, bool explicitly_destroy, bool enable_shrink);
