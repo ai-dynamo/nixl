@@ -27,7 +27,8 @@
 // Expose at runtime whether device code was compiled to expect pre-swapped mkeys
 __device__ __constant__ int __doca_mkey_swapped = DOCA_GPUNETIO_VERBS_MKEY_SWAPPED;
 
-extern "C" int doca_query_mkey_swapped() {
+extern "C" int
+doca_query_mkey_swapped() {
     int v = 0;
     if (cudaMemcpyFromSymbol(&v, __doca_mkey_swapped, sizeof(v)) != cudaSuccess) return -1;
     return v;
@@ -136,10 +137,10 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
         wqe_idx = base_wqe_idx + idx;
         wqe_ptr = doca_gpu_dev_verbs_get_wqe_ptr(qp, wqe_idx);
 
-        uint32_t rkey = nixl_prepare_mkey(
-            xferReqRing[pos].rkey[idx], xferReqRing[pos].keys_are_swapped);
-        uint32_t lkey = nixl_prepare_mkey(
-            xferReqRing[pos].lkey[idx], xferReqRing[pos].keys_are_swapped);
+        uint32_t rkey =
+            nixl_prepare_mkey(xferReqRing[pos].rkey[idx], xferReqRing[pos].keys_are_swapped);
+        uint32_t lkey =
+            nixl_prepare_mkey(xferReqRing[pos].lkey[idx], xferReqRing[pos].keys_are_swapped);
 
         doca_gpu_dev_verbs_wqe_prepare_read(qp,
                                             wqe_ptr,
@@ -168,8 +169,8 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
             wqe_idx++;
             wqe_ptr = doca_gpu_dev_verbs_get_wqe_ptr(qp, wqe_idx);
 
-            uint32_t dump_lkey = nixl_prepare_mkey(
-                xferReqRing[pos].lkey[tot_wqe - 1], xferReqRing[pos].keys_are_swapped);
+            uint32_t dump_lkey = nixl_prepare_mkey(xferReqRing[pos].lkey[tot_wqe - 1],
+                                                   xferReqRing[pos].keys_are_swapped);
 
             doca_gpu_dev_verbs_wqe_prepare_dump(qp,
                                                 wqe_ptr,
@@ -219,10 +220,10 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
         wqe_idx = base_wqe_idx + idx;
         wqe_ptr = doca_gpu_dev_verbs_get_wqe_ptr(qp, wqe_idx);
 
-        uint32_t rkey = nixl_prepare_mkey(
-            xferReqRing[pos].rkey[idx], xferReqRing[pos].keys_are_swapped);
-        uint32_t lkey = nixl_prepare_mkey(
-            xferReqRing[pos].lkey[idx], xferReqRing[pos].keys_are_swapped);
+        uint32_t rkey =
+            nixl_prepare_mkey(xferReqRing[pos].rkey[idx], xferReqRing[pos].keys_are_swapped);
+        uint32_t lkey =
+            nixl_prepare_mkey(xferReqRing[pos].lkey[idx], xferReqRing[pos].keys_are_swapped);
 #if ENABLE_DEBUG == 1
         printf("prepare_write radd %lx rkey %x ladd %lx lkey %x size %ld\n",
                (uint64_t)(xferReqRing[pos].rbuf[idx]),

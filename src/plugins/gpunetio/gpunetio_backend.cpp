@@ -27,7 +27,8 @@
 
 const char info_delimiter = '-';
 
-extern "C" int doca_query_mkey_swapped();
+extern "C" int
+doca_query_mkey_swapped();
 /****************************************
  * Constructor/Destructor
  *****************************************/
@@ -61,8 +62,8 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
             swap_keys_config = true;
     }
     NIXL_DEBUG << "GPUNETIO key byte-order swap (htonl): "
-               << (swap_keys_config ? "enabled" : "disabled")
-               << ", device expects swapped: " << (device_mkey_swapped >= 0 ? device_mkey_swapped : -1);
+               << (swap_keys_config ? "enabled" : "disabled") << ", device expects swapped: "
+               << (device_mkey_swapped >= 0 ? device_mkey_swapped : -1);
 
     NIXL_INFO << "DOCA network devices ";
     // Temporary: will extend to more GPUs in a dedicated PR
@@ -196,14 +197,13 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     } else {
         doca_devinfo_get_ipv4_addr(
             doca_dev_as_devinfo(ddev), (uint8_t *)ipv4_addr, DOCA_DEVINFO_IPV4_ADDR_SIZE);
-	if (const char *override_ip = std::getenv("NIXL_DOCASIM_IPV4_OVERRIDE")) {
+        if (const char *override_ip = std::getenv("NIXL_DOCASIM_IPV4_OVERRIDE")) {
             struct in_addr addr_override = {};
             if (inet_pton(AF_INET, override_ip, &addr_override) == 1) {
                 std::memcpy(ipv4_addr, &addr_override.s_addr, sizeof(ipv4_addr));
                 NIXL_INFO << "DOCA IP override applied from env " << override_ip;
             } else {
-                NIXL_WARN << "Invalid IPv4 override in NIXL_DOCASIM_IPV4_OVERRIDE: "
-                          << override_ip;
+                NIXL_WARN << "Invalid IPv4 override in NIXL_DOCASIM_IPV4_OVERRIDE: " << override_ip;
             }
         }
         NIXL_DEBUG << "DOCA IP address " << static_cast<unsigned>(ipv4_addr[0]) << " "
@@ -543,8 +543,8 @@ nixlDocaEngine::progressThreadStart() {
         /* Set port and IP: */
         server_addr.sin_family = AF_INET;
         server_addr.sin_port = htons(DOCA_RDMA_CM_LOCAL_PORT_SERVER);
-//        server_addr.sin_addr.s_addr = INADDR_ANY;
-         /* listen on any interface */
+        //        server_addr.sin_addr.s_addr = INADDR_ANY;
+        /* listen on any interface */
         std::memcpy(&server_addr.sin_addr.s_addr, ipv4_addr, sizeof(ipv4_addr));
         if (server_addr.sin_addr.s_addr == 0) server_addr.sin_addr.s_addr = INADDR_ANY;
         /* Bind to the set port and IP: */
@@ -1061,16 +1061,13 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
 
     uint32_t lkey = priv->mr->get_lkey();
     uint32_t rkey = priv->mr->get_rkey();
-    NIXL_INFO << "GPUNETIO registerMem publish dev " << priv->devId << " addr "
-              << std::showbase << std::hex << std::uppercase << (uintptr_t)priv->mr->get_addr()
-              << " len " << (uint64_t)priv->mr->get_tot_size()
-              << " lkey " << lkey
-              << " rkey " << rkey
+    NIXL_INFO << "GPUNETIO registerMem publish dev " << priv->devId << " addr " << std::showbase
+              << std::hex << std::uppercase << (uintptr_t)priv->mr->get_addr() << " len "
+              << (uint64_t)priv->mr->get_tot_size() << " lkey " << lkey << " rkey " << rkey
               << std::noshowbase << std::dec;
     NIXL_DEBUG << "[dbg] publish raw: dev=" << priv->devId
                << " addr_dec=" << (uintptr_t)priv->mr->get_addr()
-               << " len_dec=" << (uint64_t)priv->mr->get_tot_size()
-               << " lkey_dec=" << lkey
+               << " len_dec=" << (uint64_t)priv->mr->get_tot_size() << " lkey_dec=" << lkey
                << " rkey_dec=" << rkey;
     out = (nixlBackendMD *)priv;
 
@@ -1122,7 +1119,8 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
         tokens.push_back(token);
     // Parse as unsigned to avoid overflow/truncation (rkeys often exceed INT_MAX)
     NIXL_TRACE << "[dbg] loadRemoteMD tokens size=" << tokens.size();
-    for (size_t i = 0; i < tokens.size(); ++i) NIXL_TRACE << "[dbg] token[" << i << "]=" << tokens[i];
+    for (size_t i = 0; i < tokens.size(); ++i)
+        NIXL_TRACE << "[dbg] token[" << i << "]=" << tokens[i];
     const char *p0 = tokens[0].c_str();
     const char *p1 = tokens[1].c_str();
     const char *p2 = tokens[2].c_str();
@@ -1137,10 +1135,9 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     uint32_t rkey = static_cast<uint32_t>(rkey_ul);
     uintptr_t addr = static_cast<uintptr_t>(addr_ull);
     size_t tot_size = static_cast<size_t>(size_ull);
-    NIXL_TRACE << "[dbg] parsed remote MD rkey=" << std::showbase << std::hex << std::uppercase << rkey
-               << " addr=" << addr
-               << " size=" << (uint64_t)tot_size
-               << std::noshowbase << std::dec;
+    NIXL_TRACE << "[dbg] parsed remote MD rkey=" << std::showbase << std::hex << std::uppercase
+               << rkey << " addr=" << addr << " size=" << (uint64_t)tot_size << std::noshowbase
+               << std::dec;
 
     // Empty mmap, filled with imported data
     try {
@@ -1239,14 +1236,12 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
 
             NIXL_INFO << "GPUNETIO prepXfer queue_pos " << pos << " idx " << idx << " laddr "
                       << std::showbase << std::hex << std::uppercase
-                      << xferReqRingCpu[pos].lbuf[idx] << " lkey " << lkey_host
-                      << " lkey_be " << lkey_be << " raddr " << xferReqRingCpu[pos].rbuf[idx]
-                      << " rkey " << rkey_host << " rkey_be " << rkey_be
-                      << " size " << (uint64_t)xferReqRingCpu[pos].size[idx]
-                      << std::noshowbase << std::dec;
+                      << xferReqRingCpu[pos].lbuf[idx] << " lkey " << lkey_host << " lkey_be "
+                      << lkey_be << " raddr " << xferReqRingCpu[pos].rbuf[idx] << " rkey "
+                      << rkey_host << " rkey_be " << rkey_be << " size "
+                      << (uint64_t)xferReqRingCpu[pos].size[idx] << std::noshowbase << std::dec;
             NIXL_TRACE << "[dbg] remote_desc_addr=" << std::showbase << std::hex << std::uppercase
-                       << dbg_rbuf_desc << " remote_mr_addr=" << dbg_rbuf_mr
-                       << " used=mr_addr"
+                       << dbg_rbuf_desc << " remote_mr_addr=" << dbg_rbuf_mr << " used=mr_addr"
                        << std::noshowbase << std::dec;
         }
 

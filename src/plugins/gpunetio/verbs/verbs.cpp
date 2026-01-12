@@ -468,10 +468,9 @@ mr::mr(doca_gpu *gpu_dev_, void *addr_, uint32_t elem_num_, size_t elem_size_, s
 
     NIXL_DEBUG << "[dbg] MR path: " << (dmabuf_fd >= 0 ? "dmabuf" : "peermem/ibv_reg_mr")
                << ", addr 0x" << std::hex << std::uppercase << (uintptr_t)addr << std::dec
-               << " len 0x" << std::hex << (uint64_t)tot_size << std::dec
-               << " lkey 0x" << std::hex << (uint32_t)lkey << std::dec
-               << " rkey 0x" << std::hex << (uint32_t)rkey << std::dec;
-
+               << " len 0x" << std::hex << (uint64_t)tot_size << std::dec << " lkey 0x" << std::hex
+               << (uint32_t)lkey << std::dec << " rkey 0x" << std::hex << (uint32_t)rkey
+               << std::dec;
 }
 
 mr::mr(void *addr_, size_t tot_size_, uint32_t rkey_)
