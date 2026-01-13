@@ -786,6 +786,7 @@ void Buffer::_nixl_agent_init() {
     // Set UCX-specific parameters
     init_params["ucx_error_handling_mode"] = "none";
     init_params["num_workers"] = std::to_string(1);
+    init_params["engine_config"] = "RC_GDA_NUM_CHANNELS=4";
 
     nixlBackendH* ucx_backend = nullptr;
     status = agent->createBackend("UCX", init_params, ucx_backend);
