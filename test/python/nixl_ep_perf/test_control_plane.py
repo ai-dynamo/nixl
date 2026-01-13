@@ -524,6 +524,12 @@ def main():
         "--rounds", type=int, default=DEFAULT_ROUNDS, help="Measurement rounds"
     )
     parser.add_argument(
+        "--num-tokens", type=int, default=DEFAULT_NUM_TOKENS, help="Number of tokens per rank (default: 512)"
+    )
+    parser.add_argument(
+        "--hidden", type=int, default=DEFAULT_HIDDEN, help="Hidden dimension size (default: 4096)"
+    )
+    parser.add_argument(
         "--nvlink-backend",
         type=str,
         default="ipc",
@@ -646,6 +652,8 @@ def main():
             num_experts_per_rank=num_experts,
             warmup_rounds=args.warmup,
             measure_rounds=args.rounds,
+            num_tokens=args.num_tokens,
+            hidden=args.hidden,
             nvlink_backend=args.nvlink_backend,
             use_tcp_store=not args.use_etcd,
             world_size=world_size,
