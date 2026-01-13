@@ -35,13 +35,13 @@ namespace ep_kernels {
 struct gpu_nixl_ctx {
     uint64_t *local_counters; // [local_expert_id][src_rank]
     uint64_t *clean_counters; // Counters to be cleaned for the next iteration
-    nixlGpuXferReqH *remote_counter_reqs; // [dest_rank]
-    nixlGpuXferReqH *batch_reqs; // [dest_rank]
-    int *local_barrier_buffer; // [src_rank]
+    nixlGpuXferReqH *nixl_reqs; // [dest_rank]
+    uint64_t counters_offset;
+    uint64_t rdma_offset;
+    uint64_t sync_offset;
+    uint64_t barrier_offset;
     int *local_barrier_cnt; // [dst_rank]
-    nixlGpuXferReqH *remote_barrier_reqs; // [dest_rank]
     void **rdma_p2p_ptrs; // [num_ranks]
-    uint64_t **counters_p2p_ptrs; // [num_ranks]
     void *rdma_buffer_ptr;
     int num_local_experts;
     int num_channels;
@@ -53,35 +53,42 @@ struct gpu_nixl_ctx {
         if (rdma_p2p_ptrs[dst_rank] == nullptr)
             return nullptr;
 
-        return (void *)(reinterpret_cast<uint64_t>(rdma_p2p_ptrs[dst_rank]) + batch_offset_get(ptr));
+        return (void *)(reinterpret_cast<uint64_t>(rdma_p2p_ptrs[dst_rank]) +
+                        batch_offset_get(ptr));
     }
 
     /* Double buffering considerations are handled by nixl_ctx */
     __device__ inline uint64_t *counter_p2p_ptr_get(int local_expert_idx, int dst_rank) {
-        if (counters_p2p_ptrs[dst_rank] == nullptr)
+        if (rdma_p2p_ptrs[dst_rank] == nullptr)
             return nullptr;
 
-        return counters_p2p_ptrs[dst_rank] + (local_expert_idx * num_ranks + rank);
+        return reinterpret_cast<uint64_t*>(
+            reinterpret_cast<uint64_t>(rdma_p2p_ptrs[dst_rank]) +
+            counter_offset_get(local_expert_idx));
     }
 
     __device__ inline uint64_t *local_counter_get(int local_expert_idx, int src_rank) {
         return &local_counters[local_expert_idx * num_ranks + src_rank];
     }
 
-    __device__ inline nixlGpuXferReqH remote_counter_get(int dest_rank) {
-        return remote_counter_reqs[dest_rank];
+    __device__ inline int* local_barrier_cnt_get(int dst_rank) {
+        return &local_barrier_cnt[dst_rank];
     }
 
-    __device__ inline size_t remote_counter_offset_get(int local_expert_idx) {
-        return (local_expert_idx * num_ranks + rank) * sizeof(uint64_t);
+    __device__ inline nixlGpuXferReqH nixl_req_get(int dest_rank) {
+        return nixl_reqs[dest_rank];
     }
 
-    __device__ inline nixlGpuXferReqH remote_barrier_get(int dest_rank) {
-        return remote_barrier_reqs[dest_rank];
+    __device__ inline size_t counter_offset_get(int local_expert_idx) {
+        return counters_offset + (local_expert_idx * num_ranks + rank) * sizeof(uint64_t);
     }
 
-    __device__ inline nixlGpuXferReqH batch_get(int dest_rank) {
-        return batch_reqs[dest_rank];
+    __device__ inline size_t barrier_src_offset_get(int dst_rank) {
+        return barrier_offset + dst_rank * sizeof(int);
+    }
+
+    __device__ inline size_t barrier_dst_offset_get(int src_rank) {
+        return sync_offset + src_rank * sizeof(int);
     }
 
     __device__ inline size_t batch_offset_get(uint64_t ptr) {
