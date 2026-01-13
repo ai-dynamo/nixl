@@ -79,10 +79,10 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     config << "# Config file\nversion=1\n";
 
     for (const auto &dev : devices) {
-        // Format: "id type access_mode shared_exclusive path security_flags"
-        // Example: "11 F W N ./store0.bin sec=0x3"
+        // Format: "id type access_mode direct_io path security_flags"
+        // Example: "11 F W D ./store0.bin sec=0x3"
         config << dev.device_id << " " << dev.device_type << " "
-               << "W N " // Write mode, Not shared (exclusive)
+               << "W D " // Write mode, Direct I/O
                << dev.device_path << " " << dev.security_flags << "\n";
     }
 
