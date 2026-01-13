@@ -764,7 +764,15 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             exit(EXIT_FAILURE);
         }
 
-        remote_fds = createFileFds(getName(), num_files);
+        std::vector<std::string> filenames;
+        if (!xferBenchConfig::filenames.empty()) {
+            std::string filename;
+            std::stringstream ss(xferBenchConfig::filenames);
+            while (std::getline(ss, filename, ',')) {
+                filenames.push_back(filename);
+            }
+        }
+        remote_fds = createFileFds(getName(), num_files, filenames);
         if (remote_fds.empty()) {
             std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
             exit(EXIT_FAILURE);
