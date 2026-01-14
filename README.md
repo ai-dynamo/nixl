@@ -10,10 +10,14 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![GitHub Release](https://img.shields.io/github/v/release/ai-dynamo/nixl)](https://github.com/ai-dynamo/nixl/releases/latest)
 
+## Supported Platforms
+NIXL is supported on a Linux environment only. It is tested on Ubuntu (22.04/24.04) and Fedora. macOS and Windows are not currently supported; use a Linux host or container/VM.
+
 ## Pre-build Distributions
 ### PyPI Wheel
 
 The nixl python API and libraries, including UCX, are available directly through PyPI.
+For example, if you have a GPU running on a Linux host, container, or VM, you can do the following install:
 
 It can be installed for CUDA 12 with:
 
@@ -31,7 +35,7 @@ For backwards compatibility, `pip install nixl` installs automatically `nixl[cu1
 
 If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environment, `nixl-cu13` takes precedence.
 
-## Prerequisites for source build
+## Prerequisites for source build (Linux)
 ### Ubuntu:
 
 `$ sudo apt install build-essential cmake pkg-config`
