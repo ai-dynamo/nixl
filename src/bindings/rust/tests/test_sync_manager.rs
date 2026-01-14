@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 use nixl_sys::{BackendSyncable, SyncManager};
@@ -22,6 +22,24 @@ struct DummyData {
     should_fail: Cell<bool>,
 }
 
+impl DummyBackend {
+    fn default() -> Self {
+        Self {
+            sync_calls: Rc::new(Cell::new(0)),
+        }
+    }
+}
+
+impl DummyData {
+    fn default() -> Self {
+        Self {
+            value: Cell::new(0),
+            data_calls: Rc::new(Cell::new(0)),
+            should_fail: Cell::new(false),
+        }
+    }
+}
+
 impl BackendSyncable for DummyData {
     type Backend = DummyBackend;
     type Error = TestError;
@@ -40,17 +58,10 @@ impl BackendSyncable for DummyData {
 
 #[test]
 fn sync_manager_first_access_triggers_single_sync() {
-    let data_calls = Rc::new(Cell::new(0));
-    let backend_calls = Rc::new(Cell::new(0));
-
-    let data = DummyData {
-        value: Cell::new(0),
-        data_calls: data_calls.clone(),
-        should_fail: Cell::new(false),
-    };
-    let backend = DummyBackend {
-        sync_calls: backend_calls.clone(),
-    };
+    let data = DummyData::default();
+    let backend = DummyBackend::default();
+    let data_calls = data.data_calls.clone();
+    let backend_calls = backend.sync_calls.clone();
     let mgr = SyncManager::new(data, backend);
 
     // First access -> sync happens
@@ -66,17 +77,10 @@ fn sync_manager_first_access_triggers_single_sync() {
 
 #[test]
 fn sync_manager_resyncs_after_modify() {
-    let data_calls = Rc::new(Cell::new(0));
-    let backend_calls = Rc::new(Cell::new(0));
-
-    let data = DummyData {
-        value: Cell::new(0),
-        data_calls: data_calls.clone(),
-        should_fail: Cell::new(false),
-    };
-    let backend = DummyBackend {
-        sync_calls: backend_calls.clone(),
-    };
+    let data = DummyData::default();
+    let backend = DummyBackend::default();
+    let data_calls = data.data_calls.clone();
+    let backend_calls = backend.sync_calls.clone();
     let mut mgr = SyncManager::new(data, backend);
 
     // Ensure initial sync
@@ -94,17 +98,10 @@ fn sync_manager_resyncs_after_modify() {
 
 #[test]
 fn sync_manager_backend_accessor_triggers_sync() {
-    let data_calls = Rc::new(Cell::new(0));
-    let backend_calls = Rc::new(Cell::new(0));
-
-    let data = DummyData {
-        value: Cell::new(0),
-        data_calls: data_calls.clone(),
-        should_fail: Cell::new(false),
-    };
-    let backend = DummyBackend {
-        sync_calls: backend_calls.clone(),
-    };
+    let data = DummyData::default();
+    let backend = DummyBackend::default();
+    let data_calls = data.data_calls.clone();
+    let backend_calls = backend.sync_calls.clone();
     let mgr = SyncManager::new(data, backend);
 
     // Read-only data access should not sync
@@ -120,17 +117,10 @@ fn sync_manager_backend_accessor_triggers_sync() {
 
 #[test]
 fn sync_manager_error_is_propagated_and_retry_succeeds() {
-    let data_calls = Rc::new(Cell::new(0));
-    let backend_calls = Rc::new(Cell::new(0));
-
-    let data = DummyData {
-        value: Cell::new(0),
-        data_calls: data_calls.clone(),
-        should_fail: Cell::new(false),
-    };
-    let backend = DummyBackend {
-        sync_calls: backend_calls.clone(),
-    };
+    let data = DummyData::default();
+    let backend = DummyBackend::default();
+    let data_calls = data.data_calls.clone();
+    let backend_calls = backend.sync_calls.clone();
     let mut mgr = SyncManager::new(data, backend);
 
     // Configure to fail on first sync
