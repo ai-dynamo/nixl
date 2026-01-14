@@ -672,8 +672,6 @@ std::string Buffer::get_local_metadata() const {
 }
 
 void Buffer::_nixl_ep_gpu_ctx_update() {
-    int num_ucx_channels = max_experts_per_rank;
-
     /* Initialize local counter arrays */
     nixl_ctx->gpu[0].local_counters = counters_buffer_ptr;
     nixl_ctx->gpu[1].local_counters = counters_buffer_ptr + max_num_ranks * max_experts_per_rank;
@@ -739,8 +737,6 @@ void Buffer::_nixl_ep_gpu_ctx_update() {
     nixl_ctx->gpu[1].local_barrier_cnt = local_barrier_cnt_ptr;
     nixl_ctx->gpu[0].num_ranks = max_num_ranks;
     nixl_ctx->gpu[1].num_ranks = max_num_ranks;
-    nixl_ctx->gpu[0].num_channels = num_ucx_channels;
-    nixl_ctx->gpu[1].num_channels = num_ucx_channels;
     nixl_ctx->gpu[0].rank = rank;
     nixl_ctx->gpu[1].rank = rank;
 }
@@ -786,7 +782,6 @@ void Buffer::_nixl_agent_init() {
     // Set UCX-specific parameters
     init_params["ucx_error_handling_mode"] = "none";
     init_params["num_workers"] = std::to_string(1);
-    init_params["engine_config"] = "RC_GDA_NUM_CHANNELS=4";
 
     nixlBackendH* ucx_backend = nullptr;
     status = agent->createBackend("UCX", init_params, ucx_backend);
