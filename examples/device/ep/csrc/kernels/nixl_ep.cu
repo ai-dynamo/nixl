@@ -301,7 +301,7 @@ DISPATCH_RECV:
             }
             // Do not receive tokens if rank timeout or masked
             if (num_recv_tokens == 0)
-                num_recv_tokens = -1;
+                num_recv_tokens = 1;
             // Mask rank if timeout
             if (wait_recv_cost > NUM_TIMEOUT_CYCLES) {
                 printf("Warning: NIXL-EP timeout for dispatch receive, rank %d, local_expert_idx %d, src_rank %d\n",
