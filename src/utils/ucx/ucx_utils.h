@@ -38,6 +38,8 @@ enum class nixl_ucx_mt_t {
 };
 
 constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
+constexpr std::string_view nixl_ucx_rc_gda_num_channels_param_name = "ucx_rc_gda_num_channels";
+constexpr int nixl_ucx_rc_gda_num_channels_default_value = 4;
 
 template<typename Enum>
 [[nodiscard]] constexpr auto enumToInteger(const Enum e) noexcept
@@ -202,6 +204,7 @@ public:
                    bool prog_thread,
                    unsigned long num_workers,
                    nixl_thread_sync_t sync_mode,
+                   size_t rc_gda_num_channels,
                    const std::string &engine_conf = "");
     ~nixlUcxContext();
 
