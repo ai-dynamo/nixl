@@ -830,6 +830,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
 
     size_t num_workers = nixl_b_params_get(custom_params, "num_workers", 1);
     size_t num_threads = nixl_b_params_get(custom_params, "num_threads", 0);
+    size_t num_channels = nixl_b_params_get(custom_params,
+                                            "nixl_ucx_num_channels", 4);
 
     if (num_workers <= num_threads) {
         /* There must be at least one shared worker */
@@ -845,17 +847,13 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
         err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
     }
 
-    int rc_gda_num_channels = nixl_b_params_get(
-        custom_params, std::string(nixl_ucx_rc_gda_num_channels_param_name),
-        nixl_ucx_rc_gda_num_channels_default_value);
-
     const auto engine_config_it = custom_params->find("engine_config");
     const auto engine_config =
         (engine_config_it != custom_params->end()) ? engine_config_it->second : "";
 
     uc = std::make_unique<nixlUcxContext>(
-        devs, init_params.enableProgTh, num_workers, init_params.syncMode, rc_gda_num_channels,
-        engine_config);
+        devs, init_params.enableProgTh, num_workers, init_params.syncMode,
+        num_channels, engine_config);
 
     for (size_t i = 0; i < num_workers; i++) {
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
