@@ -450,7 +450,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     config.modify("RNDV_THRESH", "inf");
     config.modify("MAX_RMA_RAILS", "2");
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
-    config.modify("num_channels", std::to_string(num_channels));
+    config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_channels));
 
     if (ucp_version >= UCP_VERSION(1, 19)) {
         config.modify("MAX_COMPONENT_MDS", "32");
