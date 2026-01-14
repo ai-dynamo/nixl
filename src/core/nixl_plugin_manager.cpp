@@ -475,12 +475,11 @@ nixlPluginManager::discoverTelemetryPlugin(const std::string &filename) {
 }
 
 void
-nixlPluginManager::discoverPluginsFromDir(const std::string &dirpath) {
-    std::filesystem::path dir_path(dirpath);
+nixlPluginManager::discoverPluginsFromDir(const std::filesystem::path& dirpath) {
     std::error_code ec;
-    std::filesystem::directory_iterator dir_iter(dir_path, ec);
+    std::filesystem::directory_iterator dir_iter(dirpath, ec);
     if (ec) {
-        NIXL_ERROR << "Error accessing directory(" << dir_path << "): "
+        NIXL_ERROR << "Error accessing directory(" << dirpath << "): "
                    << ec.message();
         return;
     }

@@ -18,6 +18,7 @@
 #ifndef __PLUGIN_MANAGER_H
 #define __PLUGIN_MANAGER_H
 
+#include <filesystem>
 #include <string>
 #include <map>
 #include <memory>
@@ -174,7 +175,7 @@ private:
 
     // Search a directory for plugins
     void
-    discoverPluginsFromDir(const std::string &dirpath);
+    discoverPluginsFromDir(const std::filesystem::path &dirpath);
 
     // Discover helper functions
     void
