@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,7 +54,8 @@ export NIXL_ETCD_NAMESPACE="/nixl/nixlbench_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
-sleep 5
+
+wait_for_etcd
 
 echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}
@@ -81,7 +82,7 @@ run_nixlbench_two_workers() {
     args="$@"
     run_nixlbench --benchmark_group $benchmark_group $args &
     pid=$!
-    sleep 1
+    sleep 5
     run_nixlbench --benchmark_group $benchmark_group $args
     wait $pid
 }

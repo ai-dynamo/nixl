@@ -21,6 +21,7 @@
 #include "libfabric/libfabric_topology.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
+#include <sstream>
 
 // Forward declaration for LibfabricUtils namespace
 namespace LibfabricUtils {
@@ -46,6 +47,7 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
 
     // Get network devices from topology and create rails automatically
     std::vector<std::string> all_devices = topology->getAllDevices();
+
     std::string selected_provider_name = topology->getProviderName();
 
     NIXL_DEBUG << "Got " << all_devices.size()
@@ -322,16 +324,25 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 std::vector<size_t>
 nixlLibfabricRailManager::selectRailsForMemory(void *mem_addr,
                                                nixl_mem_t mem_type,
-                                               int gpu_id) const {
+                                               int gpu_id,
+                                               const std::string &gpu_pci_bus_id) const {
     if (mem_type == VRAM_SEG) {
 #ifdef HAVE_CUDA
         if (gpu_id < 0) {
             NIXL_ERROR << "Invalid GPU ID " << gpu_id << " for VRAM memory " << mem_addr;
             return {}; // Return empty vector to indicate failure
         }
-        std::vector<std::string> gpu_efa_devices = topology->getEfaDevicesForGpu(gpu_id);
+
+        // Use PCI bus ID provided by caller (queried in backend layer)
+        if (gpu_pci_bus_id.empty()) {
+            NIXL_ERROR << "Empty PCI bus ID provided for VRAM memory " << mem_addr;
+            return {}; // Return empty vector to indicate failure
+        }
+
+        // Get EFA devices for this PCI bus ID
+        std::vector<std::string> gpu_efa_devices = topology->getEfaDevicesForGPUPci(gpu_pci_bus_id);
         if (gpu_efa_devices.empty()) {
-            NIXL_ERROR << "No EFA devices found for GPU " << gpu_id;
+            NIXL_ERROR << "No EFA devices found for PCI " << gpu_pci_bus_id;
             return {}; // Return empty vector to indicate failure
         }
         std::vector<size_t> gpu_rails;
@@ -341,7 +352,7 @@ nixlLibfabricRailManager::selectRailsForMemory(void *mem_addr,
                 // Bounds check: ensure rail index is valid
                 if (it->second < data_rails_.size()) {
                     gpu_rails.push_back(it->second);
-                    NIXL_DEBUG << "VRAM memory " << mem_addr << " on GPU " << gpu_id
+                    NIXL_DEBUG << "VRAM memory " << mem_addr << " on GPU-PCI " << gpu_pci_bus_id
                                << " mapped to rail " << it->second << " (EFA device=" << efa_device
                                << ")";
                 } else {
@@ -349,18 +360,18 @@ nixlLibfabricRailManager::selectRailsForMemory(void *mem_addr,
                               << " but only " << data_rails_.size() << " rails available";
                 }
             } else {
-                NIXL_WARN << "EFA device " << efa_device << " not found in rail mapping for GPU "
-                          << gpu_id;
+                NIXL_WARN << "EFA device " << efa_device
+                          << " not found in rail mapping for GPU-PCI " << gpu_pci_bus_id;
             }
         }
 
         if (gpu_rails.empty()) {
-            NIXL_ERROR << "No valid rail mapping found for GPU " << gpu_id << " (checked "
-                       << gpu_efa_devices.size() << " EFA devices)";
+            NIXL_ERROR << "No valid rail mapping found for GPU-PCI " << gpu_pci_bus_id
+                       << " (checked " << gpu_efa_devices.size() << " EFA devices)";
             return {};
         }
 
-        NIXL_DEBUG << "VRAM memory " << mem_addr << " on GPU " << gpu_id << " will use "
+        NIXL_DEBUG << "VRAM memory " << mem_addr << " on GPU-PCI " << gpu_pci_bus_id << " will use "
                    << gpu_rails.size() << " rails total";
         return gpu_rails;
 #else
@@ -391,6 +402,7 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
                                          size_t length,
                                          nixl_mem_t mem_type,
                                          int gpu_id,
+                                         const std::string &gpu_pci_bus_id,
                                          std::vector<struct fid_mr *> &mr_list_out,
                                          std::vector<uint64_t> &key_list_out,
                                          std::vector<size_t> &selected_rails_out) {
@@ -399,8 +411,11 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Use internal rail selection with explicit GPU ID
-    std::vector<size_t> selected_rails = selectRailsForMemory(buffer, mem_type, gpu_id);
+    // Select rails based on memory type and PCI bus ID
+    // For VRAM: uses PCI bus ID provided by backend to map to topology-aware rails
+    // For DRAM: uses all available rails
+    std::vector<size_t> selected_rails =
+        selectRailsForMemory(buffer, mem_type, gpu_id, gpu_pci_bus_id);
     if (selected_rails.empty()) {
         NIXL_ERROR << "No rails selected for memory type " << mem_type;
         return NIXL_ERR_NOT_SUPPORTED;
@@ -430,6 +445,7 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
 
         struct fid_mr *mr;
         uint64_t key;
+        // Pass gpu_id parameter to individual rail's registerMemory calls
         nixl_status_t status =
             data_rails_[rail_idx]->registerMemory(buffer, length, mem_type, gpu_id, &mr, &key);
         if (status != NIXL_SUCCESS) {

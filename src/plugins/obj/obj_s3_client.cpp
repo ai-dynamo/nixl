@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,15 +38,33 @@
 
 namespace {
 
+std::optional<std::string>
+getEndpointOverride(nixl_b_params_t *custom_params) {
+    if (custom_params) {
+        auto endpoint_it = custom_params->find("endpoint_override");
+        if (endpoint_it != custom_params->end() && !endpoint_it->second.empty()) {
+            return endpoint_it->second;
+        }
+    }
+
+    const char *env_endpoint = std::getenv("AWS_ENDPOINT_OVERRIDE");
+    if (env_endpoint && env_endpoint[0] != '\0') {
+        return std::string(env_endpoint);
+    }
+
+    return std::nullopt;
+}
+
 Aws::Client::ClientConfiguration
 createClientConfiguration(nixl_b_params_t *custom_params) {
     Aws::Client::ClientConfiguration config;
 
-    if (!custom_params) return config;
+    auto endpoint_override = ::getEndpointOverride(custom_params);
+    if (endpoint_override.has_value()) {
+        config.endpointOverride = endpoint_override.value();
+    }
 
-    auto endpoint_override_it = custom_params->find("endpoint_override");
-    if (endpoint_override_it != custom_params->end())
-        config.endpointOverride = endpoint_override_it->second;
+    if (!custom_params) return config;
 
     auto scheme_it = custom_params->find("scheme");
     if (scheme_it != custom_params->end()) {

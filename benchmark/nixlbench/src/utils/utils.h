@@ -156,6 +156,7 @@ public:
     static std::string etcd_endpoints;
     static std::string benchmark_group;
     static std::string filepath;
+    static std::string filenames;
     static bool enable_vmm;
     static int num_files;
     static std::string posix_api_type;

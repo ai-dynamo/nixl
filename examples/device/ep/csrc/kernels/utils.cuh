@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * This file incorporates material from the DeepSeek project, licensed under the MIT License.
  * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -38,8 +38,21 @@
         for (int __j = 0; __j < (UNROLL_FACTOR); ++ __j) \
             ST_FUNC(__dst + __i + __j * 32, unrolled_values[__j]); \
     } \
-    for (int __i = ((N) / kLoopStride) * kLoopStride + (LANE_ID); __i < (N); __i += 32) \
-        ST_FUNC(__dst + __i, LD_FUNC(__src + __i)); \
+    { \
+        int __i = ((N) / kLoopStride) * kLoopStride + (LANE_ID); \
+        _Pragma("unroll") \
+        for (int __j = 0; __j < (UNROLL_FACTOR); ++ __j) { \
+            if (__i + __j * 32 < (N)) { \
+                unrolled_values[__j] = LD_FUNC(__src + __i + __j * 32); \
+            } \
+        } \
+        _Pragma("unroll") \
+        for (int __j = 0; __j < (UNROLL_FACTOR); ++ __j) { \
+            if (__i + __j * 32 < (N)) { \
+                ST_FUNC(__dst + __i + __j * 32, unrolled_values[__j]); \
+            } \
+        } \
+    } \
 }
 
 namespace nixl_ep {
@@ -228,28 +241,33 @@ __device__  __forceinline__ float exp2f_approx(const float &x) {
     return ret;
 }
 
-// TMA PTX instructions
-#ifndef DISABLE_SM90_FEATURES
+__forceinline__ __device__ int get_lane_id() {
+    int lane_id;
+    asm("mov.s32 %0, %laneid;" : "=r"(lane_id));
+    return lane_id;
+}
 
-__device__ __forceinline__ uint32_t elect_one_sync(int lane_id) {
+__device__ __forceinline__ uint32_t elect_one_sync() {
+#ifndef DISABLE_SM90_FEATURES
     uint32_t pred = 0;
     asm volatile(
       "{\n"
       ".reg .b32 %%rx;\n"
       ".reg .pred %%px;\n"
-      "      elect.sync %%rx|%%px, %2;\n"
-      "@%%px mov.s32 %1, 1;\n"
-      "      mov.s32 %0, %%rx;\n"
+      "      elect.sync %%rx|%%px, %1;\n"
+      "@%%px mov.s32 %0, 1;\n"
+
       "}\n"
-      : "+r"(lane_id), "+r"(pred)
+      : "+r"(pred)
       : "r"(0xffffffff));
     return pred;
+#else
+    return get_lane_id() == 0;
+#endif
 }
 
-__device__ __forceinline__ void fence_view_async_shared() {
-    asm volatile("fence.proxy.async.shared::cta; \n" :: );
-}
-
+// TMA PTX instructions
+#ifndef DISABLE_SM90_FEATURES
 __device__ __forceinline__ void fence_barrier_init() {
     asm volatile("fence.mbarrier_init.release.cluster; \n" :: );
 }
@@ -314,7 +332,7 @@ __device__ __forceinline__ void tma_store_1d(const void* smem_ptr, const void* g
     asm volatile("cp.async.bulk.commit_group;");
 }
 
-template <int N = 0>
+template <int N>
 __device__ __forceinline__ void tma_store_wait() {
     asm volatile("cp.async.bulk.wait_group.read %0;" :: "n"(N) : "memory");
 }
@@ -365,11 +383,6 @@ __device__ __forceinline__ dtype_t broadcast(dtype_t& ptr, int src_lane_idx) {
     return *reinterpret_cast<dtype_t*>(recv_int_values);
 }
 
-__forceinline__ __device__ int get_lane_id() {
-    int lane_id;
-    asm("mov.s32 %0, %laneid;" : "=r"(lane_id));
-    return lane_id;
-}
 
 constexpr float kFP8Margin = 1e-4;
 constexpr float kFinfoAmaxE4M3 = 448.0f;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -89,7 +89,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
     std::cout << "Thread " << thread_id << " Wait for initiator and then send xfer descs\n";
     std::string message = serdes.exportStr();
     while (agent.genNotif(initiator, message, extra_params) != NIXL_SUCCESS) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
     std::cout << "Thread " << thread_id << " End Control Path metadata exchanges\n";
 
@@ -105,8 +105,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
                 return x == MEM_VAL;
             });
         });
-        if (!rc)
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (!rc) std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     if (!rc)
         std::cerr << "Thread " << thread_id << " UCX Transfer failed, buffers are different\n";

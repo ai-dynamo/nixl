@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +21,7 @@
 #include "libfabric_common.h"
 #include "nixl.h"
 #include <hwloc.h>
-#include <map>
+#include <unordered_map>
 
 /**
  * @brief Topology discovery and management for AWS instances with EFA devices
@@ -32,8 +32,8 @@
  */
 class nixlLibfabricTopology {
 private:
-    // GPU to EFA device mapping: GPU 0→[efa0,efa1], GPU 1→[efa2,efa3], etc.
-    std::map<int, std::vector<std::string>> gpu_to_efa_devices;
+    // PCI bus ID to EFA device mapping: "0000:72:00.0"→[efa0,efa1], etc.
+    std::unordered_map<std::string, std::vector<std::string>> pci_to_efa_devices;
 
     // All available network devices discovered on this system
     std::vector<std::string> all_devices;
@@ -53,8 +53,8 @@ private:
     hwloc_topology_t hwloc_topology;
 
     // PCIe to Libfabric device mapping
-    std::map<std::string, std::string> pcie_to_libfabric_map;
-    std::map<std::string, std::string> libfabric_to_pcie_map;
+    std::unordered_map<std::string, std::string> pcie_to_libfabric_map;
+    std::unordered_map<std::string, std::string> libfabric_to_pcie_map;
 
     // Helper methods
     nixl_status_t
@@ -127,7 +127,7 @@ public:
 
     // GPU-based queries (main interface)
     std::vector<std::string>
-    getEfaDevicesForGpu(int gpu_id) const;
+    getEfaDevicesForGPUPci(const std::string &pci_bus_id) const;
 
     // System information
     int
@@ -151,8 +151,6 @@ public:
         return topology_discovered;
     }
 
-    bool
-    isValidGpuId(int gpu_id) const;
     bool
     isValidDevice(const std::string &efa_device) const;
 

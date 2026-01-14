@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,7 +59,7 @@ namespace {
     }
 
     constexpr int default_max_waits = 20000;
-    constexpr nixlTime::us_t default_wait_time = 1000;
+    constexpr nixlTime::us_t default_wait_time = 10000;
     constexpr char default_test_files_dir_path[] = "/mnt/3fs/";
 
     // Helper function to generate timestamped filename

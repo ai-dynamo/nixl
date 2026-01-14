@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@ ARG ARCH="x86_64"
 ARG UCX_REF="v1.20.x"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG BUILD_TYPE="release"
+ARG URING_TAG="liburing-2.13"
 
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy && \
@@ -127,6 +128,16 @@ RUN mkdir aws_sdk_build && cd aws_sdk_build && \
         -DOPENSSL_USE_STATIC_LIBS=OFF && \
     make -j${NPROC:-$(nproc)} && make install
 
+RUN git clone https://github.com/axboe/liburing.git && \
+     cd liburing && \
+     git checkout $URING_TAG && \
+     ./configure --cc=gcc --cxx=g++ && \
+     make -j library && make liburing.pc && make install && \
+     ldconfig && \
+     cd ..
+
+ENV PKG_CONFIG_PATH=/usr/lib/pkgconfig:$PKG_CONFIG_PATH
+
 RUN git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
      sed -i '/^LFLAGS_ALL =/{/-lrt/ b; s/$/ -lrt/}' Makefile && \
@@ -164,7 +175,7 @@ RUN wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3
     # Check that gpunetio development package is installed correctly
     pkg-config --cflags --libs doca-gpunetio
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/lib:/usr/local/lib:$LD_LIBRARY_PATH
 
 ENV CUDA_PATH=/usr/local/cuda
 
@@ -274,7 +285,7 @@ ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     export UV_INDEX_STRATEGY=unsafe-best-match && \
-    mkdir -p dist && \
+    rm -rf dist && mkdir -p dist && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         export PATH=$VIRTUAL_ENV/bin:$PATH && \
         ./contrib/build-wheel.sh \
