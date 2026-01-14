@@ -524,10 +524,16 @@ def main():
         "--rounds", type=int, default=DEFAULT_ROUNDS, help="Measurement rounds"
     )
     parser.add_argument(
-        "--num-tokens", type=int, default=DEFAULT_NUM_TOKENS, help="Number of tokens per rank (default: 512)"
+        "--num-tokens",
+        type=int,
+        default=DEFAULT_NUM_TOKENS,
+        help="Number of tokens per rank (default: 512)",
     )
     parser.add_argument(
-        "--hidden", type=int, default=DEFAULT_HIDDEN, help="Hidden dimension size (default: 4096)"
+        "--hidden",
+        type=int,
+        default=DEFAULT_HIDDEN,
+        help="Hidden dimension size (default: 4096)",
     )
     parser.add_argument(
         "--nvlink-backend",
