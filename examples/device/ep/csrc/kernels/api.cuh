@@ -44,7 +44,6 @@ struct gpu_nixl_ctx {
     uint64_t **counters_p2p_ptrs; // [num_ranks]
     void *rdma_buffer_ptr;
     int num_local_experts;
-    int num_channels;
     int num_ranks;
     int rank;
 

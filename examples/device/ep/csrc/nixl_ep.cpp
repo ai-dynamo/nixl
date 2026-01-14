@@ -672,9 +672,6 @@ std::string Buffer::get_local_metadata() const {
 }
 
 void Buffer::_nixl_ep_gpu_ctx_update() {
-    assert(getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr);
-    int num_ucx_channels = std::stoi(std::getenv("UCX_RC_GDA_NUM_CHANNELS"));
-
     /* Initialize local counter arrays */
     nixl_ctx->gpu[0].local_counters = counters_buffer_ptr;
     nixl_ctx->gpu[1].local_counters = counters_buffer_ptr + max_num_ranks * max_experts_per_rank;
@@ -740,8 +737,6 @@ void Buffer::_nixl_ep_gpu_ctx_update() {
     nixl_ctx->gpu[1].local_barrier_cnt = local_barrier_cnt_ptr;
     nixl_ctx->gpu[0].num_ranks = max_num_ranks;
     nixl_ctx->gpu[1].num_ranks = max_num_ranks;
-    nixl_ctx->gpu[0].num_channels = num_ucx_channels;
-    nixl_ctx->gpu[1].num_channels = num_ucx_channels;
     nixl_ctx->gpu[0].rank = rank;
     nixl_ctx->gpu[1].rank = rank;
 }
