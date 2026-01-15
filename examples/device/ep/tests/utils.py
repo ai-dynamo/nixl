@@ -47,15 +47,11 @@ def init_dist(local_rank: int, num_local_ranks: int):
     }
     if "device_id" in sig.parameters:
         # noinspection PyTypeChecker
-        params["device_id"] = torch.device(
-            "cuda:0"
-        )  # TODO: restore to local_rank once ucx fixes lane-selection
+        params["device_id"] = torch.device(f"cuda:{local_rank}")
     dist.init_process_group(**params)
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
-    torch.cuda.set_device(
-        0
-    )  # TODO: restore to local_rank once ucx fixes lane-selection
+    torch.cuda.set_device(local_rank)
 
     return (
         dist.get_rank(),
