@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # This file incorporates material from the DeepSeek project, licensed under the MIT License.
 # The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -21,6 +21,7 @@
 from typing import Any, Optional, Tuple
 
 import torch
+import torch.distributed as dist
 
 # noinspection PyUnresolvedReferences
 from .nixl_ep_cpp import EventHandle
