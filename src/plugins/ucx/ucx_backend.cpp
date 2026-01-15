@@ -830,8 +830,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
 
     size_t num_workers = nixl_b_params_get(custom_params, "num_workers", 1);
     size_t num_threads = nixl_b_params_get(custom_params, "num_threads", 0);
-    size_t num_channels = nixl_b_params_get(custom_params, "ucx_num_channels",
-                                            4);
+    size_t num_device_channels = nixl_b_params_get(custom_params,
+                                                   "ucx_num_device_channels", 4);
 
     if (num_workers <= num_threads) {
         /* There must be at least one shared worker */
@@ -853,7 +853,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
 
     uc = std::make_unique<nixlUcxContext>(
         devs, init_params.enableProgTh, num_workers, init_params.syncMode,
-        num_channels, engine_config);
+        num_device_channels, engine_config);
 
     for (size_t i = 0; i < num_workers; i++) {
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
