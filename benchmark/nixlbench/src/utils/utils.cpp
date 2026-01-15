@@ -125,6 +125,7 @@ const std::vector<xferBenchParamInfo> xbench_params = {
 
     // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
     NB_ARG_STRING(filepath, "", "File path for storage operations"),
+    NB_ARG_STRING(filenames, "", "Comma-separated filenames for storage operations"),
     NB_ARG_INT32(num_files, 1, "Number of files used by benchmark"),
     NB_ARG_BOOL(storage_enable_direct, false, "Enable direct I/O for storage operations"),
 
@@ -245,6 +246,7 @@ std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
 std::string xferBenchConfig::filepath = "";
+std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
@@ -481,6 +483,7 @@ xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
     num_threads = NB_ARG(num_threads);
     etcd_endpoints = NB_ARG(etcd_endpoints);
     filepath = NB_ARG(filepath);
+    filenames = NB_ARG(filenames);
     num_files = NB_ARG(num_files);
     posix_api_type = NB_ARG(posix_api_type);
     storage_enable_direct = NB_ARG(storage_enable_direct);
@@ -639,6 +642,7 @@ xferBenchConfig::printConfig() {
 
         if (xferBenchConfig::isStorageBackend()) {
             printOption("filepath (--filepath=path)", filepath);
+            printOption("filenames (--filenames=filename1,filename2,...)", filenames);
             printOption("Number of files (--num_files=N)", std::to_string(num_files));
             printOption("Storage enable direct (--storage_enable_direct=[0,1])",
                         std::to_string(storage_enable_direct));
