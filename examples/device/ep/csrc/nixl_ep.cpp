@@ -785,6 +785,10 @@ void Buffer::_nixl_agent_init() {
     }
 
     // Set UCX-specific parameters
+    const char* num_channels_env = std::getenv("NIXL_EP_NUM_CHANNELS");
+    if (num_channels_env != nullptr) {
+        init_params["ucx_num_channels"] = num_channels_env;
+    }
     init_params["ucx_error_handling_mode"] = "none";
     init_params["num_workers"] = std::to_string(1);
 
