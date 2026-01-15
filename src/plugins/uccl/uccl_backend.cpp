@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -273,7 +273,8 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
 
     if (mem_reg_info_.count(mem.addr)) {
         auto priv = mem_reg_info_[mem.addr];
-        NIXL_DEBUG << "Registering memory: " << mem.addr << ", len:  " << mem.len;
+        NIXL_DEBUG << "Registering memory: " << std::hex << mem.addr << ", len: " << std::dec
+                   << mem.len;
         priv->ref_cnt++;
         out = priv;
         return NIXL_SUCCESS;
@@ -414,19 +415,24 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
     std::vector<md_t> md_vector;
     std::vector<nixlUcclBackendMD *> local_priv_vector;
 
+    std::lock_guard<std::mutex> lock(mem_mutex_);
     for (size_t i = 0; i < lcnt; i++) {
         lmd = (nixlUcclBackendMD *)local[i].metadataP;
         rmd = (nixlUcclBackendMD *)remote[i].metadataP;
         size_t rsize = remote[i].len;
+        uintptr_t local_addr = local[i].addr;
+        uintptr_t remote_addr = remote[i].addr;
 
-        NIXL_DEBUG << "lmd: " << lmd->addr << ", " << lmd->mr_id << " rmd: " << rmd->addr << ", "
+        NIXL_DEBUG << "prepXfer iovec[" << i << "]: local[i].addr=" << std::hex << local_addr
+                   << ", lmd->addr=" << std::hex << lmd->addr << ", lmd->mr_id=" << std::dec
+                   << lmd->mr_id << ", remote[i].addr=" << std::hex << remote_addr
+                   << ", rmd->addr=" << std::hex << rmd->addr << ", rmd->mr_id=" << std::dec
                    << rmd->mr_id;
 
         // Validate the local address is registered
-        std::lock_guard<std::mutex> lock(mem_mutex_);
         auto local_mem_iter = mem_reg_info_.find((uint64_t)lmd->addr);
         if (local_mem_iter == mem_reg_info_.end()) {
-            NIXL_ERROR << "Local memory not registered for address: " << lmd->addr;
+            NIXL_ERROR << "Local memory not registered for address:" << std::hex << lmd->addr;
             return NIXL_ERR_BACKEND;
         }
 
@@ -439,7 +445,7 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         // Prepare the memory region metadata for batch sending
         md_t md;
         tx_msg_t tx_data;
-        tx_data.data_ptr = (uint64_t)rmd->addr;
+        tx_data.data_ptr = remote_addr;
         tx_data.data_size = rsize;
 
         // RC mode is supported for both READ/WRITE operations
@@ -459,25 +465,30 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
-    // Get FIFO items one by one for RCMODE operations
     if (rcmode) {
+        if (!handle) {
+            handle = new nixlUcclReqH(conn);
+        }
+        nixlUcclReqH *uccl_handle = static_cast<nixlUcclReqH *>(handle);
+
+        uccl_handle->fifo_items.clear();
+        uccl_handle->fifo_items.resize(local_priv_vector.size());
+
         for (size_t i = 0; i < local_priv_vector.size(); i++) {
             char fifo_item[FIFO_ITEM_SIZE];
             int retry_count = 0;
-            const int max_retries = 5;
+            const int max_retries = 50;
             do {
                 result = uccl_engine_get_fifo_item(conn, i, &fifo_item);
                 if (result == 0) {
-                    // Successfully got fifo_item
-                    NIXL_DEBUG << "Got the FIFO item to perform read operation for item " << i;
-                    memcpy(local_priv_vector[i]->fifo_item_data, fifo_item, FIFO_ITEM_SIZE);
+                    memcpy(uccl_handle->fifo_items[i].data(), fifo_item, FIFO_ITEM_SIZE);
                     break;
                 }
                 retry_count++;
                 if (retry_count < max_retries) {
                     NIXL_DEBUG << "Failed to get FIFO item, retry " << retry_count << "/"
                                << max_retries << " for item " << i;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    std::this_thread::sleep_for(std::chrono::microseconds(10));
                 }
             } while (retry_count < max_retries);
 
@@ -544,14 +555,20 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // Process each descriptor pair
     // TODO: Use a vector send async API to send all the transfers at once
+    std::lock_guard<std::mutex> lock(mem_mutex_); // Lock once for the entire loop
     for (size_t i = 0; i < lcnt; i++) {
         lmd = (nixlUcclBackendMD *)local[i].metadataP;
         rmd = (nixlUcclBackendMD *)remote[i].metadataP;
         size_t lsize = local[i].len;
         size_t rsize = remote[i].len;
+        // Use local[i].addr for the actual iovec address, not lmd->addr (which is base address)
+        uintptr_t local_addr = local[i].addr;
+        uintptr_t remote_addr = remote[i].addr;
 
-        NIXL_DEBUG << "lmd: " << lmd->addr << ", " << lmd->mr_id << " rmd: " << rmd->addr << ", "
-                   << rmd->mr_id;
+        NIXL_DEBUG << "postXfer iovec[" << i << "]: local[i].addr=" << std::hex << local_addr
+                   << ", lsize=" << std::dec << lsize << ", remote[i].addr=" << std::hex
+                   << remote_addr << ", rsize=" << std::dec << rsize << ", lmd->addr=" << std::hex
+                   << lmd->addr << ", rmd->addr=" << std::hex << rmd->addr;
 
         if (lsize != rsize) {
             NIXL_ERROR << "Local and remote sizes don't match: " << lsize << " != " << rsize;
@@ -559,10 +576,9 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         }
 
         // Validate the local address is registered
-        std::lock_guard<std::mutex> lock(mem_mutex_);
         auto local_mem_iter = mem_reg_info_.find((uint64_t)lmd->addr);
         if (local_mem_iter == mem_reg_info_.end()) {
-            NIXL_ERROR << "Local memory not registered for address: " << lmd->addr;
+            NIXL_ERROR << "Local memory not registered for base address: " << std::hex << lmd->addr;
             return NIXL_ERR_BACKEND;
         }
 
@@ -576,18 +592,31 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
 
         int result = 0;
         uint64_t transfer_id = 0;
+
+        char *fifo_item_data = nullptr;
+        if (rcmode && handle) {
+            nixlUcclReqH *uccl_handle = static_cast<nixlUcclReqH *>(handle);
+            if (i < uccl_handle->fifo_items.size()) {
+                fifo_item_data = uccl_handle->fifo_items[i].data();
+            } else {
+                NIXL_ERROR << "No FIFO item found for item: " << i
+                           << ", fifo_items.size()=" << uccl_handle->fifo_items.size();
+                return NIXL_ERR_BACKEND;
+            }
+        }
+
         switch (operation) {
         case NIXL_READ: {
             result = uccl_engine_read(
-                conn, local_mr, lmd->addr, lsize, local_priv->fifo_item_data, &transfer_id);
+                conn, local_mr, (void *)local_addr, lsize, fifo_item_data, &transfer_id);
             break;
         }
         case NIXL_WRITE:
             if (rcmode) {
                 result = uccl_engine_write_rc(
-                    conn, local_mr, lmd->addr, lsize, local_priv->fifo_item_data, &transfer_id);
+                    conn, local_mr, (void *)local_addr, lsize, fifo_item_data, &transfer_id);
             } else {
-                result = uccl_engine_write(conn, local_mr, lmd->addr, lsize, &transfer_id);
+                result = uccl_engine_write(conn, local_mr, (void *)local_addr, lsize, &transfer_id);
             }
             break;
         default:
