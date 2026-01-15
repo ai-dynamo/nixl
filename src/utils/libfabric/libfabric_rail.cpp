@@ -533,8 +533,8 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             throw std::runtime_error("fi_ep_bind av failed for rail " + std::to_string(rail_id));
         }
 
-#ifdef HAVE_FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV
         if (provider_name == "efa") {
+#ifdef HAVE_FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV
             // Disable unsolicited write recv for EFA RDM to reduce CQ overflow likelihood
             const bool use_unsolicited_write_recv = false; // Set to false to disable the feature
             ret = fi_setopt(&endpoint->fid,
@@ -551,8 +551,21 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                 NIXL_DEBUG << "FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV not supported for rail "
                            << rail_id << " (provider: " << provider_name << ") - skipping";
             }
-        }
 #endif
+
+            size_t rnr_retry = 7; // EFA_RNR_INFINITE_RETRY
+            ret = fi_setopt(&endpoint->fid,
+                            FI_OPT_ENDPOINT,
+                            FI_OPT_EFA_RNR_RETRY,
+                            &rnr_retry,
+                            sizeof(rnr_retry));
+            if (ret) {
+                NIXL_WARN << "fi_setopt FI_OPT_EFA_RNR_RETRY failed for rail " << rail_id << ": "
+                          << fi_strerror(-ret) << " - continuing with default";
+            } else {
+                NIXL_INFO << "Set RNR retry to infinite (7) for rail " << rail_id;
+            }
+        }
 
         // Enable endpoint for this rail
         ret = fi_enable(endpoint);
