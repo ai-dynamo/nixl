@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * This file incorporates material from the DeepSeek project, licensed under the MIT License.
  * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -33,7 +33,7 @@ dtype_t ceil_div(dtype_t a, dtype_t b) {
 }
 
 template <typename dtype_t>
-dtype_t align(dtype_t a, dtype_t b) {
+dtype_t align_up(dtype_t a, dtype_t b) {
     return ceil_div<dtype_t>(a, b) * b;
 }
 
@@ -42,16 +42,16 @@ struct EPBuffer {
 
     void* dispatch_rdma_send_buffer = nullptr;
     void* dispatch_rdma_recv_data_buffer = nullptr;
-    int* dispatch_rdma_recv_count_buffer = nullptr;
+    uint64_t* dispatch_rdma_recv_count_buffer = nullptr;
 
     void* combine_rdma_send_buffer = nullptr;
     void* combine_rdma_recv_data_buffer = nullptr;
-    int* combine_rdma_recv_flag_buffer = nullptr;
+    uint64_t* combine_rdma_recv_flag_buffer = nullptr;
 
     void* combine_rdma_send_buffer_data_start = nullptr;
     size_t num_bytes_per_combine_msg = 0;
 
-    std::pair<int*, int> clean_meta() {
+    std::pair<uint64_t*, int> clean_meta() {
         EP_HOST_ASSERT(dispatch_rdma_recv_count_buffer == combine_rdma_recv_flag_buffer);
         return {dispatch_rdma_recv_count_buffer, num_clean_int};
     }
@@ -97,10 +97,10 @@ struct EPLayout {
         total_bytes += recv_buffer_bytes * 2;
 
         // Symmetric signaling buffers
-        size_t dispatch_recv_count_buffer_bytes = num_experts * sizeof(int);
+        size_t dispatch_recv_count_buffer_bytes = num_experts * sizeof(uint64_t);
         size_t combine_recv_flag_buffer_bytes = dispatch_recv_count_buffer_bytes;
         size_t signaling_buffer_bytes = std::max(dispatch_recv_count_buffer_bytes, combine_recv_flag_buffer_bytes);
-        size_t signaling_buffer_bytes_aligned = align<size_t>(signaling_buffer_bytes, 128);
+        size_t signaling_buffer_bytes_aligned = align_up<size_t>(signaling_buffer_bytes, 128);
         total_bytes += signaling_buffer_bytes_aligned * 2;
 
         // Assign pointers
@@ -108,13 +108,13 @@ struct EPLayout {
         // so you may see some parameters are duplicated
         for (int i = 0; i < 2; ++ i) {
             buffers[i] = {
-                static_cast<int>(signaling_buffer_bytes / sizeof(int)),
+                static_cast<int>(signaling_buffer_bytes / sizeof(uint64_t)),
                 advance(rdma_buffer, signaling_buffer_bytes_aligned * 2 + send_buffer_bytes * i),
                 advance(rdma_buffer, signaling_buffer_bytes_aligned * 2 + send_buffer_bytes * 2 + recv_buffer_bytes * i),
-                advance<int*>(rdma_buffer, signaling_buffer_bytes_aligned * i),
+                advance<uint64_t*>(rdma_buffer, signaling_buffer_bytes_aligned * i),
                 advance(rdma_buffer, signaling_buffer_bytes_aligned * 2 + send_buffer_bytes * i),
                 advance(rdma_buffer, signaling_buffer_bytes_aligned * 2 + send_buffer_bytes * 2 + recv_buffer_bytes * i),
-                advance<int*>(rdma_buffer, signaling_buffer_bytes_aligned * i),
+                advance<uint64_t*>(rdma_buffer, signaling_buffer_bytes_aligned * i),
                 advance(rdma_buffer, signaling_buffer_bytes_aligned * 2 + send_buffer_bytes * i),
                 num_bytes_per_combine_msg
             };

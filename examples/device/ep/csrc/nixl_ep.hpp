@@ -59,9 +59,7 @@ struct NixlPeerInfo {
     char boot_id[MAX_BOOT_ID_LENGTH];
     ino_t ipc_namespace_inode;
     void *rdma_buffer_ptr;
-    uint64_t *counters_buffer_ptr;
     cudaIpcMemHandle_t rdma_ipc_handle;
-    cudaIpcMemHandle_t counters_ipc_handle;
     int* sync_buffer_ptr;
     int device_id;
     int rank;
@@ -83,18 +81,12 @@ struct NixlAgentInfo
 };
 
 struct nixl_ep_ctx {
-    std::vector<nixlXferReqH *> cpu_remote_counter_reqs_0; // [dest_expert_id,remote_rank], cpu ptrs to nixlXferReqH
-    std::vector<nixlXferReqH *> cpu_remote_counter_reqs_1; // [dest_expert_id,remote_rank], cpu ptrs to nixlXferReqH
-    std::vector<nixlGpuXferReqH> gpu_remote_counter_reqs_0; // [dest_expert_id,remote_rank], gpu ptrs to nixlGpuXferReqH
-    std::vector<nixlGpuXferReqH> gpu_remote_counter_reqs_1; // [dest_expert_id,remote_rank], gpu ptrs to nixlGpuXferReqH
     std::vector<nixlXferReqH*> cpu_batch_reqs; // [num_peers]
     std::vector<nixlGpuXferReqH> gpu_batch_reqs; // [num_peers]
     std::vector<nixlXferReqH*> cpu_barrier_reqs; // [num_peers]
     std::vector<nixlGpuXferReqH> gpu_barrier_reqs; // [num_peers]
-
     std::vector<void *> rdma_p2p_ptrs; // [num_ranks]
-    std::vector<uint64_t *> counters_p2p_ptrs; // [num_ranks]
-    ep_kernels::gpu_nixl_ctx gpu[2]; // Double buffering
+    ep_kernels::gpu_nixl_ctx gpu;
 };
 
 struct Buffer {
@@ -134,12 +126,9 @@ private:
 
     std::unique_ptr<NixlAgentInfo> nixl_agent_info;
     std::vector<NixlPeerInfo> nixl_peer_info;
-    uint64_t *counters_buffer_ptr = nullptr;
     NixlPeerInfo my_peer_info;
-    uint64_t num_counters;
     uint64_t max_num_ranks;
     int max_experts_per_rank;
-    nixl_xfer_dlist_t dummy_src_dlist; // TODO: Remove once NIXL supports null src dlist for signals
     std::unique_ptr<nixl_ep_ctx> nixl_ctx = nullptr;
 
     /* Common private funcs */
@@ -152,14 +141,12 @@ private:
     /* NIXL EP private funcs */
     void _nixl_ep_init(const std::vector<int>& ranks);
     void _nixl_ep_context_init();
-    void _nixl_ep_counters_prepare(const std::vector<int>& ranks);
     void _nixl_ep_batches_prepare(const std::vector<int>& ranks);
     void _nixl_ep_p2p_ptrs_prepare(const std::vector<int>& ranks);
     void _nixl_ep_gpu_ctx_update();
 
     /* NIXL EP cleanup funcs */
     void _nixl_ep_cleanup(const std::vector<int>& ranks_to_remove);
-    void _nixl_ep_counters_cleanup(const std::vector<int>& ranks_to_remove);
     void _nixl_ep_batches_cleanup(const std::vector<int>& ranks_to_remove);
     void _nixl_ep_p2p_ptrs_cleanup(const std::vector<int>& ranks_to_remove);
 
