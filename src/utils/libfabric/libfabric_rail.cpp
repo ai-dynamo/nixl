@@ -730,13 +730,14 @@ nixlLibfabricRail::setXferIdCallback(std::function<void(uint32_t)> callback) {
 // Per-Rail Completion Processing
 
 // Per-rail completion processing - handles one rail's CQ with configurable blocking behavior
+// Optimized to batch read up to NIXL_LIBFABRIC_CQ_BATCH_SIZE completions per syscall
 nixl_status_t
 nixlLibfabricRail::progressCompletionQueue(bool use_blocking) const {
-    // Completion processing
-    struct fi_cq_data_entry completion;
-    memset(&completion, 0, sizeof(completion));
+    // Batch completion processing - read up to 16 completions per syscall
+    struct fi_cq_data_entry completions[NIXL_LIBFABRIC_CQ_BATCH_SIZE];
+    memset(completions, 0, sizeof(completions));
 
-    int ret;
+    ssize_t ret;
 
     // Only protect libfabric CQ hardware operations
     {
@@ -744,10 +745,12 @@ nixlLibfabricRail::progressCompletionQueue(bool use_blocking) const {
 
         if (use_blocking && blocking_cq_sread_supported) {
             // Blocking read using fi_cq_sread (used by CM thread)
-            ret = fi_cq_sread(cq, &completion, 1, nullptr, NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_MS);
+            // Keep single-entry semantics for blocking to preserve timeout behavior
+            ret = fi_cq_sread(cq, completions, 1, nullptr, NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_MS);
         } else {
-            // Non-blocking read (used by progress thread or fallback)
-            ret = fi_cq_read(cq, &completion, 1);
+            // Non-blocking batch read (used by progress thread)
+            // Read up to NIXL_LIBFABRIC_CQ_BATCH_SIZE completions per syscall
+            ret = fi_cq_read(cq, completions, NIXL_LIBFABRIC_CQ_BATCH_SIZE);
         }
 
         if (ret < 0 && ret != -FI_EAGAIN) {
@@ -769,26 +772,34 @@ nixlLibfabricRail::progressCompletionQueue(bool use_blocking) const {
             return NIXL_ERR_BACKEND;
         }
     }
-    // CQ lock released here - completion is now local data
+    // CQ lock released here - completions are now local data
 
     if (ret == -FI_EAGAIN) {
         return NIXL_IN_PROG; // No completions available
     }
 
-    if (ret == 1) {
-        NIXL_TRACE << "Completion received on rail " << rail_id << " flags=" << std::hex
-                   << completion.flags << " data=" << completion.data
-                   << " context=" << completion.op_context << std::dec;
+    if (ret > 0) {
+        NIXL_TRACE << "Batch received " << ret << " completions on rail " << rail_id;
 
-        // Process completion using local data. Callbacks have their own thread safety
-        nixl_status_t status = processCompletionQueueEntry(&completion);
-        if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Failed to process completion on rail " << rail_id;
-            return status;
+        // Process all completions from the batch
+        nixl_status_t overall_status = NIXL_SUCCESS;
+        for (ssize_t i = 0; i < ret; ++i) {
+            NIXL_TRACE << "Completion " << i << "/" << ret << " on rail " << rail_id
+                       << " flags=" << std::hex << completions[i].flags
+                       << " data=" << completions[i].data
+                       << " context=" << completions[i].op_context << std::dec;
+
+            // Process each completion. Continue processing even if one fails.
+            nixl_status_t status = processCompletionQueueEntry(&completions[i]);
+            if (status != NIXL_SUCCESS) {
+                NIXL_ERROR << "Failed to process completion " << i << " on rail " << rail_id;
+                overall_status = status;
+                // Continue processing remaining completions
+            }
         }
 
-        NIXL_DEBUG << "Completion processed on rail " << rail_id;
-        return NIXL_SUCCESS;
+        NIXL_DEBUG << "Batch processed " << ret << " completions on rail " << rail_id;
+        return overall_status;
     }
 
     return NIXL_ERR_BACKEND; // Unexpected case
