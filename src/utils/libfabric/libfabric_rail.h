@@ -25,6 +25,8 @@
 #include <mutex>
 #include <ostream>
 #include <stack>
+#include <unordered_map>
+#include <atomic>
 
 #include "nixl.h"
 #include "backend/backend_aux.h"
@@ -241,6 +243,21 @@ operator<<(std::ostream &os, const ConnectionState &state) {
     }
 }
 
+/** Memory Registration Cache Entry for MRRC optimization */
+struct MRCacheEntry {
+    struct fid_mr *mr;          ///< Cached memory registration
+    uint64_t key;               ///< Memory registration key
+    std::atomic<uint32_t> ref_count; ///< Reference count for shared usage
+    size_t length;              ///< Buffer length
+    nixl_mem_t mem_type;        ///< Memory type (DRAM/VRAM)
+    int gpu_id;                 ///< GPU device ID (-1 for DRAM)
+
+    MRCacheEntry() : mr(nullptr), key(0), ref_count(0), length(0),
+                     mem_type(DRAM_SEG), gpu_id(-1) {}
+    MRCacheEntry(struct fid_mr *m, uint64_t k, size_t len, nixl_mem_t type, int gpu)
+        : mr(m), key(k), ref_count(1), length(len), mem_type(type), gpu_id(gpu) {}
+};
+
 /** Individual libfabric rail managing fabric, domain, endpoint, CQ, and AV */
 class nixlLibfabricRail {
 public:
@@ -378,6 +395,16 @@ public:
     fi_info *
     getRailInfo() const;
 
+    // MRRC statistics methods
+    /** Get number of MR cache hits */
+    uint64_t getMRCacheHits() const { return mr_cache_hits_.load(std::memory_order_relaxed); }
+
+    /** Get number of MR cache misses */
+    uint64_t getMRCacheMisses() const { return mr_cache_misses_.load(std::memory_order_relaxed); }
+
+    /** Get current MR cache size */
+    size_t getMRCacheSize() const;
+
 private:
     // Core libfabric resources
     struct fi_info *info; // from rail_infos[rail_id]
@@ -404,6 +431,12 @@ private:
     // Provider capability flags
     bool provider_supports_hmem_;
 
+    // Memory Registration Resource Cache (MRRC) for optimization
+    // Maps buffer address to cached MR entry for O(1) lookup
+    mutable std::unordered_map<uintptr_t, std::shared_ptr<MRCacheEntry>> mr_cache_;
+    mutable std::mutex mr_cache_mutex_; ///< Protects mr_cache_ access
+    mutable std::atomic<uint64_t> mr_cache_hits_{0};   ///< Cache hit counter
+    mutable std::atomic<uint64_t> mr_cache_misses_{0}; ///< Cache miss counter
 
     nixl_status_t
     processCompletionQueueEntry(struct fi_cq_data_entry *comp) const;
