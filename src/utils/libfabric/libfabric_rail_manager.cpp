@@ -90,6 +90,9 @@ nixlLibfabricRailManager::createDataRails(const std::vector<std::string> &efa_de
         data_rails_.reserve(num_data_rails_);
 
         for (size_t i = 0; i < num_data_rails_; ++i) {
+            NIXL_DEBUG << "Creating data rail " << i << "/" << num_data_rails_
+                       << " on device " << efa_devices[i] << " with provider " << provider_name;
+
             data_rails_.emplace_back(std::make_unique<nixlLibfabricRail>(
                 efa_devices[i], provider_name, static_cast<uint16_t>(i)));
 
@@ -101,7 +104,61 @@ nixlLibfabricRailManager::createDataRails(const std::vector<std::string> &efa_de
         }
     }
     catch (const std::exception &e) {
+        // RAIL_MANAGER_FALLBACK_FIX: Enhanced error handling with fallback attempts
         NIXL_ERROR << "Failed to create data rails: " << e.what();
+        NIXL_ERROR << "Rail creation failed at rail " << data_rails_.size() << " of " << num_data_rails_;
+
+        // Check if we have any rails created
+        if (!data_rails_.empty()) {
+            NIXL_WARN << "Partial success: " << data_rails_.size() << " rails created before failure";
+
+            // Check for fallback mode
+            const char* allow_partial = std::getenv("NIXL_ALLOW_PARTIAL_RAILS");
+            if (allow_partial && std::string(allow_partial) == "1") {
+                NIXL_WARN << "NIXL_ALLOW_PARTIAL_RAILS=1: Continuing with " << data_rails_.size() << " rails";
+                num_data_rails_ = data_rails_.size();
+
+                // Log diagnostic info
+                NIXL_INFO << "Partial rail creation diagnostic:";
+                NIXL_INFO << "  - Requested rails: " << efa_devices.size();
+                NIXL_INFO << "  - Created rails: " << data_rails_.size();
+                NIXL_INFO << "  - Failed at device: " << (data_rails_.size() < efa_devices.size() ?
+                                                          efa_devices[data_rails_.size()] : "unknown");
+                NIXL_INFO << "  - Error: " << e.what();
+
+                return NIXL_SUCCESS;  // Continue with partial rails
+            }
+        }
+
+        // Check if single-rail fallback is enabled
+        const char* single_rail_fallback = std::getenv("NIXL_SINGLE_RAIL_FALLBACK");
+        if (single_rail_fallback && std::string(single_rail_fallback) == "1" && !efa_devices.empty()) {
+            NIXL_WARN << "NIXL_SINGLE_RAIL_FALLBACK=1: Attempting single-rail fallback";
+
+            // Clear any partially created rails
+            data_rails_.clear();
+            num_data_rails_ = 1;
+
+            try {
+                // Try with just the first device
+                data_rails_.emplace_back(std::make_unique<nixlLibfabricRail>(
+                    efa_devices[0], provider_name, static_cast<uint16_t>(0)));
+
+                NIXL_WARN << "Single-rail fallback SUCCEEDED with device " << efa_devices[0];
+                return NIXL_SUCCESS;
+            } catch (const std::exception &e2) {
+                NIXL_ERROR << "Single-rail fallback also failed: " << e2.what();
+            }
+        }
+
+        // Log troubleshooting hints
+        NIXL_ERROR << "Rail creation failed. Troubleshooting hints:";
+        NIXL_ERROR << "  1. Check EFA device availability: fi_info -p efa";
+        NIXL_ERROR << "  2. Check glibc version compatibility (known issues with 2.39-0ubuntu8.6)";
+        NIXL_ERROR << "  3. Try setting FI_EFA_USE_DEVICE_RDMA=0 to disable GPU Direct RDMA";
+        NIXL_ERROR << "  4. Try setting NIXL_SINGLE_RAIL_FALLBACK=1 for single-rail mode";
+        NIXL_ERROR << "  5. Try setting NIXL_ALLOW_PARTIAL_RAILS=1 to use partial success";
+
         return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;
