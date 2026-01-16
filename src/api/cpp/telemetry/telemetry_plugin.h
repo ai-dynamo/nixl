@@ -47,12 +47,12 @@ public:
           name_(name),
           version_(ver) {}
 
-    std::string
+    const std::string &
     getName() const noexcept {
         return name_;
     }
 
-    std::string
+    const std::string &
     getVersion() const noexcept {
         return version_;
     }

@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,20 +54,27 @@ export NIXL_ETCD_NAMESPACE="/nixl/nixlbench_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
-sleep 5
+
+wait_for_etcd
 
 echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}
 
+DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4"
+
 run_nixlbench() {
     args="$@"
-    ./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} --filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 $args
+    ./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS $args
+}
+
+run_nixlbench_noetcd() {
+    args="$@"
+    ./bin/nixlbench $DEFAULT_NB_PARAMS $args
 }
 
 run_nixlbench_one_worker() {
-    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
     args="$@"
-    run_nixlbench --benchmark_group $benchmark_group $args
+    run_nixlbench_noetcd $args
 }
 
 run_nixlbench_two_workers() {
@@ -75,7 +82,7 @@ run_nixlbench_two_workers() {
     args="$@"
     run_nixlbench --benchmark_group $benchmark_group $args &
     pid=$!
-    sleep 1
+    sleep 5
     run_nixlbench --benchmark_group $benchmark_group $args
     wait $pid
 }
@@ -90,22 +97,20 @@ fi
 for op_type in READ WRITE; do
     for initiator in $seg_types; do
         for target in $seg_types; do
-            run_nixlbench_two_workers --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
+            run_nixlbench_two_workers --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
         done
     done
 done
 
 for op_type in READ WRITE; do
-    for target in $seg_types; do
-        run_nixlbench_one_worker --backend POSIX --op_type $op_type --target_seg_type $target
-    done
+    run_nixlbench_one_worker --backend POSIX --op_type $op_type --check_consistency
 done
 
 if $HAS_GPU ; then
     for op_type in READ WRITE; do
         for initiator in $seg_types; do
             for target in $seg_types; do
-                UCCL_RCMODE=1 run_nixlbench_two_workers --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
+                UCCL_RCMODE=1 run_nixlbench_two_workers --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
             done
         done
     done

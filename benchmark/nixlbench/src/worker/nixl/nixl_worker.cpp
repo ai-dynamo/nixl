@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -79,10 +79,10 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     config << "# Config file\nversion=1\n";
 
     for (const auto &dev : devices) {
-        // Format: "id type access_mode shared_exclusive path security_flags"
-        // Example: "11 F W N ./store0.bin sec=0x3"
+        // Format: "id type access_mode direct_io path security_flags"
+        // Example: "11 F W D ./store0.bin sec=0x3"
         config << dev.device_id << " " << dev.device_type << " "
-               << "W N " // Write mode, Not shared (exclusive)
+               << "W D " // Write mode, Direct I/O
                << dev.device_path << " " << dev.security_flags << "\n";
     }
 
@@ -313,15 +313,8 @@ iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list, nixl_xfer_dlis
     }
 }
 
-
-enum class AllocationType { POSIX_MEMALIGN, CALLOC, MALLOC };
-
 static bool
-allocateXferMemory(size_t buffer_size,
-                   void **addr,
-                   std::optional<AllocationType> allocation_type = std::nullopt,
-                   std::optional<size_t> num = 1) {
-
+allocateXferMemory(size_t buffer_size, void **addr) {
     if (!addr) {
         std::cerr << "Invalid address" << std::endl;
         return false;
@@ -330,38 +323,18 @@ allocateXferMemory(size_t buffer_size,
         std::cerr << "Invalid buffer size" << std::endl;
         return false;
     }
-    AllocationType type = allocation_type.value_or(AllocationType::MALLOC);
-
-    if (type == AllocationType::POSIX_MEMALIGN) {
-        if (xferBenchConfig::page_size == 0) {
-            std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
-            return false;
-        }
-        int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
-        if (rc != 0 || !*addr) {
-            std::cerr << "Failed to allocate " << buffer_size
-                      << " bytes of page-aligned DRAM memory" << std::endl;
-            return false;
-        }
-        memset(*addr, 0, buffer_size);
-    } else if (type == AllocationType::CALLOC) {
-        *addr = calloc(num.value_or(1), buffer_size);
-        if (!*addr) {
-            std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory"
-                      << std::endl;
-            return false;
-        }
-    } else if (type == AllocationType::MALLOC) {
-        *addr = malloc(buffer_size);
-        if (!*addr) {
-            std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory"
-                      << std::endl;
-            return false;
-        }
-    } else {
-        std::cerr << "Invalid allocation type" << std::endl;
+    if (xferBenchConfig::page_size == 0) {
+        std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
         return false;
     }
+
+    int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
+    if (rc != 0 || !*addr) {
+        std::cerr << "Failed to allocate " << buffer_size << " bytes of page-aligned DRAM memory"
+                  << std::endl;
+        return false;
+    }
+    memset(*addr, 0, buffer_size);
     return true;
 }
 
@@ -369,12 +342,7 @@ std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
     void *addr;
 
-    AllocationType type = AllocationType::CALLOC;
-    if (xferBenchConfig::storage_enable_direct) {
-        type = AllocationType::POSIX_MEMALIGN;
-    }
-
-    if (!allocateXferMemory(buffer_size, &addr, type)) {
+    if (!allocateXferMemory(buffer_size, &addr)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
         return std::nullopt;
     }
@@ -581,13 +549,7 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
     // Fill up with data
     void *buf;
-    AllocationType type = AllocationType::MALLOC;
-
-    if (xferBenchConfig::storage_enable_direct) {
-        type = AllocationType::POSIX_MEMALIGN;
-    }
-
-    if (!allocateXferMemory(buffer_size, &buf, type) || !buf) {
+    if (!allocateXferMemory(buffer_size, &buf)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
         return std::nullopt;
     }
@@ -802,7 +764,15 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             exit(EXIT_FAILURE);
         }
 
-        remote_fds = createFileFds(getName(), num_files);
+        std::vector<std::string> filenames;
+        if (!xferBenchConfig::filenames.empty()) {
+            std::string filename;
+            std::stringstream ss(xferBenchConfig::filenames);
+            while (std::getline(ss, filename, ',')) {
+                filenames.push_back(filename);
+            }
+        }
+        remote_fds = createFileFds(getName(), num_files, filenames);
         if (remote_fds.empty()) {
             std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
             exit(EXIT_FAILURE);

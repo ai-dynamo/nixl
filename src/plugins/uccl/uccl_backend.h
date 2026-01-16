@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 #define __UCCL_BACKEND_H
 
 #include <vector>
+#include <array>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -146,7 +147,6 @@ public:
     size_t length;
     int ref_cnt;
     uint64_t mr_id; // UCCL memory region id
-    char fifo_item_data[FIFO_ITEM_SIZE];
 };
 
 // UCCL Backend Request Handle
@@ -159,6 +159,7 @@ public:
     uccl_conn_t *conn;
     std::unordered_set<uint64_t> pending_transfer_ids;
     nixl_blob_t notif_msg;
+    std::vector<std::array<char, FIFO_ITEM_SIZE>> fifo_items;
 };
 
 #endif

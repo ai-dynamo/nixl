@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -448,9 +448,13 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     config.modify("ADDRESS_VERSION", "v2");
     config.modify("RNDV_THRESH", "inf");
     config.modify("MAX_RMA_RAILS", "2");
+    config.modify("IB_PCI_RELAXED_ORDERING", "try");
 
     if (ucp_version >= UCP_VERSION(1, 19)) {
         config.modify("MAX_COMPONENT_MDS", "32");
+    } else {
+        NIXL_WARN << "UCX version is less than 1.19, CUDA support is limited, "
+                  << "including the lack of support for multi-GPU within a single process.";
     }
 
     std::string elem;

@@ -16,7 +16,7 @@
 # limitations under the License.
 
 set +e
-pkill -9 -f etcd
+pkill -9 -x etcd
 pkill -9 -f python
 rm -rf default.etcd
 HOST_IP=$(hostname -I | awk '{print $1}')
