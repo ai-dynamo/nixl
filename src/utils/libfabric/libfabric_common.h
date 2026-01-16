@@ -50,6 +50,11 @@
 #define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192
 #define NIXL_LIBFABRIC_RECV_POOL_SIZE 1024 // Number of recv requests to pre-post per rail
 
+// Completion queue batch size for optimized polling
+// Based on Kalia et al. USENIX ATC'16: batch reads improve throughput by 27%
+// Start with 16 (conservative), can tune to 32-64 based on benchmarks
+#define NIXL_LIBFABRIC_CQ_BATCH_SIZE 16
+
 // Retry configuration constants
 #define NIXL_LIBFABRIC_MAX_RETRIES 10
 #define NIXL_LIBFABRIC_EFA_RETRY_DELAY_US 100
