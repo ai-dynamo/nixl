@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+#include <gnu/libc-version.h>  // For glibc version detection
 #include "libfabric_backend.h"
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
@@ -294,7 +295,18 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
       rail_manager(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
       runtime_(FI_HMEM_SYSTEM) {
 
-    NIXL_DEBUG << "Initializing Libfabric Backend";
+    // NIXL_FORCE_DISABLE_GPU_RDMA: Environment variable to force disable GPU Direct RDMA
+    // This is a workaround for glibc incompatibility issues with EFA RDM layer
+    const char* force_disable_rdma = std::getenv("NIXL_FORCE_DISABLE_GPU_RDMA");
+    if (force_disable_rdma && std::string(force_disable_rdma) == "1") {
+        NIXL_WARN << "NIXL_FORCE_DISABLE_GPU_RDMA=1 detected, setting FI_EFA_USE_DEVICE_RDMA=0";
+        setenv("FI_EFA_USE_DEVICE_RDMA", "0", 1);
+    }
+
+    // Log glibc version at engine startup for debugging
+    NIXL_INFO << "NIXL LibfabricEngine starting, glibc version: " << gnu_get_libc_version();
+
+    NIXL_DEBUG << "Initializing Libfabric Backend with GPU Support";
 
     // Query system runtime type from rail manager (determined once at topology discovery)
     runtime_ = rail_manager.getRuntime();
