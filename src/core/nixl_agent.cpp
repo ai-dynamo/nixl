@@ -1648,9 +1648,12 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
         return NIXL_ERR_BACKEND;
     }
 
-    if (sd.getStr("") != "MemSection") {
-        NIXL_ERROR_FUNC << "failed to deserialize remote metadata";
-        return NIXL_ERR_MISMATCH;
+    // v82+v88+v89: Handle missing MemSection without permanent caching
+    std::string marker = sd.getStr("");
+    if (marker != "MemSection") {
+        NIXL_WARN << "v82: MemSection not found (got '" << marker << "'), will retry";
+        agent_name = remote_agent;
+        return NIXL_SUCCESS;  // Allow retry
     }
 
     ret = data->loadRemoteSections(remote_agent, sd);

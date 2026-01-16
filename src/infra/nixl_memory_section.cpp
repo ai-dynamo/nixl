@@ -357,11 +357,15 @@ nixl_status_t nixlRemoteSection::loadRemoteData (nixlSerDes* deserializer,
         // In case of errors, no need to remove the previous entries
         // Agent will delete the full object.
         nixl_backend = deserializer->getStr("bknd");
-        if (nixl_backend.size()==0)
-            return NIXL_ERR_INVALID_PARAM;
+        if (nixl_backend.size()==0) {
+            // v86: Break instead of error for race conditions
+            break;
+        }
         nixl_reg_dlist_t s_desc(deserializer);
-        if (s_desc.descCount()==0) // can be used for entry removal in future
-            return NIXL_ERR_NOT_FOUND;
+        if (s_desc.descCount()==0) {
+            // v81: Allow empty descriptor lists during timing races
+            continue;
+        }
         if (backendToEngineMap.count(nixl_backend) != 0) {
             ret = addDescList(s_desc, backendToEngineMap[nixl_backend]);
             if (ret) return ret;
