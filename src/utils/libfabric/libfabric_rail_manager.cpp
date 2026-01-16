@@ -918,8 +918,8 @@ nixlLibfabricRailManager::markRailActive(size_t rail_id) {
     bool was_already_active = (old_value & (1ULL << rail_id)) != 0;
 
     if (!was_already_active) {
-        NIXL_DEBUG << "Marked rail " << rail_id << " as active (bitmap: 0x"
-                   << std::hex << active_rails_bitmap_.load(std::memory_order_relaxed) << std::dec << ")";
+        NIXL_DEBUG << "Marked rail " << rail_id << " as active (bitmap: 0x" << std::hex
+                   << active_rails_bitmap_.load(std::memory_order_relaxed) << std::dec << ")";
     } else {
         NIXL_TRACE << "Rail " << rail_id << " was already active";
     }
@@ -934,12 +934,13 @@ nixlLibfabricRailManager::markRailInactive(size_t rail_id) {
     }
 
     // Atomically clear the bit for this rail - no lock needed
-    uint64_t old_value = active_rails_bitmap_.fetch_and(~(1ULL << rail_id), std::memory_order_release);
+    uint64_t old_value =
+        active_rails_bitmap_.fetch_and(~(1ULL << rail_id), std::memory_order_release);
     bool was_active = (old_value & (1ULL << rail_id)) != 0;
 
     if (was_active) {
-        NIXL_DEBUG << "Marked rail " << rail_id << " as inactive (bitmap: 0x"
-                   << std::hex << active_rails_bitmap_.load(std::memory_order_relaxed) << std::dec << ")";
+        NIXL_DEBUG << "Marked rail " << rail_id << " as inactive (bitmap: 0x" << std::hex
+                   << active_rails_bitmap_.load(std::memory_order_relaxed) << std::dec << ")";
     } else {
         NIXL_TRACE << "Rail " << rail_id << " was not in active set";
     }

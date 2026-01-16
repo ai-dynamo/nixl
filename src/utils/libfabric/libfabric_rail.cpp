@@ -207,9 +207,9 @@ ControlRequestPool::createBufferChunk(size_t chunk_size, BufferChunk &chunk) {
         return NIXL_ERR_BACKEND;
     }
 
-    NIXL_INFO << "CreateBufferChunk on Rail " << rail_id_ << " successfully created buffer chunk:"
-              << " buffer=" << chunk.buffer << " size=" << chunk.size << " mr=" << chunk.mr
-              << " mr_key=" << fi_mr_key(chunk.mr);
+    NIXL_INFO << "CreateBufferChunk on Rail " << rail_id_
+              << " successfully created buffer chunk:" << " buffer=" << chunk.buffer
+              << " size=" << chunk.size << " mr=" << chunk.mr << " mr_key=" << fi_mr_key(chunk.mr);
 
     return NIXL_SUCCESS;
 }
@@ -279,8 +279,8 @@ ControlRequestPool::expandPool() {
         size_t buffer_offset = local_idx * NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE;
         if (buffer_offset + NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE > new_chunk.size) {
             NIXL_ERROR << " Rail " << rail_id_ << " buffer assignment out of bounds for request["
-                       << i << "]:"
-                       << " local_idx=" << local_idx << " buffer_offset=" << buffer_offset
+                       << i << "]:" << " local_idx=" << local_idx
+                       << " buffer_offset=" << buffer_offset
                        << " buffer_size=" << NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE
                        << " chunk_size=" << new_chunk.size;
             return NIXL_ERR_BACKEND;
@@ -782,10 +782,10 @@ nixlLibfabricRail::progressCompletionQueue(bool use_blocking) const {
     NIXL_DEBUG << "Batch read " << total_processed << " completions on rail " << rail_id;
 
     for (ssize_t i = 0; i < total_processed; i++) {
-        NIXL_TRACE << "Completion " << (i + 1) << "/" << total_processed
-                   << " on rail " << rail_id << " flags=" << std::hex
-                   << completions[i].flags << " data=" << completions[i].data
-                   << " context=" << completions[i].op_context << std::dec;
+        NIXL_TRACE << "Completion " << (i + 1) << "/" << total_processed << " on rail " << rail_id
+                   << " flags=" << std::hex << completions[i].flags
+                   << " data=" << completions[i].data << " context=" << completions[i].op_context
+                   << std::dec;
 
         // Process completion using local data. Callbacks have their own thread safety
         nixl_status_t status = processCompletionQueueEntry(&completions[i]);
@@ -1345,7 +1345,8 @@ nixlLibfabricRail::registerMemory(void *buffer,
                 mr_cache_hits_.fetch_add(1, std::memory_order_relaxed);
                 NIXL_DEBUG << "MRRC HIT: rail=" << rail_id << " buffer=" << buffer
                            << " ref_count=" << entry->ref_count.load()
-                           << " (hits=" << mr_cache_hits_.load() << " misses=" << mr_cache_misses_.load() << ")";
+                           << " (hits=" << mr_cache_hits_.load()
+                           << " misses=" << mr_cache_misses_.load() << ")";
                 return NIXL_SUCCESS;
             }
             // Entry exists but doesn't match - remove stale entry
@@ -1437,7 +1438,8 @@ nixlLibfabricRail::registerMemory(void *buffer,
         mr_cache_[cache_key] = entry;
         NIXL_DEBUG << "MRRC MISS: rail=" << rail_id << " buffer=" << buffer
                    << " cached (cache_size=" << mr_cache_.size()
-                   << " hits=" << mr_cache_hits_.load() << " misses=" << mr_cache_misses_.load() << ")";
+                   << " hits=" << mr_cache_hits_.load() << " misses=" << mr_cache_misses_.load()
+                   << ")";
     }
 
     *mr_out = mr;
@@ -1472,7 +1474,8 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
                     NIXL_DEBUG << "MRRC evicting: rail=" << rail_id << " mr=" << mr;
                     int ret = fi_close(&mr->fid);
                     if (ret) {
-                        NIXL_ERROR << "fi_close failed on rail " << rail_id << ": " << fi_strerror(-ret);
+                        NIXL_ERROR << "fi_close failed on rail " << rail_id << ": "
+                                   << fi_strerror(-ret);
                         mr_cache_.erase(it);
                         return NIXL_ERR_BACKEND;
                     }
