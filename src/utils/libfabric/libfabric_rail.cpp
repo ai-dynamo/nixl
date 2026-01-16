@@ -16,6 +16,8 @@
  * limitations under the License.
  */
 
+#include <atomic>     // v120: for memory barriers
+#include <sched.h>    // v120: for sched_yield()
 #include "libfabric_rail.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
@@ -388,7 +390,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     : rail_id(id),
       device_name(device),
       provider_name(provider),
-      blocking_cq_sread_supported(true),
+      blocking_cq_sread_supported(false),  // v120: Force non-blocking polling
       control_request_pool_(NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL, id),
       data_request_pool_(NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL, id),
       provider_supports_hmem_(false) {
@@ -473,7 +475,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         // Create CQ for this rail
         struct fi_cq_attr cq_attr = {};
         cq_attr.format = FI_CQ_FORMAT_DATA;
-        cq_attr.wait_obj = FI_WAIT_UNSPEC;
+        cq_attr.wait_obj = FI_WAIT_NONE;  // v120: Explicit non-blocking
         cq_attr.size = 12288;
         ret = fi_cq_open(domain, &cq_attr, &cq, NULL);
         if (ret) {
