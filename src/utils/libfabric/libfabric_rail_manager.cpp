@@ -642,25 +642,29 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
 
 nixl_status_t
 nixlLibfabricRailManager::progressActiveDataRails() {
-    std::vector<size_t> rails_to_process;
+    // Lock-free: Read bitmap atomically without mutex
+    uint64_t bitmap = active_rails_bitmap_.load(std::memory_order_acquire);
 
-    // Copy active rails under lock to avoid iterator invalidation
-    {
-        std::lock_guard<std::mutex> lock(active_rails_mutex_);
-        if (active_rails_.empty()) {
-            return NIXL_IN_PROG; // No active rails to process
-        }
-        rails_to_process.assign(active_rails_.begin(), active_rails_.end());
+    if (bitmap == 0) {
+        return NIXL_IN_PROG; // No active rails to process
     }
 
-    // Process rails without holding the lock
+    // Process rails using bit manipulation - no lock needed
     bool any_completions = false;
+    size_t rails_processed = 0;
 
-    for (size_t rail_id : rails_to_process) {
+    // Iterate through set bits using __builtin_ctzll (count trailing zeros)
+    while (bitmap != 0) {
+        // Find lowest set bit position
+        size_t rail_id = static_cast<size_t>(__builtin_ctzll(bitmap));
+
         if (rail_id >= data_rails_.size()) {
             NIXL_ERROR << "Invalid active rail ID: " << rail_id;
+            // Clear this invalid bit from our local copy and continue
+            bitmap &= ~(1ULL << rail_id);
             continue;
         }
+
         // Process completions on active data rails
         nixl_status_t status = data_rails_[rail_id]->progressCompletionQueue(false);
         if (status == NIXL_SUCCESS) {
@@ -670,10 +674,14 @@ nixlLibfabricRailManager::progressActiveDataRails() {
             NIXL_ERROR << "Failed to process completions on active data rail " << rail_id;
             // Continue processing other active rails even if one fails
         }
+
+        rails_processed++;
+        // Clear the processed bit
+        bitmap &= ~(1ULL << rail_id);
     }
 
     if (any_completions) {
-        NIXL_TRACE << "Processed " << rails_to_process.size() << " active rails, completions found";
+        NIXL_TRACE << "Processed " << rails_processed << " active rails, completions found";
     }
 
     return any_completions ? NIXL_SUCCESS : NIXL_IN_PROG;
@@ -901,12 +909,19 @@ nixlLibfabricRailManager::markRailActive(size_t rail_id) {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(active_rails_mutex_);
-    bool was_inserted = active_rails_.insert(rail_id).second;
+    if (rail_id >= NIXL_LIBFABRIC_MAX_BITMAP_RAILS) {
+        NIXL_ERROR << "Rail ID " << rail_id << " exceeds bitmap capacity ("
+                   << NIXL_LIBFABRIC_MAX_BITMAP_RAILS << ")";
+        return;
+    }
 
-    if (was_inserted) {
-        NIXL_DEBUG << "Marked rail " << rail_id
-                   << " as active (total active: " << active_rails_.size() << ")";
+    // Lock-free: Atomically set the bit for this rail
+    uint64_t old_bitmap = active_rails_bitmap_.fetch_or(1ULL << rail_id, std::memory_order_acq_rel);
+    bool was_inactive = !(old_bitmap & (1ULL << rail_id));
+
+    if (was_inactive) {
+        NIXL_DEBUG << "Marked rail " << rail_id << " as active (total active: "
+                   << __builtin_popcountll(old_bitmap | (1ULL << rail_id)) << ")";
     } else {
         NIXL_TRACE << "Rail " << rail_id << " was already active";
     }
@@ -914,11 +929,18 @@ nixlLibfabricRailManager::markRailActive(size_t rail_id) {
 
 void
 nixlLibfabricRailManager::markRailInactive(size_t rail_id) {
-    std::lock_guard<std::mutex> lock(active_rails_mutex_);
-    size_t erased = active_rails_.erase(rail_id);
-    if (erased > 0) {
-        NIXL_DEBUG << "Marked rail " << rail_id
-                   << " as inactive (total active: " << active_rails_.size() << ")";
+    if (rail_id >= NIXL_LIBFABRIC_MAX_BITMAP_RAILS) {
+        NIXL_TRACE << "Rail ID " << rail_id << " exceeds bitmap capacity, ignoring";
+        return;
+    }
+
+    // Lock-free: Atomically clear the bit for this rail
+    uint64_t old_bitmap = active_rails_bitmap_.fetch_and(~(1ULL << rail_id), std::memory_order_acq_rel);
+    bool was_active = old_bitmap & (1ULL << rail_id);
+
+    if (was_active) {
+        NIXL_DEBUG << "Marked rail " << rail_id << " as inactive (total active: "
+                   << __builtin_popcountll(old_bitmap & ~(1ULL << rail_id)) << ")";
     } else {
         NIXL_TRACE << "Rail " << rail_id << " was not in active set";
     }
@@ -926,14 +948,15 @@ nixlLibfabricRailManager::markRailInactive(size_t rail_id) {
 
 void
 nixlLibfabricRailManager::clearActiveRails() {
-    std::lock_guard<std::mutex> lock(active_rails_mutex_);
-    size_t cleared_count = active_rails_.size();
-    active_rails_.clear();
+    // Lock-free: Atomically exchange bitmap with zero
+    uint64_t old_bitmap = active_rails_bitmap_.exchange(0, std::memory_order_acq_rel);
+    size_t cleared_count = static_cast<size_t>(__builtin_popcountll(old_bitmap));
     NIXL_DEBUG << "Cleared " << cleared_count << " active rails";
 }
 
 size_t
 nixlLibfabricRailManager::getActiveRailCount() const {
-    std::lock_guard<std::mutex> lock(active_rails_mutex_);
-    return active_rails_.size();
+    // Lock-free: Read bitmap and count set bits
+    uint64_t bitmap = active_rails_bitmap_.load(std::memory_order_acquire);
+    return static_cast<size_t>(__builtin_popcountll(bitmap));
 }
