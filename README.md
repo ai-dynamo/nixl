@@ -24,6 +24,8 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 
 * [Doxygen images](https://github.com/ai-dynamo/nixl/tree/main/docs/doxygen) - Diagram assets (`docs/doxygen/`)
 
+* [NIXLBench docs](https://github.com/ai-dynamo/nixl/blob/main/benchmark/nixlbench/README.md) - Benchmark usage guide (`benchmark/nixlbench/README.md`)
+
 * [KVBench docs](https://github.com/ai-dynamo/nixl/tree/main/benchmark/kvbench/docs) - KVBench workflows and tutorials (`benchmark/kvbench/docs/`)
 
 ## Supported Platforms
