@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-#include <gnu/libc-version.h>  // For glibc version detection
+#include <gnu/libc-version.h> // For glibc version detection
 #include "libfabric_backend.h"
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
@@ -248,7 +248,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
 
     // NIXL_FORCE_DISABLE_GPU_RDMA: Environment variable to force disable GPU Direct RDMA
     // This is a workaround for glibc incompatibility issues with EFA RDM layer
-    const char* force_disable_rdma = std::getenv("NIXL_FORCE_DISABLE_GPU_RDMA");
+    const char *force_disable_rdma = std::getenv("NIXL_FORCE_DISABLE_GPU_RDMA");
     if (force_disable_rdma && std::string(force_disable_rdma) == "1") {
         NIXL_WARN << "NIXL_FORCE_DISABLE_GPU_RDMA=1 detected, setting FI_EFA_USE_DEVICE_RDMA=0";
         setenv("FI_EFA_USE_DEVICE_RDMA", "0", 1);
