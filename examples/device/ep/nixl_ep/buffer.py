@@ -459,7 +459,6 @@ class Buffer:
         """
         self.group_size = num_ranks
         self.num_rdma_bytes = num_rdma_bytes
-        os.environ.setdefault("UCX_RC_GDA_NUM_CHANNELS", str(num_experts_per_rank))
         self.runtime.update_memory_buffers(
             num_ranks, num_experts_per_rank, num_rdma_bytes
         )
