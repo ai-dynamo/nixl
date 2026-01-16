@@ -20,6 +20,7 @@
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "libfabric_common.h"
+#include <gnu/libc-version.h>  // For glibc version detection
 
 #include <cstring>
 #include <stdexcept>
@@ -468,6 +469,65 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         if (ret) {
             NIXL_ERROR << "fi_domain failed for rail " << rail_id << ": " << fi_strerror(-ret);
             throw std::runtime_error("fi_domain failed for rail " + std::to_string(rail_id));
+        }
+
+        // DOMAIN_VALIDATION_FIX: Validate EFA domain RDM layer is properly initialized
+        // This catches the case where fi_domain() succeeds but RDM layer failed internally
+        // (the "efa_domain_init_rdm failed. err: 28" issue that causes segfault at offset 0x18)
+        {
+            const char* skip_validation = std::getenv("NIXL_SKIP_RDM_VALIDATION");
+            if (!skip_validation || std::string(skip_validation) != "1") {
+                // Log glibc version for debugging
+                NIXL_INFO << "Domain validation: glibc version = " << gnu_get_libc_version()
+                          << ", rail " << rail_id << ", provider " << provider;
+
+                // Create a minimal test CQ to validate domain is functional
+                struct fi_cq_attr test_cq_attr = {};
+                test_cq_attr.format = FI_CQ_FORMAT_DATA;
+                test_cq_attr.wait_obj = FI_WAIT_NONE;
+                test_cq_attr.size = 1;  // Minimal size for validation
+                struct fid_cq *test_cq = nullptr;
+
+                int validate_ret = fi_cq_open(domain, &test_cq_attr, &test_cq, NULL);
+                if (validate_ret != 0) {
+                    NIXL_ERROR << "DOMAIN_VALIDATION_FAILED: fi_cq_open test failed for rail " << rail_id
+                               << " with error: " << fi_strerror(-validate_ret)
+                               << " (err=" << -validate_ret << ")";
+                    NIXL_ERROR << "This typically indicates EFA RDM layer failed to initialize.";
+                    NIXL_ERROR << "Possible causes:";
+                    NIXL_ERROR << "  1. glibc version incompatibility (current: " << gnu_get_libc_version() << ")";
+                    NIXL_ERROR << "  2. EFA device resource exhaustion";
+                    NIXL_ERROR << "  3. Kernel/driver compatibility issue";
+                    NIXL_ERROR << "Workarounds:";
+                    NIXL_ERROR << "  - Set FI_EFA_USE_DEVICE_RDMA=0 to disable GPU Direct RDMA";
+                    NIXL_ERROR << "  - Set NIXL_SKIP_RDM_VALIDATION=1 to skip this check (may crash later)";
+
+                    // Cleanup domain before throwing
+                    fi_close(&domain->fid);
+                    domain = nullptr;
+
+                    throw std::runtime_error(
+                        "EFA domain validation failed for rail " + std::to_string(rail_id) +
+                        ": RDM layer may not be properly initialized. " +
+                        "Try setting FI_EFA_USE_DEVICE_RDMA=0 or use a compatible glibc version.");
+                }
+
+                if (test_cq == nullptr) {
+                    NIXL_ERROR << "DOMAIN_VALIDATION_FAILED: test CQ is null despite success return for rail "
+                               << rail_id;
+                    fi_close(&domain->fid);
+                    domain = nullptr;
+                    throw std::runtime_error(
+                        "EFA domain validation failed for rail " + std::to_string(rail_id) +
+                        ": test CQ creation returned null pointer");
+                }
+
+                // Validation passed - close test CQ
+                fi_close(&test_cq->fid);
+                NIXL_DEBUG << "Domain validation passed for rail " << rail_id;
+            } else {
+                NIXL_WARN << "Domain validation SKIPPED (NIXL_SKIP_RDM_VALIDATION=1) for rail " << rail_id;
+            }
         }
 
         // Create CQ for this rail
