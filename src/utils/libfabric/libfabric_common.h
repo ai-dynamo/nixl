@@ -47,7 +47,7 @@
 // Request pool configuration constants
 #define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 4096 // SEND/RECV operations (1:1 with buffers)
 #define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/read operations (no buffers)
-#define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 525312  // v95: 512KB for large models
+#define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 525312 // v95: 512KB for large models
 #define NIXL_LIBFABRIC_RECV_POOL_SIZE 1024 // Number of recv requests to pre-post per rail
 
 // Retry configuration constants
