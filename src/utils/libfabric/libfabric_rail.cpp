@@ -1237,6 +1237,15 @@ nixlLibfabricRail::postRead(void *local_buffer,
 
 // Memory Registration Methods
 
+// Memory Registration Resource Cache (MRRC) implementation
+// Based on He et al. "An efficient design for fast memory registration in RDMA" (JNCA 2009)
+
+size_t
+nixlLibfabricRail::getMRCacheSize() const {
+    std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+    return mr_cache_.size();
+}
+
 nixl_status_t
 nixlLibfabricRail::registerMemory(void *buffer,
                                   size_t length,
@@ -1253,6 +1262,34 @@ nixlLibfabricRail::registerMemory(void *buffer,
         NIXL_ERROR << "Domain not initialized on rail " << rail_id;
         return NIXL_ERR_BACKEND;
     }
+
+    // MRRC: Check cache first for existing registration
+    uintptr_t buf_addr = reinterpret_cast<uintptr_t>(buffer);
+    {
+        std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+        auto it = mr_cache_.find(buf_addr);
+        if (it != mr_cache_.end()) {
+            MRCacheEntry &entry = it->second;
+            // Validate that cached entry matches requested parameters
+            if (entry.length == length && entry.mem_type == mem_type && entry.gpu_id == gpu_id) {
+                // Cache hit - increment reference count and return cached MR
+                entry.ref_count.fetch_add(1, std::memory_order_relaxed);
+                *mr_out = entry.mr;
+                *key_out = entry.key;
+                mr_cache_hits_.fetch_add(1, std::memory_order_relaxed);
+
+                NIXL_DEBUG << "MRRC cache hit: rail=" << rail_id << " buffer=" << buffer
+                           << " ref_count=" << entry.ref_count.load() << " key=" << entry.key;
+                return NIXL_SUCCESS;
+            }
+            // Parameters don't match - this is unusual, log and proceed with new registration
+            NIXL_WARN << "MRRC cache entry mismatch: rail=" << rail_id << " buffer=" << buffer
+                      << " cached_len=" << entry.length << " requested_len=" << length;
+        }
+    }
+
+    // Cache miss - perform actual registration
+    mr_cache_misses_.fetch_add(1, std::memory_order_relaxed);
 
     // Determine access flags based on provider capabilities
     uint64_t provider_access_flags;
@@ -1352,8 +1389,18 @@ nixlLibfabricRail::registerMemory(void *buffer,
         }
     }
 
+    uint64_t actual_key = fi_mr_key(mr);
+
+    // MRRC: Add to cache with ref_count=1
+    {
+        std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+        mr_cache_.emplace(buf_addr, MRCacheEntry(mr, actual_key, length, mem_type, gpu_id));
+        NIXL_DEBUG << "MRRC cache insert: rail=" << rail_id << " buffer=" << buffer
+                   << " key=" << actual_key << " cache_size=" << mr_cache_.size();
+    }
+
     *mr_out = mr;
-    *key_out = fi_mr_key(mr);
+    *key_out = actual_key;
 
     NIXL_TRACE << "Memory Registration SUCCESS: rail=" << rail_id << " provider=" << provider_name
                << " buffer=" << buffer << " length=" << length << " mr=" << mr
@@ -1370,6 +1417,31 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    // MRRC: Find cache entry and decrement reference count
+    {
+        std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+        for (auto it = mr_cache_.begin(); it != mr_cache_.end(); ++it) {
+            if (it->second.mr == mr) {
+                uint32_t prev_count = it->second.ref_count.fetch_sub(1, std::memory_order_acq_rel);
+                if (prev_count == 1) {
+                    // Last reference - actually deregister and remove from cache
+                    NIXL_DEBUG << "MRRC cache evict: rail=" << rail_id
+                               << " buffer=" << (void *)it->first << " key=" << it->second.key;
+                    mr_cache_.erase(it);
+                    // Proceed to fi_close below
+                    break;
+                } else {
+                    // Still has references - don't deregister
+                    NIXL_DEBUG << "MRRC ref decrement: rail=" << rail_id
+                               << " buffer=" << (void *)it->first
+                               << " ref_count=" << (prev_count - 1);
+                    return NIXL_SUCCESS;
+                }
+            }
+        }
+    }
+
+    // Actually close the MR (either not in cache or last reference)
     int ret = fi_close(&mr->fid);
     if (ret) {
         NIXL_ERROR << "fi_close failed on rail " << rail_id << ": " << fi_strerror(-ret);
