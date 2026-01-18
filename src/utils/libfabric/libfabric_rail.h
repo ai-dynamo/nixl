@@ -45,18 +45,22 @@ class nixlLibfabricConnection;
  * (JNCA 2009) showing memory registration costs can exceed RDMA latency.
  */
 struct MRCacheEntry {
-    struct fid_mr *mr;           ///< Libfabric memory registration handle
-    uint64_t key;                ///< Remote access key
+    struct fid_mr *mr; ///< Libfabric memory registration handle
+    uint64_t key; ///< Remote access key
     std::atomic<uint32_t> ref_count; ///< Reference count for safe deregistration
-    size_t length;               ///< Buffer length for validation
-    nixl_mem_t mem_type;         ///< Memory type (DRAM_SEG or VRAM_SEG)
-    int gpu_id;                  ///< GPU ID for VRAM validation (-1 for DRAM)
+    size_t length; ///< Buffer length for validation
+    nixl_mem_t mem_type; ///< Memory type (DRAM_SEG or VRAM_SEG)
+    int gpu_id; ///< GPU ID for VRAM validation (-1 for DRAM)
 
-    MRCacheEntry()
-        : mr(nullptr), key(0), ref_count(0), length(0), mem_type(DRAM_SEG), gpu_id(-1) {}
+    MRCacheEntry() : mr(nullptr), key(0), ref_count(0), length(0), mem_type(DRAM_SEG), gpu_id(-1) {}
 
     MRCacheEntry(struct fid_mr *mr_, uint64_t key_, size_t len_, nixl_mem_t type_, int gpu_)
-        : mr(mr_), key(key_), ref_count(1), length(len_), mem_type(type_), gpu_id(gpu_) {}
+        : mr(mr_),
+          key(key_),
+          ref_count(1),
+          length(len_),
+          mem_type(type_),
+          gpu_id(gpu_) {}
 };
 
 /**
@@ -315,11 +319,20 @@ public:
 
     // Memory Registration Cache Statistics
     /** Get number of MR cache hits */
-    uint64_t getMRCacheHits() const { return mr_cache_hits_.load(std::memory_order_relaxed); }
+    uint64_t
+    getMRCacheHits() const {
+        return mr_cache_hits_.load(std::memory_order_relaxed);
+    }
+
     /** Get number of MR cache misses */
-    uint64_t getMRCacheMisses() const { return mr_cache_misses_.load(std::memory_order_relaxed); }
+    uint64_t
+    getMRCacheMisses() const {
+        return mr_cache_misses_.load(std::memory_order_relaxed);
+    }
+
     /** Get current MR cache size */
-    size_t getMRCacheSize() const;
+    size_t
+    getMRCacheSize() const;
 
     // Address vector management methods
     /** Insert remote endpoint address into address vector */
