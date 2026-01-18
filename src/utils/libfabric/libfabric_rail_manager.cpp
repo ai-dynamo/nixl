@@ -935,7 +935,8 @@ nixlLibfabricRailManager::markRailInactive(size_t rail_id) {
     }
 
     // Lock-free: Atomically clear the bit for this rail
-    uint64_t old_bitmap = active_rails_bitmap_.fetch_and(~(1ULL << rail_id), std::memory_order_acq_rel);
+    uint64_t old_bitmap =
+        active_rails_bitmap_.fetch_and(~(1ULL << rail_id), std::memory_order_acq_rel);
     bool was_active = old_bitmap & (1ULL << rail_id);
 
     if (was_active) {
