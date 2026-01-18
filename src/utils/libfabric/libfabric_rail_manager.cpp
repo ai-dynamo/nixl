@@ -21,6 +21,7 @@
 #include "libfabric/libfabric_topology.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
+#include <cstdlib>
 #include <sstream>
 
 // Forward declaration for LibfabricUtils namespace
@@ -52,6 +53,27 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
 
     NIXL_DEBUG << "Got " << all_devices.size()
                << " network devices from topology for provider=" << selected_provider_name;
+
+    // Check for forced rail count via environment variable
+    // This fixes rail count mismatch between disaggregated workers
+    const char* force_rails_env = std::getenv(NIXL_LIBFABRIC_NUM_RAILS_ENV);
+    if (force_rails_env) {
+        try {
+            size_t force_rails = std::stoul(force_rails_env);
+            if (force_rails > 0 && force_rails < all_devices.size()) {
+                NIXL_INFO << "Forcing rail count to " << force_rails
+                          << " via " << NIXL_LIBFABRIC_NUM_RAILS_ENV
+                          << " (discovered " << all_devices.size() << " devices)";
+                all_devices.resize(force_rails);
+            } else if (force_rails == 0) {
+                NIXL_WARN << NIXL_LIBFABRIC_NUM_RAILS_ENV << " is 0, using all "
+                          << all_devices.size() << " devices";
+            }
+        } catch (const std::exception& e) {
+            NIXL_WARN << "Invalid value for " << NIXL_LIBFABRIC_NUM_RAILS_ENV
+                      << ": " << force_rails_env << ", ignoring";
+        }
+    }
 
     // Create data rails with selected provider - throw on failure
     nixl_status_t rail_status = createDataRails(all_devices, selected_provider_name);
