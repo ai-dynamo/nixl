@@ -279,8 +279,8 @@ ControlRequestPool::expandPool() {
         size_t buffer_offset = local_idx * NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE;
         if (buffer_offset + NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE > new_chunk.size) {
             NIXL_ERROR << " Rail " << rail_id_ << " buffer assignment out of bounds for request["
-                       << i << "]:"
-                       << " local_idx=" << local_idx << " buffer_offset=" << buffer_offset
+                       << i << "]:" << " local_idx=" << local_idx
+                       << " buffer_offset=" << buffer_offset
                        << " buffer_size=" << NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE
                        << " chunk_size=" << new_chunk.size;
             return NIXL_ERR_BACKEND;
