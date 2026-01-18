@@ -228,7 +228,10 @@
       • Builds and pushes x86_64 &amp; aarch64 images with any NIXL/UCX version combination<br/>
       • Choose between <b>nixlbench</b> or <b>nixl</b> build targets<br/>
       • Optional latest tag update via <code>UPDATE_LATEST</code> parameter<br/>
-      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ <code>verification/nixlbench/</code> or <code>verification/nixl/</code> based on target<br/>
+      • Images pushed to both registries:<br/>
+      &nbsp;&nbsp;- https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/<br/>
+      &nbsp;&nbsp;- https://urm.nvidia.com/sw-nbu-swx-nixl-docker-local/<br/>
+      &nbsp;&nbsp;Use <code>verification/nixlbench/</code> or <code>verification/nixl/</code> based on target<br/>
       • You must be part of access-artifactory-nbu-swx-nixl-users DL group in order to work with these images
       <br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>

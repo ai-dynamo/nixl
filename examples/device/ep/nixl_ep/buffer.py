@@ -230,7 +230,7 @@ class Buffer:
         Arguments:
             x: `torch.Tensor` with `torch.bfloat16`, shaped as `[num_tokens, hidden]`, only several hidden shapes are
                 supported. The number of tokens to be dispatched must be less than `num_max_dispatch_tokens_per_rank`.
-            topk_idx: `torch.Tensor` with `torch.int64`, shaped as `[num_tokens, num_topk]`, only several top-k shapes
+            topk_idx: `torch.Tensor` with `nixl_ep.topk_idx_t`, shaped as `[num_tokens, num_topk]`, only several top-k shapes
                 are supported. `-1` indices (not selecting any expert) are supported.
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
             num_experts: the number of all experts.
@@ -336,7 +336,7 @@ class Buffer:
         Arguments:
             x: `[num_local_experts, num_max_dispatch_tokens_per_rank * num_ranks, hidden]` with `torch.bfloat16`,
                 the local calculated tokens to be sent to this original rank and reduced.
-            topk_idx: `[num_combined_tokens, num_topk]` with `torch.int64`, the expert indices selected by the dispatched
+            topk_idx: `[num_combined_tokens, num_topk]` with `nixl_ep.topk_idx_t`, the expert indices selected by the dispatched
                 tokens. `-1` indices (not selecting any expert) are supported. Note that, `num_combined_tokens` equals
                 to the number of dispatched tokens.
             topk_weights: `[num_combined_tokens, num_topk]` with `torch.float`, the expert weights selected by the dispatched
@@ -459,8 +459,10 @@ class Buffer:
         """
         self.group_size = num_ranks
         self.num_rdma_bytes = num_rdma_bytes
-        os.environ["NIXL_EP_NUM_CHANNELS"] = str(num_experts_per_rank)
-        self.runtime.update_memory_buffers(num_ranks, num_rdma_bytes)
+        os.environ.setdefault("UCX_RC_GDA_NUM_CHANNELS", str(num_experts_per_rank))
+        self.runtime.update_memory_buffers(
+            num_ranks, num_experts_per_rank, num_rdma_bytes
+        )
 
     def set_tcp_store_group(self, tcp_store_group: Optional[dist.TCPStore]) -> None:
         """
