@@ -384,7 +384,7 @@ __device__ void *
 nixlMemoryViewGetPtr(nixlMemoryViewH mvh, unsigned index) {
     auto mem_list = static_cast<ucp_device_remote_mem_list_handle_h>(mvh);
     void *ptr = nullptr;
-    ucp_device_get_ptr<static_cast<ucs_device_level_t>(level)>(mem_list, index, &ptr);
+    ucp_device_get_ptr(mem_list, index, &ptr);
     return ptr;
 }
 
