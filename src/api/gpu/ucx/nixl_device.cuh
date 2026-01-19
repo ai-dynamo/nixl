@@ -379,7 +379,6 @@ nixlGpuWriteSignal(void *signal, uint64_t value) {
  *
  * @return Pointer to the mapped memory, or nullptr if not available.
  */
-template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ void *
 nixlMemoryViewGetPtr(nixlMemoryViewH mvh, unsigned index) {
     auto mem_list = static_cast<ucp_device_remote_mem_list_handle_h>(mvh);
