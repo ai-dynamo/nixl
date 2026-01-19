@@ -39,9 +39,7 @@ enum class nixl_gpu_level_t : uint64_t {
  * @enum  nixl_gpu_flags_t
  * @brief An enumeration of different flags for GPU transfer requests.
  */
-enum class nixl_gpu_flags_t : uint64_t {
-    NO_DELAY = UCP_DEVICE_FLAG_NODELAY
-};
+enum class nixl_gpu_flags_t : uint64_t { NO_DELAY = UCP_DEVICE_FLAG_NODELAY };
 
 /**
  * @brief Parameters for GPU transfer requests with safe type conversion.
@@ -372,7 +370,7 @@ nixlGpuWriteSignal(void *signal, uint64_t value) {
 /**
  * @brief Get a local pointer to remote memory.
  *
- * This function returns a local pointer to the mapped memory of the 
+ * This function returns a local pointer to the mapped memory of the
  * remote memory view handle at the given index.
  * The memory view must be prepared on the host using @ref nixlAgent::prepMemoryView.
  *
@@ -382,9 +380,8 @@ nixlGpuWriteSignal(void *signal, uint64_t value) {
  * @return Pointer to the mapped memory, or nullptr if not available.
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
-__device__ void*
-nixlMemoryViewGetPtr(nixlMemoryViewH mvh,
-                     unsigned index) {
+__device__ void *
+nixlMemoryViewGetPtr(nixlMemoryViewH mvh, unsigned index) {
     auto mem_list = static_cast<ucp_device_remote_mem_list_handle_h>(mvh);
     void *ptr = nullptr;
     ucp_device_get_ptr<static_cast<ucs_device_level_t>(level)>(mem_list, index, &ptr);

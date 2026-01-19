@@ -343,14 +343,16 @@ template bool operator==<nixlBasicDesc> (const nixlDescList<nixlBasicDesc> &lhs,
                                          const nixlDescList<nixlBasicDesc> &rhs);
 template bool operator==<nixlMetaDesc>  (const nixlDescList<nixlMetaDesc> &lhs,
                                          const nixlDescList<nixlMetaDesc> &rhs);
-template bool operator==<nixlRemoteMetaDesc>  (const nixlDescList<nixlRemoteMetaDesc> &lhs,
-                                         const nixlDescList<nixlRemoteMetaDesc> &rhs);
+template bool
+operator== <nixlRemoteMetaDesc>(const nixlDescList<nixlRemoteMetaDesc> &lhs,
+                                const nixlDescList<nixlRemoteMetaDesc> &rhs);
 template bool operator==<nixlBlobDesc>(const nixlDescList<nixlBlobDesc> &lhs,
                                        const nixlDescList<nixlBlobDesc> &rhs);
 template bool operator==<nixlSectionDesc>(const nixlDescList<nixlSectionDesc> &lhs,
                                           const nixlDescList<nixlSectionDesc> &rhs);
-template bool operator==<nixlRemoteDesc>(const nixlDescList<nixlRemoteDesc> &lhs,
-                                          const nixlDescList<nixlRemoteDesc> &rhs);
+template bool
+operator== <nixlRemoteDesc>(const nixlDescList<nixlRemoteDesc> &lhs,
+                            const nixlDescList<nixlRemoteDesc> &rhs);
 
 // nixlSecDescList keeps the elements sorted
 void

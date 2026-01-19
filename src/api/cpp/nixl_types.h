@@ -157,9 +157,7 @@ enum class nixl_cost_t {
  * @enum nixl_device_send_flags_t
  * @brief An enumeration of send flags for Device API.
  */
-enum nixl_device_send_flags_t {
-    NIXL_DEVICE_FLAG_LAZY = (1u << 0)
-};
+enum nixl_device_send_flags_t { NIXL_DEVICE_FLAG_LAZY = (1u << 0) };
 
 /**
  * @brief A typedef for std::optional<nixl_b_params_t> for querying memory results

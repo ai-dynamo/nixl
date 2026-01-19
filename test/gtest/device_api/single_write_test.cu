@@ -919,34 +919,39 @@ TEST_P(SingleWriteTest, MultipleWorkersPut) {
         auto status =
             getAgent(SENDER_AGENT)
                 .prepMemoryView(makeDescList<nixlBasicDesc>(src_buffers[worker_id], mem_type),
-                                src_mvhs[worker_id], &extra_params);
+                                src_mvhs[worker_id],
+                                &extra_params);
         ASSERT_EQ(status, NIXL_SUCCESS);
 
-        status = getAgent(SENDER_AGENT)
-                 .prepMemoryView(makeDescList<nixlRemoteDesc>(
-                                     dst_buffers[worker_id], mem_type, getAgentName(RECEIVER_AGENT)),
-                                 dst_mvhs[worker_id], &extra_params);
+        status =
+            getAgent(SENDER_AGENT)
+                .prepMemoryView(makeDescList<nixlRemoteDesc>(
+                                    dst_buffers[worker_id], mem_type, getAgentName(RECEIVER_AGENT)),
+                                dst_mvhs[worker_id],
+                                &extra_params);
         ASSERT_EQ(status, NIXL_SUCCESS);
     }
 
     for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
         putParams put_params{{src_mvhs[worker_id]}, {dst_mvhs[worker_id]}, size};
         constexpr size_t num_iters{1};
-        const auto status = dispatchLaunchPutKernel(
-            GetParam(), put_params, num_iters);
+        const auto status = dispatchLaunchPutKernel(GetParam(), put_params, num_iters);
         ASSERT_EQ(status, NIXL_SUCCESS) << "Kernel launch failed for worker " << worker_id;
     }
 
     for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
         std::vector<uint32_t> received(size / sizeof(uint32_t));
-        cudaMemcpy(received.data(), static_cast<void *>(dst_buffers[worker_id][0]),
-                   size, cudaMemcpyDeviceToHost);
+        cudaMemcpy(received.data(),
+                   static_cast<void *>(dst_buffers[worker_id][0]),
+                   size,
+                   cudaMemcpyDeviceToHost);
 
         EXPECT_EQ(received, patterns[worker_id])
             << "Worker " << worker_id << " full buffer verification failed";
     }
 
-    Logger() << "MultipleWorkers test: " << numWorkers << " workers with explicit selection verified";
+    Logger() << "MultipleWorkers test: " << numWorkers
+             << " workers with explicit selection verified";
 
     for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
         getAgent(SENDER_AGENT).releaseMemoryView(src_mvhs[worker_id]);
