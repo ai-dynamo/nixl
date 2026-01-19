@@ -21,7 +21,7 @@ endif
 
 ucx_utils_inc_dirs = include_directories('.')
 
-ucx_utils_sources = ['config.cpp', 
+ucx_utils_sources = ['config.cpp',
                      'gpu_xfer_req_h.cpp',
                      'mem_list.cpp',
                      'rkey.cpp',
