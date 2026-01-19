@@ -54,6 +54,7 @@ export NIXL_ETCD_NAMESPACE="/nixl/nixlbench_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
+ETCD_PID=$!
 
 wait_for_etcd
 
@@ -116,4 +117,4 @@ if $HAS_GPU ; then
     done
 fi
 
-pkill etcd
+kill -9 $ETCD_PID 2>/dev/null || true
