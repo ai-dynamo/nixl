@@ -111,6 +111,24 @@ class nixlMetaDesc : public nixlBasicDesc {
         }
 };
 
+class nixlRemoteMetaDesc : public nixlMetaDesc {
+public:
+    using nixlMetaDesc::nixlMetaDesc;
+
+    nixlRemoteMetaDesc(const std::string &remote_agent)
+        : nixlMetaDesc(),
+          remoteAgent_(remote_agent) {}
+
+    [[nodiscard]] bool
+    isValid() const noexcept {
+        return remoteAgent_ != nixl_invalid_agent;
+    }
+
+private:
+    std::string remoteAgent_;
+};
+
 typedef nixlDescList<nixlMetaDesc> nixl_meta_dlist_t;
+typedef nixlDescList<nixlRemoteMetaDesc> nixl_remote_meta_dlist_t;
 
 #endif

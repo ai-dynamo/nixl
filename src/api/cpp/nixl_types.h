@@ -154,6 +154,14 @@ enum class nixl_cost_t {
 };
 
 /**
+ * @enum nixl_device_send_flags_t
+ * @brief An enumeration of send flags for Device API.
+ */
+enum nixl_device_send_flags_t {
+    NIXL_DEVICE_FLAG_LAZY = (1u << 0)
+};
+
+/**
  * @brief A typedef for std::optional<nixl_b_params_t> for querying memory results
  *        Validity of a nixl_query_resp_t can be checked by has_value() method,
  *        and if true, the dictionary can be accessed by value() method.
@@ -220,6 +228,12 @@ struct nixlAgentOptionalArgs {
     std::string metadataLabel;
 
     /**
+     * @var initiatorMemType Specifies where the memory view handle should be allocated.
+     *                       Used in @ref nixlAgent::prepMemoryView.
+     */
+    nixl_mem_t initiatorMemType = VRAM_SEG;
+
+    /**
      * @var Backend custom parameter
      */
     nixl_blob_t customParam;
@@ -234,6 +248,12 @@ using nixl_opt_args_t = nixlAgentOptionalArgs;
  * @brief A typedef for a nixlGpuXferReqH
  */
 using nixlGpuXferReqH = void *;
+
+/**
+ * @brief A typedef for a nixlMemoryViewH
+ *        Represents a Virtual Memory Buffer Map handle
+ */
+using nixlMemoryViewH = void *;
 
 /**
  * @brief A typedefs for a point in time
@@ -289,5 +309,7 @@ using nixl_xfer_telem_t = nixlXferTelemetry;
  *        prepared for the local agent as an initiator in prepXferDlist method.
  */
 #define NIXL_INIT_AGENT ""
+
+extern const std::string nixl_invalid_agent;
 
 #endif

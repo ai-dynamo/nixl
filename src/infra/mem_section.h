@@ -105,6 +105,10 @@ class nixlMemSection {
                                 nixlBackendEngine* backend,
                                 nixl_meta_dlist_t &resp) const;
 
+        nixl_status_t
+        populate(const nixlRemoteDesc &query,
+                 nixlBackendEngine *backend,
+                 nixl_remote_meta_dlist_t &resp) const;
 
         virtual ~nixlMemSection () = 0; // Making the class abstract
 };

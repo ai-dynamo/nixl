@@ -1831,3 +1831,162 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
     // This is a checker method, returning not found is not an error to be logged
     return NIXL_ERR_NOT_FOUND;
 }
+
+nixl_status_t
+nixlAgent::prepMemoryView(const nixl_remote_dlist_t &remote_buffs,
+                          nixlMemoryViewH &mvh,
+                          const nixl_opt_args_t *extra_params) const {
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+
+    const auto desc_count = static_cast<size_t>(remote_buffs.descCount());
+    const auto mem_type = remote_buffs.getType();
+    backend_set_t backends;
+    if (extra_params && !extra_params->backends.empty()) {
+        for (const auto &backend : extra_params->backends) {
+            backends.insert(backend->engine);
+        }
+    } else {
+        for (size_t i = 0; i < desc_count; ++i) {
+            const auto &remote_buff = remote_buffs[i];
+            if (!remote_buff.isValid()) {
+                continue;
+            }
+
+            auto remote_agent = remote_buff.remoteAgent();
+            const auto it = data->remoteSections.find(std::string(remote_agent));
+            if (it == data->remoteSections.end()) {
+                NIXL_ERROR_FUNC << "metadata for remote agent '" << remote_agent << "' not found";
+                return NIXL_ERR_NOT_FOUND;
+            }
+
+            const auto mem_type_backends = it->second->queryBackends(mem_type);
+            if (!mem_type_backends) {
+                NIXL_ERROR_FUNC << "no backends found for " << mem_type
+                                << " memory type for remote agent '" << remote_agent << "'";
+                return NIXL_ERR_NOT_FOUND;
+            }
+
+            backends.insert(mem_type_backends->begin(), mem_type_backends->end());
+        }
+    }
+
+    nixlBackendEngine *engine{nullptr};
+    nixl_remote_meta_dlist_t remote_meta_dlist{mem_type};
+    for (size_t i = 0; i < desc_count; ++i) {
+        const auto &remote_buff = remote_buffs[i];
+        if (!remote_buff.isValid()) {
+            remote_meta_dlist.addDesc(nixlRemoteMetaDesc(nixl_invalid_agent));
+            continue;
+        }
+
+        auto remote_agent = remote_buff.remoteAgent();
+        auto remote_section = data->remoteSections[std::string(remote_agent)];
+        if (!engine) {
+            for (const auto &backend : backends) {
+                const auto status =
+                    remote_section->populate(remote_buff, backend, remote_meta_dlist);
+                if (status == NIXL_SUCCESS) {
+                    NIXL_INFO << "Selected backend: " << backend->getType();
+                    engine = backend;
+                    break;
+                }
+            }
+
+            if (!engine) {
+                NIXL_ERROR_FUNC << "no specified or potential backend had the required "
+                                   "registrations to be able to do the transfer";
+                return NIXL_ERR_NOT_FOUND;
+            }
+        } else {
+            const auto status = remote_section->populate(remote_buff, engine, remote_meta_dlist);
+            if (status != NIXL_SUCCESS) {
+                NIXL_ERROR_FUNC << "failed to populate remote metadata for agent '" << remote_agent
+                                << "' with status " << status;
+                return status;
+            }
+        }
+    }
+
+    if (!engine) {
+        NIXL_ERROR_FUNC << "no specified or potential backend had the required "
+                           "registrations to be able to do the transfer";
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    nixl_opt_b_args_t opt_args;
+    if (extra_params && !extra_params->customParam.empty()) {
+        opt_args.customParam = extra_params->customParam;
+    }
+
+    const auto status = engine->prepareMemoryView(remote_meta_dlist, mvh, &opt_args);
+    if (status == NIXL_SUCCESS) {
+        data->mvhToEngine.emplace(mvh, *engine);
+    }
+
+    return status;
+}
+
+nixl_status_t
+nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &local_buffs,
+                          nixlMemoryViewH &mvh,
+                          const nixl_opt_args_t *extra_params) const {
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+
+    const auto mem_type = local_buffs.getType();
+    backend_set_t backends;
+    if (extra_params && !extra_params->backends.empty()) {
+        for (const auto &backend : extra_params->backends) {
+            backends.insert(backend->engine);
+        }
+    } else {
+        const auto mem_type_backends = data->memorySection->queryBackends(mem_type);
+        if (!mem_type_backends) {
+            NIXL_ERROR_FUNC << "no backends found for " << mem_type << " memory type";
+            return NIXL_ERR_NOT_FOUND;
+        }
+
+        backends.insert(mem_type_backends->begin(), mem_type_backends->end());
+    }
+
+    nixlBackendEngine *engine{nullptr};
+    nixl_meta_dlist_t meta_dlist{mem_type};
+    for (const auto &backend : backends) {
+        const auto status = data->memorySection->populate(local_buffs, backend, meta_dlist);
+        if (status == NIXL_SUCCESS) {
+            NIXL_INFO << "Selected backend: " << backend->getType();
+            engine = backend;
+            break;
+        }
+    }
+
+    if (!engine) {
+        NIXL_ERROR_FUNC << "no specified or potential backend had the required "
+                           "registrations to be able to do the transfer";
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    nixl_opt_b_args_t opt_args;
+    if (extra_params && !extra_params->customParam.empty()) {
+        opt_args.customParam = extra_params->customParam;
+    }
+
+    const auto status = engine->prepareMemoryView(meta_dlist, mvh, &opt_args);
+    if (status == NIXL_SUCCESS) {
+        data->mvhToEngine.emplace(mvh, *engine);
+    }
+
+    return status;
+}
+
+void
+nixlAgent::releaseMemoryView(nixlMemoryViewH mvh) const {
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    const auto it = data->mvhToEngine.find(mvh);
+    if (it == data->mvhToEngine.end()) {
+        NIXL_WARN << "Invalid mvh[" << mvh << "] ";
+        return;
+    }
+
+    it->second.releaseMemoryView(mvh);
+    data->mvhToEngine.erase(it);
+}

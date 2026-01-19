@@ -36,6 +36,14 @@ enum class nixl_gpu_level_t : uint64_t {
 };
 
 /**
+ * @enum  nixl_gpu_flags_t
+ * @brief An enumeration of different flags for GPU transfer requests.
+ */
+enum class nixl_gpu_flags_t : uint64_t {
+    NO_DELAY = UCP_DEVICE_FLAG_NODELAY
+};
+
+/**
  * @brief Parameters for GPU transfer requests with safe type conversion.
  */
 struct nixlGpuXferReqParams {
@@ -249,6 +257,88 @@ nixlGpuGetXferStatus(nixlGpuXferStatusH &xfer_status) {
 }
 
 /**
+ * @brief Post a single-region memory transfer from local to remote GPU.
+ *
+ * This function creates and posts a transfer request using Virtual Memory Buffer Maps.
+ * The maps should be prepared on the host using @ref nixlAgent::prepMemoryView.
+ *
+ * @param src_mvh            [in]  Source memory view handle (local buffers)
+ * @param src_index          [in]  Index in the source memory view
+ * @param src_offset         [in]  Offset within the source buffer
+ * @param dst_mvh            [in]  Destination memory view handle (remote buffers)
+ * @param dst_index          [in]  Index in the destination memory view
+ * @param dst_offset         [in]  Offset within the destination buffer
+ * @param size               [in]  Size in bytes to transfer
+ * @param channel_id         [in]  Channel ID to use for the transfer
+ * @param flags              [in]  Transfer flags from @ref nixl_device_send_flags_t
+ * @param xfer_status        [out] Optional status handle (use @ref nixlGpuGetXferStatus)
+ *
+ * @return NIXL_IN_PROG       Transfer posted successfully.
+ * @return NIXL_ERR_BACKEND   An error occurred in UCX backend.
+ */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
+__device__ nixl_status_t
+nixlPut(nixlMemoryViewH src_mvh,
+        unsigned src_index,
+        size_t src_offset,
+        nixlMemoryViewH dst_mvh,
+        unsigned dst_index,
+        size_t dst_offset,
+        size_t size,
+        unsigned channel_id = 0,
+        unsigned flags = 0,
+        nixlGpuXferStatusH *xfer_status = nullptr) {
+    auto src_mem_list = static_cast<ucp_device_local_mem_list_handle_h>(src_mvh);
+    auto dst_mem_list = static_cast<ucp_device_remote_mem_list_handle_h>(dst_mvh);
+    ucp_device_request_t *ucp_request{xfer_status ? &xfer_status->device_request : nullptr};
+    const auto status = ucp_device_put_single<static_cast<ucs_device_level_t>(level)>(src_mem_list,
+                                                                                      src_index,
+                                                                                      src_offset,
+                                                                                      dst_mem_list,
+                                                                                      dst_index,
+                                                                                      dst_offset,
+                                                                                      size,
+                                                                                      channel_id,
+                                                                                      flags,
+                                                                                      ucp_request);
+    return nixlGpuConvertUcsStatus(status);
+}
+
+/**
+ * @brief Atomic add to remote GPU memory.
+ *
+ * This function performs an atomic increment on a remote counter/signal.
+ * The increment is visible only after previous writes complete.
+ * The signal must be initialized on the host using @ref nixlAgent::prepGpuSignal.
+ *
+ * @param signal_add_value   [in]  Value to add to the counter
+ * @param mvh                [in]  Destination memory view handle (remote buffers)
+ * @param index              [in]  Index in the destination memory view
+ * @param offset             [in]  Offset within the destination buffer
+ * @param channel_id         [in]  Channel ID to use for the transfer
+ * @param flags              [in]  Transfer flags from @ref nixl_device_send_flags_t
+ * @param xfer_status        [out] Optional status handle (use @ref nixlGpuGetXferStatus)
+ *
+ * @return NIXL_IN_PROG       Atomic add posted successfully.
+ * @return NIXL_ERR_BACKEND   An error occurred in UCX backend.
+ */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
+__device__ nixl_status_t
+nixlAtomicAdd(uint64_t value,
+              nixlMemoryViewH mvh,
+              unsigned index,
+              size_t offset,
+              unsigned channel_id = 0,
+              unsigned flags = 0,
+              nixlGpuXferStatusH *xfer_status = nullptr) {
+    auto mem_list = static_cast<ucp_device_remote_mem_list_handle_h>(mvh);
+    ucp_device_request_t *ucp_request{xfer_status ? &xfer_status->device_request : nullptr};
+    const auto status = ucp_device_counter_inc<static_cast<ucs_device_level_t>(level)>(
+        mem_list, index, value, offset, channel_id, flags, ucp_request);
+    return nixlGpuConvertUcsStatus(status);
+}
+
+/**
  * @brief Read the signal.
  *
  * The signal must be initialized with the host function @ref prepGpuSignal.
@@ -277,6 +367,28 @@ template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ void
 nixlGpuWriteSignal(void *signal, uint64_t value) {
     ucp_device_counter_write<static_cast<ucs_device_level_t>(level)>(signal, value);
+}
+
+/**
+ * @brief Get a local pointer to remote memory.
+ *
+ * This function returns a local pointer to the mapped memory of the 
+ * remote memory view handle at the given index.
+ * The memory view must be prepared on the host using @ref nixlAgent::prepMemoryView.
+ *
+ * @param mvh    [in]  Memory view handle (remote buffers)
+ * @param index  [in]  Index in the memory view
+ *
+ * @return Pointer to the mapped memory, or nullptr if not available.
+ */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
+__device__ void*
+nixlMemoryViewGetPtr(nixlMemoryViewH mvh,
+                     unsigned index) {
+    auto mem_list = static_cast<ucp_device_remote_mem_list_handle_h>(mvh);
+    void *ptr = nullptr;
+    ucp_device_get_ptr<static_cast<ucs_device_level_t>(level)>(mem_list, index, &ptr);
+    return ptr;
 }
 
 #endif // _NIXL_DEVICE_CUH

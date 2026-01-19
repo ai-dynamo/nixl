@@ -25,6 +25,8 @@
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
 
+const std::string nixl_invalid_agent = "INVALID_AGENT";
+
 /*** Class nixlBasicDesc implementation ***/
 
 // No Virtual function in nixlBasicDesc class or its children, as we want
@@ -332,17 +334,23 @@ bool operator==(const nixlDescList<T> &lhs, const nixlDescList<T> &rhs) {
 // Since we implement a template class declared in a header files, this is necessary
 template class nixlDescList<nixlBasicDesc>;
 template class nixlDescList<nixlMetaDesc>;
+template class nixlDescList<nixlRemoteMetaDesc>;
 template class nixlDescList<nixlBlobDesc>;
 template class nixlDescList<nixlSectionDesc>;
+template class nixlDescList<nixlRemoteDesc>;
 
 template bool operator==<nixlBasicDesc> (const nixlDescList<nixlBasicDesc> &lhs,
                                          const nixlDescList<nixlBasicDesc> &rhs);
 template bool operator==<nixlMetaDesc>  (const nixlDescList<nixlMetaDesc> &lhs,
                                          const nixlDescList<nixlMetaDesc> &rhs);
+template bool operator==<nixlRemoteMetaDesc>  (const nixlDescList<nixlRemoteMetaDesc> &lhs,
+                                         const nixlDescList<nixlRemoteMetaDesc> &rhs);
 template bool operator==<nixlBlobDesc>(const nixlDescList<nixlBlobDesc> &lhs,
                                        const nixlDescList<nixlBlobDesc> &rhs);
 template bool operator==<nixlSectionDesc>(const nixlDescList<nixlSectionDesc> &lhs,
                                           const nixlDescList<nixlSectionDesc> &rhs);
+template bool operator==<nixlRemoteDesc>(const nixlDescList<nixlRemoteDesc> &lhs,
+                                          const nixlDescList<nixlRemoteDesc> &rhs);
 
 // nixlSecDescList keeps the elements sorted
 void
@@ -401,4 +409,47 @@ nixlSecDescList::resize(const size_t &count) {
         throw std::logic_error(
             "nixlSecDescList: to keep list sorted, resize growth is not allowed.");
     this->descs.resize(count);
+}
+
+nixlRemoteDesc::nixlRemoteDesc(const uintptr_t &addr,
+                               const size_t &len,
+                               const uint64_t &dev_id,
+                               const std::string &remote_agent)
+    : nixlBasicDesc{addr, len, dev_id},
+      remoteAgent_{remote_agent} {}
+
+nixlRemoteDesc::nixlRemoteDesc(const nixlBasicDesc &desc, const std::string &remote_agent)
+    : nixlBasicDesc(desc),
+      remoteAgent_(remote_agent) {}
+
+nixlRemoteDesc::nixlRemoteDesc(const nixl_blob_t &blob) {
+    if (blob.size() > sizeof(nixlBasicDesc)) {
+        const size_t remote_agent_size = blob.size() - sizeof(nixlBasicDesc);
+        remoteAgent_.resize(remote_agent_size);
+        blob.copy(reinterpret_cast<char *>(this), sizeof(nixlBasicDesc));
+        blob.copy(
+            reinterpret_cast<char *>(&remoteAgent_[0]), remote_agent_size, sizeof(nixlBasicDesc));
+    } else if (blob.size() == sizeof(nixlBasicDesc)) {
+        blob.copy(reinterpret_cast<char *>(this), sizeof(nixlBasicDesc));
+    } else { // Error
+        addr = 0;
+        len = 0;
+        devId = 0;
+        remoteAgent_.clear();
+    }
+}
+
+bool
+operator==(const nixlRemoteDesc &lhs, const nixlRemoteDesc &rhs) {
+    return (((nixlBasicDesc)lhs == (nixlBasicDesc)rhs) && (lhs.remoteAgent_ == rhs.remoteAgent_));
+}
+
+nixl_blob_t
+nixlRemoteDesc::serialize() const {
+    return nixlBasicDesc::serialize() + remoteAgent_;
+}
+
+void
+nixlRemoteDesc::print(const std::string &suffix) const {
+    nixlBasicDesc::print(", Remote Agent: " + remoteAgent_ + suffix);
 }

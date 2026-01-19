@@ -1059,16 +1059,16 @@ nixlUcxEngine::getWorkerId() const {
     return it->second;
 }
 
-std::optional<size_t>
+size_t
 nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const noexcept {
     if (!opt_args || opt_args->customParam.empty()) {
-        return std::nullopt;
+        return getWorkerId();
     }
 
     constexpr std::string_view worker_id_key = "worker_id=";
     size_t pos = opt_args->customParam.find(worker_id_key);
     if (pos == std::string::npos) {
-        return std::nullopt;
+        return getWorkerId();
     }
 
     try {
@@ -1077,14 +1077,14 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const n
         if (worker_id >= getSharedWorkersSize()) {
             NIXL_WARN << "Invalid worker_id " << worker_id << " (must be < "
                       << getSharedWorkersSize() << ")";
-            return std::nullopt;
+            return getWorkerId();
         }
 
         return worker_id;
     }
     catch (const std::exception &e) {
         NIXL_WARN << "Failed to parse worker_id from customParam: " << e.what();
-        return std::nullopt;
+        return getWorkerId();
     }
 }
 
@@ -1101,8 +1101,7 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
 
     /* TODO: try to get from a pool first */
-    const auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
-    size_t worker_id = opt_worker_id.value_or(getWorkerId());
+    const auto worker_id = getWorkerIdFromOptArgs(opt_args);
     auto *ucx_handle = new nixlUcxBackendH(getWorker(worker_id).get(), worker_id);
 
     handle = ucx_handle;
@@ -1444,15 +1443,9 @@ nixlUcxEngine::prepGpuSignal(const nixlBackendMD &meta,
                              void *signal,
                              const nixl_opt_b_args_t *opt_args) const {
     try {
-        auto *ucx_meta = static_cast<const nixlUcxPrivateMetadata *>(&meta);
-
-        const auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
-        if (opt_worker_id) {
-            getWorker(*opt_worker_id)->prepGpuSignal(ucx_meta->mem, signal);
-        } else {
-            getWorker(getWorkerId())->prepGpuSignal(ucx_meta->mem, signal);
-        }
-
+        auto ucx_meta = static_cast<const nixlUcxPrivateMetadata *>(&meta);
+        const auto worker_id = getWorkerIdFromOptArgs(opt_args);
+        getWorker(worker_id)->prepGpuSignal(ucx_meta->mem, signal);
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
@@ -1565,4 +1558,92 @@ nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)
         ret = NIXL_SUCCESS;
     }
     return ret;
+}
+
+nixl_status_t
+nixlUcxEngine::prepareMemoryView(const nixl_meta_dlist_t &meta_dlist,
+                                 nixlMemoryViewH &mvh,
+                                 const nixl_opt_b_args_t *opt_args) const {
+    try {
+        mvh = prepareMemoryView(meta_dlist, opt_args);
+        return NIXL_SUCCESS;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Failed to prepare local memory view: " << e.what();
+        return NIXL_ERR_BACKEND;
+    }
+}
+
+nixl_status_t
+nixlUcxEngine::prepareMemoryView(const nixl_remote_meta_dlist_t &meta_dlist,
+                                 nixlMemoryViewH &mvh,
+                                 const nixl_opt_b_args_t *opt_args) const {
+    try {
+        mvh = prepareMemoryView(meta_dlist, opt_args);
+        return NIXL_SUCCESS;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Failed to prepare remote memory view: " << e.what();
+        return NIXL_ERR_BACKEND;
+    }
+}
+
+void
+nixlUcxEngine::releaseMemoryView(nixlMemoryViewH mvh) const {
+    const auto it = memViewMap.find(mvh);
+    if (it == memViewMap.end()) {
+        NIXL_WARN << "Invalid memory view handle: " << mvh;
+        return;
+    }
+
+    memViewMap.erase(mvh);
+}
+
+nixlMemoryViewH
+nixlUcxEngine::prepareMemoryView(const nixl_meta_dlist_t &meta_dlist,
+                                 const nixl_opt_b_args_t *opt_args) const {
+    std::vector<nixlUcxMem> local_mems;
+    const auto desc_count = static_cast<size_t>(meta_dlist.descCount());
+    local_mems.reserve(desc_count);
+    for (size_t i = 0; i < desc_count; ++i) {
+        auto localMd = static_cast<nixlUcxPrivateMetadata *>(meta_dlist[i].metadataP);
+        local_mems.emplace_back(localMd->mem);
+    }
+
+    const auto worker_id = getWorkerIdFromOptArgs(opt_args);
+    nixl::ucx::memList memList(local_mems, *getWorker(worker_id));
+    auto mvh = memList.get();
+    memViewMap.emplace(mvh, std::move(memList));
+    return mvh;
+}
+
+nixlMemoryViewH
+nixlUcxEngine::prepareMemoryView(const nixl_remote_meta_dlist_t &meta_dlist,
+                                 const nixl_opt_b_args_t *opt_args) const {
+    const auto worker_id = getWorkerIdFromOptArgs(opt_args);
+
+    std::vector<std::unique_ptr<nixl::ucx::remoteMem>> remote_mems;
+    const auto desc_count = static_cast<size_t>(meta_dlist.descCount());
+    remote_mems.reserve(desc_count);
+    for (size_t i = 0; i < desc_count; ++i) {
+        if (!meta_dlist[i].isValid()) {
+            remote_mems.emplace_back(nullptr);
+            continue;
+        }
+
+        auto remoteMd = static_cast<const nixlUcxPublicMetadata *>(meta_dlist[i].metadataP);
+        if (!remoteMd || !remoteMd->conn) {
+            throw std::runtime_error("No connection found in remote metadata");
+        }
+
+        remote_mems.emplace_back(
+            std::make_unique<nixl::ucx::remoteMem>(*remoteMd->conn->getEp(worker_id),
+                                                   static_cast<uint64_t>(meta_dlist[i].addr),
+                                                   remoteMd->getRkey(worker_id)));
+    }
+
+    nixl::ucx::memList memList(remote_mems, *getWorker(worker_id));
+    auto mvh = memList.get();
+    memViewMap.emplace(mvh, std::move(memList));
+    return mvh;
 }
