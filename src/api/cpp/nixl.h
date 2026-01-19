@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -378,6 +378,58 @@ class nixlAgent {
         nixl_status_t
         prepGpuSignal(const nixl_reg_dlist_t &signal_descs,
                       const nixl_opt_args_t *extra_params) const;
+
+        /**
+         * @brief  Prepare a Virtual Memory Buffer Map for remote buffers.
+         *
+         * This creates a data structure mapping indices to remote buffer metadata.
+         * The handle is allocated in memory accessible to the initiator (specified by
+         * extra_params->initiatorMemType).
+         *
+         * @param  remote_buffs  [in]  Remote buffer descriptors with agent names
+         * @param  mvh           [out] Memory View Handle for the remote buffers
+         * @param  extra_params  [in]  Optional parameters:
+         *                             - backends: Which backend to use (auto-selected if not
+         *                               specified)
+         *                             - initiatorMemType: Where to allocate handle (default:
+         *                               VRAM_SEG)
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        prepMemoryView(const nixl_remote_dlist_t &remote_buffs,
+                       nixlMemoryViewH &mvh,
+                       const nixl_opt_args_t *extra_params = nullptr) const;
+
+        /**
+         * @brief  Prepare a Virtual Memory Buffer Map for local buffers.
+         *
+         * This creates a data structure mapping indices to local buffer metadata.
+         * The handle is allocated in memory accessible to the initiator (specified by
+         * extra_params->initiatorMemType).
+         *
+         * @param  local_buffs     [in]  Local buffer descriptors
+         * @param  mvh             [out] Memory View Handle for the local buffers
+         * @param  extra_params    [in]  Optional parameters:
+         *                               - backends: Which backend to use (auto-selected if not
+         *                                 specified)
+         *                               - initiatorMemType: Where to allocate handle (default:
+         *                                 VRAM_SEG)
+         * @return nixl_status_t Error code if call was not successful
+         *
+         */
+        nixl_status_t
+        prepMemoryView(const nixl_xfer_dlist_t &local_buffs,
+                       nixlMemoryViewH &mvh,
+                       const nixl_opt_args_t *extra_params = nullptr) const;
+
+        /**
+         * @brief  Release a Memory View Handle.
+         *
+         * @param  mvh           [in,out] Memory View Handle to be released
+         * @return nixl_status_t Error code if call was not successful
+         */
+        void
+        releaseMemoryView(nixlMemoryViewH mvh) const;
 
         /**
          * @brief  Release the prepared descriptor list handle `dlist_hndl`
