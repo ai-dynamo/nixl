@@ -228,17 +228,27 @@ def gen_matrices_and_compute_time(
     Returns:
         List of TransferMatrix objects
     """
-    # For now, every prefill worker is bound to a single decode worker
-    assert len(prefill_workers) == len(
-        decode_workers
-    ), f"Prefill and decode workers must have the same number of workers, got {len(prefill_workers)} and {len(decode_workers)}"
+    # Handle storage-only mode with no decode workers
+    storage_only_no_decode = len(decode_workers) == 0
+    
+    if not storage_only_no_decode:
+        # For now, every prefill worker is bound to a single decode worker
+        assert len(prefill_workers) == len(
+            decode_workers
+        ), f"Prefill and decode workers must have the same number of workers, got {len(prefill_workers)} and {len(decode_workers)}"
 
-    # Assertions
-    all_ranks = list(r for worker in prefill_workers + decode_workers for r in worker)
-    world_size = max(all_ranks) + 1
-    assert set(all_ranks) == set(range(world_size)), "Ranks are missing"
-
-    workers_coupling = list(zip(prefill_workers, decode_workers))
+        # Assertions
+        all_ranks = list(r for worker in prefill_workers + decode_workers for r in worker)
+        world_size = max(all_ranks) + 1
+        assert set(all_ranks) == set(range(world_size)), "Ranks are missing"
+        workers_coupling = list(zip(prefill_workers, decode_workers))
+    else:
+        # Storage-only: only prefill workers, no decode
+        all_ranks = list(r for worker in prefill_workers for r in worker)
+        world_size = max(all_ranks) + 1
+        assert set(all_ranks) == set(range(world_size)), "Ranks are missing"
+        # Pair each prefill worker with None for decode
+        workers_coupling = [(pw, None) for pw in prefill_workers]
 
     workers_pool = cycle(workers_coupling)
     matrices = []
@@ -246,15 +256,20 @@ def gen_matrices_and_compute_time(
     for batch in tqdm(batches, desc="Generating matrices"):
         prefill_worker, decode_worker = next(workers_pool)
 
-        mat = gen_matrix(
-            batch,
-            world_size,
-            prefill_worker,
-            decode_worker,
-            model_config,
-            prefill_worker_config,
-            decode_worker_config,
-        )
+        if decode_worker is not None:
+            # Normal mode: generate RDMA matrix
+            mat = gen_matrix(
+                batch,
+                world_size,
+                prefill_worker,
+                decode_worker,
+                model_config,
+                prefill_worker_config,
+                decode_worker_config,
+            )
+        else:
+            # Storage-only with no decode: create empty matrix placeholder
+            mat = np.zeros((world_size, world_size), dtype=np.int64)
 
         compute_time = estimate_compute_time(batch, model_config, prefill_worker_config, flops_per_gpu)
         matrix_obj = TransferMatrix(
@@ -375,6 +390,12 @@ def main(
     rail_optimized: bool = False,
     prefix_hit_rate: Optional[float] = None,
     flops_per_gpu: float = 1000 * 1e12,
+    storage_only: bool = False,
+    read_only: bool = False,
+    all_nodes_per_pattern: bool = False,
+    mem_type: str = "cuda",
+    iters: int = 10,
+    isolation_iters: int = 5,
 ):
     """Generate communication matrices for inference workload.
 
@@ -389,6 +410,12 @@ def main(
         results_dir: Directory to save results
         rail_optimized: Whether to reorder decode workers for rail-optimized communication
         prefix_hit_rate: Fraction of KV cache to read from storage (0.0-1.0)
+        storage_only: If True, generate storage-only config (no RDMA matrices)
+        read_only: If True, skip write operations in storage patterns
+        all_nodes_per_pattern: If True, all prefill nodes are active in each pattern
+        mem_type: Memory type for storage operations (cuda, cpu)
+        iters: Number of iterations per traffic pattern
+        isolation_iters: Number of isolation iterations
 
     Returns:
         matrices
@@ -469,33 +496,42 @@ def main(
     logger.info("Saving %d matrices to %s", len(matrices), results_dir)
 
     # Create directories
-    matrices_dir = results_dir / "matrices"
-    matrices_dir.mkdir(parents=True, exist_ok=True)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    if not storage_only:
+        matrices_dir = results_dir / "matrices"
+        matrices_dir.mkdir(parents=True, exist_ok=True)
 
-    storage_enabled = prefix_hit_rate is not None
-    hit_rate = prefix_hit_rate if prefix_hit_rate is not None else 0.0
+    storage_enabled = prefix_hit_rate is not None or storage_only
+    hit_rate = prefix_hit_rate if prefix_hit_rate is not None else 1.0  # 100% read for storage_only
 
     if storage_enabled:
         logger.info(
-            "Storage enabled with prefix_hit_rate=%.1f%%",
+            "Storage enabled with prefix_hit_rate=%.1f%%, mem_type=%s",
             hit_rate * 100,
+            mem_type,
         )
+    if storage_only:
+        logger.info("Storage-only mode: skipping RDMA matrix files")
+    if all_nodes_per_pattern:
+        logger.info("All-nodes-per-pattern mode: all prefill nodes active in each pattern")
 
     # Build metadata
     metadata: dict[str, Any] = {
         "traffic_patterns": [],
+        "iters": iters,
+        "isolation_iters": isolation_iters,
     }
 
     for idx, matrix in enumerate(tqdm(matrices, desc="Saving matrices")):
-        # Save matrix to txt file
-        matrix_path = matrices_dir / f"matrix_{idx}.txt"
-        with open(matrix_path, "w") as f:
-            for row in matrix.matrix:
-                f.write(" ".join(f"{format_size(val)}" for val in row) + "\n")
+        # Save matrix to txt file (unless storage_only)
+        if not storage_only:
+            matrix_path = matrices_dir / f"matrix_{idx}.txt"
+            with open(matrix_path, "w") as f:
+                for row in matrix.matrix:
+                    f.write(" ".join(f"{format_size(val)}" for val in row) + "\n")
 
         # Build traffic pattern entry
         tp_entry: Dict[str, Any] = {
-            "matrix_file": f"matrices/matrix_{idx}.txt",
             # Compute time reduced by prefix hit rate (if storage enabled)
             "sleep_before_launch_sec": matrix.compute_time * (1 - hit_rate),
             "metadata": {
@@ -503,37 +539,110 @@ def main(
             },
         }
 
+        # Add matrix_file only if not storage_only
+        if not storage_only:
+            tp_entry["matrix_file"] = f"matrices/matrix_{idx}.txt"
+
+        # Add mem_type for storage_only mode
+        if storage_only:
+            tp_entry["mem_type"] = mem_type
+
         # Add per-rank storage requirements if enabled (array format)
         if storage_enabled:
             world_size = matrix.matrix.shape[0]
-            read_sizes: List[int] = [0] * world_size
-            write_sizes: List[int] = [0] * world_size
+            read_sizes: List[str] = ["0"] * world_size
+            write_sizes: List[str] = ["0"] * world_size
 
-            for rank in matrix.sender_ranks:
-                transfer_size = int(matrix.matrix[rank].sum())
-                if transfer_size > 0:
-                    read_sizes[rank] = int(transfer_size * hit_rate)
-                    write_sizes[rank] = int(transfer_size * (1 - hit_rate))
+            if all_nodes_per_pattern:
+                # All prefill nodes get the same size (based on this request's ISL)
+                # Calculate size per rank based on ISL
+                kv_size = model_config.kv_cache_size(matrix.isl)
+                per_rank_size = int(kv_size / prefill_worker_config.tp / prefill_worker_config.pp / prefill_worker_config.cp)
+                read_size = int(per_rank_size * hit_rate)
+                write_size = 0 if read_only else int(per_rank_size * (1 - hit_rate))
+                
+                # Set for ALL prefill ranks (ranks 0 to num_prefill_gpus-1)
+                for rank in range(num_prefill_gpus):
+                    if read_size > 0:
+                        read_sizes[rank] = format_size(read_size)
+                    if write_size > 0:
+                        write_sizes[rank] = format_size(write_size)
+            elif storage_only:
+                # Storage-only mode with round-robin: assign to one prefill worker at a time
+                kv_size = model_config.kv_cache_size(matrix.isl)
+                per_rank_size = int(kv_size / prefill_worker_config.tp / prefill_worker_config.pp / prefill_worker_config.cp)
+                read_size = int(per_rank_size * hit_rate)
+                write_size = 0 if read_only else int(per_rank_size * (1 - hit_rate))
+                
+                # Assign to one prefill worker (round-robin)
+                num_prefill_workers = num_prefill_gpus // (prefill_worker_config.tp * prefill_worker_config.pp * prefill_worker_config.cp)
+                worker_idx = idx % num_prefill_workers
+                worker_size = prefill_worker_config.tp * prefill_worker_config.pp * prefill_worker_config.cp
+                start_rank = worker_idx * worker_size
+                
+                for rank in range(start_rank, start_rank + worker_size):
+                    if read_size > 0:
+                        read_sizes[rank] = format_size(read_size)
+                    if write_size > 0:
+                        write_sizes[rank] = format_size(write_size)
+            else:
+                # Original behavior: only sender ranks for this specific worker
+                for rank in matrix.sender_ranks:
+                    transfer_size = int(matrix.matrix[rank].sum())
+                    if transfer_size > 0:
+                        read_size = int(transfer_size * hit_rate)
+                        write_size = 0 if read_only else int(transfer_size * (1 - hit_rate))
+                        if read_size > 0:
+                            read_sizes[rank] = format_size(read_size)
+                        if write_size > 0:
+                            write_sizes[rank] = format_size(write_size)
 
-            if any(read_sizes) or any(write_sizes):
-                tp_entry["storage"] = {
-                    "read": read_sizes,
-                    "write": write_sizes,
-                }
+            # For storage_only, only include non-zero operations
+            storage_entry = {}
+            if any(s != "0" for s in read_sizes):
+                storage_entry["read"] = read_sizes
+            if any(s != "0" for s in write_sizes):
+                storage_entry["write"] = write_sizes
+            if storage_entry:
+                tp_entry["storage"] = storage_entry
 
         metadata["traffic_patterns"].append(tp_entry)
 
     # Save metadata to YAML
     metadata_path = results_dir / "metadata.yaml"
     with open(metadata_path, "w") as f:
-        yaml.dump(metadata, f)
+        yaml.dump(metadata, f, default_flow_style=None, width=1000, sort_keys=False)
         logger.info("Saved metadata to %s", metadata_path)
+    
+    # Print summary
+    total_patterns = len(metadata["traffic_patterns"])
+    logger.info("Generated %d traffic patterns", total_patterns)
+    if storage_only:
+        logger.info("Model: %d layers, %d KV heads, head_dim=%d", 
+                    model_config.num_layers, 
+                    model_config.num_kv_heads or model_config.num_heads,
+                    model_config.head_dim)
+        logger.info("Bytes per token: %s", format_size(model_config.bytes_per_token()))
 
 
 if __name__ == "__main__":
     import click
 
     PREDEFINED_MODELS = {
+        "llama-8b": ModelConfig(
+            hidden_size=4096,
+            num_layers=32,
+            num_heads=32,
+            num_kv_heads=8,
+            dtype_size=2,
+        ),
+        "llama-70b": ModelConfig(
+            hidden_size=8192,
+            num_layers=80,
+            num_heads=64,
+            num_kv_heads=8,
+            dtype_size=2,
+        ),
         "llama-405b": ModelConfig(
             hidden_size=16384,
             num_layers=126,
@@ -651,6 +760,39 @@ if __name__ == "__main__":
         default=None,
         help="Prefix hit rate (0.0-1.0). Enables storage when specified. 0.0=write-only, 1.0=read-only.",
     )
+    @click.option(
+        "--storage-only/--no-storage-only",
+        default=False,
+        help="Generate storage-only config (no RDMA matrices). Uses 100%% read if prefix-hit-rate not set.",
+    )
+    @click.option(
+        "--read-only/--no-read-only",
+        default=False,
+        help="Generate read-only storage patterns (no writes). Default: False",
+    )
+    @click.option(
+        "--all-nodes-per-pattern/--no-all-nodes-per-pattern",
+        default=False,
+        help="Make all prefill nodes active in each traffic pattern (for storage benchmarks).",
+    )
+    @click.option(
+        "--mem-type",
+        type=str,
+        default="cuda",
+        help="Memory type for storage operations (cuda, cpu). Default: cuda",
+    )
+    @click.option(
+        "--iters",
+        type=int,
+        default=10,
+        help="Number of iterations per traffic pattern. Default: 10",
+    )
+    @click.option(
+        "--isolation-iters",
+        type=int,
+        default=5,
+        help="Number of isolation iterations. Default: 5",
+    )
     def generate(
         num_user_requests,
         batch_size,
@@ -678,6 +820,12 @@ if __name__ == "__main__":
         ppn,
         flops_per_gpu,
         prefix_hit_rate,
+        storage_only,
+        read_only,
+        all_nodes_per_pattern,
+        mem_type,
+        iters,
+        isolation_iters,
     ):
         """Generate communication matrices for given configuration"""
 
@@ -723,6 +871,12 @@ if __name__ == "__main__":
             rail_optimized=rail_optimized,
             prefix_hit_rate=prefix_hit_rate,
             flops_per_gpu=flops_per_gpu,
+            storage_only=storage_only,
+            read_only=read_only,
+            all_nodes_per_pattern=all_nodes_per_pattern,
+            mem_type=mem_type,
+            iters=iters,
+            isolation_iters=isolation_iters,
         )
 
     cli()

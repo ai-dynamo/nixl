@@ -113,9 +113,39 @@ class StorageXferHandle(NixlHandle):
 
 
 class NixlBuffer:
-    """Can be sharded. Allocates 4K-aligned buffers for O_DIRECT compatibility."""
+    """Can be sharded. Allocates 4K-aligned buffers for O_DIRECT compatibility.
+    
+    When using get_chunk(), offsets should be pre-aligned using align_offset().
+    Use aligned_total_size() to calculate buffer size when chunks need alignment.
+    """
 
     ALIGNMENT = BUFFER_ALIGNMENT
+
+    @staticmethod
+    def align_up(value: int, alignment: int = BUFFER_ALIGNMENT) -> int:
+        """Round up value to next alignment boundary."""
+        return ((value + alignment - 1) // alignment) * alignment
+
+    @staticmethod
+    def aligned_total_size(chunk_sizes: list[int], alignment: int = BUFFER_ALIGNMENT) -> int:
+        """Calculate total buffer size needed for aligned chunks.
+        
+        Each chunk starts at an aligned offset, so we need padding between chunks.
+        Example: chunks [5000, 3000] with 4K alignment needs:
+          - Chunk 0: offset=0, size=5000
+          - Chunk 1: offset=8192 (next 4K boundary after 5000), size=3000
+          - Total: 8192 + 3000 = 11192, rounded up to 12288
+        """
+        if not chunk_sizes:
+            return 0
+        offset = 0
+        for size in chunk_sizes:
+            if size > 0:
+                # Align current offset before placing chunk
+                offset = NixlBuffer.align_up(offset, alignment)
+                offset += size
+        # Final size aligned
+        return NixlBuffer.align_up(offset, alignment)
 
     def __init__(
         self,
@@ -142,7 +172,7 @@ class NixlBuffer:
             raise ValueError("Sharding is not supported yet")
 
         # 4K align the buffer size
-        size = ((size + self.ALIGNMENT - 1) // self.ALIGNMENT) * self.ALIGNMENT
+        size = self.align_up(size, self.ALIGNMENT)
         self.size = size
 
         logger.debug(
@@ -176,10 +206,28 @@ class NixlBuffer:
                 is not None
             ), f"Failed to register memory with backends {self._backends}"
 
-    def get_chunk(self, size, offset):
+    def get_chunk(self, size: int, offset: int, check_alignment: bool = True) -> torch.Tensor:
+        """Get a chunk of the buffer at the specified offset.
+        
+        Args:
+            size: Size of the chunk in bytes
+            offset: Offset into the buffer (should be aligned for O_DIRECT)
+            check_alignment: If True, warn if offset is not aligned
+            
+        Returns:
+            Tensor slice of the buffer
+            
+        Raises:
+            ValueError: If chunk would exceed buffer bounds
+        """
         if offset + size > self.size:
             raise ValueError(
-                f"Offset {offset} + size {size} is greater than buffer size {self.size}"
+                f"Chunk out of bounds: offset={offset} + size={size} = {offset + size} > buffer_size={self.size}"
+            )
+        if check_alignment and offset % self.ALIGNMENT != 0:
+            logger.warning(
+                "Chunk offset %d is not %d-byte aligned. This may cause performance issues with O_DIRECT.",
+                offset, self.ALIGNMENT
             )
         return self.buf[offset : offset + size]
 
@@ -225,22 +273,30 @@ class CTPerftest:
                 "Cuda buffers detected, but the env var CUDA_VISIBLE_DEVICES is not set, this will cause every process in the same host to use the same GPU device."
             )
 
-        """Initialize the buffers, one big send and recv buffer is used for all the transfers
-        it has to be chunked inside each transfer to get buffers per ranks
-        the buffer is big enough to handle any of the transfers
-        For now, support only CUDA/CPU buffers
-        """
+        # Initialize the buffers with aligned size calculation.
+        # One big send and recv buffer is used for all transfers, chunked per destination.
+        # Buffer must be large enough for aligned chunks (padding between chunks).
+        tp = self.traffic_pattern
+        if tp.matrix is not None:
+            # Get individual chunk sizes for aligned total calculation
+            send_sizes = [int(tp.matrix[self.my_rank][dst]) for dst in range(tp.matrix.shape[1])]
+            recv_sizes = [int(tp.matrix[src][self.my_rank]) for src in range(tp.matrix.shape[0])]
+            send_total = NixlBuffer.aligned_total_size(send_sizes)
+            recv_total = NixlBuffer.aligned_total_size(recv_sizes)
+        else:
+            send_total = recv_total = 0
+
         self.send_buf: NixlBuffer = NixlBuffer(
-            self.traffic_pattern.total_src_size(self.my_rank),
-            mem_type=self.traffic_pattern.mem_type,
+            send_total,
+            mem_type=tp.mem_type,
             nixl_agent=self.nixl_agent,
-            dtype=self.traffic_pattern.dtype,
+            dtype=tp.dtype,
         )
         self.recv_buf: NixlBuffer = NixlBuffer(
-            self.traffic_pattern.total_dst_size(self.my_rank),
-            mem_type=self.traffic_pattern.mem_type,
+            recv_total,
+            mem_type=tp.mem_type,
             nixl_agent=self.nixl_agent,
-            dtype=self.traffic_pattern.dtype,
+            dtype=tp.dtype,
         )
 
         self._check_tp_config(traffic_pattern)
@@ -341,7 +397,10 @@ class CTPerftest:
         return dst_bufs_descs
 
     def _get_bufs(self, tp: TrafficPattern):
-        """Returns lists of buffers where bufs[i] is the send/recv buffer for rank i"""
+        """Returns lists of buffers where bufs[i] is the send/recv buffer for rank i.
+        
+        Chunks are placed at aligned offsets for O_DIRECT compatibility.
+        """
         send_bufs = [None for _ in range(self.world_size)]
         recv_bufs = [None for _ in range(self.world_size)]
 
@@ -356,9 +415,13 @@ class CTPerftest:
             recv_size = tp.matrix[other_rank][self.my_rank]
             send_buf = recv_buf = None
             if send_size > 0:
+                # Align offset before getting chunk
+                send_offset = NixlBuffer.align_up(send_offset)
                 send_buf = self.send_buf.get_chunk(send_size, send_offset)
                 send_offset += send_size
             if recv_size > 0:
+                # Align offset before getting chunk
+                recv_offset = NixlBuffer.align_up(recv_offset)
                 recv_buf = self.recv_buf.get_chunk(recv_size, recv_offset)
                 recv_offset += recv_size
 
@@ -439,6 +502,39 @@ class CTPerftest:
         else:
             self._wait(pending)
             return []
+
+    def _run_isolated_tp(self, handles: list[NixlHandle], n_iters: int = 1) -> list[float]:
+        """Run each handle in isolation and return per-handle latencies.
+        
+        Each handle is run n_iters times separately, measuring time for each.
+        Returns a list of average latencies, one per handle (in same order as input).
+        
+        This provides a true "speed of light" measurement where each transfer
+        runs without interference from other transfers in the same TP.
+        
+        Args:
+            handles: List of transfer handles to run
+            n_iters: Number of iterations per handle for averaging
+            
+        Returns:
+            List of average latencies (seconds), one per handle
+        """
+        if not handles:
+            return []
+            
+        latencies = []
+        for h in handles:
+            handle_total = 0.0
+            for _ in range(n_iters):
+                t = time.time()
+                status = self.nixl_agent.transfer(h.handle)
+                assert status != "ERR", "Transfer failed"
+                if status != "DONE":
+                    self._wait([h])
+                handle_total += time.time() - t
+            latencies.append(handle_total / n_iters)
+            
+        return latencies
 
     def _wait(self, handles: list[NixlHandle]):
         """Wait for transfers to complete."""
