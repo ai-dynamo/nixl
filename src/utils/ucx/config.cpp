@@ -37,7 +37,7 @@ void
 config::modifyAlways (std::string_view key, std::string_view value) const {
     std::string key_str = std::string(key);
     std::string value_str = std::string(value);
-    const auto status = ucp_config_modify (config_.get(), key_str.c_str(), value_str.c_str());
+    const auto status = ucp_config_modify(config_.get(), key_str.c_str(), value_str.c_str());
     if (status != UCS_OK) {
         NIXL_DEBUG << "Failed to modify UCX config: " << key_str << "=" << value_str << ": "
                    << ucs_status_string(status);
