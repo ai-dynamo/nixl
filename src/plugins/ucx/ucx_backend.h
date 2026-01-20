@@ -35,7 +35,6 @@
 
 // Local includes
 #include "common/nixl_time.h"
-#include "ucx/mem_list.h"
 #include "ucx/rkey.h"
 #include "ucx/ucx_utils.h"
 
@@ -211,17 +210,10 @@ public:
     nixl_status_t
     checkConn(const std::string &remote_agent);
 
-    nixl_status_t
-    prepareMemoryView(const nixl_meta_dlist_t &,
-                      nixlMemoryViewH &,
-                      const nixl_opt_b_args_t * = nullptr) const override;
-
-    nixl_status_t
-    prepareMemoryView(const nixl_remote_meta_dlist_t &,
-                      nixlMemoryViewH &,
-                      const nixl_opt_b_args_t * = nullptr) const override;
-
-    void releaseMemoryView(nixlMemoryViewH) const override;
+private:
+    // Helper to extract worker_id from opt_args->customParam or nullopt if not found
+    [[nodiscard]] std::optional<size_t>
+    getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const noexcept;
 
 protected:
     const std::vector<std::unique_ptr<nixlUcxWorker>> &
@@ -297,15 +289,6 @@ private:
                        size_t start_idx,
                        size_t end_idx);
 
-    [[nodiscard]] size_t
-    getWorkerIdFromOptArgs(const nixl_opt_b_args_t *) const noexcept;
-
-    [[nodiscard]] nixlMemoryViewH
-    prepareMemoryView(const nixl_meta_dlist_t &, const nixl_opt_b_args_t * = nullptr) const;
-
-    [[nodiscard]] nixlMemoryViewH
-    prepareMemoryView(const nixl_remote_meta_dlist_t &, const nixl_opt_b_args_t * = nullptr) const;
-
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> uws;
@@ -322,7 +305,6 @@ private:
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t, std::hash<std::string>, strEqual>
         remoteConnMap;
-    mutable std::unordered_map<nixlMemoryViewH, nixl::ucx::memList> memViewMap;
 };
 
 class nixlUcxThread;
