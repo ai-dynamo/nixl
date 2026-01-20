@@ -35,6 +35,76 @@ getNumThreads(nixl_b_params_t *custom_params) {
         std::max(1u, std::thread::hardware_concurrency() / 2);
 }
 
+struct MultipartParams {
+    std::string upload_id;
+    int part_number = 0;
+    std::string object_key;
+    bool is_multipart = false;
+};
+
+/**
+ * Parse multipart upload parameters from descriptor metaInfo.
+ * Expected format: "<object_key>;upload_id=<id>;part_number=<num>"
+ * Or just: "<object_key>" for regular uploads
+ * Returns a MultipartParams struct with is_multipart=true if both parameters are found.
+ */
+MultipartParams
+parseMultipartParams(const std::string &metaInfo) {
+    MultipartParams params;
+
+    if (metaInfo.empty()) {
+        return params;
+    }
+
+    // First element before semicolon is the object key
+    size_t first_semi = metaInfo.find(';');
+    if (first_semi == std::string::npos) {
+        // No multipart params, just object key
+        params.object_key = metaInfo;
+        return params;
+    }
+
+    params.object_key = metaInfo.substr(0, first_semi);
+
+    size_t upload_id_pos = metaInfo.find("upload_id=");
+    if (upload_id_pos != std::string::npos) {
+        size_t start = upload_id_pos + 10; // Length of "upload_id="
+        size_t end = metaInfo.find(';', start);
+        if (end == std::string::npos) {
+            end = metaInfo.length();
+        }
+        params.upload_id = metaInfo.substr(start, end - start);
+    }
+
+    size_t part_number_pos = metaInfo.find("part_number=");
+    if (part_number_pos != std::string::npos) {
+        size_t start = part_number_pos + 12; // Length of "part_number="
+        size_t end = metaInfo.find(';', start);
+        if (end == std::string::npos) {
+            end = metaInfo.length();
+        }
+        try {
+            params.part_number = std::stoi(metaInfo.substr(start, end - start));
+        }
+        catch (const std::exception &e) {
+            NIXL_WARN << "Failed to parse part_number from metaInfo: " << e.what();
+            return params;
+        }
+    }
+
+    // Valid multipart upload requires both upload_id and part_number
+    if (!params.upload_id.empty() && params.part_number > 0 && params.part_number <= 10000) {
+        params.is_multipart = true;
+        NIXL_DEBUG << absl::StrFormat(
+            "Parsed multipart params from metaInfo: object_key=%s, upload_id=%s, part_number=%d",
+            params.object_key,
+            params.upload_id,
+            params.part_number);
+    }
+
+    return params;
+}
+
 bool
 isValidPrepXferParams(const nixl_xfer_op_t &operation,
                       const nixl_meta_dlist_t &local,
@@ -118,6 +188,7 @@ nixlObjEngine::nixlObjEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       executor_(std::make_shared<asioThreadPoolExecutor>(getNumThreads(init_params->customParams))),
       s3Client_(std::make_shared<awsS3Client>(init_params->customParams, executor_)) {
+
     NIXL_INFO << "Object storage backend initialized with S3 client wrapper";
 }
 
@@ -144,9 +215,16 @@ nixlObjEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_ERR_NOT_SUPPORTED;
 
     if (nixl_mem == OBJ_SEG) {
-        std::unique_ptr<nixlObjMetadata> obj_md = std::make_unique<nixlObjMetadata>(
-            nixl_mem, mem.devId, mem.metaInfo.empty() ? std::to_string(mem.devId) : mem.metaInfo);
-        devIdToObjKey_[mem.devId] = obj_md->objKey;
+        std::string meta_info = mem.metaInfo.empty() ? std::to_string(mem.devId) : mem.metaInfo;
+
+        std::unique_ptr<nixlObjMetadata> obj_md =
+            std::make_unique<nixlObjMetadata>(nixl_mem, mem.devId, meta_info);
+
+        size_t semi_pos = meta_info.find(';');
+        std::string obj_key_only =
+            (semi_pos != std::string::npos) ? meta_info.substr(0, semi_pos) : meta_info;
+        devIdToObjKey_[mem.devId] = obj_key_only;
+
         out = obj_md.release();
     } else {
         out = nullptr;
@@ -171,10 +249,48 @@ nixlObjEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_re
     resp.reserve(descs.descCount());
 
     try {
-        for (auto &desc : descs)
-            resp.emplace_back(s3Client_->checkObjectExists(desc.metaInfo) ?
-                                  nixl_query_resp_t{nixl_b_params_t{}} :
-                                  std::nullopt);
+        for (auto &desc : descs) {
+            // Check if metaInfo contains an upload_id query
+            std::string upload_id_query;
+            size_t upload_id_pos = desc.metaInfo.find("upload_id=");
+            if (upload_id_pos != std::string::npos) {
+                size_t start = upload_id_pos + 10;
+                size_t end = desc.metaInfo.find(';', start);
+                if (end == std::string::npos) {
+                    end = desc.metaInfo.length();
+                }
+                upload_id_query = desc.metaInfo.substr(start, end - start);
+            }
+
+            // If querying for ETags by upload_id, return them without checking object existence
+            if (!upload_id_query.empty()) {
+                NIXL_DEBUG << "Querying ETags for upload_id: " << upload_id_query;
+                nixl_b_params_t params;
+                std::lock_guard<std::mutex> lock(etagsMutex_);
+                NIXL_DEBUG << "Total upload_ids stored: " << uploadIdToETags_.size();
+                auto etag_it = uploadIdToETags_.find(upload_id_query);
+                if (etag_it != uploadIdToETags_.end() && !etag_it->second.empty()) {
+                    std::string etags_str;
+                    for (size_t i = 0; i < etag_it->second.size(); ++i) {
+                        if (i > 0) etags_str += ",";
+                        etags_str += etag_it->second[i];
+                    }
+                    params["etags"] = etags_str;
+                    params["etag_count"] = std::to_string(etag_it->second.size());
+                    resp.emplace_back(nixl_query_resp_t{params});
+                } else {
+                    resp.emplace_back(std::nullopt);
+                }
+                continue;
+            }
+            bool exists = s3Client_->checkObjectExists(desc.metaInfo);
+            if (!exists) {
+                resp.emplace_back(std::nullopt);
+                continue;
+            }
+
+            resp.emplace_back(nixl_query_resp_t{nixl_b_params_t{}});
+        }
     }
     catch (const std::runtime_error &e) {
         NIXL_ERROR << "Failed to query memory: " << e.what();
@@ -212,12 +328,18 @@ nixlObjEngine::postXfer(const nixl_xfer_op_t &operation,
         const auto &local_desc = local[i];
         const auto &remote_desc = remote[i];
 
-        auto obj_key_search = devIdToObjKey_.find(remote_desc.devId);
-        if (obj_key_search == devIdToObjKey_.end()) {
-            NIXL_ERROR << "The object segment key " << remote_desc.devId
-                       << " is not registered with the backend";
+        // Parse multipart upload parameters from remote descriptor's metaInfo
+        nixlObjMetadata *obj_md = static_cast<nixlObjMetadata *>(remote_desc.metadataP);
+        if (!obj_md) {
+            NIXL_ERROR << "Remote descriptor metadata is null";
             return NIXL_ERR_INVALID_PARAM;
         }
+
+        MultipartParams multipart_params = parseMultipartParams(obj_md->objKey);
+
+        // Use the object key from parsed params (handles both regular and multipart)
+        std::string obj_key =
+            multipart_params.object_key.empty() ? obj_md->objKey : multipart_params.object_key;
 
         auto status_promise = std::make_shared<std::promise<nixl_status_t>>();
         req_h->statusFutures_.push_back(status_promise->get_future());
@@ -228,16 +350,97 @@ nixlObjEngine::postXfer(const nixl_xfer_op_t &operation,
 
         // S3 client interface signals completion via a callback, but NIXL API polls request handle
         // for the status code. Use future/promise pair to bridge the gap.
-        if (operation == NIXL_WRITE)
-            s3Client_->putObjectAsync(
-                obj_key_search->second, data_ptr, data_len, offset, [status_promise](bool success) {
-                    status_promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
-                });
-        else
+        if (operation == NIXL_WRITE) {
+            // Use multipart upload if parameters are provided
+            if (multipart_params.is_multipart) {
+                s3Client_->uploadPartAsync(
+                    obj_key,
+                    multipart_params.upload_id,
+                    multipart_params.part_number,
+                    data_ptr,
+                    data_len,
+                    [this,
+                     status_promise,
+                     key = obj_key,
+                     upload_id = multipart_params.upload_id,
+                     part_num = multipart_params.part_number,
+                     len = data_len](bool success, const std::string &etag) {
+                        if (success) {
+                            NIXL_DEBUG << absl::StrFormat(
+                                "OBJ MULTIPART WRITE SUCCESS: key=%s, upload_id=%s, part=%d, "
+                                "size=%zu bytes, etag=%s",
+                                key,
+                                upload_id,
+                                part_num,
+                                len,
+                                etag);
+                            // Store ETag for later retrieval via queryMem, indexed by upload_id
+                            {
+                                std::lock_guard<std::mutex> lock(etagsMutex_);
+                                uploadIdToETags_[upload_id].push_back(etag);
+                                NIXL_DEBUG << absl::StrFormat("Stored ETag for upload_id=%s, total "
+                                                              "ETags for this upload: %zu",
+                                                              upload_id,
+                                                              uploadIdToETags_[upload_id].size());
+                            }
+                            status_promise->set_value(NIXL_SUCCESS);
+                        } else {
+                            // Error details already logged in obj_s3_client.cpp callback
+                            NIXL_ERROR << absl::StrFormat(
+                                "OBJ MULTIPART WRITE CALLBACK: key=%s, upload_id=%s, part=%d, "
+                                "size=%zu bytes - Transfer failed (see AWS SDK error above)",
+                                key,
+                                upload_id,
+                                part_num,
+                                len);
+                            status_promise->set_value(NIXL_ERR_BACKEND);
+                        }
+                    });
+            } else {
+                // Use regular PutObject
+                s3Client_->putObjectAsync(
+                    obj_key,
+                    data_ptr,
+                    data_len,
+                    offset,
+                    [status_promise, key = obj_key, len = data_len](bool success) {
+                        if (success) {
+                            NIXL_DEBUG << absl::StrFormat(
+                                "OBJ WRITE SUCCESS: key=%s, size=%zu bytes", key, len);
+                            status_promise->set_value(NIXL_SUCCESS);
+                        } else {
+                            // Error details already logged in obj_s3_client.cpp callback
+                            NIXL_ERROR
+                                << absl::StrFormat("OBJ WRITE CALLBACK: key=%s, size=%zu bytes - "
+                                                   "Transfer failed (see AWS SDK error above)",
+                                                   key,
+                                                   len);
+                            status_promise->set_value(NIXL_ERR_BACKEND);
+                        }
+                    });
+            }
+        } else {
+            // Read operation - multipart upload doesn't apply here
             s3Client_->getObjectAsync(
-                obj_key_search->second, data_ptr, data_len, offset, [status_promise](bool success) {
-                    status_promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
+                obj_key,
+                data_ptr,
+                data_len,
+                offset,
+                [status_promise, key = obj_key, len = data_len](bool success) {
+                    if (success) {
+                        NIXL_DEBUG << absl::StrFormat(
+                            "OBJ READ SUCCESS: key=%s, size=%zu bytes", key, len);
+                        status_promise->set_value(NIXL_SUCCESS);
+                    } else {
+                        // Error details already logged in obj_s3_client.cpp callback
+                        NIXL_ERROR << absl::StrFormat("OBJ READ CALLBACK: key=%s, size=%zu bytes - "
+                                                      "Transfer failed (see AWS SDK error above)",
+                                                      key,
+                                                      len);
+                        status_promise->set_value(NIXL_ERR_BACKEND);
+                    }
                 });
+        }
     }
 
     return NIXL_IN_PROG;
