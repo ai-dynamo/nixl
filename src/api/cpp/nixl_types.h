@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -226,12 +226,6 @@ struct nixlAgentOptionalArgs {
     std::string metadataLabel;
 
     /**
-     * @var initiatorMemType Specifies where the memory view handle should be allocated.
-     *                       Used in @ref nixlAgent::prepMemoryView.
-     */
-    nixl_mem_t initiatorMemType = VRAM_SEG;
-
-    /**
      * @var Backend custom parameter
      */
     nixl_blob_t customParam;
@@ -308,6 +302,9 @@ using nixl_xfer_telem_t = nixlXferTelemetry;
  */
 #define NIXL_INIT_AGENT ""
 
+/**
+ * @brief A constant for an invalid agent name.
+ */
 extern const std::string nixl_invalid_agent;
 
 #endif

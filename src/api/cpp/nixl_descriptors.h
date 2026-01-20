@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -189,13 +189,15 @@ public:
 };
 
 /**
- * @class nixlRemoteDesc
- * @brief A descriptor class for remote buffers, with remote agent name bundled with a
+ * @struct nixlRemoteDesc
+ * @brief A descriptor structure for remote buffers, with remote agent name bundled with a
  * nixlBasicDesc.
  */
-class nixlRemoteDesc : public nixlBasicDesc {
-public:
-    /** @var Reuse parent constructor without the remote agent name */
+struct nixlRemoteDesc : public nixlBasicDesc {
+    /** Remote agent name */
+    std::string remoteAgent;
+
+    /** Reuse parent constructor without the remote agent name */
     using nixlBasicDesc::nixlBasicDesc;
 
     /**
@@ -249,24 +251,10 @@ public:
     void
     print(const std::string &suffix) const;
 
-    [[nodiscard]] std::string_view
-    remoteAgent() const noexcept {
-        return remoteAgent_;
-    }
-
     [[nodiscard]] virtual bool
     isValid() const noexcept {
-        return remoteAgent_ != nixl_invalid_agent;
+        return remoteAgent != nixl_invalid_agent;
     }
-
-    void
-    invalidate() noexcept {
-        remoteAgent_ = nixl_invalid_agent;
-    }
-
-private:
-    /** @var Remote agent name */
-    std::string remoteAgent_;
 };
 
 /**

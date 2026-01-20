@@ -351,8 +351,9 @@ nixlAtomicAdd(uint64_t value,
 
  * @return Pointer to the mapped memory, or nullptr if not available.
  */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ void *
-nixlMemoryViewGetPtr(nixlMemoryViewH mvh, unsigned index) {
+nixlGetPtr(nixlMemoryViewH mvh, unsigned index) {
     return nullptr;
 }
 
