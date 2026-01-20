@@ -242,8 +242,8 @@ using nixl_opt_args_t = nixlAgentOptionalArgs;
 using nixlGpuXferReqH = void *;
 
 /**
- * @brief A typedef for a nixlMemoryViewH
- *        Represents a Virtual Memory Buffer Map handle
+ * @brief An alias for a nixlMemoryViewH
+ *        Represents a memory view handle
  */
 using nixlMemoryViewH = void *;
 
