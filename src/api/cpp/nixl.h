@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -380,53 +380,49 @@ class nixlAgent {
                       const nixl_opt_args_t *extra_params) const;
 
         /**
-         * @brief  Prepare a Virtual Memory Buffer Map for remote buffers.
+         * @brief  Prepare a memory view handle for remote buffers.
          *
-         * This creates a data structure mapping indices to remote buffer metadata.
-         * The handle is allocated in memory accessible to the initiator (specified by
-         * extra_params->initiatorMemType).
+         * Prepare a memory view handle @a mvh for the remote memory buffers described by the
+         * descriptor list @a dlist . The handle can be later used to perform a memory transfer
+         * using @ref nixlPut, @ref nixlAtomicAdd. The preparation should be done on the initiator
+         * agent. NIXL automatically determines the backend that can perform the preparation. If a
+         * list of backends hints is provided (via extra_params), the selection is limited to the
+         * specified backends.
          *
-         * @param  remote_buffs  [in]  Remote buffer descriptors with agent names
-         * @param  mvh           [out] Memory View Handle for the remote buffers
-         * @param  extra_params  [in]  Optional parameters:
-         *                             - backends: Which backend to use (auto-selected if not
-         *                               specified)
-         *                             - initiatorMemType: Where to allocate handle (default:
-         *                               VRAM_SEG)
+         * @param  dlist         [in]  Descriptor list for the remote buffers
+         * @param  mvh           [out] Memory view handle for the remote buffers
+         * @param  extra_params  [in]  Optional parameters
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        prepMemoryView(const nixl_remote_dlist_t &remote_buffs,
+        prepMemoryView(const nixl_remote_dlist_t &dlist,
                        nixlMemoryViewH &mvh,
                        const nixl_opt_args_t *extra_params = nullptr) const;
 
         /**
-         * @brief  Prepare a Virtual Memory Buffer Map for local buffers.
+         * @brief  Prepare a memory view handle for local buffers.
          *
-         * This creates a data structure mapping indices to local buffer metadata.
-         * The handle is allocated in memory accessible to the initiator (specified by
-         * extra_params->initiatorMemType).
+         * Prepare a memory view handle @a mvh for the local memory buffers described by the
+         * descriptor list @a dlist . The handle can be later used to perform a memory transfer
+         * using @ref nixlPut. The preparation should be done on the initiator agent. NIXL
+         * automatically determines the backend that can perform the preparation. If a list of
+         * backends hints is provided (via extra_params), the selection is limited to the specified
+         * backends.
          *
-         * @param  local_buffs     [in]  Local buffer descriptors
-         * @param  mvh             [out] Memory View Handle for the local buffers
-         * @param  extra_params    [in]  Optional parameters:
-         *                               - backends: Which backend to use (auto-selected if not
-         *                                 specified)
-         *                               - initiatorMemType: Where to allocate handle (default:
-         *                                 VRAM_SEG)
+         * @param  dlist         [in]  Descriptor list for the local buffers
+         * @param  mvh           [out] Memory view handle for the local buffers
+         * @param  extra_params  [in]  Optional parameters
          * @return nixl_status_t Error code if call was not successful
-         *
          */
         nixl_status_t
-        prepMemoryView(const nixl_xfer_dlist_t &local_buffs,
+        prepMemoryView(const nixl_xfer_dlist_t &dlist,
                        nixlMemoryViewH &mvh,
                        const nixl_opt_args_t *extra_params = nullptr) const;
 
         /**
-         * @brief  Release a Memory View Handle.
+         * @brief  Release a memory view handle.
          *
-         * @param  mvh           [in,out] Memory View Handle to be released
-         * @return nixl_status_t Error code if call was not successful
+         * @param  mvh           [in] Memory view handle to be released
          */
         void
         releaseMemoryView(nixlMemoryViewH mvh) const;
