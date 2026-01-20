@@ -458,14 +458,16 @@ PYBIND11_MODULE(_bindings, m) {
                      mems_vec.push_back(nixlEnumStrings::memTypeStr(elm));
                  return std::make_pair(params, mems_vec);
              })
-        .def("createBackend",
-             [](nixlAgent &agent,
-                const nixl_backend_t &type,
-                const nixl_b_params_t &initParams) -> uintptr_t {
-                 nixlBackendH *backend = nullptr;
-                 throw_nixl_exception(agent.createBackend(type, initParams, backend));
-                 return (uintptr_t)backend;
-             })
+        .def(
+            "createBackend",
+            [](nixlAgent &agent,
+               const nixl_backend_t &type,
+               const nixl_b_params_t &initParams) -> uintptr_t {
+                nixlBackendH *backend = nullptr;
+                throw_nixl_exception(agent.createBackend(type, initParams, backend));
+                return (uintptr_t)backend;
+            },
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "registerMem",
             [](nixlAgent &agent,
@@ -515,7 +517,8 @@ PYBIND11_MODULE(_bindings, m) {
                 return resp;
             },
             py::arg("descs"),
-            py::arg("backend"))
+            py::arg("backend"),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "makeConnection",
             [](nixlAgent &agent, const std::string &remote_agent, std::vector<uintptr_t> backends) {
@@ -794,7 +797,10 @@ PYBIND11_MODULE(_bindings, m) {
              [](nixlAgent &agent, const std::string &remote_metadata) -> py::bytes {
                  // python can only interpret text strings
                  std::string remote_name("");
-                 throw_nixl_exception(agent.loadRemoteMD(remote_metadata, remote_name));
+                 {
+                     py::gil_scoped_release release;
+                     throw_nixl_exception(agent.loadRemoteMD(remote_metadata, remote_name));
+                 }
                  return py::bytes(remote_name);
              })
         .def("invalidateRemoteMD", &nixlAgent::invalidateRemoteMD)
@@ -809,8 +815,8 @@ PYBIND11_MODULE(_bindings, m) {
                 throw_nixl_exception(agent.sendLocalMD(&extra_params));
             },
             py::arg("ip_addr") = std::string(""),
-            py::arg("port") = 0)
-
+            py::arg("port") = 0,
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "sendLocalPartialMD",
             [](nixlAgent &agent,
@@ -838,7 +844,8 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("backends") = std::vector<uintptr_t>({}),
             py::arg("ip_addr") = std::string(""),
             py::arg("port") = 0,
-            py::arg("label") = std::string(""))
+            py::arg("label") = std::string(""),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "fetchRemoteMD",
             [](nixlAgent &agent,
@@ -857,7 +864,8 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("remote_agent"),
             py::arg("ip_addr") = std::string(""),
             py::arg("port") = 0,
-            py::arg("label") = std::string(""))
+            py::arg("label") = std::string(""),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "invalidateLocalMD",
             [](nixlAgent &agent, std::string ip_addr, int port) {
@@ -869,6 +877,7 @@ PYBIND11_MODULE(_bindings, m) {
                 throw_nixl_exception(agent.invalidateLocalMD(&extra_params));
             },
             py::arg("ip_addr") = std::string(""),
-            py::arg("port") = 0)
+            py::arg("port") = 0,
+            py::call_guard<py::gil_scoped_release>())
         .def("checkRemoteMD", &nixlAgent::checkRemoteMD);
 }
