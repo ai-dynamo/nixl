@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +19,6 @@
 #include <iostream>
 #include <nixl.h>
 #include <sys/time.h>
-#include <gflags/gflags.h>
 #include "utils/utils.h"
 #include "utils/scope_guard.h"
 #include "worker/nixl/nixl_worker.h"
@@ -182,9 +181,7 @@ static std::unique_ptr<xferBenchWorker> createWorker(int *argc, char ***argv) {
 }
 
 int main(int argc, char *argv[]) {
-    gflags::ParseCommandLineFlags(&argc, &argv, true);
-
-    int ret = xferBenchConfig::loadFromFlags();
+    int ret = xferBenchConfig::parseConfig(argc, argv);
     if (0 != ret) {
         return EXIT_FAILURE;
     }
@@ -235,8 +232,6 @@ int main(int argc, char *argv[]) {
     if (0 != ret) {
         return EXIT_FAILURE;
     }
-
-    gflags::ShutDownCommandLineFlags();
 
     return worker_ptr->signaled() ? EXIT_FAILURE : EXIT_SUCCESS;
 }
