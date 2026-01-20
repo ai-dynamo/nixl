@@ -671,37 +671,9 @@ class SequentialCTPerftest(CTPerftest):
             # Gather storage times from all ranks
             storage_read_by_ranks = dist_rt.allgather_obj(storage_read_times)
             storage_write_by_ranks = dist_rt.allgather_obj(storage_write_times)
-            # Gather storage start/end timestamps for overlap analysis
+            # Gather storage start/end timestamps
             storage_read_starts_by_ranks = dist_rt.allgather_obj(storage_read_starts)
             storage_read_ends_by_ranks = dist_rt.allgather_obj(storage_read_ends)
-            
-            # Analyze TP overlap (only rank 0 prints)
-            if self.my_rank == 0 and self._has_storage:
-                logger.info("=== TP TIMING OVERLAP ANALYSIS (iter %d) ===", iter_ix)
-                for tp_idx in range(len(self.traffic_patterns)):
-                    # Get all ranks' start/end for this TP
-                    starts = [storage_read_starts_by_ranks[r][tp_idx] for r in range(self.world_size) 
-                              if storage_read_starts_by_ranks[r][tp_idx] is not None]
-                    ends = [storage_read_ends_by_ranks[r][tp_idx] for r in range(self.world_size)
-                            if storage_read_ends_by_ranks[r][tp_idx] is not None]
-                    if starts and ends:
-                        tp_start = min(starts)
-                        tp_end = max(ends)
-                        node = tp_idx // 2 % 12  # Approximate node from TP index
-                        logger.info("  TP %2d (node ~%d): %.3f - %.3f (%.1f ms)", 
-                                    tp_idx, node, tp_start, tp_end, (tp_end - tp_start) * 1000)
-                
-                # Check for overlap between consecutive TPs
-                overlap_count = 0
-                for tp_idx in range(len(self.traffic_patterns) - 1):
-                    ends_curr = [storage_read_ends_by_ranks[r][tp_idx] for r in range(self.world_size)
-                                 if storage_read_ends_by_ranks[r][tp_idx] is not None]
-                    starts_next = [storage_read_starts_by_ranks[r][tp_idx + 1] for r in range(self.world_size)
-                                   if storage_read_starts_by_ranks[r][tp_idx + 1] is not None]
-                    if ends_curr and starts_next:
-                        if max(ends_curr) > min(starts_next):
-                            overlap_count += 1
-                logger.info("=== OVERLAP: %d TP pairs overlap in time ===", overlap_count)
 
             tp_latencies_ms: list[float | None] = []
             storage_read_max_ms: list[float] = []
