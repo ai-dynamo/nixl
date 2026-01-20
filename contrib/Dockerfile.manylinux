@@ -121,7 +121,7 @@ RUN mkdir aws_sdk_build && cd aws_sdk_build && \
     export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
     export CFLAGS="-I/usr/local/openssl3/include" && \
     export CXXFLAGS="-I/usr/local/openssl3/include" && \
-    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DCMAKE_PREFIX_PATH="/usr/local/openssl3;/usr/local" \
         -DCURL_LIBRARY=/usr/local/lib/libcurl.so \
         -DCURL_INCLUDE_DIR=/usr/local/include \

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,12 +33,16 @@ public:
                     std::string src_agent_name,
                     std::string dst_agent_name,
                     bool split_buf,
-                    int num_bufs)
+                    int num_bufs,
+                    size_t buffer_size = 0)
         : srcBackendEngine_(src_engine),
           dstBackendEngine_(dst_engine),
           srcAgentName_(src_agent_name),
           dstAgentName_(dst_agent_name),
-          srcDevId_(0) {
+          srcDevId_(0),
+          bufferSize_(buffer_size > 0 ? buffer_size : BUF_SIZE),
+          numEntries_(buffer_size > 0 ? 1 : NUM_ENTRIES),
+          entrySize_(buffer_size > 0 ? buffer_size : ENTRY_SIZE) {
 
         bool remote_xfer = srcAgentName_ != dstAgentName_;
         if (remote_xfer) {
@@ -52,9 +56,9 @@ public:
 
         for (int i = 0; i < num_bufs; i++) {
             srcMem_.emplace_back(
-                std::make_unique<memoryHandler<srcMemType>>(BUF_SIZE, srcDevId_ + i));
+                std::make_unique<memoryHandler<srcMemType>>(bufferSize_, srcDevId_ + i));
             dstMem_.emplace_back(
-                std::make_unique<memoryHandler<dstMemType>>(BUF_SIZE, dstDevId_ + i));
+                std::make_unique<memoryHandler<dstMemType>>(bufferSize_, dstDevId_ + i));
         }
 
         if (dstBackendEngine_->supportsNotif()) setupNotifs("Test");
@@ -112,6 +116,9 @@ private:
     std::string dstAgentName_;
     int srcDevId_;
     int dstDevId_;
+    size_t bufferSize_;
+    size_t numEntries_;
+    size_t entrySize_;
 
     void
     registerMems() {
@@ -157,8 +164,8 @@ private:
         srcDescs_ = std::make_unique<nixl_meta_dlist_t>(srcMemType);
         dstDescs_ = std::make_unique<nixl_meta_dlist_t>(dstMemType);
 
-        int num_entries = split_buf ? NUM_ENTRIES : 1;
-        int entry_size = split_buf ? ENTRY_SIZE : BUF_SIZE;
+        int num_entries = split_buf ? numEntries_ : 1;
+        int entry_size = split_buf ? entrySize_ : bufferSize_;
         for (size_t i = 0; i < srcMem_.size(); i++) {
             for (int entry_i = 0; entry_i < num_entries; entry_i++) {
                 nixlMetaDesc desc;

@@ -17,16 +17,25 @@ limitations under the License.
 
 # NIXL Object Storage Plugin
 
-This backend provides AWS S3 object storage using aws-sdk-cpp version 1.11.
+This backend provides AWS S3 object storage using aws-sdk-cpp version 1.11 with a dual-client architecture for optimal performance across different object sizes.
+
+## Architecture
+
+The Object Storage backend uses two S3 clients to optimize performance based on object size:
+
+- **Standard S3 Client** (`awsS3Client`): Uses the traditional AWS SDK S3 client for smaller objects
+- **S3 CRT Client** (`awsS3CrtClient`): Uses AWS Common Runtime (CRT) for high-performance transfers of large objects
+
+The CRT client provides significantly improved throughput and lower CPU utilization for large objects through optimized multipart uploads/downloads and connection pooling. The backend automatically selects the appropriate client based on the object size and the configured `crtMinLimit` threshold.
 
 ## Dependencies
 
-This backend requires aws-sdk-cpp version 1.11 to be installed. Example CLI to compile from sources:
+This backend requires aws-sdk-cpp version 1.11 to be installed with both `s3` and `s3-crt` components. Example CLI to compile from sources:
 
 ```bash
 # Ubuntu/Debian
 apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev
-git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && mkdir sdk_build && cd sdk_build && cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && make -j && make install
+git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && mkdir sdk_build && cd sdk_build && cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && make -j && make install
 ```
 
 ## Configuration
@@ -49,12 +58,15 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 | `use_virtual_addressing` | Use virtual-hosted-style addressing (`true`/`false`) | `false` | No |
 | `req_checksum` | Request checksum validation (`required`/`supported`) | - | No |
 | `ca_bundle` | path to a custom certificate bundle | - | No |
+| `crtMinLimit` | Minimum object size (bytes) to use S3 CRT client for high-performance transfers | Disabled**** | No |
 
 \* If `access_key` and `secret_key` are not provided, the AWS SDK will attempt to use default credential providers (IAM roles, environment variables, credential files, etc.)
 
 \** If `bucket` parameter is not provided, the `AWS_DEFAULT_BUCKET` environment variable will be used as fallback.
 
 \*** If `endpoint_override` parameter is not provided, the `AWS_ENDPOINT_OVERRIDE` environment variable will be used as fallback.
+
+\**** If `crtMinLimit` is not provided, the S3 CRT client is disabled and all transfers use the standard S3 client. When set, objects with size >= `crtMinLimit` will use the high-performance CRT client, while smaller objects continue to use the standard client. Recommended value: 10485760 (10 MB) or higher for optimal performance on large objects.
 
 ### Environment Variables
 
@@ -169,9 +181,35 @@ nixl_b_params_t params = {
 agent.createBackend("obj", params);
 ```
 
+#### High-Performance Configuration with S3 CRT Client
+
+```cpp
+nixl_b_params_t params = {
+    {"bucket", "large-model-storage"},
+    {"region", "us-west-2"},
+    {"crtMinLimit", "10485760"}  // Use CRT client for objects >= 10 MB
+};
+agent.createBackend("obj", params);
+```
+
+This configuration automatically uses the high-performance S3 CRT client for objects 10 MB and larger, while smaller objects continue to use the standard S3 client. The CRT client provides:
+
+- **Higher Throughput**: Optimized multipart transfers with automatic chunking and parallelization
+- **Lower CPU Usage**: Efficient connection pooling and memory management
+- **Better for Large Objects**: Particularly beneficial for model weights, checkpoints, and large datasets
+
 ## Transfer Operations
 
 The Object Storage backend supports read and write operations between local memory and S3 objects. Here are the key aspects of transfer operations:
+
+### Automatic Client Selection
+
+The backend automatically selects the appropriate S3 client for each transfer operation based on the object size:
+
+- **Standard S3 Client**: Used for objects smaller than `crtMinLimit` (or all objects if `crtMinLimit` is not set)
+- **S3 CRT Client**: Used for objects with size >= `crtMinLimit`, providing optimized performance for large transfers
+
+The client selection happens transparently during transfer operations, requiring no changes to application code. The selection is logged at DEBUG level for monitoring and troubleshooting.
 
 ### Device ID to Object Key Mapping
 
