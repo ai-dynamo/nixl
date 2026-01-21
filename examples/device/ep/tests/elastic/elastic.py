@@ -490,7 +490,6 @@ def worker(torch_rank: int, args: argparse.Namespace):
         rank=global_rank,
         nvlink_backend=args.nvlink_backend,
         explicitly_destroy=True,
-        enable_shrink=True,
         tcp_store_group=tcp_store,
     )
     buffer.update_memory_buffers(
