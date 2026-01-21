@@ -363,6 +363,10 @@ nixlLibfabricEngine::~nixlLibfabricEngine() {
         progress_thread_stop_.store(true);
     }
 
+    nixl_status_t progress_status = rail_manager.progressAllControlRails();
+    if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
+        NIXL_ERROR << "Failed to progress control rails in ~nixlLibfabricEngine().";
+    }
 
     if (progress_thread_enabled_ && progress_thread_.joinable()) {
         NIXL_DEBUG << "Waiting for Progress thread to exit";
