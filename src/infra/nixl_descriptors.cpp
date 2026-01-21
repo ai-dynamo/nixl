@@ -413,9 +413,9 @@ nixlSecDescList::resize(const size_t &count) {
     this->descs.resize(count);
 }
 
-nixlRemoteDesc::nixlRemoteDesc(const uintptr_t &addr,
-                               const size_t &len,
-                               const uint64_t &dev_id,
+nixlRemoteDesc::nixlRemoteDesc(const uintptr_t addr,
+                               const size_t len,
+                               const uint64_t dev_id,
                                const std::string &remote_agent)
     : nixlBasicDesc{addr, len, dev_id},
       remoteAgent{remote_agent} {}
@@ -425,19 +425,16 @@ nixlRemoteDesc::nixlRemoteDesc(const nixlBasicDesc &desc, const std::string &rem
       remoteAgent{remote_agent} {}
 
 nixlRemoteDesc::nixlRemoteDesc(const nixl_blob_t &blob) {
-    if (blob.size() > sizeof(nixlBasicDesc)) {
-        const size_t remote_agent_size = blob.size() - sizeof(nixlBasicDesc);
-        remoteAgent.resize(remote_agent_size);
-        blob.copy(reinterpret_cast<char *>(this), sizeof(nixlBasicDesc));
-        blob.copy(
-            reinterpret_cast<char *>(&remoteAgent[0]), remote_agent_size, sizeof(nixlBasicDesc));
-    } else if (blob.size() == sizeof(nixlBasicDesc)) {
-        blob.copy(reinterpret_cast<char *>(this), sizeof(nixlBasicDesc));
-    } else { // Error
+    if (blob.size() < sizeof(nixlBasicDesc)) {
         addr = 0;
         len = 0;
         devId = 0;
-        remoteAgent.clear();
+        return;
+    }
+
+    std::memcpy(static_cast<nixlBasicDesc *>(this), blob.data(), sizeof(nixlBasicDesc));
+    if (blob.size() > sizeof(nixlBasicDesc)) {
+        remoteAgent = blob.substr(sizeof(nixlBasicDesc));
     }
 }
 

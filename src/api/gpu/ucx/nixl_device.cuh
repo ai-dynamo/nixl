@@ -59,7 +59,7 @@ struct nixlGpuXferReqParams {
  */
 struct nixlMemDesc {
     nixlMemoryViewH mvh;
-    unsigned index; /**< Index in the memory view */
+    size_t index; /**< Index in the memory view */
     size_t offset; /**< Offset within the buffer */
 };
 
@@ -353,7 +353,7 @@ nixlAtomicAdd(uint64_t value,
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ void *
-nixlGetPtr(nixlMemoryViewH mvh, unsigned index) {
+nixlGetPtr(nixlMemoryViewH mvh, size_t index) {
     return nullptr;
 }
 

@@ -116,15 +116,16 @@ struct nixlRemoteMetaDesc : public nixlMetaDesc {
 
     using nixlMetaDesc::nixlMetaDesc;
 
-    nixlRemoteMetaDesc(const std::string &remote_agent)
+    explicit nixlRemoteMetaDesc(const std::string &remote_agent)
         : nixlMetaDesc(),
           remoteAgent(remote_agent) {}
-
-    friend bool
-    operator==(const nixlRemoteMetaDesc &lhs, const nixlRemoteMetaDesc &rhs) {
-        return (((nixlMetaDesc)lhs == (nixlMetaDesc)rhs) && (lhs.remoteAgent == rhs.remoteAgent));
-    }
 };
+
+inline bool
+operator==(const nixlRemoteMetaDesc &lhs, const nixlRemoteMetaDesc &rhs) {
+    return (static_cast<const nixlMetaDesc &>(lhs) == static_cast<const nixlMetaDesc &>(rhs)) &&
+        (lhs.remoteAgent == rhs.remoteAgent);
+}
 
 typedef nixlDescList<nixlMetaDesc> nixl_meta_dlist_t;
 using nixl_remote_meta_dlist_t = nixlDescList<nixlRemoteMetaDesc>;

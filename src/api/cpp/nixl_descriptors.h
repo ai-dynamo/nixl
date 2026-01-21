@@ -208,9 +208,9 @@ struct nixlRemoteDesc : public nixlBasicDesc {
      * @param devID         deviceID/BlockID/bufferID (remote ID)
      * @param remote_agent  Remote agent name
      */
-    nixlRemoteDesc(const uintptr_t &addr,
-                   const size_t &len,
-                   const uint64_t &dev_id,
+    nixlRemoteDesc(const uintptr_t addr,
+                   const size_t len,
+                   const uint64_t dev_id,
                    const std::string &remote_agent);
 
     /**
@@ -226,7 +226,7 @@ struct nixlRemoteDesc : public nixlBasicDesc {
      *
      * @param str   Serialized blob from another nixlRemoteDesc
      */
-    nixlRemoteDesc(const nixl_blob_t &str);
+    explicit nixlRemoteDesc(const nixl_blob_t &str);
 
     /**
      * @brief Operator overloading (==) to compare nixlRemoteDesc objects
