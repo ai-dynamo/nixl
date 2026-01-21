@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,16 +19,74 @@
 #define OBJ_BACKEND_H
 
 #include "obj_executor.h"
-#include "obj_s3_client.h"
 #include <string>
 #include <memory>
 #include <unordered_map>
 #include "backend/backend_engine.h"
 
+using put_object_callback_t = std::function<void(bool success)>;
+using get_object_callback_t = std::function<void(bool success)>;
+
+/**
+ * Abstract interface for S3 client operations.
+ * Provides async operations for PutObject and GetObject.
+ */
+class iS3Client {
+public:
+    virtual ~iS3Client() = default;
+
+    /**
+     * Set the executor for async operations.
+     * @param executor The executor to use for async operations
+     */
+    virtual void
+    setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) = 0;
+
+    /**
+     * Asynchronously put an object to S3.
+     * @param key The object key
+     * @param data_ptr Pointer to the data to upload
+     * @param data_len Length of the data in bytes
+     * @param offset Offset within the object
+     * @param callback Callback function to handle the result
+     */
+    virtual void
+    putObjectAsync(std::string_view key,
+                   uintptr_t data_ptr,
+                   size_t data_len,
+                   size_t offset,
+                   put_object_callback_t callback) = 0;
+
+    /**
+     * Asynchronously get an object from S3.
+     * @param key The object key
+     * @param data_ptr Pointer to the buffer to store the downloaded data
+     * @param data_len Maximum length of data to read
+     * @param offset Offset within the object to start reading from
+     * @param callback Callback function to handle the result
+     */
+    virtual void
+    getObjectAsync(std::string_view key,
+                   uintptr_t data_ptr,
+                   size_t data_len,
+                   size_t offset,
+                   get_object_callback_t callback) = 0;
+
+    /**
+     * Check if the object exists.
+     * @param key The object key
+     * @return true if the object exists, false otherwise
+     */
+    virtual bool
+    checkObjectExists(std::string_view key) = 0;
+};
+
 class nixlObjEngine : public nixlBackendEngine {
 public:
     nixlObjEngine(const nixlBackendInitParams *init_params);
-    nixlObjEngine(const nixlBackendInitParams *init_params, std::shared_ptr<iS3Client> s3_client);
+    nixlObjEngine(const nixlBackendInitParams *init_params,
+                  std::shared_ptr<iS3Client> s3_client,
+                  std::shared_ptr<iS3Client> s3_client_crt = nullptr);
     virtual ~nixlObjEngine();
 
     bool
@@ -104,8 +162,10 @@ public:
 
 private:
     std::shared_ptr<asioThreadPoolExecutor> executor_;
-    std::shared_ptr<iS3Client> s3Client_;
+    std::shared_ptr<iS3Client> s3Client_; // Standard S3 client for small objects
+    std::shared_ptr<iS3Client> s3ClientCrt_; // S3 CRT client for large objects
     std::unordered_map<uint64_t, std::string> devIdToObjKey_;
+    size_t crtMinLimit_; // Minimum size threshold to use CRT client
 };
 
 #endif // OBJ_BACKEND_H
