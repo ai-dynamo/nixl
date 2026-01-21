@@ -79,8 +79,6 @@ private:
     int64_t num_rdma_bytes;
     void* rdma_buffer_ptr = nullptr;
 
-    // Shrink mode buffer
-    bool enable_shrink = false;
     int *mask_buffer_ptr = nullptr;
     int *sync_buffer_ptr = nullptr;
     int *sync_count_ptr = nullptr;
@@ -126,7 +124,7 @@ private:
     void _nixl_ep_destroy(void);
 
 public:
-    Buffer(int rank, bool explicitly_destroy, bool enable_shrink);
+    Buffer(int rank, bool explicitly_destroy);
 
     void update_memory_buffers(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes);
 

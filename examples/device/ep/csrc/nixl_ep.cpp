@@ -74,11 +74,10 @@ void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int6
     }
 }
 
-Buffer::Buffer(int rank, bool explicitly_destroy, bool enable_shrink):
+Buffer::Buffer(int rank, bool explicitly_destroy):
         rank(rank), num_ranks(1),
         explicitly_destroy(explicitly_destroy),
-        comm_stream(at::cuda::getStreamFromPool(true)),
-        enable_shrink(enable_shrink) {}
+        comm_stream(at::cuda::getStreamFromPool(true)) {}
 
 void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes)
 {
@@ -114,12 +113,11 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     // Allocate and clean shrink buffer
     mask_buffer_ptr = nullptr;
     sync_buffer_ptr = nullptr;
-    if (enable_shrink) {
-        int num_mask_buffer_bytes = max_num_ranks * sizeof(int);
-        CUDA_CHECK(cudaMalloc(&mask_buffer_ptr, num_mask_buffer_bytes));
-        CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0xff, num_mask_buffer_bytes));
-        CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
-    }
+    int num_mask_buffer_bytes = max_num_ranks * sizeof(int);
+    CUDA_CHECK(cudaMalloc(&mask_buffer_ptr, num_mask_buffer_bytes));
+    CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0xff, num_mask_buffer_bytes));
+    CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
+
     int num_sync_buffer_bytes = max_num_ranks * sizeof(int);
     CUDA_CHECK(cudaMalloc(&sync_buffer_ptr, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
@@ -184,10 +182,7 @@ void Buffer::destroy() {
 
     rdma_buffer_ptr = nullptr;
 
-    if (enable_shrink) {
-        cudaFree(mask_buffer_ptr);
-    }
-
+    cudaFree(mask_buffer_ptr);
     cudaFree(sync_buffer_ptr);
     cudaFree(sync_count_ptr);
 
@@ -200,7 +195,7 @@ void Buffer::destroy() {
 
 void Buffer::barrier() {
     auto compute_stream = at::cuda::getCurrentCUDAStream();
-    ep_kernels::barrier(gpu_ctx, mask_buffer_ptr, sync_buffer_ptr, compute_stream);
+    ep_kernels::barrier(gpu_ctx, mask_buffer_ptr, compute_stream);
 }
 
 void Buffer::_nixl_agents_connect(const std::vector<int>& ranks, const std::vector<nixl_blob_t>& remote_mds) {
@@ -317,10 +312,8 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Update mask buffer to mark ranks as inactive
-    if (enable_shrink) {
-        for (int removed_rank : remote_ranks_list) {
-            update_mask_buffer(removed_rank, true);  // mask=true
-        }
+    for (int removed_rank : remote_ranks_list) {
+        update_mask_buffer(removed_rank, true);  // mask=true
     }
 
     _nixl_ep_memory_views_destroy();
@@ -758,7 +751,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("current_stream_wait", &nixl_ep::EventHandle::current_stream_wait);
 
     pybind11::class_<nixl_ep::Buffer>(m, "Buffer")
-        .def(pybind11::init<int, bool, bool>())
+        .def(pybind11::init<int, bool>())
         .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers)
         .def("barrier", &nixl_ep::Buffer::barrier)
         .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds) {
