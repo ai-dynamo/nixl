@@ -181,6 +181,11 @@ const std::vector<xferBenchParamInfo> xbench_params = {
                   XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
                   "Required checksum for S3 backend [supported, required]"),
     NB_ARG_STRING(obj_ca_bundle, "", "Path to CA bundle for S3 backend"),
+    NB_ARG_UINT64(
+        obj_crt_min_limit,
+        0,
+        "Minimum object size (bytes) to use S3 CRT client for high-performance transfers. "
+        "0 means CRT client is disabled (default: 0)"),
 
     // HF3FS options - only used when backend is HF3FS
     NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool"),
@@ -259,6 +264,7 @@ bool xferBenchConfig::obj_use_virtual_addressing = false;
 std::string xferBenchConfig::obj_endpoint_override = "";
 std::string xferBenchConfig::obj_req_checksum = "";
 std::string xferBenchConfig::obj_ca_bundle = "";
+size_t xferBenchConfig::obj_crt_min_limit = 0;
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
@@ -446,6 +452,7 @@ xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
             obj_endpoint_override = NB_ARG(obj_endpoint_override);
             obj_req_checksum = NB_ARG(obj_req_checksum);
             obj_ca_bundle = NB_ARG(obj_ca_bundle);
+            obj_crt_min_limit = NB_ARG(obj_crt_min_limit);
 
             // Validate OBJ S3 scheme
             if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
@@ -638,6 +645,10 @@ xferBenchConfig::printConfig() {
             printOption("OBJ S3 required checksum (--obj_req_checksum=[supported, required])",
                         obj_req_checksum);
             printOption("OBJ S3 CA bundle (--obj_ca_bundle=cert-path)", obj_ca_bundle);
+            printOption("OBJ S3 CRT min limit (--obj_crt_min_limit=N bytes)",
+                        obj_crt_min_limit > 0 ?
+                            std::to_string(obj_crt_min_limit) + " (CRT enabled)" :
+                            "0 (CRT disabled)");
         }
 
         if (xferBenchConfig::isStorageBackend()) {

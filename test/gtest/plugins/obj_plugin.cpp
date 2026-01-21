@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,14 +33,24 @@ namespace gtest::plugins::obj {
  * used during the tests.
  */
 
-nixl_b_params_t obj_params;
+nixl_b_params_t obj_params = {{"crtMinLimit", "0"}};
+nixl_b_params_t obj_crt_params = {{"crtMinLimit", "1024"}};
 const std::string local_agent_name = "Agent1";
+const std::string crt_agent_name = "Agent2-CRT";
 const nixlBackendInitParams obj_test_params = {.localAgent = local_agent_name,
                                                .type = "OBJ",
                                                .customParams = &obj_params,
                                                .enableProgTh = false,
                                                .pthrDelay = 0,
                                                .syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW};
+
+const nixlBackendInitParams obj_crt_test_params = {.localAgent = crt_agent_name,
+                                                   .type = "OBJ",
+                                                   .customParams = &obj_crt_params,
+                                                   .enableProgTh = false,
+                                                   .pthrDelay = 0,
+                                                   .syncMode =
+                                                       nixl_thread_sync_t::NIXL_THREAD_SYNC_RW};
 
 class setupObjTestFixture : public setupBackendTestFixture {
 protected:
@@ -90,5 +100,72 @@ TEST_P(setupObjTestFixture, queryMemTest) {
 
 
 INSTANTIATE_TEST_SUITE_P(ObjTests, setupObjTestFixture, testing::Values(obj_test_params));
+
+// Separate test suite for S3 CRT client with crtMinLimit enabled
+class setupObjCrtTestFixture : public setupBackendTestFixture {
+protected:
+    setupObjCrtTestFixture() {
+        localBackendEngine_ = std::make_shared<nixlObjEngine>(&GetParam());
+    }
+};
+
+TEST_P(setupObjCrtTestFixture, CrtXferTest) {
+    // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
+                                                localBackendEngine_,
+                                                local_agent_name,
+                                                local_agent_name,
+                                                false,
+                                                1,
+                                                2048);
+    transfer.setLocalMem();
+    transfer.testTransfer(NIXL_WRITE);
+    transfer.resetLocalMem();
+    transfer.testTransfer(NIXL_READ);
+    transfer.checkLocalMem();
+}
+
+TEST_P(setupObjCrtTestFixture, CrtXferMultiBufsTest) {
+    // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
+                                                localBackendEngine_,
+                                                local_agent_name,
+                                                local_agent_name,
+                                                false,
+                                                3,
+                                                2048);
+    transfer.setLocalMem();
+    transfer.testTransfer(NIXL_WRITE);
+    transfer.resetLocalMem();
+    transfer.testTransfer(NIXL_READ);
+    transfer.checkLocalMem();
+}
+
+TEST_P(setupObjCrtTestFixture, CrtQueryMemTest) {
+    // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
+                                                localBackendEngine_,
+                                                local_agent_name,
+                                                local_agent_name,
+                                                false,
+                                                3,
+                                                2048);
+    transfer.setLocalMem();
+    transfer.testTransfer(NIXL_WRITE);
+
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-obj-key-0"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-obj-key-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-obj-key-nonexistent"));
+    std::vector<nixl_query_resp_t> resp;
+    localBackendEngine_->queryMem(descs, resp);
+
+    EXPECT_EQ(resp.size(), 3);
+    EXPECT_EQ(resp[0].has_value(), true);
+    EXPECT_EQ(resp[1].has_value(), true);
+    EXPECT_EQ(resp[2].has_value(), false);
+}
+
+INSTANTIATE_TEST_SUITE_P(ObjCrtTests, setupObjCrtTestFixture, testing::Values(obj_crt_test_params));
 
 } // namespace gtest::plugins::obj
