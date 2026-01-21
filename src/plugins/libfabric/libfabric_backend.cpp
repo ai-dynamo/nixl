@@ -363,8 +363,6 @@ nixlLibfabricEngine::~nixlLibfabricEngine() {
         progress_thread_stop_.store(true);
     }
 
-    // Post dummy completion to wake up blocking threads
-    postShutdownCompletion();
 
     if (progress_thread_enabled_ && progress_thread_.joinable()) {
         NIXL_DEBUG << "Waiting for Progress thread to exit";
@@ -1356,46 +1354,6 @@ nixlLibfabricEngine::progressThread() {
     }
     NIXL_DEBUG << "PT: Thread exiting cleanly";
     return NIXL_SUCCESS;
-}
-
-void
-nixlLibfabricEngine::postShutdownCompletion() {
-    NIXL_DEBUG << "Posting shutdown signal to wake up background thread";
-    // Send shutdown message to self on rail 0 if self-connection exists
-    auto self_conn_it = connections_.find(localAgent);
-    if (self_conn_it != connections_.end() && self_conn_it->second &&
-        rail_manager.getNumDataRails() > 0) {
-        const size_t rail_id = 0; // Use rail 0 for shutdown signal
-
-        // Allocate control request
-        const size_t control_rail_id = 0;
-        const size_t shutdown_msg_len = 8; // "SHUTDOWN" length
-        nixlLibfabricReq *control_request =
-            rail_manager.getControlRail(control_rail_id)
-                .allocateControlRequest(shutdown_msg_len, LibfabricUtils::getNextXferId());
-        if (!control_request) {
-            NIXL_ERROR << "Failed to allocate control request for shutdown";
-            return;
-        }
-
-        // Copy shutdown message to the control request buffer
-        std::strcpy(static_cast<char *>(control_request->buffer), "SHUTDOWN");
-        control_request->buffer_size = shutdown_msg_len;
-
-        nixl_status_t status = rail_manager.postControlMessage(
-            nixlLibfabricRailManager::ControlMessageType::DISCONNECT_REQ,
-            control_request,
-            self_conn_it->second->rail_remote_addr_list_[rail_id][0],
-            self_conn_it->second->agent_index_);
-
-        if (status == NIXL_SUCCESS) {
-            NIXL_DEBUG << "Shutdown signal posted successfully on rail " << rail_id;
-        } else {
-            NIXL_ERROR << "Failed to post shutdown signal on rail " << rail_id;
-        }
-    } else {
-        NIXL_ERROR << "Could not find self-connection or rails not initialized";
-    }
 }
 
 /****************************************

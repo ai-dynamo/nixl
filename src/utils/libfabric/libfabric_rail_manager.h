@@ -199,7 +199,6 @@ public:
     /** Control message types for rail communication */
     enum class ControlMessageType : int {
         NOTIFICATION, ///< User notification message
-        DISCONNECT_REQ = 3, ///< Disconnection request. Value set for backward compatibility.
     };
     /** Send control message via control rail
      * @param msg_type Type of control message

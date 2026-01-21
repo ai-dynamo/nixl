@@ -916,11 +916,6 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
             NIXL_ERROR << "No notification callback set!";
             return NIXL_ERR_BACKEND;
         }
-    } else if (msg_type == NIXL_LIBFABRIC_MSG_DISCONNECT) {
-        NIXL_TRACE << "Processing disconnect request from agent " << agent_idx << " on rail "
-                   << rail_id
-                   << "Currently not tracking the fi_addrs, so no callback for disconnect to clean "
-                      "up libfabric AV list";
     } else {
         NIXL_ERROR << "Unknown message type: " << std::hex << msg_type << std::dec;
         return NIXL_ERR_BACKEND;

@@ -81,7 +81,6 @@
 
 // Message type constants
 #define NIXL_LIBFABRIC_MSG_NOTIFICTION 2
-#define NIXL_LIBFABRIC_MSG_DISCONNECT 3
 #define NIXL_LIBFABRIC_MSG_TRANSFER 4
 
 // Single-operation immediate data extraction (no intermediate shifts)

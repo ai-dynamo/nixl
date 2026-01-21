@@ -599,9 +599,6 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     case ControlMessageType::NOTIFICATION:
         msg_type_value = NIXL_LIBFABRIC_MSG_NOTIFICTION;
         break;
-    case ControlMessageType::DISCONNECT_REQ:
-        msg_type_value = NIXL_LIBFABRIC_MSG_DISCONNECT;
-        break;
     default:
         NIXL_ERROR << "Unknown message type";
         return NIXL_ERR_INVALID_PARAM;
