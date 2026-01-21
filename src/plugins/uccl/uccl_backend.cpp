@@ -186,7 +186,7 @@ nixlUcclEngine::getPublicData(const nixlBackendMD *meta, std::string &str) const
         snprintf(hex, sizeof(hex), "%02x", static_cast<unsigned char>(priv->fifo_item[i]));
         str += hex;
     }
-    NIXL_DEBUG << "Exporting Meta Info =" << hex_str << sts::endl;
+    NIXL_DEBUG << "Exporting Meta Info =" << str << std::endl;
 
     return NIXL_SUCCESS;
 }
@@ -372,7 +372,7 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
 
     // Decode fifo_item from hex string
     const std::string &hex_str = input.metaInfo;
-    NIXL_DEBUG << "Meta Info =" << hex_str << sts::endl;
+    NIXL_DEBUG << "Meta Info =" << hex_str << std::endl;
     if (hex_str.length() == FIFO_ITEM_SIZE * 2) {
         for (int i = 0; i < FIFO_ITEM_SIZE; i++) {
             std::string byte_str = hex_str.substr(i * 2, 2);
