@@ -139,7 +139,9 @@ private:
 // UCCL Backend Memory Descriptor
 class nixlUcclBackendMD : public nixlBackendMD {
 public:
-    nixlUcclBackendMD(bool isPrivate) : nixlBackendMD(isPrivate) {}
+    nixlUcclBackendMD(bool isPrivate) : nixlBackendMD(isPrivate) {
+        memset(fifo_item, 0, FIFO_ITEM_SIZE);
+    }
 
     virtual ~nixlUcclBackendMD() {}
 
@@ -147,6 +149,7 @@ public:
     size_t length;
     int ref_cnt;
     uint64_t mr_id; // UCCL memory region id
+    char fifo_item[FIFO_ITEM_SIZE];
 };
 
 // UCCL Backend Request Handle

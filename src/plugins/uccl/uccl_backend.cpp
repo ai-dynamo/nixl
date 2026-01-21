@@ -177,7 +177,16 @@ nixlUcclEngine::getSupportedMems() const {
 nixl_status_t
 nixlUcclEngine::getPublicData(const nixlBackendMD *meta, std::string &str) const {
     nixlUcclBackendMD *priv = (nixlUcclBackendMD *)meta;
-    str = std::to_string(priv->mr_id);
+
+    // Export fifo_item as hex string
+    str.clear();
+    str.reserve(FIFO_ITEM_SIZE * 2);
+    for (int i = 0; i < FIFO_ITEM_SIZE; i++) {
+        char hex[3];
+        snprintf(hex, sizeof(hex), "%02x", static_cast<unsigned char>(priv->fifo_item[i]));
+        str += hex;
+    }
+    NIXL_DEBUG << "Exporting Meta Info =" << hex_str << sts::endl;
 
     return NIXL_SUCCESS;
 }
@@ -292,6 +301,17 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
     priv->length = mem.len;
     priv->ref_cnt = 1;
     priv->mr_id = reinterpret_cast<uint64_t>(mr); // Store the memory region handle
+
+    // Pre-compute fifo_item for one-sided RDMA operations
+    int result = uccl_engine_prepare_fifo(engine_, mr, (void *)mem.addr,
+                                                 mem.len, priv->fifo_item);
+    if (result != 0) {
+        NIXL_ERROR << "Failed to prepare fifo_item for memory region";
+        uccl_engine_mr_destroy(mr);
+        delete priv;
+        return NIXL_ERR_BACKEND;
+    }
+
     out = priv;
     mem_reg_info_[mem.addr] = priv;
     NIXL_DEBUG << "Registering memory: " << mem.addr << "Device: " << mem.devId
@@ -349,7 +369,23 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
     output_md->addr = (void *)input.addr;
     output_md->length = input.len;
     output_md->ref_cnt = 1;
-    output_md->mr_id = strtoul(input.metaInfo.c_str(), NULL, 10);
+
+    // Decode fifo_item from hex string
+    const std::string &hex_str = input.metaInfo;
+    NIXL_DEBUG << "Meta Info =" << hex_str << sts::endl;
+    if (hex_str.length() == FIFO_ITEM_SIZE * 2) {
+        for (int i = 0; i < FIFO_ITEM_SIZE; i++) {
+            std::string byte_str = hex_str.substr(i * 2, 2);
+            output_md->fifo_item[i] = static_cast<char>(strtoul(byte_str.c_str(), NULL, 16));
+        }
+        NIXL_DEBUG << "Parsed fifo_item from remote metadata";
+    } else {
+        NIXL_ERROR << "Invalid fifo_item hex string length: " << hex_str.length()
+                   << " (expected " << FIFO_ITEM_SIZE * 2 << ")";
+        delete output_md;
+        output = nullptr;
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
     return NIXL_SUCCESS;
 }
@@ -369,7 +405,6 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
-    int result = 0;
     nixlUcclBackendMD *lmd;
     nixlUcclBackendMD *rmd;
     bool rcmode = false;
@@ -411,9 +446,11 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
             return NIXL_ERR_INVALID_PARAM;
         }
     }
-    // Collect all tx_data into vectors for batch sending
-    std::vector<md_t> md_vector;
-    std::vector<nixlUcclBackendMD *> local_priv_vector;
+    handle = new nixlUcclReqH(conn);
+    nixlUcclReqH *uccl_handle = static_cast<nixlUcclReqH *>(handle);
+
+    uccl_handle->fifo_items.clear();
+    uccl_handle->fifo_items.resize(lcnt);
 
     std::lock_guard<std::mutex> lock(mem_mutex_);
     for (size_t i = 0; i < lcnt; i++) {
@@ -441,62 +478,21 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
             NIXL_ERROR << "Local memory region not properly registered";
             return NIXL_ERR_BACKEND;
         }
+        if (rcmode) {
+            memcpy(uccl_handle->fifo_items[i].data(), rmd->fifo_item, FIFO_ITEM_SIZE);
 
-        // Prepare the memory region metadata for batch sending
-        md_t md;
-        tx_msg_t tx_data;
-        tx_data.data_ptr = remote_addr;
-        tx_data.data_size = rsize;
+            // Update the address and size in the fifo_item for the actual transfer
+            // FifoItem layout: addr (8 bytes at offset 0), size (4 bytes at offset 8)
+            uint64_t *fifo_addr = reinterpret_cast<uint64_t *>(uccl_handle->fifo_items[i].data());
+            uint32_t *fifo_size = reinterpret_cast<uint32_t *>(uccl_handle->fifo_items[i].data() + 8);
+            *fifo_addr = remote_addr;
+            *fifo_size = static_cast<uint32_t>(rsize);
 
-        // RC mode is supported for both READ/WRITE operations
-        // UC mode is supported only for WRITE operations
-        md.op = rcmode ? UCCL_RW_RC : UCCL_WRITE;
-        md.data.tx_data = tx_data;
-
-        // Add to vectors for batch processing
-        md_vector.push_back(md);
-        local_priv_vector.push_back(local_priv);
-    }
-
-    // Send all tx_data as a vector
-    result = uccl_engine_send_tx_md_vector(conn, md_vector.data(), md_vector.size());
-    if (result < 0) {
-        NIXL_ERROR << "Failed to send transfer metadata vector";
-        return NIXL_ERR_BACKEND;
-    }
-
-    if (rcmode) {
-        if (!handle) {
-            handle = new nixlUcclReqH(conn);
-        }
-        nixlUcclReqH *uccl_handle = static_cast<nixlUcclReqH *>(handle);
-
-        uccl_handle->fifo_items.clear();
-        uccl_handle->fifo_items.resize(local_priv_vector.size());
-
-        for (size_t i = 0; i < local_priv_vector.size(); i++) {
-            char fifo_item[FIFO_ITEM_SIZE];
-            int retry_count = 0;
-            const int max_retries = 50;
-            do {
-                result = uccl_engine_get_fifo_item(conn, i, &fifo_item);
-                if (result == 0) {
-                    memcpy(uccl_handle->fifo_items[i].data(), fifo_item, FIFO_ITEM_SIZE);
-                    break;
-                }
-                retry_count++;
-                if (retry_count < max_retries) {
-                    NIXL_DEBUG << "Failed to get FIFO item, retry " << retry_count << "/"
-                               << max_retries << " for item " << i;
-                    std::this_thread::sleep_for(std::chrono::microseconds(10));
-                }
-            } while (retry_count < max_retries);
-
-            if (result != 0) {
-                NIXL_ERROR << "Failed to get FIFO item after " << max_retries
-                           << " retries for item " << i;
-                return NIXL_ERR_BACKEND;
-            }
+            NIXL_DEBUG << "Using pre-shared fifo_item[" << i << "]: addr=" << std::hex
+                       << remote_addr << ", size=" << std::dec << rsize;
+        } else {
+            // TODO : Suppport UC one-sided
+            return NIXL_ERR_BACKEND;
         }
     }
 
