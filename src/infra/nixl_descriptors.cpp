@@ -421,8 +421,8 @@ nixlRemoteDesc::nixlRemoteDesc(const uintptr_t &addr,
       remoteAgent{remote_agent} {}
 
 nixlRemoteDesc::nixlRemoteDesc(const nixlBasicDesc &desc, const std::string &remote_agent)
-    : nixlBasicDesc(desc),
-      remoteAgent(remote_agent) {}
+    : nixlBasicDesc{desc},
+      remoteAgent{remote_agent} {}
 
 nixlRemoteDesc::nixlRemoteDesc(const nixl_blob_t &blob) {
     if (blob.size() > sizeof(nixlBasicDesc)) {
@@ -443,15 +443,11 @@ nixlRemoteDesc::nixlRemoteDesc(const nixl_blob_t &blob) {
 
 bool
 operator==(const nixlRemoteDesc &lhs, const nixlRemoteDesc &rhs) {
-    return (((nixlBasicDesc)lhs == (nixlBasicDesc)rhs) && (lhs.remoteAgent == rhs.remoteAgent));
+    return (static_cast<const nixlBasicDesc &>(lhs) == static_cast<const nixlBasicDesc &>(rhs)) &&
+        (lhs.remoteAgent == rhs.remoteAgent);
 }
 
 nixl_blob_t
 nixlRemoteDesc::serialize() const {
     return nixlBasicDesc::serialize() + remoteAgent;
-}
-
-void
-nixlRemoteDesc::print(const std::string &suffix) const {
-    nixlBasicDesc::print(", Remote Agent: " + remoteAgent + suffix);
 }

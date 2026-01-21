@@ -243,14 +243,6 @@ struct nixlRemoteDesc : public nixlBasicDesc {
     nixl_blob_t
     serialize() const;
 
-    /**
-     * @brief Print nixlRemoteDesc for debugging purpose
-     *
-     * @param suffix gets prepended to the descriptor print
-     */
-    void
-    print(const std::string &suffix) const;
-
     [[nodiscard]] virtual bool
     isValid() const noexcept {
         return remoteAgent != nixl_invalid_agent;
@@ -446,7 +438,7 @@ using nixl_xfer_dlist_t = nixlDescList<nixlBasicDesc>;
 using nixl_reg_dlist_t = nixlDescList<nixlBlobDesc>;
 /**
  * @brief An alias for a nixlDescList<nixlRemoteDesc>
- *        used for creating remote descriptor lists
+ *        used for preparing a memory view handle for remote buffers
  */
 using nixl_remote_dlist_t = nixlDescList<nixlRemoteDesc>;
 

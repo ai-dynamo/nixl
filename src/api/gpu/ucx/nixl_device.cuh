@@ -55,6 +55,15 @@ struct nixlGpuXferReqParams {
 };
 
 /**
+ * @brief Memory descriptor
+ */
+struct nixlMemDesc {
+    nixlMemoryViewH mvh;
+    unsigned index; /**< Index in the memory view */
+    size_t offset; /**< Offset within the buffer */
+};
+
+/**
  * @brief Convert UCS status to NIXL status.
  *
  * @param status [in] UCS status code.
@@ -282,27 +291,22 @@ nixlGpuWriteSignal(void *signal, uint64_t value) {
 /**
  * @brief Post a single-region memory transfer from local to remote GPU.
  *
- * This function creates and posts a transfer request using memory view handles @a src_mvh and
- * @a dst_mvh, which are created by @ref nixlAgent::prepMemoryView.
+ * This function creates and posts a transfer request using memory descriptors @a src and @a dst.
  *
- * @param src_mvh            [in]  Source memory view handle
- * @param dst_mvh            [in]  Destination memory view handle
- * @param size               [in]  Size in bytes to transfer
- * @param channel_id         [in]  Channel ID to use for the transfer
- * @param flags              [in]  Transfer flags
- * @param xfer_status        [in,out] Optional status handle (use @ref nixlGpuGetXferStatus)
+ * @param src         [in]  Source memory descriptor
+ * @param dst         [in]  Destination memory descriptor
+ * @param size        [in]  Size in bytes to transfer
+ * @param channel_id  [in]  Channel ID to use for the transfer
+ * @param flags       [in]  Transfer flags
+ * @param xfer_status [in,out] Optional status handle (use @ref nixlGpuGetXferStatus)
  *
- * @return NIXL_IN_PROG       Transfer posted successfully.
- * @return NIXL_ERR_BACKEND   An error occurred in UCX backend.
+ * @return NIXL_IN_PROG     Transfer posted successfully.
+ * @return NIXL_ERR_BACKEND An error occurred in UCX backend.
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ nixl_status_t
-nixlPut(nixlMemoryViewH src_mvh,
-        unsigned src_index,
-        size_t src_offset,
-        nixlMemoryViewH dst_mvh,
-        unsigned dst_index,
-        size_t dst_offset,
+nixlPut(const nixlMemDesc &src,
+        const nixlMemDesc &dst,
         size_t size,
         unsigned channel_id = 0,
         unsigned flags = 0,
@@ -313,26 +317,22 @@ nixlPut(nixlMemoryViewH src_mvh,
 /**
  * @brief Atomic add to remote GPU memory.
  *
- * This function performs an atomic increment on a remote counter/signal.
+ * This function performs an atomic increment on a remote counter.
  * The increment is visible only after previous writes complete.
  *
- * @param value              [in]  Value to add to the counter
- * @param mvh                [in]  Memory view handle
- * @param index              [in]  Index in the memory view
- * @param offset             [in]  Offset within the buffer
- * @param channel_id         [in]  Channel ID to use for the transfer
- * @param flags              [in]  Transfer flags
- * @param xfer_status        [in,out] Optional status handle (use @ref nixlGpuGetXferStatus)
+ * @param value       [in]  Value to add to the counter
+ * @param counter     [in]  Counter memory descriptor
+ * @param channel_id  [in]  Channel ID to use for the transfer
+ * @param flags       [in]  Transfer flags
+ * @param xfer_status [in,out] Optional status handle (use @ref nixlGpuGetXferStatus)
  *
- * @return NIXL_IN_PROG       Atomic add posted successfully.
- * @return NIXL_ERR_BACKEND   An error occurred in UCX backend.
+ * @return NIXL_IN_PROG     Atomic add posted successfully.
+ * @return NIXL_ERR_BACKEND An error occurred in UCX backend.
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ nixl_status_t
 nixlAtomicAdd(uint64_t value,
-              nixlMemoryViewH mvh,
-              unsigned index,
-              size_t offset,
+              const nixlMemDesc &counter,
               unsigned channel_id = 0,
               unsigned flags = 0,
               nixlGpuXferStatusH *xfer_status = nullptr) {
