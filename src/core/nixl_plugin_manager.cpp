@@ -475,7 +475,7 @@ nixlPluginManager::discoverTelemetryPlugin(const std::string &filename) {
 }
 
 void
-nixlPluginManager::discoverPluginsFromDir(const std::filesystem::path& dirpath) {
+nixlPluginManager::discoverPluginsFromDir(const std::filesystem::path &dirpath) {
     std::error_code ec;
     std::filesystem::directory_iterator dir_iter(dirpath, ec);
     if (ec) {
