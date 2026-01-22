@@ -222,6 +222,9 @@ public:
     [[nodiscard]] size_t
     getGpuSignalSize() const;
 
+    void
+    warnAboutHardwareSupportMismatch() const;
+
     friend class nixlUcxWorker;
 };
 
