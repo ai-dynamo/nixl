@@ -205,7 +205,7 @@ struct nixlRemoteDesc : public nixlBasicDesc {
      *
      * @param addr          Start of buffer/block/offset-in-file
      * @param len           Length of buffer
-     * @param devID         deviceID/BlockID/bufferID (remote ID)
+     * @param dev_id        deviceID/BlockID/bufferID (remote ID)
      * @param remote_agent  Remote agent name
      */
     nixlRemoteDesc(const uintptr_t addr,
@@ -233,11 +233,6 @@ struct nixlRemoteDesc : public nixlBasicDesc {
      */
     nixl_blob_t
     serialize() const;
-
-    [[nodiscard]] bool
-    isValid() const noexcept {
-        return remoteAgent != nixl_invalid_agent;
-    }
 };
 
 /**
