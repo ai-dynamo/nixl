@@ -275,7 +275,7 @@ int main(int argc, char *argv[]) {
 
     if ((role.compare(initiator) != 0) && (role.compare(target) != 0)) {
         std::cerr << "Invalid role. Use 'initiator' or 'target'."
-                    << "Currently "<< role <<std::endl;
+                  << "Currently "<< role <<std::endl;
         return 1;
     }
 
