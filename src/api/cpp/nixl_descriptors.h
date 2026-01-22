@@ -234,7 +234,7 @@ struct nixlRemoteDesc : public nixlBasicDesc {
     nixl_blob_t
     serialize() const;
 
-    [[nodiscard]] virtual bool
+    [[nodiscard]] bool
     isValid() const noexcept {
         return remoteAgent != nixl_invalid_agent;
     }
