@@ -222,7 +222,7 @@ protected:
     }
 
     [[nodiscard]] size_t
-    getWorkerId(const nixl_opt_b_args_t * = nullptr) const noexcept;
+    getWorkerId(const nixl_opt_b_args_t *opt_args = nullptr) const noexcept;
 
     virtual size_t
     getSharedWorkersSize() const {
@@ -284,8 +284,12 @@ private:
                        size_t start_idx,
                        size_t end_idx);
 
+    /**
+     * Get the worker ID from the optional arguments.
+     * Returns std::nullopt if the 'worker_id' option extraction fails.
+     */
     [[nodiscard]] std::optional<size_t>
-    getWorkerId(const nixl_opt_b_args_t &) const noexcept;
+    getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const noexcept;
 
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;

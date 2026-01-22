@@ -1050,7 +1050,7 @@ nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
 size_t
 nixlUcxEngine::getWorkerId(const nixl_opt_b_args_t *opt_args) const noexcept {
     if (opt_args) {
-        const auto worker_id = getWorkerId(*opt_args);
+        const auto worker_id = getWorkerIdFromOptArgs(*opt_args);
         if (worker_id) {
             return *worker_id;
         }
@@ -1067,7 +1067,7 @@ nixlUcxEngine::getWorkerId(const nixl_opt_b_args_t *opt_args) const noexcept {
 }
 
 std::optional<size_t>
-nixlUcxEngine::getWorkerId(const nixl_opt_b_args_t &opt_args) const noexcept {
+nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const noexcept {
     constexpr std::string_view worker_id_key = "worker_id=";
     size_t pos = opt_args.customParam.find(worker_id_key);
     if (pos == std::string::npos) {
@@ -1103,8 +1103,8 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    /* TODO: try to get from a pool first */
     const auto worker_id = getWorkerId(opt_args);
+    /* TODO: try to get from a pool first */
     auto *ucx_handle = new nixlUcxBackendH(getWorker(worker_id).get(), worker_id);
 
     handle = ucx_handle;
