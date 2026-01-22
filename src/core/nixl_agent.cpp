@@ -1339,6 +1339,23 @@ nixlAgent::prepGpuSignal(const nixl_reg_dlist_t &signal_descs,
 }
 
 nixl_status_t
+nixlAgent::prepMemoryView(const nixl_remote_dlist_t &remote_buffs,
+                          nixlMemoryViewH &mvh,
+                          const nixl_opt_args_t *extra_params) const {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
+nixl_status_t
+nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &local_buffs,
+                          nixlMemoryViewH &mvh,
+                          const nixl_opt_args_t *extra_params) const {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
+void
+nixlAgent::releaseMemoryView(nixlMemoryViewH mvh) const {}
+
+nixl_status_t
 nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
     NIXL_LOCK_GUARD(data->lock);
     delete dlist_hndl;

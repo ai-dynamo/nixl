@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +52,15 @@ struct nixlGpuXferReqParams {
     ucp_device_mem_list_handle_h mem_list;
     uint64_t flags;
     ucp_device_request_t *ucp_request;
+};
+
+/**
+ * @brief Memory descriptor
+ */
+struct nixlMemDesc {
+    nixlMemoryViewH mvh;
+    size_t index; /**< Index in the memory view */
+    size_t offset; /**< Offset within the buffer */
 };
 
 /**
@@ -277,6 +286,75 @@ template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ void
 nixlGpuWriteSignal(void *signal, uint64_t value) {
     ucp_device_counter_write<static_cast<ucs_device_level_t>(level)>(signal, value);
+}
+
+/**
+ * @brief Post a single-region memory transfer from local to remote GPU.
+ *
+ * This function creates and posts a transfer request using memory descriptors @a src and @a dst.
+ *
+ * @param src         [in]  Source memory descriptor
+ * @param dst         [in]  Destination memory descriptor
+ * @param size        [in]  Size in bytes to transfer
+ * @param channel_id  [in]  Channel ID to use for the transfer
+ * @param flags       [in]  Transfer flags
+ * @param xfer_status [in,out] Optional status handle (use @ref nixlGpuGetXferStatus)
+ *
+ * @return NIXL_IN_PROG     Transfer posted successfully.
+ * @return NIXL_ERR_BACKEND An error occurred in UCX backend.
+ */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
+__device__ nixl_status_t
+nixlPut(const nixlMemDesc &src,
+        const nixlMemDesc &dst,
+        size_t size,
+        unsigned channel_id = 0,
+        unsigned flags = 0,
+        nixlGpuXferStatusH *xfer_status = nullptr) {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
+/**
+ * @brief Atomic add to remote GPU memory.
+ *
+ * This function performs an atomic increment on a remote counter.
+ * The increment is visible only after previous writes complete.
+ *
+ * @param value       [in]  Value to add to the counter
+ * @param counter     [in]  Counter memory descriptor
+ * @param channel_id  [in]  Channel ID to use for the transfer
+ * @param flags       [in]  Transfer flags
+ * @param xfer_status [in,out] Optional status handle (use @ref nixlGpuGetXferStatus)
+ *
+ * @return NIXL_IN_PROG     Atomic add posted successfully.
+ * @return NIXL_ERR_BACKEND An error occurred in UCX backend.
+ */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
+__device__ nixl_status_t
+nixlAtomicAdd(uint64_t value,
+              const nixlMemDesc &counter,
+              unsigned channel_id = 0,
+              unsigned flags = 0,
+              nixlGpuXferStatusH *xfer_status = nullptr) {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
+/**
+ * @brief Get a local pointer to remote memory.
+ *
+ * This function returns a local pointer to the mapped memory of the
+ * remote memory view handle at the given index.
+ * The memory view must be prepared on the host using @ref nixlAgent::prepMemoryView.
+ *
+ * @param mvh    [in]  Memory view handle (remote buffers)
+ * @param index  [in]  Index in the memory view
+
+ * @return Pointer to the mapped memory, or nullptr if not available.
+ */
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
+__device__ void *
+nixlGetPtr(nixlMemoryViewH mvh, size_t index) {
+    return nullptr;
 }
 
 #endif // _NIXL_DEVICE_CUH

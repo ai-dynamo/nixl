@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -311,6 +311,12 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     return NIXL_SUCCESS;
 }
 
+template<>
+nixl_status_t
+nixlDescList<nixlRemoteMetaDesc>::serialize(nixlSerDes *serializer) const {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
 template <class T>
 void nixlDescList<T>::print() const {
     std::cout << "DescList of mem type " << type << std::endl;
@@ -334,6 +340,8 @@ template class nixlDescList<nixlBasicDesc>;
 template class nixlDescList<nixlMetaDesc>;
 template class nixlDescList<nixlBlobDesc>;
 template class nixlDescList<nixlSectionDesc>;
+template class nixlDescList<nixlRemoteDesc>;
+template class nixlDescList<nixlRemoteMetaDesc>;
 
 template bool operator==<nixlBasicDesc> (const nixlDescList<nixlBasicDesc> &lhs,
                                          const nixlDescList<nixlBasicDesc> &rhs);
@@ -343,6 +351,12 @@ template bool operator==<nixlBlobDesc>(const nixlDescList<nixlBlobDesc> &lhs,
                                        const nixlDescList<nixlBlobDesc> &rhs);
 template bool operator==<nixlSectionDesc>(const nixlDescList<nixlSectionDesc> &lhs,
                                           const nixlDescList<nixlSectionDesc> &rhs);
+template bool
+operator== <nixlRemoteDesc>(const nixlDescList<nixlRemoteDesc> &lhs,
+                            const nixlDescList<nixlRemoteDesc> &rhs);
+template bool
+operator== <nixlRemoteMetaDesc>(const nixlDescList<nixlRemoteMetaDesc> &lhs,
+                                const nixlDescList<nixlRemoteMetaDesc> &rhs);
 
 // nixlSecDescList keeps the elements sorted
 void
@@ -401,4 +415,40 @@ nixlSecDescList::resize(const size_t &count) {
         throw std::logic_error(
             "nixlSecDescList: to keep list sorted, resize growth is not allowed.");
     this->descs.resize(count);
+}
+
+nixlRemoteDesc::nixlRemoteDesc(const uintptr_t addr,
+                               const size_t len,
+                               const uint64_t dev_id,
+                               const std::string &remote_agent)
+    : nixlBasicDesc{addr, len, dev_id},
+      remoteAgent{remote_agent} {}
+
+nixlRemoteDesc::nixlRemoteDesc(const nixlBasicDesc &desc, const std::string &remote_agent)
+    : nixlBasicDesc{desc},
+      remoteAgent{remote_agent} {}
+
+nixlRemoteDesc::nixlRemoteDesc(const nixl_blob_t &blob) {
+    if (blob.size() < sizeof(nixlBasicDesc)) {
+        addr = 0;
+        len = 0;
+        devId = 0;
+        return;
+    }
+
+    std::memcpy(static_cast<nixlBasicDesc *>(this), blob.data(), sizeof(nixlBasicDesc));
+    if (blob.size() > sizeof(nixlBasicDesc)) {
+        remoteAgent = blob.substr(sizeof(nixlBasicDesc));
+    }
+}
+
+nixl_blob_t
+nixlRemoteDesc::serialize() const {
+    return nixlBasicDesc::serialize() + remoteAgent;
+}
+
+bool
+operator==(const nixlRemoteDesc &lhs, const nixlRemoteDesc &rhs) {
+    return (static_cast<const nixlBasicDesc &>(lhs) == static_cast<const nixlBasicDesc &>(rhs)) &&
+        (lhs.remoteAgent == rhs.remoteAgent);
 }
