@@ -41,118 +41,6 @@ extern "C" {
 #include "serdes/serdes.h"
 #include "rkey.h"
 
-namespace {
-/**
- * Helper function to read a sysfs file and parse it as unsigned long
- * @param sysfs_path Path to the sysfs directory
- * @param file_name Name of the file to read
- * @param device_name Device name for logging purposes
- * @return Parsed value on success, std::nullopt on failure
- */
-std::optional<unsigned long>
-readSysfsUlong(const std::filesystem::path &sysfs_path,
-               const std::string &file_name,
-               const std::string &device_name) {
-    std::ifstream file(sysfs_path / file_name);
-    if (!file.is_open()) {
-        NIXL_TRACE << "Failed to read " << file_name << " for device " << device_name;
-        return std::nullopt;
-    }
-
-    std::string value;
-    if (!std::getline(file, value)) {
-        NIXL_TRACE << "Failed to read " << file_name << " for device " << device_name;
-        return std::nullopt;
-    }
-
-    try {
-        return std::stoul(value, nullptr, 0);
-    }
-    catch (const std::exception &e) {
-        NIXL_TRACE << "Failed to parse " << file_name << " for device " << device_name << ": "
-                   << e.what();
-        return std::nullopt;
-    }
-}
-
-/**
- * Structure to hold hardware query results
- */
-struct nixlUcxHardwareInfo {
-    unsigned numIbDevices;
-    unsigned numNvidiaGpus;
-
-    nixlUcxHardwareInfo() : numIbDevices(0), numNvidiaGpus(0) {}
-};
-
-constexpr const char *kPciDevicePath = "/sys/bus/pci/devices";
-constexpr unsigned long kPciVendorMellanox = 0x15b3;
-constexpr unsigned long kPciVendorNvidia = 0x10de;
-constexpr unsigned long kPciClassIb = 0x0207;
-constexpr unsigned long kPciClassGpuDisplay = 0x0300;
-constexpr unsigned long kPciClassGpu3d = 0x0302;
-
-/**
- * Query hardware information by scanning PCI devices
- * @param info [out] Output structure to receive hardware info
- * @return NIXL_SUCCESS on success, error code otherwise
- */
-[[nodiscard]] nixl_status_t
-queryUcxHardware(nixlUcxHardwareInfo &info) {
-    info = nixlUcxHardwareInfo();
-
-    std::error_code ec;
-    std::filesystem::directory_iterator dir_iter(kPciDevicePath, ec);
-    if (ec) {
-        NIXL_DEBUG << "Failed to scan PCI devices directory: " << ec.message();
-        return NIXL_ERR_UNKNOWN;
-    }
-
-    for (const auto &entry : dir_iter) {
-        const std::string device_name = entry.path().filename().string();
-
-        // Skip hidden entries
-        if (device_name.empty() || device_name[0] == '.') {
-            continue;
-        }
-
-        const std::filesystem::path device_path = entry.path();
-
-        // Read vendor ID
-        auto vendor_id = readSysfsUlong(device_path, "vendor", device_name);
-        if (!vendor_id) {
-            continue;
-        }
-
-        // Read class ID
-        auto class_id = readSysfsUlong(device_path, "class", device_name);
-        if (!class_id) {
-            continue;
-        }
-        *class_id >>= 8;
-
-        // Check for InfiniBand device
-        if ((*vendor_id == kPciVendorMellanox) && (*class_id == kPciClassIb)) {
-            info.numIbDevices++;
-            NIXL_DEBUG << "Found IB device #" << info.numIbDevices << ": " << device_name
-                       << " vendor=0x" << std::hex << *vendor_id << " class=0x" << *class_id
-                       << std::dec;
-        }
-
-        // Check for GPU
-        if ((*vendor_id == kPciVendorNvidia) &&
-            ((*class_id == kPciClassGpuDisplay) || (*class_id == kPciClassGpu3d))) {
-            info.numNvidiaGpus++;
-            NIXL_DEBUG << "Found GPU #" << info.numNvidiaGpus << ": " << device_name << " vendor=0x"
-                       << std::hex << *vendor_id << " class=0x" << *class_id << std::dec;
-        }
-    }
-
-    return NIXL_SUCCESS;
-}
-
-} // namespace
-
 using namespace std;
 
 [[nodiscard]] nixl_b_params_t
@@ -745,6 +633,151 @@ nixlUcxContext::getGpuSignalSize() const {
 #else
     throw std::runtime_error(std::string(ucxGpuDeviceApiUnsupported));
 #endif
+}
+
+namespace {
+/**
+ * Helper function to read a sysfs file and parse it as unsigned long
+ * @param sysfs_path Path to the sysfs directory
+ * @param file_name Name of the file to read
+ * @param device_name Device name for logging purposes
+ * @return Parsed value on success, std::nullopt on failure
+ */
+std::optional<unsigned long>
+readSysfsUlong(const std::filesystem::path &sysfs_path,
+               const std::string &file_name,
+               const std::string &device_name) {
+    std::ifstream file(sysfs_path / file_name);
+    if (!file.is_open()) {
+        NIXL_TRACE << "Failed to read " << file_name << " for device " << device_name;
+        return std::nullopt;
+    }
+
+    std::string value;
+    if (!std::getline(file, value)) {
+        NIXL_TRACE << "Failed to read " << file_name << " for device " << device_name;
+        return std::nullopt;
+    }
+
+    try {
+        return std::stoul(value, nullptr, 0);
+    }
+    catch (const std::exception &e) {
+        NIXL_TRACE << "Failed to parse " << file_name << " for device " << device_name << ": "
+                   << e.what();
+        return std::nullopt;
+    }
+}
+
+/**
+ * Structure to hold hardware query results
+ */
+struct nixlUcxHardwareInfo {
+    unsigned numIbDevices;
+    unsigned numNvidiaGpus;
+
+    nixlUcxHardwareInfo() : numIbDevices(0), numNvidiaGpus(0) {}
+};
+
+constexpr const char *kPciDevicePath = "/sys/bus/pci/devices";
+constexpr unsigned long kPciVendorMellanox = 0x15b3;
+constexpr unsigned long kPciVendorNvidia = 0x10de;
+constexpr unsigned long kPciClassIb = 0x0207;
+constexpr unsigned long kPciClassGpuDisplay = 0x0300;
+constexpr unsigned long kPciClassGpu3d = 0x0302;
+
+/**
+ * Query hardware information by scanning PCI devices
+ * @param info [out] Output structure to receive hardware info
+ * @return NIXL_SUCCESS on success, error code otherwise
+ */
+[[nodiscard]] nixl_status_t
+queryUcxHardware(nixlUcxHardwareInfo &info) {
+    info = nixlUcxHardwareInfo();
+
+    std::error_code ec;
+    std::filesystem::directory_iterator dir_iter(kPciDevicePath, ec);
+    if (ec) {
+        NIXL_DEBUG << "Failed to scan PCI devices directory: " << ec.message();
+        return NIXL_ERR_UNKNOWN;
+    }
+
+    for (const auto &entry : dir_iter) {
+        const std::string device_name = entry.path().filename().string();
+
+        // Skip hidden entries
+        if (device_name.empty() || device_name[0] == '.') {
+            continue;
+        }
+
+        const std::filesystem::path device_path = entry.path();
+
+        // Read vendor ID
+        auto vendor_id = readSysfsUlong(device_path, "vendor", device_name);
+        if (!vendor_id) {
+            continue;
+        }
+
+        // Read class ID
+        auto class_id = readSysfsUlong(device_path, "class", device_name);
+        if (!class_id) {
+            continue;
+        }
+        *class_id >>= 8;
+
+        // Check for InfiniBand device
+        if ((*vendor_id == kPciVendorMellanox) && (*class_id == kPciClassIb)) {
+            info.numIbDevices++;
+            NIXL_DEBUG << "Found IB device #" << info.numIbDevices << ": " << device_name
+                       << " vendor=0x" << std::hex << *vendor_id << " class=0x" << *class_id
+                       << std::dec;
+        }
+
+        // Check for GPU
+        if ((*vendor_id == kPciVendorNvidia) &&
+            ((*class_id == kPciClassGpuDisplay) || (*class_id == kPciClassGpu3d))) {
+            info.numNvidiaGpus++;
+            NIXL_DEBUG << "Found GPU #" << info.numNvidiaGpus << ": " << device_name << " vendor=0x"
+                       << std::hex << *vendor_id << " class=0x" << *class_id << std::dec;
+        }
+    }
+
+    return NIXL_SUCCESS;
+}
+
+} // namespace
+
+void
+nixlUcxContext::warnAboutHardwareSupportMismatch() const {
+    ucp_context_attr_t attr = {
+        .field_mask = UCP_ATTR_FIELD_MEMORY_TYPES,
+    };
+    const auto ctx_query_status = ucp_context_query(ctx, &attr);
+    if (ctx_query_status != UCS_OK) {
+        throw std::runtime_error("Failed to query UCX context: " +
+                                 std::string(ucs_status_string(ctx_query_status)));
+    }
+
+    nixlUcxHardwareInfo hw_info;
+    const auto hw_query_status = queryUcxHardware(hw_info);
+    if (hw_query_status != NIXL_SUCCESS) {
+        throw std::runtime_error("Failed to query hardware");
+    }
+
+    NIXL_TRACE << "UCX hardware query result: "
+               << "num_ib_devices=" << hw_info.numIbDevices << ", "
+               << "num_gpus=" << hw_info.numNvidiaGpus;
+
+    if (hw_info.numNvidiaGpus > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_CUDA)) {
+        NIXL_WARN << hw_info.numNvidiaGpus
+                  << " NVIDIA GPU(s) were detected, but CUDA support was not found! "
+                  << "Performance may be degraded.";
+    }
+    if (hw_info.numIbDevices > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_RDMA)) {
+        NIXL_WARN << hw_info.numIbDevices
+                  << " IB device(s) were detected, but accelerated IB support was not found! "
+                     "Performance may be degraded.";
+    }
 }
 
 /* ===========================================
