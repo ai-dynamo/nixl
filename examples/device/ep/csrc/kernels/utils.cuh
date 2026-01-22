@@ -345,7 +345,7 @@ __host__ __device__ constexpr dtype_t ceil_div(dtype_t a, dtype_t b) {
 }
 
 template <typename dtype_t>
-__host__ __device__ constexpr dtype_t align(dtype_t a, dtype_t b) {
+__host__ __device__ constexpr dtype_t align_up(dtype_t a, dtype_t b) {
     return ceil_div<dtype_t>(a, b) * b;
 }
 

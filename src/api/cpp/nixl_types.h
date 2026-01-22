@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -234,6 +234,12 @@ using nixl_opt_args_t = nixlAgentOptionalArgs;
  * @brief A typedef for a nixlGpuXferReqH
  */
 using nixlGpuXferReqH = void *;
+
+/**
+ * @brief An alias for a nixlMemoryViewH
+ *        Represents a memory view handle
+ */
+using nixlMemoryViewH = void *;
 
 /**
  * @brief A typedefs for a point in time

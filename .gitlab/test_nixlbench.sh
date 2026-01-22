@@ -54,6 +54,7 @@ export NIXL_ETCD_NAMESPACE="/nixl/nixlbench_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
+ETCD_PID=$!
 
 wait_for_etcd
 
@@ -106,15 +107,14 @@ for op_type in READ WRITE; do
     run_nixlbench_one_worker --backend POSIX --op_type $op_type --check_consistency
 done
 
-# UCCL has a bug for data validation
 if $HAS_GPU ; then
     for op_type in READ WRITE; do
         for initiator in $seg_types; do
             for target in $seg_types; do
-                UCCL_RCMODE=1 run_nixlbench_two_workers --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
+                UCCL_RCMODE=1 run_nixlbench_two_workers --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
             done
         done
     done
 fi
 
-pkill etcd
+kill -9 $ETCD_PID 2>/dev/null || true

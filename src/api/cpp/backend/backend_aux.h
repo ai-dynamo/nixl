@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,6 +111,23 @@ class nixlMetaDesc : public nixlBasicDesc {
         }
 };
 
+struct nixlRemoteMetaDesc : public nixlMetaDesc {
+    std::string remoteAgent;
+
+    using nixlMetaDesc::nixlMetaDesc;
+
+    explicit nixlRemoteMetaDesc(const std::string &remote_agent)
+        : nixlMetaDesc(),
+          remoteAgent(remote_agent) {}
+};
+
+inline bool
+operator==(const nixlRemoteMetaDesc &lhs, const nixlRemoteMetaDesc &rhs) {
+    return (static_cast<const nixlMetaDesc &>(lhs) == static_cast<const nixlMetaDesc &>(rhs)) &&
+        (lhs.remoteAgent == rhs.remoteAgent);
+}
+
 typedef nixlDescList<nixlMetaDesc> nixl_meta_dlist_t;
+using nixl_remote_meta_dlist_t = nixlDescList<nixlRemoteMetaDesc>;
 
 #endif
