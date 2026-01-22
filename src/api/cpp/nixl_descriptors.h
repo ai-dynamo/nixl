@@ -229,15 +229,6 @@ struct nixlRemoteDesc : public nixlBasicDesc {
     explicit nixlRemoteDesc(const nixl_blob_t &str);
 
     /**
-     * @brief Operator overloading (==) to compare nixlRemoteDesc objects
-     *
-     * @param lhs   nixlRemoteDesc object
-     * @param rhs   nixlRemoteDesc object
-     */
-    friend bool
-    operator==(const nixlRemoteDesc &lhs, const nixlRemoteDesc &rhs);
-
-    /**
      * @brief Serialize nixlRemoteDesc to a blob
      */
     nixl_blob_t
@@ -248,6 +239,15 @@ struct nixlRemoteDesc : public nixlBasicDesc {
         return remoteAgent != nixl_invalid_agent;
     }
 };
+
+/**
+ * @brief Operator overloading (==) to compare nixlRemoteDesc objects
+ *
+ * @param lhs   nixlRemoteDesc object
+ * @param rhs   nixlRemoteDesc object
+ */
+bool
+operator==(const nixlRemoteDesc &lhs, const nixlRemoteDesc &rhs);
 
 /**
  * @class nixlDescList

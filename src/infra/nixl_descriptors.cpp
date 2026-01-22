@@ -444,13 +444,13 @@ nixlRemoteDesc::nixlRemoteDesc(const nixl_blob_t &blob) {
     }
 }
 
+nixl_blob_t
+nixlRemoteDesc::serialize() const {
+    return nixlBasicDesc::serialize() + remoteAgent;
+}
+
 bool
 operator==(const nixlRemoteDesc &lhs, const nixlRemoteDesc &rhs) {
     return (static_cast<const nixlBasicDesc &>(lhs) == static_cast<const nixlBasicDesc &>(rhs)) &&
         (lhs.remoteAgent == rhs.remoteAgent);
-}
-
-nixl_blob_t
-nixlRemoteDesc::serialize() const {
-    return nixlBasicDesc::serialize() + remoteAgent;
 }
