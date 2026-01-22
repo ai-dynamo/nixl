@@ -273,10 +273,10 @@ int main(int argc, char *argv[]) {
 
     std::transform(role.begin(), role.end(), role.begin(), ::tolower);
 
-    if (role.compare(initiator) != 0 && role.compare(target) != 0) {
-            std::cerr << "Invalid role. Use 'initiator' or 'target'."
-                      << "Currently "<< role <<std::endl;
-            return 1;
+    if ((role.compare(initiator) != 0) && (role.compare(target) != 0)) {
+        std::cerr << "Invalid role. Use 'initiator' or 'target'."
+                    << "Currently "<< role <<std::endl;
+        return 1;
     }
 
     auto sync_mode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
