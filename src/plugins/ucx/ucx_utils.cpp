@@ -20,6 +20,9 @@
 #include <algorithm>
 #include <cstring>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -32,10 +35,123 @@ extern "C" {
 #endif
 }
 
+#include "nixl_types.h"
 #include "common/nixl_log.h"
 #include "config.h"
 #include "serdes/serdes.h"
 #include "rkey.h"
+
+namespace {
+/**
+ * Helper function to read a sysfs file and parse it as unsigned long
+ * @param sysfs_path Path to the sysfs directory
+ * @param file_name Name of the file to read
+ * @param device_name Device name for logging purposes
+ * @return Parsed value on success, std::nullopt on failure
+ */
+std::optional<unsigned long>
+readSysfsUlong(const std::filesystem::path &sysfs_path,
+               const std::string &file_name,
+               const std::string &device_name) {
+    std::ifstream file(sysfs_path / file_name);
+    if (!file.is_open()) {
+        NIXL_TRACE << "Failed to read " << file_name << " for device " << device_name;
+        return std::nullopt;
+    }
+
+    std::string value;
+    if (!std::getline(file, value)) {
+        NIXL_TRACE << "Failed to read " << file_name << " for device " << device_name;
+        return std::nullopt;
+    }
+
+    try {
+        return std::stoul(value, nullptr, 0);
+    }
+    catch (const std::exception &e) {
+        NIXL_TRACE << "Failed to parse " << file_name << " for device " << device_name << ": "
+                   << e.what();
+        return std::nullopt;
+    }
+}
+
+/**
+ * Structure to hold hardware query results
+ */
+struct nixlUcxHardwareInfo {
+    unsigned numIbDevices;
+    unsigned numNvidiaGpus;
+
+    nixlUcxHardwareInfo() : numIbDevices(0), numNvidiaGpus(0) {}
+};
+
+constexpr const char *kPciDevicePath = "/sys/bus/pci/devices";
+constexpr unsigned long kPciVendorMellanox = 0x15b3;
+constexpr unsigned long kPciVendorNvidia = 0x10de;
+constexpr unsigned long kPciClassIb = 0x0207;
+constexpr unsigned long kPciClassGpuDisplay = 0x0300;
+constexpr unsigned long kPciClassGpu3d = 0x0302;
+
+/**
+ * Query hardware information by scanning PCI devices
+ * @param info [out] Output structure to receive hardware info
+ * @return NIXL_SUCCESS on success, error code otherwise
+ */
+[[nodiscard]] nixl_status_t
+queryUcxHardware(nixlUcxHardwareInfo &info) {
+    info = nixlUcxHardwareInfo();
+
+    std::error_code ec;
+    std::filesystem::directory_iterator dir_iter(kPciDevicePath, ec);
+    if (ec) {
+        NIXL_DEBUG << "Failed to scan PCI devices directory: " << ec.message();
+        return NIXL_ERR_UNKNOWN;
+    }
+
+    for (const auto &entry : dir_iter) {
+        const std::string device_name = entry.path().filename().string();
+
+        // Skip hidden entries
+        if (device_name.empty() || device_name[0] == '.') {
+            continue;
+        }
+
+        const std::filesystem::path device_path = entry.path();
+
+        // Read vendor ID
+        auto vendor_id = readSysfsUlong(device_path, "vendor", device_name);
+        if (!vendor_id) {
+            continue;
+        }
+
+        // Read class ID
+        auto class_id = readSysfsUlong(device_path, "class", device_name);
+        if (!class_id) {
+            continue;
+        }
+        *class_id >>= 8;
+
+        // Check for InfiniBand device
+        if ((*vendor_id == kPciVendorMellanox) && (*class_id == kPciClassIb)) {
+            info.numIbDevices++;
+            NIXL_DEBUG << "Found IB device #" << info.numIbDevices << ": " << device_name
+                       << " vendor=0x" << std::hex << *vendor_id << " class=0x" << *class_id
+                       << std::dec;
+        }
+
+        // Check for GPU
+        if ((*vendor_id == kPciVendorNvidia) &&
+            ((*class_id == kPciClassGpuDisplay) || (*class_id == kPciClassGpu3d))) {
+            info.numNvidiaGpus++;
+            NIXL_DEBUG << "Found GPU #" << info.numNvidiaGpus << ": " << device_name << " vendor=0x"
+                       << std::hex << *vendor_id << " class=0x" << *class_id << std::dec;
+        }
+    }
+
+    return NIXL_SUCCESS;
+}
+
+} // namespace
 
 using namespace std;
 
