@@ -479,8 +479,7 @@ nixlPluginManager::discoverPluginsFromDir(const std::filesystem::path& dirpath) 
     std::error_code ec;
     std::filesystem::directory_iterator dir_iter(dirpath, ec);
     if (ec) {
-        NIXL_ERROR << "Error accessing directory(" << dirpath << "): "
-                   << ec.message();
+        NIXL_ERROR << "Error accessing directory(" << dirpath << "): " << ec.message();
         return;
     }
 
