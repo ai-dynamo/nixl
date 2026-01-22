@@ -272,7 +272,7 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     size_t n_desc = descs.size();
 
     // nixlMetaDesc should be internal and not be serialized
-    if constexpr(std::is_same_v<nixlMetaDesc, T> || std::is_same_v<nixlRemoteMetaDesc, T>)
+    if (std::is_same<nixlMetaDesc, T>::value)
         return NIXL_ERR_INVALID_PARAM;
 
     // For now very few descriptor types, if needed can add a name method to each
@@ -311,6 +311,12 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     }
 
     return NIXL_SUCCESS;
+}
+
+template<>
+nixl_status_t
+nixlDescList<nixlRemoteMetaDesc>::serialize(nixlSerDes *serializer) const {
+    return NIXL_ERR_NOT_SUPPORTED;
 }
 
 template <class T>
