@@ -25,8 +25,6 @@
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
 
-const std::string nixl_invalid_agent = "INVALID_AGENT";
-
 /*** Class nixlBasicDesc implementation ***/
 
 // No Virtual function in nixlBasicDesc class or its children, as we want
