@@ -30,7 +30,6 @@ extern "C"
 #include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
 
-
 enum class nixl_ucx_mt_t {
     SINGLE,
     CTX,
