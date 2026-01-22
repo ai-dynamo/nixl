@@ -148,7 +148,7 @@ public:
     void *addr;
     size_t length;
     int ref_cnt;
-    uint64_t mr_id; // UCCL memory region id
+    uccl_mr_t mr_id; // UCCL memory region id
     char fifo_item[FIFO_ITEM_SIZE];
 };
 
