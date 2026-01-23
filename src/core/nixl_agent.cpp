@@ -1886,10 +1886,10 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
             continue;
         }
 
-        const backend_set_t backends{data->getBackends(extra_params, it->second, mem_type)};
         // Engine is not selected, try to find a backend that can populate the remote metadata
+        const backend_set_t backends{data->getBackends(extra_params, it->second, mem_type)};
         for (const auto &backend : backends) {
-            const auto status = it->second->populate(desc, backend, remote_meta_dlist);
+            const nixl_status_t status{it->second->populate(desc, backend, remote_meta_dlist)};
             if (status == NIXL_SUCCESS) {
                 NIXL_DEBUG << "Selected backend: " << backend->getType();
                 engine = backend;
@@ -1913,7 +1913,7 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
         opt_args.customParam = extra_params->customParam;
     }
 
-    const auto status = engine->prepMemoryView(remote_meta_dlist, mvh, &opt_args);
+    const nixl_status_t status{engine->prepMemoryView(remote_meta_dlist, mvh, &opt_args)};
     if (status == NIXL_SUCCESS) {
         data->mvhToEngine.emplace(mvh, *engine);
     }
@@ -1932,7 +1932,7 @@ nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &dlist,
     nixl_meta_dlist_t meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
     for (const auto &backend : backends) {
-        const auto status = data->memorySection->populate(dlist, backend, meta_dlist);
+        const nixl_status_t status{data->memorySection->populate(dlist, backend, meta_dlist)};
         if (status == NIXL_SUCCESS) {
             NIXL_DEBUG << "Selected backend: " << backend->getType();
             engine = backend;
@@ -1950,7 +1950,7 @@ nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &dlist,
         opt_args.customParam = extra_params->customParam;
     }
 
-    const auto status = engine->prepMemoryView(meta_dlist, mvh, &opt_args);
+    const nixl_status_t status{engine->prepMemoryView(meta_dlist, mvh, &opt_args)};
     if (status == NIXL_SUCCESS) {
         data->mvhToEngine.emplace(mvh, *engine);
     }
