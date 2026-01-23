@@ -35,6 +35,7 @@
 #include "uccl_engine.h"
 
 #define FIFO_ITEM_SIZE 64
+// FifoItem and deserialize_fifo_item are now provided by uccl_engine.h
 
 class nixlUcclBackendMD;
 class nixlUcclReqH;
@@ -162,7 +163,7 @@ public:
     uccl_conn_t *conn;
     std::unordered_set<uint64_t> pending_transfer_ids;
     nixl_blob_t notif_msg;
-    std::vector<std::array<char, FIFO_ITEM_SIZE>> fifo_items;
+    std::vector<FifoItem> fifo_items;
 };
 
 #endif

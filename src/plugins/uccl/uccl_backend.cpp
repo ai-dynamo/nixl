@@ -288,7 +288,6 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
 
     // Register memory with UCCL engine
     uccl_mr_t mr;
-    // Register memory with UCCL engine
     int result = uccl_engine_reg(engine_, mem.addr, mem.len, mr);
     if (result != 0) {
         NIXL_ERROR << "Failed to register memory with UCCL engine";
@@ -302,11 +301,11 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
     priv->mr_id = mr;
 
     // Pre-compute fifo_item for one-sided RDMA operations
-    int result = uccl_engine_prepare_fifo(engine_, mr, (void *)mem.addr,
+    result = uccl_engine_prepare_fifo(engine_, mr, (void *)mem.addr,
                                                  mem.len, priv->fifo_item);
     if (result != 0) {
         NIXL_ERROR << "Failed to prepare fifo_item for memory region";
-        uccl_engine_mr_destroy(mr);
+        uccl_engine_mr_destroy(engine_, mr);
         delete priv;
         return NIXL_ERR_BACKEND;
     }
@@ -442,7 +441,6 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
     handle = new nixlUcclReqH(conn);
     nixlUcclReqH *uccl_handle = static_cast<nixlUcclReqH *>(handle);
 
-    uccl_handle->fifo_items.clear();
     uccl_handle->fifo_items.resize(lcnt);
 
     std::lock_guard<std::mutex> lock(mem_mutex_);
@@ -466,35 +464,14 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
             return NIXL_ERR_BACKEND;
         }
 
-        auto local_priv = local_mem_iter->second;
-        if (local_priv->mr_id == 0) {
-            NIXL_ERROR << "Local memory region not properly registered";
-            return NIXL_ERR_BACKEND;
-        }
         if (rcmode) {
-            memcpy(uccl_handle->fifo_items[i].data(), rmd->fifo_item, FIFO_ITEM_SIZE);
+            // Deserialize fifo_item from char[] into FifoItem struct
+            deserialize_fifo_item(rmd->fifo_item, &uccl_handle->fifo_items[i]);
 
-            // Log the original fifo_item address before overwriting
-            uint64_t original_fifo_addr = *reinterpret_cast<uint64_t *>(rmd->fifo_item);
-            uint32_t *rkey_ptr = reinterpret_cast<uint32_t *>(rmd->fifo_item + 32); // padding offset
-            NIXL_ERROR << "DEBUG: Original fifo_item addr=" << std::hex << original_fifo_addr
-                       << ", rmd->addr=" << std::hex << (uintptr_t)rmd->addr
-                       << ", remote_addr=" << std::hex << remote_addr
-                       << ", first_rkey=" << rkey_ptr[0];
+            uccl_engine_update_fifo(uccl_handle->fifo_items[i], remote_addr, rsize);
 
-            // Update the address and size in the fifo_item for the actual transfer
-            int result = uccl_engine_update_fifo(
-                uccl_handle->fifo_items[i].data(),
-                remote_addr,
-                static_cast<uint32_t>(rsize)
-            );
-            if (result != 0) {
-                NIXL_ERROR << "Failed to update FIFO item";
-                return NIXL_ERR_BACKEND;
-            }
-
-            NIXL_ERROR << "DEBUG: After update fifo_item addr=" << std::hex
-                       << *fifo_addr << ", size=" << std::dec << *fifo_size;
+            NIXL_DEBUG << "Using pre-shared fifo_item[" << i << "]: addr=" << std::hex
+                       << remote_addr << ", size=" << std::dec << rsize;
         } else {
             // TODO : Suppport UC one-sided
             return NIXL_ERR_BACKEND;
@@ -594,9 +571,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     // Perform the vector operation (single call for all transfers)
     int result = 0;
     uint64_t transfer_id = 0;
-    nixlUcclReqH *uccl_handle = static_cast<nixlUcclReqH *>(handle);
-
-    auto fifo_items = uccl_handle->fifo_items;
+    uccl_handle = static_cast<nixlUcclReqH *>(handle);
 
     switch (operation) {
     case NIXL_READ: {
@@ -605,14 +580,13 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
             return NIXL_ERR_INVALID_PARAM;
         }
         result = uccl_engine_read_vector(
-            conn, mr_ids, addr_v, size_v, fifo_items, lcnt, &transfer_id);
+            conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
         break;
     }
     case NIXL_WRITE: {
         if (rcmode) {
-            // RC write_vector takes non-const void*
-            result = uccl_engine_write_vector_rc(
-                conn, mr_ids, addr_v, size_v, fifo_items, lcnt, &transfer_id);
+            result = uccl_engine_write_rc_vector(
+                conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
         } else {
             // TODO: Non-RC write
             // std::vector<void const*> const_addr_v(addr_v.begin(), addr_v.end());
@@ -677,9 +651,7 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
         }
     }
     bool all_done = uccl_handle->pending_transfer_ids.empty();
-    if (all_done) {
-        NIXL_ERROR << "DEBUG: All transfers complete";
-    }
+
     if (all_done && !uccl_handle->notif_msg.empty()) {
         nixlSerDes ser_des;
         ser_des.addStr("msg", uccl_handle->notif_msg);
@@ -703,7 +675,6 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
         }
     }
 
-    NIXL_ERROR << "DEBUG checkXfer: returning " << (all_done ? "SUCCESS" : "IN_PROG");
     return (all_done) ? NIXL_SUCCESS : NIXL_IN_PROG;
 }
 
@@ -725,9 +696,7 @@ nixl_status_t
 nixlUcclEngine::getNotifs(notif_list_t &notif_list) {
     if (notif_list.size() != 0) return NIXL_ERR_INVALID_PARAM;
 
-    NIXL_ERROR << "DEBUG getNotifs: polling for notifications";
     std::vector<notify_msg_t> notify_msgs = uccl_engine_get_notifs();
-    NIXL_ERROR << "DEBUG getNotifs: got " << notify_msgs.size() << " notifications";
     for (size_t i = 0; i < notify_msgs.size(); i++) {
         size_t msg_len = sizeof(notify_msgs[i].msg);
         std::string serialized_str(notify_msgs[i].msg, msg_len);
