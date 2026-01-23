@@ -405,10 +405,9 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                nixl_thread_sync_t sync_mode,
                                size_t num_device_channels,
                                const std::string &engine_config) {
-    ucp_params_t ucp_params;
     unsigned major_version, minor_version, release_number;
     ucp_get_version(&major_version, &minor_version, &release_number);
-    unsigned ucp_version = UCP_VERSION(major_version, minor_version);
+    ucp_version = UCP_VERSION(major_version, minor_version);
 
     // With strict synchronization model nixlAgent serializes access to backends, with more
     // permissive models backends need to account for concurrent access and ensure their internal
@@ -418,6 +417,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         nixl_ucx_mt_t::WORKER :
         nixl_ucx_mt_t::SINGLE;
 
+    ucp_params_t ucp_params;
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED;
     ucp_params.features = UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64 | UCP_FEATURE_AM;
 #ifdef HAVE_UCX_GPU_DEVICE_API
@@ -738,19 +738,22 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
 
     const nixlUcxHardwareInfo hw_info;
 
-    NIXL_TRACE << "nixlUcxHardwareInfo { "
+    NIXL_DEBUG << "nixlUcxHardwareInfo { "
                << "numNvidiaGpus=" << hw_info.numNvidiaGpus << ", "
                << "numIbDevices=" << hw_info.numIbDevices << " }";
 
     if (hw_info.numNvidiaGpus > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_CUDA)) {
         NIXL_WARN << hw_info.numNvidiaGpus
-                  << " NVIDIA GPU(s) were detected, but CUDA support was not found! "
-                  << "Performance may be degraded.";
+                  << " NVIDIA GPU(s) were detected, but UCX CUDA support was not found! "
+                  << "GPU memory is not supported.";
     }
-    if (hw_info.numIbDevices > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_RDMA)) {
-        NIXL_WARN << hw_info.numIbDevices
-                  << " IB device(s) were detected, but accelerated IB support was not found! "
-                     "Performance may be degraded.";
+    if (ucp_version >= UCP_VERSION(1, 21)) {
+        // `UCS_MEMORY_TYPE_RDMA` is included in `memory_types` only from UCX 1.21
+        if (hw_info.numIbDevices > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_RDMA)) {
+            NIXL_WARN << hw_info.numIbDevices
+                      << " IB device(s) were detected, but accelerated IB support was not found! "
+                         "Performance may be degraded.";
+        }
     }
 }
 
