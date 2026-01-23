@@ -1861,7 +1861,6 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
     backend_set_t backends = data->extractBackends(extra_params);
-
     const auto desc_count = static_cast<size_t>(dlist.descCount());
     const auto mem_type = dlist.getType();
     if (backends.empty()) {
