@@ -1849,6 +1849,28 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
 
     const auto desc_count = static_cast<size_t>(dlist.descCount());
     const auto mem_type = dlist.getType();
+    if (backends.empty()) {
+        for (size_t i = 0; i < desc_count; ++i) {
+            const auto &desc = dlist[i];
+            if (desc.remoteAgent == nixl_invalid_agent) {
+                continue;
+            }
+
+            const auto it = data->remoteSections.find(desc.remoteAgent);
+            if (it == data->remoteSections.end()) {
+                NIXL_ERROR_FUNC << "Metadata for remote agent '" << desc.remoteAgent << "' not found";
+                return NIXL_ERR_NOT_FOUND;
+            }
+
+            const auto mem_type_backends = it->second->queryBackends(mem_type);
+            if (mem_type_backends) {
+                backends.insert(mem_type_backends->begin(), mem_type_backends->end());
+            }
+
+            break;
+        }
+    }
+
     nixl_remote_meta_dlist_t remote_meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
     for (size_t i = 0; i < desc_count; ++i) {
@@ -1858,14 +1880,10 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
             continue;
         }
 
-        const auto it = data->remoteSections.find(desc.remoteAgent);
-        if (it == data->remoteSections.end()) {
-            NIXL_ERROR_FUNC << "Metadata for remote agent '" << desc.remoteAgent << "' not found";
-            return NIXL_ERR_NOT_FOUND;
-        }
-
+        const auto remote_section = data->remoteSections.at(desc.remoteAgent);
         if (engine) {
-            const auto status = it->second->populate(desc, engine, remote_meta_dlist);
+            // Engine is already selected, populate the remote metadata
+            const auto status = remote_section->populate(desc, engine, remote_meta_dlist);
             if (status != NIXL_SUCCESS) {
                 return status;
             }
@@ -1873,15 +1891,9 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
             continue;
         }
 
-        if (backends.empty()) {
-            const auto mem_type_backends = it->second->queryBackends(mem_type);
-            if (mem_type_backends) {
-                backends.insert(mem_type_backends->begin(), mem_type_backends->end());
-            }
-        }
-
+        // Engine is not selected, try to find a backend that can populate the remote metadata
         for (const auto &backend : backends) {
-            const auto status = it->second->populate(desc, backend, remote_meta_dlist);
+            const auto status = remote_section->populate(desc, backend, remote_meta_dlist);
             if (status == NIXL_SUCCESS) {
                 NIXL_DEBUG << "Selected backend: " << backend->getType();
                 engine = backend;
@@ -1889,6 +1901,7 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
             }
         }
 
+        // If no backend can populate the remote metadata, return an error
         if (!engine) {
             break;
         }
