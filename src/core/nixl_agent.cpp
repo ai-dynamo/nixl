@@ -1098,6 +1098,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_BACKEND;
     }
 
+    NIXL_DEBUG << req_hndl->initiatorDescs->dump();
+
     // If status is not NIXL_IN_PROG we can repost,
     req_hndl->status = req_hndl->engine->postXfer(req_hndl->backendOp,
                                                   *req_hndl->initiatorDescs,

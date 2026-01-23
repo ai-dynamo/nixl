@@ -24,6 +24,7 @@
 #include "backend/backend_aux.h"
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
+#include "absl/strings/str_join.h"
 
 /*** Class nixlBasicDesc implementation ***/
 
@@ -323,6 +324,20 @@ void nixlDescList<T>::print() const {
     for (auto & elm : descs) {
         elm.print("");
     }
+}
+
+template<class T>
+std::string
+nixlDescList<T>::dump() const {
+    std::unordered_map<size_t, size_t> count_map;
+    for (auto &elm : descs) {
+        count_map[elm.len]++;
+    }
+
+    std::stringstream ss;
+    ss << "descList mem_type=" << type << " count=" << descs.size() << " content={"
+       << absl::StrJoin(count_map, ", ", absl::PairFormatter(":")) << "}";
+    return ss.str();
 }
 
 template <class T>
