@@ -320,8 +320,8 @@ nixlDescList<nixlRemoteMetaDesc>::serialize(nixlSerDes *serializer) const {
 
 template<class T>
 void
-nixlDescList<T>::print(bool compact) const {
-    std::cout << to_string(compact) << std::endl;
+nixlDescList<T>::print() const {
+    std::cout << to_string() << std::endl;
 }
 
 template<class T>

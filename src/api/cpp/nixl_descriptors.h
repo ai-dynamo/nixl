@@ -419,7 +419,7 @@ public:
      * @brief Print the descriptor list for debugging
      */
     void
-    print(bool compact = false) const;
+    print() const;
 
     /**
      * @brief Dump the descriptor list into a string for debugging
