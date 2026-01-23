@@ -399,7 +399,6 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
                          const nixl_opt_b_args_t *opt_args) const {
     nixlUcclBackendMD *lmd;
     nixlUcclBackendMD *rmd;
-    bool rcmode = false;
     handle = nullptr;
 
     NIXL_DEBUG << "UCCL PrepXfer: " << operation << " remote_agent: " << remote_agent;
@@ -454,18 +453,13 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
             return NIXL_ERR_BACKEND;
         }
 
-        if (rcmode) {
-            // Deserialize fifo_item from char[] into FifoItem struct
-            deserialize_fifo_item(rmd->fifo_item, &uccl_handle->fifo_items[i]);
+        // Deserialize fifo_item from char[] into FifoItem struct
+        deserialize_fifo_item(rmd->fifo_item, &uccl_handle->fifo_items[i]);
 
-            uccl_engine_update_fifo(uccl_handle->fifo_items[i], remote_addr, rsize);
+        uccl_engine_update_fifo(uccl_handle->fifo_items[i], remote_addr, rsize);
 
-            NIXL_DEBUG << "Using pre-shared fifo_item[" << i << "]: addr=" << std::hex
-                       << remote_addr << ", size=" << std::dec << rsize;
-        } else {
-            // TODO : Suppport UC one-sided
-            return NIXL_ERR_BACKEND;
-        }
+        NIXL_DEBUG << "Using pre-shared fifo_item[" << i << "]: addr=" << std::hex
+                   << remote_addr << ", size=" << std::dec << rsize;
     }
 
     return NIXL_SUCCESS;
