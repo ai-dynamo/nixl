@@ -217,7 +217,7 @@ struct GusliDeviceConfig {
     size_t dev_offset;
 };
 
-// Parser for GUSLI device list: "id:type:path,id:type:path:offset,..."
+// Parser for GUSLI device list: "id:type:path,id:type:path,..." and byte-based device offset list
 // security_list: comma-separated security flags; num_devices: expected device count (validation)
 std::vector<GusliDeviceConfig>
 parseGusliDeviceList(const std::string &device_list,

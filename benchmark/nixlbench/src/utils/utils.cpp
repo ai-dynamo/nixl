@@ -839,6 +839,12 @@ parseGusliDeviceList(const std::string &device_list,
                   << "). Using 'sec=0x3' for missing entries." << std::endl;
     }
 
+    if (!dev_offsets.empty() && dev_offsets.size() != devices.size()) {
+        std::cerr << "Warning: Number of device offsets (" << dev_offsets.size()
+                  << ") doesn't match number of devices (" << devices.size()
+                  << "). Using 'offset=1048576' for missing entries." << std::endl;
+    }
+
     if (num_devices > 0 && devices.size() != static_cast<size_t>(num_devices)) {
         std::cerr << "Error: Number of devices in device_list (" << devices.size()
                   << ") must match num_devices (" << num_devices << ")" << std::endl;
