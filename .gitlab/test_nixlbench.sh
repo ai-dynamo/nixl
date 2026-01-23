@@ -111,7 +111,7 @@ if $HAS_GPU ; then
     for op_type in READ WRITE; do
         for initiator in $seg_types; do
             for target in $seg_types; do
-                UCCL_RCMODE=1 run_nixlbench_two_workers --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+                run_nixlbench_two_workers --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
             done
         done
     done
