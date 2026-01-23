@@ -419,13 +419,13 @@ public:
      * @brief Print the descriptor list for debugging
      */
     void
-    print() const;
+    print(bool compact = false) const;
 
     /**
      * @brief Dump the descriptor list into a string for debugging
      */
     std::string
-    dump() const;
+    to_string(bool compact = false) const;
 };
 /**
  * @brief A typedef for a nixlDescList<nixlBasicDesc>

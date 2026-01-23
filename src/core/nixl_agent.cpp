@@ -1098,8 +1098,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_BACKEND;
     }
 
-    NIXL_DEBUG << req_hndl->initiatorDescs->dump();
-
     // If status is not NIXL_IN_PROG we can repost,
     req_hndl->status = req_hndl->engine->postXfer(req_hndl->backendOp,
                                                   *req_hndl->initiatorDescs,
@@ -1122,6 +1120,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     if (data->telemetryEnabled) {
+        NIXL_DEBUG << req_hndl->initiatorDescs->to_string(true);
+
         if (req_hndl->status < 0) {
             data->addErrorTelemetry(req_hndl->status);
         } else if (req_hndl->status == NIXL_IN_PROG) {

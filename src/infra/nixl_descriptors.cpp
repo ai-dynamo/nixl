@@ -318,25 +318,32 @@ nixlDescList<nixlRemoteMetaDesc>::serialize(nixlSerDes *serializer) const {
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
-template <class T>
-void nixlDescList<T>::print() const {
-    std::cout << "DescList of mem type " << type << std::endl;
-    for (auto & elm : descs) {
-        elm.print("");
-    }
+template<class T>
+void
+nixlDescList<T>::print(bool compact) const {
+    std::cout << to_string(compact) << std::endl;
 }
 
 template<class T>
 std::string
-nixlDescList<T>::dump() const {
-    std::unordered_map<size_t, size_t> count_map;
-    for (auto &elm : descs) {
-        count_map[elm.len]++;
+nixlDescList<T>::to_string(bool compact) const {
+    std::stringstream ss;
+    ss << "DescList of mem type " << type;
+
+    if (compact) {
+        std::unordered_map<size_t, size_t> count_map;
+        for (auto &elm : descs) {
+            count_map[elm.len]++;
+        }
+
+        ss << " count=" << descs.size() << " content={"
+           << absl::StrJoin(count_map, ", ", absl::PairFormatter(":")) << "}";
+    } else {
+        for (auto &elm : descs) {
+            elm.print("");
+        }
     }
 
-    std::stringstream ss;
-    ss << "descList mem_type=" << type << " count=" << descs.size() << " content={"
-       << absl::StrJoin(count_map, ", ", absl::PairFormatter(":")) << "}";
     return ss.str();
 }
 
