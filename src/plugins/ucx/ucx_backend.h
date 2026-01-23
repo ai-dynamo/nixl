@@ -35,6 +35,7 @@
 
 // Local includes
 #include "common/nixl_time.h"
+#include "ucx/mem_list.h"
 #include "ucx/rkey.h"
 #include "ucx/ucx_utils.h"
 
@@ -210,6 +211,18 @@ public:
     nixl_status_t
     checkConn(const std::string &remote_agent);
 
+    nixl_status_t
+    prepMemoryView(const nixl_remote_meta_dlist_t &,
+                   nixlMemoryViewH &,
+                   const nixl_opt_b_args_t * = nullptr) const override;
+
+    nixl_status_t
+    prepMemoryView(const nixl_meta_dlist_t &,
+                   nixlMemoryViewH &,
+                   const nixl_opt_b_args_t * = nullptr) const override;
+
+    void releaseMemoryView(nixlMemoryViewH) const override;
+
 protected:
     const std::vector<std::unique_ptr<nixlUcxWorker>> &
     getWorkers() const {
@@ -307,6 +320,8 @@ private:
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t, std::hash<std::string>, strEqual>
         remoteConnMap;
+
+    mutable std::unordered_map<nixlMemoryViewH, nixl::ucx::memList> memViewMap;
 };
 
 class nixlUcxThread;
