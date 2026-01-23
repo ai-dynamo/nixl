@@ -428,16 +428,6 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const char *uccl_rcmode = std::getenv("UCCL_RCMODE");
-    rcmode = (uccl_rcmode && std::strcmp(uccl_rcmode, "1") == 0);
-
-    if (operation == NIXL_READ) {
-        if (!rcmode) {
-            NIXL_ERROR
-                << "UCCL_RCMODE environment variable must be set to 1 for NIXL_READ operations";
-            return NIXL_ERR_INVALID_PARAM;
-        }
-    }
     handle = new nixlUcclReqH(conn);
     nixlUcclReqH *uccl_handle = static_cast<nixlUcclReqH *>(handle);
 
@@ -520,16 +510,6 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const char *uccl_rcmode = std::getenv("UCCL_RCMODE");
-    rcmode = (uccl_rcmode && std::strcmp(uccl_rcmode, "1") == 0);
-
-    if (operation == NIXL_READ) {
-        if (!rcmode) {
-            NIXL_ERROR
-                << "UCCL_RCMODE environment variable must be set to 1 for NIXL_READ operations";
-            return NIXL_ERR_INVALID_PARAM;
-        }
-    }
     std::vector<uccl_mr_t> mr_ids;
     std::vector<void*> addr_v;
     std::vector<size_t> size_v;
@@ -575,24 +555,13 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
 
     switch (operation) {
     case NIXL_READ: {
-        if (!rcmode) {
-            NIXL_ERROR << "NIXL_READ operations require UCCL_RCMODE=1";
-            return NIXL_ERR_INVALID_PARAM;
-        }
         result = uccl_engine_read_vector(
             conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
         break;
     }
     case NIXL_WRITE: {
-        if (rcmode) {
-            result = uccl_engine_write_rc_vector(
+            result = uccl_engine_write_vector(
                 conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
-        } else {
-            // TODO: Non-RC write
-            // std::vector<void const*> const_addr_v(addr_v.begin(), addr_v.end());
-            // result = uccl_engine_write_vector(
-            //     conn, mr_ids, const_addr_v, size_v, lcnt, &transfer_id);
-        }
         break;
     }
     default:
@@ -644,7 +613,6 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
         uint64_t transfer_id = *it;
         int is_done = uccl_engine_xfer_status(conn, transfer_id);
         if (is_done) {
-            NIXL_ERROR << "DEBUG: Transfer " << transfer_id << " completed";
             it = uccl_handle->pending_transfer_ids.erase(it);
         } else {
             ++it;

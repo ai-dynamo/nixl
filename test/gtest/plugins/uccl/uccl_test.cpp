@@ -255,9 +255,6 @@ TestUcclBackend::TestUcclBackend() {
 template<TestUcclBackend::TestType test_type, enum nixl_xfer_op_t op>
 void
 TestUcclBackend::testXfer() {
-    if (op == NIXL_READ) {
-        m_env.addVar("UCCL_RCMODE", "1");
-    }
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
 
