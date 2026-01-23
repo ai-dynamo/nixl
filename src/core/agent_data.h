@@ -122,7 +122,7 @@ class nixlAgentData {
         nixl_status_t
         invalidateRemoteData(const std::string &remote_name);
         [[nodiscard]] static backend_set_t
-        extractBackends(const nixl_opt_args_t *opt_args);
+        getBackends(const nixl_opt_args_t *opt_args, nixlMemSection *section, nixl_mem_t mem_type);
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
