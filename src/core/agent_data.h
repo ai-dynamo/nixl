@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -82,6 +82,9 @@ class nixlAgentData {
 
         // Bookkeeping from GPU request handles to backend engines
         std::unordered_map<nixlGpuXferReqH, nixlBackendEngine *> gpuReqToEngine;
+
+        // Bookkeeping from memory view handles to backend engines
+        std::unordered_map<nixlMemoryViewH, nixlBackendEngine &> mvhToEngine;
 
         // Local section, and Remote sections and their available common backends
         nixlLocalSection*                                        memorySection;
