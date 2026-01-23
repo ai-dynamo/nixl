@@ -200,6 +200,7 @@ private:
     /* Local UCX stuff */
     ucp_context_h ctx;
     nixl_ucx_mt_t mt_type;
+    unsigned ucp_version;
 
 public:
     nixlUcxContext(std::vector<std::string> devices,
