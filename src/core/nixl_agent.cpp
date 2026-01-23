@@ -1834,18 +1834,33 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
     return NIXL_ERR_NOT_FOUND;
 }
 
+backend_set_t
+nixlAgentData::extractBackends(const nixl_opt_args_t *opt_args) {
+    backend_set_t backends;
+    if (opt_args) {
+        for (const auto &backend : opt_args->backends) {
+            backends.insert(backend->engine);
+        }
+    }
+
+    return backends;
+}
+
+namespace {
+[[nodiscard]] backend_set_t
+getMemBackends(nixlMemSection *section, nixl_mem_t mem_type) {
+    const auto mem_type_backends = section->queryBackends(mem_type);
+    return mem_type_backends ? *mem_type_backends : backend_set_t{};
+}
+} // namespace
+
 nixl_status_t
 nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
                           nixlMemoryViewH &mvh,
                           const nixl_opt_args_t *extra_params) const {
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
-    backend_set_t backends;
-    if (extra_params) {
-        for (const auto &backend : extra_params->backends) {
-            backends.insert(backend->engine);
-        }
-    }
+    backend_set_t backends = data->extractBackends(extra_params);
 
     const auto desc_count = static_cast<size_t>(dlist.descCount());
     const auto mem_type = dlist.getType();
@@ -1861,11 +1876,7 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
                 continue;
             }
 
-            const auto mem_type_backends = it->second->queryBackends(mem_type);
-            if (mem_type_backends) {
-                backends.insert(mem_type_backends->begin(), mem_type_backends->end());
-            }
-
+            backends = getMemBackends(it->second, mem_type);
             break;
         }
     }
@@ -1935,19 +1946,10 @@ nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &dlist,
                           const nixl_opt_args_t *extra_params) const {
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
+    backend_set_t backends = data->extractBackends(extra_params);
     const auto mem_type = dlist.getType();
-    backend_set_t backends;
-    if (extra_params) {
-        for (const auto &backend : extra_params->backends) {
-            backends.insert(backend->engine);
-        }
-    }
-
     if (backends.empty()) {
-        const auto mem_type_backends = data->memorySection->queryBackends(mem_type);
-        if (mem_type_backends) {
-            backends.insert(mem_type_backends->begin(), mem_type_backends->end());
-        }
+        backends = getMemBackends(data->memorySection, mem_type);
     }
 
     nixlBackendEngine *engine{nullptr};
