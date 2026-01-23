@@ -1858,8 +1858,7 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
 
             const auto it = data->remoteSections.find(desc.remoteAgent);
             if (it == data->remoteSections.end()) {
-                NIXL_ERROR_FUNC << "Metadata for remote agent '" << desc.remoteAgent << "' not found";
-                return NIXL_ERR_NOT_FOUND;
+                continue;
             }
 
             const auto mem_type_backends = it->second->queryBackends(mem_type);
@@ -1880,10 +1879,15 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
             continue;
         }
 
-        const auto remote_section = data->remoteSections.at(desc.remoteAgent);
+        const auto it = data->remoteSections.find(desc.remoteAgent);
+        if (it == data->remoteSections.end()) {
+            NIXL_ERROR_FUNC << "Metadata for remote agent '" << desc.remoteAgent << "' not found";
+            return NIXL_ERR_NOT_FOUND;
+        }
+
         if (engine) {
             // Engine is already selected, populate the remote metadata
-            const auto status = remote_section->populate(desc, engine, remote_meta_dlist);
+            const auto status = it->second->populate(desc, engine, remote_meta_dlist);
             if (status != NIXL_SUCCESS) {
                 return status;
             }
@@ -1893,7 +1897,7 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
 
         // Engine is not selected, try to find a backend that can populate the remote metadata
         for (const auto &backend : backends) {
-            const auto status = remote_section->populate(desc, backend, remote_meta_dlist);
+            const auto status = it->second->populate(desc, backend, remote_meta_dlist);
             if (status == NIXL_SUCCESS) {
                 NIXL_DEBUG << "Selected backend: " << backend->getType();
                 engine = backend;
