@@ -37,8 +37,7 @@ static const std::vector<std::vector<std::string>> illegal_plugin_combinations =
 };
 const std::string nixl_invalid_agent = "INVALID_AGENT";
 constexpr std::string_view nixl_backend_not_found{
-    "No specified or potential backend has the required registrations to be able to do the "
-    "transfer"};
+    "No backend supports the required transfer registrations."};
 
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
@@ -1861,7 +1860,7 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
 
         const auto it = data->remoteSections.find(desc.remoteAgent);
         if (it == data->remoteSections.end()) {
-            NIXL_ERROR << "Metadata for remote agent '" << desc.remoteAgent << "' not found";
+            NIXL_ERROR_FUNC << "Metadata for remote agent '" << desc.remoteAgent << "' not found";
             return NIXL_ERR_NOT_FOUND;
         }
 
@@ -1896,7 +1895,7 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
     }
 
     if (!engine) {
-        NIXL_ERROR << nixl_backend_not_found;
+        NIXL_ERROR_FUNC << nixl_backend_not_found;
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -1946,7 +1945,7 @@ nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &dlist,
     }
 
     if (!engine) {
-        NIXL_ERROR << nixl_backend_not_found;
+        NIXL_ERROR_FUNC << nixl_backend_not_found;
         return NIXL_ERR_NOT_FOUND;
     }
 
