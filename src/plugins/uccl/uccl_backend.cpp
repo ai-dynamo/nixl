@@ -89,7 +89,7 @@ getNixlParam(const nixl_b_params_t *custom_params, const std::string &key, int d
 }
 
 nixlUcclEngine::nixlUcclEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {
+    : nixlBackendEngine(init_params), stop_listener_(false) {
 
     local_agent_name_ = init_params->localAgent;
     nixl_b_params_t *custom_params = init_params->customParams;
@@ -103,6 +103,8 @@ nixlUcclEngine::nixlUcclEngine(const nixlBackendInitParams *init_params)
 }
 
 nixlUcclEngine::~nixlUcclEngine() {
+    stop_listener_ = true;
+
     {
         std::lock_guard<std::mutex> lock(mem_mutex_);
         for (auto &[addr, priv] : mem_reg_info_) {
@@ -128,15 +130,15 @@ nixlUcclEngine::~nixlUcclEngine() {
         connected_agents_.clear();
     }
 
-    if (listener_thread_.joinable()) {
-        listener_thread_.detach();
-    }
-
     if (engine_) {
-        // Add a small delay to allow UCCL internal cleanup to complete
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
         uccl_engine_destroy(engine_);
         engine_ = nullptr;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    if (listener_thread_.joinable()) {
+        listener_thread_.detach();
     }
 }
 
@@ -144,11 +146,22 @@ void
 nixlUcclEngine::startListener() {
     // The listener waits for connections from remote agents
     NIXL_DEBUG << "UCCL accepting connections";
-    while (true) {
+    while (!stop_listener_) {
+        // Check if engine is still valid before using it
+        if (!engine_) {
+            NIXL_DEBUG << "Engine destroyed, listener thread exiting";
+            break;
+        }
+
         char ip_buf[256];
         int remote_gpu_idx;
         uccl_conn_t *conn = uccl_engine_accept(engine_, ip_buf, sizeof(ip_buf), &remote_gpu_idx);
         if (!conn) {
+            // Check if we should stop (engine destroyed or shutdown requested)
+            if (stop_listener_ || !engine_) {
+                NIXL_DEBUG << "Listener thread stopping";
+                break;
+            }
             NIXL_ERROR << "Failed to accept connection from remote agent";
             continue;
         }
@@ -160,6 +173,7 @@ nixlUcclEngine::startListener() {
             connected_agents_[ip_buf] = reinterpret_cast<uint64_t>(conn);
         }
     }
+    NIXL_DEBUG << "UCCL listener thread exiting";
 }
 
 nixl_mem_list_t

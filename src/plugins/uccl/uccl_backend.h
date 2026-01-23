@@ -135,6 +135,7 @@ private:
     std::unordered_map<uint64_t, nixlUcclBackendMD *> mem_reg_info_;
     std::unordered_map<std::string, uint64_t> connected_agents_; // agent name -> conn_id
     std::thread listener_thread_;
+    std::atomic<bool> stop_listener_;
 };
 
 // UCCL Backend Memory Descriptor
