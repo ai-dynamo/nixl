@@ -4,7 +4,7 @@
  */
 
 #include "engine_impl.h"
-#include "utils/object/engine_utils.h"
+#include "engine_utils.h"
 #include "s3/client.h"
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>

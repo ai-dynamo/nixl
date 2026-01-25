@@ -382,7 +382,7 @@ VendorObjEngineImpl::registerMem(const nixlBlobDesc &mem,
 
 #### 3. Add Selection Logic
 
-Add a helper function in `src/utils/object/engine_utils.h`:
+Add a helper function in `engine_utils.h` (located at `src/utils/object/engine_utils.h`):
 
 ```cpp
 inline bool

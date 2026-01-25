@@ -5,9 +5,9 @@
 
 #include "client.h"
 #include "object/s3/utils.h"
-#include <aws/s3-crt/model/PutObjectRequest.h>
-#include <aws/s3-crt/model/GetObjectRequest.h>
-#include <aws/s3-crt/model/HeadObjectRequest.h>
+#include <aws/s3/model/PutObjectRequest.h>
+#include <aws/s3/model/GetObjectRequest.h>
+#include <aws/s3/model/HeadObjectRequest.h>
 #include <aws/core/utils/stream/PreallocatedStreamBuf.h>
 #include <aws/core/utils/memory/stl/AWSStringStream.h>
 #include <absl/strings/str_format.h>
@@ -18,7 +18,7 @@ awsS3AccelClient::awsS3AccelClient(nixl_b_params_t *custom_params,
     : awsS3Client(custom_params, executor) {
 
     // Create S3 CRT client configuration for accelerated transfers
-    Aws::S3Crt::ClientConfiguration config;
+    Aws::Client::ClientConfiguration config;
     nixl_s3_utils::configureClientCommon(config, custom_params);
     if (executor) config.executor = executor;
 
@@ -26,13 +26,13 @@ awsS3AccelClient::awsS3AccelClient(nixl_b_params_t *custom_params,
     bool use_virtual_addressing = nixl_s3_utils::getUseVirtualAddressing(custom_params);
 
     if (credentials_opt.has_value())
-        s3CrtClient_ = std::make_unique<Aws::S3Crt::S3CrtClient>(
+        s3Client_ = std::make_unique<Aws::S3::S3Client>(
             credentials_opt.value(),
             config,
             Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::RequestDependent,
             use_virtual_addressing);
     else
-        s3CrtClient_ = std::make_unique<Aws::S3Crt::S3CrtClient>(
+        s3Client_ = std::make_unique<Aws::S3::S3Client>(
             config,
             Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::RequestDependent,
             use_virtual_addressing);
@@ -55,7 +55,7 @@ awsS3AccelClient::putObjectAsync(std::string_view key,
         return;
     }
 
-    Aws::S3Crt::Model::PutObjectRequest request;
+    Aws::S3::Model::PutObjectRequest request;
     request.WithBucket(bucketName_).WithKey(Aws::String(key));
 
     auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf>(
@@ -64,12 +64,12 @@ awsS3AccelClient::putObjectAsync(std::string_view key,
         Aws::MakeShared<Aws::IOStream>("PutObjectInputStream", preallocated_stream_buf.get());
     request.SetBody(data_stream);
 
-    s3CrtClient_->PutObjectAsync(
+    s3Client_->PutObjectAsync(
         request,
         [callback, preallocated_stream_buf, data_stream](
-            const Aws::S3Crt::S3CrtClient *,
-            const Aws::S3Crt::Model::PutObjectRequest &,
-            const Aws::S3Crt::Model::PutObjectOutcome &outcome,
+            const Aws::S3::S3Client *,
+            const Aws::S3::Model::PutObjectRequest &,
+            const Aws::S3::Model::PutObjectOutcome &outcome,
             const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
             if (!outcome.IsSuccess()) {
                 std::cerr << "putObjectAsync (Accel) error:" << outcome.GetError() << std::endl;
@@ -92,17 +92,17 @@ awsS3AccelClient::getObjectAsync(std::string_view key,
             return new Aws::IOStream(preallocated_stream_buf.get());
         });
 
-    Aws::S3Crt::Model::GetObjectRequest request;
+    Aws::S3::Model::GetObjectRequest request;
     request.WithBucket(bucketName_)
         .WithKey(Aws::String(key))
         .WithRange(absl::StrFormat("bytes=%d-%d", offset, offset + data_len - 1));
     request.SetResponseStreamFactory(*stream_factory.get());
 
-    s3CrtClient_->GetObjectAsync(
+    s3Client_->GetObjectAsync(
         request,
-        [callback, stream_factory](const Aws::S3Crt::S3CrtClient *,
-                                   const Aws::S3Crt::Model::GetObjectRequest &,
-                                   const Aws::S3Crt::Model::GetObjectOutcome &outcome,
+        [callback, stream_factory](const Aws::S3::S3Client *,
+                                   const Aws::S3::Model::GetObjectRequest &,
+                                   const Aws::S3::Model::GetObjectOutcome &outcome,
                                    const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
             callback(outcome.IsSuccess());
         },
@@ -111,10 +111,10 @@ awsS3AccelClient::getObjectAsync(std::string_view key,
 
 bool
 awsS3AccelClient::checkObjectExists(std::string_view key) {
-    Aws::S3Crt::Model::HeadObjectRequest request;
+    Aws::S3::Model::HeadObjectRequest request;
     request.WithBucket(bucketName_).WithKey(Aws::String(key));
 
-    auto outcome = s3CrtClient_->HeadObject(request);
+    auto outcome = s3Client_->HeadObject(request);
     if (outcome.IsSuccess())
         return true;
     else if (outcome.GetError().GetResponseCode() == Aws::Http::HttpResponseCode::NOT_FOUND)

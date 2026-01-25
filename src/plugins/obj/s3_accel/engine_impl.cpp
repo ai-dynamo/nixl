@@ -9,23 +9,20 @@
 
 S3AccelObjEngineImpl::S3AccelObjEngineImpl(const nixlBackendInitParams *init_params)
     : DefaultObjEngineImpl(init_params) {
-    s3Client_.reset();
-    s3ClientCrt_ = std::make_shared<awsS3AccelClient>(init_params->customParams, executor_);
+    s3Client_ = std::make_shared<awsS3AccelClient>(init_params->customParams, executor_);
     NIXL_INFO << "Object storage backend initialized with S3 Accel client";
 }
 
 S3AccelObjEngineImpl::S3AccelObjEngineImpl(const nixlBackendInitParams *init_params,
                                            std::shared_ptr<iS3Client> s3_client,
-                                           std::shared_ptr<iS3Client> s3_client_crt)
-    : DefaultObjEngineImpl(init_params, s3_client, s3_client_crt) {
-    s3Client_.reset();
-    s3ClientCrt_ = s3_client_crt;
-    if (!s3ClientCrt_) {
-        s3ClientCrt_ = std::make_shared<awsS3AccelClient>(init_params->customParams, executor_);
-    }
+                                           std::shared_ptr<iS3Client> s3_client_accel)
+    : DefaultObjEngineImpl(init_params, s3_client, s3_client_accel) {
+    s3Client_ = s3_client_accel ?
+        s3_client_accel :
+        std::make_shared<awsS3AccelClient>(init_params->customParams, executor_);
 }
 
 iS3Client *
 S3AccelObjEngineImpl::getClient() const {
-    return s3ClientCrt_.get();
+    return s3Client_.get();
 }

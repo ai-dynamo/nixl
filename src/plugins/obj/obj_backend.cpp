@@ -16,7 +16,7 @@
  */
 
 #include "obj_backend.h"
-#include "utils/object/engine_utils.h"
+#include "engine_utils.h"
 #include "s3/engine_impl.h"
 #include "s3_crt/engine_impl.h"
 #include "s3_accel/engine_impl.h"

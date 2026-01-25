@@ -13,13 +13,11 @@ public:
     explicit S3AccelObjEngineImpl(const nixlBackendInitParams *init_params);
     S3AccelObjEngineImpl(const nixlBackendInitParams *init_params,
                          std::shared_ptr<iS3Client> s3_client,
-                         std::shared_ptr<iS3Client> s3_client_crt);
+                         std::shared_ptr<iS3Client> s3_client_accel = nullptr);
 
 protected:
     iS3Client *
     getClient() const override;
-
-    std::shared_ptr<iS3Client> s3ClientCrt_;
 };
 
 #endif // OBJ_PLUGIN_S3_ACCEL_ENGINE_IMPL_H

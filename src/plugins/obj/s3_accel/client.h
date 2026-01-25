@@ -52,8 +52,7 @@ public:
     bool
     checkObjectExists(std::string_view key) override;
 
-protected:
-    std::unique_ptr<Aws::S3Crt::S3CrtClient> s3CrtClient_;
+    // S3 client from base S3
 };
 
 #endif // OBJ_PLUGIN_S3_ACCEL_CLIENT_H

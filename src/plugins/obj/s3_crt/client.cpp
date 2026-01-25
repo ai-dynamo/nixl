@@ -16,7 +16,8 @@
 #include "common/nixl_log.h"
 
 awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
-                               std::shared_ptr<Aws::Utils::Threading::Executor> executor) {
+                               std::shared_ptr<Aws::Utils::Threading::Executor> executor)
+    : awsS3Client(custom_params, executor) {
     // Initialize AWS SDK (thread-safe, only happens once)
     nixl_s3_utils::initAWSSDK();
 
