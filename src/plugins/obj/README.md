@@ -248,16 +248,27 @@ The object plugin uses a modular, inheritance-based architecture that makes it e
 
 ### Architecture Overview
 
-The plugin separates concerns into:
+The plugin uses a **pImpl (Pointer to Implementation)** design pattern to provide:
+- **ABI Stability**: Interface changes don't require recompiling client code
+- **Modularity**: Easy to add vendor-specific engines without modifying core logic
+- **Encapsulation**: Implementation details hidden behind abstract interface
+
+The architecture separates concerns into:
 
 - **Clients**: Handle S3-compatible storage operations (inheriting from `awsS3Client` or `awsS3AccelClient`)
-- **Engine Implementations**: Manage NIXL backend operations (inheriting from `DefaultObjEngineImpl` or `S3AccelObjEngineImpl`)
+- **Engine Implementations**: Manage NIXL backend operations (inheriting from `nixlObjEngineImpl`)
 
 #### Current Hierarchy
 
 ```
 +----------------------+
-|   nixlObjEngine      |
+|   nixlObjEngine      |  (public interface)
++----------------------+
+           |
+           | uses (pImpl)
+           v
++----------------------+
+|  nixlObjEngineImpl   |  (abstract base)
 +----------------------+
            |
            v
@@ -276,6 +287,12 @@ The plugin separates concerns into:
           | uses: awsS3AccelClient       |
           +------------------------------+
 ```
+
+**Key Points:**
+- `nixlObjEngine` is the public interface that clients use
+- `nixlObjEngineImpl` is the abstract base class for all engine implementations
+- Concrete implementations inherit from `nixlObjEngineImpl` (or its subclasses) and override specific methods
+- The public interface remains stable while implementations can evolve independently
 
 ### Adding a Vendor Implementation
 
@@ -376,17 +393,31 @@ isVendorRequested(nixl_b_params_t *custom_params) {
 }
 ```
 
-Update `obj_backend.cpp` to include your engine:
+Update `obj_backend.cpp` to include your engine in the factory function:
 
 ```cpp
 #include "s3_accel/vendor_name/engine_impl.h"
 
-std::unique_ptr<nixlObjEngine::Impl>
+std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params) {
+    // Check for vendor-specific engine first
     if (isVendorRequested(init_params->customParams)) {
         return std::make_unique<VendorObjEngineImpl>(init_params);
     }
-    // ... existing selection logic
+
+    // Check for S3 Accelerated engine
+    if (isAcceleratedRequested(init_params->customParams)) {
+        return std::make_unique<S3AccelObjEngineImpl>(init_params);
+    }
+
+    // Check for S3 CRT engine
+    size_t crt_min_limit = getCrtMinLimit(init_params->customParams);
+    if (crt_min_limit > 0) {
+        return std::make_unique<S3CrtObjEngineImpl>(init_params);
+    }
+
+    // Default to standard S3 engine
+    return std::make_unique<DefaultObjEngineImpl>(init_params);
 }
 ```
 

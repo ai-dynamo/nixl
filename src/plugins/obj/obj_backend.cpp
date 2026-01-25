@@ -26,7 +26,7 @@
 // Obj Engine Implementation
 // -----------------------------------------------------------------------------
 
-std::unique_ptr<nixlObjEngine::Impl>
+std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params) {
     if (isAcceleratedRequested(init_params->customParams)) {
         return std::make_unique<S3AccelObjEngineImpl>(init_params);
@@ -39,7 +39,7 @@ createObjEngineImpl(const nixlBackendInitParams *init_params) {
     return std::make_unique<DefaultObjEngineImpl>(init_params);
 }
 
-std::unique_ptr<nixlObjEngine::Impl>
+std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params,
                     std::shared_ptr<iS3Client> s3_client,
                     std::shared_ptr<iS3Client> s3_client_crt) {

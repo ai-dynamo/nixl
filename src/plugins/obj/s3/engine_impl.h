@@ -8,7 +8,7 @@
 
 #include "obj_backend.h"
 
-class DefaultObjEngineImpl : public nixlObjEngine::Impl {
+class DefaultObjEngineImpl : public nixlObjEngineImpl {
 public:
     explicit DefaultObjEngineImpl(const nixlBackendInitParams *init_params);
     DefaultObjEngineImpl(const nixlBackendInitParams *init_params,
