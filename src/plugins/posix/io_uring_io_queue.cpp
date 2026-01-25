@@ -40,8 +40,6 @@ public:
     nixlPosixIOQueueUring(uint32_t max_ios);
 
     virtual nixl_status_t
-    post(void) override;
-    virtual nixl_status_t
     enqueue(int fd,
             void *buf,
             size_t len,
@@ -49,23 +47,22 @@ public:
             bool read,
             nixlPosixIOQueueDoneCb clb,
             void *ctx) override;
-    virtual nixl_status_t
-    poll(void) override;
     virtual ~nixlPosixIOQueueUring() override;
 
 protected:
     nixlPosixIoUringIO *
     getBufInfo(struct iocb *io);
     nixl_status_t
-    doSubmit(void);
+    submitBatch(uint32_t to_submit, uint32_t &submitted_ios) override;
     nixl_status_t
-    doCheckCompleted(void);
+    checkCompleted(uint32_t &completed_ios) override;
 
 private:
     struct io_uring uring; // The io_uring instance for async I/O operations
 };
 
-nixlPosixIOQueueUring::nixlPosixIOQueueUring(uint32_t max_ios) : nixlPosixIOQueueImpl<nixlPosixIoUringIO>(max_ios) {
+nixlPosixIOQueueUring::nixlPosixIOQueueUring(uint32_t max_ios)
+    : nixlPosixIOQueueImpl<nixlPosixIoUringIO>(max_ios) {
     io_uring_params params = {};
     if (io_uring_queue_init_params(max_ios_, &uring, &params) < 0) {
         throw std::runtime_error(
@@ -74,15 +71,12 @@ nixlPosixIOQueueUring::nixlPosixIOQueueUring(uint32_t max_ios) : nixlPosixIOQueu
 }
 
 nixl_status_t
-nixlPosixIOQueueUring::doSubmit(void) {
-    if (ios_to_submit_.empty()) {
-        return NIXL_SUCCESS; // No blocks to submit
-    }
+nixlPosixIOQueueUring::submitBatch(uint32_t to_submit, uint32_t &submitted_ios) {
+    NIXL_ASSERT(!ios_to_submit_.empty());
+    NIXL_ASSERT(ios_to_submit_.size() >= to_submit);
 
-    int num_ios = std::min(MAX_IO_SUBMIT_BATCH_SIZE, (int)ios_to_submit_.size());
-    for (int i = 0; i < num_ios; i++) {
+    for (uint32_t i = 0; i < to_submit; i++) {
         nixlPosixIoUringIO *io = ios_to_submit_.front();
-        ios_to_submit_.pop_front();
 
         struct io_uring_sqe *sqe = io_uring_get_sqe(&uring);
         if (!sqe) {
@@ -97,6 +91,9 @@ nixlPosixIOQueueUring::doSubmit(void) {
         }
 
         io_uring_sqe_set_data(sqe, io);
+
+        ios_to_submit_.pop_front();
+        submitted_ios++;
     }
 
     int ret = io_uring_submit(&uring);
@@ -105,39 +102,37 @@ nixlPosixIOQueueUring::doSubmit(void) {
         return NIXL_ERR_BACKEND;
     }
 
-    return ios_to_submit_.empty() ? NIXL_SUCCESS : NIXL_IN_PROG;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlPosixIOQueueUring::doCheckCompleted(void) {
+nixlPosixIOQueueUring::checkCompleted(uint32_t &completed_ios) {
     struct io_uring_cqe *cqe;
     unsigned head;
-    int count = 0;
+
+    completed_ios = 0;
+
     io_uring_for_each_cqe(&uring, head, cqe) {
         int res = cqe->res;
         nixlPosixIoUringIO *io = reinterpret_cast<nixlPosixIoUringIO *>(io_uring_cqe_get_data(cqe));
         if (io->clb_) {
             io->clb_(io->ctx_, res, 0);
         }
+        completed_ios++;
         free_ios_.push_back(io);
         if (res < 0) {
             NIXL_ERROR << absl::StrFormat("IO operation failed: %s", nixl_strerror(-res));
             return NIXL_ERR_BACKEND;
         }
-        count++;
-        if (count == MAX_IO_CHECK_COMPLETED_BATCH_SIZE) {
+        if (completed_ios == MAX_IO_CHECK_COMPLETED_BATCH_SIZE) {
             break;
         }
     }
 
     // Mark all seen
-    io_uring_cq_advance(&uring, count);
+    io_uring_cq_advance(&uring, completed_ios);
 
-    if (free_ios_.size() == max_ios_) {
-        return NIXL_SUCCESS; // All ios are free now
-    }
-
-    return NIXL_IN_PROG; // Some ios are in flight, need to check again
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -168,30 +163,11 @@ nixlPosixIOQueueUring::enqueue(int fd,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t
-nixlPosixIOQueueUring::post(void) {
-    nixl_status_t status = doSubmit();
-    if (status < 0) {
-        return status;
-    }
-
-    return NIXL_IN_PROG;
-}
-
-nixl_status_t
-nixlPosixIOQueueUring::poll(void) {
-    nixl_status_t status = post();
-    if (status < 0) {
-        return status;
-    }
-
-    return doCheckCompleted();
-}
-
 nixlPosixIOQueueUring::~nixlPosixIOQueueUring() {
     io_uring_queue_exit(&uring);
 }
 
-std::unique_ptr<nixlPosixIOQueue> nixlPosixIOQueueUringCreate(uint32_t max_ios) {
+std::unique_ptr<nixlPosixIOQueue>
+nixlPosixIOQueueUringCreate(uint32_t max_ios) {
     return std::make_unique<nixlPosixIOQueueUring>(max_ios);
 }

@@ -47,6 +47,7 @@ static const struct {
 
 const uint32_t nixlPosixIOQueue::MIN_IOS = 64;
 const uint32_t nixlPosixIOQueue::MAX_IOS = 1024 * 64;
+const uint32_t nixlPosixIOQueue::MAX_OUTSTANDING_IOS = 16;
 
 std::unique_ptr<nixlPosixIOQueue>
 nixlPosixIOQueue::instantiate(std::string_view io_queue_type, uint32_t max_ios) {

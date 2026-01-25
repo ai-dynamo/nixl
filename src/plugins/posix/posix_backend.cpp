@@ -217,18 +217,19 @@ nixlPosixBackendReqH::checkXfer() {
 
 nixl_status_t
 nixlPosixBackendReqH::postXfer() {
+    nixl_status_t status;
     num_confirmed_ios_ = 0;
 
     for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
          local_it != local.end() && remote_it != remote.end();
          ++local_it, ++remote_it) {
-        nixl_status_t status = io_queue_->enqueue(remote_it->devId,
-                                                  reinterpret_cast<void *>(local_it->addr),
-                                                  remote_it->len,
-                                                  remote_it->addr,
-                                                  operation == NIXL_READ,
-                                                  ioDoneClb,
-                                                  this);
+        status = io_queue_->enqueue(remote_it->devId,
+                                    reinterpret_cast<void *>(local_it->addr),
+                                    remote_it->len,
+                                    remote_it->addr,
+                                    operation == NIXL_READ,
+                                    ioDoneClb,
+                                    this);
 
         if (status != NIXL_SUCCESS) {
             // Currently we do not support partial submissions, so it's all or nothing
@@ -237,7 +238,13 @@ nixlPosixBackendReqH::postXfer() {
         }
     }
 
-    return io_queue_->post();
+    status = io_queue_->post();
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << absl::StrFormat("Error posting I/O operations: %d", status);
+        return status;
+    }
+
+    return NIXL_IN_PROG;
 }
 
 // -----------------------------------------------------------------------------
