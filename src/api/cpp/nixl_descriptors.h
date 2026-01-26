@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -189,6 +189,62 @@ public:
 };
 
 /**
+ * @struct nixlRemoteDesc
+ * @brief A descriptor structure for remote buffers, with remote agent name bundled with a
+ * nixlBasicDesc.
+ */
+struct nixlRemoteDesc : public nixlBasicDesc {
+    /** Remote agent name */
+    std::string remoteAgent;
+
+    /** Reuse parent constructor without the remote agent name */
+    using nixlBasicDesc::nixlBasicDesc;
+
+    /**
+     * @brief Parametrized constructor for nixlRemoteDesc
+     *
+     * @param addr          Start of buffer/block/offset-in-file
+     * @param len           Length of buffer
+     * @param dev_id        deviceID/BlockID/bufferID (remote ID)
+     * @param remote_agent  Remote agent name
+     */
+    nixlRemoteDesc(const uintptr_t addr,
+                   const size_t len,
+                   const uint64_t dev_id,
+                   const std::string &remote_agent);
+
+    /**
+     * @brief Constructor for nixlRemoteDesc from nixlBasicDesc and remote agent name
+     *
+     * @param desc          nixlBasicDesc object
+     * @param remote_agent  Remote agent name
+     */
+    nixlRemoteDesc(const nixlBasicDesc &desc, const std::string &remote_agent);
+
+    /**
+     * @brief Deserializer constructor for nixlRemoteDesc with serialized blob
+     *
+     * @param str   Serialized blob from another nixlRemoteDesc
+     */
+    explicit nixlRemoteDesc(const nixl_blob_t &str);
+
+    /**
+     * @brief Serialize nixlRemoteDesc to a blob
+     */
+    nixl_blob_t
+    serialize() const;
+};
+
+/**
+ * @brief Operator overloading (==) to compare nixlRemoteDesc objects
+ *
+ * @param lhs   nixlRemoteDesc object
+ * @param rhs   nixlRemoteDesc object
+ */
+bool
+operator==(const nixlRemoteDesc &lhs, const nixlRemoteDesc &rhs);
+
+/**
  * @class nixlDescList
  * @brief A class for describing a list of descriptors, as a template based on
  *        the nixlDesc type that is used.
@@ -375,5 +431,10 @@ using nixl_xfer_dlist_t = nixlDescList<nixlBasicDesc>;
  *        used for creating registratoin descriptor lists
  */
 using nixl_reg_dlist_t = nixlDescList<nixlBlobDesc>;
+/**
+ * @brief An alias for a nixlDescList<nixlRemoteDesc>
+ *        used for preparing a memory view handle for remote buffers
+ */
+using nixl_remote_dlist_t = nixlDescList<nixlRemoteDesc>;
 
 #endif
