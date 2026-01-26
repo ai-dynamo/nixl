@@ -304,8 +304,17 @@ public:
         return topology.get();
     }
 
+    /** Get the system's accelerator type.
+     * @return fi_hmem_iface type for the system's accelerator
+     */
+    fi_hmem_iface
+    getSystemAcceleratorType() const;
+
 private:
     size_t striping_threshold_;
+
+    // System accelerator type (determined once at initialization)
+    fi_hmem_iface system_accelerator_type_;
 
     // Rail allocation
     std::vector<std::unique_ptr<nixlLibfabricRail>> data_rails_;

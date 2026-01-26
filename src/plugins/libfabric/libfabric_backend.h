@@ -211,6 +211,10 @@ private:
     // Mutex for connection state tracking
     mutable std::mutex connection_state_mutex_;
 
+
+    // System accelerator type (set during initialization from rail_manager)
+    fi_hmem_iface system_accelerator_type_;
+
     void
     cleanup();
 
@@ -272,6 +276,7 @@ private:
                                 const std::string &agent_name,
                                 uint32_t &total_message_length,
                                 std::vector<BinaryNotification> &fragments_out) const;
+
 #ifdef HAVE_CUDA
     // CUDA context management
     std::unique_ptr<nixlLibfabricCudaCtx> cudaCtx_;
