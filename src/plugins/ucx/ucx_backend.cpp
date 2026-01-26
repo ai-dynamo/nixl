@@ -1570,11 +1570,11 @@ nixlUcxEngine::prepMemoryView(const nixl_remote_meta_dlist_t &meta_dlist,
     try {
         const auto desc_count = static_cast<size_t>(meta_dlist.descCount());
         std::vector<std::unique_ptr<nixl::ucx::remoteMem>> remote_mems;
-        const auto worker_id = getWorkerId(opt_args);
+        const size_t worker_id = getWorkerId(opt_args);
         remote_mems.reserve(desc_count);
         for (size_t i = 0; i < desc_count; ++i) {
             if (meta_dlist[i].remoteAgent == nixl_invalid_agent) {
-                remote_mems.emplace_back(nullptr);
+                remote_mems.emplace_back();
                 continue;
             }
 
@@ -1614,7 +1614,7 @@ nixlUcxEngine::prepMemoryView(const nixl_meta_dlist_t &meta_dlist,
             local_mems.emplace_back(localMd->mem);
         }
 
-        const auto worker_id = getWorkerId(opt_args);
+        const size_t worker_id = getWorkerId(opt_args);
         nixl::ucx::memList memList{local_mems, *getWorker(worker_id)};
         mvh = memList.get();
         memViewMap.emplace(mvh, std::move(memList));
