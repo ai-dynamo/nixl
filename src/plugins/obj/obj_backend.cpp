@@ -19,7 +19,9 @@
 #include "engine_utils.h"
 #include "s3/engine_impl.h"
 #include "s3_crt/engine_impl.h"
+#if defined HAVE_CUOBJ_CLIENT
 #include "s3_accel/engine_impl.h"
+#endif
 #include <memory>
 
 // -----------------------------------------------------------------------------
@@ -28,9 +30,11 @@
 
 std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params) {
+#if defined HAVE_CUOBJ_CLIENT
     if (isAcceleratedRequested(init_params->customParams)) {
         return std::make_unique<S3AccelObjEngineImpl>(init_params);
     }
+#endif
 
     if (getCrtMinLimit(init_params->customParams) > 0) {
         return std::make_unique<S3CrtObjEngineImpl>(init_params);
@@ -43,9 +47,11 @@ std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params,
                     std::shared_ptr<iS3Client> s3_client,
                     std::shared_ptr<iS3Client> s3_client_crt) {
+#if defined HAVE_CUOBJ_CLIENT
     if (isAcceleratedRequested(init_params->customParams)) {
         return std::make_unique<S3AccelObjEngineImpl>(init_params, s3_client, s3_client_crt);
     }
+#endif
 
     if (getCrtMinLimit(init_params->customParams) > 0) {
         return std::make_unique<S3CrtObjEngineImpl>(init_params, s3_client, s3_client_crt);

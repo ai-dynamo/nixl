@@ -30,6 +30,8 @@ The CRT client provides significantly improved throughput and lower CPU utilizat
 
 ## Dependencies
 
+### Required Dependencies
+
 This backend requires aws-sdk-cpp version 1.11 to be installed with both `s3` and `s3-crt` components. Example CLI to compile from sources:
 
 ```bash
@@ -37,6 +39,14 @@ This backend requires aws-sdk-cpp version 1.11 to be installed with both `s3` an
 apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev
 git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && mkdir sdk_build && cd sdk_build && cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && make -j && make install
 ```
+
+### Optional Dependencies
+
+**S3 Accelerated Engines** (`cuobjclient-13.1`): Required for GPU-direct and accelerated object storage operations. When available, enables:
+- `S3AccelObjEngineImpl` - Base accelerated S3 engine
+- Vendor-specific accelerated implementations under `s3_accel/`
+
+If `cuobjclient-13.1` is not found during build, the S3 Accelerated engines will be automatically disabled, and the plugin will fall back to standard S3 and S3 CRT engines.
 
 ## Configuration
 
@@ -296,6 +306,39 @@ The architecture separates concerns into:
 
 ### Adding a Vendor Implementation
 
+> **⚠️ Important: Conditional Compilation for S3 Accelerated Engines**
+>
+> The S3 Accelerated path (`s3_accel`) and any vendor implementations under it require the `cuobjclient-13.1` library. When adding new extensions to `s3_accel`:
+>
+> 1. **Protect includes** with `#if defined HAVE_CUOBJ_CLIENT`:
+>    ```cpp
+>    #if defined HAVE_CUOBJ_CLIENT
+>    #include "s3_accel/engine_impl.h"
+>    #include "s3_accel/vendor_name/engine_impl.h"
+>    #endif
+>    ```
+>
+> 2. **Protect instantiation code** in factory functions:
+>    ```cpp
+>    #if defined HAVE_CUOBJ_CLIENT
+>    if (isAcceleratedRequested(init_params->customParams)) {
+>        return std::make_unique<S3AccelObjEngineImpl>(init_params);
+>    }
+>    #endif
+>    ```
+>
+> 3. **Add sources conditionally** in `meson.build`:
+>    ```python
+>    if cuobj_dep.found()
+>        obj_sources += [
+>            's3_accel/vendor_name/client.cpp',
+>            's3_accel/vendor_name/engine_impl.cpp',
+>        ]
+>    endif
+>    ```
+>
+> This ensures the plugin builds correctly both with and without the `cuobjclient` library available.
+
 Follow these steps to add a vendor-specific client and engine:
 
 #### 1. Create Vendor Client
@@ -393,13 +436,17 @@ isVendorRequested(nixl_b_params_t *custom_params) {
 }
 ```
 
-Update `obj_backend.cpp` to include your engine in the factory function:
+Update `obj_backend.cpp` to include your engine in the factory function with proper conditional compilation:
 
 ```cpp
+#if defined HAVE_CUOBJ_CLIENT
+#include "s3_accel/engine_impl.h"
 #include "s3_accel/vendor_name/engine_impl.h"
+#endif
 
 std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params) {
+#if defined HAVE_CUOBJ_CLIENT
     // Check for vendor-specific engine first
     if (isVendorRequested(init_params->customParams)) {
         return std::make_unique<VendorObjEngineImpl>(init_params);
@@ -409,6 +456,7 @@ createObjEngineImpl(const nixlBackendInitParams *init_params) {
     if (isAcceleratedRequested(init_params->customParams)) {
         return std::make_unique<S3AccelObjEngineImpl>(init_params);
     }
+#endif
 
     // Check for S3 CRT engine
     size_t crt_min_limit = getCrtMinLimit(init_params->customParams);
@@ -421,19 +469,33 @@ createObjEngineImpl(const nixlBackendInitParams *init_params) {
 }
 ```
 
+**Note**: Don't forget to also update the second overload of `createObjEngineImpl` that takes client pointers as parameters with the same conditional compilation guards.
+
 #### 4. Update Build Configuration
 
-Add your sources to `meson.build`:
+Add your sources to `meson.build` within the conditional `cuobj_dep` block:
 
 ```python
-obj_sources = [
-    # ... existing sources
-    's3_accel/vendor_name/client.cpp',
-    's3_accel/vendor_name/client.h',
-    's3_accel/vendor_name/engine_impl.cpp',
-    's3_accel/vendor_name/engine_impl.h',
-]
+if cuobj_dep.found()
+    message('Found CUObjClient Library. Enabling S3 Accelerated engines')
+    obj_sources += [
+        's3_accel/client.cpp',
+        's3_accel/client.h',
+        's3_accel/engine_impl.cpp',
+        's3_accel/engine_impl.h',
+        # Add your vendor sources here:
+        's3_accel/vendor_name/client.cpp',
+        's3_accel/vendor_name/client.h',
+        's3_accel/vendor_name/engine_impl.cpp',
+        's3_accel/vendor_name/engine_impl.h',
+    ]
+    plugin_deps += [ cuobj_dep ]
+else
+    message('Could not find CUObjClient Library. Skipping S3 Accelerated engines')
+endif
 ```
+
+This ensures your vendor implementation is only compiled when the `cuobjclient` library is available.
 
 #### 5. Usage
 
