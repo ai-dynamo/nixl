@@ -182,7 +182,7 @@ public:
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;
     static std::string gusli_config_file;
-    static uint64_t gusli_bdev_byte_offset;
+    static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
 
     static int
@@ -214,13 +214,15 @@ struct GusliDeviceConfig {
     char device_type; // 'F' for file, 'K' for kernel device, 'N' for networked server
     std::string device_path;
     std::string security_flags;
+    size_t dev_offset;
 };
 
-// Parser for GUSLI device list: "id:type:path,id:type:path,..."
+// Parser for GUSLI device list: "id:type:path,id:type:path,..." and byte-based device offset list
 // security_list: comma-separated security flags; num_devices: expected device count (validation)
 std::vector<GusliDeviceConfig>
 parseGusliDeviceList(const std::string &device_list,
                      const std::string &security_list,
+                     const std::string &dev_offset_list,
                      int num_devices);
 
 // Timer class for measuring durations at high resolution

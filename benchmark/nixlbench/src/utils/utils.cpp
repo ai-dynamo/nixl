@@ -199,9 +199,10 @@ const std::vector<xferBenchParamInfo> xbench_params = {
         gusli_config_file,
         "",
         "Configuration file content for GUSLI backend (if empty, auto-generated from device_list)"),
-    NB_ARG_UINT64(gusli_bdev_byte_offset,
-                  1048576,
-                  "Byte offset in block device for GUSLI operations (default: 1MB)"),
+    NB_ARG_STRING(gusli_device_byte_offsets,
+                  "",
+                  "Comma-separated list of byte offsets per device for GUSLI operations "
+                  "If empty or fewer than devices, uses 1MB as default."),
     NB_ARG_STRING(
         gusli_device_security,
         "",
@@ -269,7 +270,7 @@ int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
 std::string xferBenchConfig::gusli_config_file = "";
-uint64_t xferBenchConfig::gusli_bdev_byte_offset = 0;
+std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
 
 // We allow both --param_name and --param-name for compatibility.
@@ -436,7 +437,7 @@ xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
             gusli_client_name = NB_ARG(gusli_client_name);
             gusli_max_simultaneous_requests = NB_ARG(gusli_max_simultaneous_requests);
             gusli_config_file = NB_ARG(gusli_config_file);
-            gusli_bdev_byte_offset = NB_ARG(gusli_bdev_byte_offset);
+            gusli_device_byte_offsets = NB_ARG(gusli_device_byte_offsets);
             gusli_device_security = NB_ARG(gusli_device_security);
         }
 
@@ -764,6 +765,7 @@ allBytesAre(void *buffer, size_t size, uint8_t value) {
 std::vector<GusliDeviceConfig>
 parseGusliDeviceList(const std::string &device_list,
                      const std::string &security_list,
+                     const std::string &dev_offset_list,
                      int num_devices) {
     std::vector<GusliDeviceConfig> devices;
 
@@ -774,6 +776,15 @@ parseGusliDeviceList(const std::string &device_list,
         std::string sec_flag;
         while (std::getline(sec_ss, sec_flag, ',')) {
             security_flags.push_back(sec_flag);
+        }
+    }
+
+    std::vector<size_t> dev_offsets;
+    if (!dev_offset_list.empty()) {
+        std::stringstream dev_ss(dev_offset_list);
+        std::string offset;
+        while (std::getline(dev_ss, offset, ',')) {
+            dev_offsets.push_back(std::stoull(offset));
         }
     }
 
@@ -811,7 +822,9 @@ parseGusliDeviceList(const std::string &device_list,
             }
             std::string sec_flag =
                 (device_count < security_flags.size()) ? security_flags[device_count] : "sec=0x3";
-            devices.push_back({device_id, device_type, path, sec_flag});
+            size_t offset =
+                (device_count < dev_offsets.size()) ? dev_offsets[device_count] : 1048576;
+            devices.push_back({device_id, device_type, path, sec_flag, offset});
             device_count++;
         } else {
             std::cerr << "Invalid GUSLI device specification: " << device_spec
@@ -824,6 +837,12 @@ parseGusliDeviceList(const std::string &device_list,
         std::cerr << "Warning: Number of security flags (" << security_flags.size()
                   << ") doesn't match number of devices (" << devices.size()
                   << "). Using 'sec=0x3' for missing entries." << std::endl;
+    }
+
+    if (!dev_offsets.empty() && dev_offsets.size() != devices.size()) {
+        std::cerr << "Warning: Number of device offsets (" << dev_offsets.size()
+                  << ") doesn't match number of devices (" << devices.size()
+                  << "). Using 'offset=1048576' for missing entries." << std::endl;
     }
 
     if (num_devices > 0 && devices.size() != static_cast<size_t>(num_devices)) {
@@ -843,6 +862,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
     if (!gusli_devmap_init && xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
         gusli_devs = parseGusliDeviceList(xferBenchConfig::device_list,
                                           xferBenchConfig::gusli_device_security,
+                                          xferBenchConfig::gusli_device_byte_offsets,
                                           xferBenchConfig::num_initiator_dev);
         gusli_devmap_init = true;
     }

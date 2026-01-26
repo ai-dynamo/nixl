@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -86,7 +86,7 @@ class xferBenchNixlWorker: public xferBenchWorker {
         void
         cleanupBasicDescObj(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
-        initBasicDescBlk(size_t buffer_size, int mem_dev_id);
+        initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
         void
         cleanupBasicDescBlk(xferBenchIOV &basic_desc);
 };
