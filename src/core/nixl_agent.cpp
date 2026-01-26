@@ -35,6 +35,7 @@ constexpr char TELEMETRY_ENABLED_VAR[] = "NIXL_TELEMETRY_ENABLE";
 static const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
 };
+const std::string nixl_invalid_agent = "INVALID_AGENT";
 
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
@@ -1339,23 +1340,6 @@ nixlAgent::prepGpuSignal(const nixl_reg_dlist_t &signal_descs,
 }
 
 nixl_status_t
-nixlAgent::prepMemoryView(const nixl_remote_dlist_t &remote_buffs,
-                          nixlMemoryViewH &mvh,
-                          const nixl_opt_args_t *extra_params) const {
-    return NIXL_ERR_NOT_SUPPORTED;
-}
-
-nixl_status_t
-nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &local_buffs,
-                          nixlMemoryViewH &mvh,
-                          const nixl_opt_args_t *extra_params) const {
-    return NIXL_ERR_NOT_SUPPORTED;
-}
-
-void
-nixlAgent::releaseMemoryView(nixlMemoryViewH mvh) const {}
-
-nixl_status_t
 nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
     NIXL_LOCK_GUARD(data->lock);
     delete dlist_hndl;
@@ -1847,4 +1831,143 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
 
     // This is a checker method, returning not found is not an error to be logged
     return NIXL_ERR_NOT_FOUND;
+}
+
+backend_set_t
+nixlAgentData::getBackends(const nixl_opt_args_t *opt_args,
+                           nixlMemSection *section,
+                           nixl_mem_t mem_type) {
+    if (opt_args && !opt_args->backends.empty()) {
+        backend_set_t backends;
+        for (const auto &backend : opt_args->backends) {
+            backends.insert(backend->engine);
+        }
+
+        return backends;
+    }
+
+    const auto mem_type_backends = section->queryBackends(mem_type);
+    return mem_type_backends ? *mem_type_backends : backend_set_t{};
+}
+
+nixl_status_t
+nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
+                          nixlMemoryViewH &mvh,
+                          const nixl_opt_args_t *extra_params) const {
+    const auto desc_count = static_cast<size_t>(dlist.descCount());
+    const auto mem_type = dlist.getType();
+    nixl_remote_meta_dlist_t remote_meta_dlist{mem_type};
+    nixlBackendEngine *engine{nullptr};
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    for (size_t i = 0; i < desc_count; ++i) {
+        const auto &desc = dlist[i];
+        if (desc.remoteAgent == nixl_invalid_agent) {
+            remote_meta_dlist.addDesc(nixlRemoteMetaDesc(nixl_invalid_agent));
+            continue;
+        }
+
+        const auto it = data->remoteSections.find(desc.remoteAgent);
+        if (it == data->remoteSections.end()) {
+            NIXL_ERROR_FUNC << "Metadata for remote agent '" << desc.remoteAgent << "' not found";
+            return NIXL_ERR_NOT_FOUND;
+        }
+
+        if (engine) {
+            // Engine has already been selected, add element to the remote metadata
+            const auto status = it->second->addElement(desc, engine, remote_meta_dlist);
+            if (status != NIXL_SUCCESS) {
+                return status;
+            }
+
+            continue;
+        }
+
+        // Engine has not been selected yet, try to find a backend that can add an element to the
+        // remote metadata
+        const auto backends = data->getBackends(extra_params, it->second, mem_type);
+        for (const auto &backend : backends) {
+            const auto status = it->second->addElement(desc, backend, remote_meta_dlist);
+            if (status == NIXL_SUCCESS) {
+                NIXL_DEBUG << "Selected backend: " << backend->getType();
+                engine = backend;
+                break;
+            }
+        }
+
+        // If no backend can add an element to the remote metadata, return an error
+        if (!engine) {
+            break;
+        }
+    }
+
+    if (!engine) {
+        NIXL_ERROR_FUNC
+            << "A backend capable of creating a list of remote memory descriptors was not found";
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    nixl_opt_b_args_t opt_args;
+    if (extra_params) {
+        opt_args.customParam = extra_params->customParam;
+    }
+
+    const auto status = engine->prepMemoryView(remote_meta_dlist, mvh, &opt_args);
+    if (status == NIXL_SUCCESS) {
+        data->mvhToEngine.emplace(mvh, *engine);
+    }
+
+    return status;
+}
+
+nixl_status_t
+nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &dlist,
+                          nixlMemoryViewH &mvh,
+                          const nixl_opt_args_t *extra_params) const {
+    const auto mem_type = dlist.getType();
+    nixl_meta_dlist_t meta_dlist{mem_type};
+    nixlBackendEngine *engine{nullptr};
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    const auto backends = data->getBackends(extra_params, data->memorySection, mem_type);
+    for (const auto &backend : backends) {
+        const auto status = data->memorySection->populate(dlist, backend, meta_dlist);
+        if (status == NIXL_SUCCESS) {
+            NIXL_DEBUG << "Selected backend: " << backend->getType();
+            engine = backend;
+            break;
+        }
+    }
+
+    if (!engine) {
+        NIXL_ERROR_FUNC
+            << "A backend capable of creating a list of local memory descriptors was not found";
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    nixl_opt_b_args_t opt_args;
+    if (extra_params) {
+        opt_args.customParam = extra_params->customParam;
+    }
+
+    const auto status = engine->prepMemoryView(meta_dlist, mvh, &opt_args);
+    if (status == NIXL_SUCCESS) {
+        data->mvhToEngine.emplace(mvh, *engine);
+    }
+
+    return status;
+}
+
+void
+nixlAgent::releaseMemoryView(nixlMemoryViewH mvh) const {
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+
+    const auto it = data->mvhToEngine.find(mvh);
+    if (it == data->mvhToEngine.end()) {
+        NIXL_WARN << "Invalid memory view handle: " << mvh;
+        return;
+    }
+
+    it->second.releaseMemoryView(mvh);
+    data->mvhToEngine.erase(it);
 }

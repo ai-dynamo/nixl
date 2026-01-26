@@ -296,4 +296,9 @@ using nixl_xfer_telem_t = nixlXferTelemetry;
  */
 #define NIXL_INIT_AGENT ""
 
+/**
+ * @brief A constant for an invalid agent name.
+ */
+extern const std::string nixl_invalid_agent;
+
 #endif
