@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -253,6 +253,11 @@ public:
     /* GPU signal management */
     void
     prepGpuSignal(const nixlUcxMem &mem, void *signal) const;
+
+    [[nodiscard]] ucp_worker_h
+    get() const noexcept {
+        return worker.get();
+    }
 
 private:
     [[nodiscard]] static ucp_worker *
