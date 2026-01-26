@@ -98,6 +98,10 @@ class nixlMetaDesc : public nixlBasicDesc {
 
         nixlMetaDesc() : nixlBasicDesc() { metadataP = nullptr; }
 
+        nixlMetaDesc(uintptr_t addr, size_t len, uint64_t dev_id, nixlBackendMD *metadata)
+            : nixlBasicDesc(addr, len, dev_id),
+              metadataP(metadata) {}
+
         // No serializer or deserializer, using parent not to expose the metadata
 
         inline friend bool operator==(const nixlMetaDesc &lhs, const nixlMetaDesc &rhs) {
