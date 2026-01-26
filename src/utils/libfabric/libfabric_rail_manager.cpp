@@ -38,12 +38,25 @@ static std::atomic<size_t> round_robin_counter{0};
 static const std::string NUM_RAILS_TAG{"num_rails"};
 
 nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
-    : striping_threshold_(striping_threshold) {
+    : striping_threshold_(striping_threshold),
+      system_accelerator_type_(FI_HMEM_CUDA) {
     NIXL_DEBUG << "Creating rail manager with striping threshold: " << striping_threshold_
                << " bytes";
 
     // Initialize topology system
     topology = std::make_unique<nixlLibfabricTopology>();
+
+    // Determine system accelerator type once at initialization
+    if (topology->getNumNvidiaGpus() > 0) {
+        system_accelerator_type_ = FI_HMEM_CUDA;
+        NIXL_DEBUG << "System accelerator type: CUDA (" << topology->getNumNvidiaGpus() << " GPUs)";
+    } else if (topology->getNumGpus() > 0) {
+        system_accelerator_type_ = FI_HMEM_NEURON;
+        NIXL_DEBUG << "System accelerator type: NEURON (" << topology->getNumGpus() << " devices)";
+    } else {
+        system_accelerator_type_ = FI_HMEM_SYSTEM;
+        NIXL_DEBUG << "System accelerator type: SYSTEM (no accelerators)";
+    }
 
     // Get network devices from topology and create rails automatically
     std::vector<std::string> all_devices = topology->getAllDevices();
@@ -930,4 +943,10 @@ size_t
 nixlLibfabricRailManager::getActiveRailCount() const {
     std::lock_guard<std::mutex> lock(active_rails_mutex_);
     return active_rails_.size();
+}
+
+// System accelerator type getter
+fi_hmem_iface
+nixlLibfabricRailManager::getSystemAcceleratorType() const {
+    return system_accelerator_type_;
 }
