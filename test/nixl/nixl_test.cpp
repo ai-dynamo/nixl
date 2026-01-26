@@ -273,7 +273,7 @@ int main(int argc, char *argv[]) {
 
     std::transform(role.begin(), role.end(), role.begin(), ::tolower);
 
-    if ((role.compare(initiator) != 0) && (role.compare(target) != 0)) {
+    if (role != initiator && role != target) {
         std::cerr << "Invalid role. Use 'initiator' or 'target'."
                   << "Currently " << role << std::endl;
         return 1;
