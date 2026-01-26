@@ -1567,32 +1567,29 @@ nixl_status_t
 nixlUcxEngine::prepMemoryView(const nixl_remote_meta_dlist_t &meta_dlist,
                               nixlMemoryViewH &mvh,
                               const nixl_opt_b_args_t *opt_args) const {
-    try {
-        const auto desc_count = static_cast<size_t>(meta_dlist.descCount());
-        std::vector<std::unique_ptr<nixl::ucx::remoteMem>> remote_mems;
-        const size_t worker_id = getWorkerId(opt_args);
-        remote_mems.reserve(desc_count);
-        for (size_t i = 0; i < desc_count; ++i) {
-            if (meta_dlist[i].remoteAgent == nixl_invalid_agent) {
-                remote_mems.emplace_back();
-                continue;
-            }
-
-            auto remoteMd = static_cast<const nixlUcxPublicMetadata *>(meta_dlist[i].metadataP);
-            if (!remoteMd || !remoteMd->conn) {
-                NIXL_ERROR << "No connection found in remote metadata";
-                return NIXL_ERR_NOT_FOUND;
-            }
-
-            remote_mems.emplace_back(
-                new nixl::ucx::remoteMem{*remoteMd->conn->getEp(worker_id),
-                                         static_cast<uint64_t>(meta_dlist[i].addr),
-                                         remoteMd->getRkey(worker_id)});
+    const auto desc_count = static_cast<size_t>(meta_dlist.descCount());
+    std::vector<std::unique_ptr<nixl::ucx::remoteMem>> remote_mems;
+    const size_t worker_id = getWorkerId(opt_args);
+    remote_mems.reserve(desc_count);
+    for (size_t i = 0; i < desc_count; ++i) {
+        if (meta_dlist[i].remoteAgent == nixl_invalid_agent) {
+            remote_mems.emplace_back();
+            continue;
         }
 
-        nixl::ucx::memList memList{remote_mems, *getWorker(worker_id)};
-        mvh = memList.get();
-        memViewMap.emplace(mvh, std::move(memList));
+        auto remoteMd = static_cast<const nixlUcxPublicMetadata *>(meta_dlist[i].metadataP);
+        if (!remoteMd || !remoteMd->conn) {
+            NIXL_ERROR << "No connection found in remote metadata";
+            return NIXL_ERR_NOT_FOUND;
+        }
+
+        remote_mems.emplace_back(new nixl::ucx::remoteMem{*remoteMd->conn->getEp(worker_id),
+                                                          static_cast<uint64_t>(meta_dlist[i].addr),
+                                                          remoteMd->getRkey(worker_id)});
+    }
+
+    try {
+        mvh = nixl::ucx::createMemList(remote_mems, *getWorker(worker_id));
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
@@ -1605,19 +1602,17 @@ nixl_status_t
 nixlUcxEngine::prepMemoryView(const nixl_meta_dlist_t &meta_dlist,
                               nixlMemoryViewH &mvh,
                               const nixl_opt_b_args_t *opt_args) const {
-    try {
-        std::vector<nixlUcxMem> local_mems;
-        const auto desc_count = static_cast<size_t>(meta_dlist.descCount());
-        local_mems.reserve(desc_count);
-        for (size_t i = 0; i < desc_count; ++i) {
-            auto localMd = static_cast<const nixlUcxPrivateMetadata *>(meta_dlist[i].metadataP);
-            local_mems.emplace_back(localMd->mem);
-        }
+    std::vector<nixlUcxMem> local_mems;
+    const auto desc_count = static_cast<size_t>(meta_dlist.descCount());
+    local_mems.reserve(desc_count);
+    for (size_t i = 0; i < desc_count; ++i) {
+        auto localMd = static_cast<const nixlUcxPrivateMetadata *>(meta_dlist[i].metadataP);
+        local_mems.emplace_back(localMd->mem);
+    }
 
-        const size_t worker_id = getWorkerId(opt_args);
-        nixl::ucx::memList memList{local_mems, *getWorker(worker_id)};
-        mvh = memList.get();
-        memViewMap.emplace(mvh, std::move(memList));
+    const size_t worker_id = getWorkerId(opt_args);
+    try {
+        mvh = nixl::ucx::createMemList(local_mems, *getWorker(worker_id));
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
@@ -1628,7 +1623,5 @@ nixlUcxEngine::prepMemoryView(const nixl_meta_dlist_t &meta_dlist,
 
 void
 nixlUcxEngine::releaseMemoryView(nixlMemoryViewH mvh) const {
-    if (memViewMap.erase(mvh) == 0) {
-        NIXL_WARN << "Invalid memory view handle: " << mvh;
-    }
+    nixl::ucx::releaseMemList(mvh);
 }

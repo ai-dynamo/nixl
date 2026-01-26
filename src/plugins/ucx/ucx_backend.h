@@ -320,8 +320,6 @@ private:
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t, std::hash<std::string>, strEqual>
         remoteConnMap;
-
-    mutable std::unordered_map<nixlMemoryViewH, nixl::ucx::memList> memViewMap;
 };
 
 class nixlUcxThread;

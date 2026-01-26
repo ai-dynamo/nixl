@@ -38,19 +38,10 @@ struct remoteMem {
     const rkey &rkey_;
 };
 
-class memList {
-public:
-    memList(const std::vector<std::unique_ptr<remoteMem>> &, nixlUcxWorker &);
-    memList(const std::vector<nixlUcxMem> &, const nixlUcxWorker &);
+void *createMemList(const std::vector<std::unique_ptr<remoteMem>> &, nixlUcxWorker &);
+void *createMemList(const std::vector<nixlUcxMem> &, const nixlUcxWorker &);
 
-    [[nodiscard]] void *
-    get() const noexcept {
-        return memList_.get();
-    }
-
-private:
-    std::unique_ptr<void, void (*)(void *)> memList_;
-};
+void releaseMemList(void *mvh) noexcept;
 } // namespace nixl::ucx
 
 #endif

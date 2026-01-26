@@ -76,7 +76,9 @@ addElements(const std::vector<ucp_device_mem_list_elem_t> &elements) {
     params.num_elements = elements.size();
     return params;
 }
+} // namespace
 
+namespace nixl::ucx {
 void *
 createMemList(const std::vector<std::unique_ptr<remoteMem>> &mems, nixlUcxWorker &worker) {
     const auto elements = createElements(mems);
@@ -113,25 +115,25 @@ createMemList(const std::vector<nixlUcxMem> &mems, const nixlUcxWorker &worker) 
 
     return handle;
 }
-} // namespace
 
-namespace nixl::ucx {
-memList::memList(const std::vector<std::unique_ptr<remoteMem>> &mems, nixlUcxWorker &worker)
-    : memList_{createMemList(mems, worker), &ucp_device_mem_list_release} {}
-
-memList::memList(const std::vector<nixlUcxMem> &mems, const nixlUcxWorker &worker)
-    : memList_{createMemList(mems, worker), &ucp_device_mem_list_release} {}
+void
+releaseMemList(void *mvh) noexcept {
+    ucp_device_mem_list_release(mvh);
+}
 } // namespace nixl::ucx
 #else
 namespace nixl::ucx {
-memList::memList(const std::vector<std::unique_ptr<remoteMem>> &mems, nixlUcxWorker &worker)
-    : memList_{nullptr, nullptr} {
+void *
+createMemList(const std::vector<std::unique_ptr<remoteMem>> &mems, nixlUcxWorker &worker) {
     throw std::runtime_error("UCX GPU device API is not supported");
 }
 
-memList::memList(const std::vector<nixlUcxMem> &mems, const nixlUcxWorker &worker)
-    : memList_{nullptr, nullptr} {
+void *
+createMemList(const std::vector<nixlUcxMem> &mems, const nixlUcxWorker &worker) {
     throw std::runtime_error("UCX GPU device API is not supported");
 }
+
+void
+releaseMemList(void *mvh) noexcept {}
 } // namespace nixl::ucx
 #endif
