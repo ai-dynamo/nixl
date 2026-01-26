@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,8 +35,8 @@ config::modify (std::string_view key, std::string_view value) const {
 
 void
 config::modifyAlways (std::string_view key, std::string_view value) const {
-    const std::string& key_str = std::string(key);
-    const std::string& value_str = std::string(value);
+    std::string key_str(key);
+    std::string value_str(value);
     const auto status = ucp_config_modify(config_.get(), key_str.c_str(), value_str.c_str());
     if (status != UCS_OK) {
         NIXL_DEBUG << "Failed to modify UCX config: " << key_str << "=" << value_str << ": "
