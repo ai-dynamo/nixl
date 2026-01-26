@@ -38,10 +38,13 @@ struct remoteMem {
     const rkey &rkey_;
 };
 
-void *createMemList(const std::vector<std::unique_ptr<remoteMem>> &, nixlUcxWorker &);
-void *createMemList(const std::vector<nixlUcxMem> &, const nixlUcxWorker &);
+void *
+createMemList(const std::vector<std::unique_ptr<remoteMem>> &, nixlUcxWorker &);
+void *
+createMemList(const std::vector<nixlUcxMem> &, const nixlUcxWorker &);
 
-void releaseMemList(void *mvh) noexcept;
+void
+releaseMemList(void *mvh) noexcept;
 } // namespace nixl::ucx
 
 #endif
