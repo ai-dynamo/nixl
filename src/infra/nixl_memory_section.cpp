@@ -88,10 +88,10 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
 }
 
 nixl_status_t
-nixlMemSection::populate(const nixlRemoteDesc &query,
-                         nixlBackendEngine *backend,
-                         nixl_remote_meta_dlist_t &resp) const {
-    section_key_t sec_key = std::make_pair(VRAM_SEG, backend);
+nixlMemSection::addElement(const nixlRemoteDesc &query,
+                           nixlBackendEngine *backend,
+                           nixl_remote_meta_dlist_t &resp) const {
+    const section_key_t sec_key{VRAM_SEG, backend};
     const auto it = sectionMap.find(sec_key);
     if (it == sectionMap.end()) {
         return NIXL_ERR_NOT_FOUND;

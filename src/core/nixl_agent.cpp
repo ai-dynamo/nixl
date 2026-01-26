@@ -36,8 +36,6 @@ static const std::vector<std::vector<std::string>> illegal_plugin_combinations =
     {"GDS", "GDS_MT"},
 };
 const std::string nixl_invalid_agent = "INVALID_AGENT";
-constexpr std::string_view nixl_backend_not_found{
-    "No backend supports the required transfer registrations."};
 
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
@@ -939,7 +937,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     if (!handle->engine) {
-        NIXL_ERROR_FUNC << nixl_backend_not_found;
+        NIXL_ERROR_FUNC << "no specified or potential backend had the required "
+                           "registrations to be able to do the transfer";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
@@ -1838,18 +1837,16 @@ backend_set_t
 nixlAgentData::getBackends(const nixl_opt_args_t *opt_args,
                            nixlMemSection *section,
                            nixl_mem_t mem_type) {
-    backend_set_t backends;
-    if (opt_args) {
+    if (opt_args && !opt_args->backends.empty()) {
+        backend_set_t backends;
         for (const auto &backend : opt_args->backends) {
             backends.insert(backend->engine);
         }
-    }
 
-    if (!backends.empty()) {
         return backends;
     }
 
-    backend_set_t *mem_type_backends{section->queryBackends(mem_type)};
+    const auto mem_type_backends = section->queryBackends(mem_type);
     return mem_type_backends ? *mem_type_backends : backend_set_t{};
 }
 
@@ -1857,12 +1854,12 @@ nixl_status_t
 nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
                           nixlMemoryViewH &mvh,
                           const nixl_opt_args_t *extra_params) const {
-    NIXL_SHARED_LOCK_GUARD(data->lock);
-
     const auto desc_count = static_cast<size_t>(dlist.descCount());
-    const nixl_mem_t mem_type{dlist.getType()};
+    const auto mem_type = dlist.getType();
     nixl_remote_meta_dlist_t remote_meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     for (size_t i = 0; i < desc_count; ++i) {
         const auto &desc = dlist[i];
         if (desc.remoteAgent == nixl_invalid_agent) {
@@ -1877,8 +1874,8 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
         }
 
         if (engine) {
-            // Engine is already selected, populate the remote metadata
-            const auto status = it->second->populate(desc, engine, remote_meta_dlist);
+            // Engine has already been selected, add element to the remote metadata
+            const auto status = it->second->addElement(desc, engine, remote_meta_dlist);
             if (status != NIXL_SUCCESS) {
                 return status;
             }
@@ -1886,10 +1883,11 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
             continue;
         }
 
-        // Engine is not selected, try to find a backend that can populate the remote metadata
-        const backend_set_t backends{data->getBackends(extra_params, it->second, mem_type)};
+        // Engine has not been selected yet, try to find a backend that can add an element to the
+        // remote metadata
+        const auto backends = data->getBackends(extra_params, it->second, mem_type);
         for (const auto &backend : backends) {
-            const nixl_status_t status{it->second->populate(desc, backend, remote_meta_dlist)};
+            const auto status = it->second->addElement(desc, backend, remote_meta_dlist);
             if (status == NIXL_SUCCESS) {
                 NIXL_DEBUG << "Selected backend: " << backend->getType();
                 engine = backend;
@@ -1897,14 +1895,15 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
             }
         }
 
-        // If no backend can populate the remote metadata, return an error
+        // If no backend can add an element to the remote metadata, return an error
         if (!engine) {
             break;
         }
     }
 
     if (!engine) {
-        NIXL_ERROR_FUNC << nixl_backend_not_found;
+        NIXL_ERROR_FUNC
+            << "A backend capable of creating a list of remote memory descriptors was not found";
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -1913,7 +1912,7 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
         opt_args.customParam = extra_params->customParam;
     }
 
-    const nixl_status_t status{engine->prepMemoryView(remote_meta_dlist, mvh, &opt_args)};
+    const auto status = engine->prepMemoryView(remote_meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
         data->mvhToEngine.emplace(mvh, *engine);
     }
@@ -1925,14 +1924,14 @@ nixl_status_t
 nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &dlist,
                           nixlMemoryViewH &mvh,
                           const nixl_opt_args_t *extra_params) const {
-    NIXL_SHARED_LOCK_GUARD(data->lock);
-
-    const nixl_mem_t mem_type{dlist.getType()};
-    const backend_set_t backends{data->getBackends(extra_params, data->memorySection, mem_type)};
+    const auto mem_type = dlist.getType();
     nixl_meta_dlist_t meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    const auto backends = data->getBackends(extra_params, data->memorySection, mem_type);
     for (const auto &backend : backends) {
-        const nixl_status_t status{data->memorySection->populate(dlist, backend, meta_dlist)};
+        const auto status = data->memorySection->populate(dlist, backend, meta_dlist);
         if (status == NIXL_SUCCESS) {
             NIXL_DEBUG << "Selected backend: " << backend->getType();
             engine = backend;
@@ -1941,7 +1940,8 @@ nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &dlist,
     }
 
     if (!engine) {
-        NIXL_ERROR_FUNC << nixl_backend_not_found;
+        NIXL_ERROR_FUNC
+            << "A backend capable of creating a list of local memory descriptors was not found";
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -1950,7 +1950,7 @@ nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &dlist,
         opt_args.customParam = extra_params->customParam;
     }
 
-    const nixl_status_t status{engine->prepMemoryView(meta_dlist, mvh, &opt_args)};
+    const auto status = engine->prepMemoryView(meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
         data->mvhToEngine.emplace(mvh, *engine);
     }
@@ -1964,7 +1964,7 @@ nixlAgent::releaseMemoryView(nixlMemoryViewH mvh) const {
 
     const auto it = data->mvhToEngine.find(mvh);
     if (it == data->mvhToEngine.end()) {
-        NIXL_WARN << "Invalid mvh[" << mvh << "] ";
+        NIXL_WARN << "Invalid memory view handle: " << mvh;
         return;
     }
 
