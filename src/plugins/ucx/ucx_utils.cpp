@@ -32,7 +32,6 @@ extern "C" {
 #endif
 }
 
-#include "nixl_types.h"
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
@@ -405,7 +404,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                const std::string &engine_config) {
     unsigned major_version, minor_version, release_number;
     ucp_get_version(&major_version, &minor_version, &release_number);
-    ucp_version = UCP_VERSION(major_version, minor_version);
+    ucpVersion_ = UCP_VERSION(major_version, minor_version);
 
     // With strict synchronization model nixlAgent serializes access to backends, with more
     // permissive models backends need to account for concurrent access and ensure their internal
@@ -445,7 +444,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     config.modify("RCACHE_MAX_UNRELEASED", "1024");
     config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_device_channels));
 
-    if (ucp_version >= UCP_VERSION(1, 19)) {
+    if (ucpVersion_ >= UCP_VERSION(1, 19)) {
         config.modify("MAX_COMPONENT_MDS", "32");
     } else {
         NIXL_WARN << "UCX version is less than 1.19, CUDA support is limited, "
@@ -638,10 +637,10 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
     ucp_context_attr_t attr = {
         .field_mask = UCP_ATTR_FIELD_MEMORY_TYPES,
     };
-    const auto ctx_query_status = ucp_context_query(ctx, &attr);
-    if (ctx_query_status != UCS_OK) {
+    const auto status = ucp_context_query(ctx, &attr);
+    if (status != UCS_OK) {
         throw std::runtime_error("Failed to query UCX context: " +
-                                 std::string(ucs_status_string(ctx_query_status)));
+                                 std::string(ucs_status_string(status)));
     }
 
     const nixl::hwInfo hw_info;
@@ -655,7 +654,8 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
                   << " NVIDIA GPU(s) were detected, but UCX CUDA support was not found! "
                   << "GPU memory is not supported.";
     }
-    if (ucp_version >= UCP_VERSION(1, 21)) {
+
+    if (ucpVersion_ >= UCP_VERSION(1, 21)) {
         // `UCS_MEMORY_TYPE_RDMA` is included in `memory_types` only from UCX 1.21
         if (hw_info.numIbDevices > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_RDMA)) {
             NIXL_WARN << hw_info.numIbDevices
