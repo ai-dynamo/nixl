@@ -290,13 +290,13 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     endif
 
     summary({
-    'UCX GPU Device API'  : ucx_gpu_device_api_available,
-    'GPU-side compile'    : have_gpu_side,
-    'Host-side compile'   : have_host_side,
-    'nvcc available'      : nvcc_prog.found(),
-    'DOCA GPUNETIO found' : doca_gpunetio_dep.found(),
+    'UCX GPU Device API'    : ucx_gpu_device_api_available,
+    'GPU-side compile'      : have_gpu_side,
+    'Host-side compile'     : have_host_side,
+    'nvcc available'        : nvcc_prog.found(),
+    'DOCA GPUNETIO found'   : doca_gpunetio_dep.found(),
     'UCX GPU Device API V2' : ucx_gpu_device_api_v2_available,
-    'Host-side compile V2' : have_host_side_v2,
+    'Host-side compile V2'  : have_host_side_v2,
   }, section: 'UCX GPU Device API', bool_yn: true)
 endif
 
