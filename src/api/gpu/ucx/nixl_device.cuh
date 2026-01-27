@@ -371,6 +371,7 @@ nixlAtomicAdd(uint64_t value,
  *
  * @param mvh    [in]  Memory view handle (remote buffers)
  * @param index  [in]  Index in the memory view
+
  * @return Pointer to the mapped memory, or nullptr if not available.
  */
 __device__ inline void *
