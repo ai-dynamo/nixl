@@ -36,6 +36,12 @@ enum class nixl_gpu_level_t : uint64_t {
 };
 
 /**
+ * @enum  nixl_gpu_flags_t
+ * @brief An enumeration of different flags for GPU transfer requests.
+ */
+enum class nixl_gpu_flags_t : uint64_t { NO_DELAY = UCP_DEVICE_FLAG_NODELAY };
+
+/**
  * @brief Parameters for GPU transfer requests with safe type conversion.
  */
 struct nixlGpuXferReqParams {
@@ -311,7 +317,20 @@ nixlPut(const nixlMemDesc &src,
         unsigned channel_id = 0,
         unsigned flags = 0,
         nixlGpuXferStatusH *xfer_status = nullptr) {
-    return NIXL_ERR_NOT_SUPPORTED;
+    auto src_mem_list = static_cast<ucp_device_local_mem_list_h>(src.mvh);
+    auto dst_mem_list = static_cast<ucp_device_remote_mem_list_h>(dst.mvh);
+    ucp_device_request_t *ucp_request{xfer_status ? &xfer_status->device_request : nullptr};
+    const auto status = ucp_device_put<static_cast<ucs_device_level_t>(level)>(src_mem_list,
+                                                                               src.index,
+                                                                               src.offset,
+                                                                               dst_mem_list,
+                                                                               dst.index,
+                                                                               dst.offset,
+                                                                               size,
+                                                                               channel_id,
+                                                                               flags,
+                                                                               ucp_request);
+    return nixlGpuConvertUcsStatus(status);
 }
 
 /**
@@ -336,7 +355,11 @@ nixlAtomicAdd(uint64_t value,
               unsigned channel_id = 0,
               unsigned flags = 0,
               nixlGpuXferStatusH *xfer_status = nullptr) {
-    return NIXL_ERR_NOT_SUPPORTED;
+    auto mem_list = static_cast<ucp_device_remote_mem_list_h>(counter.mvh);
+    ucp_device_request_t *ucp_request{xfer_status ? &xfer_status->device_request : nullptr};
+    const auto status = ucp_device_counter_inc<static_cast<ucs_device_level_t>(level)>(
+        value, mem_list, counter.index, counter.offset, channel_id, flags, ucp_request);
+    return nixlGpuConvertUcsStatus(status);
 }
 
 /**
@@ -351,10 +374,12 @@ nixlAtomicAdd(uint64_t value,
 
  * @return Pointer to the mapped memory, or nullptr if not available.
  */
-template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
-__device__ void *
+__device__ inline void *
 nixlGetPtr(nixlMemoryViewH mvh, size_t index) {
-    return nullptr;
+    auto mem_list = static_cast<ucp_device_remote_mem_list_h>(mvh);
+    void *ptr = nullptr;
+    ucp_device_get_ptr(mem_list, index, &ptr);
+    return ptr;
 }
 
 #endif // _NIXL_DEVICE_CUH
