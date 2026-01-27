@@ -101,6 +101,13 @@ if cuda_available
                              args: cuda_inc_path != '' ? '-I' + cuda_inc_path : [])
         cuda_fabric_available = true
     endif
+    add_project_arguments('-forward-unknown-to-host-compiler', language: 'cuda')
+    add_project_arguments('-rdc=true', language: 'cuda')
+
+    nvcc_flags_link = []
+    nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
+    nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
+    add_project_link_arguments(nvcc_flags_link, language: 'cuda')
 endif
 
 # OpenMP
@@ -150,6 +157,28 @@ endif
 if cuda_fabric_available
     add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
 endif
+
+doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
+
+have_nixl_gdaki = false
+ucxpath_inc = get_option('ucxpath_inc')
+if ucxpath_inc != ''
+    if cuda_available and add_languages('cuda', required: false)
+	nvcc = meson.get_compiler('cuda')
+        test_code = '''#include "gpu/ucx/nixl_device.cuh"
+                       int main() { return 0; }'''
+
+        if nvcc.compiles(test_code,
+                        include_directories: include_directories(nixl_inc, ucxpath_inc),
+                        dependencies: [cuda_dep, doca_gpunetio_dep],
+                        args: nvcc_flags_link)
+            have_nixl_gdaki = true
+            add_project_arguments('-DHAVE_NIXL_DEV_API', language: ['cpp', 'cuda'])
+        endif
+    endif
+endif
+
+message('Using NIXL Device API: ', have_nixl_gdaki)
 
 # Subprojects
 subdir('src/utils')

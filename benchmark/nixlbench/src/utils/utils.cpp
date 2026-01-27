@@ -129,6 +129,25 @@ const std::vector<xferBenchParamInfo> xbench_params = {
     NB_ARG_INT32(num_files, 1, "Number of files used by benchmark"),
     NB_ARG_BOOL(storage_enable_direct, false, "Enable direct I/O for storage operations"),
 
+    // Add GDAKI options for NIXL worker
+    NB_ARG_BOOL(enable_gdaki, false, "Enable GDAKI (only used with nixl worker)"),
+
+    // GDAKI kernel configuration parameters
+    NB_ARG_STRING(gdaki_gpu_level,
+                  "block",
+                  "GPU thread coordination pattern for transfers [thread|warp|block] "
+                  "(default: block)"),
+    NB_ARG_INT32(gdaki_threads_per_block,
+                 256,
+                 "Number of CUDA threads per block for GDAKI kernels (default: 256, range: "
+                 "1-1024)"),
+    NB_ARG_INT32(gdaki_blocks_per_grid,
+                 1,
+                 "Number of CUDA blocks to launch for concurrent transfers (default: 1)"),
+    NB_ARG_BOOL(gdaki_enable_partial_transfers,
+                false,
+                "Enable testing of partial/selective transfer functionality (default: false)"),
+
     // GDS options - only used when backend is GDS
     NB_ARG_INT32(gds_batch_pool_size,
                  32,
@@ -240,6 +259,13 @@ int xferBenchConfig::num_threads = 0;
 bool xferBenchConfig::enable_pt = false;
 size_t xferBenchConfig::progress_threads = 0;
 bool xferBenchConfig::enable_vmm = false;
+bool xferBenchConfig::enable_gdaki = false;
+std::string xferBenchConfig::gdaki_gpu_device_list;
+// GDAKI kernel configuration parameters
+std::string xferBenchConfig::gdaki_gpu_level;
+size_t xferBenchConfig::gdaki_threads_per_block = 0;
+size_t xferBenchConfig::gdaki_blocks_per_grid = 0;
+bool xferBenchConfig::gdaki_enable_partial_transfers = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::benchmark_group = "default";
@@ -390,6 +416,56 @@ xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
         progress_threads = NB_ARG(progress_threads);
         device_list = NB_ARG(device_list);
         enable_vmm = NB_ARG(enable_vmm);
+        enable_gdaki = NB_ARG(enable_gdaki);
+
+        // Load GDAKI kernel configuration parameters
+        if (enable_gdaki) {
+            gdaki_gpu_device_list = NB_ARG(gdaki_gpu_device_list);
+            gdaki_threads_per_block = NB_ARG(gdaki_threads_per_block);
+            gdaki_blocks_per_grid = NB_ARG(gdaki_blocks_per_grid);
+            gdaki_enable_partial_transfers = NB_ARG(gdaki_enable_partial_transfers);
+
+            // Validate GDAKI configuration
+            if (xferBenchConfig::xferBenchConfigGpuLevels.find(NB_ARG(gdaki_gpu_level)) ==
+                xferBenchConfig::xferBenchConfigGpuLevels.end()) {
+                std::cerr << "Invalid GDAKI gpu level: " << NB_ARG(gdaki_gpu_level)
+                          << ". Must be: " << xferBenchConfig::xferBenchConfigGpuLevelThread << ", "
+                          << xferBenchConfig::xferBenchConfigGpuLevelWarp << " or "
+                          << xferBenchConfig::xferBenchConfigGpuLevelBlock << std::endl;
+                return -1;
+            }
+
+            gdaki_gpu_level = NB_ARG(gdaki_gpu_level);
+
+            // Inform about gpu coordination level support
+            if (xferBenchConfig::xferBenchConfigGpuLevelBlock !=
+                std::string_view(gdaki_gpu_level)) {
+                if (gdaki_enable_partial_transfers) {
+                    std::cout << "INFO: GDAKI GPU Coordination level '" << gdaki_gpu_level
+                              << "' gpu coordination with partial transfers enabled." << std::endl;
+                } else {
+                    std::cout << "INFO: GDAKI GPU Coordination level '" << gdaki_gpu_level
+                              << "' will fall back to 'block' coordination (enable partial "
+                                 "transfers for full support)."
+                              << std::endl;
+                    gdaki_gpu_level = xferBenchConfig::xferBenchConfigGpuLevelBlock;
+                }
+            }
+
+            if (gdaki_threads_per_block < 1 ||
+                gdaki_threads_per_block > XFERBENCH_DEV_API_MAX_THREADS) {
+                std::cerr << "Invalid GDAKI threads per block: " << gdaki_threads_per_block
+                          << ". Must be between 1 and " << XFERBENCH_DEV_API_MAX_THREADS
+                          << std::endl;
+                return -1;
+            }
+
+            if (gdaki_blocks_per_grid < XFERBENCH_DEV_API_MIN_BLOCKS_PER_GRID) {
+                std::cerr << "Invalid GDAKI blocks per grid: " << gdaki_blocks_per_grid
+                          << ". Must be >= 1" << std::endl;
+                return -1;
+            }
+        }
 
 #if defined(HAVE_CUDA) && !defined(HAVE_CUDA_FABRIC)
         if (enable_vmm) {
@@ -467,6 +543,16 @@ xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
                 obj_req_checksum != XFERBENCH_OBJ_REQ_CHECKSUM_REQUIRED) {
                 std::cerr << "Invalid OBJ S3 required checksum: " << obj_req_checksum
                           << ". Must be one of [supported, required]" << std::endl;
+                return -1;
+            }
+        }
+
+        // If GDAKI is enabled, check for GPU device list
+        if (enable_gdaki) {
+            if (gdaki_gpu_device_list.empty()) {
+                std::cerr
+                    << "GDAKI is enabled but no GPU device list provided (--gdaki_gpu_device_list)"
+                    << std::endl;
                 return -1;
             }
         }
@@ -613,6 +699,18 @@ xferBenchConfig::printConfig() {
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption("Enable VMM (--enable_vmm=[0,1])", std::to_string(enable_vmm));
+        printOption("Enable GDAKI (--enable_gdaki=[0,1])", std::to_string(enable_gdaki));
+        if (enable_gdaki) {
+            printOption("GDAKI GPU device list (--gdaki_gpu_device_list=dev1,dev2,...)",
+                        gdaki_gpu_device_list);
+            printOption("GDAKI GPU level (--gdaki_gpu_level=[thread,warp,block])", gdaki_gpu_level);
+            printOption("GDAKI threads per block (--gdaki_threads_per_block=N)",
+                        std::to_string(gdaki_threads_per_block));
+            printOption("GDAKI blocks per grid (--gdaki_blocks_per_grid=N)",
+                        std::to_string(gdaki_blocks_per_grid));
+            printOption("GDAKI enable partial transfers (--gdaki_enable_partial_transfers=[0,1])",
+                        std::to_string(gdaki_enable_partial_transfers));
+        }
 
         // Print GDS options if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
