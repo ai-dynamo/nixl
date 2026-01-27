@@ -22,6 +22,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #include "nixl_log.h"
 
@@ -36,13 +37,13 @@ namespace {
     constexpr unsigned long kPciClassGpuDisplay = 0x0300;
     constexpr unsigned long kPciClassGpu3d = 0x0302;
 
-    std::optional<unsigned long>
+    [[nodiscard]] std::optional<unsigned long>
     readSysfsUlong(const std::filesystem::path &sysfs_path,
-                   const std::string &file_name,
-                   const std::string &device_name) {
+                   std::string_view file_name,
+                   std::string_view device_name) noexcept {
         std::ifstream file(sysfs_path / file_name);
         if (!file.is_open()) {
-            NIXL_TRACE << "Failed to read " << file_name << " for device " << device_name;
+            NIXL_TRACE << "Failed to open " << file_name << " for device " << device_name;
             return std::nullopt;
         }
 
@@ -82,7 +83,7 @@ hwInfo::hwInfo() {
         const std::filesystem::path device_path = entry.path();
 
         // Read vendor ID
-        auto vendor_id = readSysfsUlong(device_path, "vendor", device_name);
+        const auto vendor_id = readSysfsUlong(device_path, "vendor", device_name);
         if (!vendor_id) {
             continue;
         }
