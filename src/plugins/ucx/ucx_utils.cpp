@@ -20,9 +20,6 @@
 #include <algorithm>
 #include <cstring>
 #include <exception>
-#include <filesystem>
-#include <fstream>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -36,6 +33,7 @@ extern "C" {
 }
 
 #include "nixl_types.h"
+#include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
 #include "serdes/serdes.h"
@@ -635,96 +633,6 @@ nixlUcxContext::getGpuSignalSize() const {
 #endif
 }
 
-namespace {
-struct nixlUcxHardwareInfo {
-    unsigned numNvidiaGpus = 0;
-    unsigned numIbDevices = 0;
-
-    nixlUcxHardwareInfo() {
-        std::error_code ec;
-        std::filesystem::directory_iterator dir_iter(kPciDevicePath, ec);
-        if (ec) {
-            throw std::runtime_error("Failed to scan PCI devices directory: " + ec.message());
-        }
-
-        for (const auto &entry : dir_iter) {
-            const std::string device_name = entry.path().filename().string();
-
-            // Skip hidden entries
-            if (device_name.empty() || device_name[0] == '.') {
-                continue;
-            }
-
-            const std::filesystem::path device_path = entry.path();
-
-            // Read vendor ID
-            auto vendor_id = readSysfsUlong(device_path, "vendor", device_name);
-            if (!vendor_id) {
-                continue;
-            }
-
-            // Read class ID
-            auto class_id = readSysfsUlong(device_path, "class", device_name);
-            if (!class_id) {
-                continue;
-            }
-            *class_id >>= 8;
-
-            // Check for InfiniBand device
-            if ((*vendor_id == kPciVendorMellanox) && (*class_id == kPciClassIb)) {
-                numIbDevices++;
-                NIXL_DEBUG << "Found IB device #" << numIbDevices << ": " << device_name
-                           << " vendor=0x" << std::hex << *vendor_id << " class=0x" << *class_id
-                           << std::dec;
-            }
-
-            // Check for GPU
-            if ((*vendor_id == kPciVendorNvidia) &&
-                ((*class_id == kPciClassGpuDisplay) || (*class_id == kPciClassGpu3d))) {
-                numNvidiaGpus++;
-                NIXL_DEBUG << "Found GPU #" << numNvidiaGpus << ": " << device_name << " vendor=0x"
-                           << std::hex << *vendor_id << " class=0x" << *class_id << std::dec;
-            }
-        }
-    }
-
-private:
-    static constexpr const char *kPciDevicePath = "/sys/bus/pci/devices";
-    static constexpr unsigned long kPciVendorMellanox = 0x15b3;
-    static constexpr unsigned long kPciVendorNvidia = 0x10de;
-    static constexpr unsigned long kPciClassIb = 0x0207;
-    static constexpr unsigned long kPciClassGpuDisplay = 0x0300;
-    static constexpr unsigned long kPciClassGpu3d = 0x0302;
-
-    static std::optional<unsigned long>
-    readSysfsUlong(const std::filesystem::path &sysfs_path,
-                   const std::string &file_name,
-                   const std::string &device_name) {
-        std::ifstream file(sysfs_path / file_name);
-        if (!file.is_open()) {
-            NIXL_TRACE << "Failed to read " << file_name << " for device " << device_name;
-            return std::nullopt;
-        }
-
-        std::string value;
-        if (!std::getline(file, value)) {
-            NIXL_TRACE << "Failed to read " << file_name << " for device " << device_name;
-            return std::nullopt;
-        }
-
-        try {
-            return std::stoul(value, nullptr, 0);
-        }
-        catch (const std::exception &e) {
-            NIXL_TRACE << "Failed to parse " << file_name << " for device " << device_name << ": "
-                       << e.what();
-            return std::nullopt;
-        }
-    }
-};
-
-} // namespace
-
 void
 nixlUcxContext::warnAboutHardwareSupportMismatch() const {
     ucp_context_attr_t attr = {
@@ -736,9 +644,9 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
                                  std::string(ucs_status_string(ctx_query_status)));
     }
 
-    const nixlUcxHardwareInfo hw_info;
+    const nixl::hwInfo hw_info;
 
-    NIXL_DEBUG << "nixlUcxHardwareInfo { "
+    NIXL_DEBUG << "hwInfo { "
                << "numNvidiaGpus=" << hw_info.numNvidiaGpus << ", "
                << "numIbDevices=" << hw_info.numIbDevices << " }";
 
