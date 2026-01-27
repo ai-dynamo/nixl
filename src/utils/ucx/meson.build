@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +21,11 @@ endif
 
 ucx_utils_inc_dirs = include_directories('.')
 
-ucx_utils_sources = ['ucx_utils.cpp', 'ucx_utils.h', 'config.h', 'config.cpp', 'rkey.cpp', 'rkey.h', 'gpu_xfer_req_h.cpp', 'gpu_xfer_req_h.h']
+ucx_utils_sources = ['config.cpp',
+                     'gpu_xfer_req_h.cpp',
+                     'mem_list.cpp',
+                     'rkey.cpp',
+                     'ucx_utils.cpp']
 
 ucx_utils_lib = library('ucx_utils',
            ucx_utils_sources,

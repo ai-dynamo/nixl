@@ -43,7 +43,7 @@ $ meson setup <name_of_build_dir> \
     -Dlibfabric_path=/path/to/libfabric
 
 # Build and install
-$ cd build
+$ cd <name_of_build_dir>
 $ ninja && ninja install
 ```
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -83,6 +83,9 @@ class nixlAgentData {
         // Bookkeeping from GPU request handles to backend engines
         std::unordered_map<nixlGpuXferReqH, nixlBackendEngine *> gpuReqToEngine;
 
+        // Bookkeeping from memory view handles to backend engines
+        std::unordered_map<nixlMemoryViewH, nixlBackendEngine &> mvhToEngine;
+
         // Local section, and Remote sections and their available common backends
         nixlLocalSection*                                        memorySection;
 
@@ -118,6 +121,8 @@ class nixlAgentData {
         loadRemoteSections(const std::string &remote_name, nixlSerDes &sd);
         nixl_status_t
         invalidateRemoteData(const std::string &remote_name);
+        [[nodiscard]] static backend_set_t
+        getBackends(const nixl_opt_args_t *opt_args, nixlMemSection *section, nixl_mem_t mem_type);
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);

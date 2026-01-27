@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -182,6 +182,26 @@ class nixlBackendEngine {
                       const nixl_opt_b_args_t *opt_args = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
+
+        // Prepare a memory view for remote buffers
+        virtual nixl_status_t
+        prepMemoryView(const nixl_remote_meta_dlist_t &,
+                       nixlMemoryViewH &,
+                       const nixl_opt_b_args_t * = nullptr) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
+        // Prepare a memory view for local buffers
+        virtual nixl_status_t
+        prepMemoryView(const nixl_meta_dlist_t &,
+                       nixlMemoryViewH &,
+                       const nixl_opt_b_args_t * = nullptr) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
+        // Release memory view handle
+        virtual void
+        releaseMemoryView(nixlMemoryViewH mvh) const {}
 
         // *** Needs to be implemented if supportsRemote() is true *** //
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -378,6 +378,54 @@ class nixlAgent {
         nixl_status_t
         prepGpuSignal(const nixl_reg_dlist_t &signal_descs,
                       const nixl_opt_args_t *extra_params) const;
+
+        /**
+         * @brief  Prepare a memory view handle for remote buffers.
+         *
+         * Prepare a memory view handle @a mvh for the remote memory buffers described by the
+         * descriptor list @a dlist . The handle can be later used to perform a memory transfer
+         * using @ref nixlPut, @ref nixlAtomicAdd. The preparation should be done on the initiator
+         * agent. NIXL automatically determines the backend that can perform the preparation. If a
+         * list of backends hints is provided (via extra_params), the selection is limited to the
+         * specified backends.
+         *
+         * @param  dlist         [in]  Descriptor list for the remote buffers
+         * @param  mvh           [out] Memory view handle for the remote buffers
+         * @param  extra_params  [in]  Optional parameters
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        prepMemoryView(const nixl_remote_dlist_t &dlist,
+                       nixlMemoryViewH &mvh,
+                       const nixl_opt_args_t *extra_params = nullptr) const;
+
+        /**
+         * @brief  Prepare a memory view handle for local buffers.
+         *
+         * Prepare a memory view handle @a mvh for the local memory buffers described by the
+         * descriptor list @a dlist . The handle can be later used to perform a memory transfer
+         * using @ref nixlPut. The preparation should be done on the initiator agent. NIXL
+         * automatically determines the backend that can perform the preparation. If a list of
+         * backends hints is provided (via extra_params), the selection is limited to the specified
+         * backends.
+         *
+         * @param  dlist         [in]  Descriptor list for the local buffers
+         * @param  mvh           [out] Memory view handle for the local buffers
+         * @param  extra_params  [in]  Optional parameters
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        prepMemoryView(const nixl_xfer_dlist_t &dlist,
+                       nixlMemoryViewH &mvh,
+                       const nixl_opt_args_t *extra_params = nullptr) const;
+
+        /**
+         * @brief  Release a memory view handle.
+         *
+         * @param  mvh           [in] Memory view handle to be released
+         */
+        void
+        releaseMemoryView(nixlMemoryViewH mvh) const;
 
         /**
          * @brief  Release the prepared descriptor list handle `dlist_hndl`

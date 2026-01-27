@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -105,6 +105,10 @@ class nixlMemSection {
                                 nixlBackendEngine* backend,
                                 nixl_meta_dlist_t &resp) const;
 
+        [[nodiscard]] nixl_status_t
+        addElement(const nixlRemoteDesc &query,
+                   nixlBackendEngine *backend,
+                   nixl_remote_meta_dlist_t &resp) const;
 
         virtual ~nixlMemSection () = 0; // Making the class abstract
 };

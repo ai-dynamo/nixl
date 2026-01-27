@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -93,6 +93,72 @@ TestSingleWriteKernel(nixlGpuXferReqH req_hdnl,
     }
 }
 
+#ifdef HAVE_UCX_GPU_DEVICE_API_V2
+struct putParams {
+    nixlMemDesc src;
+    nixlMemDesc dst;
+    size_t size;
+    unsigned channelId{0};
+    unsigned flags{static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY)};
+};
+
+template<nixl_gpu_level_t level>
+__global__ void
+putKernel(putParams put_params,
+          size_t num_iters,
+          unsigned long long *start_time,
+          unsigned long long *end_time) {
+    __shared__ nixlGpuXferStatusH xfer_statuses[MAX_THREADS];
+    nixlGpuXferStatusH xfer_status = xfer_statuses[GetReqIdx<level>()];
+
+    assert(GetReqIdx<level>() < MAX_THREADS);
+
+    if (start_time && (threadIdx.x == 0)) {
+        *start_time = GetTimeNs();
+    }
+
+    __syncthreads();
+
+    for (size_t i = 0; i < num_iters; ++i) {
+        auto status = nixlPut<level>(put_params.src,
+                                     put_params.dst,
+                                     put_params.size,
+                                     put_params.channelId,
+                                     put_params.flags,
+                                     &xfer_status);
+        if (status != NIXL_IN_PROG) {
+            printf("Thread %d: nixlPut failed iteration %zu: status=%d (0x%x)\n",
+                   threadIdx.x,
+                   i,
+                   status,
+                   static_cast<unsigned int>(status));
+            return;
+        }
+
+        do {
+            status = nixlGpuGetXferStatus<level>(xfer_status);
+        } while (status == NIXL_IN_PROG);
+
+        if (status != NIXL_SUCCESS) {
+            printf("Thread %d: Transfer completion failed iteration %zu: status=%d\n",
+                   threadIdx.x,
+                   i,
+                   status);
+            return;
+        }
+    }
+
+    if (end_time && (threadIdx.x == 0)) {
+        *end_time = GetTimeNs();
+    }
+}
+
+__global__ void
+getPtrKernel(nixlMemoryViewH mvh, size_t index, void **ptr) {
+    *ptr = nixlGetPtr(mvh, index);
+}
+#endif
+
 template<nixl_gpu_level_t level>
 nixl_status_t
 LaunchSingleWriteTest(unsigned num_threads,
@@ -132,6 +198,76 @@ LaunchSingleWriteTest(unsigned num_threads,
 
     return ret;
 }
+
+#ifdef HAVE_UCX_GPU_DEVICE_API_V2
+template<typename T> class gpuVar {
+public:
+    gpuVar() : ptr_{allocate(), &deallocate} {
+        cudaMemset(ptr_.get(), 0, sizeof(T));
+    }
+
+    T *
+    get() const {
+        return ptr_.get();
+    }
+
+    T
+    operator*() const {
+        T value;
+        cudaMemcpy(&value, ptr_.get(), sizeof(T), cudaMemcpyDeviceToHost);
+        return value;
+    }
+
+private:
+    static T *
+    allocate() {
+        T *ptr;
+        cudaMalloc(&ptr, sizeof(T));
+        return ptr;
+    }
+
+    static void
+    deallocate(T *ptr) {
+        cudaFree(ptr);
+    }
+
+    std::unique_ptr<T, void (*)(T *)> ptr_;
+};
+
+struct gpuTimer {
+    gpuVar<unsigned long long> start_;
+    gpuVar<unsigned long long> end_;
+};
+
+template<nixl_gpu_level_t level>
+nixl_status_t
+launchPutKernel(const putParams &put_params,
+                size_t num_iters,
+                gpuTimer *gpu_timer,
+                unsigned num_threads = 32) {
+    unsigned long long *start_time{nullptr};
+    unsigned long long *end_time{nullptr};
+    if (gpu_timer) {
+        start_time = gpu_timer->start_.get();
+        end_time = gpu_timer->end_.get();
+    }
+    putKernel<level><<<1, num_threads>>>(put_params, num_iters, start_time, end_time);
+
+    auto err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("Failed to synchronize: %s\n", cudaGetErrorString(err));
+        return NIXL_ERR_BACKEND;
+    }
+
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("Failed to launch kernel: %s\n", cudaGetErrorString(err));
+        return NIXL_ERR_BACKEND;
+    }
+
+    return NIXL_SUCCESS;
+}
+#endif
 
 class SingleWriteTest : public DeviceApiTestBase {
 protected:
@@ -190,6 +326,18 @@ protected:
         nixlDescList<Desc> desc_list(mem_type);
         for (const auto &buffer : buffers) {
             desc_list.addDesc(Desc(buffer, buffer.getSize(), uint64_t(DEV_ID)));
+        }
+        return desc_list;
+    }
+
+    template<typename Desc>
+    nixlDescList<Desc>
+    makeDescList(const std::vector<MemBuffer> &buffers,
+                 nixl_mem_t mem_type,
+                 const std::string &agent_name) {
+        nixlDescList<Desc> desc_list(mem_type);
+        for (const auto &buffer : buffers) {
+            desc_list.addDesc(Desc(buffer, buffer.getSize(), uint64_t(DEV_ID), agent_name));
         }
         return desc_list;
     }
@@ -303,6 +451,26 @@ protected:
             return NIXL_ERR_INVALID_PARAM;
         }
     }
+
+#ifdef HAVE_UCX_GPU_DEVICE_API_V2
+    nixl_status_t
+    dispatchLaunchPutKernel(nixl_gpu_level_t level,
+                            const putParams &put_params,
+                            size_t num_iters,
+                            gpuTimer *gpu_timer = nullptr) {
+        switch (level) {
+        case nixl_gpu_level_t::BLOCK:
+            return launchPutKernel<nixl_gpu_level_t::BLOCK>(put_params, num_iters, gpu_timer);
+        case nixl_gpu_level_t::WARP:
+            return launchPutKernel<nixl_gpu_level_t::WARP>(put_params, num_iters, gpu_timer);
+        case nixl_gpu_level_t::THREAD:
+            return launchPutKernel<nixl_gpu_level_t::THREAD>(put_params, num_iters, gpu_timer);
+        default:
+            ADD_FAILURE() << "Unknown level: " << static_cast<int>(level);
+            return NIXL_ERR_INVALID_PARAM;
+        }
+    }
+#endif
 
 protected:
     static constexpr size_t SENDER_AGENT = 0;
@@ -650,6 +818,187 @@ TEST_P(SingleWriteTest, MultipleWorkersTest) {
     invalidateMD();
 }
 
+#ifdef HAVE_UCX_GPU_DEVICE_API_V2
+TEST_P(SingleWriteTest, SingleWorkerPut) {
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    constexpr size_t size = 4 * 1024;
+    constexpr size_t count = 1;
+    constexpr nixl_mem_t mem_type = VRAM_SEG;
+    createRegisteredMem(getAgent(SENDER_AGENT), size, count, mem_type, src_buffers);
+    createRegisteredMem(getAgent(RECEIVER_AGENT), size, count, mem_type, dst_buffers);
+
+    auto src_data = static_cast<uint32_t *>(static_cast<void *>(src_buffers[0]));
+    cudaMemset(src_data, 0, size);
+
+    constexpr uint32_t pattern = 0xDEADBEEF;
+    cudaMemcpy(src_data, &pattern, sizeof(pattern), cudaMemcpyHostToDevice);
+
+    exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
+
+    nixlMemoryViewH src_mvh;
+    auto status = getAgent(SENDER_AGENT)
+                      .prepMemoryView(makeDescList<nixlBasicDesc>(src_buffers, mem_type), src_mvh);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    nixlMemoryViewH dst_mvh;
+    status = getAgent(SENDER_AGENT)
+                 .prepMemoryView(makeDescList<nixlRemoteDesc>(
+                                     dst_buffers, mem_type, getAgentName(RECEIVER_AGENT)),
+                                 dst_mvh);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    putParams put_params{{src_mvh, 0, 0}, {dst_mvh, 0, 0}, size};
+    constexpr size_t num_iters = 1000;
+    gpuTimer gpu_timer;
+    status = dispatchLaunchPutKernel(GetParam(), put_params, num_iters, &gpu_timer);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    logResultsPublic(size, count, num_iters, *gpu_timer.start_, *gpu_timer.end_);
+
+    uint32_t dst_data;
+    cudaMemcpy(&dst_data,
+               static_cast<uint32_t *>(static_cast<void *>(dst_buffers[0])),
+               sizeof(uint32_t),
+               cudaMemcpyDeviceToHost);
+    EXPECT_EQ(dst_data, pattern) << "Data transfer verification failed. Expected: 0x" << std::hex
+                                 << pattern << ", Got: 0x" << dst_data;
+
+    getAgent(SENDER_AGENT).releaseMemoryView(dst_mvh);
+    getAgent(SENDER_AGENT).releaseMemoryView(src_mvh);
+    invalidateMD();
+}
+
+TEST_P(SingleWriteTest, MultipleWorkersPut) {
+    constexpr size_t size = 4 * 1024;
+    constexpr nixl_mem_t mem_type = VRAM_SEG;
+
+    std::vector<std::vector<MemBuffer>> src_buffers(numWorkers);
+    std::vector<std::vector<MemBuffer>> dst_buffers(numWorkers);
+    std::vector<std::vector<uint32_t>> patterns(numWorkers);
+
+    for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
+        createRegisteredMem(getAgent(SENDER_AGENT), size, 1, mem_type, src_buffers[worker_id]);
+        createRegisteredMem(getAgent(RECEIVER_AGENT), size, 1, mem_type, dst_buffers[worker_id]);
+
+        constexpr size_t num_elements = size / sizeof(uint32_t);
+        patterns[worker_id].resize(num_elements);
+        for (size_t i = 0; i < num_elements; i++) {
+            patterns[worker_id][i] = 0xDEAD0000 | worker_id;
+        }
+
+        cudaMemcpy(static_cast<void *>(src_buffers[worker_id][0]),
+                   patterns[worker_id].data(),
+                   size,
+                   cudaMemcpyHostToDevice);
+    }
+
+    exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
+
+    std::vector<nixlMemoryViewH> src_mvhs(numWorkers);
+    std::vector<nixlMemoryViewH> dst_mvhs(numWorkers);
+    nixl_opt_args_t extra_params;
+
+    for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
+        extra_params.customParam = "worker_id=" + std::to_string(worker_id);
+
+        auto status =
+            getAgent(SENDER_AGENT)
+                .prepMemoryView(makeDescList<nixlBasicDesc>(src_buffers[worker_id], mem_type),
+                                src_mvhs[worker_id],
+                                &extra_params);
+        ASSERT_EQ(status, NIXL_SUCCESS);
+
+        status =
+            getAgent(SENDER_AGENT)
+                .prepMemoryView(makeDescList<nixlRemoteDesc>(
+                                    dst_buffers[worker_id], mem_type, getAgentName(RECEIVER_AGENT)),
+                                dst_mvhs[worker_id],
+                                &extra_params);
+        ASSERT_EQ(status, NIXL_SUCCESS);
+    }
+
+    for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
+        putParams put_params{{src_mvhs[worker_id], 0, 0}, {dst_mvhs[worker_id], 0, 0}, size};
+        constexpr size_t num_iters = 1;
+        const auto status = dispatchLaunchPutKernel(GetParam(), put_params, num_iters);
+        ASSERT_EQ(status, NIXL_SUCCESS) << "Kernel launch failed for worker " << worker_id;
+    }
+
+    for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
+        std::vector<uint32_t> received(size / sizeof(uint32_t));
+        cudaMemcpy(received.data(),
+                   static_cast<void *>(dst_buffers[worker_id][0]),
+                   size,
+                   cudaMemcpyDeviceToHost);
+
+        EXPECT_EQ(received, patterns[worker_id])
+            << "Worker " << worker_id << " full buffer verification failed";
+    }
+
+    Logger() << "MultipleWorkers test: " << numWorkers
+             << " workers with explicit selection verified";
+
+    for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
+        getAgent(SENDER_AGENT).releaseMemoryView(src_mvhs[worker_id]);
+        getAgent(SENDER_AGENT).releaseMemoryView(dst_mvhs[worker_id]);
+    }
+
+    invalidateMD();
+}
+
+TEST_P(SingleWriteTest, SingleWorkerPutGap) {
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    constexpr size_t size = 4 * 1024;
+    constexpr size_t count = 1;
+    constexpr nixl_mem_t mem_type = VRAM_SEG;
+    createRegisteredMem(getAgent(SENDER_AGENT), size, count, mem_type, src_buffers);
+    createRegisteredMem(getAgent(RECEIVER_AGENT), size, count, mem_type, dst_buffers);
+
+    auto src_data = static_cast<uint32_t *>(static_cast<void *>(src_buffers[0]));
+    cudaMemset(src_data, 0, size);
+
+    constexpr uint32_t pattern = 0xDEADBEEF;
+    cudaMemcpy(src_data, &pattern, sizeof(pattern), cudaMemcpyHostToDevice);
+
+    exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
+
+    const auto local_dlist = makeDescList<nixlBasicDesc>(src_buffers, mem_type);
+    nixlMemoryViewH src_mvh;
+    auto status = getAgent(SENDER_AGENT).prepMemoryView(local_dlist, src_mvh);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    auto remote_dlist =
+        makeDescList<nixlRemoteDesc>(dst_buffers, mem_type, getAgentName(RECEIVER_AGENT));
+    remote_dlist.addDesc({{}, nixl_invalid_agent});
+    nixlMemoryViewH dst_mvh;
+    status = getAgent(SENDER_AGENT).prepMemoryView(remote_dlist, dst_mvh);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    putParams put_params{{src_mvh, 0, 0}, {dst_mvh, 0, 0}, size};
+    constexpr size_t num_iters = 1000;
+    gpuTimer gpu_timer;
+    status = dispatchLaunchPutKernel(GetParam(), put_params, num_iters, &gpu_timer);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    void *ptr;
+    getPtrKernel<<<1, 1>>>(dst_mvh, 0, &ptr);
+    ASSERT_NE(ptr, nullptr);
+
+    logResultsPublic(size, count, num_iters, *gpu_timer.start_, *gpu_timer.end_);
+
+    uint32_t dst_data;
+    cudaMemcpy(&dst_data,
+               static_cast<uint32_t *>(static_cast<void *>(dst_buffers[0])),
+               sizeof(uint32_t),
+               cudaMemcpyDeviceToHost);
+    EXPECT_EQ(dst_data, pattern) << "Data transfer verification failed. Expected: 0x" << std::hex
+                                 << pattern << ", Got: 0x" << dst_data;
+
+    getAgent(SENDER_AGENT).releaseMemoryView(dst_mvh);
+    getAgent(SENDER_AGENT).releaseMemoryView(src_mvh);
+    invalidateMD();
+}
+#endif
 } // namespace gtest::nixl::gpu::single_write
 
 using gtest::nixl::gpu::single_write::SingleWriteTest;

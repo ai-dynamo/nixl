@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -84,6 +84,26 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
         static_cast<nixlBasicDesc &>(resp[i]) = query[i];
         resp[i].metadataP = (*base)[s_index].metadataP;
     }
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlMemSection::addElement(const nixlRemoteDesc &query,
+                           nixlBackendEngine *backend,
+                           nixl_remote_meta_dlist_t &resp) const {
+    const section_key_t sec_key{VRAM_SEG, backend};
+    const auto it = sectionMap.find(sec_key);
+    if (it == sectionMap.end()) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    nixl_sec_dlist_t *base = it->second;
+    const int s_index = base->getCoveringIndex(query);
+    if (s_index < 0) {
+        return NIXL_ERR_UNKNOWN;
+    }
+
+    resp.addDesc({query.addr, query.len, query.devId, (*base)[s_index].metadataP});
     return NIXL_SUCCESS;
 }
 
