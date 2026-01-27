@@ -358,7 +358,7 @@ nixlAtomicAdd(uint64_t value,
     auto mem_list = static_cast<ucp_device_remote_mem_list_h>(counter.mvh);
     ucp_device_request_t *ucp_request{xfer_status ? &xfer_status->device_request : nullptr};
     const auto status = ucp_device_counter_inc<static_cast<ucs_device_level_t>(level)>(
-        mem_list, counter.index, value, counter.offset, channel_id, flags, ucp_request);
+        value, mem_list, counter.index, counter.offset, channel_id, flags, ucp_request);
     return nixlGpuConvertUcsStatus(status);
 }
 
