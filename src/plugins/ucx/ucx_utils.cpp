@@ -112,7 +112,7 @@ ucx_err_mode_from_string(std::string_view s) {
 
 static void
 err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status) {
-    auto ep = reinterpret_cast<nixlUcxEp *>(arg);
+    auto ep = static_cast<nixlUcxEp *>(arg);
     ep->err_cb(ucp_ep, status);
 }
 
@@ -196,7 +196,7 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t er
         UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
     ep_params.err_mode = err_handling_mode;
     ep_params.err_handler.cb = err_cb_wrapper;
-    ep_params.err_handler.arg = reinterpret_cast<void *>(this);
+    ep_params.err_handler.arg = static_cast<void *>(this);
     ep_params.address = reinterpret_cast<ucp_address_t *>(addr);
 
     status = ucx_status_to_nixl(ucp_ep_create(worker, &ep_params, &eph));
