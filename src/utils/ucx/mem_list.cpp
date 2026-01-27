@@ -84,7 +84,7 @@ createMemList(const std::vector<std::unique_ptr<remoteMem>> &mems, nixlUcxWorker
     const auto elements = createElements(mems);
     const auto params = addElements(elements);
 
-    ucp_device_remote_mem_list_handle_h handle{nullptr};
+    ucp_device_remote_mem_list_h handle{nullptr};
     ucs_status_t status;
     while ((status = ucp_device_remote_mem_list_create(&params, &handle)) ==
            UCS_ERR_NOT_CONNECTED) {
@@ -106,7 +106,7 @@ createMemList(const std::vector<nixlUcxMem> &mems, const nixlUcxWorker &worker) 
     params.field_mask |= UCP_DEVICE_MEM_LIST_PARAMS_FIELD_WORKER;
     params.worker = worker.get();
 
-    ucp_device_local_mem_list_handle_h handle{nullptr};
+    ucp_device_local_mem_list_h handle{nullptr};
     const auto status = ucp_device_local_mem_list_create(&params, &handle);
     if (status != UCS_OK) {
         throw std::runtime_error(std::string("Failed to create device local memory list: ") +
