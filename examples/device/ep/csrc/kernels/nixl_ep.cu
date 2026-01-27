@@ -822,8 +822,6 @@ combine(void* combined_x,
         __syncwarp();
     }
 
-    cg::this_grid().sync(); // TODO: revisit this grid sync
-
 // Receiving phase
 COMBINE_RECV:
     if ((phases & EP_RECV_PHASE) == 0)
