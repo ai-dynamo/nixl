@@ -35,7 +35,6 @@ constexpr char TELEMETRY_ENABLED_VAR[] = "NIXL_TELEMETRY_ENABLE";
 static const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
 };
-const std::string nixl_invalid_agent = "INVALID_AGENT";
 
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {

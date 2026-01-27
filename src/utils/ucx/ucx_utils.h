@@ -255,6 +255,11 @@ public:
     void
     prepGpuSignal(const nixlUcxMem &mem, void *signal) const;
 
+    [[nodiscard]] ucp_worker_h
+    get() const noexcept {
+        return worker.get();
+    }
+
 private:
     [[nodiscard]] static ucp_worker *
     createUcpWorker(const nixlUcxContext &);
