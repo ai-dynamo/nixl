@@ -135,26 +135,9 @@ putKernel(putParams put_params,
             return;
         }
 
-        status = nixlGpuGetXferStatus<level>(xfer_status);
-        if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
-            printf("Thread %d: Failed to progress single write transfer iteration %zu: status=%d\n",
-                   threadIdx.x,
-                   i,
-                   status);
-            return;
-        }
-
-        while (status == NIXL_IN_PROG) {
+        do {
             status = nixlGpuGetXferStatus<level>(xfer_status);
-            if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
-                printf("Thread %d: Failed to progress single write transfer iteration %zu: "
-                       "status=%d\n",
-                       threadIdx.x,
-                       i,
-                       status);
-                return;
-            }
-        }
+        } while (status == NIXL_IN_PROG);
 
         if (status != NIXL_SUCCESS) {
             printf("Thread %d: Transfer completion failed iteration %zu: status=%d\n",
