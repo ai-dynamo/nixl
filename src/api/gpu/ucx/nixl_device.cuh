@@ -376,8 +376,9 @@ nixlAtomicAdd(uint64_t value,
 __device__ inline void *
 nixlGetPtr(nixlMemoryViewH mvh, size_t index) {
     auto mem_list = static_cast<ucp_device_remote_mem_list_h>(mvh);
-    void *ptr;
-    return ucp_device_get_ptr(mem_list, index, &ptr) == UCS_OK ? ptr : nullptr;
+    void *ptr = nullptr;
+    ucp_device_get_ptr(mem_list, index, &ptr);
+    return ptr;
 }
 
 #endif // _NIXL_DEVICE_CUH

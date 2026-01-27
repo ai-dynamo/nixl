@@ -152,6 +152,11 @@ putKernel(putParams put_params,
         *end_time = GetTimeNs();
     }
 }
+
+__global__ void
+getPtrKernel(nixlMemoryViewH mvh, size_t index, void **ptr) {
+    *ptr = nixlGetPtr(mvh, index);
+}
 #endif
 
 template<nixl_gpu_level_t level>
@@ -974,6 +979,10 @@ TEST_P(SingleWriteTest, SingleWorkerPutGap) {
     gpuTimer gpu_timer;
     status = dispatchLaunchPutKernel(GetParam(), put_params, num_iters, &gpu_timer);
     ASSERT_EQ(status, NIXL_SUCCESS);
+
+    void *ptr;
+    getPtrKernel<<<1, 1>>>(dst_mvh, 0, &ptr);
+    ASSERT_NE(ptr, nullptr);
 
     logResultsPublic(size, count, num_iters, *gpu_timer.start_, *gpu_timer.end_);
 
