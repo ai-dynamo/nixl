@@ -44,7 +44,7 @@ if cuda_dep.found()
     plugins_gtest_cuda_deps = [cuda_dep]
 endif
 
-plugins_gtest_sources = ['../main.cpp', '../common.cpp', 'obj_plugin.cpp']
+plugins_gtest_sources = ['../main.cpp', '../common.cpp', 'obj_plugin.cpp', 'test_obj_checkXferList.cpp']
 if cuobj_dep.found()
     plugins_gtest_sources += 'obj_cuobj_plugin.cpp'
 endif

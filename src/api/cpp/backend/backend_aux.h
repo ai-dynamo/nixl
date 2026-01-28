@@ -33,6 +33,7 @@ struct nixlBackendOptionalArgs {
     nixl_blob_t notifMsg;
     bool        hasNotif = false;
     nixl_blob_t customParam;
+    nixl_xfer_track_flags_t trackFlags = 0;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;

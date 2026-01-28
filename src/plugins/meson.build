@@ -13,6 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Base deps for plugins that use += (e.g. OBJ when POSIX is disabled)
+plugin_deps = [nixl_infra, nixl_common_dep]
+compile_defs = []
+compile_flags = []
+
 if enabled_plugins.get('UCX')
     if not ucx_dep.found() and is_explicit_enable
         error('UCX plugin requested but UCX dependency not found')
