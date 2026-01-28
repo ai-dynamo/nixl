@@ -14,6 +14,8 @@
 # limitations under the License.
 
 utils_sources = [
+  'neuron.cpp',
+  'neuron.h',
   'utils.cpp',
   'utils.h',
   'scope_guard.h'
@@ -23,7 +25,8 @@ utils_deps = [
   cuda_dep,
   openmp_dep,
   cxxopts_dep,
-  tomlplusplus_dep
+  tomlplusplus_dep,
+  dependency('dl', required: true)
 ]
 
 utils_lib = static_library('utils',
