@@ -124,6 +124,14 @@ class BaseModelArch(ABC):
                 from models.deepseek_r1 import DeepSeekR1
 
                 modelc = DeepSeekR1(**filtered_dict)
+            elif "gpt_oss_120b" in model_name.lower():
+                from models.gpt_oss_120b import GptOss120B
+
+                modelc = GptOss120B(**filtered_dict)
+            elif "qwen3_32b" in model_name.lower():
+                from models.qwen3_32b import Qwen3_32B
+
+                modelc = Qwen3_32B(**filtered_dict)
             else:
                 raise ValueError(f"Model name {model_name} not supported")
 
