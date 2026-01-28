@@ -20,10 +20,10 @@
 #include <cstring>
 #include <iostream>
 
-#include "ucx/ucx_utils.h"
-#include "ucx/rkey.h"
-//TODO: meson conditional build for CUDA
-//#define USE_VRAM
+#include "ucx_utils.h"
+#include "rkey.h"
+// TODO: meson conditional build for CUDA
+// #define USE_VRAM
 
 #ifdef USE_VRAM
 
@@ -32,10 +32,11 @@
 
 int gpu_id = 0;
 
-static void checkCudaError(cudaError_t result, const char *message) {
+static void
+checkCudaError(cudaError_t result, const char *message) {
     if (result != cudaSuccess) {
-    std::cerr << message << " (Error code: " << result << " - "
-                   << cudaGetErrorString(result) << ")" << std::endl;
+        std::cerr << message << " (Error code: " << result << " - " << cudaGetErrorString(result)
+                  << ")" << std::endl;
         exit(EXIT_FAILURE);
     }
 }
@@ -44,13 +45,17 @@ static void checkCudaError(cudaError_t result, const char *message) {
 
 using namespace std;
 
-
-void completeRequest(nixlUcxWorker w[2], std::string op, bool is_flush, nixl_status_t ret,  nixlUcxReq &req)
-{
-    assert( ret == NIXL_SUCCESS || ret == NIXL_IN_PROG);
+void
+completeRequest(nixlUcxWorker w[2],
+                std::string op,
+                bool is_flush,
+                nixl_status_t ret,
+                nixlUcxReq &req) {
+    assert(ret == NIXL_SUCCESS || ret == NIXL_IN_PROG);
     if (ret == NIXL_SUCCESS) {
         if (!is_flush) {
-            cout << "WARNING: " << op << " request completed immediately - no testing non-inline path" << endl;
+            cout << "WARNING: " << op
+                 << " request completed immediately - no testing non-inline path" << endl;
         }
     } else {
         if (!is_flush) {
@@ -61,18 +66,18 @@ void completeRequest(nixlUcxWorker w[2], std::string op, bool is_flush, nixl_sta
         do {
             ret = w[0].test(req);
             w[1].progress();
-        } while( ret == NIXL_IN_PROG);
+        } while (ret == NIXL_IN_PROG);
         assert(ret == NIXL_SUCCESS);
         w[0].reqRelease(req);
     }
 }
 
-int main()
-{
+int
+main() {
     vector<string> devs;
     // TODO: pass dev name for testing
     // in CI it would be goot to test both SHM and IB
-    //devs.push_back("mlx5_0");
+    // devs.push_back("mlx5_0");
     nixlUcxContext c[2] = {{devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 1},
                            {devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 1}};
 
@@ -94,19 +99,19 @@ int main()
     checkCudaError(cudaMalloc(&buffer[1], buf_size), "Failed to allocate CUDA buffer 1");
     nixl_mem_type = VRAM_SEG;
 #else
-    buffer[0] = (uint8_t*) calloc(1, buf_size);
-    buffer[1] = (uint8_t*) calloc(1, buf_size);
+    buffer[0] = (uint8_t *)calloc(1, buf_size);
+    buffer[1] = (uint8_t *)calloc(1, buf_size);
     nixl_mem_type = DRAM_SEG;
 #endif
-    chk_buffer = (uint8_t*) calloc(1, buf_size);
+    chk_buffer = (uint8_t *)calloc(1, buf_size);
 
     assert(buffer[0]);
     assert(buffer[1]);
     /* Test control path */
-    for(i = 0; i < 2; i++) {
+    for (i = 0; i < 2; i++) {
         const std::string addr = w[i].epAddr();
         assert(!addr.empty());
-        auto result = w[!i].connect((void*)addr.data(), addr.size());
+        auto result = w[!i].connect((void *)addr.data(), addr.size());
         assert(result.ok());
         ep[!i] = std::move(*result);
         assert(0 == c[i].memReg(buffer[i], buf_size, mem[i], nixl_mem_type));
@@ -136,15 +141,16 @@ int main()
     completeRequest(w, std::string("WRITE"), true, ret, req);
 
 #ifdef USE_VRAM
-    checkCudaError(cudaMemcpy(chk_buffer, buffer[1], 128, cudaMemcpyDeviceToHost), "Failed to memcpy");
+    checkCudaError(cudaMemcpy(chk_buffer, buffer[1], 128, cudaMemcpyDeviceToHost),
+                   "Failed to memcpy");
 #else
     memcpy(chk_buffer, buffer[1], buf_size);
 #endif
 
-    for(i = 0; i < buf_size/2; i++) {
+    for (i = 0; i < buf_size / 2; i++) {
         assert(chk_buffer[i] == 0xda);
     }
-    for(; i < buf_size; i++) {
+    for (; i < buf_size; i++) {
         assert(chk_buffer[i] == 0xbb);
     }
 
@@ -154,12 +160,12 @@ int main()
 
 #ifdef USE_VRAM
     checkCudaError(cudaMemset(buffer[0], 0xbb, buf_size), "Failed to memset");
-    checkCudaError(cudaMemset(buffer[1], 0xbb, buf_size/3), "Failed to memset");
+    checkCudaError(cudaMemset(buffer[1], 0xbb, buf_size / 3), "Failed to memset");
     checkCudaError(cudaMemset(buffer[1] + 32, 0xda, buf_size - buf_size / 3), "Failed to memset");
 #else
     memset(buffer[0], 0xbb, buf_size);
-    memset(buffer[1], 0xbb, buf_size/3);
-    memset(buffer[1] + buf_size/3, 0xda, buf_size - buf_size / 3);
+    memset(buffer[1], 0xbb, buf_size / 3);
+    memset(buffer[1] + buf_size / 3, 0xda, buf_size - buf_size / 3);
 #endif
 
     // Read request
@@ -171,20 +177,21 @@ int main()
     completeRequest(w, std::string("READ"), true, ret, req);
 
 #ifdef USE_VRAM
-    checkCudaError(cudaMemcpy(chk_buffer, buffer[0], buf_size, cudaMemcpyDeviceToHost), "Failed to memcpy");
+    checkCudaError(cudaMemcpy(chk_buffer, buffer[0], buf_size, cudaMemcpyDeviceToHost),
+                   "Failed to memcpy");
 #else
     memcpy(chk_buffer, buffer[0], buf_size);
 #endif
 
-    for(i = 0; i < buf_size/3; i++) {
+    for (i = 0; i < buf_size / 3; i++) {
         assert(chk_buffer[i] == 0xbb);
     }
-    for(; i < buf_size; i++) {
+    for (; i < buf_size; i++) {
         assert(chk_buffer[i] == 0xda);
     }
 
     /* Test shutdown */
-    for(i = 0; i < 2; i++) {
+    for (i = 0; i < 2; i++) {
         c[i].memDereg(mem[i]);
         assert(ep[i].release());
     }

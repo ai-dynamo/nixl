@@ -17,9 +17,8 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 /src/bindings/python @ovidiusm @mkhazraee @roiedanino
 /src/bindings/rust @roiedanino @gleon99 @mkhazraee
 
-# UCX Plugins
-/src/plugins/ucx* @brminich @yosefe @gleon99
-/src/utils/ucx @brminich @yosefe @gleon99
+# UCX Plugin
+/src/plugins/ucx @brminich @yosefe @gleon99
 
 # Storage Plugins
 /src/plugins/posix @w1ldptr @vvenkates27 @brminich
