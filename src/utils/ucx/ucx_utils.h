@@ -202,6 +202,7 @@ public:
                    bool prog_thread,
                    unsigned long num_workers,
                    nixl_thread_sync_t sync_mode,
+                   size_t num_device_channels,
                    const std::string &engine_conf = "");
     ~nixlUcxContext();
 

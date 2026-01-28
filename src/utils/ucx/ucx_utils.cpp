@@ -409,6 +409,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                bool prog_thread,
                                unsigned long num_workers,
                                nixl_thread_sync_t sync_mode,
+                               size_t num_device_channels,
                                const std::string &engine_config) {
     ucp_params_t ucp_params;
     unsigned major_version, minor_version, release_number;
@@ -450,6 +451,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     config.modify("MAX_RMA_RAILS", "2");
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
     config.modify("RCACHE_MAX_UNRELEASED", "1024");
+    config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_device_channels));
 
     if (ucp_version >= UCP_VERSION(1, 19)) {
         config.modify("MAX_COMPONENT_MDS", "32");

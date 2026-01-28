@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,8 +53,8 @@ int main()
     vector<string> devs;
     devs.push_back("mlx5_0");
 
-    nixlUcxContext c[2] = {{devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
-                           {devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
+    nixlUcxContext c[2] = {{devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 1},
+                           {devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 1}};
 
     nixlUcxWorker w[2] = {nixlUcxWorker(c[0]), nixlUcxWorker(c[1])};
     std::unique_ptr<nixlUcxEp> ep[2];
