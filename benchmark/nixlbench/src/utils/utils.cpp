@@ -125,6 +125,7 @@ const std::vector<xferBenchParamInfo> xbench_params = {
 
     // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
     NB_ARG_STRING(filepath, "", "File path for storage operations"),
+    NB_ARG_STRING(filenames, "", "Comma-separated filenames for storage operations"),
     NB_ARG_INT32(num_files, 1, "Number of files used by benchmark"),
     NB_ARG_BOOL(storage_enable_direct, false, "Enable direct I/O for storage operations"),
 
@@ -180,6 +181,11 @@ const std::vector<xferBenchParamInfo> xbench_params = {
                   XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
                   "Required checksum for S3 backend [supported, required]"),
     NB_ARG_STRING(obj_ca_bundle, "", "Path to CA bundle for S3 backend"),
+    NB_ARG_UINT64(
+        obj_crt_min_limit,
+        0,
+        "Minimum object size (bytes) to use S3 CRT client for high-performance transfers. "
+        "0 means CRT client is disabled (default: 0)"),
 
     // HF3FS options - only used when backend is HF3FS
     NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool"),
@@ -193,9 +199,10 @@ const std::vector<xferBenchParamInfo> xbench_params = {
         gusli_config_file,
         "",
         "Configuration file content for GUSLI backend (if empty, auto-generated from device_list)"),
-    NB_ARG_UINT64(gusli_bdev_byte_offset,
-                  1048576,
-                  "Byte offset in block device for GUSLI operations (default: 1MB)"),
+    NB_ARG_STRING(gusli_device_byte_offsets,
+                  "",
+                  "Comma-separated list of byte offsets per device for GUSLI operations "
+                  "If empty or fewer than devices, uses 1MB as default."),
     NB_ARG_STRING(
         gusli_device_security,
         "",
@@ -245,6 +252,7 @@ std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
 std::string xferBenchConfig::filepath = "";
+std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
@@ -257,11 +265,12 @@ bool xferBenchConfig::obj_use_virtual_addressing = false;
 std::string xferBenchConfig::obj_endpoint_override = "";
 std::string xferBenchConfig::obj_req_checksum = "";
 std::string xferBenchConfig::obj_ca_bundle = "";
+size_t xferBenchConfig::obj_crt_min_limit = 0;
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
 std::string xferBenchConfig::gusli_config_file = "";
-uint64_t xferBenchConfig::gusli_bdev_byte_offset = 0;
+std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
 
 // We allow both --param_name and --param-name for compatibility.
@@ -428,7 +437,7 @@ xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
             gusli_client_name = NB_ARG(gusli_client_name);
             gusli_max_simultaneous_requests = NB_ARG(gusli_max_simultaneous_requests);
             gusli_config_file = NB_ARG(gusli_config_file);
-            gusli_bdev_byte_offset = NB_ARG(gusli_bdev_byte_offset);
+            gusli_device_byte_offsets = NB_ARG(gusli_device_byte_offsets);
             gusli_device_security = NB_ARG(gusli_device_security);
         }
 
@@ -444,6 +453,7 @@ xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
             obj_endpoint_override = NB_ARG(obj_endpoint_override);
             obj_req_checksum = NB_ARG(obj_req_checksum);
             obj_ca_bundle = NB_ARG(obj_ca_bundle);
+            obj_crt_min_limit = NB_ARG(obj_crt_min_limit);
 
             // Validate OBJ S3 scheme
             if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
@@ -481,6 +491,7 @@ xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
     num_threads = NB_ARG(num_threads);
     etcd_endpoints = NB_ARG(etcd_endpoints);
     filepath = NB_ARG(filepath);
+    filenames = NB_ARG(filenames);
     num_files = NB_ARG(num_files);
     posix_api_type = NB_ARG(posix_api_type);
     storage_enable_direct = NB_ARG(storage_enable_direct);
@@ -635,10 +646,15 @@ xferBenchConfig::printConfig() {
             printOption("OBJ S3 required checksum (--obj_req_checksum=[supported, required])",
                         obj_req_checksum);
             printOption("OBJ S3 CA bundle (--obj_ca_bundle=cert-path)", obj_ca_bundle);
+            printOption("OBJ S3 CRT min limit (--obj_crt_min_limit=N bytes)",
+                        obj_crt_min_limit > 0 ?
+                            std::to_string(obj_crt_min_limit) + " (CRT enabled)" :
+                            "0 (CRT disabled)");
         }
 
         if (xferBenchConfig::isStorageBackend()) {
             printOption("filepath (--filepath=path)", filepath);
+            printOption("filenames (--filenames=filename1,filename2,...)", filenames);
             printOption("Number of files (--num_files=N)", std::to_string(num_files));
             printOption("Storage enable direct (--storage_enable_direct=[0,1])",
                         std::to_string(storage_enable_direct));
@@ -749,6 +765,7 @@ allBytesAre(void *buffer, size_t size, uint8_t value) {
 std::vector<GusliDeviceConfig>
 parseGusliDeviceList(const std::string &device_list,
                      const std::string &security_list,
+                     const std::string &dev_offset_list,
                      int num_devices) {
     std::vector<GusliDeviceConfig> devices;
 
@@ -759,6 +776,15 @@ parseGusliDeviceList(const std::string &device_list,
         std::string sec_flag;
         while (std::getline(sec_ss, sec_flag, ',')) {
             security_flags.push_back(sec_flag);
+        }
+    }
+
+    std::vector<size_t> dev_offsets;
+    if (!dev_offset_list.empty()) {
+        std::stringstream dev_ss(dev_offset_list);
+        std::string offset;
+        while (std::getline(dev_ss, offset, ',')) {
+            dev_offsets.push_back(std::stoull(offset));
         }
     }
 
@@ -796,7 +822,9 @@ parseGusliDeviceList(const std::string &device_list,
             }
             std::string sec_flag =
                 (device_count < security_flags.size()) ? security_flags[device_count] : "sec=0x3";
-            devices.push_back({device_id, device_type, path, sec_flag});
+            size_t offset =
+                (device_count < dev_offsets.size()) ? dev_offsets[device_count] : 1048576;
+            devices.push_back({device_id, device_type, path, sec_flag, offset});
             device_count++;
         } else {
             std::cerr << "Invalid GUSLI device specification: " << device_spec
@@ -809,6 +837,12 @@ parseGusliDeviceList(const std::string &device_list,
         std::cerr << "Warning: Number of security flags (" << security_flags.size()
                   << ") doesn't match number of devices (" << devices.size()
                   << "). Using 'sec=0x3' for missing entries." << std::endl;
+    }
+
+    if (!dev_offsets.empty() && dev_offsets.size() != devices.size()) {
+        std::cerr << "Warning: Number of device offsets (" << dev_offsets.size()
+                  << ") doesn't match number of devices (" << devices.size()
+                  << "). Using 'offset=1048576' for missing entries." << std::endl;
     }
 
     if (num_devices > 0 && devices.size() != static_cast<size_t>(num_devices)) {
@@ -828,6 +862,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
     if (!gusli_devmap_init && xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
         gusli_devs = parseGusliDeviceList(xferBenchConfig::device_list,
                                           xferBenchConfig::gusli_device_security,
+                                          xferBenchConfig::gusli_device_byte_offsets,
                                           xferBenchConfig::num_initiator_dev);
         gusli_devmap_init = true;
     }

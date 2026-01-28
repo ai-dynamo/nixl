@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -80,6 +80,7 @@ export NIXL_ETCD_NAMESPACE="/nixl/python_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
+ETCD_PID=$!
 
 wait_for_etcd
 
@@ -125,4 +126,4 @@ telePID=$!
 sleep 15
 kill -s INT $telePID
 
-pkill etcd
+kill -9 $ETCD_PID 2>/dev/null || true
