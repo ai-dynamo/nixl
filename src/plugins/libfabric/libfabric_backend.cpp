@@ -633,7 +633,7 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
 
     conn_info->overall_state_ = ConnectionState::CONNECTED;
     NIXL_DEBUG << "Connection state for agent " << remote_agent << " is now "
-                << conn_info->overall_state_;
+               << conn_info->overall_state_;
 
     return NIXL_SUCCESS;
 }
@@ -1221,7 +1221,7 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    const auto& connection = it->second;
+    const auto &connection = it->second;
     const size_t control_rail_id = 0; // Only use control rail 0 for notifications
 
     NIXL_DEBUG << "Sending " << binary_notifications.size() << " notification fragments"

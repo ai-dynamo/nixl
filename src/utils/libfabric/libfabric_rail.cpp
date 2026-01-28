@@ -477,9 +477,9 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         ret = fi_cq_open(domain, &cq_attr, &cq, NULL);
         if (ret) {
             NIXL_ERROR << "fi_cq_open with FI_WAIT_NONE failed for rail " << rail_id << ": "
-                        << fi_strerror(-ret);
+                       << fi_strerror(-ret);
             throw std::runtime_error("fi_cq_open with FI_WAIT_NONE failed for rail " +
-                                        std::to_string(rail_id));
+                                     std::to_string(rail_id));
         }
         NIXL_TRACE << "fi_cq_open with FI_WAIT_NONE succeeded for rail " << rail_id;
 
