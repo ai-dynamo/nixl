@@ -421,6 +421,10 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         // TCP provider doesn't support FI_MR_PROV_KEY or FI_MR_VIRT_ADDR, use basic mode
         hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_ALLOCATED;
         hints->domain_attr->mr_key_size = 0; // Let provider decide
+    } else if (provider == "cxi") {
+        hints->caps |= FI_RMA_EVENT;
+        hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR | FI_MR_ALLOCATED |
+            FI_MR_PROV_KEY | FI_MR_ENDPOINT;
     } else {
         // EFA and other providers support advanced memory registration
         hints->domain_attr->mr_mode =
@@ -1384,6 +1388,22 @@ nixlLibfabricRail::registerMemory(void *buffer,
                    << " (buffer=" << buffer << ", length=" << length
                    << ", requested_key=" << requested_key << ")";
         return NIXL_ERR_BACKEND;
+    }
+
+    if (info->domain_attr->mr_mode & FI_MR_ENDPOINT) {
+        ret = fi_mr_bind(mr, &endpoint->fid, 0);
+        if (ret) {
+            NIXL_ERROR << "fi_mr_bind failed on rail " << rail_id << ": " << fi_strerror(-ret);
+            fi_close(&mr->fid);
+            return NIXL_ERR_BACKEND;
+        }
+
+        ret = fi_mr_enable(mr);
+        if (ret) {
+            NIXL_ERROR << "fi_mr_enable failed on rail " << rail_id << ": " << fi_strerror(-ret);
+            fi_close(&mr->fid);
+            return NIXL_ERR_BACKEND;
+        }
     }
 
     *mr_out = mr;
