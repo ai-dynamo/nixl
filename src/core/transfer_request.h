@@ -47,6 +47,7 @@ class nixlXferReqH {
 
         nixl_xfer_op_t     backendOp;
         nixl_status_t      status;
+        nixl_xfer_track_flags_t trackFlags = 0;
 
         nixl_xfer_telem_t telemetry;
 

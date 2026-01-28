@@ -98,6 +98,7 @@ struct nixl_capi_xfer_req_s { /* empty */ };
 struct nixl_capi_notif_map_s { /* empty */ };
 struct nixl_capi_xfer_dlist_handle_s { /* empty */ };
 struct nixl_capi_query_resp_list_s { /* empty */ };
+struct nixl_capi_xfer_entry_events_s { /* empty */ };
 // clang-format on
 
 // ---- Core agent functions ----
@@ -425,6 +426,20 @@ nixl_capi_opt_args_get_skip_desc_merge(nixl_capi_opt_args_t args, bool *skip_mer
 }
 
 nixl_capi_status_t
+nixl_capi_opt_args_set_track_flags(nixl_capi_opt_args_t args, uint32_t track_flags) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_opt_args_t, uint32_t);
+    static fn_t real = (fn_t)resolve("nixl_capi_opt_args_set_track_flags");
+    return real(args, track_flags);
+}
+
+nixl_capi_status_t
+nixl_capi_opt_args_get_track_flags(nixl_capi_opt_args_t args, uint32_t *track_flags) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_opt_args_t, uint32_t *);
+    static fn_t real = (fn_t)resolve("nixl_capi_opt_args_get_track_flags");
+    return real(args, track_flags);
+}
+
+nixl_capi_status_t
 nixl_capi_opt_args_set_ip_addr(nixl_capi_opt_args_t args, const char *ip_addr) {
     using fn_t = nixl_capi_status_t (*)(nixl_capi_opt_args_t, const char *);
     static fn_t real = (fn_t)resolve("nixl_capi_opt_args_set_ip_addr");
@@ -748,6 +763,41 @@ nixl_capi_get_xfer_status(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl
     using fn_t = nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t);
     static fn_t real = (fn_t)resolve("nixl_capi_get_xfer_status");
     return real(agent, req_hndl);
+}
+
+nixl_capi_status_t
+nixl_capi_xfer_entry_events_create(nixl_capi_xfer_entry_events_t *events) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_xfer_entry_events_t *);
+    static fn_t real = (fn_t)resolve("nixl_capi_xfer_entry_events_create");
+    return real(events);
+}
+
+nixl_capi_status_t
+nixl_capi_xfer_entry_events_destroy(nixl_capi_xfer_entry_events_t events) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_xfer_entry_events_t);
+    static fn_t real = (fn_t)resolve("nixl_capi_xfer_entry_events_destroy");
+    return real(events);
+}
+
+nixl_capi_status_t
+nixl_capi_xfer_entry_events_size(nixl_capi_xfer_entry_events_t events, size_t *size) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_xfer_entry_events_t, size_t *);
+    static fn_t real = (fn_t)resolve("nixl_capi_xfer_entry_events_size");
+    return real(events, size);
+}
+
+nixl_capi_status_t
+nixl_capi_xfer_entry_events_get(nixl_capi_xfer_entry_events_t events, size_t index, size_t *idx_out, int *status_out) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_xfer_entry_events_t, size_t, size_t *, int *);
+    static fn_t real = (fn_t)resolve("nixl_capi_xfer_entry_events_get");
+    return real(events, index, idx_out, status_out);
+}
+
+nixl_capi_status_t
+nixl_capi_get_xfer_status_with_events(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl, nixl_capi_xfer_entry_events_t events) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t, nixl_capi_xfer_entry_events_t);
+    static fn_t real = (fn_t)resolve("nixl_capi_get_xfer_status_with_events");
+    return real(agent, req_hndl, events);
 }
 
 nixl_capi_status_t
