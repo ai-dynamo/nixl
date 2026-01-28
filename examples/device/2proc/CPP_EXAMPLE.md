@@ -60,8 +60,6 @@ Two key settings for container compatibility:
 
 1. **`UCX_TLS=all`** (Transport Layer Selection)
    - Lets UCX auto-select best available transports including CUDA IPC
-   - Provides 60+ GB/s NVLink performance
-   - Alternative: `UCX_TLS=^cuda_ipc` excludes CUDA IPC (may fail if it's the only GPU transport)
 
 2. **`UCX_POSIX_USE_PROC_LINK=n`** (Disable procfs mode - **important for containers!**)
    - **Without this**: UCX tries to access `/proc/<other_pid>/fd/<fd>` for shared memory
@@ -70,7 +68,6 @@ Two key settings for container compatibility:
    - **Benefit**: Clean output, no permission errors
 
 **Optional settings:**
-- `UCX_LOG_LEVEL=fatal` - Only show catastrophic errors (hides probe warnings)
 - If `UCX_NET_DEVICES` is set, unset it for optimal NVLink performance
 
 **Running the example:**
