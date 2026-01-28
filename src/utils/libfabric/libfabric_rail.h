@@ -214,10 +214,9 @@ public:
 
 
 /** Connection state tracking for multi-rail connections */
-enum class ConnectionState: int {
+enum class ConnectionState {
     DISCONNECTED, ///< No connection attempt made, initial state
-    CONNECTED = 3, ///< ACK received, ready for data transfers. Value set for backward compatibility.
-    FAILED ///< Connection attempt failed
+    CONNECTED ///< Ready for data transfers.
 };
 
 // Stream operator for ConnectionState to enable logging
@@ -228,8 +227,6 @@ operator<<(std::ostream &os, const ConnectionState &state) {
         return os << "DISCONNECTED";
     case ConnectionState::CONNECTED:
         return os << "CONNECTED";
-    case ConnectionState::FAILED:
-        return os << "FAILED";
     default:
         return os << "UNKNOWN";
     }
