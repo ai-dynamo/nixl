@@ -15,13 +15,13 @@ public:
     std::shared_ptr<c10d::TCPStore> store;
 };
 
-TCPStore::TCPStore(const std::string& host, int port, bool is_master, int timeout_ms)
+TCPStore::TCPStore(const std::string &host, int port, bool is_master, int timeout_ms)
     : impl_(std::make_unique<Impl>()) {
 
     c10d::TCPStoreOptions opts;
     opts.port = port;
     opts.isServer = is_master;
-    opts.numWorkers = 2;  // For 2proc example
+    opts.numWorkers = 2; // For 2proc example
     opts.waitWorkers = true;
     opts.timeout = std::chrono::milliseconds(timeout_ms);
     opts.multiTenant = false;

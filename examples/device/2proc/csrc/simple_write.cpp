@@ -19,33 +19,36 @@
 #include "kernels.h"
 
 // Configuration constants
-constexpr uint8_t INITIATOR_FILL_VALUE = 42;  // Initiator writes this pattern
-constexpr int INITIATOR_DEVICE = 0;            // Initiator always uses GPU 0
-constexpr int TARGET_DEVICE = 1;               // Target always uses GPU 1
+constexpr uint8_t INITIATOR_FILL_VALUE = 42; // Initiator writes this pattern
+constexpr int INITIATOR_DEVICE = 0; // Initiator always uses GPU 0
+constexpr int TARGET_DEVICE = 1; // Target always uses GPU 1
 
-#define CUDA_CHECK(cmd) do {                         \
-    cudaError_t e = cmd;                             \
-    if (e != cudaSuccess) {                          \
-        std::cerr << "CUDA error: " << cudaGetErrorString(e) \
-                  << " at " << __FILE__ << ":" << __LINE__ << std::endl; \
-        exit(EXIT_FAILURE);                          \
-    }                                                \
-} while(0)
+#define CUDA_CHECK(cmd)                                                                       \
+    do {                                                                                      \
+        cudaError_t e = cmd;                                                                  \
+        if (e != cudaSuccess) {                                                               \
+            std::cerr << "CUDA error: " << cudaGetErrorString(e) << " at " << __FILE__ << ":" \
+                      << __LINE__ << std::endl;                                               \
+            exit(EXIT_FAILURE);                                                               \
+        }                                                                                     \
+    } while (0)
 
-#define NIXL_CHECK(cmd, msg) do {                    \
-    if ((cmd) != NIXL_SUCCESS) {                     \
-        std::cerr << "NIXL error: " << msg           \
-                  << " at " << __FILE__ << ":" << __LINE__ << std::endl; \
-        exit(EXIT_FAILURE);                          \
-    }                                                \
-} while(0)
+#define NIXL_CHECK(cmd, msg)                                                            \
+    do {                                                                                \
+        if ((cmd) != NIXL_SUCCESS) {                                                    \
+            std::cerr << "NIXL error: " << msg << " at " << __FILE__ << ":" << __LINE__ \
+                      << std::endl;                                                     \
+            exit(EXIT_FAILURE);                                                         \
+        }                                                                               \
+    } while (0)
 
 struct Config {
-    std::string mode = "initiator";  // "initiator" or "target"
-    size_t size = 1024 * 1024;       // 1 MB default
+    std::string mode = "initiator"; // "initiator" or "target"
+    size_t size = 1024 * 1024; // 1 MB default
 };
 
-void print_usage(const char* prog) {
+void
+print_usage(const char *prog) {
     std::cout << "Usage: " << prog << " [options]\n"
               << "Options:\n"
               << "  --mode <initiator|target>  Run as initiator or target (default: initiator)\n"
@@ -53,38 +56,38 @@ void print_usage(const char* prog) {
               << "  --help                     Show this help\n";
 }
 
-Config parse_args(int argc, char** argv) {
+Config
+parse_args(int argc, char **argv) {
     Config cfg;
 
-    static struct option long_options[] = {
-        {"mode", required_argument, 0, 'm'},
-        {"size", required_argument, 0, 's'},
-        {"help", no_argument, 0, 'h'},
-        {0, 0, 0, 0}
-    };
+    static struct option long_options[] = {{"mode", required_argument, 0, 'm'},
+                                           {"size", required_argument, 0, 's'},
+                                           {"help", no_argument, 0, 'h'},
+                                           {0, 0, 0, 0}};
 
     int opt;
     while ((opt = getopt_long(argc, argv, "m:s:h", long_options, nullptr)) != -1) {
         switch (opt) {
-            case 'm':
-                cfg.mode = optarg;
-                break;
-            case 's':
-                cfg.size = std::stoull(optarg);
-                break;
-            case 'h':
-                print_usage(argv[0]);
-                exit(0);
-            default:
-                print_usage(argv[0]);
-                exit(1);
+        case 'm':
+            cfg.mode = optarg;
+            break;
+        case 's':
+            cfg.size = std::stoull(optarg);
+            break;
+        case 'h':
+            print_usage(argv[0]);
+            exit(0);
+        default:
+            print_usage(argv[0]);
+            exit(1);
         }
     }
 
     return cfg;
 }
 
-void run_target(const Config& cfg) {
+void
+run_target(const Config &cfg) {
     std::cout << "[target] Starting..." << std::endl;
 
     // Target always uses GPU 1 (for demo simplicity)
@@ -104,15 +107,15 @@ void run_target(const Config& cfg) {
     init_params["num_workers"] = "1";
     init_params["ucx_error_handling_mode"] = "none";
 
-    nixlBackendH* backend = nullptr;
+    nixlBackendH *backend = nullptr;
     NIXL_CHECK(agent->createBackend("UCX", init_params, backend), "createBackend");
 
     nixl_opt_args_t extra_params;
     extra_params.backends.push_back(backend);
 
     // Allocate GPU memory (initialize to 0 - will receive INITIATOR_FILL_VALUE)
-    void* data_ptr = nullptr;
-    void* signal_ptr = nullptr;
+    void *data_ptr = nullptr;
+    void *signal_ptr = nullptr;
 
     CUDA_CHECK(cudaMalloc(&data_ptr, cfg.size));
     CUDA_CHECK(cudaMemset(data_ptr, 0, cfg.size));
@@ -132,7 +135,8 @@ void run_target(const Config& cfg) {
     NIXL_CHECK(agent->registerMem(data_reg, &extra_params), "registerMem data");
 
     nixl_reg_dlist_t signal_reg(VRAM_SEG);
-    signal_reg.addDesc(nixlBlobDesc((uintptr_t)signal_ptr, signal_size, TARGET_DEVICE, "target_signal"));
+    signal_reg.addDesc(
+        nixlBlobDesc((uintptr_t)signal_ptr, signal_size, TARGET_DEVICE, "target_signal"));
     NIXL_CHECK(agent->registerMem(signal_reg, &extra_params), "registerMem signal");
     NIXL_CHECK(agent->prepGpuSignal(signal_reg, &extra_params), "prepGpuSignal");
 
@@ -215,7 +219,8 @@ void run_target(const Config& cfg) {
     std::cout << "[target] Complete!" << std::endl;
 }
 
-void run_initiator(const Config& cfg) {
+void
+run_initiator(const Config &cfg) {
     std::cout << "[initiator] Starting..." << std::endl;
 
     // Create TCPStore (initiator is master, starts the server)
@@ -236,15 +241,15 @@ void run_initiator(const Config& cfg) {
     init_params["num_workers"] = "1";
     init_params["ucx_error_handling_mode"] = "none";
 
-    nixlBackendH* backend = nullptr;
+    nixlBackendH *backend = nullptr;
     NIXL_CHECK(agent->createBackend("UCX", init_params, backend), "createBackend");
 
     nixl_opt_args_t extra_params;
     extra_params.backends.push_back(backend);
 
     // Allocate GPU memory (fill with test pattern)
-    void* data_ptr = nullptr;
-    void* signal_ptr = nullptr;
+    void *data_ptr = nullptr;
+    void *signal_ptr = nullptr;
 
     CUDA_CHECK(cudaMalloc(&data_ptr, cfg.size));
     CUDA_CHECK(cudaMemset(data_ptr, INITIATOR_FILL_VALUE, cfg.size));
@@ -260,11 +265,13 @@ void run_initiator(const Config& cfg) {
 
     // Register memory with NIXL
     nixl_reg_dlist_t data_reg(VRAM_SEG);
-    data_reg.addDesc(nixlBlobDesc((uintptr_t)data_ptr, cfg.size, INITIATOR_DEVICE, "initiator_data"));
+    data_reg.addDesc(
+        nixlBlobDesc((uintptr_t)data_ptr, cfg.size, INITIATOR_DEVICE, "initiator_data"));
     NIXL_CHECK(agent->registerMem(data_reg, &extra_params), "registerMem data");
 
     nixl_reg_dlist_t signal_reg(VRAM_SEG);
-    signal_reg.addDesc(nixlBlobDesc((uintptr_t)signal_ptr, signal_size, INITIATOR_DEVICE, "initiator_signal"));
+    signal_reg.addDesc(
+        nixlBlobDesc((uintptr_t)signal_ptr, signal_size, INITIATOR_DEVICE, "initiator_signal"));
     NIXL_CHECK(agent->registerMem(signal_reg, &extra_params), "registerMem signal");
 
     // Get local metadata
@@ -309,9 +316,10 @@ void run_initiator(const Config& cfg) {
     remote_data_serdes.importStr(target_data_descs);
     nixl_xfer_dlist_t remote_data(&remote_data_serdes);
 
-    nixlXferReqH* data_xfer_req = nullptr;
-    NIXL_CHECK(agent->createXferReq(NIXL_WRITE, local_data, remote_data, target_name,
-                                    data_xfer_req, &extra_params), "createXferReq data");
+    nixlXferReqH *data_xfer_req = nullptr;
+    NIXL_CHECK(agent->createXferReq(
+                   NIXL_WRITE, local_data, remote_data, target_name, data_xfer_req, &extra_params),
+               "createXferReq data");
 
     nixlGpuXferReqH data_gpu_req = nullptr;
     NIXL_CHECK(agent->createGpuXferReq(*data_xfer_req, data_gpu_req), "createGpuXferReq data");
@@ -323,32 +331,34 @@ void run_initiator(const Config& cfg) {
     remote_signal_serdes.importStr(target_signal_descs);
     nixl_xfer_dlist_t remote_signal(&remote_signal_serdes);
 
-    nixlXferReqH* signal_xfer_req = nullptr;
-    NIXL_CHECK(agent->createXferReq(NIXL_WRITE, local_signal, remote_signal, target_name,
-                                    signal_xfer_req, &extra_params), "createXferReq signal");
+    nixlXferReqH *signal_xfer_req = nullptr;
+    NIXL_CHECK(
+        agent->createXferReq(
+            NIXL_WRITE, local_signal, remote_signal, target_name, signal_xfer_req, &extra_params),
+        "createXferReq signal");
 
     nixlGpuXferReqH signal_gpu_req = nullptr;
-    NIXL_CHECK(agent->createGpuXferReq(*signal_xfer_req, signal_gpu_req), "createGpuXferReq signal");
+    NIXL_CHECK(agent->createGpuXferReq(*signal_xfer_req, signal_gpu_req),
+               "createGpuXferReq signal");
 
     // Prepare GPU request handles array (kernel needs device memory, not host stack pointer)
-    uintptr_t* data_req_handles = nullptr;
+    uintptr_t *data_req_handles = nullptr;
     CUDA_CHECK(cudaMalloc(&data_req_handles, sizeof(uintptr_t)));
     uintptr_t data_gpu_req_val = reinterpret_cast<uintptr_t>(data_gpu_req);
-    CUDA_CHECK(cudaMemcpy(data_req_handles, &data_gpu_req_val, sizeof(uintptr_t),
-                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(
+        cudaMemcpy(data_req_handles, &data_gpu_req_val, sizeof(uintptr_t), cudaMemcpyHostToDevice));
 
     // Launch GPU kernel to post write + signal
     std::cout << "[initiator] Transferring data via GPU kernel..." << std::endl;
-    launch_post_write_and_signal(
-        (uintptr_t)data_req_handles,                     // GPU handles array
-        1,                                                // Number of handles
-        reinterpret_cast<uintptr_t>(signal_gpu_req),    // Signal handle
-        (uintptr_t)signal_ptr,                           // Signal memory
-        cfg.size,                                         // Transfer size
-        0,                                                // THREAD level cooperation
-        1,                                                // Single thread
-        1,                                                // One write per signal
-        0                                                 // Default stream
+    launch_post_write_and_signal((uintptr_t)data_req_handles, // GPU handles array
+                                 1, // Number of handles
+                                 reinterpret_cast<uintptr_t>(signal_gpu_req), // Signal handle
+                                 (uintptr_t)signal_ptr, // Signal memory
+                                 cfg.size, // Transfer size
+                                 0, // THREAD level cooperation
+                                 1, // Single thread
+                                 1, // One write per signal
+                                 0 // Default stream
     );
     CUDA_CHECK(cudaDeviceSynchronize());
     std::cout << "[initiator] Transfer complete!" << std::endl;
@@ -372,7 +382,8 @@ void run_initiator(const Config& cfg) {
     std::cout << "[initiator] Complete!" << std::endl;
 }
 
-int main(int argc, char** argv) {
+int
+main(int argc, char **argv) {
     Config cfg = parse_args(argc, argv);
 
     if (cfg.mode == "target") {
