@@ -1310,7 +1310,7 @@ nixl_status_t
 nixlLibfabricRail::registerMemory(void *buffer,
                                   size_t length,
                                   nixl_mem_t mem_type,
-                                  int gpu_id,
+                                  int device_id,
                                   enum fi_hmem_iface iface,
                                   struct fid_mr **mr_out,
                                   uint64_t *key_out) const {
@@ -1366,11 +1366,20 @@ nixlLibfabricRail::registerMemory(void *buffer,
         if (provider_supports_hmem_) {
             mr_attr.iface = iface;
             if (iface == FI_HMEM_CUDA) {
-                mr_attr.device.cuda = gpu_id;
-                NIXL_DEBUG << "CUDA memory registration - iface: FI_HMEM_CUDA, device.cuda: " << gpu_id;
+                mr_attr.device.cuda = device_id;
+                NIXL_DEBUG << "CUDA memory registration - iface: FI_HMEM_CUDA, device.cuda: "
+                           << device_id;
             } else if (iface == FI_HMEM_NEURON) {
+                /*
+                 * Store a sentinel; libfabric requires this to be initialized.
+                 * Libfabric requires the device.neuron field to be set for Neuron HMEM,
+                 * but the EFA provider does not use the value. Store an invalid device id
+                 * sentinel to both follow the Libfabric spec and cause an error if a
+                 * provider uses the value in the future.
+                 */
                 mr_attr.device.neuron = -1;
-                NIXL_DEBUG << "NEURON memory registration - iface: FI_HMEM_NEURON, gpu_id: " << gpu_id;
+                NIXL_DEBUG << "NEURON memory registration - iface: FI_HMEM_NEURON, device_id: "
+                           << device_id;
             }
         } else {
             NIXL_WARN << "VRAM memory requested but provider does not support FI_HMEM - falling "

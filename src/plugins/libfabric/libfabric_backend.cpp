@@ -30,30 +30,31 @@
 
 #include "absl/strings/numbers.h"
 
-
 /****************************************
  * Neuron Address Query
  *****************************************/
 namespace {
 
-void *dlopen_libnrt() {
+void *
+dlopen_libnrt() {
     static void *const handle = dlopen("libnrt.so.1", RTLD_NOW);
     return handle;
 }
 
-template <class Fn>
-Fn *_load_nrt_symbol(const char *fn_name, Fn *) {
+template<class Fn>
+Fn *
+_load_nrt_symbol(const char *fn_name, Fn *) {
     void *libnrt_handle = dlopen_libnrt();
     if (libnrt_handle) {
-       return reinterpret_cast<Fn *>(dlsym(libnrt_handle, fn_name));
+        return reinterpret_cast<Fn *>(dlsym(libnrt_handle, fn_name));
     }
     return nullptr;
 }
 
 #define LOAD_NRT_SYMBOL(sym) _load_nrt_symbol(#sym, &sym)
 
-int nrt_get_attached_efa_bdf(const void *va, char *efa_bdf, size_t *len)
-{
+int
+nrt_get_attached_efa_bdf(const void *va, char *efa_bdf, size_t *len) {
     static const auto fn = LOAD_NRT_SYMBOL(nrt_get_attached_efa_bdf);
     if (fn == nullptr) {
         NIXL_ERROR << "Could not resolve libnrt symbol: " << __func__;
@@ -62,8 +63,8 @@ int nrt_get_attached_efa_bdf(const void *va, char *efa_bdf, size_t *len)
     return fn(va, efa_bdf, len);
 }
 
-int nrtQueryAddr(const void *va, std::string *efa_bdf)
-{
+int
+nrtQueryAddr(const void *va, std::string *efa_bdf) {
     char buf[] = "0000:00:00.0";
     size_t buflen = sizeof(buf);
 
@@ -75,7 +76,7 @@ int nrtQueryAddr(const void *va, std::string *efa_bdf)
     return -1;
 }
 
-}  // namespace
+} // namespace
 
 #ifdef HAVE_CUDA
 // CUDA error checking macros
@@ -292,20 +293,20 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
       progress_thread_enabled_(init_params->enableProgTh),
       progress_thread_delay_(std::chrono::microseconds(init_params->pthrDelay)),
       rail_manager(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
-      system_accelerator_type_(FI_HMEM_SYSTEM) {
+      runtime_(FI_HMEM_SYSTEM) {
 
-    NIXL_DEBUG << "Initializing Libfabric Backend with GPU Support";
+    NIXL_DEBUG << "Initializing Libfabric Backend";
 
-    // Query system accelerator type from rail manager (determined once at topology discovery)
-    system_accelerator_type_ = rail_manager.getSystemAcceleratorType();
+    // Query system runtime type from rail manager (determined once at topology discovery)
+    runtime_ = rail_manager.getRuntime();
 
-    NIXL_DEBUG << "System accelerator type: "
-               << (system_accelerator_type_ == FI_HMEM_CUDA       ? "CUDA" :
-                       system_accelerator_type_ == FI_HMEM_NEURON ? "NEURON" :
-                                                                    "SYSTEM");
+    NIXL_INFO << "System runtime: "
+              << (runtime_ == FI_HMEM_CUDA       ? "CUDA" :
+                      runtime_ == FI_HMEM_NEURON ? "NEURON" :
+                                                   "SYSTEM");
 
 #ifdef HAVE_CUDA
-    if (system_accelerator_type_ == FI_HMEM_CUDA) {
+    if (runtime_ == FI_HMEM_CUDA) {
         // Initialize CUDA context management
         vramInitCtx();
         // CUDA address workaround
@@ -807,14 +808,14 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
 
     priv->buffer_ = (void *)mem.addr;
     priv->length_ = mem.len;
-    priv->gpu_device_id_ = mem.devId; // Store GPU device ID
+    priv->device_id_ = mem.devId; // Store device ID
 
     std::string pci_bus_id = "";
 
-    // Use system accelerator type to determine device-specific operations
+    // Use system runtime type to determine device-specific operations
     if (nixl_mem == VRAM_SEG) {
 #ifdef HAVE_CUDA
-        if (system_accelerator_type_ == FI_HMEM_CUDA) {
+        if (runtime_ == FI_HMEM_CUDA) {
             // CUDA-specific address query
             // For multi-GPU support, skip CUDA address workaround
             if (cuda_addr_wa_) {
@@ -828,10 +829,8 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
                     NIXL_DEBUG << "CUDA context updated, restarting progress thread";
                     vramApplyCtx();
                 }
-            }
-
-            // Set CUDA device context directly for multi-GPU support
-            if (!cuda_addr_wa_) {
+            } else {
+                // Set CUDA device context directly for multi-GPU support
                 cudaError_t cuda_ret = cudaSetDevice(mem.devId);
                 if (cuda_ret != cudaSuccess) {
                     NIXL_ERROR << "Failed to set CUDA device " << mem.devId << ": "
@@ -855,7 +854,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
             NIXL_DEBUG << "Queried PCI bus ID: " << pci_bus_id << " for GPU " << mem.devId;
         }
 #endif
-        if (system_accelerator_type_ == FI_HMEM_NEURON) {
+        if (runtime_ == FI_HMEM_NEURON) {
             // Neuron-specific address query
             int ret = nrtQueryAddr((void *)mem.addr, &pci_bus_id);
             if (ret) {
@@ -874,7 +873,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
 
 #ifdef HAVE_CUDA
     // Set CUDA context before libfabric operations for VRAM
-    if (nixl_mem == VRAM_SEG && system_accelerator_type_ == FI_HMEM_CUDA) {
+    if (nixl_mem == VRAM_SEG && runtime_ == FI_HMEM_CUDA) {
         vramApplyCtx();
     }
 #endif
@@ -903,7 +902,8 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
                << (nixl_mem == VRAM_SEG ? " with GPU Direct RDMA support" : "");
 
     NIXL_DEBUG << "Successfully registered memory on " << priv->selected_rails_.size()
-               << " rails for " << (nixl_mem == VRAM_SEG ? "GPU" : "CPU") << " " << mem.devId;
+               << " rails for " << (nixl_mem == VRAM_SEG ? "accelerator" : "CPU") << " device "
+               << mem.devId;
     out = priv.release();
     return NIXL_SUCCESS;
 }
@@ -1138,9 +1138,9 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         // Get transfer info for THIS descriptor
         void *transfer_addr = (void *)local[desc_idx].addr;
         size_t transfer_size = local[desc_idx].len;
-        int gpu_id = local[desc_idx].devId;
+        int device_id = local[desc_idx].devId;
 
-        NIXL_DEBUG << "Processing descriptor " << desc_idx << " GPU " << gpu_id
+        NIXL_DEBUG << "Processing descriptor " << desc_idx << " device " << device_id
                    << " local_addr: " << transfer_addr << " size=" << transfer_size
                    << " remote_addr=" << (void *)remote[desc_idx].addr;
 
@@ -1170,8 +1170,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             submitted_count);
 
         if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx << " GPU "
-                       << gpu_id;
+            NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx
+                       << " device " << device_id;
             return status;
         }
 
