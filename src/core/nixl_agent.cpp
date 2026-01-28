@@ -1171,6 +1171,55 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
     return req_hndl->status;
 }
 
+
+nixlAgent::getXferStatus (nixlXferReqH *req_hndl,
+                          std::vector<nixl_status_t> &entry_status) const {
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+
+    // Check if the remote was invalidated before completion
+    if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
+        NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
+                        << "' was invalidated during transfer";
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    // Get per-entry status from backend
+    nixl_status_t status = req_hndl->engine->checkXferList(
+                                 req_hndl->backendHandle, entry_status);
+
+    // If backend doesn't support per-entry status, return the error
+    if (status == NIXL_ERR_NOT_SUPPORTED) {
+        return status;
+    }
+
+    // Update overall request status and handle errors/completion
+    if (status != NIXL_IN_PROG) {
+        req_hndl->status = status;
+
+        if (status < 0) {
+            if (status == NIXL_ERR_REMOTE_DISCONNECT) {
+                data->invalidateRemoteData(req_hndl->remoteAgent);
+                return NIXL_ERR_REMOTE_DISCONNECT;
+            } else {
+                NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
+                                << "' returned error status " << req_hndl->status;
+            }
+        }
+
+        // Update telemetry
+        if (data->telemetryEnabled) {
+            if (status == NIXL_SUCCESS) {
+                req_hndl->updateRequestStats(data->telemetry_, NIXL_TELEMETRY_FINISH);
+            } else if (status < 0) {
+                data->addErrorTelemetry(status);
+            }
+        }
+    }
+
+    return status;
+}
+
 nixl_status_t
 nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &telemetry) const {
 

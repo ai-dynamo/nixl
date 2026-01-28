@@ -287,6 +287,24 @@ class nixlAgent {
         nixl_status_t
         getXferStatus (nixlXferReqH* req_hndl) const;
 
+        /**
+         * @brief  Check the status of transfer request and get per-entry error codes.
+         *         This overload is useful for batch transfers to identify which specific
+         *         entries failed. Not all backends support this feature.
+         *
+         * @param  req_hndl       Transfer request handle after postXferReq
+         * @param  entry_status   [out] Vector of status codes for each descriptor pair.
+         *                        Size matches the number of entries in local_indices/remote_indices.
+         *                        For storage backends, each entry corresponds to one I/O operation.
+         *                        Will be cleared and populated by this call.
+         * @return nixl_status_t  Overall status: NIXL_SUCCESS if all entries succeeded,
+         *                        NIXL_IN_PROG if any in progress, or first error encountered.
+         *                        NIXL_ERR_NOT_SUPPORTED if backend doesn't support per-entry status.
+         */
+        nixl_status_t
+        getXferStatus (nixlXferReqH* req_hndl,
+                       std::vector<nixl_status_t> &entry_status) const;
+
 
         /**
          * @brief  Get the telemetry data associated with `req_hndl`.
