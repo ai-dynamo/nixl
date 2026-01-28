@@ -24,6 +24,7 @@
 #include "backend/backend_aux.h"
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
+#include "absl/strings/str_join.h"
 
 const std::string nixl_invalid_agent = "INVALID_AGENT";
 
@@ -319,12 +320,33 @@ nixlDescList<nixlRemoteMetaDesc>::serialize(nixlSerDes *serializer) const {
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
-template <class T>
-void nixlDescList<T>::print() const {
-    std::cout << "DescList of mem type " << type << std::endl;
-    for (auto & elm : descs) {
-        elm.print("");
+template<class T>
+void
+nixlDescList<T>::print() const {
+    std::cout << to_string() << std::endl;
+}
+
+template<class T>
+std::string
+nixlDescList<T>::to_string(bool compact) const {
+    std::stringstream ss;
+    ss << "DescList of mem type " << type;
+
+    if (compact) {
+        std::unordered_map<size_t, size_t> count_map;
+        for (auto &elm : descs) {
+            count_map[elm.len]++;
+        }
+
+        ss << " count=" << descs.size() << " content={"
+           << absl::StrJoin(count_map, ", ", absl::PairFormatter(":")) << "}";
+    } else {
+        for (auto &elm : descs) {
+            elm.print("");
+        }
     }
+
+    return ss.str();
 }
 
 template <class T>
