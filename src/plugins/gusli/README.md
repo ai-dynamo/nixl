@@ -174,6 +174,15 @@ Security flags can be specified per-device using `--gusli_device_security`:
            --num_initiator_dev=3 \
            --num_target_dev=3 \
            --op_type=WRITE
+
+# Custom devices with per-device security and per-device byte offsets
+./nixlbench --backend=GUSLI \
+           --device_list="11:F:./mystore.bin,27:F:./store1.bin" \
+           --gusli_device_security="sec=0x3,sec=0x7" \
+           --gusli_device_byte_offsets="1048576,2097152" \
+           --num_initiator_dev=2 \
+           --num_target_dev=2 \
+           --op_type=WRITE
 ```
 
 ### GUSLI-Specific Parameters
