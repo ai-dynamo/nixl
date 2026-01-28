@@ -112,4 +112,3 @@ void launch_wait_for_signal(uintptr_t signal_ptr,
     wait_for_signal_kernel_thread<<<1, 1, 0, stream>>>(
         signal, expected_value);
 }
-

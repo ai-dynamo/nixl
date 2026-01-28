@@ -43,4 +43,3 @@ void launch_wait_for_signal(uintptr_t signal_ptr,
                             int level,
                             int threads_per_block,
                             cudaStream_t stream);
-
