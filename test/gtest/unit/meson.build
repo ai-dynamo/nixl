@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +18,7 @@ unit_test_deps = [
     gtest_dep,
 ]
 
-aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
-if aws_s3.found()
+if is_variable('obj_backend_interface')
     subdir('obj')
     unit_test_deps += [obj_unit_test_dep]
 endif
