@@ -21,11 +21,13 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
-#include <unordered_set>
 #include <functional>
-#include <mutex>
 #include <atomic>
 #include "libfabric_rail.h"
+
+// Lock-free active rails tracking: Maximum 64 rails supported with bitmap
+// Based on eliminating mutex overhead in the progress loop hot path
+#define NIXL_LIBFABRIC_MAX_BITMAP_RAILS 64
 
 #ifdef HAVE_CUDA
 #include <cuda.h>
@@ -314,9 +316,10 @@ private:
     // EFA device to rail mapping
     std::unordered_map<std::string, size_t> efa_device_to_rail_map;
 
-    // Active Rail Tracking System
-    std::unordered_set<size_t> active_rails_;
-    mutable std::mutex active_rails_mutex_;
+    // Lock-Free Active Rail Tracking System
+    // Uses atomic bitmap for O(1) lock-free operations instead of mutex+set
+    // Supports up to NIXL_LIBFABRIC_MAX_BITMAP_RAILS (64) rails
+    std::atomic<uint64_t> active_rails_bitmap_{0};
 
     // Internal rail selection method
     std::vector<size_t>
