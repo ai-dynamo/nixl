@@ -420,6 +420,12 @@ public:
      */
     void
     print() const;
+
+    /**
+     * @brief Dump the descriptor list into a string for debugging
+     */
+    std::string
+    to_string(bool compact = false) const;
 };
 /**
  * @brief A typedef for a nixlDescList<nixlBasicDesc>
