@@ -15,24 +15,42 @@ A **high-throughput streaming pattern** using NIXL with notification-based backp
 
 ## Quick Start
 
-### Configuration
-
-Edit constants at the top of `nixl_sender_receiver.py`:
-
-```python
-NUM_BUFFERS = 64                   # Number of buffer slots
-BUFFER_SIZE = 16 * 1024 * 1024     # 16MB per buffer
-NUM_TRANSFERS = 1000               # Number of transfers to perform
-BACKPRESSURE_THRESHOLD = 60        # NUM_BUFFERS - 4 (leave margin)
-PROGRESS_UPDATE_INTERVAL = 16      # Send progress every N transfers
-```
-
 ### Usage
 
+**Basic (local testing with both processes)**:
 ```bash
-# Run the example (assumes NIXL is properly installed)
 cd send_recv
 python3 nixl_sender_receiver.py
+```
+
+**Distributed testing (separate sender and receiver)**:
+```bash
+# Terminal 1 (or Node 1) - Start receiver first
+python3 nixl_sender_receiver.py --mode receiver --tcp-host 10.0.0.1
+
+# Terminal 2 (or Node 2) - Start sender
+python3 nixl_sender_receiver.py --mode sender --tcp-host 10.0.0.1
+```
+
+**Custom buffer configuration**:
+```bash
+python3 nixl_sender_receiver.py --num-buffers 128 --buffer-size 33554432 --num-transfers 2000
+```
+
+**Using etcd for metadata**:
+```bash
+python3 nixl_sender_receiver.py --use-etcd
+```
+
+**All options**:
+```
+--mode {both,sender,receiver}  Run mode (default: both)
+--num-buffers N                Number of buffer slots (default: 64)
+--buffer-size N                Buffer size in bytes (default: 16777216 = 16MB)
+--num-transfers N              Number of transfers (default: 1000)
+--tcp-host HOST                TCP metadata server host (default: 127.0.0.1)
+--tcp-port PORT                TCP metadata server port (default: 9998)
+--use-etcd                     Use NIXL etcd instead of TCP server
 ```
 
 **Expected Output:**
@@ -97,7 +115,7 @@ python3 nixl_sender_receiver.py
 receiver_agent = nixl_agent("receiver", nixl_agent_config(backends=["UCX"]))
 
 # Allocate and register memory
-memory_addr = nixl_utils.malloc_passthru(TOTAL_MEMORY_SIZE)
+memory_addr = common_utils.malloc_passthru(TOTAL_MEMORY_SIZE)
 memory_reg_descs = receiver_agent.get_reg_descs(memory_reg_desc, "DRAM")
 receiver_agent.register_memory(memory_reg_descs)
 ```
@@ -167,7 +185,7 @@ while transfers_sent < NUM_TRANSFERS:
 
 ## Utility Functions
 
-Located in `../nixl_utils/`:
+Located in `../common_utils/`:
 
 ### `metadata_utils.py`
 
@@ -195,9 +213,9 @@ Located in `../nixl_utils/`:
 
 ## References
 
-- **General Guide**: `../nixl_utils/NIXL_PYTHON_GUIDE.md` - Transfer modes, polling, notifications, backpressure
+- **General Guide**: `../common_utils/NIXL_PYTHON_GUIDE.md` - Transfer modes, polling, notifications, backpressure
 - **Simple Example**: `../2proc/` - Basic two-process transfers
-- **Utility Functions**: `../nixl_utils/`
+- **Utility Functions**: `../common_utils/`
 
 ---
 

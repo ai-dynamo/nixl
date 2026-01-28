@@ -13,7 +13,7 @@ This package provides reusable utilities for NIXL Python examples.
 ## Quick Start
 
 ```python
-from nixl_utils import (
+from common_utils import (
     # Memory utilities
     read_uint64, write_uint64,
     # Metadata utilities
@@ -31,7 +31,7 @@ from nixl_utils import (
 Low-level memory operations using NumPy for safe pointer access.
 
 ```python
-from nixl_utils import write_uint64, read_uint64
+from common_utils import write_uint64, read_uint64
 
 # Write a 64-bit value to a memory address
 write_uint64(addr, 0xDEADBEEF)
@@ -52,7 +52,7 @@ Handles metadata exchange between NIXL agents. Supports two modes:
 2. **NIXL Built-in Mode**: Uses NIXL's native etcd APIs for production/distributed deployments
 
 ```python
-from nixl_utils import publish_agent_metadata, retrieve_agent_metadata
+from common_utils import publish_agent_metadata, retrieve_agent_metadata
 
 # --- TCP Server Mode (default) ---
 # Publish metadata
@@ -90,7 +90,7 @@ remote_name = retrieve_agent_metadata(
 A lightweight TCP-based key-value store for metadata exchange in local testing scenarios.
 
 ```python
-from nixl_utils import start_server, set_metadata, get_metadata, clear_metadata
+from common_utils import start_server, set_metadata, get_metadata, clear_metadata
 
 # Start the server (singleton, called once per process)
 start_server(port=9998)

@@ -6,15 +6,11 @@ This directory contains Python examples demonstrating NIXL usage patterns.
 
 ```
 python/
-├── 2proc/                      # Two-process example (target-initiator pattern)
-│   ├── nixl_api_2proc.py
-│   └── README.md
-│
-├── send_recv/                  # High-throughput streaming with backpressure
+├── streaming_backpressure/     # High-throughput streaming with backpressure
 │   ├── nixl_sender_receiver.py
 │   └── README.md
 │
-├── nixl_utils/                      # Shared utilities for examples
+├── common_utils/               # Shared utilities for examples
 │   ├── __init__.py
 │   ├── tcp_server.py
 │   ├── memory_utils.py
@@ -34,17 +30,10 @@ python/
 
 ## Quick Start
 
-### Two-Process Example
+### Streaming with Backpressure
 
 ```bash
-cd 2proc
-python3 nixl_api_2proc.py
-```
-
-### Sender-Receiver (Streaming)
-
-```bash
-cd send_recv
+cd streaming_backpressure
 python3 nixl_sender_receiver.py
 ```
 
@@ -60,8 +49,8 @@ python3 basic_two_peers.py --mode initiator --ip 127.0.0.1 --port 5555
 
 ## Documentation
 
-- **API Patterns Guide**: `nixl_utils/NIXL_PYTHON_GUIDE.md`
-- **Utilities Reference**: `nixl_utils/README.md`
+- **API Patterns Guide**: `common_utils/NIXL_PYTHON_GUIDE.md`
+- **Utilities Reference**: `common_utils/README.md`
 - **Example READMEs**: Each folder has its own README
 
 ## Metadata Exchange
