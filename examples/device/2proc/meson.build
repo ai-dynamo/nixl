@@ -89,12 +89,40 @@ simple_write_exe = executable(
   install: false,
 )
 
+# Build unified single-file executable (no PyTorch dependency)
+simple_write_unified_exe = executable(
+  'simple_write_unified',
+  'simple_write_unified.cu',
+  dependencies: [nixl_dep, cuda_dep],
+  include_directories: [nixl_inc_dirs, nixl_gpu_inc_dirs, utils_inc_dirs] + doca_inc_dirs,
+  link_with: [nixl_lib, nixl_build_lib, serdes_lib],
+  cuda_args: [
+    '-std=c++17',
+    '-DHAVE_CUDA',
+    '--expt-relaxed-constexpr',
+    '--ptxas-options=--register-usage-level=10',
+    '-Xcompiler', '-Wno-deprecated-declarations',
+    '-Xcompiler', '-Wno-unused-variable',
+    '-Xcompiler', '-Wno-sign-compare',
+    '-Xcompiler', '-Wno-reorder',
+    '-Xcompiler', '-Wno-attributes',
+  ] + (meson.get_compiler('cuda').version().version_compare('>=12.9') and
+       meson.get_compiler('cuda').version().version_compare('<12.10') ?
+       ['-D_LIBCUDACXX_ATOMIC_UNSAFE_AUTOMATIC_STORAGE'] : []),
+  install: false,
+)
+
 # Summary
 message('NIXL Device 2proc Example (Pure C++)')
 message('====================================')
-message('simple_write: ' + simple_write_exe.full_path())
+message('simple_write:         ' + simple_write_exe.full_path())
+message('simple_write_unified: ' + simple_write_unified_exe.full_path() + ' (single file, no PyTorch)')
 message('')
 message('Run: ./simple_write --mode initiator (terminal 1)')
 message('     ./simple_write --mode target (terminal 2)')
+message('')
+message('Or unified version:')
+message('     ./simple_write_unified --mode target')
+message('     ./simple_write_unified --mode initiator')
 message('')
 message('See CPP_EXAMPLE.md for detailed usage and UCX configuration')
