@@ -93,24 +93,67 @@ public:
     nixlObjBackendReqH() = default;
     ~nixlObjBackendReqH() = default;
 
-    std::vector<std::future<nixl_status_t>> statusFutures_;
+    std::vector<std::shared_future<nixl_status_t>> statusFutures_;
+    std::vector<nixl_status_t> cachedResults_;
 
     nixl_status_t
     getOverallStatus() {
-        while (!statusFutures_.empty()) {
-            if (statusFutures_.back().wait_for(std::chrono::seconds(0)) ==
-                std::future_status::ready) {
-                auto current_status = statusFutures_.back().get();
-                if (current_status != NIXL_SUCCESS) {
-                    statusFutures_.clear();
-                    return current_status;
+        size_t num_futures = statusFutures_.size();
+
+        // Check all futures and cache results
+        for (size_t i = 0; i < num_futures; ++i) {
+            if (i >= cachedResults_.size()) {
+                cachedResults_.resize(num_futures, NIXL_IN_PROG);
+            }
+
+            if (cachedResults_[i] == NIXL_IN_PROG) {
+                if (statusFutures_[i].wait_for(std::chrono::seconds(0)) ==
+                    std::future_status::ready) {
+                    cachedResults_[i] = statusFutures_[i].get();
                 }
-                statusFutures_.pop_back();
-            } else {
+            }
+
+            // Return first error or in-progress
+            if (cachedResults_[i] < 0) {
+                return cachedResults_[i];
+            }
+            if (cachedResults_[i] == NIXL_IN_PROG) {
                 return NIXL_IN_PROG;
             }
         }
+
         return NIXL_SUCCESS;
+    }
+
+    nixl_status_t
+    getStatusList(std::vector<nixl_status_t> &entry_status) {
+        size_t num_futures = statusFutures_.size();
+
+        if (cachedResults_.size() < num_futures) {
+            cachedResults_.resize(num_futures, NIXL_IN_PROG);
+        }
+
+        nixl_status_t overall_status = NIXL_SUCCESS;
+
+        // Update cached results
+        for (size_t i = 0; i < num_futures; ++i) {
+            if (cachedResults_[i] == NIXL_IN_PROG) {
+                if (statusFutures_[i].wait_for(std::chrono::seconds(0)) ==
+                    std::future_status::ready) {
+                    cachedResults_[i] = statusFutures_[i].get();
+                }
+            }
+
+            // Track overall status
+            if (cachedResults_[i] < 0 && overall_status >= 0) {
+                overall_status = cachedResults_[i];
+            } else if (cachedResults_[i] == NIXL_IN_PROG && overall_status == NIXL_SUCCESS) {
+                overall_status = NIXL_IN_PROG;
+            }
+        }
+
+        entry_status = cachedResults_;
+        return overall_status;
     }
 };
 
@@ -270,7 +313,11 @@ nixlObjEngine::postXfer(const nixl_xfer_op_t &operation,
         }
 
         auto status_promise = std::make_shared<std::promise<nixl_status_t>>();
+<<<<<<< HEAD
         req_h->statusFutures_.push_back(status_promise->get_future());
+=======
+        req_h->statusFutures_.push_back(status_promise->get_future().share());
+>>>>>>> Obj (S3): Implement checkXferList with shared_future pattern
 
         uintptr_t data_ptr = local_desc.addr;
         size_t data_len = local_desc.len;
@@ -307,6 +354,13 @@ nixl_status_t
 nixlObjEngine::checkXfer(nixlBackendReqH *handle) const {
     nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
     return req_h->getOverallStatus();
+}
+
+nixl_status_t
+nixlObjEngine::checkXferList(nixlBackendReqH *handle,
+                              std::vector<nixl_status_t> &entry_status) const {
+    nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
+    return req_h->getStatusList(entry_status);
 }
 
 nixl_status_t
