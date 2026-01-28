@@ -112,6 +112,8 @@ else
                                  clang \
                                  hwloc \
                                  libhwloc-dev \
+                                 libxml2-dev \
+                                 npm \
                                  libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
     # Ubuntu 22.04 specific setup
@@ -216,6 +218,21 @@ else
       git clone --depth 1 https://github.com/google/gtest-parallel.git &&
       mkdir -p ${INSTALL_DIR}/bin &&
       cp ${TMPDIR}/gtest-parallel/* ${INSTALL_DIR}/bin/
+    )
+
+    ( \
+      cd ${TMPDIR} && \
+      curl -sL https://aka.ms/InstallAzureCLIDeb | bash && \
+      npm install -g azurite && \
+	  git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
+      cd azure-sdk-for-cpp/ && \
+      mkdir build && cd build && \
+      AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
+      cmake --build . --target azure-storage-blobs azure-identity && \
+      $SUDO cmake --install sdk/core && \
+      $SUDO cmake --install sdk/storage/azure-storage-common && \
+      $SUDO cmake --install sdk/storage/azure-storage-blobs && \
+      $SUDO cmake --install sdk/identity
     )
 fi # PRE_INSTALLED_ENV end
 
