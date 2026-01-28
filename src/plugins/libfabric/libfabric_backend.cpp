@@ -1452,6 +1452,19 @@ nixlLibfabricEngine::progressThread() {
     NIXL_DEBUG << "PT: Thread started successfully for data rails only";
     // Main progress loop - continuously process completions only on data rails
     while (!progress_thread_stop_.load()) {
+#ifdef HAVE_CUDA
+        // v133b: Apply CUDA context INSIDE the loop before any GPU memory operations
+        // CRITICAL: Must be inside loop because:
+        //   1. Progress thread starts in constructor BEFORE registerMem() is called
+        //   2. pthrCudaCtx_ is NULL until first GPU memory registration
+        //   3. UCX backend restarts thread on context change; libfabric doesn't
+        // Safe to call repeatedly - vramApplyCtx() checks cuda_addr_wa_ first
+        // Performance: ~2us overhead per iteration, acceptable for KV cache latency
+        if (cuda_addr_wa_) {
+            vramApplyCtx();
+        }
+#endif
+
         // Process completions only on data rails (non-blocking)
         bool any_completions = false;
         nixl_status_t status = rail_manager.progressActiveDataRails();
