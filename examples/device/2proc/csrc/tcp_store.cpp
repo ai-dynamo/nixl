@@ -31,27 +31,32 @@ TCPStore::TCPStore(const std::string& host, int port, bool is_master, int timeou
 
 TCPStore::~TCPStore() = default;
 
-void TCPStore::set(const std::string& key, const std::string& value) {
+void
+TCPStore::set(const std::string &key, const std::string &value) {
     std::vector<uint8_t> data(value.begin(), value.end());
     impl_->store->set(key, data);
 }
 
-std::string TCPStore::get(const std::string& key) {
+std::string
+TCPStore::get(const std::string &key) {
     auto data = impl_->store->get(key);
     return std::string(data.begin(), data.end());
 }
 
-bool TCPStore::wait(const std::string& key, int timeout_ms) {
+bool
+TCPStore::wait(const std::string &key, int timeout_ms) {
     try {
         std::vector<std::string> keys = {key};
         impl_->store->wait(keys, std::chrono::milliseconds(timeout_ms));
         return true;
-    } catch (const std::exception&) {
+    }
+    catch (const std::exception &) {
         return false;
     }
 }
 
-void TCPStore::delete_key(const std::string& key) {
+void
+TCPStore::delete_key(const std::string &key) {
     impl_->store->deleteKey(key);
 }
 

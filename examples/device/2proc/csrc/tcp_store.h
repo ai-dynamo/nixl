@@ -24,7 +24,7 @@ public:
      * @param is_master Whether this process should start the server
      * @param timeout_ms Timeout in milliseconds (default: 30000)
      */
-    TCPStore(const std::string& host, int port, bool is_master, int timeout_ms = 30000);
+    TCPStore(const std::string &host, int port, bool is_master, int timeout_ms = 30000);
     ~TCPStore();
 
     /**
@@ -33,7 +33,8 @@ public:
      * @param key Key to set
      * @param value Value to store (binary safe)
      */
-    void set(const std::string& key, const std::string& value);
+    void
+    set(const std::string &key, const std::string &value);
 
     /**
      * Get a value from the store.
@@ -41,7 +42,8 @@ public:
      * @param key Key to retrieve
      * @return Value associated with the key
      */
-    std::string get(const std::string& key);
+    std::string
+    get(const std::string &key);
 
     /**
      * Wait for a key to be available in the store.
@@ -50,14 +52,16 @@ public:
      * @param timeout_ms Timeout in milliseconds
      * @return true if key is available, false on timeout
      */
-    bool wait(const std::string& key, int timeout_ms = 30000);
+    bool
+    wait(const std::string &key, int timeout_ms = 30000);
 
     /**
      * Delete a key from the store.
      *
      * @param key Key to delete
      */
-    void delete_key(const std::string& key);
+    void
+    delete_key(const std::string &key);
 
 private:
     class Impl;
