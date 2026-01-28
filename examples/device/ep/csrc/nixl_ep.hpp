@@ -43,23 +43,14 @@
 
 #include "nixl.h"
 
-#define EP_EXECUTE_ONCE(func) do { static bool _ = ((func), true); } while(0)
-
 #ifndef TORCH_EXTENSION_NAME
 #define TORCH_EXTENSION_NAME nixl_ep_cpp
 #endif
 
 namespace nixl_ep {
 
-#define MAX_IP_LENGTH 16
-#define MAX_BOOT_ID_LENGTH 37
-
 struct NixlPeerInfo {
-    char ip[MAX_IP_LENGTH];
-    char boot_id[MAX_BOOT_ID_LENGTH];
-    ino_t ipc_namespace_inode;
-    void *rdma_buffer_ptr;
-    cudaIpcMemHandle_t rdma_ipc_handle;
+    void* rdma_buffer_ptr;
     int* sync_buffer_ptr;
     int device_id;
     int rank;
@@ -80,15 +71,6 @@ struct NixlAgentInfo
     std::vector<bool> wire_up_done; // [num_peers]
 };
 
-struct nixl_ep_ctx {
-    std::vector<nixlXferReqH*> cpu_batch_reqs; // [num_peers]
-    std::vector<nixlGpuXferReqH> gpu_batch_reqs; // [num_peers]
-    std::vector<nixlXferReqH*> cpu_barrier_reqs; // [num_peers]
-    std::vector<nixlGpuXferReqH> gpu_barrier_reqs; // [num_peers]
-    std::vector<void *> rdma_p2p_ptrs; // [num_ranks]
-    ep_kernels::gpu_nixl_ctx gpu;
-};
-
 struct Buffer {
 private:
     int buffer_idx = 0; // Double buffering index
@@ -97,11 +79,9 @@ private:
     int64_t num_rdma_bytes;
     void* rdma_buffer_ptr = nullptr;
 
-    // Shrink mode buffer
-    bool enable_shrink = false;
     int *mask_buffer_ptr = nullptr;
     int *sync_buffer_ptr = nullptr;
-    int *local_barrier_cnt_ptr = nullptr;
+    int *sync_count_ptr = nullptr;
 
     // Device info and communication
     int device_id;
@@ -127,9 +107,9 @@ private:
     std::unique_ptr<NixlAgentInfo> nixl_agent_info;
     std::vector<NixlPeerInfo> nixl_peer_info;
     NixlPeerInfo my_peer_info;
-    uint64_t max_num_ranks;
+    int max_num_ranks;
     int max_experts_per_rank;
-    std::unique_ptr<nixl_ep_ctx> nixl_ctx = nullptr;
+    ep_kernels::gpu_nixl_ctx gpu_ctx;
 
     /* Common private funcs */
     void _nixl_agent_init();
@@ -138,20 +118,13 @@ private:
     void _nixl_agents_peer_info_gather(std::vector<int>& ranks);
     void _nixl_agents_peer_info_cleanup(const std::vector<int>& ranks);
 
-    /* NIXL EP private funcs */
-    void _nixl_ep_init(const std::vector<int>& ranks);
-    void _nixl_ep_context_init();
-    void _nixl_ep_batches_prepare(const std::vector<int>& ranks);
-    void _nixl_ep_p2p_ptrs_prepare(const std::vector<int>& ranks);
-    void _nixl_ep_gpu_ctx_update();
-
-    /* NIXL EP cleanup funcs */
-    void _nixl_ep_cleanup(const std::vector<int>& ranks_to_remove);
-    void _nixl_ep_batches_cleanup(const std::vector<int>& ranks_to_remove);
-    void _nixl_ep_p2p_ptrs_cleanup(const std::vector<int>& ranks_to_remove);
+    void _nixl_ep_init(void);
+    void _nixl_ep_memory_views_create(void);
+    void _nixl_ep_memory_views_destroy(void);
+    void _nixl_ep_destroy(void);
 
 public:
-    Buffer(int rank, bool explicitly_destroy, bool enable_shrink);
+    Buffer(int rank, bool explicitly_destroy);
 
     void update_memory_buffers(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes);
 
