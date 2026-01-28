@@ -162,7 +162,7 @@ public:
     virtual ~nixlUcclReqH() {}
 
     uccl_conn_t *conn;
-    std::unordered_set<uint64_t> pending_transfer_ids;
+    uint64_t transfer_id;
     nixl_blob_t notif_msg;
     std::vector<FifoItem> fifo_items;
 };

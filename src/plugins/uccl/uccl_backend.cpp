@@ -584,7 +584,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     if (!handle) {
         handle = new nixlUcclReqH(conn);
     }
-    uccl_handle->pending_transfer_ids.insert(transfer_id);
+    uccl_handle->transfer_id = transfer_id;
 
     NIXL_DEBUG << "Successfully posted vector " << (operation == NIXL_READ ? "READ" : "WRITE")
                << " operation with " << lcnt << " iovecs, transfer_id: " << transfer_id;
@@ -615,19 +615,8 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
         return NIXL_ERR_BACKEND;
     }
 
-    auto it = uccl_handle->pending_transfer_ids.begin();
-    while (it != uccl_handle->pending_transfer_ids.end()) {
-        uint64_t transfer_id = *it;
-        int is_done = uccl_engine_xfer_status(conn, transfer_id);
-        if (is_done) {
-            it = uccl_handle->pending_transfer_ids.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    bool all_done = uccl_handle->pending_transfer_ids.empty();
-
-    if (all_done && !uccl_handle->notif_msg.empty()) {
+    int is_done = uccl_engine_xfer_status(conn, uccl_handle->transfer_id);
+    if (is_done) {
         nixlSerDes ser_des;
         ser_des.addStr("msg", uccl_handle->notif_msg);
         std::string serialized = ser_des.exportStr();
@@ -648,9 +637,10 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
             NIXL_DEBUG << "All transfers in handle completed, sent notification: "
                        << uccl_handle->notif_msg;
         }
+        return NIXL_SUCCESS;
     }
 
-    return (all_done) ? NIXL_SUCCESS : NIXL_IN_PROG;
+    return NIXL_IN_PROG;
 }
 
 nixl_status_t
