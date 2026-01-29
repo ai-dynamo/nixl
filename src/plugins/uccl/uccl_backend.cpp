@@ -89,7 +89,8 @@ getNixlParam(const nixl_b_params_t *custom_params, const std::string &key, int d
 }
 
 nixlUcclEngine::nixlUcclEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params), stop_listener_(false) {
+    : nixlBackendEngine(init_params),
+      stop_listener_(false) {
 
     local_agent_name_ = init_params->localAgent;
     nixl_b_params_t *custom_params = init_params->customParams;
@@ -197,7 +198,6 @@ nixlUcclEngine::getPublicData(const nixlBackendMD *meta, std::string &str) const
         snprintf(hex, sizeof(hex), "%02x", static_cast<unsigned char>(priv->fifo_item[i]));
         str += hex;
     }
-    NIXL_DEBUG << "Exporting Meta Info =" << str << std::endl;
 
     return NIXL_SUCCESS;
 }
@@ -315,8 +315,7 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
     priv->mr_id = mr;
 
     // Pre-compute fifo_item for one-sided RDMA operations
-    result = uccl_engine_prepare_fifo(engine_, mr, (void *)mem.addr,
-                                                 mem.len, priv->fifo_item);
+    result = uccl_engine_prepare_fifo(engine_, mr, (void *)mem.addr, mem.len, priv->fifo_item);
     if (result != 0) {
         NIXL_ERROR << "Failed to prepare fifo_item for memory region";
         uccl_engine_mr_destroy(engine_, mr);
@@ -326,7 +325,7 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
 
     out = priv;
     mem_reg_info_[mem.addr] = priv;
-    NIXL_DEBUG << "Registering memory: " << mem.addr << "Device: " << mem.devId
+    NIXL_DEBUG << "Registering memory: " << std::hex << mem.addr << " Device: " << mem.devId
                << " ref_cnt: " << priv->ref_cnt << " mr_id: " << priv->mr_id;
 
     return NIXL_SUCCESS;
@@ -341,7 +340,7 @@ nixlUcclEngine::deregisterMem(nixlBackendMD *meta) {
 
     // Deregister memory from UCCL engine
     uccl_engine_mr_destroy(engine_, priv->mr_id);
-    NIXL_DEBUG << "Deregistered memory: " << priv->addr << " mr_id: " << priv->mr_id;
+    NIXL_DEBUG << "Deregistered memory: " << std::hex << priv->addr << " mr_id: " << priv->mr_id;
 
     mem_reg_info_.erase((uint64_t)priv->addr);
     delete priv;
@@ -351,7 +350,7 @@ nixlUcclEngine::deregisterMem(nixlBackendMD *meta) {
 nixl_status_t
 nixlUcclEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
     nixlUcclBackendMD *input_md = (nixlUcclBackendMD *)input;
-    NIXL_DEBUG << "UCCL Load Local MD: " << input_md->addr << "Meta Info:" << input_md->mr_id;
+    NIXL_DEBUG << "UCCL Load Local MD: " << std::hex << input_md->addr << "Meta Info:" << input_md->mr_id;
 
     nixlUcclBackendMD *output_md = (nixlUcclBackendMD *)output;
     output_md->addr = (void *)input_md->addr;
@@ -367,7 +366,7 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
                              const nixl_mem_t &nixl_mem,
                              const std::string &remote_agent,
                              nixlBackendMD *&output) {
-    NIXL_DEBUG << "UCCL Load Remote MD: " << input.addr << "Meta Info:" << input.metaInfo
+    NIXL_DEBUG << "UCCL Load Remote MD: " << std::hex <<  input.addr << " Meta Info:" << input.metaInfo
                << " remote_agent: " << remote_agent;
 
     output = new nixlUcclBackendMD(true);
@@ -378,7 +377,7 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
 
     // Decode fifo_item from hex string
     const std::string &hex_str = input.metaInfo;
-    NIXL_DEBUG << "Meta Info =" << hex_str << std::endl;
+
     if (hex_str.length() == FIFO_ITEM_SIZE * 2) {
         for (int i = 0; i < FIFO_ITEM_SIZE; i++) {
             std::string byte_str = hex_str.substr(i * 2, 2);
@@ -386,8 +385,8 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
         }
         NIXL_DEBUG << "Parsed fifo_item from remote metadata";
     } else {
-        NIXL_ERROR << "Invalid fifo_item hex string length: " << hex_str.length()
-                   << " (expected " << FIFO_ITEM_SIZE * 2 << ")";
+        NIXL_ERROR << "Invalid fifo_item hex string length: " << hex_str.length() << " (expected "
+                   << FIFO_ITEM_SIZE * 2 << ")";
         delete output_md;
         output = nullptr;
         return NIXL_ERR_INVALID_PARAM;
@@ -472,8 +471,8 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
 
         uccl_engine_update_fifo(uccl_handle->fifo_items[i], remote_addr, rsize);
 
-        NIXL_DEBUG << "Using pre-shared fifo_item[" << i << "]: addr=" << std::hex
-                   << remote_addr << ", size=" << std::dec << rsize;
+        NIXL_DEBUG << "Using pre-shared fifo_item[" << i << "]: addr=" << std::hex << remote_addr
+                   << ", size=" << std::dec << rsize;
     }
 
     return NIXL_SUCCESS;
@@ -518,9 +517,9 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     std::vector<uccl_mr_t> mr_ids;
-    std::vector<void*> addr_v;
+    std::vector<void *> addr_v;
     std::vector<size_t> size_v;
-    
+
     std::lock_guard<std::mutex> lock(mem_mutex_); // Lock once for the entire operation
     for (size_t i = 0; i < lcnt; i++) {
         lmd = (nixlUcclBackendMD *)local[i].metadataP;
@@ -555,7 +554,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         size_v.push_back(lsize);
     }
 
-    // Perform the vector operation (single call for all transfers)
+    // Perform a vector operation
     int result = 0;
     uint64_t transfer_id = 0;
     uccl_handle = static_cast<nixlUcclReqH *>(handle);
@@ -567,8 +566,8 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         break;
     }
     case NIXL_WRITE: {
-            result = uccl_engine_write_vector(
-                conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
+        result = uccl_engine_write_vector(
+            conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
         break;
     }
     default:
@@ -588,7 +587,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
 
     NIXL_DEBUG << "Successfully posted vector " << (operation == NIXL_READ ? "READ" : "WRITE")
                << " operation with " << lcnt << " iovecs, transfer_id: " << transfer_id;
-    
+
     if (opt_args && opt_args->hasNotif) {
         uccl_handle->notif_msg = opt_args->notifMsg;
     }
