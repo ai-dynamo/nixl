@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -287,7 +287,7 @@ def main():
                 print_telemetry_event(event)
             else:
                 # No events available, sleep briefly
-                time.sleep(0.1)
+                time.sleep(0.5)
 
         logger.info("\nTotal events read: %d", event_count)
         logger.info("Final buffer size: %d events", buffer.size())

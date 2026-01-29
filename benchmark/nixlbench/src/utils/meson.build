@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,8 +21,9 @@ utils_sources = [
 
 utils_deps = [
   cuda_dep,
-  gflags_dep,
-  openmp_dep
+  openmp_dep,
+  cxxopts_dep,
+  tomlplusplus_dep
 ]
 
 utils_lib = static_library('utils',

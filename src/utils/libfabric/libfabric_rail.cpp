@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -118,7 +118,7 @@ RequestPool::getPoolUtilization() const {
 }
 
 nixlLibfabricReq *
-RequestPool::allocateReq() {
+RequestPool::allocateReq(uint32_t req_id) {
     std::lock_guard<std::mutex> lock(pool_mutex_);
 
     if (free_indices_.empty()) {
@@ -148,7 +148,7 @@ RequestPool::allocateReq() {
 
     nixlLibfabricReq *req = &requests_[idx];
     req->in_use = true;
-    req->xfer_id = LibfabricUtils::getNextXferId();
+    req->xfer_id = req_id;
 
     return req;
 }
@@ -299,7 +299,7 @@ ControlRequestPool::expandPool() {
 }
 
 nixlLibfabricReq *
-ControlRequestPool::allocate(size_t needed_size) {
+ControlRequestPool::allocate(size_t needed_size, uint32_t req_id) {
     // Validate size before attempting allocation
     if (needed_size > NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE) {
         NIXL_ERROR << "Control pool allocation failed on rail " << rail_id_ << " - requested size "
@@ -309,7 +309,7 @@ ControlRequestPool::allocate(size_t needed_size) {
     }
 
     // Use common allocation logic from base class
-    nixlLibfabricReq *req = allocateReq();
+    nixlLibfabricReq *req = allocateReq(req_id);
 
     if (req) {
         // Always reset buffer_size to the actual message size needed
@@ -370,9 +370,9 @@ DataRequestPool::expandPool() {
 }
 
 nixlLibfabricReq *
-DataRequestPool::allocate(nixlLibfabricReq::OpType op_type) {
+DataRequestPool::allocate(nixlLibfabricReq::OpType op_type, uint32_t req_id) {
     // Use common allocation logic from base class
-    nixlLibfabricReq *req = allocateReq();
+    nixlLibfabricReq *req = allocateReq(req_id);
     if (req) {
         // Set the operation type specific to data requests
         req->operation_type = op_type;
@@ -533,6 +533,40 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             throw std::runtime_error("fi_ep_bind av failed for rail " + std::to_string(rail_id));
         }
 
+        if (provider_name == "efa") {
+#ifdef HAVE_FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV
+            // Disable unsolicited write recv for EFA RDM to reduce CQ overflow likelihood
+            const bool use_unsolicited_write_recv = false; // Set to false to disable the feature
+            ret = fi_setopt(&endpoint->fid,
+                            FI_OPT_ENDPOINT,
+                            FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV,
+                            &use_unsolicited_write_recv,
+                            sizeof(use_unsolicited_write_recv));
+            if (ret && ret != -FI_ENOSYS && ret != -FI_ENOPROTOOPT) {
+                NIXL_WARN << "fi_setopt FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV failed for rail "
+                          << rail_id << ": " << fi_strerror(-ret) << " - continuing anyway";
+            } else if (ret == 0) {
+                NIXL_INFO << "Successfully disabled unsolicited write recv for rail " << rail_id;
+            } else if (ret == -FI_ENOSYS || ret == -FI_ENOPROTOOPT) {
+                NIXL_DEBUG << "FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV not supported for rail "
+                           << rail_id << " (provider: " << provider_name << ") - skipping";
+            }
+#endif
+
+            size_t rnr_retry = 7; // EFA_RNR_INFINITE_RETRY
+            ret = fi_setopt(&endpoint->fid,
+                            FI_OPT_ENDPOINT,
+                            FI_OPT_EFA_RNR_RETRY,
+                            &rnr_retry,
+                            sizeof(rnr_retry));
+            if (ret) {
+                NIXL_WARN << "fi_setopt FI_OPT_EFA_RNR_RETRY failed for rail " << rail_id << ": "
+                          << fi_strerror(-ret) << " - continuing with default";
+            } else {
+                NIXL_INFO << "Set RNR retry to infinite (7) for rail " << rail_id;
+            }
+        }
+
         // Enable endpoint for this rail
         ret = fi_enable(endpoint);
         if (ret) {
@@ -565,20 +599,29 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                    << " control requests, " << NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL
                    << " data requests for rail " << rail_id;
 
-        // Post initial receive using new resource management system
-        nixlLibfabricReq *recv_req = allocateControlRequest(NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE);
-        if (!recv_req) {
-            NIXL_ERROR << "Failed to allocate request for initial receive on rail " << rail_id;
-            throw std::runtime_error("Failed to allocate request for initial receive on rail " +
-                                     std::to_string(rail_id));
+        // Post initial pool of receives using new resource management system
+        NIXL_INFO << "Pre-posting " << NIXL_LIBFABRIC_RECV_POOL_SIZE << " recv requests for rail "
+                  << rail_id;
+
+        for (size_t i = 0; i < NIXL_LIBFABRIC_RECV_POOL_SIZE; ++i) {
+            nixlLibfabricReq *recv_req = allocateControlRequest(
+                NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE, LibfabricUtils::getNextXferId());
+            if (!recv_req) {
+                NIXL_ERROR << "Failed to allocate request for recv " << i << " on rail " << rail_id;
+                throw std::runtime_error("Failed to allocate request for recv pool on rail " +
+                                         std::to_string(rail_id));
+            }
+            status = postRecv(recv_req);
+            if (status != NIXL_SUCCESS) {
+                NIXL_ERROR << "Failed to post recv " << i << " on rail " << rail_id;
+                releaseRequest(recv_req);
+                throw std::runtime_error("Failed to post recv pool on rail " +
+                                         std::to_string(rail_id));
+            }
         }
-        status = postRecv(recv_req);
-        if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Failed to post initial receive on rail " << rail_id;
-            releaseRequest(recv_req);
-            throw std::runtime_error("Failed to post initial receive on rail " +
-                                     std::to_string(rail_id));
-        }
+
+        NIXL_INFO << "Successfully pre-posted " << NIXL_LIBFABRIC_RECV_POOL_SIZE
+                  << " recv requests for rail " << rail_id;
         NIXL_TRACE << "Successfully initialized rail " << rail_id;
     }
     catch (...) {
@@ -950,7 +993,8 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
     releaseRequest(req);
 
     // Post a new receive using new resource management system
-    nixlLibfabricReq *new_req = allocateControlRequest(NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE);
+    nixlLibfabricReq *new_req = allocateControlRequest(NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE,
+                                                       LibfabricUtils::getNextXferId());
     if (!new_req) {
         NIXL_ERROR << "Failed to allocate request for subsequent receive on rail " << rail_id;
         return NIXL_ERR_BACKEND;
@@ -1434,13 +1478,13 @@ nixlLibfabricRail::getMemoryKey(struct fid_mr *mr) const {
 // Optimized Resource Management Methods
 
 nixlLibfabricReq *
-nixlLibfabricRail::allocateControlRequest(size_t needed_size) const {
-    return const_cast<ControlRequestPool &>(control_request_pool_).allocate(needed_size);
+nixlLibfabricRail::allocateControlRequest(size_t needed_size, uint32_t req_id) const {
+    return const_cast<ControlRequestPool &>(control_request_pool_).allocate(needed_size, req_id);
 }
 
 nixlLibfabricReq *
-nixlLibfabricRail::allocateDataRequest(nixlLibfabricReq::OpType op_type) const {
-    return const_cast<DataRequestPool &>(data_request_pool_).allocate(op_type);
+nixlLibfabricRail::allocateDataRequest(nixlLibfabricReq::OpType op_type, uint32_t req_id) const {
+    return const_cast<DataRequestPool &>(data_request_pool_).allocate(op_type, req_id);
 }
 
 void
@@ -1477,4 +1521,9 @@ nixlLibfabricRail::findRequestFromContext(void *context) const {
     }
     NIXL_ERROR << "No request found for context " << context << " on rail " << rail_id;
     return nullptr;
+}
+
+fi_info *
+nixlLibfabricRail::getRailInfo() const {
+    return info;
 }
