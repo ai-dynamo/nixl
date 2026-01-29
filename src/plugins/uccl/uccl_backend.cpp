@@ -350,7 +350,8 @@ nixlUcclEngine::deregisterMem(nixlBackendMD *meta) {
 nixl_status_t
 nixlUcclEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
     nixlUcclBackendMD *input_md = (nixlUcclBackendMD *)input;
-    NIXL_DEBUG << "UCCL Load Local MD: " << std::hex << input_md->addr << "Meta Info:" << input_md->mr_id;
+    NIXL_DEBUG << "UCCL Load Local MD: " << std::hex << input_md->addr
+               << "Meta Info:" << input_md->mr_id;
 
     nixlUcclBackendMD *output_md = (nixlUcclBackendMD *)output;
     output_md->addr = (void *)input_md->addr;
@@ -366,8 +367,8 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
                              const nixl_mem_t &nixl_mem,
                              const std::string &remote_agent,
                              nixlBackendMD *&output) {
-    NIXL_DEBUG << "UCCL Load Remote MD: " << std::hex <<  input.addr << " Meta Info:" << input.metaInfo
-               << " remote_agent: " << remote_agent;
+    NIXL_DEBUG << "UCCL Load Remote MD: " << std::hex << input.addr
+               << " Meta Info:" << input.metaInfo << " remote_agent: " << remote_agent;
 
     output = new nixlUcclBackendMD(true);
     nixlUcclBackendMD *output_md = static_cast<nixlUcclBackendMD *>(output);
