@@ -1274,6 +1274,13 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
                        << " for fragment " << seq_id;
             return NIXL_ERR_BACKEND;
         }
+
+        // Progress the control rail to ensure the message is sent.
+        status = rail_manager.progressAllControlRails();
+        if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
+            NIXL_ERROR << "Failed to progress control rails in notifSendPriv.";
+            return status;
+        }
     }
 
     NIXL_DEBUG << "Successfully sent all " << binary_notifications.size()
