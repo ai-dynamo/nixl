@@ -37,7 +37,7 @@ public:
 
 class nixlPosixIOQueueUring : public nixlPosixIOQueueImpl<nixlPosixIoUringIO> {
 public:
-    nixlPosixIOQueueUring(uint32_t max_ios);
+    nixlPosixIOQueueUring(uint32_t ios_pool_size, uint32_t kernel_queue_size);
 
     virtual nixl_status_t
     post(void) override;
@@ -63,9 +63,10 @@ private:
     struct io_uring uring; // The io_uring instance for async I/O operations
 };
 
-nixlPosixIOQueueUring::nixlPosixIOQueueUring(uint32_t max_ios) : nixlPosixIOQueueImpl<nixlPosixIoUringIO>(max_ios) {
+nixlPosixIOQueueUring::nixlPosixIOQueueUring(uint32_t ios_pool_size, uint32_t kernel_queue_size)
+    : nixlPosixIOQueueImpl<nixlPosixIoUringIO>(ios_pool_size, kernel_queue_size) {
     io_uring_params params = {};
-    if (io_uring_queue_init_params(max_ios_, &uring, &params) < 0) {
+    if (io_uring_queue_init_params(kernel_queue_size_, &uring, &params) < 0) {
         throw std::runtime_error(
             absl::StrFormat("Failed to initialize io_uring instance: %s", nixl_strerror(errno)));
     }
@@ -132,7 +133,7 @@ nixlPosixIOQueueUring::doCheckCompleted(void) {
     // Mark all seen
     io_uring_cq_advance(&uring, count);
 
-    if (free_ios_.size() == max_ios_) {
+    if (free_ios_.size() == ios_pool_size_) {
         return NIXL_SUCCESS; // All ios are free now
     }
 
@@ -181,6 +182,7 @@ nixlPosixIOQueueUring::~nixlPosixIOQueueUring() {
     io_uring_queue_exit(&uring);
 }
 
-std::unique_ptr<nixlPosixIOQueue> nixlPosixIOQueueUringCreate(uint32_t max_ios) {
-    return std::make_unique<nixlPosixIOQueueUring>(max_ios);
+std::unique_ptr<nixlPosixIOQueue>
+nixlPosixIOQueueUringCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size) {
+    return std::make_unique<nixlPosixIOQueueUring>(ios_pool_size, kernel_queue_size);
 }

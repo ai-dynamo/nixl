@@ -33,7 +33,7 @@ public:
 
 class nixlPosixIOQueueLinuxAIO : public nixlPosixIOQueueImpl<nixlPosixLinuxAioIO> {
 public:
-    nixlPosixIOQueueLinuxAIO(uint32_t max_ios);
+    nixlPosixIOQueueLinuxAIO(uint32_t ios_pool_size, uint32_t kernel_queue_size);
 
     virtual nixl_status_t
     post(void) override;
@@ -59,9 +59,10 @@ private:
     io_context_t io_ctx_; // I/O context
 };
 
-nixlPosixIOQueueLinuxAIO::nixlPosixIOQueueLinuxAIO(uint32_t max_ios)
-    : nixlPosixIOQueueImpl<nixlPosixLinuxAioIO>(max_ios) {
-    int res = io_queue_init(max_ios_, &io_ctx_);
+nixlPosixIOQueueLinuxAIO::nixlPosixIOQueueLinuxAIO(uint32_t ios_pool_size,
+                                                   uint32_t kernel_queue_size)
+    : nixlPosixIOQueueImpl<nixlPosixLinuxAioIO>(ios_pool_size, kernel_queue_size) {
+    int res = io_queue_init(kernel_queue_size_, &io_ctx_);
     if (res) {
         throw std::runtime_error(
             absl::StrFormat("Failed to initialize io_queue: %s", nixl_strerror(errno)));
@@ -145,7 +146,7 @@ nixlPosixIOQueueLinuxAIO::doCheckCompleted(void) {
     int rc;
     struct timespec timeout = {0, 0};
 
-    if (free_ios_.size() == max_ios_) {
+    if (free_ios_.size() == ios_pool_size_) {
         return NIXL_SUCCESS; // All ios are free, no ios in flight
     }
 
@@ -175,7 +176,7 @@ nixlPosixIOQueueLinuxAIO::doCheckCompleted(void) {
         free_ios_.splice(free_ios_.end(), completed_ios);
     }
 
-    if (free_ios_.size() == max_ios_) {
+    if (free_ios_.size() == ios_pool_size_) {
         return NIXL_SUCCESS; // All ios are free now
     }
 
@@ -193,6 +194,6 @@ nixlPosixIOQueueLinuxAIO::poll(void) {
 }
 
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueLinuxAIOCreate(uint32_t max_ios) {
-    return std::make_unique<nixlPosixIOQueueLinuxAIO>(max_ios);
+nixlPosixIOQueueLinuxAIOCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size) {
+    return std::make_unique<nixlPosixIOQueueLinuxAIO>(ios_pool_size, kernel_queue_size);
 }

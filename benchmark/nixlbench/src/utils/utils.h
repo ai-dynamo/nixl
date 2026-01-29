@@ -161,6 +161,8 @@ public:
     static bool enable_vmm;
     static int num_files;
     static std::string posix_api_type;
+    static int posix_ios_pool_size;
+    static int posix_kernel_queue_size;
     static bool storage_enable_direct;
     static int gds_batch_pool_size;
     static int gds_batch_limit;

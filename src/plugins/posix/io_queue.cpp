@@ -16,18 +16,20 @@
  */
 
 #include "io_queue.h"
+#include "common/nixl_log.h"
+#include <absl/strings/str_format.h>
 
 #ifdef HAVE_POSIXAIO
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueAIOCreate(uint32_t max_ios);
+nixlPosixIOQueueAIOCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size);
 #endif
 #ifdef HAVE_LIBURING
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueUringCreate(uint32_t max_ios);
+nixlPosixIOQueueUringCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size);
 #endif
 #ifdef HAVE_LINUXAIO
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueLinuxAIOCreate(uint32_t max_ios);
+nixlPosixIOQueueLinuxAIOCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size);
 #endif
 
 static const struct {
@@ -45,14 +47,28 @@ static const struct {
 #endif
 };
 
-const uint32_t nixlPosixIOQueue::MIN_IOS = 64;
-const uint32_t nixlPosixIOQueue::MAX_IOS = 1024 * 64;
+const uint32_t nixlPosixIOQueue::MIN_IOS_POOL_SIZE = 64;
+const uint32_t nixlPosixIOQueue::MAX_IOS_POOL_SIZE = 1024 * 64;
+const uint32_t nixlPosixIOQueue::DEF_IOS_POOL_SIZE = nixlPosixIOQueue::MAX_IOS_POOL_SIZE;
+const uint32_t nixlPosixIOQueue::MIN_KERNEL_QUEUE_SIZE = 16;
+const uint32_t nixlPosixIOQueue::MAX_KERNEL_QUEUE_SIZE = 1024;
+const uint32_t nixlPosixIOQueue::DEF_KERNEL_QUEUE_SIZE = 256;
 
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueue::instantiate(std::string_view io_queue_type, uint32_t max_ios) {
+nixlPosixIOQueue::instantiate(std::string_view io_queue_type,
+                              uint32_t ios_pool_size,
+                              uint32_t kernel_queue_size) {
     for (const auto &factory : factories) {
         if (io_queue_type == factory.name) {
-            return factory.createFn(max_ios);
+            if (ios_pool_size == 0) {
+                ios_pool_size = DEF_IOS_POOL_SIZE;
+                NIXL_INFO << "Using default IO pool size: " << ios_pool_size;
+            }
+            if (kernel_queue_size == 0) {
+                kernel_queue_size = DEF_KERNEL_QUEUE_SIZE;
+                NIXL_INFO << "Using default kernel queue size: " << kernel_queue_size;
+            }
+            return factory.createFn(ios_pool_size, kernel_queue_size);
         }
     }
     return nullptr;

@@ -32,7 +32,8 @@ public:
 
 class nixlPosixIOQueueAIO : public nixlPosixIOQueueImpl<nixlPosixAioIO> {
 public:
-    nixlPosixIOQueueAIO(uint32_t max_ios) : nixlPosixIOQueueImpl<nixlPosixAioIO>(max_ios) {}
+    nixlPosixIOQueueAIO(uint32_t ios_pool_size, uint32_t kernel_queue_size)
+        : nixlPosixIOQueueImpl<nixlPosixAioIO>(ios_pool_size, kernel_queue_size) {}
 
     virtual nixl_status_t
     post(void) override;
@@ -175,6 +176,6 @@ nixlPosixIOQueueAIO::poll(void) {
 }
 
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueAIOCreate(uint32_t max_ios) {
-    return std::make_unique<nixlPosixIOQueueAIO>(max_ios);
+nixlPosixIOQueueAIOCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size) {
+    return std::make_unique<nixlPosixIOQueueAIO>(ios_pool_size, kernel_queue_size);
 }
