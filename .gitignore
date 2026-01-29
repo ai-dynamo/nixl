@@ -21,3 +21,15 @@ cufile.log
 
 # Asio
 subprojects/asio-*
+
+# Meson wrap lock
+subprojects/.wraplock
+
+# Python cache
+**/__pycache__/
+*.egg-info/
+
+# KVBench testing artifacts
+benchmark/kvbench/devdata/
+benchmark/kvbench/test_plans/
+benchmark/kvbench/test/
