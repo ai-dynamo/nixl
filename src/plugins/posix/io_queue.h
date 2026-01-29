@@ -30,9 +30,12 @@ using nixlPosixIOQueueDoneCb = std::function<void(void *ctx, uint32_t data_size,
 class nixlPosixIOQueue {
 public:
     using nixlPosixIOQueueCreateFn =
-        std::function<std::unique_ptr<nixlPosixIOQueue>(uint32_t max_ios)>;
+        std::function<std::unique_ptr<nixlPosixIOQueue>(uint32_t ios_pool_size,
+                                                        uint32_t kernel_queue_size)>;
 
-    nixlPosixIOQueue(uint32_t max_ios) : max_ios_(normalizedMaxIOS(max_ios)) {}
+    nixlPosixIOQueue(uint32_t ios_pool_size, uint32_t kernel_queue_size)
+        : ios_pool_size_(normalizedIOSPoolSize(ios_pool_size)),
+          kernel_queue_size_(normalizedKernelQueueSize(kernel_queue_size)) {}
 
     virtual ~nixlPosixIOQueue() {}
 
@@ -50,25 +53,37 @@ public:
     poll(void) = 0;
 
     static std::unique_ptr<nixlPosixIOQueue>
-    instantiate(std::string_view io_queue_type, uint32_t max_ios);
+    instantiate(std::string_view io_queue_type, uint32_t ios_pool_size, uint32_t kernel_queue_size);
     static std::string_view
     getDefaultIoQueueType(void);
 
 protected:
     static uint32_t
-    normalizedMaxIOS(uint32_t max_ios) {
-        return std::clamp(max_ios, MIN_IOS, MAX_IOS);
+    normalizedIOSPoolSize(uint32_t ios_pool_size) {
+        return std::clamp(ios_pool_size, MIN_IOS_POOL_SIZE, MAX_IOS_POOL_SIZE);
     }
 
-    uint32_t max_ios_;
-    static const uint32_t MIN_IOS;
-    static const uint32_t MAX_IOS;
+    static uint32_t
+    normalizedKernelQueueSize(uint32_t kernel_queue_size) {
+        return std::clamp(kernel_queue_size, MIN_KERNEL_QUEUE_SIZE, MAX_KERNEL_QUEUE_SIZE);
+    }
+
+    uint32_t ios_pool_size_;
+    uint32_t kernel_queue_size_;
+    static const uint32_t MIN_IOS_POOL_SIZE;
+    static const uint32_t MAX_IOS_POOL_SIZE;
+    static const uint32_t DEF_IOS_POOL_SIZE;
+    static const uint32_t MIN_KERNEL_QUEUE_SIZE;
+    static const uint32_t MAX_KERNEL_QUEUE_SIZE;
+    static const uint32_t DEF_KERNEL_QUEUE_SIZE;
 };
 
 template<typename Entry> class nixlPosixIOQueueImpl : public nixlPosixIOQueue {
 public:
-    nixlPosixIOQueueImpl(uint32_t max_ios) : nixlPosixIOQueue(max_ios), ios_(max_ios_) {
-        for (uint32_t i = 0; i < max_ios_; i++) {
+    nixlPosixIOQueueImpl(uint32_t ios_pool_size, uint32_t kernel_queue_size)
+        : nixlPosixIOQueue(ios_pool_size, kernel_queue_size),
+          ios_(ios_pool_size) {
+        for (uint32_t i = 0; i < ios_pool_size; i++) {
             free_ios_.push_back(&ios_[i]);
         }
     }
@@ -78,6 +93,5 @@ protected:
     std::list<Entry *> free_ios_;
     std::list<Entry *> ios_to_submit_;
 };
-
 
 #endif // POSIX_IO_QUEUE_H

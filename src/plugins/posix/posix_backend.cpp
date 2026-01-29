@@ -103,6 +103,31 @@ getIoQueueType(const nixl_b_params_t *custom_params) {
     return nixlPosixIOQueue::getDefaultIoQueueType();
 }
 
+static uint32_t
+getIOSPoolSize(const nixl_b_params_t *custom_params) {
+    uint32_t ios_pool_size = 0;
+    if (custom_params) {
+        if (custom_params->count("ios_pool_size") > 0) {
+            const auto &value = custom_params->at("ios_pool_size");
+            ios_pool_size = std::stoi(value);
+        }
+    }
+    return ios_pool_size;
+}
+
+static uint32_t
+getKernelQueueSize(const nixl_b_params_t *custom_params) {
+    int kernel_queue_size = 0;
+    if (custom_params) {
+        if (custom_params->count("kernel_queue_size") > 0) {
+            const auto &value = custom_params->at("kernel_queue_size");
+            kernel_queue_size = std::stoi(value);
+        }
+    }
+
+    return kernel_queue_size;
+}
+
 // Log completion percentage at regular intervals (every log_percent_step percent)
 void
 logOnPercentStep(unsigned int completed, unsigned int total) {
@@ -133,14 +158,16 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
                                            const nixl_meta_dlist_t &loc,
                                            const nixl_meta_dlist_t &rem,
                                            const nixl_opt_b_args_t *args,
-                                           const nixl_b_params_t *params)
+                                           const nixl_b_params_t *params,
+                                           std::unique_ptr<nixlPosixIOQueue> &io_queue)
     : operation(op),
       local(loc),
       remote(rem),
       opt_args(args),
       custom_params_(params),
       queue_depth_(loc.descCount()),
-      num_confirmed_ios_(queue_depth_) {
+      num_confirmed_ios_(queue_depth_),
+      io_queue_(io_queue) {
 
     auto it = params->find("io_queue_type");
     if (it == params->end() || it->second.empty()) {
@@ -155,12 +182,6 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
                                         remote.descCount()),
                         NIXL_ERR_INVALID_PARAM);
     }
-
-    nixl_status_t status = initIoQueue(io_queue_type);
-    if (status != NIXL_SUCCESS) {
-        throw exception(absl::StrFormat("Failed to initialize io queue: %s", io_queue_type),
-                        status);
-    }
 }
 
 void
@@ -173,27 +194,6 @@ void
 nixlPosixBackendReqH::ioDoneClb(void *ctx, uint32_t data_size, int error) {
     nixlPosixBackendReqH *self = static_cast<nixlPosixBackendReqH *>(ctx);
     self->ioDone(data_size, error);
-}
-
-nixl_status_t
-nixlPosixBackendReqH::initIoQueue(const std::string &io_queue_type) {
-    try {
-        io_queue_ = nixlPosixIOQueue::instantiate(io_queue_type, queue_depth_);
-        if (!io_queue_) {
-            throw exception(absl::StrFormat("Failed to initialize io queue: %s", io_queue_type),
-                            NIXL_ERR_INVALID_PARAM);
-        }
-
-        return NIXL_SUCCESS;
-    }
-    catch (const nixlPosixBackendReqH::exception &e) {
-        NIXL_ERROR << absl::StrFormat("Failed to initialize io queue: %s", e.what());
-        return e.code();
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << absl::StrFormat("Failed to initialize io queue: %s", e.what());
-        return NIXL_ERR_BACKEND;
-    }
 }
 
 nixl_status_t
@@ -246,7 +246,11 @@ nixlPosixBackendReqH::postXfer() {
 
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
-      io_queue_type_(getIoQueueType(init_params->customParams)) {
+      io_queue_type_(getIoQueueType(init_params->customParams)),
+      io_queue_(nixlPosixIOQueue::instantiate(io_queue_type_,
+                                              getIOSPoolSize(init_params->customParams),
+                                              getKernelQueueSize(init_params->customParams))),
+      io_queue_lock_(init_params->syncMode) {
     if (io_queue_type_.empty()) {
         initErr = true;
         NIXL_ERROR << "Failed to initialize POSIX backend - no supported io queue type found";
@@ -288,8 +292,9 @@ nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
         nixl_b_params_t params;
         params["io_queue_type"] = io_queue_type_;
 
-        auto posix_handle =
-            std::make_unique<nixlPosixBackendReqH>(operation, local, remote, opt_args, &params);
+        auto posix_handle = std::make_unique<nixlPosixBackendReqH>(
+            operation, local, remote, opt_args, &params, io_queue_);
+        NIXL_LOCK_GUARD(io_queue_lock_);
         nixl_status_t status = posix_handle->prepXfer();
         if (status != NIXL_SUCCESS) {
             return status;
@@ -317,6 +322,7 @@ nixlPosixEngine::postXfer(const nixl_xfer_op_t &operation,
                           const nixl_opt_b_args_t *opt_args) const {
     try {
         auto &posix_handle = castPosixHandle(handle);
+        NIXL_LOCK_GUARD(io_queue_lock_);
         nixl_status_t status = posix_handle.postXfer();
         if (status != NIXL_IN_PROG) {
             NIXL_ERROR << "Error in submitting queue";
@@ -334,6 +340,7 @@ nixl_status_t
 nixlPosixEngine::checkXfer(nixlBackendReqH *handle) const {
     try {
         auto &posix_handle = castPosixHandle(handle);
+        NIXL_LOCK_GUARD(io_queue_lock_);
         return posix_handle.checkXfer();
     }
     catch (const nixlPosixBackendReqH::exception &e) {

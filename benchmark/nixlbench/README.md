@@ -498,6 +498,8 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 **POSIX Backend:**
 ```
 --posix_api_type TYPE      # API type for POSIX operations [AIO, URING, POSIXAIO] (default: AIO)
+--posix_ios_pool_size SIZE # IO pool size for POSIX operations (default: 65536)
+--posix_kernel_queue_size SIZE # Kernel queue size for AIO and URING APIs (default: 256)
 ```
 
 **GPUNETIO Backend:**

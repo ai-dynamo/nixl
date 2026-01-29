@@ -156,6 +156,10 @@ const std::vector<xferBenchParamInfo> xbench_params = {
         posix_api_type,
         XFERBENCH_POSIX_API_AIO,
         "API type for POSIX operations [AIO, URING, POSIXAIO] (only used with POSIX backend)"),
+    NB_ARG_INT32(posix_ios_pool_size, 65536, "IO pool size for POSIX operations (default: 65536)"),
+    NB_ARG_INT32(posix_kernel_queue_size,
+                 256,
+                 "Kernel queue size for AIO and URING (default: 256)"),
 
     // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
     NB_ARG_STRING(
@@ -266,6 +270,8 @@ std::string xferBenchConfig::gpunetio_oob_list = "";
 std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
+int xferBenchConfig::posix_ios_pool_size = 0;
+int xferBenchConfig::posix_kernel_queue_size = 0;
 std::string xferBenchConfig::filepath = "";
 std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
@@ -438,6 +444,8 @@ xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
                           << ". Must be one of [AIO, URING, POSIXAIO]" << std::endl;
                 return -1;
             }
+            posix_ios_pool_size = NB_ARG(posix_ios_pool_size);
+            posix_kernel_queue_size = NB_ARG(posix_kernel_queue_size);
         }
 
         // Load DOCA-specific configurations if backend is DOCA
@@ -665,6 +673,10 @@ xferBenchConfig::printConfig() {
         // Print POSIX options if backend is POSIX
         if (backend == XFERBENCH_BACKEND_POSIX) {
             printOption("POSIX API type (--posix_api_type=[AIO,URING,POSIXAIO])", posix_api_type);
+            printOption("POSIX IO pool size (--posix_ios_pool_size=N)",
+                        std::to_string(posix_ios_pool_size));
+            printOption("POSIX kernel queue size (--posix_kernel_queue_size=N)",
+                        std::to_string(posix_kernel_queue_size));
         }
 
         // Print OBJ options if backend is OBJ
