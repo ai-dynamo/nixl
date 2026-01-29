@@ -28,19 +28,94 @@ from nixl.logging import get_logger
 
 logger = get_logger(__name__)
 
+BUFFER_ALIGNMENT = 4096  # 4K alignment for O_DIRECT
+
+
+def allocate_aligned_buffer(
+    size: int,
+    device: torch.device,
+    alignment: int = BUFFER_ALIGNMENT,
+    fill_value: int = 0,
+    dtype: torch.dtype = torch.int8,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Allocate a buffer with guaranteed alignment.
+
+    Args:
+        size: Desired buffer size in bytes
+        device: Torch device (cpu or cuda)
+        alignment: Required alignment in bytes (default 4K for O_DIRECT)
+        fill_value: Value to fill buffer with
+        dtype: Torch dtype for buffer
+
+    Returns:
+        Tuple of (raw_buffer, aligned_view) where aligned_view is a slice
+        of raw_buffer starting at an aligned address.
+    """
+    # Over-allocate by alignment-1 bytes to guarantee we can find an aligned start
+    alloc_size = size + alignment - 1
+    raw_buf = torch.full((alloc_size,), fill_value, dtype=dtype, device=device)
+
+    # Find aligned offset within the buffer
+    raw_ptr = raw_buf.data_ptr()
+    align_offset = (alignment - (raw_ptr % alignment)) % alignment
+
+    # Create aligned view
+    aligned_buf = raw_buf[align_offset : align_offset + size]
+
+    # Verify alignment
+    aligned_ptr = aligned_buf.data_ptr()
+    assert (
+        aligned_ptr % alignment == 0
+    ), f"Buffer not aligned: ptr={aligned_ptr:#x}, alignment={alignment}"
+
+    logger.debug(
+        "Buffer aligned: raw_ptr=%#x, aligned_ptr=%#x, offset=%d",
+        raw_ptr,
+        aligned_ptr,
+        align_offset,
+    )
+
+    return raw_buf, aligned_buf
+
 
 class NixlHandle:
-    def __init__(self, remote_rank, handle, traffic_pattern):
-        self.remote_rank = remote_rank
+    """Base class for NIXL transfer handles."""
+
+    def __init__(self, handle):
         self.handle = handle
+
+    def __str__(self):
+        return "NixlHandle"
+
+
+class RDMAHandle(NixlHandle):
+    """Handle for RDMA transfers to a remote rank."""
+
+    def __init__(self, handle, remote_rank, traffic_pattern):
+        super().__init__(handle)
+        self.remote_rank = remote_rank
         self.tp = traffic_pattern
 
     def __str__(self):
-        return f"to:{self.remote_rank}"
+        return f"RDMA→rank:{self.remote_rank}"
+
+
+class StorageXferHandle(NixlHandle):
+    """Handle for storage I/O transfer operations."""
+
+    def __init__(self, handle, file_path: str, operation: str):
+        super().__init__(handle)
+        self.file_path = file_path
+        self.operation = operation  # "read" or "write"
+
+    def __str__(self):
+        return f"Storage:{self.operation}:{self.file_path}"
 
 
 class NixlBuffer:
-    """Can be sharded"""
+    """Can be sharded. Allocates 4K-aligned buffers for O_DIRECT compatibility."""
+
+    ALIGNMENT = BUFFER_ALIGNMENT
 
     def __init__(
         self,
@@ -50,9 +125,12 @@ class NixlBuffer:
         shards=1,
         fill_value=0,
         dtype: torch.dtype = torch.int8,
+        backends: (
+            list[str] | None
+        ) = None,  # Additional backends to register with (e.g., ["POSIX"])
     ):
-        self.size = size
         self.nixl_agent = nixl_agent
+        self._backends = backends
         if mem_type in ("cuda", "vram"):
             device = torch.device("cuda")
         elif mem_type in ("cpu", "dram"):
@@ -63,6 +141,10 @@ class NixlBuffer:
         if shards > 1:
             raise ValueError("Sharding is not supported yet")
 
+        # 4K align the buffer size
+        size = ((size + self.ALIGNMENT - 1) // self.ALIGNMENT) * self.ALIGNMENT
+        self.size = size
+
         logger.debug(
             "[Rank %d] Initializing NixlBuffer with size %d, device %s, shards %d, fill_value %d",
             dist_rt.get_rank(),
@@ -71,7 +153,11 @@ class NixlBuffer:
             shards,
             fill_value,
         )
-        self.buf = torch.full((size,), fill_value, dtype=dtype, device=device)
+
+        # Allocate aligned buffer
+        self._raw_buf, self.buf = allocate_aligned_buffer(
+            size, device, self.ALIGNMENT, fill_value, dtype
+        )
 
         logger.debug(
             "[Rank %d] Registering memory for buffer %s",
@@ -79,9 +165,16 @@ class NixlBuffer:
             self.buf,
         )
         self.reg_descs = nixl_agent.get_reg_descs(self.buf)
+        # First register with default backend (UCX for RDMA)
         assert (
             nixl_agent.register_memory(self.reg_descs) is not None
         ), "Failed to register memory"
+        # Also register with additional backends if specified (e.g., POSIX for storage)
+        if self._backends:
+            assert (
+                nixl_agent.register_memory(self.reg_descs, backends=self._backends)
+                is not None
+            ), f"Failed to register memory with backends {self._backends}"
 
     def get_chunk(self, size, offset):
         if offset + size > self.size:
@@ -91,10 +184,19 @@ class NixlBuffer:
         return self.buf[offset : offset + size]
 
     def destroy(self):
+        # Deregister from additional backends first
+        if self._backends:
+            self.nixl_agent.deregister_memory(self.reg_descs, backends=self._backends)
+        # Deregister from default backend
         self.nixl_agent.deregister_memory(self.reg_descs)
-        if hasattr(self.buf, "is_cuda") and self.buf.is_cuda:
+        # Delete the raw buffer (buf is just a view into it)
+        if hasattr(self._raw_buf, "is_cuda") and self._raw_buf.is_cuda:
             del self.buf
+            del self._raw_buf
             torch.cuda.empty_cache()
+        else:
+            del self.buf
+            del self._raw_buf
 
 
 class CTPerftest:
@@ -144,23 +246,74 @@ class CTPerftest:
         self._check_tp_config(traffic_pattern)
         assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
 
-    def _barrier_tp(self, tp: TrafficPattern, senders_only=True):
-        """Barrier for a traffic pattern"""
+    def _format_size(self, size_bytes: int) -> str:
+        """Format byte size to human readable string."""
+        if size_bytes >= 1e9:
+            return f"{size_bytes / 1e9:.2f} GB"
+        elif size_bytes >= 1e6:
+            return f"{size_bytes / 1e6:.2f} MB"
+        elif size_bytes >= 1e3:
+            return f"{size_bytes / 1e3:.2f} KB"
+        return f"{size_bytes} B"
+
+    def _barrier_tp(self, tp: TrafficPattern, senders_only=True, include_storage=True):
+        """Barrier for a traffic pattern (participating ranks only).
+
+        Args:
+            tp: The traffic pattern
+            senders_only: If True, only RDMA senders. If False, all RDMA participants.
+            include_storage: If True, also include ranks with storage ops.
+        """
         if senders_only:
-            dist_rt.barrier(tp.senders_ranks())
+            ranks = set(tp.senders_ranks())
         else:
-            dist_rt.barrier(tp.ranks())
+            ranks = set(tp.senders_ranks() + tp.receivers_ranks())
+
+        # Include storage ranks if requested
+        if include_storage and tp.storage_ops:
+            ranks.update(tp.storage_ops.keys())
+
+        if ranks:
+            dist_rt.barrier(list(ranks))
 
     def _share_md(self) -> None:
         """Share agent metadata between all ranks. (Need to be run after registering buffers)"""
-        logger.debug("[Rank %d] Sharing MD", self.my_rank)
-        md = self.nixl_agent.get_agent_metadata()
+        # Skip remote metadata when running single-rank or when no remote-capable backend is available
+        if self.world_size == 1:
+            logger.debug(
+                "[Rank %d] Single-rank run, skipping metadata exchange", self.my_rank
+            )
+            return
+        logger.debug("[Rank %d] Getting local agent metadata...", self.my_rank)
+        try:
+            md = self.nixl_agent.get_agent_metadata()
+        except Exception as e:
+            logger.warning(
+                "[Rank %d] Skipping metadata exchange due to agent error: %s",
+                self.my_rank,
+                e,
+            )
+            return
+
+        logger.debug("[Rank %d] Exchanging metadata with all ranks...", self.my_rank)
         mds = dist_rt.allgather_obj(md)
+
+        agent_names = []
         for other_rank, metadata in enumerate(mds):
             if other_rank == self.my_rank:
+                agent_names.append(f"{other_rank}(local)")
                 continue
+            logger.debug(
+                "[Rank %d] Adding remote agent: rank %d", self.my_rank, other_rank
+            )
             self.nixl_agent.add_remote_agent(metadata)
+            agent_names.append(f"{other_rank}")
 
+        logger.info(
+            "[Rank %d] Metadata exchange complete. Agents: [%s]",
+            self.my_rank,
+            ", ".join(agent_names),
+        )
         dist_rt.barrier()
 
     def _share_recv_buf_descs(self, my_recv_bufs: list[Optional[NixlBuffer]]) -> list:
@@ -191,6 +344,11 @@ class CTPerftest:
         """Returns lists of buffers where bufs[i] is the send/recv buffer for rank i"""
         send_bufs = [None for _ in range(self.world_size)]
         recv_bufs = [None for _ in range(self.world_size)]
+
+        # No RDMA buffers needed if no matrix (storage-only pattern)
+        if tp.matrix is None:
+            return send_bufs, recv_bufs
+
         send_offset = recv_offset = 0
 
         for other_rank in range(self.world_size):
@@ -242,7 +400,7 @@ class CTPerftest:
                 f"{other}",
                 f"{tp.id}_{self.my_rank}_{other}",
             )
-            handles.append(NixlHandle(other, handle, tp))
+            handles.append(RDMAHandle(handle, other, tp))
 
         return handles, send_bufs, recv_bufs
 
@@ -250,7 +408,7 @@ class CTPerftest:
         self,
         iters=15,
         fill_value: int = 100000,
-        mem_type: Literal["cuda", "vram", "cpu", "dram"] = "cuda",
+        mem_type: Literal["cuda", "vram", "cpu", "dram"] = "cpu",
     ):
         full_matrix = np.full((self.world_size, self.world_size), fill_value=fill_value)
         tp = TrafficPattern(matrix=full_matrix, mem_type=mem_type)
@@ -259,13 +417,22 @@ class CTPerftest:
             self._run_tp(handles)
             self._wait(handles)
 
-    def _run_tp(self, handles: list[NixlHandle], blocking=False) -> list[NixlHandle]:
+    def _run_tp(self, handles: list[NixlHandle], blocking=False) -> list:
         pending = []
-        for handle in handles:
-            status = self.nixl_agent.transfer(handle.handle)
+        for h in handles:
+            logger.debug("[Rank %d] Transfer: %s", self.my_rank, h)
+            status = self.nixl_agent.transfer(h.handle)
             assert status != "ERR", "Transfer failed"
             if status != "DONE":
-                pending.append(handle)
+                pending.append(h)
+
+        logger.debug(
+            "[Rank %d] Transfer: %d handles initiated, %d pending, blocking=%s",
+            self.my_rank,
+            len(handles),
+            len(pending),
+            blocking,
+        )
 
         if not blocking:
             return pending
@@ -274,18 +441,33 @@ class CTPerftest:
             return []
 
     def _wait(self, handles: list[NixlHandle]):
-        # Wait for transfers to complete
+        """Wait for transfers to complete."""
+        if not handles:
+            return
+        logger.debug(
+            "[Rank %d] Waiting for %d handles to complete...",
+            self.my_rank,
+            len(handles),
+        )
+        poll_count = 0
         while True:
             pending = []
-            for handle in handles:
-                state = self.nixl_agent.check_xfer_state(handle.handle)
+            for h in handles:
+                state = self.nixl_agent.check_xfer_state(h.handle)
                 assert state != "ERR", "Transfer got to Error state."
                 if state != "DONE":
-                    pending.append(handle)
+                    pending.append(h)
 
             if not pending:
                 break
             handles = pending
+            poll_count += 1
+
+        logger.debug(
+            "[Rank %d] All handles completed (polled %d times)",
+            self.my_rank,
+            poll_count,
+        )
 
     def _destroy(self, handles: list[NixlHandle]):
         logger.debug("[Rank %d] Releasing XFER handles", self.my_rank)
@@ -306,11 +488,16 @@ class CTPerftest:
         self.recv_buf.destroy()
 
     def _check_tp_config(self, tp: TrafficPattern):
-        # Matrix size should be world * world
-        assert tp.matrix.shape == (
-            self.world_size,
-            self.world_size,
-        ), f"Matrix size is not the same as world size, got {tp.matrix.shape}, world_size={self.world_size}"
+        # Matrix size should be world * world (if matrix exists)
+        if tp.matrix is not None:
+            assert tp.matrix.shape == (
+                self.world_size,
+                self.world_size,
+            ), f"Matrix size is not the same as world size, got {tp.matrix.shape}, world_size={self.world_size}"
+        elif not tp.storage_ops:
+            raise ValueError(
+                "Traffic pattern must have either RDMA matrix or storage ops"
+            )
 
     def _verify_tp(
         self,

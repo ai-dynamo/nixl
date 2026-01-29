@@ -19,8 +19,11 @@ import json
 import os
 import time
 from collections import defaultdict
+from enum import Enum, auto
 from itertools import chain
-from test.custom_traffic_perftest import CTPerftest, NixlBuffer
+from pathlib import Path
+from test.custom_traffic_perftest import CTPerftest, NixlBuffer, StorageXferHandle
+from test.storage_backend import FilesystemBackend, StorageBackend, StorageHandle
 from test.traffic_pattern import TrafficPattern
 from typing import Any, Dict, List, Optional
 
@@ -29,9 +32,16 @@ from runtime.etcd_rt import etcd_dist_utils as dist_rt
 from tabulate import tabulate
 
 from nixl._api import nixl_agent
+from nixl._api import nixl_agent_config
 from nixl.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class StorageOpType(Enum):
+    """Type of storage operation."""
+    READ = auto()
+    WRITE = auto()
 
 
 class SequentialCTPerftest(CTPerftest):
@@ -47,11 +57,18 @@ class SequentialCTPerftest(CTPerftest):
         n_iters: int = 3,
         n_isolation_iters=30,
         warmup_iters=30,
+        # Storage options (optional)
+        storage_path: Optional[Path] = None,
+        storage_nixl_backend: Optional[str] = None,
+        storage_direct_io: bool = False,
     ) -> None:
         """Initialize multi-pattern performance test.
 
         Args:
             traffic_patterns: List of traffic patterns to test simultaneously
+            storage_path: Optional base path for storage operations
+            storage_nixl_backend: Storage backend type (POSIX, GDS, GDS_MT)
+            storage_direct_io: Whether to use O_DIRECT for storage I/O
         """
         self.my_rank = dist_rt.get_rank()
         self.world_size = dist_rt.get_world_size()
@@ -60,8 +77,19 @@ class SequentialCTPerftest(CTPerftest):
         self.n_isolation_iters = n_isolation_iters
         self.warmup_iters = warmup_iters
 
+        # Storage setup
+        self._has_storage = any(tp.storage_ops for tp in traffic_patterns) and storage_path
+        self._storage_backend: Optional[StorageBackend] = None
+        self._storage_handles: Dict[str, StorageHandle] = {}
+        self._storage_nixl_backend: Optional[str] = None
+
         logger.debug("[Rank %d] Initializing Nixl agent", self.my_rank)
-        self.nixl_agent = nixl_agent(f"{self.my_rank}")
+        if self._has_storage:
+            # Create agent without auto UCX - we'll create GDS first, then UCX
+            config = nixl_agent_config(backends=[])
+            self.nixl_agent = nixl_agent(f"{self.my_rank}", config)
+        else:
+            self.nixl_agent = nixl_agent(f"{self.my_rank}")
 
         for tp in self.traffic_patterns:
             self._check_tp_config(tp)
@@ -71,11 +99,95 @@ class SequentialCTPerftest(CTPerftest):
             logger.warning(
                 "Cuda buffers detected, but the env var CUDA_VISIBLE_DEVICES is not set, this will cause every process in the same host to use the same GPU device."
             )
-        assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
+        assert "UCX" in self.nixl_agent.get_plugin_list() or self._has_storage, "UCX plugin is not loaded"
 
         # NixlBuffer caches buffers and reuse them if they are big enough, let's initialize them once, with the largest needed size
         self.send_buf_by_mem_type: dict[str, NixlBuffer] = {}
         self.recv_buf_by_mem_type: dict[str, NixlBuffer] = {}
+
+        # Initialize storage backend if needed
+        if self._has_storage:
+            nixl_backend = storage_nixl_backend or "POSIX"
+            self._storage_nixl_backend = nixl_backend
+            use_direct_io = storage_direct_io or nixl_backend in ("GDS", "GDS_MT")
+            logger.info(
+                "[Rank %d] Storage: %s, backend=%s, O_DIRECT=%s",
+                self.my_rank, storage_path, nixl_backend, use_direct_io,
+            )
+            self._storage_backend = FilesystemBackend(
+                agent=self.nixl_agent,
+                base_path=storage_path,
+                nixl_backend=nixl_backend,
+                use_direct_io=use_direct_io,
+            )
+            self.nixl_agent.create_backend("UCX")
+
+    # =========================================================================
+    # STORAGE METHODS
+    # =========================================================================
+
+    def _get_storage_key(self, tp_idx: int) -> str:
+        """Get storage handle key for a traffic pattern index."""
+        return f"{tp_idx}:{self.my_rank}"
+
+    def _prepare_storage(self):
+        """Prepare all storage handles for traffic patterns with storage ops."""
+        if not self._has_storage or not self._storage_backend:
+            return
+        for tp_idx, tp in enumerate(self.traffic_patterns):
+            if not tp.storage_ops:
+                continue
+            my_ops = tp.storage_ops.get(self.my_rank)
+            if my_ops:
+                self._storage_handles[self._get_storage_key(tp_idx)] = self._storage_backend.prepare(
+                    tp_idx=tp_idx,
+                    rank=self.my_rank,
+                    read_size=my_ops.read_size,
+                    write_size=my_ops.write_size,
+                )
+        logger.info("[Rank %d] Prepared %d storage handles", self.my_rank, len(self._storage_handles))
+
+    def _prepare_storage_xfer(self, tp_idx: int, operation: StorageOpType) -> List[StorageXferHandle]:
+        """Prepare a NIXL transfer handle for storage read or write."""
+        if not self._storage_backend:
+            return []
+        storage_handle = self._storage_handles.get(self._get_storage_key(tp_idx))
+        if not storage_handle:
+            return []
+        op_name = "read" if operation == StorageOpType.READ else "write"
+        if operation == StorageOpType.READ:
+            if storage_handle.read_size == 0:
+                return []
+            size = storage_handle.read_size
+            buf_offset = 0
+            get_handle_fn = self._storage_backend.get_read_handle
+        else:
+            if storage_handle.write_size == 0:
+                return []
+            size = storage_handle.write_size
+            buf_offset = storage_handle.read_size
+            get_handle_fn = self._storage_backend.get_write_handle
+        buf = self.send_buf_by_mem_type.get(self.traffic_patterns[tp_idx].mem_type)
+        if not buf:
+            return []
+        raw_xfer = get_handle_fn(storage_handle, buf.get_chunk(size, offset=buf_offset))
+        if not raw_xfer:
+            return []
+        # Wrap raw handle in StorageXferHandle for consistent interface
+        file_path = str(storage_handle.backend_data.get("file_path", f"tp_{tp_idx}_rank_{self.my_rank}"))
+        return [StorageXferHandle(raw_xfer, file_path, op_name)]
+
+    def _prepare_storage_read(self, tp_idx: int) -> List[Any]:
+        """Get storage read transfer handle."""
+        return self._prepare_storage_xfer(tp_idx, StorageOpType.READ)
+
+    def _prepare_storage_write(self, tp_idx: int) -> List[Any]:
+        """Get storage write transfer handle."""
+        return self._prepare_storage_xfer(tp_idx, StorageOpType.WRITE)
+
+    # =========================================================================
+    # BUFFER METHODS (with storage support)
+    # =========================================================================
 
     def _init_buffers(self):
         logger.debug("[Rank %d] Initializing buffers", self.my_rank)
@@ -83,25 +195,31 @@ class SequentialCTPerftest(CTPerftest):
         max_dst_by_mem_type = defaultdict(int)
 
         for tp in self.traffic_patterns:
+            # Include storage sizes in buffer calculation
+            my_ops = tp.storage_ops.get(self.my_rank) if tp.storage_ops else None
+            storage_size = (my_ops.read_size + my_ops.write_size) if my_ops else 0
             max_src_by_mem_type[tp.mem_type] = max(
-                max_src_by_mem_type[tp.mem_type], tp.total_src_size(self.my_rank)
+                max_src_by_mem_type[tp.mem_type], tp.total_src_size(self.my_rank), storage_size
             )
             max_dst_by_mem_type[tp.mem_type] = max(
                 max_dst_by_mem_type[tp.mem_type], tp.total_dst_size(self.my_rank)
             )
 
+        # If storage is enabled, also register buffers with storage backend
+        storage_backends = [self._storage_nixl_backend] if self._storage_nixl_backend else None
+
         for mem_type, size in max_src_by_mem_type.items():
             if not size:
                 continue
             self.send_buf_by_mem_type[mem_type] = NixlBuffer(
-                size, mem_type=mem_type, nixl_agent=self.nixl_agent
+                size, mem_type=mem_type, nixl_agent=self.nixl_agent, backends=storage_backends
             )
 
         for mem_type, size in max_dst_by_mem_type.items():
             if not size:
                 continue
             self.recv_buf_by_mem_type[mem_type] = NixlBuffer(
-                size, mem_type=mem_type, nixl_agent=self.nixl_agent
+                size, mem_type=mem_type, nixl_agent=self.nixl_agent, backends=storage_backends
             )
 
     def _destroy_buffers(self):
@@ -116,6 +234,10 @@ class SequentialCTPerftest(CTPerftest):
 
         send_bufs = [None for _ in range(self.world_size)]
         recv_bufs = [None for _ in range(self.world_size)]
+
+        # If no matrix, return empty buffers (storage-only pattern)
+        if tp.matrix is None:
+            return send_bufs, recv_bufs
 
         send_offset_by_memtype: dict[str, int] = defaultdict(int)
         recv_offset_by_memtype: dict[str, int] = defaultdict(int)
@@ -141,6 +263,10 @@ class SequentialCTPerftest(CTPerftest):
 
         return send_bufs, recv_bufs
 
+    # =========================================================================
+    # MAIN RUN METHOD
+    # =========================================================================
+
     def run(
         self,
         verify_buffers: bool = False,
@@ -162,12 +288,14 @@ class SequentialCTPerftest(CTPerftest):
         logger.debug("[Rank %d] Running sequential CT perftest", self.my_rank)
         self._init_buffers()
         self._share_md()
+        self._prepare_storage()  # <-- ADDED: prepare storage handles
 
         results: Dict[str, Any] = {
             "iterations_results": [],
             "metadata": {
                 "ts": time.time(),
                 "iters": [{} for _ in range(self.n_iters)],
+                "storage_enabled": self._has_storage,  # <-- ADDED
             },
         }
 
@@ -183,6 +311,10 @@ class SequentialCTPerftest(CTPerftest):
 
         results["metadata"]["prepare_tp_time"] = time.time() - s
 
+        # ADDED: Prepare storage handles
+        storage_read_handles = [self._prepare_storage_read(i) for i in range(len(self.traffic_patterns))]
+        storage_write_handles = [self._prepare_storage_write(i) for i in range(len(self.traffic_patterns))]
+
         # Warmup
         warm_dsts: set[int] = set()
         for tp_ix, handles in enumerate(tp_handles):
@@ -194,6 +326,15 @@ class SequentialCTPerftest(CTPerftest):
                 self._run_tp(handles, blocking=True)
             warm_dsts.update(dsts)
 
+        # ADDED: Storage warmup
+        if self._has_storage:
+            for read_h, write_h in zip(storage_read_handles, storage_write_handles):
+                for _ in range(self.warmup_iters):
+                    if read_h:
+                        self._run_tp(read_h, blocking=True)
+                    if write_h:
+                        self._run_tp(write_h, blocking=True)
+
         dist_rt.barrier()
 
         # Isolated mode -  Measure SOL for every matrix
@@ -202,8 +343,12 @@ class SequentialCTPerftest(CTPerftest):
             self.my_rank,
         )
         my_isolated_tp_latencies: list[float] = [0 for _ in tp_handles]
+        my_isolated_read_latencies: list[float] = [0 for _ in tp_handles]
+        my_isolated_write_latencies: list[float] = [0 for _ in tp_handles]
 
         results["metadata"]["sol_calculation_ts"] = time.time()
+
+        # Isolated RDMA measurement
         for tp_ix, handles in enumerate(tp_handles):
             tp = self.traffic_patterns[tp_ix]
             dist_rt.barrier()
@@ -230,18 +375,67 @@ class SequentialCTPerftest(CTPerftest):
 
             my_isolated_tp_latencies[tp_ix] /= self.n_isolation_iters
 
+        # Isolated storage read measurement
+        if self._has_storage:
+            logger.info("[Rank %d] Running isolated storage read benchmark", self.my_rank)
+            for tp_ix, read_h in enumerate(storage_read_handles):
+                dist_rt.barrier()
+                if not read_h:
+                    continue
+                for _ in range(self.n_isolation_iters):
+                    t = time.time()
+                    self._run_tp(read_h, blocking=True)
+                    my_isolated_read_latencies[tp_ix] += time.time() - t
+                my_isolated_read_latencies[tp_ix] /= self.n_isolation_iters
+
+        # Isolated storage write measurement
+        if self._has_storage:
+            logger.info("[Rank %d] Running isolated storage write benchmark", self.my_rank)
+            for tp_ix, write_h in enumerate(storage_write_handles):
+                dist_rt.barrier()
+                if not write_h:
+                    continue
+                for _ in range(self.n_isolation_iters):
+                    t = time.time()
+                    self._run_tp(write_h, blocking=True)
+                    my_isolated_write_latencies[tp_ix] += time.time() - t
+                my_isolated_write_latencies[tp_ix] /= self.n_isolation_iters
+
         # Store isolated results
         isolated_tp_latencies_by_ranks = dist_rt.allgather_obj(my_isolated_tp_latencies)
+        isolated_read_latencies_by_ranks = dist_rt.allgather_obj(my_isolated_read_latencies)
+        isolated_write_latencies_by_ranks = dist_rt.allgather_obj(my_isolated_write_latencies)
+
         isolated_tp_latencies_ms = []
+        isolated_read_latencies_ms = []
+        isolated_write_latencies_ms = []
         for i in range(len(self.traffic_patterns)):
+            # RDMA
             tp_lats = [
                 rank_lats[i]
                 for rank_lats in isolated_tp_latencies_by_ranks
                 if rank_lats[i] > 0
             ]
-
             if tp_lats:
                 isolated_tp_latencies_ms.append(max(tp_lats) * 1e3)
+            else:
+                isolated_tp_latencies_ms.append(0.0)
+
+            # Storage read
+            read_lats = [
+                rank_lats[i]
+                for rank_lats in isolated_read_latencies_by_ranks
+                if rank_lats[i] > 0
+            ]
+            isolated_read_latencies_ms.append(max(read_lats) * 1e3 if read_lats else 0.0)
+
+            # Storage write
+            write_lats = [
+                rank_lats[i]
+                for rank_lats in isolated_write_latencies_by_ranks
+                if rank_lats[i] > 0
+            ]
+            isolated_write_latencies_ms.append(max(write_lats) * 1e3 if write_lats else 0.0)
 
         logger.info("[Rank %d] Running workload benchmark", self.my_rank)
 
@@ -257,6 +451,9 @@ class SequentialCTPerftest(CTPerftest):
 
             tp_starts: list[float | None] = [None] * len(tp_handles)
             tp_ends: list[float | None] = [None] * len(tp_handles)
+            # Storage timing per TP
+            storage_read_times: list[float] = [0.0] * len(tp_handles)
+            storage_write_times: list[float] = [0.0] * len(tp_handles)
             logger.debug("[Rank %d] Warmup done.", self.my_rank)
             dist_rt.barrier(timeout_sec=None)
 
@@ -271,7 +468,14 @@ class SequentialCTPerftest(CTPerftest):
                 if tp.sleep_before_launch_sec is not None:
                     time.sleep(tp.sleep_before_launch_sec)
 
-                # Run TP
+                # Storage READ (before RDMA)
+                read_h = storage_read_handles[tp_ix]
+                if read_h:
+                    read_start = time.time()
+                    self._run_tp(read_h, blocking=True)
+                    storage_read_times[tp_ix] = time.time() - read_start
+
+                # Run RDMA transfer
                 logger.debug(
                     "[Rank %d] Running TP %d/%d",
                     self.my_rank,
@@ -293,6 +497,13 @@ class SequentialCTPerftest(CTPerftest):
                 tp_starts[tp_ix] = tp_start_ts
                 tp_ends[tp_ix] = tp_end_ts
 
+                # Storage WRITE (after RDMA)
+                write_h = storage_write_handles[tp_ix]
+                if write_h:
+                    write_start = time.time()
+                    self._run_tp(write_h, blocking=True)
+                    storage_write_times[tp_ix] = time.time() - write_start
+
                 if tp.sleep_after_launch_sec is not None:
                     time.sleep(tp.sleep_after_launch_sec)
 
@@ -301,12 +512,30 @@ class SequentialCTPerftest(CTPerftest):
 
             tp_starts_by_ranks = dist_rt.allgather_obj(tp_starts)
             tp_ends_by_ranks = dist_rt.allgather_obj(tp_ends)
+            # Gather storage times from all ranks
+            storage_read_by_ranks = dist_rt.allgather_obj(storage_read_times)
+            storage_write_by_ranks = dist_rt.allgather_obj(storage_write_times)
 
             tp_latencies_ms: list[float | None] = []
+            storage_read_max_ms: list[float] = []
+            storage_write_max_ms: list[float] = []
 
             tp_sizes_gb = [
                 self._get_tp_total_size(tp) / 1e9 for tp in self.traffic_patterns
             ]
+
+            # Calculate total storage sizes per TP (sum across all ranks)
+            storage_read_sizes_gb: list[float] = []
+            storage_write_sizes_gb: list[float] = []
+            for tp in self.traffic_patterns:
+                read_total = 0
+                write_total = 0
+                if tp.storage_ops:
+                    for ops in tp.storage_ops.values():
+                        read_total += ops.read_size
+                        write_total += ops.write_size
+                storage_read_sizes_gb.append(read_total / 1e9)
+                storage_write_sizes_gb.append(write_total / 1e9)
 
             for i, tp in enumerate(self.traffic_patterns):
                 starts = [
@@ -318,6 +547,12 @@ class SequentialCTPerftest(CTPerftest):
                 ]
                 starts = [x for x in starts if x is not None]
                 ends = [x for x in ends if x is not None]
+
+                # Max storage times across ranks (slowest determines pipeline)
+                read_times = [storage_read_by_ranks[r][i] for r in range(len(storage_read_by_ranks)) if storage_read_by_ranks[r][i] > 0]
+                write_times = [storage_write_by_ranks[r][i] for r in range(len(storage_write_by_ranks)) if storage_write_by_ranks[r][i] > 0]
+                storage_read_max_ms.append(max(read_times) * 1e3 if read_times else 0.0)
+                storage_write_max_ms.append(max(write_times) * 1e3 if write_times else 0.0)
 
                 if not ends or not starts:
                     tp_latencies_ms.append(None)
@@ -340,24 +575,48 @@ class SequentialCTPerftest(CTPerftest):
 
             if self.my_rank == 0:
                 headers = [
-                    "Transfer size (GB)",
-                    "Latency (ms)",
-                    "Isolated Latency (ms)",
-                    "Num Senders",
-                    "Mean BW (GB/s)",  # Bandwidth
+                    "RDMA (GB)",
+                    "RDMA (ms)",
+                    "Iso RDMA (ms)",
+                    "RDMA BW",
+                    "Read (GB)",
+                    "Read (ms)",
+                    "Iso Read (ms)",
+                    "Read BW",
+                    "Write (GB)",
+                    "Write (ms)",
+                    "Iso Write (ms)",
+                    "Write BW",
                 ]
-                data = [
-                    [
+                data = []
+                for i, tp in enumerate(self.traffic_patterns):
+                    read_ms = storage_read_max_ms[i]
+                    write_ms = storage_write_max_ms[i]
+                    iso_read = isolated_read_latencies_ms[i]
+                    iso_write = isolated_write_latencies_ms[i]
+                    read_size = storage_read_sizes_gb[i]
+                    write_size = storage_write_sizes_gb[i]
+
+                    # Calculate BWs from isolated latencies (GB/s)
+                    read_bw = (read_size / (iso_read / 1e3)) if iso_read > 0 else None
+                    write_bw = (write_size / (iso_write / 1e3)) if iso_write > 0 else None
+
+                    data.append([
                         tp_sizes_gb[i],
                         tp_latencies_ms[i],
-                        isolated_tp_latencies_ms[i],
-                        len(tp.senders_ranks()),
+                        isolated_tp_latencies_ms[i] if isolated_tp_latencies_ms[i] > 0 else None,
                         mean_bw,
-                    ]
-                    for i, tp in enumerate(self.traffic_patterns)
-                ]
+                        read_size if read_size > 0 else None,
+                        read_ms if read_ms > 0 else None,
+                        iso_read if iso_read > 0 else None,
+                        read_bw,
+                        write_size if write_size > 0 else None,
+                        write_ms if write_ms > 0 else None,
+                        iso_write if iso_write > 0 else None,
+                        write_bw,
+                    ])
                 logger.info(
-                    f"Iteration {iter_ix + 1}/{self.n_iters}\n{tabulate(data, headers=headers, floatfmt='.3f')}"
+                    f"Iteration {iter_ix + 1}/{self.n_iters}\n{tabulate(data, headers=headers, floatfmt='.3f', missingval='-')}"
                 )
 
             if verify_buffers:
@@ -399,11 +658,17 @@ class SequentialCTPerftest(CTPerftest):
         if json_output_path and self.my_rank == 0:
             logger.info("Saving results to %s", json_output_path)
             with open(json_output_path, "w") as f:
-                json.dump(results, f)
+                # Use default=str to handle Path objects
+                json.dump(results, f, default=str)
 
         # Destroy
         logger.info("[Rank %d] Finished run, destroying objects", self.my_rank)
-        self._destroy(handles)
+        all_handles = [h for hs in tp_handles + storage_read_handles + storage_write_handles for h in hs]  # <-- MODIFIED
+        self._destroy(all_handles)
+
+        # ADDED: Close storage backend
+        if self._storage_backend:
+            self._storage_backend.close()
 
     def _write_yaml_results(
         self,
