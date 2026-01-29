@@ -100,11 +100,11 @@ class Qwen3(BaseModelArch):
         kv_size = int(kv_size / self.num_layers)
         if kv_size <= 0:
             raise ValueError("Invalid KV Size: 0")
-        
+
         io_size = int(kv_size / self.model_config.model.tp_size)
         if self.model_config.system.access_pattern == "block":
             io_size = int(io_size * (self.num_layers / self.model_config.model.pp_size))
-        
+
         return int(io_size * page_size)
 
     def to_dict(self) -> Dict[str, Any]:
