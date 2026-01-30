@@ -178,6 +178,7 @@ def plan_command(model, model_config, model_configs, format, **kwargs):
                 all_plans.append(plan_data)
             else:
                 click.echo(separator)
+                click.echo(f"Model: {model}")
                 click.echo(f"Model Config: {config_file}")
                 click.echo(f"ISL: {model_configuration.runtime.isl} tokens")
                 click.echo(f"Page Size: {model_configuration.system.page_size}")
