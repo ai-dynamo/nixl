@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,33 +15,36 @@
  * limitations under the License.
  */
 
-#ifndef NIXL_SRC_UTILS_UCX_RKEY_H
-#define NIXL_SRC_UTILS_UCX_RKEY_H
+#ifndef NIXL_SRC_UTILS_UCX_MEM_LIST_H
+#define NIXL_SRC_UTILS_UCX_MEM_LIST_H
 
 #include <memory>
+#include <vector>
 
 extern "C" {
-#include <ucp/api/ucp.h>
+#include <ucp/api/ucp_def.h>
 }
 
+class nixlUcxMem;
+class nixlUcxWorker;
 class nixlUcxEp;
 
 namespace nixl::ucx {
-class rkey {
-public:
-    rkey() = delete;
-    rkey(const nixlUcxEp &, const void *rkey_buffer);
+class rkey;
 
-    [[nodiscard]] ucp_rkey_h
-    get() const noexcept {
-        return rkey_.get();
-    }
-
-private:
-    [[nodiscard]] static ucp_rkey_h
-    unpackUcpRkey(const nixlUcxEp &, const void *rkey_buffer);
-
-    const std::unique_ptr<ucp_rkey, void (*)(ucp_rkey_h)> rkey_;
+struct remoteMem {
+    const nixlUcxEp &ep_;
+    uint64_t addr_;
+    const rkey &rkey_;
 };
+
+void *
+createMemList(const std::vector<std::unique_ptr<remoteMem>> &, nixlUcxWorker &);
+void *
+createMemList(const std::vector<nixlUcxMem> &, const nixlUcxWorker &);
+
+void
+releaseMemList(void *mvh) noexcept;
 } // namespace nixl::ucx
+
 #endif

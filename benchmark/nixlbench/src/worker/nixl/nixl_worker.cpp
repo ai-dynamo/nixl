@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -79,12 +79,14 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     config << "# Config file\nversion=1\n";
 
     for (const auto &dev : devices) {
-        // Format: "id type access_mode shared_exclusive path security_flags"
-        // Example: "11 F W N ./store0.bin sec=0x3"
+        // Format: "id type access_mode direct_io path security_flags"
+        // Example: "11 F W D ./store0.bin sec=0x3"
         config << dev.device_id << " " << dev.device_type << " "
-               << "W N " // Write mode, Not shared (exclusive)
+               << "W D " // Write mode, Direct I/O
                << dev.device_path << " " << dev.security_flags << "\n";
     }
+
+    std::cout << "GUSLI Device Config: " << config.str() << std::endl;
 
     return config.str();
 }
@@ -220,7 +222,13 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             backend_params["endpoint_override"] = xferBenchConfig::obj_endpoint_override;
         }
 
-        std::cout << "OBJ backend" << std::endl;
+        if (xferBenchConfig::obj_crt_min_limit > 0) {
+            backend_params["crtMinLimit"] = std::to_string(xferBenchConfig::obj_crt_min_limit);
+            std::cout << "OBJ backend with S3 CRT client enabled for objects >= "
+                      << xferBenchConfig::obj_crt_min_limit << " bytes" << std::endl;
+        } else {
+            std::cout << "OBJ backend with S3 CRT client disabled" << std::endl;
+        }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically
         if (!xferBenchConfig::storage_enable_direct) {
@@ -235,6 +243,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             isInitiator() ? xferBenchConfig::num_initiator_dev : xferBenchConfig::num_target_dev;
         gusli_devices = parseGusliDeviceList(xferBenchConfig::device_list,
                                              xferBenchConfig::gusli_device_security,
+                                             xferBenchConfig::gusli_device_byte_offsets,
                                              expected_num_devices);
 
         // Set GUSLI backend parameters
@@ -257,7 +266,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         std::cout << "  Configured devices: " << gusli_devices.size() << std::endl;
         for (const auto &dev : gusli_devices) {
             std::cout << "    Device " << dev.device_id << " [" << dev.device_type
-                      << "]: " << dev.device_path << " (" << dev.security_flags << ")" << std::endl;
+                      << "]: " << dev.device_path << " (" << dev.security_flags << ")"
+                      << ", offset = " << dev.dev_offset << std::endl;
         }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
         std::cout << "UCCL backend" << std::endl;
@@ -627,22 +637,13 @@ xferBenchNixlWorker::cleanupBasicDescObj(xferBenchIOV &iov) {
 }
 
 std::optional<xferBenchIOV>
-xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id) {
-    // For block devices, we create a block device descriptor
-    // The address represents the LBA (Logical Block Address) offset in the block device
-    // Similar to how nixl_gusli_test.cpp handles block device addressing
-
-    static uint64_t lba_offset = xferBenchConfig::gusli_bdev_byte_offset;
+xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset) {
+    // The dev_offset represents the LBA (Logical Block Address) offset in the block device
 
     // Create IOV with LBA offset as address, buffer size, and device ID
     // The device ID corresponds to the block device UUID (e.g., 11 for local file, 14 for
     // /dev/zero)
-    auto ret = std::optional<xferBenchIOV>(std::in_place, lba_offset, buffer_size, mem_dev_id);
-
-    // Update offset for next allocation (similar to file handling)
-    lba_offset += buffer_size;
-
-    return ret;
+    return std::optional<xferBenchIOV>(std::in_place, dev_offset, buffer_size, mem_dev_id);
 }
 
 void
@@ -735,7 +736,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
                 // Use device IDs from parsed configuration (num_devices == gusli_devices.size())
-                basic_desc = initBasicDescBlk(buffer_size, gusli_devices[i].device_id);
+                basic_desc = initBasicDescBlk(
+                    buffer_size, gusli_devices[i].device_id, gusli_devices[i].dev_offset);
                 if (basic_desc) {
                     iov_list.push_back(basic_desc.value());
                 }
@@ -764,7 +766,15 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             exit(EXIT_FAILURE);
         }
 
-        remote_fds = createFileFds(getName(), num_files);
+        std::vector<std::string> filenames;
+        if (!xferBenchConfig::filenames.empty()) {
+            std::string filename;
+            std::stringstream ss(xferBenchConfig::filenames);
+            while (std::getline(ss, filename, ',')) {
+                filenames.push_back(filename);
+            }
+        }
+        remote_fds = createFileFds(getName(), num_files, filenames);
         if (remote_fds.empty()) {
             std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
             exit(EXIT_FAILURE);
@@ -979,6 +989,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
         uint64_t file_offset = 0;
         for (auto &iov_list : local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
+            int devidx = 0;
             for (auto &iov : iov_list) {
                 if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
                     std::optional<xferBenchIOV> basic_desc;
@@ -988,11 +999,10 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     }
                 } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
                     xferBenchIOV iov_remote(iov);
-                    iov_remote.addr = xferBenchConfig::gusli_bdev_byte_offset + file_offset;
+                    iov_remote.addr = gusli_devices[devidx++].dev_offset + file_offset;
                     iov_remote.len = block_size;
                     iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);
-                    file_offset += block_size;
                 } else {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = file_offset;
@@ -1007,6 +1017,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 }
             }
             res.push_back(remote_iov_list);
+            file_offset += block_size;
         }
     } else {
         for (const auto &local_iov : local_iovs) {

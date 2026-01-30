@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -418,6 +418,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 
 #### Core Configuration
 ```
+--config_file PATH         # Configuraion file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
 --backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] (default: UCX)
@@ -509,11 +510,39 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --gusli_client_name NAME               # Client identifier (default: NIXLBench)
 --gusli_max_simultaneous_requests NUM  # Concurrent request limit (default: 32)
 --gusli_device_security LIST           # Comma-separated security flags per device (e.g., 'sec=0x3,sec=0x71')
---gusli_bdev_byte_offset BYTES         # Starting LBA offset in bytes (default: 1048576)
+--gusli_device_byte_offsets LIST       # Comma-separated LBA offset in bytes per device (default: 1048576)
 --gusli_config_file CONTENT            # Custom config file content (auto-generated if not provided)
 
 Note: storage_enable_direct is automatically enabled for GUSLI backend
 ```
+
+### Configuration File
+
+The name of a config file can be specified using the `--config_file` command line parameter. The config file is in TOML format.
+
+Each existing command-line parameter can also be placed in the global scope (no sections) of the configuration file, so the following invocations:
+
+```
+nixlbench --etcd_endpoints http://localhost:2379 --backend POSIX --filepath /mnt/test --posix_api_type AIO --max_block_size 2097152
+```
+and
+
+```
+nixlbench --config_file /tmp/nixlbench.config
+```
+
+where `/tmp/nixlbench.config` contains:
+
+```
+etcd_endpoints="http://localhost:2379"
+backend="POSIX"
+filepath="/mnt/test"
+posix_api_type="AIO"
+max_block_size=2097152
+``
+are identical.
+
+If a parameter exists in the config file and is also explicitly specified on the command line, the latter takes precedence.
 
 ### Using ETCD for Coordination
 
@@ -655,7 +684,7 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 - `--gusli_client_name`: Client identifier (default: "NIXLBench")
 - `--gusli_max_simultaneous_requests`: Concurrent request limit (default: 32)
 - `--gusli_device_security`: Comma-separated security flags per device (default: "sec=0x3" for each device)
-- `--gusli_bdev_byte_offset`: Starting LBA offset in bytes (default: 1MB)
+- `--gusli_device_byte_offsets`: Comma-separated LBA offset in bytes per device (default: 1MB for each device)
 - `--gusli_config_file`: Custom config file content override
 
 **Notes**:
