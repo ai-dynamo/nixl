@@ -186,6 +186,9 @@ const std::vector<xferBenchParamInfo> xbench_params = {
         0,
         "Minimum object size (bytes) to use S3 CRT client for high-performance transfers. "
         "0 means CRT client is disabled (default: 0)"),
+    NB_ARG_BOOL(obj_accelerated_enable,
+                false,
+                "Enable S3 Accelerated client for GPU-direct transfers (requires cuobjclient library, default: false)"),
 
     // AZURE BLOB options - only used when backend is AZURE_BLOB
     NB_ARG_STRING(azure_blob_account_url, "", "Account URL for Azure Blob backend"),
@@ -270,6 +273,7 @@ std::string xferBenchConfig::obj_endpoint_override = "";
 std::string xferBenchConfig::obj_req_checksum = "";
 std::string xferBenchConfig::obj_ca_bundle = "";
 size_t xferBenchConfig::obj_crt_min_limit = 0;
+bool xferBenchConfig::obj_accelerated_enable = false;
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
@@ -460,6 +464,7 @@ xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
             obj_req_checksum = NB_ARG(obj_req_checksum);
             obj_ca_bundle = NB_ARG(obj_ca_bundle);
             obj_crt_min_limit = NB_ARG(obj_crt_min_limit);
+            obj_accelerated_enable = NB_ARG(obj_accelerated_enable);
 
             // Validate OBJ S3 scheme
             if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
@@ -663,6 +668,8 @@ xferBenchConfig::printConfig() {
                         obj_crt_min_limit > 0 ?
                             std::to_string(obj_crt_min_limit) + " (CRT enabled)" :
                             "0 (CRT disabled)");
+            printOption("OBJ S3 Accelerated enable (--obj_accelerated_enable=[true|false])",
+                        obj_accelerated_enable ? "true (Accelerated enabled)" : "false (Accelerated disabled)");
         }
 
         if (backend == XFERBENCH_BACKEND_AZURE_BLOB) {

@@ -229,6 +229,11 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         } else {
             std::cout << "OBJ backend with S3 CRT client disabled" << std::endl;
         }
+
+        if (xferBenchConfig::obj_accelerated_enable) {
+            backend_params["accelerated"] = "true";
+            std::cout << "OBJ backend with S3 Accelerated client enabled" << std::endl;
+        }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically
         if (!xferBenchConfig::storage_enable_direct) {
