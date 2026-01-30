@@ -25,6 +25,7 @@ TEXT_CLEAR="\033[0m"
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
+PREVDIR=$(dirname "$(readlink -f "$0")")
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir>"
@@ -131,3 +132,9 @@ echo "./bin/ucx_worker_test disabled"
 echo "${TEXT_CLEAR}"
 
 kill -9 $ETCD_PID 2>/dev/null || true
+
+sleep 5
+
+# Sample test for Azure Blob Plugin - should be changed to their gtest
+cd $PREVDIR
+./test_azure.sh
