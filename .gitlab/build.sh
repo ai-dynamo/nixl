@@ -222,8 +222,8 @@ else
 
     ( \
       cd ${TMPDIR} && \
-      curl -sL https://aka.ms/InstallAzureCLIDeb | bash && \
-      npm install -g azurite && \
+      curl -sL https://aka.ms/InstallAzureCLIDeb | $SUDO bash && \
+      $SUDO npm install -g azurite && \
 	  git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
       cd azure-sdk-for-cpp/ && \
       mkdir build && cd build && \
