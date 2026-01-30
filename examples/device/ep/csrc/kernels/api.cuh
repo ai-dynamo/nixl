@@ -42,7 +42,7 @@ struct gpu_nixl_ctx {
     int max_num_ranks;
     int rank;
 
-    __device__ inline size_t offset_get(uint64_t ptr);
+    __device__ inline uint64_t offset_get(uint64_t ptr);
     __device__ inline void* p2p_ptr_get(uint64_t dst_ptr, int dst_rank);
 };
 

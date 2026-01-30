@@ -34,7 +34,7 @@ namespace nixl_ep {
 
 namespace ep_kernels {
 
-__device__ inline size_t gpu_nixl_ctx::offset_get(uint64_t ptr) {
+__device__ inline uint64_t gpu_nixl_ctx::offset_get(uint64_t ptr) {
     return ptr - reinterpret_cast<uint64_t>(rdma_buffer_ptr);
 }
 
