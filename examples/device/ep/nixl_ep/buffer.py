@@ -52,10 +52,9 @@ class Buffer:
 
     def __init__(
         self,
-        nvlink_backend: Literal["nixl", "ipc", "none"] = "nixl",
+        nvlink_backend: Literal["nixl", "none"] = "nixl",
         explicitly_destroy: bool = False,
         rank: int = 0,
-        enable_shrink: bool = False,
         group: Optional[dist.ProcessGroup] = None,
         comm: Optional["mpi4py.MPI.Comm"] = None,
         tcp_store_group: Optional[dist.TCPStore] = None,
@@ -81,14 +80,10 @@ class Buffer:
         self.tcp_store_group = tcp_store_group
         assert not (group and comm)
 
-        # Configure NVLINK backend
-        os.environ["NIXL_EP_NVLINK_BACKEND_IPC"] = (
-            "1" if nvlink_backend == "ipc" else "0"
-        )
         if nvlink_backend != "nixl":
             os.environ["UCX_TLS"] = "^cuda_ipc"
 
-        self.runtime = nixl_ep_cpp.Buffer(self.rank, explicitly_destroy, enable_shrink)
+        self.runtime = nixl_ep_cpp.Buffer(self.rank, explicitly_destroy)
 
     def destroy(self):
         """

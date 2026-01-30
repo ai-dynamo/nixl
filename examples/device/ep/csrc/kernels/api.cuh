@@ -33,34 +33,17 @@ namespace nixl_ep {
 // EP kernels
 namespace ep_kernels {
 struct gpu_nixl_ctx {
-    nixlGpuXferReqH *batch_reqs; // [dest_rank]
-    nixlGpuXferReqH *remote_barrier_reqs; // [dest_rank]
-    int *local_barrier_buffer; // [src_rank]
-    int *local_barrier_cnt; // [dst_rank]
-    void **rdma_p2p_ptrs; // [num_ranks]
+    nixlMemoryViewH local_mvh;
+    nixlMemoryViewH barrier_mvh;
+    nixlMemoryViewH remote_mvh;
+    int *sync_buffer_ptr; // [src_rank]
+    int *sync_count_ptr; // [dst_rank]
     void *rdma_buffer_ptr;
-    int num_ranks;
+    int max_num_ranks;
     int rank;
 
-    /* Double buffering considerations are handled by the caller */
-    __device__ inline void *rdma_p2p_ptr_get(uint64_t ptr, int dst_rank) {
-        if (rdma_p2p_ptrs[dst_rank] == nullptr)
-            return nullptr;
-
-        return (void *)(reinterpret_cast<uint64_t>(rdma_p2p_ptrs[dst_rank]) + batch_offset_get(ptr));
-    }
-
-    __device__ inline nixlGpuXferReqH remote_barrier_get(int dest_rank) {
-        return remote_barrier_reqs[dest_rank];
-    }
-
-    __device__ inline nixlGpuXferReqH batch_get(int dest_rank) {
-        return batch_reqs[dest_rank];
-    }
-
-    __device__ inline size_t batch_offset_get(uint64_t ptr) {
-        return ptr - reinterpret_cast<uint64_t>(rdma_buffer_ptr);
-    }
+    __device__ inline uint64_t offset_get(uint64_t ptr);
+    __device__ inline void* p2p_ptr_get(uint64_t dst_ptr, int dst_rank);
 };
 
 void clean_buffer(int* clean_0, int num_clean_int_0,
@@ -96,7 +79,7 @@ void combine(void* combined_x,
              void* workspace, int num_device_sms,
              cudaStream_t stream, int phases, bool zero_copy, ep_kernels::gpu_nixl_ctx nixl_ctx);
 
-void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, int* sync_buffer_ptr, cudaStream_t stream);
+void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, cudaStream_t stream);
 
 void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* output_mask_tensor, cudaStream_t stream);
 
