@@ -19,4 +19,3 @@ num_query_heads: 64
 num_kv_heads: 8
 query_head_dimension: 64
 num_model_params: 116800000000
-
