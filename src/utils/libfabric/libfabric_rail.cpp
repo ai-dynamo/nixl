@@ -388,7 +388,6 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     : rail_id(id),
       device_name(device),
       provider_name(provider),
-      blocking_cq_sread_supported(true),
       control_request_pool_(NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL, id),
       data_request_pool_(NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL, id),
       provider_supports_hmem_(false) {
@@ -477,32 +476,17 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         // Create CQ for this rail
         struct fi_cq_attr cq_attr = {};
         cq_attr.format = FI_CQ_FORMAT_DATA;
-        cq_attr.wait_obj = FI_WAIT_UNSPEC;
+        cq_attr.wait_obj = FI_WAIT_NONE;
         cq_attr.size = 12288;
         ret = fi_cq_open(domain, &cq_attr, &cq, NULL);
         if (ret) {
-            NIXL_INFO << "not harmful: fi_cq_open with FI_WAIT_UNSPEC failed for rail " << rail_id
-                      << ": " << fi_strerror(-ret) << " - trying FI_WAIT_NONE for "
-                      << info->fabric_attr->name << " provider";
-            if (ret == -FI_ENOSYS) {
-                NIXL_TRACE << "FI_WAIT_UNSPEC not supported, falling back to FI_WAIT_NONE for rail "
-                           << rail_id;
-                blocking_cq_sread_supported = false;
-                // If fi_cq_open fails due to FI_WAIT_UNSPEC not supported, we fall back to
-                // FI_WAIT_NONE and use fi_cq_read in control rails
-                cq_attr.wait_obj = FI_WAIT_NONE;
-                ret = fi_cq_open(domain, &cq_attr, &cq, NULL);
-                if (ret) {
-                    NIXL_ERROR << "fi_cq_open with FI_WAIT_NONE failed for rail " << rail_id << ": "
-                               << fi_strerror(-ret);
-                    throw std::runtime_error("fi_cq_open with FI_WAIT_NONE failed for rail " +
-                                             std::to_string(rail_id));
-                }
-                NIXL_TRACE << "fi_cq_open with FI_WAIT_NONE succeeded for rail " << rail_id;
-            } else {
-                throw std::runtime_error("fi_cq_open failed for rail " + std::to_string(rail_id));
-            }
+            NIXL_ERROR << "fi_cq_open with FI_WAIT_NONE failed for rail " << rail_id << ": "
+                       << fi_strerror(-ret);
+            throw std::runtime_error("fi_cq_open with FI_WAIT_NONE failed for rail " +
+                                     std::to_string(rail_id));
         }
+        NIXL_TRACE << "fi_cq_open with FI_WAIT_NONE succeeded for rail " << rail_id;
+
         // Verify CQ was properly created
         if (!cq) {
             NIXL_ERROR << "CQ is null after fi_cq_open for rail " << rail_id;
@@ -715,18 +699,6 @@ nixlLibfabricRail::setNotificationCallback(std::function<void(const std::string 
 }
 
 void
-nixlLibfabricRail::setConnectionAckCallback(
-    std::function<void(uint16_t, nixlLibfabricConnection *, ConnectionState)> callback) {
-    connectionAckCallback = callback;
-}
-
-void
-nixlLibfabricRail::setConnectionReqCallback(
-    std::function<nixl_status_t(uint16_t, const std::string &, nixlLibfabricRail *)> callback) {
-    connectionReqCallback = callback;
-}
-
-void
 nixlLibfabricRail::setXferIdCallback(std::function<void(uint32_t)> callback) {
     xferIdCallback = callback;
 }
@@ -735,7 +707,7 @@ nixlLibfabricRail::setXferIdCallback(std::function<void(uint32_t)> callback) {
 
 // Per-rail completion processing - handles one rail's CQ with configurable blocking behavior
 nixl_status_t
-nixlLibfabricRail::progressCompletionQueue(bool use_blocking) const {
+nixlLibfabricRail::progressCompletionQueue() const {
     // Completion processing
     struct fi_cq_data_entry completion;
     memset(&completion, 0, sizeof(completion));
@@ -746,13 +718,8 @@ nixlLibfabricRail::progressCompletionQueue(bool use_blocking) const {
     {
         std::lock_guard<std::mutex> cq_lock(cq_progress_mutex_);
 
-        if (use_blocking && blocking_cq_sread_supported) {
-            // Blocking read using fi_cq_sread (used by CM thread)
-            ret = fi_cq_sread(cq, &completion, 1, nullptr, NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_MS);
-        } else {
-            // Non-blocking read (used by progress thread or fallback)
-            ret = fi_cq_read(cq, &completion, 1);
-        }
+        // Non-blocking read (used by progress thread or fallback)
+        ret = fi_cq_read(cq, &completion, 1);
 
         if (ret < 0 && ret != -FI_EAGAIN) {
             NIXL_ERROR << "fi_cq_read returned error " << ret << " on rail " << rail_id << ": "
@@ -935,35 +902,7 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
     NIXL_TRACE << "Received control message type " << msg_type << " agent_idx=" << agent_idx
                << " XFER_ID=" << xfer_id << " imm_data=" << std::hex << comp->data << std::dec;
 
-    if (msg_type == NIXL_LIBFABRIC_MSG_CONNECT) {
-        NIXL_TRACE << "Processing connection request on rail " << rail_id
-                   << " Xfer_id :" << xfer_id;
-        // Use callback to handle connection request processing
-        if (connectionReqCallback) {
-            std::string serialized_data(static_cast<char *>(req->buffer), req->buffer_size);
-            nixl_status_t callback_status = connectionReqCallback(
-                agent_idx, serialized_data, const_cast<nixlLibfabricRail *>(this));
-            if (callback_status != NIXL_SUCCESS) {
-                NIXL_ERROR << "Connection request callback failed";
-                return callback_status;
-            }
-            NIXL_TRACE << "Connection request processed via callback for rail " << rail_id;
-        } else {
-            NIXL_ERROR << "No connection request callback set for rail " << rail_id;
-            return NIXL_ERR_BACKEND;
-        }
-    } else if (msg_type == NIXL_LIBFABRIC_MSG_ACK) {
-        NIXL_TRACE << "Processing connect request acknowledgement on rail " << rail_id;
-        // Notify engine that connection is established via callback
-        // TODO: validate the current state before calling callback
-        if (connectionAckCallback) {
-            connectionAckCallback(agent_idx, nullptr, ConnectionState::CONNECTED);
-            NIXL_TRACE << "Connection state updated to CONNECTED via callback for rail " << rail_id;
-        } else {
-            NIXL_ERROR << "No connection state callback set for rail " << rail_id;
-            return NIXL_ERR_BACKEND;
-        }
-    } else if (msg_type == NIXL_LIBFABRIC_MSG_NOTIFICTION) {
+    if (msg_type == NIXL_LIBFABRIC_MSG_NOTIFICTION) {
         NIXL_TRACE << "Processing notification request on rail " << rail_id
                    << " Xfer_id :" << xfer_id;
 
@@ -981,11 +920,6 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
             NIXL_ERROR << "No notification callback set!";
             return NIXL_ERR_BACKEND;
         }
-    } else if (msg_type == NIXL_LIBFABRIC_MSG_DISCONNECT) {
-        NIXL_TRACE << "Processing disconnect request from agent " << agent_idx << " on rail "
-                   << rail_id
-                   << "Currently not tracking the fi_addrs, so no callback for disconnect to clean "
-                      "up libfabric AV list";
     } else {
         NIXL_ERROR << "Unknown message type: " << std::hex << msg_type << std::dec;
         return NIXL_ERR_BACKEND;
@@ -1131,7 +1065,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
                                     NIXL_LIBFABRIC_MAX_RETRY_DELAY_US);
 
             // Progress completion queue to drain pending completions before retry
-            nixl_status_t progress_status = progressCompletionQueue(false);
+            nixl_status_t progress_status = progressCompletionQueue();
             if (progress_status == NIXL_SUCCESS) {
                 NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
             }
@@ -1210,7 +1144,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                                     NIXL_LIBFABRIC_MAX_RETRY_DELAY_US);
 
             // Progress completion queue to drain pending completions before retry
-            nixl_status_t progress_status = progressCompletionQueue(false);
+            nixl_status_t progress_status = progressCompletionQueue();
             if (progress_status == NIXL_SUCCESS) {
                 NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
             }
@@ -1287,7 +1221,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
                                     NIXL_LIBFABRIC_MAX_RETRY_DELAY_US);
 
             // Progress completion queue to drain pending completions before retry
-            nixl_status_t progress_status = progressCompletionQueue(false);
+            nixl_status_t progress_status = progressCompletionQueue();
             if (progress_status == NIXL_SUCCESS) {
                 NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
             }
