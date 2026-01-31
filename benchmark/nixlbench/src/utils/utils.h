@@ -178,6 +178,8 @@ public:
     static std::string obj_req_checksum;
     static std::string obj_ca_bundle;
     static size_t obj_crt_min_limit;
+    static bool obj_accelerated_enable;
+    static std::string obj_accelerated_type;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;
