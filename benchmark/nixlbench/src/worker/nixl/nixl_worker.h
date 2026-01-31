@@ -46,6 +46,10 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<std::vector<xferBenchIOV>> remote_iovs;
         std::vector<GusliDeviceConfig> gusli_devices;
 
+        // GDAKI signal buffer support
+        std::vector<xferBenchIOV> signal_buffers;
+        bool is_gdaki_enabled;
+
     public:
         xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices);
         ~xferBenchNixlWorker();  // Custom destructor to clean up resources
@@ -61,8 +65,20 @@ class xferBenchNixlWorker: public xferBenchWorker {
                     size_t block_size) override;
         void
         poll(size_t block_size) override;
+        void
+        devicePoll(size_t block_size, unsigned int skip, unsigned int num_iter);
         int
         synchronizeStart();
+        bool
+        sendWireupNotification(std::string_view &remote_name);
+        bool
+        waitForAck(std::string_view &remote_name);
+        void
+        sendMetadata(std::string_view local_md, int rank);
+        bool
+        recvAndLoadMetadata(int rank);
+        bool
+        waitForWireupAck(std::string_view item);
 
         // Data operations
         std::variant<xferBenchStats, int>
@@ -76,8 +92,22 @@ class xferBenchNixlWorker: public xferBenchWorker {
         void cleanupBasicDescDram(xferBenchIOV &basic_desc);
 #if HAVE_CUDA
         std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);
-        void cleanupBasicDescVram(xferBenchIOV &basic_desc);
+        void
+        cleanupBasicDescVram(xferBenchIOV &basic_desc);
 #endif
+        // GDAKI signal buffer management
+        std::optional<xferBenchIOV>
+        initSignalBuffer(int mem_dev_id, size_t sigsize);
+        void
+        cleanupSignalBuffer(std::optional<xferBenchIOV> &);
+
+        // GDAKI wireup notification
+        bool
+        sendWireupMessage();
+
+        // GDAKI bidirectional metadata exchange
+        bool
+        exchangeMetadataBidirectional();
         std::optional<xferBenchIOV>
         initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
         void cleanupBasicDescFile(xferBenchIOV &basic_desc);
