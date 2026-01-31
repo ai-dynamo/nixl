@@ -44,6 +44,9 @@
 #define NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD (128 * 1024) // 128KB
 #define LF_EP_NAME_MAX_LEN 56
 
+// Environment variable to force rail count (fix for rail mismatch in disaggregated inference)
+#define NIXL_LIBFABRIC_NUM_RAILS_ENV "NIXL_LIBFABRIC_NUM_RAILS"
+
 // Request pool configuration constants
 #define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 4096 // SEND/RECV operations (1:1 with buffers)
 #define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/read operations (no buffers)
