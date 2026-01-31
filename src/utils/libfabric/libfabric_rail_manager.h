@@ -109,8 +109,9 @@ public:
      * @param buffer Memory buffer to register
      * @param length Buffer size in bytes
      * @param mem_type Memory type (DRAM_SEG or VRAM_SEG)
-     * @param gpu_id GPU device ID (used for VRAM_SEG, ignored for DRAM_SEG)
-     * @param gpu_pci_bus_id PCI bus ID for VRAM-GPU (queried in backend layer), empty for DRAM
+     * @param device_id Device ID (used for VRAM_SEG, ignored for DRAM_SEG)
+     * @param device_pci_bus_id PCI bus ID for VRAM device (queried in backend layer), empty for
+     * DRAM
      * @param mr_list_out Memory registration handles, indexed by rail ID
      * @param key_list_out Remote access keys, indexed by rail ID
      * @param selected_rails_out List of rail IDs where memory was registered
@@ -120,8 +121,8 @@ public:
     registerMemory(void *buffer,
                    size_t length,
                    nixl_mem_t mem_type,
-                   int gpu_id,
-                   const std::string &gpu_pci_bus_id,
+                   int device_id,
+                   const std::string &device_pci_bus_id,
                    std::vector<struct fid_mr *> &mr_list_out,
                    std::vector<uint64_t> &key_list_out,
                    std::vector<size_t> &selected_rails_out);
@@ -299,8 +300,22 @@ public:
         std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &data_endpoints_out,
         std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &control_endpoints_out) const;
 
+    const nixlLibfabricTopology *
+    getTopology() const {
+        return topology.get();
+    }
+
+    /** Get the system's runtime type.
+     * @return fi_hmem_iface runtime type (CUDA, NEURON, or SYSTEM)
+     */
+    fi_hmem_iface
+    getRuntime() const;
+
 private:
     size_t striping_threshold_;
+
+    // System runtime type (determined once at initialization)
+    fi_hmem_iface runtime_;
 
     // Rail allocation
     std::vector<std::unique_ptr<nixlLibfabricRail>> data_rails_;
@@ -322,7 +337,7 @@ private:
     std::vector<size_t>
     selectRailsForMemory(void *mem_addr,
                          nixl_mem_t mem_type,
-                         int gpu_id,
+                         int device_id,
                          const std::string &pci_bus_id = "") const;
 
     // Helper functions for connection SerDes

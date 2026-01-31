@@ -39,7 +39,7 @@ main() {
         topology.printTopologyInfo();
 
         // Test GPU-specific queries only if GPUs are detected
-        int num_gpus = topology.getNumGpus();
+        int num_gpus = topology.getNumNvidiaAccel();
         if (num_gpus > 0) {
             NIXL_INFO << "3. Testing GPU-specific queries (detected " << num_gpus << " GPUs)...";
             int test_gpus = std::min(num_gpus, 3); // Test up to 3 GPUs or all available
@@ -57,7 +57,7 @@ main() {
                          prop.pciBusID,
                          prop.pciDeviceID);
 
-                auto gpu_devices = topology.getEfaDevicesForGPUPci(pci_bus_id);
+                auto gpu_devices = topology.getEfaDevicesForPci(pci_bus_id);
 
                 std::string device_list;
                 for (const auto &device : gpu_devices) {
