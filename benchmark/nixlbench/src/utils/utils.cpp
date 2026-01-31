@@ -190,6 +190,10 @@ const std::vector<xferBenchParamInfo> xbench_params = {
                 false,
                 "Enable S3 Accelerated client for GPU-direct transfers (requires cuobjclient "
                 "library, default: false)"),
+    NB_ARG_STRING(obj_accelerated_type,
+                  "",
+                  "S3 Accelerated client vendor type to use. "
+                  "Only used when obj_accelerated_enable=true (default: empty)"),
 
     // AZURE BLOB options - only used when backend is AZURE_BLOB
     NB_ARG_STRING(azure_blob_account_url, "", "Account URL for Azure Blob backend"),
@@ -275,6 +279,7 @@ std::string xferBenchConfig::obj_req_checksum = "";
 std::string xferBenchConfig::obj_ca_bundle = "";
 size_t xferBenchConfig::obj_crt_min_limit = 0;
 bool xferBenchConfig::obj_accelerated_enable = false;
+std::string xferBenchConfig::obj_accelerated_type = "";
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
@@ -466,6 +471,7 @@ xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
             obj_ca_bundle = NB_ARG(obj_ca_bundle);
             obj_crt_min_limit = NB_ARG(obj_crt_min_limit);
             obj_accelerated_enable = NB_ARG(obj_accelerated_enable);
+            obj_accelerated_type = NB_ARG(obj_accelerated_type);
 
             // Validate OBJ S3 scheme
             if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
@@ -672,6 +678,8 @@ xferBenchConfig::printConfig() {
             printOption("OBJ S3 Accelerated enable (--obj_accelerated_enable=[true|false])",
                         obj_accelerated_enable ? "true (Accelerated enabled)" :
                                                  "false (Accelerated disabled)");
+            printOption("OBJ S3 Accelerated type (--obj_accelerated_type=type)",
+                        obj_accelerated_type.empty() ? "(default)" : obj_accelerated_type);
         }
 
         if (backend == XFERBENCH_BACKEND_AZURE_BLOB) {

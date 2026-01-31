@@ -232,7 +232,12 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
         if (xferBenchConfig::obj_accelerated_enable) {
             backend_params["accelerated"] = "true";
-            std::cout << "OBJ backend with S3 Accelerated client enabled" << std::endl;
+            std::cout << "OBJ backend with S3 Accelerated client enabled";
+            if (!xferBenchConfig::obj_accelerated_type.empty()) {
+                backend_params["type"] = xferBenchConfig::obj_accelerated_type;
+                std::cout << " (type: " << xferBenchConfig::obj_accelerated_type << ")";
+            }
+            std::cout << std::endl;
         }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically

@@ -180,6 +180,7 @@ public:
     static std::string obj_ca_bundle;
     static size_t obj_crt_min_limit;
     static bool obj_accelerated_enable;
+    static std::string obj_accelerated_type;
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
     static int hf3fs_iopool_size;
