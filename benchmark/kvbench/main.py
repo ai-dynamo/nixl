@@ -527,29 +527,14 @@ def sequential_ct_perftest(
             storage_ops=storage_ops,
         )
 
-        # Validate: storage ranks must be senders (unless storage-only with no RDMA)
-        # 
-        # Why this constraint?
-        # When a TP has both RDMA and storage, we use barriers to synchronize:
-        #   1. After storage read, before RDMA (so RDMA timing is accurate)
-        #   2. After RDMA, before storage write (so storage write timing is accurate)
-        # 
-        # These barriers include senders + storage ranks. If storage was on non-sender
-        # ranks, those ranks wouldn't participate in RDMA but would be in the barrier,
-        # breaking the synchronization logic. By requiring storage ranks ⊆ sender ranks,
-        # the barrier correctly syncs all active participants.
+        # Storage operations are flexible - any rank can have read/write:
+        #   - Storage READ happens before RDMA (for all ranks with read_h)
+        #   - Storage WRITE happens after RDMA (for all ranks with write_h)
         #
-        # Storage-only patterns (no RDMA) are allowed to have any ranks with storage.
-        if storage_ops and matrix is not None:
-            sender_ranks = set(pattern.senders_ranks())
-            storage_ranks = set(storage_ops.keys())
-            non_sender_storage = storage_ranks - sender_ranks
-            # Only enforce if there are actual senders (allow storage-only patterns)
-            if non_sender_storage and sender_ranks:
-                raise ValueError(
-                    f"Traffic pattern {idx}: storage configured for non-sender ranks {non_sender_storage}. "
-                    f"Only sender ranks can have storage operations. Senders: {sender_ranks}"
-                )
+        # Example configurations:
+        #   - Senders: read → send → write
+        #   - Receivers: read → receive → write
+        #   - Mixed: any combination
 
         patterns.append(pattern)
 

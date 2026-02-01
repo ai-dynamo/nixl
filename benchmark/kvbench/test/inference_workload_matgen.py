@@ -230,18 +230,29 @@ def gen_matrices_and_compute_time(
     """
     # Handle storage-only mode with no decode workers
     storage_only_no_decode = len(decode_workers) == 0
-    
+
+    workers_coupling: list[tuple[list[int], list[int] | None]]
     if not storage_only_no_decode:
-        # For now, every prefill worker is bound to a single decode worker
-        assert len(prefill_workers) == len(
+        # Support N:1 ratio (multiple prefill workers per decode worker)
+        assert len(prefill_workers) >= len(
             decode_workers
-        ), f"Prefill and decode workers must have the same number of workers, got {len(prefill_workers)} and {len(decode_workers)}"
+        ), f"Prefill workers ({len(prefill_workers)}) must be >= decode workers ({len(decode_workers)})"
+        assert (
+            len(prefill_workers) % len(decode_workers) == 0
+        ), f"Prefill workers ({len(prefill_workers)}) must be divisible by decode workers ({len(decode_workers)})"
 
         # Assertions
-        all_ranks = list(r for worker in prefill_workers + decode_workers for r in worker)
+        all_ranks = list(
+            r for worker in prefill_workers + decode_workers for r in worker
+        )
         world_size = max(all_ranks) + 1
         assert set(all_ranks) == set(range(world_size)), "Ranks are missing"
-        workers_coupling = list(zip(prefill_workers, decode_workers))
+
+        # Pair prefill workers with decode workers (cycling decode if N:1)
+        ratio = len(prefill_workers) // len(decode_workers)
+        workers_coupling = [
+            (pw, decode_workers[i // ratio]) for i, pw in enumerate(prefill_workers)
+        ]
     else:
         # Storage-only: only prefill workers, no decode
         all_ranks = list(r for worker in prefill_workers for r in worker)
@@ -271,7 +282,9 @@ def gen_matrices_and_compute_time(
             # Storage-only with no decode: create empty matrix placeholder
             mat = np.zeros((world_size, world_size), dtype=np.int64)
 
-        compute_time = estimate_compute_time(batch, model_config, prefill_worker_config, flops_per_gpu)
+        compute_time = estimate_compute_time(
+            batch, model_config, prefill_worker_config, flops_per_gpu
+        )
         matrix_obj = TransferMatrix(
             matrix=mat,
             compute_time=compute_time,
@@ -502,7 +515,9 @@ def main(
         matrices_dir.mkdir(parents=True, exist_ok=True)
 
     storage_enabled = prefix_hit_rate is not None or storage_only
-    hit_rate = prefix_hit_rate if prefix_hit_rate is not None else 1.0  # 100% read for storage_only
+    hit_rate = (
+        prefix_hit_rate if prefix_hit_rate is not None else 1.0
+    )  # 100% read for storage_only
 
     if storage_enabled:
         logger.info(
@@ -513,7 +528,9 @@ def main(
     if storage_only:
         logger.info("Storage-only mode: skipping RDMA matrix files")
     if all_nodes_per_pattern:
-        logger.info("All-nodes-per-pattern mode: all prefill nodes active in each pattern")
+        logger.info(
+            "All-nodes-per-pattern mode: all prefill nodes active in each pattern"
+        )
 
     # Build metadata
     metadata: dict[str, Any] = {
@@ -557,10 +574,15 @@ def main(
                 # All prefill nodes get the same size (based on this request's ISL)
                 # Calculate size per rank based on ISL
                 kv_size = model_config.kv_cache_size(matrix.isl)
-                per_rank_size = int(kv_size / prefill_worker_config.tp / prefill_worker_config.pp / prefill_worker_config.cp)
+                per_rank_size = int(
+                    kv_size
+                    / prefill_worker_config.tp
+                    / prefill_worker_config.pp
+                    / prefill_worker_config.cp
+                )
                 read_size = int(per_rank_size * hit_rate)
                 write_size = 0 if read_only else int(per_rank_size * (1 - hit_rate))
-                
+
                 # Set for ALL prefill ranks (ranks 0 to num_prefill_gpus-1)
                 for rank in range(num_prefill_gpus):
                     if read_size > 0:
@@ -570,16 +592,29 @@ def main(
             elif storage_only:
                 # Storage-only mode with round-robin: assign to one prefill worker at a time
                 kv_size = model_config.kv_cache_size(matrix.isl)
-                per_rank_size = int(kv_size / prefill_worker_config.tp / prefill_worker_config.pp / prefill_worker_config.cp)
+                per_rank_size = int(
+                    kv_size
+                    / prefill_worker_config.tp
+                    / prefill_worker_config.pp
+                    / prefill_worker_config.cp
+                )
                 read_size = int(per_rank_size * hit_rate)
                 write_size = 0 if read_only else int(per_rank_size * (1 - hit_rate))
-                
+
                 # Assign to one prefill worker (round-robin)
-                num_prefill_workers = num_prefill_gpus // (prefill_worker_config.tp * prefill_worker_config.pp * prefill_worker_config.cp)
+                num_prefill_workers = num_prefill_gpus // (
+                    prefill_worker_config.tp
+                    * prefill_worker_config.pp
+                    * prefill_worker_config.cp
+                )
                 worker_idx = idx % num_prefill_workers
-                worker_size = prefill_worker_config.tp * prefill_worker_config.pp * prefill_worker_config.cp
+                worker_size = (
+                    prefill_worker_config.tp
+                    * prefill_worker_config.pp
+                    * prefill_worker_config.cp
+                )
                 start_rank = worker_idx * worker_size
-                
+
                 for rank in range(start_rank, start_rank + worker_size):
                     if read_size > 0:
                         read_sizes[rank] = format_size(read_size)
@@ -591,7 +626,9 @@ def main(
                     transfer_size = int(matrix.matrix[rank].sum())
                     if transfer_size > 0:
                         read_size = int(transfer_size * hit_rate)
-                        write_size = 0 if read_only else int(transfer_size * (1 - hit_rate))
+                        write_size = (
+                            0 if read_only else int(transfer_size * (1 - hit_rate))
+                        )
                         if read_size > 0:
                             read_sizes[rank] = format_size(read_size)
                         if write_size > 0:
@@ -613,15 +650,17 @@ def main(
     with open(metadata_path, "w") as f:
         yaml.dump(metadata, f, default_flow_style=None, width=1000, sort_keys=False)
         logger.info("Saved metadata to %s", metadata_path)
-    
+
     # Print summary
     total_patterns = len(metadata["traffic_patterns"])
     logger.info("Generated %d traffic patterns", total_patterns)
     if storage_only:
-        logger.info("Model: %d layers, %d KV heads, head_dim=%d", 
-                    model_config.num_layers, 
-                    model_config.num_kv_heads or model_config.num_heads,
-                    model_config.head_dim)
+        logger.info(
+            "Model: %d layers, %d KV heads, head_dim=%d",
+            model_config.num_layers,
+            model_config.num_kv_heads or model_config.num_heads,
+            model_config.head_dim,
+        )
         logger.info("Bytes per token: %s", format_size(model_config.bytes_per_token()))
 
 
