@@ -308,7 +308,7 @@ run_initiator(const Config &cfg) {
     std::string target_data_descs = store.get("NIXL_2PROC/target_data_descs");
     std::string target_signal_descs = store.get("NIXL_2PROC/target_signal_descs");
 
-    // Create write requests
+    // Prepare memory views for new device API
     nixl_xfer_dlist_t local_data(VRAM_SEG);
     local_data.addDesc(nixlBasicDesc((uintptr_t)data_ptr, cfg.size, INITIATOR_DEVICE));
 
@@ -316,63 +316,62 @@ run_initiator(const Config &cfg) {
     remote_data_serdes.importStr(target_data_descs);
     nixl_xfer_dlist_t remote_data(&remote_data_serdes);
 
-    nixlXferReqH *data_xfer_req = nullptr;
-    NIXL_CHECK(agent->createXferReq(
-                   NIXL_WRITE, local_data, remote_data, target_name, data_xfer_req, &extra_params),
-               "createXferReq data");
-
-    nixlGpuXferReqH data_gpu_req = nullptr;
-    NIXL_CHECK(agent->createGpuXferReq(*data_xfer_req, data_gpu_req), "createGpuXferReq data");
-
-    nixl_xfer_dlist_t local_signal(VRAM_SEG);
-    local_signal.addDesc(nixlBasicDesc((uintptr_t)signal_ptr, signal_size, INITIATOR_DEVICE));
-
     nixlSerDes remote_signal_serdes;
     remote_signal_serdes.importStr(target_signal_descs);
     nixl_xfer_dlist_t remote_signal(&remote_signal_serdes);
 
-    nixlXferReqH *signal_xfer_req = nullptr;
-    NIXL_CHECK(
-        agent->createXferReq(
-            NIXL_WRITE, local_signal, remote_signal, target_name, signal_xfer_req, &extra_params),
-        "createXferReq signal");
+    // Prepare memory view handles
+    nixlMemoryViewH local_data_mvh = nullptr;
+    NIXL_CHECK(agent->prepMemoryView(local_data, local_data_mvh, &extra_params),
+               "prepMemoryView local data");
 
-    nixlGpuXferReqH signal_gpu_req = nullptr;
-    NIXL_CHECK(agent->createGpuXferReq(*signal_xfer_req, signal_gpu_req),
-               "createGpuXferReq signal");
+    nixlMemoryViewH remote_data_mvh = nullptr;
+    NIXL_CHECK(agent->prepMemoryView(remote_data, remote_data_mvh, &extra_params),
+               "prepMemoryView remote data");
 
-    // Prepare GPU request handles array (kernel needs device memory, not host stack pointer)
-    uintptr_t *data_req_handles = nullptr;
-    CUDA_CHECK(cudaMalloc(&data_req_handles, sizeof(uintptr_t)));
-    uintptr_t data_gpu_req_val = reinterpret_cast<uintptr_t>(data_gpu_req);
-    CUDA_CHECK(
-        cudaMemcpy(data_req_handles, &data_gpu_req_val, sizeof(uintptr_t), cudaMemcpyHostToDevice));
+    nixlMemoryViewH remote_signal_mvh = nullptr;
+    NIXL_CHECK(agent->prepMemoryView(remote_signal, remote_signal_mvh, &extra_params),
+               "prepMemoryView remote signal");
+
+    // Create memory descriptors
+    nixlMemDesc src_desc{local_data_mvh, 0, 0};
+    nixlMemDesc dst_desc{remote_data_mvh, 0, 0};
+    nixlMemDesc signal_desc{remote_signal_mvh, 0, 0};
+
+    // Prepare descriptor arrays for GPU (kernel needs device memory, not host stack pointers)
+    nixlMemDesc *d_src_descs = nullptr;
+    nixlMemDesc *d_dst_descs = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_src_descs, sizeof(nixlMemDesc)));
+    CUDA_CHECK(cudaMalloc(&d_dst_descs, sizeof(nixlMemDesc)));
+    CUDA_CHECK(cudaMemcpy(d_src_descs, &src_desc, sizeof(nixlMemDesc), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_dst_descs, &dst_desc, sizeof(nixlMemDesc), cudaMemcpyHostToDevice));
 
     // Launch GPU kernel to post write + signal
     std::cout << "[initiator] Transferring data via GPU kernel..." << std::endl;
-    launch_post_write_and_signal((uintptr_t)data_req_handles, // GPU handles array
-                                 1, // Number of handles
-                                 reinterpret_cast<uintptr_t>(signal_gpu_req), // Signal handle
-                                 (uintptr_t)signal_ptr, // Signal memory
-                                 cfg.size, // Transfer size
-                                 0, // THREAD level cooperation
-                                 1, // Single thread
-                                 1, // One write per signal
-                                 0 // Default stream
+    launch_post_write_and_signal((uintptr_t)d_src_descs,  // Source descriptors array
+                                 (uintptr_t)d_dst_descs,  // Dest descriptors array
+                                 1,                       // Number of descriptors
+                                 signal_desc,             // Signal descriptor
+                                 (uintptr_t)signal_ptr,   // Signal memory
+                                 cfg.size,                // Transfer size
+                                 0,                       // THREAD level cooperation
+                                 1,                       // Single thread
+                                 1,                       // One write per signal
+                                 0                        // Default stream
     );
     CUDA_CHECK(cudaDeviceSynchronize());
     std::cout << "[initiator] Transfer complete!" << std::endl;
 
     // Cleanup
-    agent->releaseGpuXferReq(data_gpu_req);
-    agent->releaseGpuXferReq(signal_gpu_req);
-    NIXL_CHECK(agent->releaseXferReq(data_xfer_req), "releaseXferReq data");
-    NIXL_CHECK(agent->releaseXferReq(signal_xfer_req), "releaseXferReq signal");
+    agent->releaseMemoryView(local_data_mvh);
+    agent->releaseMemoryView(remote_data_mvh);
+    agent->releaseMemoryView(remote_signal_mvh);
     NIXL_CHECK(agent->deregisterMem(data_reg, &extra_params), "deregisterMem data");
     NIXL_CHECK(agent->deregisterMem(signal_reg, &extra_params), "deregisterMem signal");
     NIXL_CHECK(agent->invalidateRemoteMD(target_name), "invalidateRemoteMD");
 
-    CUDA_CHECK(cudaFree(data_req_handles));
+    CUDA_CHECK(cudaFree(d_src_descs));
+    CUDA_CHECK(cudaFree(d_dst_descs));
     CUDA_CHECK(cudaFree(data_ptr));
     CUDA_CHECK(cudaFree(signal_ptr));
 

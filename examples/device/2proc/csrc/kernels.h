@@ -9,20 +9,35 @@
 #include <cstddef>
 #include <cstdint>
 
+// For C++ host code, provide nixlMemDesc definition
+// (nixlMemoryViewH is already defined in nixl_types.h as void*)
+#ifndef __CUDACC__
+struct nixlMemDesc {
+    void *mvh;      // nixlMemoryViewH
+    size_t index;
+    size_t offset;
+};
+#endif
+
 /**
- * @brief Launch GPU kernel that posts RDMA write + signal.
+ * @brief Launch GPU kernel that posts RDMA write + signal using new device API.
  *
- * @param data_req_handles_ptr Device memory pointer to GPU request handles
- * @param data_req_count Number of handles in the array
- * @param signal_req_handle GPU request handle for signal operation
- * @param signal_ptr Device memory pointer to signal location
+ * @param src_descs_ptr Device memory pointer to source memory descriptors
+ * @param dst_descs_ptr Device memory pointer to destination memory descriptors
+ * @param desc_count Number of descriptors in the arrays
+ * @param signal_desc Remote signal memory descriptor
+ * @param signal_ptr Device memory pointer to local signal location
+ * @param size Transfer size per descriptor
  * @param level GPU cooperation level (0=THREAD, 1=WARP)
+ * @param threads_per_block Number of threads per block
+ * @param pipeline Number of writes before signaling
  * @param stream CUDA stream for kernel launch
  */
 void
-launch_post_write_and_signal(uintptr_t data_req_handles_ptr,
-                             int data_req_count,
-                             uintptr_t signal_req_handle,
+launch_post_write_and_signal(uintptr_t src_descs_ptr,
+                             uintptr_t dst_descs_ptr,
+                             int desc_count,
+                             nixlMemDesc signal_desc,
                              uintptr_t signal_ptr,
                              size_t size,
                              int level,
@@ -36,6 +51,7 @@ launch_post_write_and_signal(uintptr_t data_req_handles_ptr,
  * @param signal_ptr Device memory pointer to signal location
  * @param expected_value Value to wait for
  * @param level GPU cooperation level (0=THREAD, 1=WARP)
+ * @param threads_per_block Number of threads per block
  * @param stream CUDA stream for kernel launch
  */
 void

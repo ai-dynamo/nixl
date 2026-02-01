@@ -8,11 +8,14 @@
 #include <string>
 #include <memory>
 
+namespace c10d {
+class TCPStore;
+}
+
 namespace tcp_store {
 
 /**
  * Simple wrapper around PyTorch's TCPStore for metadata exchange.
- * Follows the same pattern as EP framework's TCPStore usage.
  */
 class TCPStore {
 public:
@@ -26,6 +29,10 @@ public:
      */
     TCPStore(const std::string &host, int port, bool is_master, int timeout_ms = 30000);
     ~TCPStore();
+
+    // Prevent copying
+    TCPStore(const TCPStore &) = delete;
+    TCPStore &operator=(const TCPStore &) = delete;
 
     /**
      * Set a key-value pair in the store.
@@ -64,8 +71,7 @@ public:
     delete_key(const std::string &key);
 
 private:
-    class Impl;
-    std::unique_ptr<Impl> impl_;
+    std::shared_ptr<c10d::TCPStore> store_;
 };
 
 } // namespace tcp_store

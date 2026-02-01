@@ -16,3 +16,6 @@
 if get_option('build_nixl_ep')
     subdir('ep')
 endif
+
+# 2proc example - demonstrates GPU-initiated RDMA with Device API V2
+subdir('2proc')

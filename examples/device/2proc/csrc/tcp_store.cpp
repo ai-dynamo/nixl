@@ -10,14 +10,7 @@
 
 namespace tcp_store {
 
-class TCPStore::Impl {
-public:
-    std::shared_ptr<c10d::TCPStore> store;
-};
-
-TCPStore::TCPStore(const std::string &host, int port, bool is_master, int timeout_ms)
-    : impl_(std::make_unique<Impl>()) {
-
+TCPStore::TCPStore(const std::string &host, int port, bool is_master, int timeout_ms) {
     c10d::TCPStoreOptions opts;
     opts.port = port;
     opts.isServer = is_master;
@@ -26,7 +19,7 @@ TCPStore::TCPStore(const std::string &host, int port, bool is_master, int timeou
     opts.timeout = std::chrono::milliseconds(timeout_ms);
     opts.multiTenant = false;
 
-    impl_->store = std::make_shared<c10d::TCPStore>(host, opts);
+    store_ = std::make_shared<c10d::TCPStore>(host, opts);
 }
 
 TCPStore::~TCPStore() = default;
@@ -34,12 +27,12 @@ TCPStore::~TCPStore() = default;
 void
 TCPStore::set(const std::string &key, const std::string &value) {
     std::vector<uint8_t> data(value.begin(), value.end());
-    impl_->store->set(key, data);
+    store_->set(key, data);
 }
 
 std::string
 TCPStore::get(const std::string &key) {
-    auto data = impl_->store->get(key);
+    auto data = store_->get(key);
     return std::string(data.begin(), data.end());
 }
 
@@ -47,7 +40,7 @@ bool
 TCPStore::wait(const std::string &key, int timeout_ms) {
     try {
         std::vector<std::string> keys = {key};
-        impl_->store->wait(keys, std::chrono::milliseconds(timeout_ms));
+        store_->wait(keys, std::chrono::milliseconds(timeout_ms));
         return true;
     }
     catch (const std::exception &) {
@@ -57,7 +50,7 @@ TCPStore::wait(const std::string &key, int timeout_ms) {
 
 void
 TCPStore::delete_key(const std::string &key) {
-    impl_->store->deleteKey(key);
+    store_->deleteKey(key);
 }
 
 } // namespace tcp_store
