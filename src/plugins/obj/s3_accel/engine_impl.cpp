@@ -14,12 +14,12 @@ S3AccelObjEngineImpl::S3AccelObjEngineImpl(const nixlBackendInitParams *init_par
 }
 
 S3AccelObjEngineImpl::S3AccelObjEngineImpl(const nixlBackendInitParams *init_params,
-                                           std::shared_ptr<iS3Client> s3_client,
-                                           std::shared_ptr<iS3Client> s3_client_accel)
-    : DefaultObjEngineImpl(init_params, s3_client, s3_client_accel) {
-    s3Client_ = s3_client_accel ?
-        s3_client_accel :
+                                           std::shared_ptr<iS3Client> s3_client)
+    : DefaultObjEngineImpl(init_params) {
+    s3Client_ = s3_client ?
+        s3_client :
         std::make_shared<awsS3AccelClient>(init_params->customParams, executor_);
+    NIXL_INFO << "Object storage backend initialized with S3 Accel client (injected)";
 }
 
 iS3Client *

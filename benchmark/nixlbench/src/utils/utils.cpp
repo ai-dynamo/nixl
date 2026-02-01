@@ -75,8 +75,7 @@ const std::vector<xferBenchParamInfo> xbench_params = {
     NB_ARG_STRING(
         benchmark_group,
         "default",
-        "Name of benchmark group. Use different names to run multiple benchmarks in parallel "
-        "(Default: default)"),
+        "Name of benchmark group. Use different names to run multiple benchmarks in parallel"),
     NB_ARG_STRING(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]"),
     NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]"),
     NB_ARG_STRING(backend,
@@ -93,19 +92,19 @@ const std::vector<xferBenchParamInfo> xbench_params = {
         XFERBENCH_SEG_TYPE_DRAM,
         "Type of memory segment for target [DRAM, VRAM]. Note: Storage backends determine "
         "remote type automatically."),
-    NB_ARG_STRING(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, maytoone, onetomany, tp"),
+    NB_ARG_STRING(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, manytoone, onetomany, tp"),
     NB_ARG_STRING(mode,
                   XFERBENCH_MODE_SG,
-                  "MODE: SG (Single GPU per proc), MG (Multi GPU per proc) [default: SG]"),
+                  "MODE: SG (Single GPU per proc), MG (Multi GPU per proc)"),
     NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE"),
     NB_ARG_BOOL(check_consistency, false, "Enable Consistency Check"),
     NB_ARG_UINT64(total_buffer_size,
                   8LL * 1024 * (1 << 20),
-                  "Total buffer size across device for each process (Default: 80 GiB)"),
-    NB_ARG_UINT64(start_block_size, 4 * (1 << 10), "Max size of block (Default: 4 KiB)"),
-    NB_ARG_UINT64(max_block_size, 64 * (1 << 20), "Max size of block (Default: 64 MiB)"),
-    NB_ARG_UINT64(start_batch_size, 1, "Starting size of batch (Default: 1)"),
-    NB_ARG_UINT64(max_batch_size, 1, "Max size of batch (starts from 1)"),
+                  "Total buffer size across device for each process"),
+    NB_ARG_UINT64(start_block_size, 4 * (1 << 10), "Max size of block"),
+    NB_ARG_UINT64(max_block_size, 64 * (1 << 20), "Max size of block"),
+    NB_ARG_UINT64(start_batch_size, 1, "Starting size of batch"),
+    NB_ARG_UINT64(max_batch_size, 1, "Max size of batch"),
     NB_ARG_INT32(num_iter, 1000, "Max iterations"),
     NB_ARG_INT32(large_blk_iter_ftr,
                  16,
@@ -115,12 +114,12 @@ const std::vector<xferBenchParamInfo> xbench_params = {
         num_threads,
         1,
         "Number of threads used by benchmark."
-        " Num_iter must be greater or equal than num_threads and equally divisible by num_threads."
-        " (Default: 1)"),
+        " Num_iter must be greater or equal than num_threads and equally divisible by"
+        " num_threads."),
     NB_ARG_INT32(num_initiator_dev, 1, "Number of device in initiator process"),
     NB_ARG_INT32(num_target_dev, 1, "Number of device in target process"),
     NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worker)"),
-    NB_ARG_UINT64(progress_threads, 0, "Number of progress threads (default: 0)"),
+    NB_ARG_UINT64(progress_threads, 0, "Number of progress threads"),
     NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested"),
 
     // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
@@ -132,11 +131,11 @@ const std::vector<xferBenchParamInfo> xbench_params = {
     // GDS options - only used when backend is GDS
     NB_ARG_INT32(gds_batch_pool_size,
                  32,
-                 "Batch pool size for GDS operations (default: 32, only used with GDS backend)"),
+                 "Batch pool size for GDS operations (only used with GDS backend)"),
     NB_ARG_INT32(gds_batch_limit,
                  128,
-                 "Batch limit for GDS operations (default: 128, only used with GDS backend)"),
-    NB_ARG_INT32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin (Default: 1)"),
+                 "Batch limit for GDS operations (only used with GDS backend)"),
+    NB_ARG_INT32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin"),
 
     // TODO: We should take rank wise device list as input to extend support
     // <rank>:<device_list>, ...
@@ -185,15 +184,15 @@ const std::vector<xferBenchParamInfo> xbench_params = {
         obj_crt_min_limit,
         0,
         "Minimum object size (bytes) to use S3 CRT client for high-performance transfers. "
-        "0 means CRT client is disabled (default: 0)"),
+        "0 means CRT client is disabled"),
     NB_ARG_BOOL(obj_accelerated_enable,
                 false,
                 "Enable S3 Accelerated client for GPU-direct transfers (requires cuobjclient "
-                "library, default: false)"),
+                "library)"),
     NB_ARG_STRING(obj_accelerated_type,
                   "",
                   "S3 Accelerated client vendor type to use. "
-                  "Only used when obj_accelerated_enable=true (default: empty)"),
+                  "Only used when obj_accelerated_enable=true"),
 
     // AZURE BLOB options - only used when backend is AZURE_BLOB
     NB_ARG_STRING(azure_blob_account_url, "", "Account URL for Azure Blob backend"),
@@ -306,7 +305,7 @@ xferBenchConfig::parseConfig(int argc, char *argv[]) {
 
     options.add_options()("help", "Print usage");
     options.add_options()(getOptionName(CONFIG_FILE_PARAM_NAME),
-                          "Config file (default: none)",
+                          "Config file",
                           cxxopts::value<std::string>()->default_value(""));
 
     for (const auto &param : xbench_params) {

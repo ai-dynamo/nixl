@@ -6,19 +6,18 @@
 #ifndef OBJ_PLUGIN_S3_ACCEL_CLIENT_H
 #define OBJ_PLUGIN_S3_ACCEL_CLIENT_H
 
-#include <memory>
-#include <string_view>
-#include <cstdint>
-#include <aws/s3-crt/S3CrtClient.h>
-#include <aws/core/utils/memory/stl/AWSString.h>
 #include "s3/client.h"
 #include "nixl_types.h"
 
 /**
- * S3 Accelerated Object Client - Inherits from S3 Vanilla and uses CRT for accelerated transfers.
- * This client uses the same high-performance CRT implementation as S3CrtClient but represents
- * a separate acceleration path from the standard CRT client. This is the base class for
- * vendor-specific accelerated implementations.
+ * S3 Accelerated Object Client - Inherits from S3 Vanilla client.
+ *
+ * This client serves as the base class for vendor-specific accelerated implementations.
+ * It inherits all functionality from awsS3Client and can be extended by vendor clients
+ * to provide custom S3-compatible storage behavior (e.g., GPU-direct transfers).
+ *
+ * Vendor implementations should inherit from this class and override specific methods
+ * as needed for their storage systems.
  */
 class awsS3AccelClient : public awsS3Client {
 public:
@@ -32,27 +31,13 @@ public:
 
     virtual ~awsS3AccelClient() = default;
 
-    void
-    setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) override;
-
-    void
-    putObjectAsync(std::string_view key,
-                   uintptr_t data_ptr,
-                   size_t data_len,
-                   size_t offset,
-                   put_object_callback_t callback) override;
-
-    void
-    getObjectAsync(std::string_view key,
-                   uintptr_t data_ptr,
-                   size_t data_len,
-                   size_t offset,
-                   get_object_callback_t callback) override;
-
-    bool
-    checkObjectExists(std::string_view key) override;
-
-    // S3 client from base S3
+    // Inherits all methods from awsS3Client:
+    // - setExecutor()
+    // - putObjectAsync()
+    // - getObjectAsync()
+    // - checkObjectExists()
+    //
+    // Vendor clients can override these methods for custom behavior.
 };
 
 #endif // OBJ_PLUGIN_S3_ACCEL_CLIENT_H

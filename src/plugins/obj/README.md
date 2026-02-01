@@ -383,8 +383,7 @@ class VendorObjEngineImpl : public S3AccelObjEngineImpl {
 public:
     explicit VendorObjEngineImpl(const nixlBackendInitParams *init_params);
     VendorObjEngineImpl(const nixlBackendInitParams *init_params,
-                        std::shared_ptr<iS3Client> s3_client,
-                        std::shared_ptr<iS3Client> s3_client_crt);
+                        std::shared_ptr<iS3Client> s3_client);
 
     // Override engine methods for vendor-specific behavior if needed
     nixl_status_t registerMem(const nixlBlobDesc &mem,
@@ -401,16 +400,16 @@ public:
 
 VendorObjEngineImpl::VendorObjEngineImpl(const nixlBackendInitParams *init_params)
     : S3AccelObjEngineImpl(init_params) {
-    s3ClientCrt_ = std::make_shared<awsVendorClient>(init_params->customParams, executor_);
+    // Create vendor-specific S3 client and assign to s3Client_
+    s3Client_ = std::make_shared<awsVendorClient>(init_params->customParams, executor_);
     NIXL_INFO << "Object storage backend initialized with Vendor client";
 }
 
 VendorObjEngineImpl::VendorObjEngineImpl(const nixlBackendInitParams *init_params,
-                                         std::shared_ptr<iS3Client> s3_client,
-                                         std::shared_ptr<iS3Client> s3_client_crt)
-    : S3AccelObjEngineImpl(init_params, s3_client, s3_client_crt) {
-    if (!s3ClientCrt_) {
-        s3ClientCrt_ = std::make_shared<awsVendorClient>(init_params->customParams, executor_);
+                                         std::shared_ptr<iS3Client> s3_client)
+    : S3AccelObjEngineImpl(init_params, s3_client) {
+    if (!s3Client_) {
+        s3Client_ = std::make_shared<awsVendorClient>(init_params->customParams, executor_);
     }
 }
 
