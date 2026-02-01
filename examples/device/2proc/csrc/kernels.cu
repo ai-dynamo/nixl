@@ -30,15 +30,17 @@ post_write_and_signal_kernel_thread(const nixlMemDesc *src_descs,
 
         // Post pipelined writes
         for (int i = 0; i < pipeline; ++i) {
-            nixlPut<nixl_gpu_level_t::THREAD>(
-                src_descs[0], dst_descs[0], size, 0,
-                static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr);
+            nixlPut<nixl_gpu_level_t::THREAD>(src_descs[0],
+                                              dst_descs[0],
+                                              size,
+                                              0,
+                                              static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY),
+                                              nullptr);
         }
 
         // Signal completion
         nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
-            signal_inc, signal_desc, 0,
-            static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr);
+            signal_inc, signal_desc, 0, static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr);
     }
 }
 
@@ -61,16 +63,21 @@ post_write_and_signal_kernel_warp(const nixlMemDesc *src_descs,
 
         // Post pipelined writes
         for (int i = 0; i < pipeline; ++i) {
-            nixlPut<nixl_gpu_level_t::WARP>(
-                src_descs[desc_idx], dst_descs[desc_idx], size, 0,
-                static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr);
+            nixlPut<nixl_gpu_level_t::WARP>(src_descs[desc_idx],
+                                            dst_descs[desc_idx],
+                                            size,
+                                            0,
+                                            static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY),
+                                            nullptr);
         }
 
         // Only lane 0 signals completion
         if (lane == 0) {
-            nixlAtomicAdd<nixl_gpu_level_t::WARP>(
-                signal_inc, signal_desc, 0,
-                static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr);
+            nixlAtomicAdd<nixl_gpu_level_t::WARP>(signal_inc,
+                                                  signal_desc,
+                                                  0,
+                                                  static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY),
+                                                  nullptr);
         }
     }
 }

@@ -32,7 +32,8 @@ public:
 
     // Prevent copying
     TCPStore(const TCPStore &) = delete;
-    TCPStore &operator=(const TCPStore &) = delete;
+    TCPStore &
+    operator=(const TCPStore &) = delete;
 
     /**
      * Set a key-value pair in the store.

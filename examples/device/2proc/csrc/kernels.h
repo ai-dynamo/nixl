@@ -13,7 +13,7 @@
 // (nixlMemoryViewH is already defined in nixl_types.h as void*)
 #ifndef __CUDACC__
 struct nixlMemDesc {
-    void *mvh;      // nixlMemoryViewH
+    void *mvh; // nixlMemoryViewH
     size_t index;
     size_t offset;
 };
