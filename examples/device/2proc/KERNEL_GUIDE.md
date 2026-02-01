@@ -22,48 +22,55 @@ Traditionally, GPUs rely on the CPU to orchestrate data transfers:
 
 The NIXL device API exposes GPU-side functions that allow CUDA kernels to directly post RDMA operations.
 
-## NIXL Device API Core Functions
+## NIXL Device API V2 Core Functions
 
-The 2proc example demonstrates these key device API functions:
+The 2proc example demonstrates the modern Device API V2:
 
-### 1. `nixlGpuPostSingleWriteXferReq<LEVEL>(req, ...)`
+### 1. `nixlPut<LEVEL>(src_desc, dst_desc, size, ...)`
 Posts a GPU-initiated RDMA write from GPU thread(s).
 
 ```cuda
 template<nixl_gpu_level_t LEVEL>
-void nixlGpuPostSingleWriteXferReq(
-    nixlGpuXferReqH req,     // GPU transfer request handle
-    uint32_t dst_offset,     // Destination offset (bytes)
-    uint32_t src_offset,     // Source offset (bytes)
-    uint32_t dst_rkey_idx,   // Destination remote key index
+void nixlPut(
+    nixlMemDesc src_desc,    // Source memory descriptor
+    nixlMemDesc dst_desc,    // Destination memory descriptor
     size_t size,             // Transfer size (bytes)
-    uint32_t flags,          // Operation flags
-    bool wait_completion     // Wait for completion
+    uint32_t channel_id,     // Channel ID (usually 0)
+    unsigned flags,          // Operation flags (e.g., NO_DELAY)
+    void *status             // Optional status pointer
 );
 ```
 
-**What it does**: Initiates an RDMA write from GPU memory to remote GPU memory.
+**What it does**: Initiates an RDMA write from local GPU memory to remote GPU memory.
+
+**Memory Descriptor** (`nixlMemDesc`):
+```cuda
+struct nixlMemDesc {
+    void *mvh;        // Memory view handle (from prepMemoryView)
+    size_t index;     // Buffer index
+    size_t offset;    // Offset within buffer
+};
+```
 
 **Cooperation Levels** (`LEVEL`):
 - `nixl_gpu_level_t::THREAD` - Single thread posts the request
-- `nixl_gpu_level_t::WARP` - All 32 threads in a warp cooperate to post
+- `nixl_gpu_level_t::WARP` - All 32 threads in a warp cooperate
 
-### 2. `nixlGpuPostSignalXferReq<LEVEL>(req, ...)`
-Posts a GPU-initiated signal (atomic increment) to remote memory.
+### 2. `nixlAtomicAdd<LEVEL>(value, counter_desc, ...)`
+Posts a GPU-initiated atomic add to remote memory.
 
 ```cuda
 template<nixl_gpu_level_t LEVEL>
-void nixlGpuPostSignalXferReq(
-    nixlGpuXferReqH req,     // Signal request handle
-    uint32_t offset,         // Signal memory offset
-    uint64_t value,          // Increment value
-    uint32_t dst_rkey_idx,   // Destination remote key index
-    uint32_t flags,          // Operation flags
-    bool wait_completion     // Wait for completion
+void nixlAtomicAdd(
+    uint64_t value,          // Value to add
+    nixlMemDesc counter_desc, // Remote counter descriptor
+    uint32_t channel_id,     // Channel ID (usually 0)
+    unsigned flags,          // Operation flags (e.g., NO_DELAY)
+    void *status             // Optional status pointer
 );
 ```
 
-**What it does**: Atomically increments a counter in remote GPU memory, typically used to signal completion.
+**What it does**: Atomically adds a value to a counter in remote GPU memory, typically used to signal completion.
 
 ### 3. `nixlGpuReadSignal<LEVEL>(signal_ptr)`
 Reads a local signal value from GPU memory.
@@ -83,15 +90,18 @@ The device API supports two cooperation patterns for GPU threads.
 **One thread** handles the entire operation independently.
 
 ```cuda
-__global__ void thread_level_kernel(...) {
+__global__ void thread_level_kernel(nixlMemDesc src_desc, nixlMemDesc dst_desc,
+                                     nixlMemDesc signal_desc, size_t size) {
     if (blockIdx.x == 0 && threadIdx.x == 0) {
         // Single thread posts write
-        nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::THREAD>(
-            data_req, 0, 0, 0, size, 0, true
+        nixlPut<nixl_gpu_level_t::THREAD>(
+            src_desc, dst_desc, size, 0,
+            static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr
         );
         // Single thread posts signal
-        nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(
-            signal_req, 0, 1, 0, 0, true
+        nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
+            1, signal_desc, 0,
+            static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr
         );
     }
 }
@@ -106,17 +116,20 @@ __global__ void thread_level_kernel(...) {
 **All 32 threads in a warp** cooperate on the operation.
 
 ```cuda
-__global__ void warp_level_kernel(...) {
+__global__ void warp_level_kernel(nixlMemDesc src_desc, nixlMemDesc dst_desc,
+                                   nixlMemDesc signal_desc, size_t size) {
     if (blockIdx.x == 0 && threadIdx.x < 32) {
         unsigned lane = threadIdx.x;
         // All 32 threads cooperate on write
-        nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::WARP>(
-            data_req, 0, 0, 0, size, 0, true
+        nixlPut<nixl_gpu_level_t::WARP>(
+            src_desc, dst_desc, size, 0,
+            static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr
         );
         // Lane 0 posts signal
         if (lane == 0) {
-            nixlGpuPostSignalXferReq<nixl_gpu_level_t::WARP>(
-                signal_req, 0, 1, 0, 0, true
+            nixlAtomicAdd<nixl_gpu_level_t::WARP>(
+                1, signal_desc, 0,
+                static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr
             );
         }
     }
@@ -136,37 +149,29 @@ The 2proc example demonstrates the fundamental write-and-signal pattern.
 
 ### Pattern 1: Write + Signal (Initiator Side)
 
-The initiator sends data and signals completion:
+The initiator sends data and signals completion using Device API V2:
 
 ```cuda
 __global__ void post_write_and_signal_kernel_warp(
-    uintptr_t data_req_handles_ptr,
-    int data_req_count,
-    uintptr_t signal_req_handle,
-    uint64_t *signal_ptr,
-    size_t size,
-    uint64_t signal_inc,
-    int pipeline
+    const nixlMemDesc *src_descs,
+    const nixlMemDesc *dst_descs,
+    nixlMemDesc signal_desc,
+    size_t size
 ) {
     if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) {
-        auto *data_req_handles =
-            reinterpret_cast<const uintptr_t *>(data_req_handles_ptr);
-        nixlGpuXferReqH data_req =
-            reinterpret_cast<nixlGpuXferReqH>(data_req_handles[0]);
-        nixlGpuXferReqH signal_req =
-            reinterpret_cast<nixlGpuXferReqH>(signal_req_handle);
-
         unsigned lane = threadIdx.x;
 
         // Post the write
-        nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::WARP>(
-            data_req, 0, 0, 0, size, 0, true
+        nixlPut<nixl_gpu_level_t::WARP>(
+            src_descs[0], dst_descs[0], size, 0,
+            static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr
         );
 
         // Signal completion (lane 0 only)
         if (lane == 0) {
-            nixlGpuPostSignalXferReq<nixl_gpu_level_t::WARP>(
-                signal_req, 0, signal_inc, 0, 0, true
+            nixlAtomicAdd<nixl_gpu_level_t::WARP>(
+                1, signal_desc, 0,
+                static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr
             );
         }
     }
@@ -228,45 +233,52 @@ Initiator GPU:                    Target GPU:
 
 **Real-world usage**: This pattern is used in MoE models (like NIXL EP) where GPUs exchange expert activations without CPU coordination.
 
-## Device API Setup Flow
+## Device API V2 Setup Flow
 
 Before kernels can use these functions, the host must prepare:
 
-1. **Initialize DeviceHost**
-   ```python
-   host = device_host.DeviceHost("name", "UCX", port)
+1. **Initialize NIXL Agent**
+   ```cpp
+   nixlAgent agent("name", config);
+   agent.createBackend("UCX", params, backend);
    ```
 
 2. **Register GPU memory**
-   ```python
-   reg_id = host.register_vram(ptr, size, device_id)
+   ```cpp
+   nixl_reg_dlist_t reg(VRAM_SEG);
+   reg.addDesc(nixlBlobDesc((uintptr_t)ptr, size, device_id, ""));
+   agent.registerMem(reg, &params);
    ```
 
 3. **Exchange metadata with peer**
-   ```python
-   local_meta = host.get_metadata()
-   # Exchange via TCP/etcd/other mechanism
-   peer_name = host.add_remote_agent(remote_meta)
+   ```cpp
+   std::string local_meta;
+   agent.getLocalMD(local_meta);
+   // Exchange via TCP/etcd/other mechanism
+   agent.loadRemoteMD(remote_meta, remote_name);
    ```
 
-4. **Create transfer descriptors**
-   ```python
-   descs = host.serialize_xfer_descs(ptr, size, device_id)
-   # Send to peer via out-of-band mechanism
+4. **Prepare memory views**
+   ```cpp
+   nixlMemoryViewH local_mvh = nullptr;
+   agent.prepMemoryView(local_descs, local_mvh, &params);
+
+   nixlMemoryViewH remote_mvh = nullptr;
+   agent.prepMemoryView(remote_descs, remote_mvh, &params);
    ```
 
-5. **Create GPU request handles**
-   ```python
-   req = host.create_write_req(ptr, size, device_id, remote_descs, peer_name)
-   gpu_req = host.create_gpu_req(req)  # Handle usable in kernel
+5. **Create memory descriptors**
+   ```cpp
+   nixlMemDesc src_desc{local_mvh, 0, 0};
+   nixlMemDesc dst_desc{remote_mvh, 0, 0};
    ```
 
-6. **Launch kernel with GPU handle**
-   ```python
-   kernel<<<...>>>(gpu_req, ...)
+6. **Launch kernel with descriptors**
+   ```cpp
+   kernel<<<...>>>(src_desc, dst_desc, size, ...)
    ```
 
-**Why this setup?** The host establishes connections and prepares metadata, then gives GPU threads handles they can use directly. Once set up, GPU can post transfers without host involvement.
+**Why this setup?** The host establishes connections and prepares memory view handles, then creates descriptors that GPU threads can use directly. Once set up, GPU can post transfers without host involvement.
 
 ## From 2proc to EP
 
@@ -289,7 +301,7 @@ The 2proc example shows **device API building blocks**. The EP framework builds 
 2. Understand how patterns compose (EP framework)
 3. Build your own device API applications
 
-**Key insight**: EP uses the same `nixlGpuPost*()` functions you see in 2proc, just orchestrated into more complex communication patterns for MoE workloads.
+**Key insight**: EP uses the same Device API V2 functions (`nixlPut`, `nixlAtomicAdd`) you see in 2proc, just orchestrated into more complex communication patterns for MoE workloads.
 
 ## Common Use Cases for Device API
 
@@ -309,8 +321,8 @@ The 2proc example shows **device API building blocks**. The EP framework builds 
 ## Summary
 
 The 2proc kernels demonstrate:
-1. **GPU-initiated RDMA writes** via `nixlGpuPostSingleWriteXferReq`
-2. **GPU-initiated signaling** via `nixlGpuPostSignalXferReq`
+1. **GPU-initiated RDMA writes** via `nixlPut`
+2. **GPU-initiated signaling** via `nixlAtomicAdd`
 3. **GPU-side synchronization** via `nixlGpuReadSignal`
 4. **Thread vs Warp cooperation** patterns
 5. **Write-and-signal** coordination primitive
