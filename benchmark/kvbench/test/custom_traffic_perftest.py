@@ -114,7 +114,7 @@ class StorageXferHandle(NixlHandle):
 
 class NixlBuffer:
     """Can be sharded. Allocates 4K-aligned buffers for O_DIRECT compatibility.
-    
+
     When using get_chunk(), offsets should be pre-aligned using align_offset().
     Use aligned_total_size() to calculate buffer size when chunks need alignment.
     """
@@ -127,9 +127,11 @@ class NixlBuffer:
         return ((value + alignment - 1) // alignment) * alignment
 
     @staticmethod
-    def aligned_total_size(chunk_sizes: list[int], alignment: int = BUFFER_ALIGNMENT) -> int:
+    def aligned_total_size(
+        chunk_sizes: list[int], alignment: int = BUFFER_ALIGNMENT
+    ) -> int:
         """Calculate total buffer size needed for aligned chunks.
-        
+
         Each chunk starts at an aligned offset, so we need padding between chunks.
         Example: chunks [5000, 3000] with 4K alignment needs:
           - Chunk 0: offset=0, size=5000
@@ -206,17 +208,19 @@ class NixlBuffer:
                 is not None
             ), f"Failed to register memory with backends {self._backends}"
 
-    def get_chunk(self, size: int, offset: int, check_alignment: bool = True) -> torch.Tensor:
+    def get_chunk(
+        self, size: int, offset: int, check_alignment: bool = True
+    ) -> torch.Tensor:
         """Get a chunk of the buffer at the specified offset.
-        
+
         Args:
             size: Size of the chunk in bytes
             offset: Offset into the buffer (should be aligned for O_DIRECT)
             check_alignment: If True, warn if offset is not aligned
-            
+
         Returns:
             Tensor slice of the buffer
-            
+
         Raises:
             ValueError: If chunk would exceed buffer bounds
         """
@@ -227,7 +231,8 @@ class NixlBuffer:
         if check_alignment and offset % self.ALIGNMENT != 0:
             logger.warning(
                 "Chunk offset %d is not %d-byte aligned. This may cause performance issues with O_DIRECT.",
-                offset, self.ALIGNMENT
+                offset,
+                self.ALIGNMENT,
             )
         return self.buf[offset : offset + size]
 
@@ -279,8 +284,12 @@ class CTPerftest:
         tp = self.traffic_pattern
         if tp.matrix is not None:
             # Get individual chunk sizes for aligned total calculation
-            send_sizes = [int(tp.matrix[self.my_rank][dst]) for dst in range(tp.matrix.shape[1])]
-            recv_sizes = [int(tp.matrix[src][self.my_rank]) for src in range(tp.matrix.shape[0])]
+            send_sizes = [
+                int(tp.matrix[self.my_rank][dst]) for dst in range(tp.matrix.shape[1])
+            ]
+            recv_sizes = [
+                int(tp.matrix[src][self.my_rank]) for src in range(tp.matrix.shape[0])
+            ]
             send_total = NixlBuffer.aligned_total_size(send_sizes)
             recv_total = NixlBuffer.aligned_total_size(recv_sizes)
         else:
@@ -398,7 +407,7 @@ class CTPerftest:
 
     def _get_bufs(self, tp: TrafficPattern):
         """Returns lists of buffers where bufs[i] is the send/recv buffer for rank i.
-        
+
         Chunks are placed at aligned offsets for O_DIRECT compatibility.
         """
         send_bufs = [None for _ in range(self.world_size)]
@@ -503,25 +512,27 @@ class CTPerftest:
             self._wait(pending)
             return []
 
-    def _run_isolated_tp(self, handles: list[NixlHandle], n_iters: int = 1) -> list[float]:
+    def _run_isolated_tp(
+        self, handles: list[NixlHandle], n_iters: int = 1
+    ) -> list[float]:
         """Run each handle in isolation and return per-handle latencies.
-        
+
         Each handle is run n_iters times separately, measuring time for each.
         Returns a list of average latencies, one per handle (in same order as input).
-        
+
         This provides a true "speed of light" measurement where each transfer
         runs without interference from other transfers in the same TP.
-        
+
         Args:
             handles: List of transfer handles to run
             n_iters: Number of iterations per handle for averaging
-            
+
         Returns:
             List of average latencies (seconds), one per handle
         """
         if not handles:
             return []
-            
+
         latencies = []
         for h in handles:
             handle_total = 0.0
@@ -533,7 +544,7 @@ class CTPerftest:
                     self._wait([h])
                 handle_total += time.time() - t
             latencies.append(handle_total / n_iters)
-            
+
         return latencies
 
     def _wait(self, handles: list[NixlHandle]):

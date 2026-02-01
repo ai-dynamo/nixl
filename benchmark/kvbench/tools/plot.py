@@ -723,15 +723,31 @@ def diff(
 @click.option("--outfile", "-o", type=click.Path())
 @click.option("--max-y", "-y", type=float, help="Maximum value for y-axis")
 @click.option("--max-x", "-x", type=float, help="Maximum value for x-axis")
-@click.option("--filter-outliers", "-f", type=float, default=None, 
-              help="Filter isolated latency outliers above this percentile (e.g., 90 for P90)")
-@click.option("--smooth", "-s", type=int, default=None,
-              help="Smooth isolated line by binning into N bins and plotting median per bin")
-@click.option("--filter-spikes", type=float, default=None,
-              help="Filter spikes: points > N std devs above trend (e.g., 1.5 or 2.0)")
-def plot_read(log_file, title, outfile, max_y, max_x, filter_outliers, smooth, filter_spikes):
+@click.option(
+    "--filter-outliers",
+    "-f",
+    type=float,
+    default=None,
+    help="Filter isolated latency outliers above this percentile (e.g., 90 for P90)",
+)
+@click.option(
+    "--smooth",
+    "-s",
+    type=int,
+    default=None,
+    help="Smooth isolated line by binning into N bins and plotting median per bin",
+)
+@click.option(
+    "--filter-spikes",
+    type=float,
+    default=None,
+    help="Filter spikes: points > N std devs above trend (e.g., 1.5 or 2.0)",
+)
+def plot_read(
+    log_file, title, outfile, max_y, max_x, filter_outliers, smooth, filter_spikes
+):
     """Plot Storage Read latency (identical style to RDMA plot).
-    
+
     Use --filter-outliers 90 to exclude isolated latency spikes above P90.
     Use --smooth 20 to bin data into 20 bins and show median per bin.
     Use --filter-spikes 1.5 to remove points > 1.5 std devs above the trend line.
@@ -753,20 +769,21 @@ def plot_read(log_file, title, outfile, max_y, max_x, filter_outliers, smooth, f
         isos = []
         for tp in iter_results:
             if iter_idx == 0:
-                size = tp.get("size", 0) or tp.get("storage_read_size_gb", 0); sizes.append(size)
+                size = tp.get("size", 0) or tp.get("storage_read_size_gb", 0)
+                sizes.append(size)
             lats.append(tp.get("storage_read_avg_ms", 0))
             isos.append(tp.get("isolated_read_p50_ms", 0))
         latencies_by_iter.append(lats)
         isolated_by_iter.append(isos)
 
     mean_isolated = np.mean(isolated_by_iter, axis=0)
-    
+
     # Filter outliers if requested (global percentile)
     if filter_outliers is not None:
         threshold = np.percentile(mean_isolated, filter_outliers)
         mean_isolated = np.where(mean_isolated <= threshold, mean_isolated, np.nan)
         print(f"Filtering isolated latency > P{filter_outliers} ({threshold:.1f} ms)")
-    
+
     # Filter spikes: points significantly above the trend line
     if filter_spikes is not None:
         sizes_arr = np.array(sizes)
@@ -833,7 +850,7 @@ def plot_read(log_file, title, outfile, max_y, max_x, filter_outliers, smooth, f
     valid_mask = ~np.isnan(mean_isolated)
     valid_sizes = np.array(sizes)[valid_mask]
     valid_isolated = mean_isolated[valid_mask]
-    
+
     if len(valid_sizes) > 0:
         if smooth is not None and smooth > 0:
             # Bin data and plot median per bin
@@ -843,7 +860,9 @@ def plot_read(log_file, title, outfile, max_y, max_x, filter_outliers, smooth, f
             for i in range(smooth):
                 mask = (valid_sizes >= bin_edges[i]) & (valid_sizes < bin_edges[i + 1])
                 if i == smooth - 1:  # Include right edge for last bin
-                    mask = (valid_sizes >= bin_edges[i]) & (valid_sizes <= bin_edges[i + 1])
+                    mask = (valid_sizes >= bin_edges[i]) & (
+                        valid_sizes <= bin_edges[i + 1]
+                    )
                 if np.sum(mask) > 0:
                     bin_centers.append((bin_edges[i] + bin_edges[i + 1]) / 2)
                     bin_medians.append(np.median(valid_isolated[mask]))
@@ -851,7 +870,11 @@ def plot_read(log_file, title, outfile, max_y, max_x, filter_outliers, smooth, f
             plt.plot(bin_centers, bin_medians, "r-", linewidth=2, label=label)
         else:
             x_sorted, iso_sorted = zip(*sorted(zip(valid_sizes, valid_isolated)))
-            label = "Micro-benchmark" if filter_outliers is None else f"Micro-benchmark (≤P{int(filter_outliers)})"
+            label = (
+                "Micro-benchmark"
+                if filter_outliers is None
+                else f"Micro-benchmark (≤P{int(filter_outliers)})"
+            )
             plt.plot(x_sorted, iso_sorted, "r-", linewidth=1, label=label)
 
     plt.legend()
@@ -898,7 +921,8 @@ def plot_write(log_file, title, outfile, max_y, max_x):
         isos = []
         for tp in iter_results:
             if iter_idx == 0:
-                size = tp.get("size", 0) or tp.get("storage_write_size_gb", 0); sizes.append(size)
+                size = tp.get("size", 0) or tp.get("storage_write_size_gb", 0)
+                sizes.append(size)
             lats.append(tp.get("storage_write_avg_ms", 0))
             isos.append(tp.get("isolated_write_p50_ms", 0))
         latencies_by_iter.append(lats)
@@ -980,11 +1004,16 @@ def plot_write(log_file, title, outfile, max_y, max_x):
 @click.option("--outfile", "-o", type=click.Path())
 @click.option("--max-y", "-y", type=float, help="Maximum value for y-axis")
 @click.option("--max-x", "-x", type=float, help="Maximum value for x-axis")
-@click.option("--filter-outliers", "-f", type=float, default=None,
-              help="Filter isolated BW outliers below this percentile (e.g., 10 for P10)")
+@click.option(
+    "--filter-outliers",
+    "-f",
+    type=float,
+    default=None,
+    help="Filter isolated BW outliers below this percentile (e.g., 10 for P10)",
+)
 def bw_read(log_file, title, outfile, max_y, max_x, filter_outliers):
     """Plot Read BW (identical style to RDMA plot).
-    
+
     Use --filter-outliers 10 to exclude isolated BW below P10 (low outliers).
     """
     with open(log_file) as f:
@@ -1004,7 +1033,8 @@ def bw_read(log_file, title, outfile, max_y, max_x, filter_outliers):
         iso_bws = []
         for tp in iter_results:
             if iter_idx == 0:
-                size_x = tp.get("size", 0) or tp.get("storage_read_size_gb", 0); sizes.append(size_x)
+                size_x = tp.get("size", 0) or tp.get("storage_read_size_gb", 0)
+                sizes.append(size_x)
             size = tp.get("size", 0) or tp.get("storage_read_size_gb", 0)
             read_ms = tp.get("storage_read_avg_ms", 0)
             iso_read_ms = tp.get("isolated_read_p50_ms", 0)
@@ -1014,7 +1044,7 @@ def bw_read(log_file, title, outfile, max_y, max_x, filter_outliers):
         iso_bw_by_iter.append(iso_bws)
 
     mean_iso = np.mean(iso_bw_by_iter, axis=0)
-    
+
     # Filter outliers if requested (for BW, filter LOW values - below percentile)
     if filter_outliers is not None:
         threshold = np.percentile(mean_iso, filter_outliers)
@@ -1073,7 +1103,11 @@ def bw_read(log_file, title, outfile, max_y, max_x, filter_outliers):
     valid_iso = mean_iso[valid_mask]
     if len(valid_sizes) > 0:
         x_sorted, iso_sorted = zip(*sorted(zip(valid_sizes, valid_iso)))
-        label = "Micro-benchmark" if filter_outliers is None else f"Micro-benchmark (≥P{int(filter_outliers)})"
+        label = (
+            "Micro-benchmark"
+            if filter_outliers is None
+            else f"Micro-benchmark (≥P{int(filter_outliers)})"
+        )
         plt.plot(x_sorted, iso_sorted, "r-", linewidth=1, label=label)
 
     plt.legend()
@@ -1120,7 +1154,8 @@ def bw_write(log_file, title, outfile, max_y, max_x):
         iso_bws = []
         for tp in iter_results:
             if iter_idx == 0:
-                size_x = tp.get("size", 0) or tp.get("storage_write_size_gb", 0); sizes.append(size_x)
+                size_x = tp.get("size", 0) or tp.get("storage_write_size_gb", 0)
+                sizes.append(size_x)
             size = tp.get("size", 0) or tp.get("storage_write_size_gb", 0)
             write_ms = tp.get("storage_write_avg_ms", 0)
             iso_write_ms = tp.get("isolated_write_p50_ms", 0)

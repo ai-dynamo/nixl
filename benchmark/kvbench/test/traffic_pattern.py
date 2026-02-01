@@ -104,11 +104,11 @@ class TrafficPattern:
 
     def all_participating_ranks(self):
         """Return all ranks that actively participate in this TP.
-        
+
         Includes:
         - RDMA senders (they initiate transfers)
         - Storage ranks (they do read/write ops)
-        
+
         Does NOT include RDMA receivers (they just have buffers registered,
         no active operations needed).
         """
