@@ -64,7 +64,7 @@ jobs:
       - name: Build NIXL
         timeout-minutes: 30
         run: |
-          sudo ./.gitlab/build.sh $NIXL_INSTALL_DIR $NIXL_INSTALL_DIR -Ddisable_gds_backend=true
+          ./.gitlab/build.sh $NIXL_INSTALL_DIR $NIXL_INSTALL_DIR -Ddisable_gds_backend=true
       - name: Run AWS S3 tests
         working-directory: ./.gitlab
         timeout-minutes: 180
