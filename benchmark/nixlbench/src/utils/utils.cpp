@@ -79,6 +79,9 @@ NB_ARG_UINT64(max_block_size, 64 * (1 << 20), "Max size of block");
 NB_ARG_UINT64(start_batch_size, 1, "Starting size of batch");
 NB_ARG_UINT64(max_batch_size, 1, "Max size of batch");
 NB_ARG_INT32(num_iter, 1000, "Max iterations");
+NB_ARG_BOOL(recreate_xfer,
+            false,
+            "Recreate xfer each iteration (default: false for all backends, true for GUSLI)");
 NB_ARG_INT32(large_blk_iter_ftr,
              16,
              "factor to reduce test iteration when testing large block size(>1MB)");
@@ -203,6 +206,7 @@ std::string xferBenchConfig::mode = "";
 std::string xferBenchConfig::op_type = "";
 bool xferBenchConfig::check_consistency = false;
 size_t xferBenchConfig::total_buffer_size = 0;
+bool xferBenchConfig::recreate_xfer = false;
 int xferBenchConfig::num_initiator_dev = 0;
 int xferBenchConfig::num_target_dev = 0;
 size_t xferBenchConfig::start_block_size = 0;
@@ -435,6 +439,12 @@ xferBenchConfig::loadParams(void) {
     num_files = NB_ARG(num_files);
     posix_api_type = NB_ARG(posix_api_type);
     storage_enable_direct = NB_ARG(storage_enable_direct);
+    recreate_xfer = NB_ARG(recreate_xfer);
+    if (!recreate_xfer && XFERBENCH_BACKEND_GUSLI == backend) {
+        std::cout << "GUSLI backend requires per-iteration request creation due to library bug."
+                  << " Setting recreate_xfer to true." << std::endl;
+        recreate_xfer = true;
+    }
 
     // Validate ETCD configuration
     if (!isStorageBackend() && etcd_endpoints.empty()) {
@@ -554,6 +564,8 @@ xferBenchConfig::printConfig() {
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption("Enable VMM (--enable_vmm=[0,1])", std::to_string(enable_vmm));
+        printOption("Recreate xfer each iteration (--recreate_xfer=[0,1])",
+                    std::to_string(recreate_xfer));
 
         // Print GDS options if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
