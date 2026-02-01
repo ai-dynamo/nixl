@@ -23,8 +23,21 @@ constexpr int TARGET_GPU = 0;
 constexpr int INITIATOR_GPU = 1;
 constexpr size_t DATA_SIZE = 1024 * 1024;
 
-#define CHECK(cmd, msg) do { if ((cmd) != NIXL_SUCCESS) { std::cerr << msg << std::endl; exit(1); } } while(0)
-#define CUDA_CHECK(cmd) do { cudaError_t e = cmd; if (e != cudaSuccess) { std::cerr << cudaGetErrorString(e) << std::endl; exit(1); } } while(0)
+#define CHECK(cmd, msg)                    \
+    do {                                   \
+        if ((cmd) != NIXL_SUCCESS) {       \
+            std::cerr << msg << std::endl; \
+            exit(1);                       \
+        }                                  \
+    } while (0)
+#define CUDA_CHECK(cmd)                                      \
+    do {                                                     \
+        cudaError_t e = cmd;                                 \
+        if (e != cudaSuccess) {                              \
+            std::cerr << cudaGetErrorString(e) << std::endl; \
+            exit(1);                                         \
+        }                                                    \
+    } while (0)
 
 struct MetadataExchange {
     std::mutex mutex;
@@ -33,27 +46,39 @@ struct MetadataExchange {
     std::string initiator_md, target_md, target_data_desc, target_signal_desc;
 };
 
-__global__ void write_and_signal_kernel(nixlMemDesc src_desc, nixlMemDesc dst_desc,
-                                        nixlMemDesc signal_desc, size_t size) {
+__global__ void
+write_and_signal_kernel(nixlMemDesc src_desc,
+                        nixlMemDesc dst_desc,
+                        nixlMemDesc signal_desc,
+                        size_t size) {
     if (blockIdx.x == 0 && threadIdx.x == 0) {
-        nixlPut<nixl_gpu_level_t::THREAD>(
-            src_desc, dst_desc, size, 0,
-            static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr);
+        nixlPut<nixl_gpu_level_t::THREAD>(src_desc,
+                                          dst_desc,
+                                          size,
+                                          0,
+                                          static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY),
+                                          nullptr);
         nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
-            1, signal_desc, 0,
-            static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr);
+            1, signal_desc, 0, static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY), nullptr);
     }
 }
 
-__global__ void wait_for_signal_kernel(const void *signal_ptr, uint64_t expected) {
+__global__ void
+wait_for_signal_kernel(const void *signal_ptr, uint64_t expected) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         while (nixlGpuReadSignal<nixl_gpu_level_t::THREAD>(signal_ptr) < expected) {}
     }
 }
 
-void setup_agent(int gpu, const char* name, std::unique_ptr<nixlAgent>& agent,
-                 nixlBackendH*& backend, nixl_opt_args_t& extra_params,
-                 void*& data_ptr, void*& signal_ptr, size_t& signal_size) {
+void
+setup_agent(int gpu,
+            const char *name,
+            std::unique_ptr<nixlAgent> &agent,
+            nixlBackendH *&backend,
+            nixl_opt_args_t &extra_params,
+            void *&data_ptr,
+            void *&signal_ptr,
+            size_t &signal_size) {
     CUDA_CHECK(cudaSetDevice(gpu));
     nixlAgentConfig cfg(true);
     agent = std::make_unique<nixlAgent>(name, cfg);
@@ -73,7 +98,8 @@ void setup_agent(int gpu, const char* name, std::unique_ptr<nixlAgent>& agent,
     CUDA_CHECK(cudaMemset(signal_ptr, 0, signal_size));
 }
 
-void run_target(MetadataExchange& ex) {
+void
+run_target(MetadataExchange &ex) {
     std::cout << "[target] Starting on GPU " << TARGET_GPU << std::endl;
 
     std::unique_ptr<nixlAgent> agent;
@@ -82,7 +108,8 @@ void run_target(MetadataExchange& ex) {
     void *data_ptr = nullptr, *signal_ptr = nullptr;
     size_t signal_size = 0;
 
-    setup_agent(TARGET_GPU, "target", agent, backend, extra_params, data_ptr, signal_ptr, signal_size);
+    setup_agent(
+        TARGET_GPU, "target", agent, backend, extra_params, data_ptr, signal_ptr, signal_size);
 
     nixl_reg_dlist_t data_reg(VRAM_SEG), signal_reg(VRAM_SEG);
     data_reg.addDesc(nixlBlobDesc((uintptr_t)data_ptr, DATA_SIZE, TARGET_GPU, "data"));
@@ -139,9 +166,11 @@ void run_target(MetadataExchange& ex) {
     // Verify data transfer (check first and last byte)
     uint8_t check[2];
     CUDA_CHECK(cudaMemcpy(&check[0], data_ptr, 1, cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(&check[1], (uint8_t*)data_ptr + DATA_SIZE - 1, 1, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(
+        cudaMemcpy(&check[1], (uint8_t *)data_ptr + DATA_SIZE - 1, 1, cudaMemcpyDeviceToHost));
     std::cout << "[target] " << (check[0] == FILL_VALUE && check[1] == FILL_VALUE ? "✓" : "✗")
-              << " Data verified (first=" << (int)check[0] << ", last=" << (int)check[1] << ")" << std::endl;
+              << " Data verified (first=" << (int)check[0] << ", last=" << (int)check[1] << ")"
+              << std::endl;
 
     CHECK(agent->deregisterMem(data_reg, &extra_params), "deregisterMem");
     CHECK(agent->deregisterMem(signal_reg, &extra_params), "deregisterMem");
@@ -149,7 +178,8 @@ void run_target(MetadataExchange& ex) {
     CUDA_CHECK(cudaFree(signal_ptr));
 }
 
-void run_initiator(MetadataExchange& ex) {
+void
+run_initiator(MetadataExchange &ex) {
     std::cout << "[initiator] Starting on GPU " << INITIATOR_GPU << std::endl;
 
     std::unique_ptr<nixlAgent> agent;
@@ -158,7 +188,14 @@ void run_initiator(MetadataExchange& ex) {
     void *data_ptr = nullptr, *signal_ptr = nullptr;
     size_t signal_size = 0;
 
-    setup_agent(INITIATOR_GPU, "initiator", agent, backend, extra_params, data_ptr, signal_ptr, signal_size);
+    setup_agent(INITIATOR_GPU,
+                "initiator",
+                agent,
+                backend,
+                extra_params,
+                data_ptr,
+                signal_ptr,
+                signal_size);
 
     nixl_reg_dlist_t data_reg(VRAM_SEG), signal_reg(VRAM_SEG);
     data_reg.addDesc(nixlBlobDesc((uintptr_t)data_ptr, DATA_SIZE, INITIATOR_GPU, "data"));
@@ -192,7 +229,8 @@ void run_initiator(MetadataExchange& ex) {
     std::string target_data_desc, target_signal_desc;
     {
         std::unique_lock<std::mutex> lock(ex.mutex);
-        ex.cv.wait(lock, [&ex] { return !ex.target_data_desc.empty() && !ex.target_signal_desc.empty(); });
+        ex.cv.wait(
+            lock, [&ex] { return !ex.target_data_desc.empty() && !ex.target_signal_desc.empty(); });
         target_data_desc = ex.target_data_desc;
         target_signal_desc = ex.target_signal_desc;
     }
@@ -216,10 +254,13 @@ void run_initiator(MetadataExchange& ex) {
     }
 
     // Prepare memory views using Device API V2
-    nixlMemoryViewH local_data_mvh = nullptr, remote_data_mvh = nullptr, remote_signal_mvh = nullptr;
+    nixlMemoryViewH local_data_mvh = nullptr, remote_data_mvh = nullptr,
+                    remote_signal_mvh = nullptr;
     CHECK(agent->prepMemoryView(local_data, local_data_mvh, &extra_params), "prepMemoryView local");
-    CHECK(agent->prepMemoryView(remote_data, remote_data_mvh, &extra_params), "prepMemoryView remote data");
-    CHECK(agent->prepMemoryView(remote_signal, remote_signal_mvh, &extra_params), "prepMemoryView remote signal");
+    CHECK(agent->prepMemoryView(remote_data, remote_data_mvh, &extra_params),
+          "prepMemoryView remote data");
+    CHECK(agent->prepMemoryView(remote_signal, remote_signal_mvh, &extra_params),
+          "prepMemoryView remote signal");
 
     // Create memory descriptors for GPU
     nixlMemDesc src_desc{local_data_mvh, 0, 0};
@@ -242,7 +283,8 @@ void run_initiator(MetadataExchange& ex) {
     CUDA_CHECK(cudaFree(signal_ptr));
 }
 
-int main() {
+int
+main() {
     std::cout << "Starting unified example with " << DATA_SIZE << " bytes" << std::endl;
 
     MetadataExchange ex;

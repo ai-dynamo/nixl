@@ -362,16 +362,16 @@ run_initiator(const Config &cfg) {
 
     // Launch GPU kernel to post write + signal
     std::cout << "[initiator] Transferring data via GPU kernel..." << std::endl;
-    launch_post_write_and_signal((uintptr_t)d_src_descs,  // Source descriptors array
-                                 (uintptr_t)d_dst_descs,  // Dest descriptors array
-                                 1,                       // Number of descriptors
-                                 signal_desc,             // Signal descriptor
-                                 (uintptr_t)signal_ptr,   // Signal memory
-                                 cfg.size,                // Transfer size
-                                 0,                       // THREAD level cooperation
-                                 1,                       // Single thread
-                                 1,                       // One write per signal
-                                 0                        // Default stream
+    launch_post_write_and_signal((uintptr_t)d_src_descs, // Source descriptors array
+                                 (uintptr_t)d_dst_descs, // Dest descriptors array
+                                 1, // Number of descriptors
+                                 signal_desc, // Signal descriptor
+                                 (uintptr_t)signal_ptr, // Signal memory
+                                 cfg.size, // Transfer size
+                                 0, // THREAD level cooperation
+                                 1, // Single thread
+                                 1, // One write per signal
+                                 0 // Default stream
     );
     CUDA_CHECK(cudaDeviceSynchronize());
     std::cout << "[initiator] Transfer complete!" << std::endl;
