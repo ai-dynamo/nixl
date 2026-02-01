@@ -453,6 +453,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --max_block_size SIZE      # Maximum block size (default: 64MiB)
 --start_batch_size SIZE    # Starting batch size (default: 1)
 --max_batch_size SIZE      # Maximum batch size (default: 1)
+--recreate_xfer            # Recreate xfer for every iteration
 ```
 
 #### Performance and Threading

@@ -1273,8 +1273,6 @@ execTransfer(nixlAgent *agent,
         }
 
         // Execute transfers
-        // GUSLI requires per-iteration request creation due to library bug
-        const bool recreate_per_iteration = (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
         const int result = execTransferIterations(agent,
                                                   op,
                                                   local_desc,
@@ -1284,7 +1282,7 @@ execTransfer(nixlAgent *agent,
                                                   num_iter,
                                                   timer,
                                                   thread_stats,
-                                                  recreate_per_iteration);
+                                                  xferBenchConfig::recreate_xfer);
 
         if (__builtin_expect(result != 0, 0)) {
             ret = result;
