@@ -110,12 +110,11 @@ const std::vector<xferBenchParamInfo> xbench_params = {
                  16,
                  "factor to reduce test iteration when testing large block size(>1MB)"),
     NB_ARG_INT32(warmup_iter, 100, "Number of warmup iterations before timing"),
-    NB_ARG_INT32(
-        num_threads,
-        1,
-        "Number of threads used by benchmark."
-        " Num_iter must be greater or equal than num_threads and equally divisible by"
-        " num_threads."),
+    NB_ARG_INT32(num_threads,
+                 1,
+                 "Number of threads used by benchmark."
+                 " Num_iter must be greater or equal than num_threads and equally divisible by"
+                 " num_threads."),
     NB_ARG_INT32(num_initiator_dev, 1, "Number of device in initiator process"),
     NB_ARG_INT32(num_target_dev, 1, "Number of device in target process"),
     NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worker)"),
