@@ -5,7 +5,7 @@ This is a simplified, pure C++ version of the 2proc device API example. Unlike t
 ## Architecture
 
 ```
-simple_write.cpp        # Main program (~500 lines)
+simple_write.cpp        # Main program
 ├── nixlAgent           # Direct NIXL C++ API usage
 ├── CUDA                # Direct cudaMalloc/cudaMemcpy
 ├── Device kernels      # GPU-initiated RDMA (kernels.cu)
@@ -21,19 +21,13 @@ simple_write.cpp        # Main program (~500 lines)
 
 ## Build
 
-From NIXL repository root, in DFW container:
+From NIXL repository root:
 
 ```bash
-# Configure and build with all required flags
-rm -rf build && mkdir build
-meson setup build/ \
-    -Ducx_path=/usr \
-    -Dlibfabric_path=/usr/local \
-    -Dbuild_nixl_ep=true \
-    --prefix=/usr/local/nixl \
-    --buildtype=release
-
-cd build && ninja && ninja install
+# Configure and build
+meson setup build/ -Ducx_path=/usr -Dlibfabric_path=/usr/local
+ninja -C build
+ninja -C build install
 ldconfig
 
 # Binary location
@@ -43,32 +37,29 @@ build/examples/device/2proc/simple_write
 ## Run
 
 ```bash
-# Set UCX configuration for optimal container compatibility
-export UCX_TLS=all                    # Auto-select best transports
-export UCX_POSIX_USE_PROC_LINK=n      # Avoid /proc/PID/fd access errors
+# Set UCX configuration for container compatibility
+export UCX_POSIX_USE_PROC_LINK=n
 
 # Terminal 1 (initiator - must start FIRST to create TCPStore server)
-./build/examples/device/2proc/simple_write --mode initiator --size 1048576
+./build/examples/device/2proc/simple_write --mode initiator
 
 # Terminal 2 (target - start SECOND after initiator's server is ready)
-./build/examples/device/2proc/simple_write --mode target --size 1048576
+./build/examples/device/2proc/simple_write --mode target
 ```
 
 **UCX Configuration:**
 
-Two key settings for container compatibility:
+Key setting for container compatibility:
 
-1. **`UCX_TLS=all`** (Transport Layer Selection)
-   - Lets UCX auto-select best available transports including CUDA IPC
-
-2. **`UCX_POSIX_USE_PROC_LINK=n`** (Disable procfs mode - **important for containers!**)
-   - **Without this**: UCX tries to access `/proc/<other_pid>/fd/<fd>` for shared memory
-   - **Result**: "Permission denied" errors in containers (containers block cross-process /proc access)
-   - **With this setting**: UCX uses file paths instead (e.g., `/dev/shm/ucx_shm_posix_...`)
-   - **Benefit**: Clean output, no permission errors
+- **`UCX_POSIX_USE_PROC_LINK=n`** (Disable procfs mode - **important for containers!**)
+  - **Without this**: UCX tries to access `/proc/<other_pid>/fd/<fd>` for shared memory
+  - **Result**: "Permission denied" errors in containers (containers block cross-process /proc access)
+  - **With this setting**: UCX uses file paths instead (e.g., `/dev/shm/ucx_shm_posix_...`)
+  - **Benefit**: Clean output, no permission errors
 
 **Optional settings:**
-- If `UCX_NET_DEVICES` is set, unset it for optimal NVLink performance
+- `export UCX_TLS=all` - Explicitly enable all transports (default, but useful for documentation)
+- `unset UCX_NET_DEVICES` - Required for CUDA IPC in single-process scenarios
 
 **Running the example:**
 - Initiator creates TCPStore server (port 9998), target connects as client
@@ -102,88 +93,15 @@ Two key settings for container compatibility:
 5. **Transfer**: Launch GPU kernel that posts RDMA write + signal
 6. **Measure**: Repeat and report performance
 
-## Code Flow
+## Key Features
 
-```cpp
-// nixlAgent setup (like EP framework)
-nixlAgent agent("name", config);
-agent.getPluginParams("UCX", mems, init_params);
-init_params["num_workers"] = "1";
-init_params["ucx_error_handling_mode"] = "none";
-agent.createBackend("UCX", init_params, backend);
+- **Direct API**: Shows NIXL C++ API usage without abstraction layers
+- **Single file**: All logic in one place for easy understanding
+- **Device API V2**: Uses modern `nixlPut()` and `nixlAtomicAdd()` GPU operations
+- **Educational**: Clear example of how EP framework internally uses NIXL
 
-// CUDA memory
-cudaMalloc(&data_ptr, size);
-cudaMemset(data_ptr, fill_value, size);
+## Further Reading
 
-// Register with NIXL
-nixl_reg_dlist_t reg(VRAM_SEG);
-reg.addDesc(nixlBlobDesc((uintptr_t)data_ptr, size, dev_id, ""));
-agent.registerMem(reg, &params);
-
-// Metadata exchange
-std::string local_meta;
-agent.getLocalMD(local_meta);
-// ... exchange via TCP ...
-agent.loadRemoteMD(remote_meta, remote_name);
-
-// Create GPU request handles
-agent.createXferReq(NIXL_WRITE, local_descs, remote_descs,
-                    remote_name, xfer_req, &params);
-agent.createGpuXferReq(*xfer_req, gpu_req);
-
-// Launch device kernel
-launch_post_write_and_signal(
-    gpu_req_handles,      // GPU handles
-    signal_gpu_req,       // Signal handle
-    signal_ptr,           // Signal memory
-    size,                 // Transfer size
-    ...
-);
-```
-
-## Comparison: Python vs C++
-
-### Python Version (Current)
-```
-example.py                 (~230 lines)
-  └── device_buffer.py     (~320 lines)
-      └── device_host.so   (pybind11, ~200 lines C++)
-          └── nixlAgent    (C++ API)
-```
-**Total**: ~750 lines across 3 layers
-
-### C++ Version (This)
-```
-simple_write.cpp           (~500 lines, all-in-one)
-  └── nixlAgent            (C++ API, direct)
-```
-**Total**: ~500 lines, single layer
-
-## Benefits of C++ Version
-
-1. **Simpler**: No Python/C++ boundary, no pybind11
-2. **Clearer**: Direct NIXL API usage visible in one file
-3. **Faster build**: No Python module compilation
-4. **Educational**: Shows exactly how EP framework uses NIXL
-5. **Portable**: Just C++ and CUDA, no Python dependencies
-
-## When to Use Which
-
-**Use C++ version** when:
-- Learning device API fundamentals
-- Understanding how EP framework works internally
-- Building C++ applications with device API
-- Want minimal dependencies
-
-**Use Python version** when:
-- Rapid prototyping
-- Integration with PyTorch workflows
-- Python ecosystem tools needed
-
-## Next Steps
-
-After understanding this example, see:
-- **KERNEL_GUIDE.md** - GPU kernel patterns explained
-- **EP framework** (`examples/device/ep/`) - Production MoE use case
-- **NIXL docs** - Full API reference
+- **KERNEL_GUIDE.md** - GPU kernel patterns and Device API V2 details
+- **UNIFIED_EXAMPLE.md** - Single-process variant with in-memory metadata exchange
+- **EP framework** (`examples/device/ep/`) - Production-ready distributed training example
