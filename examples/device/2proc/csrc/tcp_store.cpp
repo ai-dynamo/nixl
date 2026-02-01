@@ -32,8 +32,7 @@ TCPStore::set(const std::string &key, const std::string &value) {
 
 std::string
 TCPStore::get(const std::string &key) {
-    auto data = store_->get(key);
-    return std::string(data.begin(), data.end());
+    return store_->get_to_str(key);
 }
 
 bool
