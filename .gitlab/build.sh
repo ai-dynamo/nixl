@@ -36,6 +36,7 @@ LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
 UCCL_COMMIT_SHA="a962f611021afc2e3c9358f6da4ae96539cbca0f"
+AZURITE_VER="3.35.0"
 TMPDIR=$(mktemp -d)
 
 if [ -z "$INSTALL_DIR" ]; then
@@ -223,7 +224,7 @@ else
     ( \
       cd ${TMPDIR} && \
       curl -sL https://aka.ms/InstallAzureCLIDeb | $SUDO bash && \
-      $SUDO npm install -g azurite && \
+      $SUDO npm install -g azurite@${AZURITE_VER} && \
 	  git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
       cd azure-sdk-for-cpp/ && \
       mkdir build && cd build && \

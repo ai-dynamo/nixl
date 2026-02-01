@@ -14,6 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+
+set -e
+set -x
+
 AZ_ACCOUNT_NAME="nixl-ci-dev"
 AZ_ACCOUNT_KEY="ZGV2c3RvcmVhY2NvdW50Mw=="   # "devstoreaccount3" base64
 export AZURITE_ACCOUNTS="${AZ_ACCOUNT_NAME}:${AZ_ACCOUNT_KEY}"
