@@ -114,7 +114,6 @@ else
                                  hwloc \
                                  libhwloc-dev \
                                  libxml2-dev \
-                                 npm \
                                  libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
     # Ubuntu 22.04 specific setup
@@ -154,6 +153,17 @@ else
     wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O ${TMPDIR}/install_uv.sh
     chmod +x ${TMPDIR}/install_uv.sh
     ${TMPDIR}/install_uv.sh
+
+    # Install Node Version Manager then Nodejs to install Azurite
+    wget --tries=3 --waitretry=5 "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh" -O ${TMPDIR}/install_nvm.sh
+    chmod +x ${TMPDIR}/install_nvm.sh
+    ${TMPDIR}/install_nvm.sh
+    ls -la ${HOME}
+    export NVM_DIR=${HOME}/.nvm
+    ls -la ${HOME}/.nvm
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    nvm install --lts  # install nodejs
+    npm install -g azurite@${AZURITE_VER}
 
     wget --tries=3 --waitretry=5 -O "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
     tar xjf "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -C ${TMPDIR}
@@ -224,8 +234,7 @@ else
     ( \
       cd ${TMPDIR} && \
       curl -sL https://aka.ms/InstallAzureCLIDeb | $SUDO bash && \
-      $SUDO npm install -g azurite@${AZURITE_VER} && \
-	  git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
+      git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
       cd azure-sdk-for-cpp/ && \
       mkdir build && cd build && \
       AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
