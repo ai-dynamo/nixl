@@ -309,16 +309,30 @@ run_initiator(const Config &cfg) {
     std::string target_signal_descs = store.get("NIXL_2PROC/target_signal_descs");
 
     // Prepare memory views for new device API
+    // Local data descriptor
     nixl_xfer_dlist_t local_data(VRAM_SEG);
     local_data.addDesc(nixlBasicDesc((uintptr_t)data_ptr, cfg.size, INITIATOR_DEVICE));
 
+    // Deserialize remote descriptors and reconstruct as nixlRemoteDesc
     nixlSerDes remote_data_serdes;
     remote_data_serdes.importStr(target_data_descs);
-    nixl_xfer_dlist_t remote_data(&remote_data_serdes);
+    nixl_xfer_dlist_t remote_data_basic(&remote_data_serdes);
+
+    // Convert to nixlRemoteDesc with target agent name using nixl_remote_dlist_t
+    nixl_remote_dlist_t remote_data(VRAM_SEG);
+    for (const auto &desc : remote_data_basic) {
+        remote_data.addDesc(nixlRemoteDesc(desc, target_name));
+    }
 
     nixlSerDes remote_signal_serdes;
     remote_signal_serdes.importStr(target_signal_descs);
-    nixl_xfer_dlist_t remote_signal(&remote_signal_serdes);
+    nixl_xfer_dlist_t remote_signal_basic(&remote_signal_serdes);
+
+    // Convert to nixlRemoteDesc with target agent name using nixl_remote_dlist_t
+    nixl_remote_dlist_t remote_signal(VRAM_SEG);
+    for (const auto &desc : remote_signal_basic) {
+        remote_signal.addDesc(nixlRemoteDesc(desc, target_name));
+    }
 
     // Prepare memory view handles
     nixlMemoryViewH local_data_mvh = nullptr;
