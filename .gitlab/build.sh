@@ -178,7 +178,9 @@ else
                   --enable-efa && \
       make -j"$NPROC" && \
       make install && \
-      $SUDO ldconfig \
+      $SUDO ldconfig \ && \
+      cd .. && \
+      rm -rf libfabric-*
     )
 
     ( \
@@ -219,7 +221,9 @@ else
       cmake .. -DBUILD_SHARED_LIBS=ON && \
       make -j4 && \
       $SUDO make install && \
-      $SUDO ldconfig
+      $SUDO ldconfig && \
+      cd .. && \
+      rm -rf Mooncake
     )
 
     ( \
@@ -231,6 +235,7 @@ else
 
     ( \
       cd ${TMPDIR} && \
+      df -h && \
       curl -sL https://aka.ms/InstallAzureCLIDeb | $SUDO bash && \
       git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
       cd azure-sdk-for-cpp/ && \
