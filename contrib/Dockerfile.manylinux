@@ -58,6 +58,7 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     librdmacm-devel \
     hwloc \
     hwloc-devel \
+    libxml2-devel \
     wget \
     zlib
 

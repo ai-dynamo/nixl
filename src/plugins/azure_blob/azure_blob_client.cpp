@@ -1,5 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 Microsoft Corporation.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,9 +93,10 @@ azureBlobClient::putBlobAsync(std::string_view blob_name,
         return;
     }
 
-    asio::post(*executor_, [this, blob_name, data_ptr, data_len, callback]() {
+    std::string blob_name_str(blob_name);
+    asio::post(*executor_, [this, blob_name_str, data_ptr, data_len, callback]() {
         try {
-            auto blobClient = blobContainerClient_->GetBlockBlobClient(std::string(blob_name));
+            auto blobClient = blobContainerClient_->GetBlockBlobClient(blob_name_str);
             blobClient.UploadFrom(reinterpret_cast<uint8_t *>(data_ptr), data_len);
             callback(true);
         }
@@ -111,9 +113,10 @@ azureBlobClient::getBlobAsync(std::string_view blob_name,
                               size_t offset,
                               get_blob_callback_t callback) {
 
-    asio::post(*executor_, [this, blob_name, data_ptr, data_len, offset, callback]() {
+    std::string blob_name_str(blob_name);
+    asio::post(*executor_, [this, blob_name_str, data_ptr, data_len, offset, callback]() {
         try {
-            auto blobClient = blobContainerClient_->GetBlockBlobClient(std::string(blob_name));
+            auto blobClient = blobContainerClient_->GetBlockBlobClient(blob_name_str);
             Azure::Storage::Blobs::DownloadBlobToOptions options;
             Azure::Core::Http::HttpRange range;
             range.Offset = static_cast<int64_t>(offset);
