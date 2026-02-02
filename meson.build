@@ -100,8 +100,20 @@ has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', depen
 has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 
 # Check for CUObject Client library
-cuobj_dep = dependency('cuobjclient-13.1', required: false)
-if cuobj_dep.found()
+cc = meson.get_compiler('cpp')
+gds_path = get_option('gds_path')
+if gds_path != ''
+    gds_lib_path = gds_path + '/lib64'
+    gds_inc_path = gds_path + '/include'
+    cuobjclient_lib_file = 'cuobjclient'
+    cuobjclient_lib_found = cc.find_library(cuobjclient_lib_file, dirs: [gds_lib_path], required: false)
+endif
+#cuobj_dep = dependency('cuobjclient-13.1', required: false)
+#if cuobj_dep.found()
+if cuobjclient_lib_found.found()
+    cuobj_dep = declare_dependency(
+        link_args: ['-L' + gds_lib_path, '-lcufile', '-lcuobjclient', '-lcudart'],
+        include_directories: include_directories(gds_inc_path))
     add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
 endif
 
