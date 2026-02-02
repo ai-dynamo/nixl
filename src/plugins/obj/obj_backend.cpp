@@ -72,6 +72,11 @@ nixlObjEngine::nixlObjEngine(const nixlBackendInitParams *init_params,
 
 nixlObjEngine::~nixlObjEngine() = default;
 
+nixl_mem_list_t
+nixlObjEngine::getSupportedMems() const {
+    return impl_->getSupportedMems();
+}
+
 nixl_status_t
 nixlObjEngine::registerMem(const nixlBlobDesc &mem,
                            const nixl_mem_t &nixl_mem,

@@ -304,6 +304,19 @@ The architecture separates concerns into:
 - Concrete implementations inherit from `nixlObjEngineImpl` (or its subclasses) and override specific methods
 - The public interface remains stable while implementations can evolve independently
 
+#### Supported Memory Types
+
+Each engine implementation defines its own supported memory segment types via `getSupportedMems()`:
+
+| Engine | Supported Memory Types | Description |
+|--------|----------------------|-------------|
+| `DefaultObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | Standard S3 client - CPU memory only |
+| `S3CrtObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | S3 CRT client - CPU memory only |
+| `S3AccelObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | S3 Accelerated base - CPU memory by default |
+| Vendor engines | `OBJ_SEG`, `DRAM_SEG`, `VRAM_SEG` | Vendor-specific - override to add GPU support |
+
+**Important:** Vendor engines that support GPU-direct transfers should override `getSupportedMems()` to include `VRAM_SEG`. The base `S3AccelObjEngineImpl` does not include `VRAM_SEG` by default - each vendor must explicitly expose this capability.
+
 ### Adding a Vendor Implementation
 
 > **⚠️ Important: Conditional Compilation for S3 Accelerated Engines**
@@ -384,6 +397,11 @@ public:
     explicit VendorObjEngineImpl(const nixlBackendInitParams *init_params);
     VendorObjEngineImpl(const nixlBackendInitParams *init_params,
                         std::shared_ptr<iS3Client> s3_client);
+
+    // Add VRAM_SEG support for GPU-direct transfers
+    nixl_mem_list_t getSupportedMems() const override {
+        return {OBJ_SEG, DRAM_SEG, VRAM_SEG};
+    }
 
     // Override engine methods for vendor-specific behavior if needed
     nixl_status_t registerMem(const nixlBlobDesc &mem,
@@ -511,8 +529,18 @@ agent.createBackend("obj", params);
 
 Common methods to override for vendor-specific behavior:
 
+- `getSupportedMems()` - Memory segment types supported by this engine (override to add `VRAM_SEG` for GPU-direct transfers)
 - `registerMem()` - Custom memory registration logic
 - `deregisterMem()` - Custom cleanup logic
 - `queryMem()` - Vendor-specific object existence checks
 - `prepXfer()` / `postXfer()` - Custom transfer logic
 - `getClient()` - Return vendor-specific client
+
+**Note:** Vendor engines must explicitly override `getSupportedMems()` to include `VRAM_SEG` if they support GPU-direct transfers. Example:
+
+```cpp
+nixl_mem_list_t
+getSupportedMems() const override {
+    return {DRAM_SEG, OBJ_SEG, VRAM_SEG};
+}
+```

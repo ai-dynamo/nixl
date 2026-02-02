@@ -14,6 +14,9 @@ public:
     S3AccelObjEngineImpl(const nixlBackendInitParams *init_params,
                          std::shared_ptr<iS3Client> s3_client);
 
+    // Inherits getSupportedMems() from DefaultObjEngineImpl returning {OBJ_SEG, DRAM_SEG}.
+    // Vendor engines that support GPU-direct transfers should override this to include VRAM_SEG.
+
 protected:
     iS3Client *
     getClient() const override;

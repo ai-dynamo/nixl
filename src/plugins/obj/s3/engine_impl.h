@@ -16,6 +16,11 @@ public:
                          std::shared_ptr<iS3Client> s3_client_crt);
     ~DefaultObjEngineImpl() override;
 
+    nixl_mem_list_t
+    getSupportedMems() const override {
+        return {DRAM_SEG, OBJ_SEG};
+    }
+
     nixl_status_t
     registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
     nixl_status_t

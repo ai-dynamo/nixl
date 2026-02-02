@@ -89,6 +89,9 @@ class nixlObjEngineImpl {
 public:
     virtual ~nixlObjEngineImpl() = default;
 
+    virtual nixl_mem_list_t
+    getSupportedMems() const = 0;
+
     virtual nixl_status_t
     registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) = 0;
     virtual nixl_status_t
@@ -140,9 +143,7 @@ public:
     }
 
     nixl_mem_list_t
-    getSupportedMems() const override {
-        return {OBJ_SEG, DRAM_SEG};
-    }
+    getSupportedMems() const override;
 
     nixl_status_t
     registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
