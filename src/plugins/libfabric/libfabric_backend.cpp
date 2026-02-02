@@ -20,6 +20,7 @@
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
 
+#include <dlfcn.h>
 #include <limits>
 #include <cstring>
 #include <unistd.h>
@@ -28,6 +29,54 @@
 #include <numeric>
 
 #include "absl/strings/numbers.h"
+
+/****************************************
+ * Neuron Address Query
+ *****************************************/
+namespace {
+
+void *
+dlopen_libnrt() {
+    static void *const handle = dlopen("libnrt.so.1", RTLD_NOW);
+    return handle;
+}
+
+template<class Fn>
+Fn *
+_load_nrt_symbol(const char *fn_name, Fn *) {
+    void *libnrt_handle = dlopen_libnrt();
+    if (libnrt_handle) {
+        return reinterpret_cast<Fn *>(dlsym(libnrt_handle, fn_name));
+    }
+    return nullptr;
+}
+
+#define LOAD_NRT_SYMBOL(sym) _load_nrt_symbol(#sym, &sym)
+
+int
+nrt_get_attached_efa_bdf(const void *va, char *efa_bdf, size_t *len) {
+    static const auto fn = LOAD_NRT_SYMBOL(nrt_get_attached_efa_bdf);
+    if (fn == nullptr) {
+        NIXL_ERROR << "Could not resolve libnrt symbol: " << __func__;
+        return -1;
+    }
+    return fn(va, efa_bdf, len);
+}
+
+int
+nrtQueryAddr(const void *va, std::string *efa_bdf) {
+    char buf[] = "0000:00:00.0";
+    size_t buflen = sizeof(buf);
+
+    if (nrt_get_attached_efa_bdf(va, buf, &buflen) == 0) {
+        efa_bdf->assign(buf, buflen);
+        return 0;
+    }
+
+    return -1;
+}
+
+} // namespace
 
 #ifdef HAVE_CUDA
 // CUDA error checking macros
@@ -243,20 +292,31 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
       cm_thread_stop_(false),
       progress_thread_enabled_(init_params->enableProgTh),
       progress_thread_delay_(std::chrono::microseconds(init_params->pthrDelay)),
-      rail_manager(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD) {
+      rail_manager(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
+      runtime_(FI_HMEM_SYSTEM) {
 
-    NIXL_DEBUG << "Initializing Libfabric Backend with GPU Support";
+    NIXL_DEBUG << "Initializing Libfabric Backend";
+
+    // Query system runtime type from rail manager (determined once at topology discovery)
+    runtime_ = rail_manager.getRuntime();
+
+    NIXL_INFO << "System runtime: "
+              << (runtime_ == FI_HMEM_CUDA       ? "CUDA" :
+                      runtime_ == FI_HMEM_NEURON ? "NEURON" :
+                                                   "SYSTEM");
 
 #ifdef HAVE_CUDA
-    // Initialize CUDA context management
-    vramInitCtx();
-    // CUDA address workaround
-    if (getenv("NIXL_DISABLE_CUDA_ADDR_WA")) {
-        NIXL_DEBUG << "Disabling CUDA address workaround";
-        cuda_addr_wa_ = false;
-    } else {
-        cuda_addr_wa_ = true;
-        NIXL_DEBUG << "CUDA address workaround enabled";
+    if (runtime_ == FI_HMEM_CUDA) {
+        // Initialize CUDA context management
+        vramInitCtx();
+        // CUDA address workaround
+        if (getenv("NIXL_DISABLE_CUDA_ADDR_WA")) {
+            NIXL_DEBUG << "Disabling CUDA address workaround";
+            cuda_addr_wa_ = false;
+        } else {
+            cuda_addr_wa_ = true;
+            NIXL_DEBUG << "CUDA address workaround enabled";
+        }
     }
 #endif
 
@@ -748,50 +808,63 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
 
     priv->buffer_ = (void *)mem.addr;
     priv->length_ = mem.len;
-    priv->gpu_device_id_ = mem.devId; // Store GPU device ID
+    priv->device_id_ = mem.devId; // Store device ID
 
     std::string pci_bus_id = "";
-#ifdef HAVE_CUDA
-    // Handle CUDA memory registration with GPU Direct RDMA support
+
+    // Use system runtime type to determine device-specific operations
     if (nixl_mem == VRAM_SEG) {
-        // For multi-GPU support, skip CUDA address workaround
-        if (cuda_addr_wa_) {
-            bool need_restart;
-            if (vramUpdateCtx((void *)mem.addr, mem.devId, need_restart)) {
-                NIXL_WARN << "CUDA address workaround failed for device " << mem.devId
-                          << ", disabling workaround for multi-GPU support";
-                cuda_addr_wa_ = false; // Disable workaround for subsequent registrations
-            } else if (need_restart) {
-                // Restart progress thread if needed
-                NIXL_DEBUG << "CUDA context updated, restarting progress thread";
-                vramApplyCtx();
+#ifdef HAVE_CUDA
+        if (runtime_ == FI_HMEM_CUDA) {
+            // CUDA-specific address query
+            // For multi-GPU support, skip CUDA address workaround
+            if (cuda_addr_wa_) {
+                bool need_restart;
+                if (vramUpdateCtx((void *)mem.addr, mem.devId, need_restart)) {
+                    NIXL_WARN << "CUDA address workaround failed for device " << mem.devId
+                              << ", disabling workaround for multi-GPU support";
+                    cuda_addr_wa_ = false; // Disable workaround for subsequent registrations
+                } else if (need_restart) {
+                    // Restart progress thread if needed
+                    NIXL_DEBUG << "CUDA context updated, restarting progress thread";
+                    vramApplyCtx();
+                }
+            } else {
+                // Set CUDA device context directly for multi-GPU support
+                cudaError_t cuda_ret = cudaSetDevice(mem.devId);
+                if (cuda_ret != cudaSuccess) {
+                    NIXL_ERROR << "Failed to set CUDA device " << mem.devId << ": "
+                               << cudaGetErrorString(cuda_ret);
+                    return NIXL_ERR_NOT_SUPPORTED;
+                }
+                NIXL_DEBUG << "Set CUDA device context to GPU " << mem.devId;
             }
-        }
-        // Set CUDA device context directly for multi-GPU support
-        if (!cuda_addr_wa_) {
-            cudaError_t cuda_ret = cudaSetDevice(mem.devId);
-            if (cuda_ret != cudaSuccess) {
-                NIXL_ERROR << "Failed to set CUDA device " << mem.devId << ": "
-                           << cudaGetErrorString(cuda_ret);
-                return NIXL_ERR_NOT_SUPPORTED;
+
+            // Query PCI bus ID from memory address (AFTER setting context)
+            bool is_dev;
+            CUdevice dev;
+            CUcontext ctx;
+
+            int ret = cudaQueryAddr((void *)mem.addr, is_dev, dev, ctx, pci_bus_id);
+            if (ret || !is_dev) {
+                NIXL_ERROR << "Failed to query device from memory " << (void *)mem.addr;
+                return NIXL_ERR_BACKEND;
             }
-            NIXL_DEBUG << "Set CUDA device context to GPU " << mem.devId;
+
+            NIXL_DEBUG << "Queried PCI bus ID: " << pci_bus_id << " for GPU " << mem.devId;
         }
-
-        // Query PCI bus ID from memory address (AFTER setting context)
-        bool is_dev;
-        CUdevice dev;
-        CUcontext ctx;
-
-        int ret = cudaQueryAddr((void *)mem.addr, is_dev, dev, ctx, pci_bus_id);
-        if (ret || !is_dev) {
-            NIXL_ERROR << "Failed to query device from memory " << (void *)mem.addr;
-            return NIXL_ERR_BACKEND;
-        }
-
-        NIXL_DEBUG << "Queried PCI bus ID: " << pci_bus_id << " for GPU " << mem.devId;
-    }
 #endif
+        if (runtime_ == FI_HMEM_NEURON) {
+            // Neuron-specific address query
+            int ret = nrtQueryAddr((void *)mem.addr, &pci_bus_id);
+            if (ret) {
+                NIXL_ERROR << "Could not query EFA device from memory " << (void *)mem.addr;
+                // Fall back to all rails.
+            }
+            NIXL_DEBUG << "Queried PCI bus ID: " << pci_bus_id << " for Neuron device "
+                       << mem.devId;
+        }
+    }
 
     // Initialize vectors to accommodate all possible rails (for indexing consistency)
     priv->rail_mr_list_.resize(rail_manager.getNumDataRails(), nullptr);
@@ -800,7 +873,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
 
 #ifdef HAVE_CUDA
     // Set CUDA context before libfabric operations for VRAM
-    if (nixl_mem == VRAM_SEG) {
+    if (nixl_mem == VRAM_SEG && runtime_ == FI_HMEM_CUDA) {
         vramApplyCtx();
     }
 #endif
@@ -829,7 +902,8 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
                << (nixl_mem == VRAM_SEG ? " with GPU Direct RDMA support" : "");
 
     NIXL_DEBUG << "Successfully registered memory on " << priv->selected_rails_.size()
-               << " rails for " << (nixl_mem == VRAM_SEG ? "GPU" : "CPU") << " " << mem.devId;
+               << " rails for " << (nixl_mem == VRAM_SEG ? "accelerator" : "CPU") << " device "
+               << mem.devId;
     out = priv.release();
     return NIXL_SUCCESS;
 }
@@ -1064,9 +1138,9 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         // Get transfer info for THIS descriptor
         void *transfer_addr = (void *)local[desc_idx].addr;
         size_t transfer_size = local[desc_idx].len;
-        int gpu_id = local[desc_idx].devId;
+        int device_id = local[desc_idx].devId;
 
-        NIXL_DEBUG << "Processing descriptor " << desc_idx << " GPU " << gpu_id
+        NIXL_DEBUG << "Processing descriptor " << desc_idx << " device " << device_id
                    << " local_addr: " << transfer_addr << " size=" << transfer_size
                    << " remote_addr=" << (void *)remote[desc_idx].addr;
 
@@ -1096,8 +1170,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             submitted_count);
 
         if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx << " GPU "
-                       << gpu_id;
+            NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx
+                       << " device " << device_id;
             return status;
         }
 
