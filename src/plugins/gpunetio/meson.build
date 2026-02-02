@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +19,7 @@ plugin_gpunetio_deps = [dependency('libibverbs'), dependency('libmlx5'), depende
 absl_log_dep = dependency('absl_log', required: true)
 
 gpu_cuda_args = []
-compile_flags += '-D DOCA_ALLOW_EXPERIMENTAL_API'
+compile_flags = ['-D DOCA_ALLOW_EXPERIMENTAL_API']
 
 if 'GPUNETIO' in static_plugins
     gpunetio_backend_lib = static_library('GPUNETIO',
