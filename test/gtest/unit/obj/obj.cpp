@@ -25,6 +25,8 @@
 #include "s3/client.h"
 #include "obj_backend.h"
 #include "obj_executor.h"
+#include "object/engine_utils.h"
+#include "s3_accel/dell/rdma_interface.h"
 
 namespace gtest::obj {
 /**
@@ -42,6 +44,7 @@ struct ObjTestConfig {
     std::string name;
     nixl_b_params_t customParams;
     std::string agentName;
+    bool supportsVram = false;
 };
 
 class mockS3Client : public iS3Client {
@@ -52,6 +55,15 @@ private:
     std::set<std::string> checkedKeys_;
 
 public:
+    mockS3Client() = default;
+
+    mockS3Client([[maybe_unused]] nixl_b_params_t *custom_params,
+                 std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr) {
+        if (executor) {
+            executor_ = std::dynamic_pointer_cast<asioThreadPoolExecutor>(executor);
+        }
+    }
+
     void
     setSimulateSuccess(bool success) {
         simulateSuccess_ = success;
@@ -67,7 +79,7 @@ public:
                    uintptr_t data_ptr,
                    size_t data_len,
                    size_t offset,
-                   put_object_callback_t callback) override {
+                   put_object_callback_t callback) {
         pendingCallbacks_.push_back([callback, this]() { callback(simulateSuccess_); });
     }
 
@@ -76,7 +88,7 @@ public:
                    uintptr_t data_ptr,
                    size_t data_len,
                    size_t offset,
-                   get_object_callback_t callback) override {
+                   get_object_callback_t callback) {
         pendingCallbacks_.push_back([callback, data_ptr, data_len, offset, this]() {
             if (simulateSuccess_ && data_ptr && data_len > 0) {
                 char *buffer = reinterpret_cast<char *>(data_ptr);
@@ -117,6 +129,66 @@ public:
     hasExecutor() const {
         return executor_ != nullptr;
     }
+
+protected:
+    // Make pendingCallbacks_ accessible to derived classes
+    std::vector<std::function<void()>> &
+    getPendingCallbacks() {
+        return pendingCallbacks_;
+    }
+
+    // Make simulateSuccess_ accessible to derived classes
+    bool
+    getSimulateSuccess() const {
+        return simulateSuccess_;
+    }
+};
+
+// Dell-specific mock S3 client with RDMA support
+class mockDellS3Client : public mockS3Client, public iS3RdmaClient {
+public:
+    mockDellS3Client() = default;
+
+    mockDellS3Client([[maybe_unused]] nixl_b_params_t *custom_params,
+                     std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr)
+        : mockS3Client(custom_params, executor) {}
+
+    // Dell-specific RDMA methods
+    void
+    putObjectRdmaAsync(std::string_view key,
+                       uintptr_t data_ptr,
+                       size_t data_len,
+                       size_t offset,
+                       std::string_view rdma_desc,
+                       put_object_callback_t callback) {
+        if (rdma_desc.empty()) {
+            getPendingCallbacks().push_back([callback]() { callback(false); });
+        } else {
+            getPendingCallbacks().push_back([callback, this]() { callback(getSimulateSuccess()); });
+        }
+    }
+
+    void
+    getObjectRdmaAsync(std::string_view key,
+                       uintptr_t data_ptr,
+                       size_t data_len,
+                       size_t offset,
+                       std::string_view rdma_desc,
+                       get_object_callback_t callback) {
+        if (rdma_desc.empty()) {
+            getPendingCallbacks().push_back([callback]() { callback(false); });
+        } else {
+            getPendingCallbacks().push_back([callback, data_ptr, data_len, offset, this]() {
+                if (getSimulateSuccess() && data_ptr && data_len > 0) {
+                    char *buffer = reinterpret_cast<char *>(data_ptr);
+                    for (size_t i = 0; i < data_len; ++i) {
+                        buffer[i] = static_cast<char>('A' + ((i + offset) % 26));
+                    }
+                }
+                callback(getSimulateSuccess());
+            });
+        }
+    }
 };
 
 // Base test fixture with common test helper methods
@@ -137,7 +209,12 @@ protected:
         initParams_.pthrDelay = 0;
         initParams_.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
 
-        mockS3Client_ = std::make_shared<mockS3Client>();
+        // Use appropriate mock client based on configuration
+        if (isDellOBSRequested(&customParams_)) {
+            mockS3Client_ = std::make_shared<mockDellS3Client>();
+        } else {
+            mockS3Client_ = std::make_shared<mockS3Client>();
+        }
         objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockS3Client_);
     }
 
@@ -150,6 +227,8 @@ protected:
         std::vector<char> test_buffer(buffer_size);
 
         nixlBlobDesc local_desc, remote_desc;
+        local_desc.addr = reinterpret_cast<uintptr_t>(test_buffer.data());
+        local_desc.len = test_buffer.size();
         local_desc.devId = 1;
         remote_desc.devId = 2;
         remote_desc.metaInfo = (operation == NIXL_READ) ? "test-read-key" : "test-write-key";
@@ -164,8 +243,7 @@ protected:
         nixl_meta_dlist_t local_descs(DRAM_SEG);
         nixl_meta_dlist_t remote_descs(OBJ_SEG);
 
-        nixlMetaDesc local_meta_desc(
-            reinterpret_cast<uintptr_t>(test_buffer.data()), test_buffer.size(), 1);
+        nixlMetaDesc local_meta_desc(local_desc.addr, local_desc.len, local_desc.devId);
         local_descs.addDesc(local_meta_desc);
 
         nixlMetaDesc remote_meta_desc(0, test_buffer.size(), 2);
@@ -209,6 +287,10 @@ protected:
         std::vector<char> test_buffer0(size0);
         std::vector<char> test_buffer1(size1);
         nixlBlobDesc local_desc0, local_desc1;
+        local_desc0.addr = reinterpret_cast<uintptr_t>(test_buffer0.data());
+        local_desc1.addr = reinterpret_cast<uintptr_t>(test_buffer1.data());
+        local_desc0.len = test_buffer0.size();
+        local_desc1.len = test_buffer1.size();
         local_desc0.devId = 1;
         local_desc1.devId = 1;
         nixlBackendMD *local_metadata0 = nullptr;
@@ -286,6 +368,8 @@ protected:
         std::vector<char> test_buffer(buffer_size, 'Z');
 
         nixlBlobDesc local_desc;
+        local_desc.addr = reinterpret_cast<uintptr_t>(test_buffer.data());
+        local_desc.len = test_buffer.size();
         local_desc.devId = 1;
         nixlBackendMD *local_metadata = nullptr;
         ASSERT_EQ(objEngine_->registerMem(local_desc, DRAM_SEG, local_metadata), NIXL_SUCCESS);
@@ -353,7 +437,14 @@ static const ObjTestConfig standardConfig = {"Standard", {}, "test-standard-agen
 static const ObjTestConfig crtConfig = {"CRT", {{"crtMinLimit", "1024"}}, "test-crt-agent"};
 
 #if defined HAVE_CUOBJ_CLIENT
-static const ObjTestConfig accelConfig = {"Accel", {{"accelerated", "true"}}, "test-accel-agent"};
+static const ObjTestConfig accelConfig = {"Accel",
+                                          {{"accelerated", "true"}},
+                                          "test-accel-agent",
+                                          false};
+static const ObjTestConfig dellConfig = {"Dell",
+                                         {{"accelerated", "true"}, {"type", "dell"}},
+                                         "test-dell-agent",
+                                         true};
 #endif
 
 // Parameterized tests - run for all client types
@@ -368,11 +459,25 @@ TEST_P(objParamTestFixture, EngineInitialization) {
 
 TEST_P(objParamTestFixture, GetSupportedMems) {
     auto supported_mems = objEngine_->getSupportedMems();
-    EXPECT_EQ(supported_mems.size(), 2);
+
+    // Check expected number of supported memory types based on configuration
+    const auto &config = GetParam();
+    if (config.supportsVram) {
+        EXPECT_EQ(supported_mems.size(), 3); // OBJ_SEG, DRAM_SEG, VRAM_SEG
+    } else {
+        EXPECT_EQ(supported_mems.size(), 2); // OBJ_SEG, DRAM_SEG
+    }
+
     EXPECT_TRUE(std::find(supported_mems.begin(), supported_mems.end(), OBJ_SEG) !=
                 supported_mems.end());
     EXPECT_TRUE(std::find(supported_mems.begin(), supported_mems.end(), DRAM_SEG) !=
                 supported_mems.end());
+
+    // Dell configuration should also support VRAM_SEG
+    if (config.supportsVram) {
+        EXPECT_TRUE(std::find(supported_mems.begin(), supported_mems.end(), VRAM_SEG) !=
+                    supported_mems.end());
+    }
 }
 
 TEST_P(objParamTestFixture, RegisterMemoryObjSeg) {
@@ -413,11 +518,54 @@ TEST_P(objParamTestFixture, RegisterMemoryDramSeg) {
     nixl_status_t status = objEngine_->registerMem(mem_desc, DRAM_SEG, metadata);
 
     EXPECT_EQ(status, NIXL_SUCCESS);
-    EXPECT_EQ(metadata, nullptr);
+    if (GetParam().supportsVram) {
+        EXPECT_NE(metadata, nullptr);
+    } else {
+        EXPECT_EQ(metadata, nullptr);
+    }
+
+    if (metadata) {
+        status = objEngine_->deregisterMem(metadata);
+        EXPECT_EQ(status, NIXL_SUCCESS);
+    }
+}
+
+TEST_P(objParamTestFixture, RegisterMemoryVramSeg) {
+    if (!GetParam().supportsVram) {
+        GTEST_SKIP() << "Test requires VRAM support";
+    }
+    nixlBlobDesc mem_desc;
+    mem_desc.devId = 123;
+
+    nixlBackendMD *metadata = nullptr;
+    nixl_status_t status = objEngine_->registerMem(mem_desc, VRAM_SEG, metadata);
+
+    EXPECT_EQ(status, NIXL_SUCCESS);
+    EXPECT_NE(metadata, nullptr);
 
     status = objEngine_->deregisterMem(metadata);
     EXPECT_EQ(status, NIXL_SUCCESS);
 }
+
+TEST_P(objParamTestFixture, NullHandlePostXfer) {
+    nixlBackendReqH *handle = nullptr;
+    nixl_meta_dlist_t local_descs(DRAM_SEG);
+    nixl_meta_dlist_t remote_descs(OBJ_SEG);
+    nixl_status_t status =
+        objEngine_->postXfer(NIXL_WRITE, local_descs, remote_descs, "", handle, nullptr);
+    EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+}
+
+TEST_P(objParamTestFixture, NullHandleCheckXfer) {
+    nixl_status_t status = objEngine_->checkXfer(nullptr);
+    EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+}
+
+TEST_P(objParamTestFixture, NullHandleReleaseReqH) {
+    nixl_status_t status = objEngine_->releaseReqH(nullptr);
+    EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+}
+
 
 TEST_P(objParamTestFixture, WriteTransfer) {
     testTransferWithSize(NIXL_WRITE, 1024, "-" + GetParam().name);
@@ -463,7 +611,7 @@ TEST_P(objParamTestFixture, CheckObjectExists) {
 #if defined HAVE_CUOBJ_CLIENT
 INSTANTIATE_TEST_SUITE_P(ObjClientTests,
                          objParamTestFixture,
-                         testing::Values(standardConfig, crtConfig, accelConfig),
+                         testing::Values(standardConfig, crtConfig, accelConfig, dellConfig),
                          [](const testing::TestParamInfo<ObjTestConfig> &info) {
                              return info.param.name;
                          });

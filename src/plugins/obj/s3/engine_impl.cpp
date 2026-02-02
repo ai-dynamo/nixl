@@ -203,6 +203,10 @@ DefaultObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
                                const std::string &remote_agent,
                                nixlBackendReqH *&handle,
                                const nixl_opt_b_args_t *opt_args) const {
+    if (!handle) {
+        NIXL_ERROR << "transfer request handle is null";
+        return NIXL_ERR_INVALID_PARAM;
+    }
     nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
 
     for (int i = 0; i < local.descCount(); ++i) {
@@ -248,12 +252,20 @@ DefaultObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
 
 nixl_status_t
 DefaultObjEngineImpl::checkXfer(nixlBackendReqH *handle) const {
+    if (!handle) {
+        NIXL_ERROR << "transfer request handle is null";
+        return NIXL_ERR_INVALID_PARAM;
+    }
     nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
     return req_h->getOverallStatus();
 }
 
 nixl_status_t
 DefaultObjEngineImpl::releaseReqH(nixlBackendReqH *handle) const {
+    if (!handle) {
+        NIXL_ERROR << "transfer request handle is null";
+        return NIXL_ERR_INVALID_PARAM;
+    }
     nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
     delete req_h;
     return NIXL_SUCCESS;
