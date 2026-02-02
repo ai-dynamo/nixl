@@ -43,4 +43,12 @@ isAcceleratedRequested(nixl_b_params_t *custom_params) {
     return accel_it != custom_params->end() && accel_it->second == "true";
 }
 
+inline bool
+isDellOBSRequested(nixl_b_params_t *custom_params) {
+    if (!isAcceleratedRequested(custom_params)) return false;
+    auto type_it = custom_params->find("type");
+    return type_it != custom_params->end() && type_it->second == "dell";
+}
+
+
 #endif // OBJ_PLUGIN_UTILS_OBJECT_ENGINE_UTILS_H
