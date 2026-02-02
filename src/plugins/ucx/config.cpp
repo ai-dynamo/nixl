@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,18 +24,18 @@
 
 namespace nixl::ucx {
 void
-config::modify (std::string_view key, std::string_view value) const {
-    const char *env_val = std::getenv (absl::StrFormat ("UCX_%s", key.data()).c_str());
+config::modify(std::string_view key, std::string_view value) const {
+    const char *env_val = std::getenv(absl::StrFormat("UCX_%s", key.data()).c_str());
     if (env_val) {
         NIXL_DEBUG << "UCX env var has already been set: " << key << "=" << env_val;
     } else {
-        modifyAlways (key, value);
+        modifyAlways(key, value);
     }
 }
 
 void
-config::modifyAlways (std::string_view key, std::string_view value) const {
-    const auto status = ucp_config_modify (config_.get(), key.data(), value.data());
+config::modifyAlways(std::string_view key, std::string_view value) const {
+    const auto status = ucp_config_modify(config_.get(), key.data(), value.data());
     if (status != UCS_OK) {
         NIXL_DEBUG << "Failed to modify UCX config: " << key << "=" << value << ": "
                    << ucs_status_string(status);
@@ -47,12 +47,10 @@ config::modifyAlways (std::string_view key, std::string_view value) const {
 ucp_config_t *
 config::readUcpConfig() {
     ucp_config_t *config = nullptr;
-    const auto status = ucp_config_read (NULL, NULL, &config);
+    const auto status = ucp_config_read(nullptr, nullptr, &config);
     if (status != UCS_OK) {
-        const auto err_str =
-            std::string ("Failed to create UCX config: ") + ucs_status_string (status);
-        NIXL_ERROR << err_str;
-        throw std::runtime_error (err_str);
+        throw std::runtime_error("Failed to create UCX config: " +
+                                 std::string(ucs_status_string(status)));
     }
     return config;
 }

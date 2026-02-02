@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,18 +37,18 @@ public:
 
     // Modify the config if it is not already set via environment variable
     void
-    modify (std::string_view key, std::string_view value) const;
+    modify(std::string_view key, std::string_view value) const;
 
     // Modify the config always
     void
-    modifyAlways (std::string_view key, std::string_view value) const;
+    modifyAlways(std::string_view key, std::string_view value) const;
 
 private:
     [[nodiscard]] static ucp_config_t *
     readUcpConfig();
 
-    const std::unique_ptr<ucp_config_t, void (*) (ucp_config_t *)> config_{readUcpConfig(),
-                                                                           &ucp_config_release};
+    const std::unique_ptr<ucp_config_t, void (*)(ucp_config_t *)> config_{readUcpConfig(),
+                                                                          &ucp_config_release};
 };
 } // namespace nixl::ucx
 

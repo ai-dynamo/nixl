@@ -204,28 +204,96 @@ Or for CUDA 13 with:
 pip install nixl[cu13]
 ```
 
-To build and install the Python bindings from source, you have to build and install separately the platform-specific package and the `nixl` meta-package:
+#### Installation from source
 
-On CUDA 12:
+Prerequisites:
+
+- `uv`: https://docs.astral.sh/uv/getting-started/installation/
+- `tomlkit`: https://pypi.org/project/tomlkit/
+- `PyTorch`: https://pytorch.org/get-started/locally/
+
+`uv` is always required *even if* you have another kind of Python virtual environment manager or if you are using a system-wide Python installation without using a virtual environment.
+
+Example with `uv` Python virtual environment:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:${PATH}"
+
+uv venv .venv --python 3.12
+source .venv/bin/activate
+uv pip install tomlkit
+```
+
+Example with python-virtualenv:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:${PATH}"
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install tomlkit
+```
+
+Example with system-wide Python installation without using a virtual environment:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:${PATH}"
+
+pip install tomlkit
+```
+
+Then install PyTorch following the instructions on the PyTorch website: https://pytorch.org/get-started/locally/
+
+After installing the prerequisites, you can build and install the NIXL binaries and the Python bindings from source. You have to:
+
+1. Build NIXL binaries and install them
+2. Build and install the CUDA platform-specific package (`nixl-cu12` or `nixl-cu13`)
+3. Build and install the `nixl` meta-package
+
+**For CUDA 12:**
 
 ```
 pip install .
 meson setup build
-ninja -C build
+ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
 ```
 
-On CUDA 13:
+**For CUDA 13:**
 
 ```
 pip install .
 ./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
 meson setup build
-ninja -C build
+ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
 ```
 
-For Python examples, see [examples/python/](examples/python/).
+To check if the installation is successful, you can run the following command:
+
+```
+python3 -c "import nixl; agent = nixl.nixl_agent('agent1')"
+```
+
+which should print:
+
+```
+2026-01-08 13:36:27 NIXL INFO    _api.py:363 Backend UCX was instantiated
+2026-01-08 13:36:27 NIXL INFO    _api.py:253 Initialized NIXL agent: agent1
+```
+
+You can also run a complete Python example to test the installation:
+
+```
+python3 examples/python/expanded_two_peers.py --mode=target --use_cuda=true --ip=127.0.0.1 --port=4242 &
+sleep 5
+python3 examples/python/expanded_two_peers.py --mode=initiator --use_cuda=true --ip=127.0.0.1 --port=4242
+```
+
+For more Python examples, see [examples/python/](examples/python/).
 
 ### Rust Bindings
 #### Build
