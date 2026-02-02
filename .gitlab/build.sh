@@ -178,7 +178,7 @@ else
                   --enable-efa && \
       make -j"$NPROC" && \
       make install && \
-      $SUDO ldconfig \ && \
+      $SUDO ldconfig && \
       cd .. && \
       rm -rf libfabric-*
     )
@@ -201,7 +201,9 @@ else
       cd aws_sdk_build && \
       cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
       make -j"$NPROC" && \
-      $SUDO make install
+      $SUDO make install && \
+      cd .. && \
+      rm -rf aws_sdk_build aws-sdk-cpp
     )
 
     ( \
@@ -209,7 +211,9 @@ else
       git clone https://github.com/nvidia/gusli.git && \
       cd gusli && \
       $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
-      $SUDO ldconfig
+      $SUDO ldconfig && \
+      cd .. && \
+      rm -rf gusli
     )
 
     ( \
