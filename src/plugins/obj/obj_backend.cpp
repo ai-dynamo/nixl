@@ -49,7 +49,7 @@ createObjEngineImpl(const nixlBackendInitParams *init_params,
                     std::shared_ptr<iS3Client> s3_client_crt) {
 #if defined HAVE_CUOBJ_CLIENT
     if (isAcceleratedRequested(init_params->customParams)) {
-        return std::make_unique<S3AccelObjEngineImpl>(init_params, s3_client, s3_client_crt);
+        return std::make_unique<S3AccelObjEngineImpl>(init_params, s3_client);
     }
 #endif
 

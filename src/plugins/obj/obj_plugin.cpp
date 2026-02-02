@@ -23,12 +23,7 @@
 // Plugin type alias for convenience
 using obj_plugin_t = nixlBackendPluginCreator<nixlObjEngine>;
 
-// Define supported segments based on available libraries
-#if defined HAVE_CUOBJ_CLIENT
-static const nixl_mem_list_t supported_segments = {DRAM_SEG, OBJ_SEG, VRAM_SEG};
-#else
 static const nixl_mem_list_t supported_segments = {DRAM_SEG, OBJ_SEG};
-#endif
 
 #ifdef STATIC_PLUGIN_OBJ
 nixlBackendPlugin *
