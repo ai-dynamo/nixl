@@ -213,7 +213,7 @@ else
       $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
       $SUDO ldconfig && \
       cd .. && \
-      rm -rf gusli
+      $SUDO rm -rf gusli
     )
 
     ( \
