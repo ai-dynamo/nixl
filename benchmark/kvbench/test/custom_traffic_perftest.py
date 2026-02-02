@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -488,6 +488,15 @@ class CTPerftest:
         for _ in range(iters):
             self._run_tp(handles)
             self._wait(handles)
+
+    def _run_handle(self, handle: NixlHandle) -> float:
+        """Run a single transfer handle and return latency in seconds."""
+        t = time.time()
+        status = self.nixl_agent.transfer(handle.handle)
+        assert status != "ERR", "Transfer failed"
+        if status != "DONE":
+            self._wait([handle])
+        return time.time() - t
 
     def _run_tp(self, handles: list[NixlHandle], blocking=False) -> list:
         pending = []

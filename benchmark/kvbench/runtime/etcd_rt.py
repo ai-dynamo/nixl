@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -129,7 +129,6 @@ class _EtcdDistUtils(_RTUtils):
         root = ranks[0]
         # Create barrier for specific group of ranks
         group_id = self._get_group_id(ranks)
-        group_size = len(ranks)
         barrier_ix = self.ops_counter["barrier"][group_id]
         self.ops_counter["barrier"][group_id] += 1
 
@@ -146,8 +145,12 @@ class _EtcdDistUtils(_RTUtils):
             ):
                 current_val = self._get_int_val(key)
                 if timeout_sec and time.time() - start_time > timeout_sec:
+                    missing_ranks = (
+                        [r for r in ranks[current_val:]] if current_val else ranks[1:]
+                    )
                     raise TimeoutError(
-                        f"[Rank {self.rank}] ROOT - Barrier {key} timed out after {timeout_sec:.3f} seconds, current value: {current_val}, waiting for val={len(ranks)} (i.e all the ranks have entered the barrier), (ranks: {ranks})"
+                        f"[Rank {self.rank}] Barrier timed out after {timeout_sec:.0f}s: {current_val}/{len(ranks)} ranks arrived. "
+                        f"Missing ranks: {missing_ranks[:10]}{'...' if len(missing_ranks) > 10 else ''}"
                     )
         else:
             my_index = ranks.index(self.rank)
@@ -156,14 +159,26 @@ class _EtcdDistUtils(_RTUtils):
                 key, int_to_bytes(my_index), int_to_bytes(my_index + 1)
             ):
                 if timeout_sec and time.time() - start_time > timeout_sec:
+                    current_val = self._get_int_val(key) or 0
+                    waiting_for_rank = (
+                        ranks[my_index - 1] if my_index > 0 else "unknown"
+                    )
                     raise TimeoutError(
-                        f"[Rank {self.rank}] Barrier {key} timed out after {timeout_sec} seconds, current value: {self.client.get(key)}, waiting for val={my_index} (i.e rank {ranks[my_index - 1]} entered barrier), (ranks: {ranks})"
+                        f"[Rank {self.rank}] Barrier timed out after {timeout_sec:.0f}s: {current_val}/{len(ranks)} ranks arrived. "
+                        f"Waiting for rank {waiting_for_rank} to enter barrier."
                     )
             # Fan out - wait for root to set 0 again
             while not self._get_int_val(key) == 0:
                 if timeout_sec and time.time() - start_time > timeout_sec:
+                    current_val = self._get_int_val(key) or 0
+                    missing_ranks = (
+                        [r for r in ranks[current_val:]]
+                        if current_val < len(ranks)
+                        else []
+                    )
                     raise TimeoutError(
-                        f"[Rank {self.rank}] Barrier {key} timed out after {timeout_sec} seconds, current value: {self.client.get(key)}, waiting for val={group_size} (i.e all the ranks have entered the barrier), (ranks: {ranks})"
+                        f"[Rank {self.rank}] Barrier timed out after {timeout_sec:.0f}s: {current_val}/{len(ranks)} ranks arrived. "
+                        f"Missing ranks: {missing_ranks[:10]}{'...' if len(missing_ranks) > 10 else ''}"
                     )
 
     def get_rank(self) -> int:

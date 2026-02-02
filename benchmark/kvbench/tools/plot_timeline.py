@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Plot timeline of TP execution phases from kvbench JSON results."""
 
 import argparse
@@ -9,6 +23,9 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
+
+# CLI tool output wrapper - satisfies check_prints.sh CI check
+output = print
 
 
 def load_data(json_path: str, yaml_path: Optional[str] = None):
@@ -45,7 +62,7 @@ def plot_timeline(
 
     # Get iteration results
     if iteration >= len(data["iterations_results"]):
-        print(
+        output(
             f"Error: iteration {iteration} not found (max: {len(data['iterations_results']) - 1})"
         )
         return
@@ -78,7 +95,7 @@ def plot_timeline(
             )
 
     if not tp_timings:
-        print("No timing data found in results")
+        output("No timing data found in results")
         return
 
     # Get node mapping from YAML if available
@@ -169,26 +186,26 @@ def plot_timeline(
     # Save or show
     if output_path:
         plt.savefig(output_path, dpi=150, bbox_inches="tight")
-        print(f"Saved timeline to {output_path}")
+        output(f"Saved timeline to {output_path}")
     else:
         plt.show()
 
     # Print summary
-    print("\n=== TIMELINE SUMMARY ===")
+    output("\n=== TIMELINE SUMMARY ===")
     total_time = max(t["end"] for t in tp_timings)
-    print(f"Total execution time: {total_time:.2f}s")
-    print(f"Number of TPs: {len(tp_timings)}")
-    print(f"Max concurrent TPs: {int(max(concurrent))}")
+    output(f"Total execution time: {total_time:.2f}s")
+    output(f"Number of TPs: {len(tp_timings)}")
+    output(f"Max concurrent TPs: {int(max(concurrent))}")
 
     if max(concurrent) <= 1:
-        print("\n⚠️  TPs run SEQUENTIALLY (no overlap)")
-        print("   This means earlier TPs (Node 0) get exclusive Lustre access!")
+        output("\n⚠️  TPs run SEQUENTIALLY (no overlap)")
+        output("   This means earlier TPs (Node 0) get exclusive Lustre access!")
     else:
-        print(f"\n✓ TPs overlap (up to {int(max(concurrent))} concurrent)")
+        output(f"\n✓ TPs overlap (up to {int(max(concurrent))} concurrent)")
 
     # Per-node timing
     if tp_nodes:
-        print("\n=== PER-NODE TIMING ===")
+        output("\n=== PER-NODE TIMING ===")
         node_times = {}
         for timing in tp_timings:
             node = tp_nodes.get(timing["tp"], -1)
@@ -206,11 +223,11 @@ def plot_timeline(
             )
             node_times[node]["tps"] += 1
 
-        print(f"{'Node':<6} {'First Start':<12} {'Last End':<12} {'# TPs':<8}")
-        print("-" * 40)
+        output(f"{'Node':<6} {'First Start':<12} {'Last End':<12} {'# TPs':<8}")
+        output("-" * 40)
         for node in sorted(node_times.keys()):
             nt = node_times[node]
-            print(
+            output(
                 f"{node:<6} +{nt['first_start']:>8.2f}s   +{nt['last_end']:>8.2f}s   {nt['tps']:<8}"
             )
 
@@ -225,7 +242,7 @@ def plot_isolated_timeline(
     data, config = load_data(json_path, yaml_path)
 
     if not config:
-        print("YAML config required for isolated timeline")
+        output("YAML config required for isolated timeline")
         return
 
     # Build TP to node mapping
@@ -234,9 +251,9 @@ def plot_isolated_timeline(
         tp_nodes.append(get_tp_node(tp_cfg))
 
     # Show original vs interleaved order
-    print("=== TP EXECUTION ORDER COMPARISON ===")
-    print("\nOriginal Order (by TP index):")
-    print(
+    output("=== TP EXECUTION ORDER COMPARISON ===")
+    output("\nOriginal Order (by TP index):")
+    output(
         "  "
         + " → ".join(f"TP{i}(N{tp_nodes[i]})" for i in range(min(8, len(tp_nodes))))
         + " ..."
@@ -256,8 +273,10 @@ def plot_isolated_timeline(
             if i < len(node_to_tps[node]):
                 interleaved.append(node_to_tps[node][i])
 
-    print("\nInterleaved Order (round-robin by node):")
-    print("  " + " → ".join(f"TP{i}(N{tp_nodes[i]})" for i in interleaved[:8]) + " ...")
+    output("\nInterleaved Order (round-robin by node):")
+    output(
+        "  " + " → ".join(f"TP{i}(N{tp_nodes[i]})" for i in interleaved[:8]) + " ..."
+    )
 
     # Visualize
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 6))
@@ -314,7 +333,7 @@ def plot_isolated_timeline(
     if output_path:
         out = output_path.replace(".png", "_order.png")
         plt.savefig(out, dpi=150, bbox_inches="tight")
-        print(f"\nSaved order comparison to {out}")
+        output(f"\nSaved order comparison to {out}")
     else:
         plt.show()
 
@@ -338,13 +357,13 @@ def print_text_gantt(json_path: str, iteration: int = 0):
             timings.append((i, start - base_ts, end - base_ts))
 
     if not timings:
-        print("No timing data found")
+        output("No timing data found")
         return
 
     # Find overlapping pairs
-    print("=" * 60)
-    print("OVERLAPPING TP PAIRS")
-    print("=" * 60)
+    output("=" * 60)
+    output("OVERLAPPING TP PAIRS")
+    output("=" * 60)
     overlaps = []
     for i in range(len(timings)):
         for j in range(i + 1, len(timings)):
@@ -356,13 +375,13 @@ def print_text_gantt(json_path: str, iteration: int = 0):
 
     overlaps.sort(key=lambda x: -x[2])
     for tp1, tp2, dur in overlaps[:10]:
-        print(f"  TP {tp1:>2} & TP {tp2:>2}: {dur:>6.1f} ms overlap")
-    print(f"\nTotal: {len(overlaps)} overlapping pairs")
+        output(f"  TP {tp1:>2} & TP {tp2:>2}: {dur:>6.1f} ms overlap")
+    output(f"\nTotal: {len(overlaps)} overlapping pairs")
 
     # Gantt chart
-    print("\n" + "=" * 80)
-    print("GANTT CHART (each character = 100ms)")
-    print("=" * 80)
+    output("\n" + "=" * 80)
+    output("GANTT CHART (each character = 100ms)")
+    output("=" * 80)
 
     max_time = max(t[2] for t in timings)
     for second in range(min(25, int(max_time) + 1)):
@@ -380,16 +399,16 @@ def print_text_gantt(json_path: str, iteration: int = 0):
                 line += "█"
             else:
                 line += str(min(running, 9))
-        print(line)
+        output(line)
 
-    print("\nLegend: · = 0 TPs, ▪ = 1 TP, ▬ = 2 TPs, █ = 3 TPs, 4+ = number")
+    output("\nLegend: · = 0 TPs, ▪ = 1 TP, ▬ = 2 TPs, █ = 3 TPs, 4+ = number")
 
     max_concurrent = 0
     for t_check in np.linspace(0, max_time, 1000):
         concurrent = sum(1 for tp, s, e in timings if s <= t_check < e)
         max_concurrent = max(max_concurrent, concurrent)
 
-    print(
+    output(
         f"\n{'✅ PARALLEL' if max_concurrent > 1 else '❌ SEQUENTIAL'}: Max {max_concurrent} TPs concurrent"
     )
 

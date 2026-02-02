@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -172,29 +172,22 @@ class SequentialCTPerftest(CTPerftest):
                     if size > 0:
                         storage_ranks.add(rank)
 
-            dist_rt.barrier()  # Global barrier before each TP
+            # Global barrier: ensure TPs run sequentially (one at a time)
+            dist_rt.barrier()
 
-            if self.my_rank not in storage_ranks:
+            # Isolated storage: only first rank runs (true isolated perf, no contention)
+            first_storage_rank = min(storage_ranks) if storage_ranks else None
+            if self.my_rank != first_storage_rank:
                 continue
 
-            dist_rt.barrier(storage_ranks)  # Barrier among participating ranks
+            # Use single handle directly (more efficient than _run_tp for single handle)
+            handle = handles[0] if handles else None
+            if not handle:
+                continue
 
             iter_latencies = []
-            for iter_idx in range(self.n_isolation_iters):
-                dist_rt.barrier(storage_ranks)  # Sync before each iteration
-                t = time.time()
-                self._run_tp(handles, blocking=True)
-                iter_latency = time.time() - t
-                iter_latencies.append(iter_latency)
-                if iter_idx < 3 or iter_idx == self.n_isolation_iters - 1:
-                    logger.info(
-                        "[Rank %d] Isolated %s TP %d iter %d: %.3f ms",
-                        self.my_rank,
-                        op_type,
-                        tp_ix,
-                        iter_idx,
-                        iter_latency * 1e3,
-                    )
+            for _ in range(self.n_isolation_iters):
+                iter_latencies.append(self._run_handle(handle))
 
             # Calculate fio-style percentile statistics
             sorted_lats = sorted(iter_latencies)
@@ -225,9 +218,7 @@ class SequentialCTPerftest(CTPerftest):
                 sorted_lats[-1] * 1e3,
             )
 
-            # Barrier after TP completes - ensures all participating ranks finish
-            # before next TP starts (prevents OST contention spillover)
-            dist_rt.barrier(storage_ranks)
+            # No end barrier - only one rank runs isolated storage
 
         return my_stats
 
@@ -583,6 +574,30 @@ class SequentialCTPerftest(CTPerftest):
         measures their performance, and optionally verifies the results.
         """
         logger.debug("[Rank %d] Running sequential CT perftest", self.my_rank)
+
+        # Health check: fail fast (30s) if any ranks crashed at startup
+        logger.info(
+            "[Rank %d] Health check: verifying all %d ranks are alive...",
+            self.my_rank,
+            self.world_size,
+        )
+        try:
+            dist_rt.barrier(timeout_sec=30)
+            if self.my_rank == 0:
+                logger.info(
+                    "[Rank 0] Health check passed: all %d ranks are alive",
+                    self.world_size,
+                )
+        except TimeoutError as e:
+            logger.error(
+                "[Rank %d] Health check FAILED: some ranks did not start. %s",
+                self.my_rank,
+                e,
+            )
+            raise RuntimeError(
+                f"Health check failed: not all {self.world_size} ranks started. Check node health and container mounts."
+            ) from e
+
         self._init_buffers()
         # Only exchange metadata if we have RDMA traffic patterns
         if self._has_rdma:
@@ -760,19 +775,33 @@ class SequentialCTPerftest(CTPerftest):
 
         # Isolated storage read/write measurements
         if self._has_storage:
-            logger.info(
-                "[Rank %d] Running isolated storage read benchmark", self.my_rank
-            )
-            my_isolated_read_stats = self._run_isolated_storage_benchmark(
-                storage_read_handles, "read"
-            )
+            # Check if any TP has read/write ops
+            has_reads = any(h for h in storage_read_handles)
+            has_writes = any(h for h in storage_write_handles)
 
+            if has_reads:
+                logger.info(
+                    "[Rank %d] Running isolated storage read benchmark", self.my_rank
+                )
+                my_isolated_read_stats = self._run_isolated_storage_benchmark(
+                    storage_read_handles, "read"
+                )
+
+            if has_writes:
+                logger.info(
+                    "[Rank %d] Running isolated storage write benchmark", self.my_rank
+                )
+                my_isolated_write_stats = self._run_isolated_storage_benchmark(
+                    storage_write_handles, "write"
+                )
+
+        # Barrier: sync all ranks after isolated benchmarks
+        # Only first rank runs isolated storage, others wait here
+        if self.my_rank == 0:
             logger.info(
-                "[Rank %d] Running isolated storage write benchmark", self.my_rank
+                "[Rank 0] Isolated benchmarks complete, syncing with other ranks"
             )
-            my_isolated_write_stats = self._run_isolated_storage_benchmark(
-                storage_write_handles, "write"
-            )
+        dist_rt.barrier(timeout_sec=None)
 
         # Store isolated results
         isolated_rdma_stats_by_ranks = dist_rt.allgather_obj(my_isolated_rdma_stats)
@@ -839,7 +868,8 @@ class SequentialCTPerftest(CTPerftest):
             storage_read_starts: list[float | None] = [None] * len(tp_handles)
             storage_read_ends: list[float | None] = [None] * len(tp_handles)
             logger.debug("[Rank %d] Warmup done.", self.my_rank)
-            dist_rt.barrier(timeout_sec=None)
+            # Use default timeout (600s) - avoid infinite hang if ranks fail
+            dist_rt.barrier()
 
             iter_metadata["start_ts"] = time.time()
             for tp_ix, handles in enumerate(tp_handles):

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -433,20 +433,21 @@ def main(
     Returns:
         matrices
     """
-    # Rules of thumb
-    assert (
-        prefill_worker_config.tp <= decode_worker_config.tp
-    ), "Prefill TP must be less than or equal to decode TP"
-    assert (
-        prefill_worker_config.pp >= decode_worker_config.pp
-    ), "Prefill PP must be more or equal to decode PP"
-    assert (
-        prefill_worker_config.cp >= decode_worker_config.cp
-    ), "Prefill CP must be more or equal to decode CP"
-    assert decode_worker_config.cp == 1, "Decode CP must be 1"
-    assert (
-        prefill_worker_config.ep <= decode_worker_config.ep
-    ), "Prefill EP must be less or equal to decode EP"
+    # Rules of thumb - only apply when there are decode workers
+    if num_decode_gpus > 0:
+        assert (
+            prefill_worker_config.tp <= decode_worker_config.tp
+        ), "Prefill TP must be less than or equal to decode TP"
+        assert (
+            prefill_worker_config.pp >= decode_worker_config.pp
+        ), "Prefill PP must be more or equal to decode PP"
+        assert (
+            prefill_worker_config.cp >= decode_worker_config.cp
+        ), "Prefill CP must be more or equal to decode CP"
+        assert decode_worker_config.cp == 1, "Decode CP must be 1"
+        assert (
+            prefill_worker_config.ep <= decode_worker_config.ep
+        ), "Prefill EP must be less or equal to decode EP"
     if rail_optimized:
         assert (
             decode_worker_config.tp == 8

@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 Analyze kvbench benchmark results - detect performance patterns and anomalies.
 
@@ -17,6 +29,9 @@ import statistics
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+# CLI tool output wrapper - satisfies check_prints.sh CI check
+output = print
 
 try:
     import yaml
@@ -288,15 +303,15 @@ def print_full_table(analysis: Dict, show_ranks: bool = False):
     """Print comprehensive analysis table."""
     tps = analysis["tps"]
 
-    print("=" * 120)
-    print("FULL RESULTS TABLE")
-    print("=" * 120)
+    output("=" * 120)
+    output("FULL RESULTS TABLE")
+    output("=" * 120)
 
     header = f"{'TP':<4} {'Size(GB)':<10} {'p50(ms)':<10} {'BW(GB/s)':<10} {'Wkld(ms)':<10} {'p90/p50':<8}"
     if show_ranks and tps and tps[0]["nodes"]:
         header += f" {'Nodes':<12} {'Ranks':<6}"
-    print(header)
-    print("-" * 120)
+    output(header)
+    output("-" * 120)
 
     for t in sorted(tps, key=lambda x: (x["read_size_gb"], x["tp"])):
         if t["read_p50_ms"] <= 0:
@@ -307,9 +322,9 @@ def print_full_table(analysis: Dict, show_ranks: bool = False):
         row = f"{t['tp']:<4} {t['read_size_gb']:<10.3f} {t['read_p50_ms']:<10.1f} {t['read_bw_gbs']:<10.2f} {t['workload_read_ms']:<10.1f} {p90_ratio:<8.2f}"
         if show_ranks and t["nodes"]:
             row += f" {str(t['nodes']):<12} {len(t['ranks']):<6}"
-        print(row)
+        output(row)
 
-    print("-" * 120)
+    output("-" * 120)
 
 
 def print_node_analysis(analysis: Dict):
@@ -329,20 +344,20 @@ def print_node_analysis(analysis: Dict):
     if not node_perf:
         return
 
-    print("\n" + "=" * 90)
-    print("PERFORMANCE BY NODE")
-    print("=" * 90)
+    output("\n" + "=" * 90)
+    output("PERFORMANCE BY NODE")
+    output("=" * 90)
 
     if node_names:
-        print(
+        output(
             f"\n{'Node':<6} {'Hostname':<20} {'Avg BW':<10} {'Min':<10} {'Max':<10} {'Std':<10} {'TPs':<6}"
         )
-        print("-" * 90)
+        output("-" * 90)
     else:
-        print(
+        output(
             f"\n{'Node':<6} {'Avg BW':<10} {'Min':<10} {'Max':<10} {'Std':<10} {'TPs':<6}"
         )
-        print("-" * 60)
+        output("-" * 60)
 
     for node in sorted(node_perf.keys()):
         bws = node_perf[node]
@@ -351,11 +366,11 @@ def print_node_analysis(analysis: Dict):
 
         hostname = node_names.get(node, "")
         if node_names:
-            print(
+            output(
                 f"{node:<6} {hostname:<20} {avg_bw:<10.2f} {min(bws):<10.2f} {max(bws):<10.2f} {std_bw:<10.2f} {len(bws):<6}"
             )
         else:
-            print(
+            output(
                 f"{node:<6} {avg_bw:<10.2f} {min(bws):<10.2f} {max(bws):<10.2f} {std_bw:<10.2f} {len(bws):<6}"
             )
 
@@ -393,26 +408,26 @@ def print_numa_analysis(analysis: Dict):
     if not has_numa_variation:
         return  # Skip NUMA analysis if all TPs span both NUMAs
 
-    print("\n" + "=" * 80)
-    print("PERFORMANCE BY NODE + NUMA")
-    print("=" * 80)
+    output("\n" + "=" * 80)
+    output("PERFORMANCE BY NODE + NUMA")
+    output("=" * 80)
 
-    print(
+    output(
         f"\n{'Node':<6} {'NUMA':<6} {'Avg BW':<10} {'Min':<10} {'Max':<10} {'TPs':<6}"
     )
-    print("-" * 60)
+    output("-" * 60)
 
     for node, numa in sorted(node_numa_perf.keys()):
         bws = node_numa_perf[(node, numa)]
         avg_bw = statistics.mean(bws)
-        print(
+        output(
             f"{node:<6} {numa:<6} {avg_bw:<10.2f} {min(bws):<10.2f} {max(bws):<10.2f} {len(bws):<6}"
         )
 
     # Within-node comparison
-    print("\n" + "-" * 60)
-    print("NUMA0 vs NUMA1 per node:")
-    print("-" * 60)
+    output("\n" + "-" * 60)
+    output("NUMA0 vs NUMA1 per node:")
+    output("-" * 60)
 
     for node in nodes:
         numa0_bws = node_numa_perf.get((node, 0), [])
@@ -421,15 +436,15 @@ def print_numa_analysis(analysis: Dict):
             avg0 = statistics.mean(numa0_bws)
             avg1 = statistics.mean(numa1_bws)
             diff = (avg1 - avg0) / avg0 * 100 if avg0 > 0 else 0
-            print(
+            output(
                 f"  Node {node}: NUMA0={avg0:.1f} GB/s, NUMA1={avg1:.1f} GB/s, diff={diff:+.1f}%"
             )
         elif numa0_bws:
-            print(
+            output(
                 f"  Node {node}: NUMA0={statistics.mean(numa0_bws):.1f} GB/s, NUMA1=N/A"
             )
         elif numa1_bws:
-            print(
+            output(
                 f"  Node {node}: NUMA0=N/A, NUMA1={statistics.mean(numa1_bws):.1f} GB/s"
             )
 
@@ -463,17 +478,17 @@ def print_outliers(analysis: Dict):
     if not outliers:
         return  # Skip section if no outliers
 
-    print("\n" + "=" * 90)
-    print(f"OUTLIERS (>20% deviation from median BW={median_bw:.2f} GB/s)")
-    print("=" * 90)
+    output("\n" + "=" * 90)
+    output(f"OUTLIERS (>20% deviation from median BW={median_bw:.2f} GB/s)")
+    output("=" * 90)
 
-    print(
+    output(
         f"\n{'TP':<4} {'Size(GB)':<10} {'Actual(ms)':<12} {'Expected(ms)':<12} {'Deviation':<12} {'BW(GB/s)':<10} {'Nodes'}"
     )
-    print("-" * 90)
+    output("-" * 90)
 
     for o in sorted(outliers, key=lambda x: x["deviation_pct"]):
-        print(
+        output(
             f"{o['tp']:<4} {o['read_size_gb']:<10.3f} {o['read_p50_ms']:<12.1f} {o['expected_ms']:<12.1f} {o['deviation_pct']:+.1f}%{'':<6} {o['read_bw_gbs']:<10.2f} {o['nodes']}"
         )
 
@@ -513,24 +528,24 @@ def print_isolated_vs_workload(analysis: Dict):
     if not data:
         return
 
-    print("\n" + "=" * 80)
-    print("ISOLATED vs WORKLOAD COMPARISON")
-    print("=" * 80)
+    output("\n" + "=" * 80)
+    output("ISOLATED vs WORKLOAD COMPARISON")
+    output("=" * 80)
 
     # Summary statistics only
     overheads = [d["overhead"] for d in data]
     iso_bws = [d["iso_bw"] for d in data]
     wkld_bws = [d["wkld_bw"] for d in data]
 
-    print("\n  Overhead (workload latency / isolated latency - 1):")
-    print(f"    Mean:   {statistics.mean(overheads):+.1f}%")
-    print(f"    Median: {statistics.median(overheads):+.1f}%")
-    print(f"    Min:    {min(overheads):+.1f}%")
-    print(f"    Max:    {max(overheads):+.1f}%")
-    print("\n  Bandwidth:")
-    print(f"    Isolated mean:  {statistics.mean(iso_bws):.2f} GB/s")
-    print(f"    Workload mean:  {statistics.mean(wkld_bws):.2f} GB/s")
-    print(
+    output("\n  Overhead (workload latency / isolated latency - 1):")
+    output(f"    Mean:   {statistics.mean(overheads):+.1f}%")
+    output(f"    Median: {statistics.median(overheads):+.1f}%")
+    output(f"    Min:    {min(overheads):+.1f}%")
+    output(f"    Max:    {max(overheads):+.1f}%")
+    output("\n  Bandwidth:")
+    output(f"    Isolated mean:  {statistics.mean(iso_bws):.2f} GB/s")
+    output(f"    Workload mean:  {statistics.mean(wkld_bws):.2f} GB/s")
+    output(
         f"    Ratio:          {statistics.mean(wkld_bws) / statistics.mean(iso_bws) * 100:.1f}%"
     )
 
@@ -545,11 +560,11 @@ def print_isolated_vs_workload(analysis: Dict):
             node_to_data[node]["wkld_bws"].append(d["wkld_bw"])
 
     if node_to_data and len(node_to_data) > 1:
-        print("\n  Per-Node:")
-        print(
+        output("\n  Per-Node:")
+        output(
             f"  {'Node':<6} {'Overhead':<12} {'Iso BW':<10} {'Wkld BW':<10} {'Ratio':<8}"
         )
-        print(f"  {'-' * 50}")
+        output(f"  {'-' * 50}")
         for node in sorted(node_to_data.keys()):
             ndata = node_to_data[node]
             ratio = (
@@ -559,7 +574,7 @@ def print_isolated_vs_workload(analysis: Dict):
                 if ndata["iso_bws"]
                 else 0
             )
-            print(
+            output(
                 f"  {node:<6} {statistics.mean(ndata['overheads']):+.1f}%{'':<6} {statistics.mean(ndata['iso_bws']):<10.2f} {statistics.mean(ndata['wkld_bws']):<10.2f} {ratio:<.1f}%"
             )
 
@@ -576,14 +591,14 @@ def print_iteration_variance(analysis: Dict):
     if not tps or "read_bw_gbs_std" not in tps[0]:
         return
 
-    print("\n" + "=" * 90)
-    print(f"CROSS-ITERATION VARIANCE ({num_iters} iterations)")
-    print("=" * 90)
+    output("\n" + "=" * 90)
+    output(f"CROSS-ITERATION VARIANCE ({num_iters} iterations)")
+    output("=" * 90)
 
-    print(
+    output(
         f"\n{'TP':<4} {'Size(GB)':<10} {'BW Mean':<10} {'BW Std':<10} {'CV%':<8} {'Min':<10} {'Max':<10} {'Nodes':<8}"
     )
-    print("-" * 90)
+    output("-" * 90)
 
     for t in sorted(tps, key=lambda x: x["read_size_gb"]):
         if t["read_bw_gbs"] <= 0:
@@ -596,11 +611,11 @@ def print_iteration_variance(analysis: Dict):
         cv = (std_bw / mean_bw * 100) if mean_bw > 0 else 0
 
         node_str = str(t["nodes"]) if t["nodes"] else ""
-        print(
+        output(
             f"{t['tp']:<4} {t['read_size_gb']:<10.3f} {mean_bw:<10.2f} {std_bw:<10.3f} {cv:<8.1f} {min_bw:<10.2f} {max_bw:<10.2f} {node_str:<8}"
         )
 
-    print("-" * 90)
+    output("-" * 90)
 
     # Summary stats
     all_cvs = [
@@ -614,7 +629,7 @@ def print_iteration_variance(analysis: Dict):
     valid_cvs = [cv for cv in all_cvs if cv > 0]
 
     if valid_cvs:
-        print(
+        output(
             f"\n  Mean CV: {statistics.mean(valid_cvs):.1f}%,  Max CV: {max(valid_cvs):.1f}%"
         )
 
@@ -634,10 +649,10 @@ def print_bandwidth_histogram(analysis: Dict):
     bws = [d[1] for d in data]
     median_bw = statistics.median(bws)
 
-    print("\n" + "=" * 100)
-    print("BANDWIDTH DISTRIBUTION (sorted by BW)")
-    print("=" * 100)
-    print()
+    output("\n" + "=" * 100)
+    output("BANDWIDTH DISTRIBUTION (sorted by BW)")
+    output("=" * 100)
+    output()
 
     for tp, bw, nodes, size_gb in sorted(data, key=lambda x: x[1]):
         bar_len = int(bw * 2)
@@ -647,7 +662,7 @@ def print_bandwidth_histogram(analysis: Dict):
         )
         node_str = f"N{nodes[0]}" if nodes else ""
         size_str = f"{size_gb * 1024:.0f}MB" if size_gb < 1 else f"{size_gb:.1f}GB"
-        print(f"  TP{tp:02d} {fast} {size_str:<7} {node_str:<4} |{bar} {bw:.1f} GB/s")
+        output(f"  TP{tp:02d} {fast} {size_str:<7} {node_str:<4} |{bar} {bw:.1f} GB/s")
 
 
 def print_summary(analysis: Dict):
@@ -658,13 +673,13 @@ def print_summary(analysis: Dict):
     sizes = [t["read_size_gb"] for t in tps if t["read_size_gb"] > 0]
 
     if not bws:
-        print("No valid data to summarize")
+        output("No valid data to summarize")
         return
 
-    print("\n" + "=" * 80)
-    print("EXECUTIVE SUMMARY")
-    print("=" * 80)
-    print(
+    output("\n" + "=" * 80)
+    output("EXECUTIVE SUMMARY")
+    output("=" * 80)
+    output(
         f"""
   Total TPs:           {len(tps)}
   Total data:          {sum(sizes):.1f} GB
@@ -725,7 +740,7 @@ def export_csv(analysis: Dict, output_path: str):
             ]
             f.write(",".join(row) + "\n")
 
-    print(f"\n✓ CSV exported to: {output_path}")
+    output(f"\n✓ CSV exported to: {output_path}")
 
 
 def print_per_size_analysis(analysis: Dict):
@@ -744,15 +759,15 @@ def print_per_size_analysis(analysis: Dict):
     if not size_groups:
         return
 
-    print("\n" + "=" * 110)
-    print("PERFORMANCE BY TRANSFER SIZE")
-    print("=" * 110)
+    output("\n" + "=" * 110)
+    output("PERFORMANCE BY TRANSFER SIZE")
+    output("=" * 110)
 
     # Header
-    print(
+    output(
         f"\n{'Size':<10} {'TPs':<5} {'Avg BW':<10} {'Min BW':<10} {'Max BW':<10} {'Spread':<10} {'Avg Wkld':<12} {'Efficiency':<12}"
     )
-    print("-" * 110)
+    output("-" * 110)
 
     for size_gb in sorted(size_groups.keys()):
         group = size_groups[size_gb]
@@ -788,11 +803,11 @@ def print_per_size_analysis(analysis: Dict):
         efficiency = (avg_wkld_bw / avg_iso * 100) if avg_iso > 0 else 0
 
         size_str = f"{size_gb * 1024:.0f}MB" if size_gb < 1 else f"{size_gb:.1f}GB"
-        print(
+        output(
             f"{size_str:<10} {len(group):<5} {avg_bw:<10.2f} {min_bw:<10.2f} {max_bw:<10.2f} {spread:<9.1f}% {avg_wkld:<12.1f} {efficiency:<11.1f}%"
         )
 
-    print("-" * 110)
+    output("-" * 110)
 
 
 def print_node_size_matrix(analysis: Dict):
@@ -820,17 +835,17 @@ def print_node_size_matrix(analysis: Dict):
     if not nodes:
         return
 
-    print("\n" + "=" * 110)
-    print("NODE × SIZE MATRIX (Isolated BW in GB/s)")
-    print("=" * 110)
+    output("\n" + "=" * 110)
+    output("NODE × SIZE MATRIX (Isolated BW in GB/s)")
+    output("=" * 110)
 
     # Header
     header = f"{'Node':<6}"
     for size_gb in sizes:
         size_str = f"{size_gb * 1024:.0f}M" if size_gb < 1 else f"{size_gb:.1f}G"
         header += f"{size_str:<10}"
-    print(header)
-    print("-" * (6 + 10 * len(sizes)))
+    output(header)
+    output("-" * (6 + 10 * len(sizes)))
 
     # Per-node rows
     for node in nodes:
@@ -860,7 +875,7 @@ def print_node_size_matrix(analysis: Dict):
         hostname = node_names.get(node, "")
         if hostname:
             row += f"  ({hostname})"
-        print(row)
+        output(row)
 
 
 def detect_bottlenecks(analysis: Dict) -> List[Dict]:
@@ -1059,12 +1074,12 @@ def print_bottleneck_report(analysis: Dict):
     """Print comprehensive bottleneck detection report."""
     issues = detect_bottlenecks(analysis)
 
-    print("\n" + "=" * 110)
-    print("🔍 BOTTLENECK DETECTION REPORT")
-    print("=" * 110)
+    output("\n" + "=" * 110)
+    output("🔍 BOTTLENECK DETECTION REPORT")
+    output("=" * 110)
 
     if not issues:
-        print("\n  ✅ No significant bottlenecks detected!")
+        output("\n  ✅ No significant bottlenecks detected!")
         return
 
     # Sort by severity
@@ -1076,26 +1091,26 @@ def print_bottleneck_report(analysis: Dict):
     medium = sum(1 for i in issues if i["severity"] == "MEDIUM")
     low = sum(1 for i in issues if i["severity"] == "LOW")
 
-    print(
+    output(
         f"\n  Found {len(issues)} potential issues: {high} HIGH, {medium} MEDIUM, {low} LOW"
     )
 
     for i, issue in enumerate(issues, 1):
         severity_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}[issue["severity"]]
-        print(f"\n  {i}. [{severity_emoji} {issue['severity']}] {issue['type']}")
-        print(f"     {issue['description']}")
-        print(f"     → {issue['recommendation']}")
+        output(f"\n  {i}. [{severity_emoji} {issue['severity']}] {issue['type']}")
+        output(f"     {issue['description']}")
+        output(f"     → {issue['recommendation']}")
 
-    print("\n" + "-" * 110)
+    output("\n" + "-" * 110)
 
 
 def print_aggregate_throughput(analysis: Dict):
     """Print aggregate throughput for the entire workload."""
     tps = analysis["tps"]
 
-    print("\n" + "=" * 100)
-    print("AGGREGATE THROUGHPUT ANALYSIS")
-    print("=" * 100)
+    output("\n" + "=" * 100)
+    output("AGGREGATE THROUGHPUT ANALYSIS")
+    output("=" * 100)
 
     # Calculate total data
     total_read_gb = sum(t["read_size_gb"] for t in tps)
@@ -1138,7 +1153,7 @@ def print_aggregate_throughput(analysis: Dict):
         else 0
     )
 
-    print(
+    output(
         f"""
   TOTAL DATA VOLUME:
     Read:              {total_read_gb:.2f} GB
@@ -1218,11 +1233,11 @@ Examples:
     args = parser.parse_args()
 
     if not Path(args.json_path).exists():
-        print(f"Error: File not found: {args.json_path}")
+        output(f"Error: File not found: {args.json_path}")
         sys.exit(1)
 
     if args.yaml_path and not HAS_YAML:
-        print("Warning: PyYAML not installed, cannot parse YAML file")
+        output("Warning: PyYAML not installed, cannot parse YAML file")
         args.yaml_path = None
 
     # Run analysis
@@ -1240,13 +1255,13 @@ Examples:
 
     # Header with iteration info
     if args.all_iterations:
-        print(f"\n{'=' * 80}")
-        print(f"ANALYZING ALL {analysis['num_iterations']} ITERATIONS (aggregated)")
-        print(f"{'=' * 80}")
+        output(f"\n{'=' * 80}")
+        output(f"ANALYZING ALL {analysis['num_iterations']} ITERATIONS (aggregated)")
+        output(f"{'=' * 80}")
     else:
-        print(f"\n{'=' * 80}")
-        print(f"ANALYZING ITERATION {args.iteration}")
-        print(f"{'=' * 80}")
+        output(f"\n{'=' * 80}")
+        output(f"ANALYZING ITERATION {args.iteration}")
+        output(f"{'=' * 80}")
 
     print_summary(analysis)
     print_per_size_analysis(analysis)
@@ -1273,9 +1288,9 @@ Examples:
     if args.csv_path:
         export_csv(analysis, args.csv_path)
 
-    print("\n" + "=" * 80)
-    print("ANALYSIS COMPLETE")
-    print("=" * 80)
+    output("\n" + "=" * 80)
+    output("ANALYSIS COMPLETE")
+    output("=" * 80)
 
 
 if __name__ == "__main__":

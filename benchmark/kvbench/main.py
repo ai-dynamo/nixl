@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -426,6 +426,12 @@ def kvcache_command(model, model_config, **kwargs):
     default=30,
     help="Number of warmup iterations per TP (default: 30)",
 )
+@click.option(
+    "--isolation-iters",
+    type=int,
+    default=10,
+    help="Number of isolation benchmark iterations per TP (default: 10, was 30)",
+)
 def sequential_ct_perftest(
     config_file,
     verify_buffers,
@@ -435,6 +441,7 @@ def sequential_ct_perftest(
     storage_backend,
     storage_direct_io,
     warmup_iters,
+    isolation_iters,
 ):
     """Run sequential custom traffic performance test using patterns defined in YAML config."""
     from test.sequential_custom_traffic_perftest import SequentialCTPerftest
@@ -560,6 +567,7 @@ def sequential_ct_perftest(
     perftest = SequentialCTPerftest(
         patterns,
         warmup_iters=warmup_iters,
+        n_isolation_iters=isolation_iters,
         storage_path=storage_base_path if has_storage else None,
         storage_nixl_backend=storage_backend if has_storage else None,
         storage_direct_io=use_direct_io if has_storage else False,
