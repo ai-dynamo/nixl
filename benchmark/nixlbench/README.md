@@ -462,9 +462,10 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 
 #### Storage Backend Options (GDS, GDS_MT, POSIX, HF3FS, OBJ)
 ```
---filepath PATH            # File path for storage operations
---num_files NUM            # Number of files used by benchmark (default: 1)
---storage_enable_direct    # Enable direct I/O for storage operations
+--filepath PATH                        # File path for storage operations
+--num_files NUM                        # Number of files used by benchmark (default: 1)
+--storage_enable_direct                # Enable direct I/O for storage operations
+--recreate_xfer_req_per_iteration      # Recreate transfer request on every iteration (default: false, auto-enabled for GUSLI)
 ```
 
 #### Backend-Specific Options
@@ -690,6 +691,7 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 **Notes**:
 - Number of devices in `--device_list` must match `--num_initiator_dev` and `--num_target_dev`
 - Direct I/O is automatically enabled for GUSLI (no need to specify `--storage_enable_direct`)
+- Transfer request recreation per iteration is automatically enabled for GUSLI (can be overridden with `--recreate_xfer_req_per_iteration=false`)
 
 ### Worker Types
 

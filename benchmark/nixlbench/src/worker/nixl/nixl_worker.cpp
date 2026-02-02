@@ -238,6 +238,14 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             xferBenchConfig::storage_enable_direct = true;
         }
 
+        // GUSLI backend requires per-iteration request recreation - enable it automatically
+        if (!xferBenchConfig::recreate_xfer_req_per_iteration) {
+            std::cout
+                << "GUSLI backend: Automatically enabling recreate_xfer_req_per_iteration"
+                << std::endl;
+            xferBenchConfig::recreate_xfer_req_per_iteration = true;
+        }
+
         // Parse and configure GUSLI devices from general device_list parameter
         int expected_num_devices =
             isInitiator() ? xferBenchConfig::num_initiator_dev : xferBenchConfig::num_target_dev;
@@ -1109,7 +1117,7 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
 }
 
 // Execute transfers with configurable request lifecycle behavior
-// recreate_per_iteration: true for GUSLI (bug workaround), false for standard backends
+// recreate_per_iteration: if true, creates/releases transfer request on each iteration
 static int
 execTransferIterations(nixlAgent *agent,
                        const nixl_xfer_op_t op,
@@ -1139,7 +1147,7 @@ execTransferIterations(nixlAgent *agent,
     // Execute transfer iterations
     // Branch prediction hint: most backends don't recreate per iteration
     if (__builtin_expect(recreate_per_iteration, 0)) {
-        // GUSLI path: Create/execute/release per iteration
+        // Per-iteration recreation path: Create/execute/release per iteration
         for (int i = 0; i < num_iter; ++i) {
             nixl_status_t create_rc =
                 agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
@@ -1226,8 +1234,8 @@ execTransfer(nixlAgent *agent,
         }
 
         // Execute transfers
-        // GUSLI requires per-iteration request creation due to library bug
-        const bool recreate_per_iteration = (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
+        // Use configured recreate_xfer_req_per_iteration setting
+        const bool recreate_per_iteration = xferBenchConfig::recreate_xfer_req_per_iteration;
         const int result = execTransferIterations(agent,
                                                   op,
                                                   local_desc,

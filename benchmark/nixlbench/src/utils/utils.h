@@ -161,6 +161,7 @@ public:
     static int num_files;
     static std::string posix_api_type;
     static bool storage_enable_direct;
+    static bool recreate_xfer_req_per_iteration;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
     static int gds_mt_num_threads;

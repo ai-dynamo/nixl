@@ -128,6 +128,10 @@ const std::vector<xferBenchParamInfo> xbench_params = {
     NB_ARG_STRING(filenames, "", "Comma-separated filenames for storage operations"),
     NB_ARG_INT32(num_files, 1, "Number of files used by benchmark"),
     NB_ARG_BOOL(storage_enable_direct, false, "Enable direct I/O for storage operations"),
+    NB_ARG_BOOL(recreate_xfer_req_per_iteration,
+                false,
+                "Recreate transfer request on every iteration (default: false, automatically set to "
+                "true for GUSLI backend unless explicitly specified)"),
 
     // GDS options - only used when backend is GDS
     NB_ARG_INT32(gds_batch_pool_size,
@@ -254,6 +258,7 @@ std::string xferBenchConfig::posix_api_type = "";
 std::string xferBenchConfig::filepath = "";
 std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
+bool xferBenchConfig::recreate_xfer_req_per_iteration = false;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
 std::string xferBenchConfig::obj_secret_key = "";
