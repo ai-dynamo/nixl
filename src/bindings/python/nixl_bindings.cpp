@@ -696,7 +696,8 @@ PYBIND11_MODULE(_bindings, m) {
             py::call_guard<py::gil_scoped_release>())
         .def(
             "getXferStatusList",
-            [](nixlAgent &agent, uintptr_t reqh) -> std::pair<nixl_status_t, std::vector<nixl_status_t>> {
+            [](nixlAgent &agent,
+               uintptr_t reqh) -> std::pair<nixl_status_t, std::vector<nixl_status_t>> {
                 std::vector<nixl_status_t> entry_status;
                 nixl_status_t ret = agent.getXferStatus((nixlXferReqH *)reqh, entry_status);
                 // Don't throw for in-progress statuses
@@ -711,7 +712,7 @@ PYBIND11_MODULE(_bindings, m) {
                 Get transfer status with per-entry status codes.
 
                 Returns a tuple of (overall_status, entry_status_list) where:
-                - overall_status: NIXL_SUCCESS (0), NIXL_IN_PROG (1), 
+                - overall_status: NIXL_SUCCESS (0), NIXL_IN_PROG (1),
                   NIXL_IN_PROG_WITH_ERR (2), or error code
                 - entry_status_list: List of status codes for each entry
 

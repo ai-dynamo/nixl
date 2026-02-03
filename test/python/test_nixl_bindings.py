@@ -238,12 +238,17 @@ def test_get_xfer_status_list():
     logger.info("Initial entry status: %s", entry_status)
 
     # Wait for completion using getXferStatusList
-    while overall_status == nixl.NIXL_IN_PROG or overall_status == nixl.NIXL_IN_PROG_WITH_ERR:
+    while (
+        overall_status == nixl.NIXL_IN_PROG
+        or overall_status == nixl.NIXL_IN_PROG_WITH_ERR
+    ):
         overall_status, entry_status = agent1.getXferStatusList(handle)
         logger.info("Polling - overall: %s, entries: %s", overall_status, entry_status)
 
     # Verify completion
-    assert overall_status == nixl.NIXL_SUCCESS, f"Expected success but got {overall_status}"
+    assert (
+        overall_status == nixl.NIXL_SUCCESS
+    ), f"Expected success but got {overall_status}"
 
     # Verify entry count matches number of descriptors
     # Note: Some backends may not support per-entry status
