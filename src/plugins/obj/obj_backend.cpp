@@ -313,11 +313,7 @@ nixlObjEngine::postXfer(const nixl_xfer_op_t &operation,
         }
 
         auto status_promise = std::make_shared<std::promise<nixl_status_t>>();
-<<<<<<< HEAD
-        req_h->statusFutures_.push_back(status_promise->get_future());
-=======
         req_h->statusFutures_.push_back(status_promise->get_future().share());
->>>>>>> Obj (S3): Implement checkXferList with shared_future pattern
 
         uintptr_t data_ptr = local_desc.addr;
         size_t data_len = local_desc.len;

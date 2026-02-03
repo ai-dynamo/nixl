@@ -21,64 +21,112 @@
 
 #include "common.h"
 #include "nixl.h"
-#include "plugin_manager.h"
+#include "nixl_types.h"
 #include "mocks/gmock_engine.h"
 
 namespace gtest {
 namespace agent {
 
+static constexpr const char *local_agent_name = "LocalAgent";
+static constexpr const char *remote_agent_name = "RemoteAgent";
+static constexpr size_t bufLen = 256;
+
+class agentHelperForXferStatus {
+protected:
+    testing::NiceMock<mocks::GMockBackendEngine> gmock_engine_;
+    std::unique_ptr<nixlAgent> agent_;
+
+public:
+    agentHelperForXferStatus(const std::string &name)
+        : agent_(std::make_unique<nixlAgent>(name, nixlAgentConfig(true))) {}
+
+    ~agentHelperForXferStatus() {
+        agent_.reset();
+    }
+
+    nixlAgent *getAgent() const {
+        return agent_.get();
+    }
+
+    const mocks::GMockBackendEngine &getGMockEngine() const {
+        return gmock_engine_;
+    }
+
+    nixl_status_t createBackendWithGMock(nixl_b_params_t &params, nixlBackendH *&backend) {
+        gmock_engine_.SetToParams(params);
+        return agent_->createBackend(GetMockBackendName(), params, backend);
+    }
+
+    nixl_status_t getAndLoadRemoteMd(nixlAgent *remote_agent, std::string &remote_agent_name_out) {
+        std::string remote_metadata;
+        nixl_status_t status = remote_agent->getLocalMD(remote_metadata);
+        if (status != NIXL_SUCCESS) return status;
+        return agent_->loadRemoteMD(remote_metadata, remote_agent_name_out);
+    }
+};
+
 class getXferStatusListTest : public ::testing::Test {
 protected:
-    static constexpr const char *local_agent_name = "LocalAgent";
-    static constexpr const char *remote_agent_name = "RemoteAgent";
-    static constexpr size_t bufLen = 256;
-
-    std::unique_ptr<nixlAgent> local_agent_;
-    std::unique_ptr<nixlAgent> remote_agent_;
-    testing::NiceMock<mocks::GMockBackendEngine> gmock_engine_;
+    std::unique_ptr<agentHelperForXferStatus> local_agent_helper_;
+    std::unique_ptr<agentHelperForXferStatus> remote_agent_helper_;
+    nixlAgent *local_agent_;
+    nixlAgent *remote_agent_;
 
     void SetUp() override {
-        local_agent_ = std::make_unique<nixlAgent>(local_agent_name, nixlAgentConfig(true));
-        remote_agent_ = std::make_unique<nixlAgent>(remote_agent_name, nixlAgentConfig(true));
+        local_agent_helper_ = std::make_unique<agentHelperForXferStatus>(local_agent_name);
+        remote_agent_helper_ = std::make_unique<agentHelperForXferStatus>(remote_agent_name);
+        local_agent_ = local_agent_helper_->getAgent();
+        remote_agent_ = remote_agent_helper_->getAgent();
     }
 
     void TearDown() override {
-        local_agent_.reset();
-        remote_agent_.reset();
+        local_agent_helper_.reset();
+        remote_agent_helper_.reset();
     }
 };
 
 // Test that getXferStatus with entry_status returns NOT_SUPPORTED for backends without support
 TEST_F(getXferStatusListTest, ReturnsNotSupportedForDefaultBackend) {
-    // Create backend with mock
-    nixl_b_params_t params;
-    gmock_engine_.SetToParams(params);
-    nixlBackendH *backend = nullptr;
-    ASSERT_EQ(local_agent_->createBackend(GetMockBackendName(), params, backend), NIXL_SUCCESS);
-    ASSERT_NE(backend, nullptr);
+    // Create backends on BOTH agents
+    nixl_b_params_t local_params, remote_params;
+    nixlBackendH *local_backend, *remote_backend;
+    ASSERT_EQ(local_agent_helper_->createBackendWithGMock(local_params, local_backend), NIXL_SUCCESS);
+    ASSERT_EQ(remote_agent_helper_->createBackendWithGMock(remote_params, remote_backend), NIXL_SUCCESS);
 
-    // Exchange metadata
-    std::string remote_metadata;
-    ASSERT_EQ(remote_agent_->getLocalMD(remote_metadata), NIXL_SUCCESS);
-    std::string remote_agent_name_out;
-    ASSERT_EQ(local_agent_->loadRemoteMD(remote_metadata, remote_agent_name_out), NIXL_SUCCESS);
-
-    // Register memory
+    // Register memory on both agents
     std::vector<char> local_buf(bufLen);
     std::vector<char> remote_buf(bufLen);
     nixlBlobDesc local_desc(reinterpret_cast<uintptr_t>(local_buf.data()), bufLen, 0);
     nixlBlobDesc remote_desc(reinterpret_cast<uintptr_t>(remote_buf.data()), bufLen, 0);
 
-    ASSERT_EQ(local_agent_->registerMem({{local_desc, NIXL_CPU}}), NIXL_SUCCESS);
-    ASSERT_EQ(remote_agent_->registerMem({{remote_desc, NIXL_CPU}}), NIXL_SUCCESS);
+    nixl_reg_dlist_t local_reg_dlist(DRAM_SEG);
+    local_reg_dlist.addDesc(local_desc);
+    nixl_reg_dlist_t remote_reg_dlist(DRAM_SEG);
+    remote_reg_dlist.addDesc(remote_desc);
+
+    nixl_opt_args_t local_extra_params, remote_extra_params;
+    local_extra_params.backends.push_back(local_backend);
+    remote_extra_params.backends.push_back(remote_backend);
+
+    ASSERT_EQ(local_agent_->registerMem(local_reg_dlist, &local_extra_params), NIXL_SUCCESS);
+    ASSERT_EQ(remote_agent_->registerMem(remote_reg_dlist, &remote_extra_params), NIXL_SUCCESS);
+
+    // Exchange metadata
+    std::string remote_agent_name_out;
+    ASSERT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, remote_agent_name_out), NIXL_SUCCESS);
 
     // Create transfer request
+    nixl_xfer_dlist_t local_xfer_dlist(DRAM_SEG);
+    local_xfer_dlist.addDesc(local_desc);
+    nixl_xfer_dlist_t remote_xfer_dlist(DRAM_SEG);
+    remote_xfer_dlist.addDesc(remote_desc);
+
     nixlXferReqH *req_hndl = nullptr;
     ASSERT_EQ(local_agent_->createXferReq(
         NIXL_WRITE,
-        {{local_desc, NIXL_CPU}},
-        {{remote_desc, NIXL_CPU}},
-        remote_agent_name,
+        local_xfer_dlist,
+        remote_xfer_dlist,
+        remote_agent_name_out,
         req_hndl), NIXL_SUCCESS);
     ASSERT_NE(req_hndl, nullptr);
 
@@ -94,41 +142,52 @@ TEST_F(getXferStatusListTest, ReturnsNotSupportedForDefaultBackend) {
 
     // Cleanup
     ASSERT_EQ(local_agent_->releaseXferReq(req_hndl), NIXL_SUCCESS);
-    ASSERT_EQ(local_agent_->deregisterMem({{local_desc, NIXL_CPU}}), NIXL_SUCCESS);
-    ASSERT_EQ(remote_agent_->deregisterMem({{remote_desc, NIXL_CPU}}), NIXL_SUCCESS);
+    ASSERT_EQ(local_agent_->deregisterMem(local_reg_dlist, &local_extra_params), NIXL_SUCCESS);
+    ASSERT_EQ(remote_agent_->deregisterMem(remote_reg_dlist, &remote_extra_params), NIXL_SUCCESS);
 }
 
 // Test that standard getXferStatus still works correctly
 TEST_F(getXferStatusListTest, StandardGetXferStatusStillWorks) {
-    // Create backend with mock
-    nixl_b_params_t params;
-    gmock_engine_.SetToParams(params);
-    nixlBackendH *backend = nullptr;
-    ASSERT_EQ(local_agent_->createBackend(GetMockBackendName(), params, backend), NIXL_SUCCESS);
-    ASSERT_NE(backend, nullptr);
+    // Create backends on BOTH agents
+    nixl_b_params_t local_params, remote_params;
+    nixlBackendH *local_backend, *remote_backend;
+    ASSERT_EQ(local_agent_helper_->createBackendWithGMock(local_params, local_backend), NIXL_SUCCESS);
+    ASSERT_EQ(remote_agent_helper_->createBackendWithGMock(remote_params, remote_backend), NIXL_SUCCESS);
 
-    // Exchange metadata
-    std::string remote_metadata;
-    ASSERT_EQ(remote_agent_->getLocalMD(remote_metadata), NIXL_SUCCESS);
-    std::string remote_agent_name_out;
-    ASSERT_EQ(local_agent_->loadRemoteMD(remote_metadata, remote_agent_name_out), NIXL_SUCCESS);
-
-    // Register memory
+    // Register memory on both agents
     std::vector<char> local_buf(bufLen);
     std::vector<char> remote_buf(bufLen);
     nixlBlobDesc local_desc(reinterpret_cast<uintptr_t>(local_buf.data()), bufLen, 0);
     nixlBlobDesc remote_desc(reinterpret_cast<uintptr_t>(remote_buf.data()), bufLen, 0);
 
-    ASSERT_EQ(local_agent_->registerMem({{local_desc, NIXL_CPU}}), NIXL_SUCCESS);
-    ASSERT_EQ(remote_agent_->registerMem({{remote_desc, NIXL_CPU}}), NIXL_SUCCESS);
+    nixl_reg_dlist_t local_reg_dlist(DRAM_SEG);
+    local_reg_dlist.addDesc(local_desc);
+    nixl_reg_dlist_t remote_reg_dlist(DRAM_SEG);
+    remote_reg_dlist.addDesc(remote_desc);
+
+    nixl_opt_args_t local_extra_params, remote_extra_params;
+    local_extra_params.backends.push_back(local_backend);
+    remote_extra_params.backends.push_back(remote_backend);
+
+    ASSERT_EQ(local_agent_->registerMem(local_reg_dlist, &local_extra_params), NIXL_SUCCESS);
+    ASSERT_EQ(remote_agent_->registerMem(remote_reg_dlist, &remote_extra_params), NIXL_SUCCESS);
+
+    // Exchange metadata
+    std::string remote_agent_name_out;
+    ASSERT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, remote_agent_name_out), NIXL_SUCCESS);
 
     // Create transfer request
+    nixl_xfer_dlist_t local_xfer_dlist(DRAM_SEG);
+    local_xfer_dlist.addDesc(local_desc);
+    nixl_xfer_dlist_t remote_xfer_dlist(DRAM_SEG);
+    remote_xfer_dlist.addDesc(remote_desc);
+
     nixlXferReqH *req_hndl = nullptr;
     ASSERT_EQ(local_agent_->createXferReq(
         NIXL_WRITE,
-        {{local_desc, NIXL_CPU}},
-        {{remote_desc, NIXL_CPU}},
-        remote_agent_name,
+        local_xfer_dlist,
+        remote_xfer_dlist,
+        remote_agent_name_out,
         req_hndl), NIXL_SUCCESS);
     ASSERT_NE(req_hndl, nullptr);
 
@@ -141,8 +200,8 @@ TEST_F(getXferStatusListTest, StandardGetXferStatusStillWorks) {
 
     // Cleanup
     ASSERT_EQ(local_agent_->releaseXferReq(req_hndl), NIXL_SUCCESS);
-    ASSERT_EQ(local_agent_->deregisterMem({{local_desc, NIXL_CPU}}), NIXL_SUCCESS);
-    ASSERT_EQ(remote_agent_->deregisterMem({{remote_desc, NIXL_CPU}}), NIXL_SUCCESS);
+    ASSERT_EQ(local_agent_->deregisterMem(local_reg_dlist, &local_extra_params), NIXL_SUCCESS);
+    ASSERT_EQ(remote_agent_->deregisterMem(remote_reg_dlist, &remote_extra_params), NIXL_SUCCESS);
 }
 
 }  // namespace agent

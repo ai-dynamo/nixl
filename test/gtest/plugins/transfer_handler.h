@@ -97,6 +97,26 @@ public:
             EXPECT_TRUE(srcMem_[i]->checkIncreasing(LOCAL_BUF_BYTE + i));
     }
 
+    const nixl_meta_dlist_t&
+    getLocalMeta() const {
+        return *srcDescs_;
+    }
+
+    const nixl_meta_dlist_t&
+    getRemoteMeta() const {
+        return *dstDescs_;
+    }
+
+    std::shared_ptr<nixlBackendEngine>
+    getLocalEngine() const {
+        return srcBackendEngine_;
+    }
+
+    const std::string&
+    getRemoteAgentName() const {
+        return dstAgentName_;
+    }
+
 private:
     static constexpr uint8_t LOCAL_BUF_BYTE = 0x11;
     static constexpr uint8_t XFER_BUF_BYTE = 0x22;

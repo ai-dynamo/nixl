@@ -1172,6 +1172,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
 }
 
 
+nixl_status_t
 nixlAgent::getXferStatus (nixlXferReqH *req_hndl,
                           std::vector<nixl_status_t> &entry_status) const {
 

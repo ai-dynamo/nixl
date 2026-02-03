@@ -17,6 +17,7 @@ agent_unit_test_dep = declare_dependency(
     sources: [
         '../../mocks/gmock_engine.cpp',
         'agent.cpp',
+        'test_getXferStatusList_core.cpp',
     ],
     include_directories: [nixl_inc_dirs, gtest_inc_dirs],
     dependencies: [gmock_dep, nixl_common_dep],
