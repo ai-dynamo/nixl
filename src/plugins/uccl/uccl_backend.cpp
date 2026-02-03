@@ -477,7 +477,6 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
                          const nixl_opt_b_args_t *opt_args) const {
     nixlUcclReqH *uccl_handle;
     nixlUcclBackendMD *lmd;
-    nixlUcclBackendMD *rmd;
 
     NIXL_DEBUG << "UCCL PostXfer: " << operation << " remote_agent: " << remote_agent;
 
