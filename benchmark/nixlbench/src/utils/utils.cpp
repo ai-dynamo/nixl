@@ -82,7 +82,7 @@ const std::vector<xferBenchParamInfo> xbench_params = {
     NB_ARG_STRING(backend,
                   XFERBENCH_BACKEND_UCX,
                   "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
-                  "GUSLI] (only used with nixl worker)"),
+                  "GUSLI, AZURE_BLOB] (only used with nixl worker)"),
     NB_ARG_STRING(
         initiator_seg_type,
         XFERBENCH_SEG_TYPE_DRAM,
@@ -187,6 +187,10 @@ const std::vector<xferBenchParamInfo> xbench_params = {
         "Minimum object size (bytes) to use S3 CRT client for high-performance transfers. "
         "0 means CRT client is disabled (default: 0)"),
 
+    // AZURE BLOB options - only used when backend is AZURE_BLOB
+    NB_ARG_STRING(azure_blob_account_url, "", "Account URL for Azure Blob backend"),
+    NB_ARG_STRING(azure_blob_container_name, "", "Container name for Azure Blob backend"),
+
     // HF3FS options - only used when backend is HF3FS
     NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool"),
 
@@ -266,6 +270,8 @@ std::string xferBenchConfig::obj_endpoint_override = "";
 std::string xferBenchConfig::obj_req_checksum = "";
 std::string xferBenchConfig::obj_ca_bundle = "";
 size_t xferBenchConfig::obj_crt_min_limit = 0;
+std::string xferBenchConfig::azure_blob_account_url = "";
+std::string xferBenchConfig::azure_blob_container_name = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
@@ -470,6 +476,12 @@ xferBenchConfig::loadParams(cxxopts::ParseResult &result) {
                 return -1;
             }
         }
+
+        // Load AZURE_BLOB-specific configurations if backend is AZURE_BLOB
+        if (backend == XFERBENCH_BACKEND_AZURE_BLOB) {
+            azure_blob_account_url = NB_ARG(azure_blob_account_url);
+            azure_blob_container_name = NB_ARG(azure_blob_container_name);
+        }
     }
 
     initiator_seg_type = NB_ARG(initiator_seg_type);
@@ -608,7 +620,8 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ])", backend);
+        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB])",
+                    backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
@@ -650,6 +663,13 @@ xferBenchConfig::printConfig() {
                         obj_crt_min_limit > 0 ?
                             std::to_string(obj_crt_min_limit) + " (CRT enabled)" :
                             "0 (CRT disabled)");
+        }
+
+        if (backend == XFERBENCH_BACKEND_AZURE_BLOB) {
+            printOption("Azure Blob Storage account URL (--azure_blob_account_url=url)",
+                        azure_blob_account_url);
+            printOption("Azure Blob Storage container name (--azure_blob_container_name=name)",
+                        azure_blob_container_name);
         }
 
         if (xferBenchConfig::isStorageBackend()) {
@@ -724,8 +744,15 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
 }
+
+bool
+xferBenchConfig::isObjStorageBackend() {
+    return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
+};
 
 /**********
  * xferBench Utils
@@ -907,9 +934,9 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                         exit(EXIT_FAILURE);
                     }
                     is_allocated = true;
-                    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
-                        if (!getObjS3(iov.metaInfo)) {
-                            std::cerr << "Failed to get S3 object: " << iov.metaInfo << std::endl;
+                    if (xferBenchConfig::isObjStorageBackend()) {
+                        if (!xferBenchUtils::getObj(iov.metaInfo)) {
+                            std::cerr << "Failed to get object: " << iov.metaInfo << std::endl;
                             exit(EXIT_FAILURE);
                         }
                         int fd = open(iov.metaInfo.c_str(), O_RDONLY);
@@ -1167,31 +1194,51 @@ xferBenchUtils::buildAwsCredentials() {
 }
 
 bool
+xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+        return putObjS3(buffer_size, name);
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
+        return putObjAzure(buffer_size, name);
+    } else {
+        std::cerr << "Error: putObj called with unsupported object storage backend: "
+                  << xferBenchConfig::backend << std::endl;
+        return false;
+    }
+}
+
+bool
+xferBenchUtils::getObj(const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+        return getObjS3(name);
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
+        return getObjAzure(name);
+    } else {
+        std::cerr << "Error: getObj called with unsupported object storage backend: "
+                  << xferBenchConfig::backend << std::endl;
+        return false;
+    }
+}
+
+bool
+xferBenchUtils::rmObj(const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+        return rmObjS3(name);
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
+        return rmObjAzure(name);
+    } else {
+        std::cerr << "Error: rmObj called with unsupported object storage backend: "
+                  << xferBenchConfig::backend << std::endl;
+        return false;
+    }
+}
+
+bool
 xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
     std::string filename = "/tmp/" + name;
-    int fd = open(filename.c_str(), O_RDWR | O_CREAT, 0744);
+    int fd = createFile(buffer_size, filename);
     if (fd < 0) {
-        std::cerr << "Failed to open file: " << name << " with error: " << strerror(errno)
-                  << std::endl;
         return false;
     }
-    // Create buffer filled with XFERBENCH_TARGET_BUFFER_ELEMENT
-    void *buf = (void *)malloc(buffer_size);
-    if (!buf) {
-        std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
-        close(fd);
-        return false;
-    }
-    memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
-    int rc = pwrite(fd, buf, buffer_size, 0);
-    if (rc < 0) {
-        std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
-                  << std::endl;
-        free(buf);
-        close(fd);
-        return false;
-    }
-    free(buf);
 
     std::string bucket_name = xferBenchConfig::obj_bucket_name;
     if (bucket_name.empty()) {
@@ -1213,13 +1260,11 @@ xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
     if (result != 0) {
         std::cerr << "Failed to put S3 object " << name << " in bucket " << bucket_name
                   << " (exit code: " << result << ")" << std::endl;
-        close(fd);
-        unlink(filename.c_str());
+        cleanupFile(fd, filename);
         return false;
     }
 
-    close(fd);
-    unlink(filename.c_str());
+    cleanupFile(fd, filename);
     return true;
 }
 
@@ -1271,6 +1316,121 @@ xferBenchUtils::rmObjS3(const std::string &name) {
         return false;
     }
     return true;
+}
+
+int
+xferBenchUtils::createFile(size_t buffer_size, const std::string &filename) {
+    int fd = open(filename.c_str(), O_RDWR | O_CREAT, 0744);
+    if (fd < 0) {
+        std::cerr << "Failed to open file: " << filename << " with error: " << strerror(errno)
+                  << std::endl;
+        return -1;
+    }
+    // Create buffer filled with XFERBENCH_TARGET_BUFFER_ELEMENT
+    void *buf = (void *)malloc(buffer_size);
+    if (!buf) {
+        std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
+        close(fd);
+        return -1;
+    }
+    memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+    int rc = pwrite(fd, buf, buffer_size, 0);
+    if (rc < 0) {
+        std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
+                  << std::endl;
+        free(buf);
+        close(fd);
+        return -1;
+    }
+    free(buf);
+    return fd;
+}
+
+void
+xferBenchUtils::cleanupFile(const int fd, const std::string &filename) {
+    close(fd);
+    unlink(filename.c_str());
+}
+
+bool
+xferBenchUtils::putObjAzure(size_t buffer_size, const std::string &name) {
+    std::string filename = "/tmp/" + name;
+    int fd = createFile(buffer_size, filename);
+    if (fd < 0) {
+        return false;
+    }
+
+    std::string az_cli_params = buildCommonAzCliBlobParams(name);
+    if (az_cli_params.empty()) {
+        return false;
+    }
+    std::string full_cmd = "az storage blob upload " + az_cli_params + " -f " + filename;
+    std::cout << "Putting Azure blob: " << name << std::endl;
+
+    int result = system(full_cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Warning: Failed to put Azure blob " << name << " (exit code: " << result
+                  << ")" << std::endl;
+        cleanupFile(fd, filename);
+        return false;
+    }
+
+    cleanupFile(fd, filename);
+    return true;
+}
+
+bool
+xferBenchUtils::getObjAzure(const std::string &name) {
+    std::string az_cli_params = buildCommonAzCliBlobParams(name);
+    if (az_cli_params.empty()) {
+        return false;
+    }
+    std::string full_cmd = "az storage blob download " + az_cli_params + " -f " + name;
+    std::cout << "Getting Azure blob: " << name << std::endl;
+
+    int result = system(full_cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Warning: Failed to get Azure blob " << name << " (exit code: " << result
+                  << ")" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool
+xferBenchUtils::rmObjAzure(const std::string &name) {
+    std::string az_cli_params = buildCommonAzCliBlobParams(name);
+    if (az_cli_params.empty()) {
+        return false;
+    }
+    std::string full_cmd = "az storage blob delete " + az_cli_params;
+    std::cout << "Removing Azure blob: " << name << std::endl;
+
+    int result = system(full_cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Warning: Failed to remove Azure blob " << name << " (exit code: " << result
+                  << ")" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+std::string
+xferBenchUtils::buildCommonAzCliBlobParams(const std::string &blob_name) {
+    std::string account_url = xferBenchConfig::azure_blob_account_url;
+    if (account_url.empty()) {
+        std::cerr << "Error: Invalid Azure Storage account url" << std::endl;
+        return "";
+    }
+
+    std::string container_name = xferBenchConfig::azure_blob_container_name;
+    if (container_name.empty()) {
+        std::cerr << "Error: Invalid Azure Storage container name" << std::endl;
+        return "";
+    }
+
+    return "--blob-url " + account_url + "/" + container_name + "/" + blob_name +
+        " --auth-mode login  --output none";
 }
 
 /*
