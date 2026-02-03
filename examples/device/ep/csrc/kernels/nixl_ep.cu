@@ -59,6 +59,10 @@ __forceinline__ __device__ bool is_rank_masked(int* mask_buffer_ptr, int rank) {
     }
 }
 
+__device__ __forceinline__ unsigned int doorbell_flag(int idx) {
+    return (idx + 1) % 4 == 0 ? UCP_DEVICE_FLAG_NODELAY : 0;
+}
+
 template <bool kUseFP8, bool kUseUE8M0, int kHidden>
 __global__ __launch_bounds__(1024, 1) void
 dispatch(void* packed_recv_x, void* packed_recv_x_scales,
@@ -189,7 +193,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
                         nixlMemDesc src_mdesc{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(src_ptr)};
                         nixlMemDesc dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
                         EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(src_mdesc, dst_mdesc, num_bytes_per_msg,
-                                dst_expert_local_idx, (slot_idx + 1) % 4 == 0 ? UCP_DEVICE_FLAG_NODELAY : 0) == NIXL_IN_PROG);
+                                dst_expert_local_idx, doorbell_flag(slot_idx)) == NIXL_IN_PROG);
                     } else {
                         // NOTES: only 2 load iterations for 7K hidden with 8 unrolls
                         const auto* src_int4_ptr = reinterpret_cast<const int4*>(src_ptr);
@@ -790,7 +794,7 @@ combine(void* combined_x,
                     nixlMemDesc src_mdesc{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(buf_ptr)};
                     nixlMemDesc dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
                     EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(src_mdesc, dst_mdesc, num_send_bytes,
-                            local_expert_idx, (token_idx - offset + 1) % 4 == 0 ? UCP_DEVICE_FLAG_NODELAY : 0) == NIXL_IN_PROG);
+                            local_expert_idx, doorbell_flag(token_idx - offset)) == NIXL_IN_PROG);
                 }
             }
         }
