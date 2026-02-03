@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include "utils/neuron.h"
 #include "utils/utils.h"
 #include <unistd.h>
 #include <utility>
@@ -157,9 +158,14 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             exit(EXIT_FAILURE);
         }
 
+        // We need to make sure the Neuron runtime is initialized before initializing libfabric,
+        // otherwise the FI_HMEM_NEURON backend will not be created. This issue has been fixed
+        // upstream: https://github.com/ofiwg/libfabric/pull/11804
+        int nc_count = neuronCoreCount();
+
         std::cout << "Init nixl worker, dev " << (("all" == devices[0]) ? "all" : devices[rank])
                   << " rank " << rank << ", type " << name << ", hostname " << hostname
-                  << std::endl;
+                  << ", nc_count " << nc_count << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS)) {
         // Using default param values for GDS backend
         std::cout << "GDS backend" << std::endl;
@@ -445,11 +451,27 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value) {
 }
 
 static std::optional<xferBenchIOV>
+getVramDescNeuron(int devid, size_t buffer_size, uint8_t memset_value) {
+    void *addr;
+    CHECK_NEURON_ERROR(neuronMalloc(&addr, buffer_size, devid), "Failed to allocate nrt tensor");
+    CHECK_NEURON_ERROR(neuronMemset(addr, memset_value, buffer_size),
+                       "Failed to set device memory");
+
+    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
+}
+
+static std::optional<xferBenchIOV>
 getVramDesc(int devid, size_t buffer_size, bool isInit) {
-    CHECK_CUDA_ERROR(cudaSetDevice(devid), "Failed to set device");
     uint8_t memset_value =
         isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT : XFERBENCH_TARGET_BUFFER_ELEMENT;
 
+    // Assume no CUDA cores exist if Neuron cores are found.
+    // There are no AWS instance types with both NVIDIA GPUs and Neuron accelerators.
+    if (neuronCoreCount() > 0) {
+        return getVramDescNeuron(devid, buffer_size, memset_value);
+    }
+
+    CHECK_CUDA_ERROR(cudaSetDevice(devid), "Failed to set device");
     if (xferBenchConfig::enable_vmm) {
         return getVramDescCudaVmm(devid, buffer_size, memset_value);
     } else {
@@ -619,8 +641,14 @@ xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
 #if HAVE_CUDA
 void
 xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
-    CHECK_CUDA_ERROR(cudaSetDevice(iov.devId), "Failed to set device");
+    // Assume no CUDA cores exist if Neuron cores are found.
+    // There are no AWS instance types with both NVIDIA GPUs and Neuron accelerators.
+    if (neuronCoreCount() > 0) {
+        CHECK_NEURON_ERROR(neuronFree((void *)iov.addr), "Failed to free nrt tensor");
+        return;
+    }
 
+    CHECK_CUDA_ERROR(cudaSetDevice(iov.devId), "Failed to set device");
     if (xferBenchConfig::enable_vmm) {
         CHECK_CUDA_DRIVER_ERROR(cuMemUnmap(iov.addr, iov.len), "Failed to unmap memory");
         CHECK_CUDA_DRIVER_ERROR(cuMemRelease(iov.handle), "Failed to release memory");
