@@ -1554,33 +1554,32 @@ nixl_capi_status_t
 nixl_capi_get_xfer_status_list(nixl_capi_agent_t agent,
                                nixl_capi_xfer_req_t req_hndl,
                                int32_t *entry_status_out,
-                               size_t *entry_count)
-{
-  if (!agent || !req_hndl || !entry_status_out || !entry_count) {
-    return NIXL_CAPI_ERROR_INVALID_PARAM;
-  }
-
-  try {
-    std::vector<nixl_status_t> entry_status;
-    nixl_status_t ret = agent->inner->getXferStatus(req_hndl->req, entry_status);
-
-    // Copy entry statuses to output array (up to provided size)
-    size_t copy_count = std::min(*entry_count, entry_status.size());
-    for (size_t i = 0; i < copy_count; i++) {
-      entry_status_out[i] = static_cast<int32_t>(entry_status[i]);
+                               size_t *entry_count) {
+    if (!agent || !req_hndl || !entry_status_out || !entry_count) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
-    *entry_count = entry_status.size();
 
-    // Map return status
-    if (ret == NIXL_SUCCESS) return NIXL_CAPI_SUCCESS;
-    if (ret == NIXL_IN_PROG) return NIXL_CAPI_IN_PROG;
-    if (ret == NIXL_IN_PROG_WITH_ERR) return NIXL_CAPI_IN_PROG_WITH_ERR;
-    if (ret == NIXL_ERR_NOT_SUPPORTED) return NIXL_CAPI_ERROR_NOT_SUPPORTED;
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
-  catch (...) {
-    return NIXL_CAPI_ERROR_BACKEND;
-  }
+    try {
+        std::vector<nixl_status_t> entry_status;
+        nixl_status_t ret = agent->inner->getXferStatus(req_hndl->req, entry_status);
+
+        // Copy entry statuses to output array (up to provided size)
+        size_t copy_count = std::min(*entry_count, entry_status.size());
+        for (size_t i = 0; i < copy_count; i++) {
+            entry_status_out[i] = static_cast<int32_t>(entry_status[i]);
+        }
+        *entry_count = entry_status.size();
+
+        // Map return status
+        if (ret == NIXL_SUCCESS) return NIXL_CAPI_SUCCESS;
+        if (ret == NIXL_IN_PROG) return NIXL_CAPI_IN_PROG;
+        if (ret == NIXL_IN_PROG_WITH_ERR) return NIXL_CAPI_IN_PROG_WITH_ERR;
+        if (ret == NIXL_ERR_NOT_SUPPORTED) return NIXL_CAPI_ERROR_NOT_SUPPORTED;
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
 }
 
 nixl_capi_status_t
