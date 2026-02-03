@@ -223,11 +223,25 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         }
 
         if (xferBenchConfig::obj_crt_min_limit > 0) {
+            // Warn if both CRT and accelerated options are set - CRT takes precedence
+            if (xferBenchConfig::obj_accelerated_enable) {
+                std::cerr << "Warning: Both obj_crt_min_limit and obj_accelerated_enable are set. "
+                          << "CRT client will be used (takes precedence over accelerated)."
+                          << std::endl;
+            }
             backend_params["crtMinLimit"] = std::to_string(xferBenchConfig::obj_crt_min_limit);
             std::cout << "OBJ backend with S3 CRT client enabled for objects >= "
                       << xferBenchConfig::obj_crt_min_limit << " bytes" << std::endl;
+        } else if (xferBenchConfig::obj_accelerated_enable) {
+            backend_params["accelerated"] = "true";
+            std::cout << "OBJ backend with S3 Accelerated client enabled";
+            if (!xferBenchConfig::obj_accelerated_type.empty()) {
+                backend_params["type"] = xferBenchConfig::obj_accelerated_type;
+                std::cout << " (type: " << xferBenchConfig::obj_accelerated_type << ")";
+            }
+            std::cout << std::endl;
         } else {
-            std::cout << "OBJ backend with S3 CRT client disabled" << std::endl;
+            std::cout << "OBJ backend with standard S3 enabled" << std::endl;
         }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically

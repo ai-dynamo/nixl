@@ -99,6 +99,12 @@ has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', depen
 # Check whether the POSIX plugin is enabled
 has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 
+# Check for CUObject Client library
+cuobj_dep = dependency('cuobjclient-13.1', required: false)
+if cuobj_dep.found()
+    add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
+endif
+
 # Forced to ignore this error due to:
 # https://github.com/abseil/abseil-cpp/issues/1779
 # This must be global since subprojects cannot be assigned with arguments.

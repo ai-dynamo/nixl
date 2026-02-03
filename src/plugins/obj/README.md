@@ -30,6 +30,8 @@ The CRT client provides significantly improved throughput and lower CPU utilizat
 
 ## Dependencies
 
+### Required Dependencies
+
 This backend requires aws-sdk-cpp version 1.11 to be installed with both `s3` and `s3-crt` components. Example CLI to compile from sources:
 
 ```bash
@@ -37,6 +39,14 @@ This backend requires aws-sdk-cpp version 1.11 to be installed with both `s3` an
 apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev
 git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && mkdir sdk_build && cd sdk_build && cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && make -j && make install
 ```
+
+### Optional Dependencies
+
+**S3 Accelerated Engines** (`cuobjclient-13.1`): Required for GPU-direct and accelerated object storage operations. When available, enables:
+- `S3AccelObjEngineImpl` - Base accelerated S3 engine
+- Vendor-specific accelerated implementations under `s3_accel/`
+
+If `cuobjclient-13.1` is not found during build, the S3 Accelerated engines will be automatically disabled, and the plugin will fall back to standard S3 and S3 CRT engines.
 
 ## Configuration
 
@@ -241,3 +251,296 @@ The client selection happens transparently during transfer operations, requiring
 - Operation completion is tracked through the request handle
 - The `checkXfer` function can be used to poll for operation completion
 - The request handle must be released using `releaseReqH` after the operation is complete
+
+## Extending with Vendor-Specific Implementations
+
+The object plugin uses a modular, inheritance-based architecture that makes it easy to add vendor-specific backends without modifying core engine logic.
+
+### Architecture Overview
+
+The plugin uses a **pImpl (Pointer to Implementation)** design pattern to provide:
+- **ABI Stability**: Interface changes don't require recompiling client code
+- **Modularity**: Easy to add vendor-specific engines without modifying core logic
+- **Encapsulation**: Implementation details hidden behind abstract interface
+
+The architecture separates concerns into:
+
+- **Clients**: Handle S3-compatible storage operations (inheriting from `awsS3Client` or `awsS3AccelClient`)
+- **Engine Implementations**: Manage NIXL backend operations (inheriting from `nixlObjEngineImpl`)
+
+#### Current Hierarchy
+
+```
++----------------------+
+|   nixlObjEngine      |  (public interface)
++----------------------+
+           |
+           | uses (pImpl)
+           v
++----------------------+
+|  nixlObjEngineImpl   |  (abstract base)
++----------------------+
+           |
+           v
++------------------------------------+
+| DefaultObjEngineImpl               |
+| uses: awsS3Client                  |
++------------------------------------+
+      |
+      |--+------------------------------+
+      |  | S3CrtObjEngineImpl           |
+      |  | uses: awsS3CrtClient         |
+      |  +------------------------------+
+      |
+      +-->+------------------------------+
+          | S3AccelObjEngineImpl         |
+          | uses: awsS3AccelClient       |
+          +------------------------------+
+```
+
+**Key Points:**
+- `nixlObjEngine` is the public interface that clients use
+- `nixlObjEngineImpl` is the abstract base class for all engine implementations
+- Concrete implementations inherit from `nixlObjEngineImpl` (or its subclasses) and override specific methods
+- The public interface remains stable while implementations can evolve independently
+
+#### Supported Memory Types
+
+Each engine implementation defines its own supported memory segment types via `getSupportedMems()`:
+
+| Engine | Supported Memory Types | Description |
+|--------|----------------------|-------------|
+| `DefaultObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | Standard S3 client - CPU memory only |
+| `S3CrtObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | S3 CRT client - CPU memory only |
+| `S3AccelObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | S3 Accelerated base - CPU memory by default |
+| Vendor engines | `OBJ_SEG`, `DRAM_SEG`, `VRAM_SEG` | Vendor-specific - override to add GPU support |
+
+**Important:** Vendor engines that support GPU-direct transfers should override `getSupportedMems()` to include `VRAM_SEG`. The base `S3AccelObjEngineImpl` does not include `VRAM_SEG` by default - each vendor must explicitly expose this capability.
+
+### Adding a Vendor Implementation
+
+> **⚠️ Important: Conditional Compilation for S3 Accelerated Engines**
+>
+> The S3 Accelerated path (`s3_accel`) and any vendor implementations under it require the `cuobjclient-13.1` library. When adding new extensions to `s3_accel`:
+>
+> 1. **Protect includes** with `#if defined HAVE_CUOBJ_CLIENT`:
+>    ```cpp
+>    #if defined HAVE_CUOBJ_CLIENT
+>    #include "s3_accel/engine_impl.h"
+>    #include "s3_accel/vendor_name/engine_impl.h"
+>    #endif
+>    ```
+>
+> 2. **Protect instantiation code** in factory functions:
+>    ```cpp
+>    #if defined HAVE_CUOBJ_CLIENT
+>    if (isAcceleratedRequested(init_params->customParams)) {
+>        return std::make_unique<S3AccelObjEngineImpl>(init_params);
+>    }
+>    #endif
+>    ```
+>
+> 3. **Add sources conditionally** in `meson.build`:
+>    ```python
+>    if cuobj_dep.found()
+>        obj_sources += [
+>            's3_accel/vendor_name/client.cpp',
+>            's3_accel/vendor_name/engine_impl.cpp',
+>        ]
+>    endif
+>    ```
+>
+> This ensures the plugin builds correctly both with and without the `cuobjclient` library available.
+
+Follow these steps to add a vendor-specific client and engine:
+
+#### 1. Create Vendor Client
+
+Create a new directory under `s3_accel/` for your vendor (e.g., `s3_accel/vendor_name/`).
+
+**client.h**
+```cpp
+#pragma once
+#include "s3_accel/client.h"
+
+class awsVendorClient : public awsS3AccelClient {
+public:
+    awsVendorClient(nixl_b_params_t *custom_params,
+                    std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr);
+    virtual ~awsVendorClient() = default;
+
+    // Override methods for vendor-specific behavior if needed
+};
+```
+
+**client.cpp**
+```cpp
+#include "client.h"
+#include "common/nixl_log.h"
+
+awsVendorClient::awsVendorClient(nixl_b_params_t *custom_params,
+                                 std::shared_ptr<Aws::Utils::Threading::Executor> executor)
+    : awsS3AccelClient(custom_params, executor) {
+    NIXL_INFO << "Initialized Vendor-specific Object Client";
+}
+```
+
+#### 2. Create Vendor Engine Implementation
+
+**engine_impl.h**
+```cpp
+#pragma once
+#include "s3_accel/engine_impl.h"
+
+class VendorObjEngineImpl : public S3AccelObjEngineImpl {
+public:
+    explicit VendorObjEngineImpl(const nixlBackendInitParams *init_params);
+    VendorObjEngineImpl(const nixlBackendInitParams *init_params,
+                        std::shared_ptr<iS3Client> s3_client);
+
+    // Add VRAM_SEG support for GPU-direct transfers
+    nixl_mem_list_t getSupportedMems() const override {
+        return {OBJ_SEG, DRAM_SEG, VRAM_SEG};
+    }
+
+    // Override engine methods for vendor-specific behavior if needed
+    nixl_status_t registerMem(const nixlBlobDesc &mem,
+                             const nixl_mem_t &nixl_mem,
+                             nixlBackendMD *&out) override;
+};
+```
+
+**engine_impl.cpp**
+```cpp
+#include "engine_impl.h"
+#include "s3_accel/vendor_name/client.h"
+#include "common/nixl_log.h"
+
+VendorObjEngineImpl::VendorObjEngineImpl(const nixlBackendInitParams *init_params)
+    : S3AccelObjEngineImpl(init_params) {
+    // Create vendor-specific S3 client and assign to s3Client_
+    s3Client_ = std::make_shared<awsVendorClient>(init_params->customParams, executor_);
+    NIXL_INFO << "Object storage backend initialized with Vendor client";
+}
+
+VendorObjEngineImpl::VendorObjEngineImpl(const nixlBackendInitParams *init_params,
+                                         std::shared_ptr<iS3Client> s3_client)
+    : S3AccelObjEngineImpl(init_params, s3_client) {
+    if (!s3Client_) {
+        s3Client_ = std::make_shared<awsVendorClient>(init_params->customParams, executor_);
+    }
+}
+
+nixl_status_t
+VendorObjEngineImpl::registerMem(const nixlBlobDesc &mem,
+                                const nixl_mem_t &nixl_mem,
+                                nixlBackendMD *&out) {
+    NIXL_INFO << "Vendor-specific registerMem called";
+    return S3AccelObjEngineImpl::registerMem(mem, nixl_mem, out);
+}
+```
+
+#### 3. Add Selection Logic
+
+Add a helper function in `engine_utils.h` (located at `src/utils/object/engine_utils.h`):
+
+```cpp
+inline bool
+isVendorRequested(nixl_b_params_t *custom_params) {
+    if (!isAcceleratedRequested(custom_params)) return false;
+    auto type_it = custom_params->find("type");
+    return type_it != custom_params->end() && type_it->second == "vendor_name";
+}
+```
+
+Update `obj_backend.cpp` to include your engine in the factory function with proper conditional compilation:
+
+```cpp
+#if defined HAVE_CUOBJ_CLIENT
+#include "s3_accel/engine_impl.h"
+#include "s3_accel/vendor_name/engine_impl.h"
+#endif
+
+std::unique_ptr<nixlObjEngineImpl>
+createObjEngineImpl(const nixlBackendInitParams *init_params) {
+#if defined HAVE_CUOBJ_CLIENT
+    // Check for vendor-specific engine first
+    if (isVendorRequested(init_params->customParams)) {
+        return std::make_unique<VendorObjEngineImpl>(init_params);
+    }
+
+    // Check for S3 Accelerated engine
+    if (isAcceleratedRequested(init_params->customParams)) {
+        return std::make_unique<S3AccelObjEngineImpl>(init_params);
+    }
+#endif
+
+    // Check for S3 CRT engine
+    size_t crt_min_limit = getCrtMinLimit(init_params->customParams);
+    if (crt_min_limit > 0) {
+        return std::make_unique<S3CrtObjEngineImpl>(init_params);
+    }
+
+    // Default to standard S3 engine
+    return std::make_unique<DefaultObjEngineImpl>(init_params);
+}
+```
+
+**Note**: Don't forget to also update the second overload of `createObjEngineImpl` that takes client pointers as parameters with the same conditional compilation guards.
+
+#### 4. Update Build Configuration
+
+Add your sources to `meson.build` within the conditional `cuobj_dep` block:
+
+```python
+if cuobj_dep.found()
+    message('Found CUObjClient Library. Enabling S3 Accelerated engines')
+    obj_sources += [
+        's3_accel/client.cpp',
+        's3_accel/client.h',
+        's3_accel/engine_impl.cpp',
+        's3_accel/engine_impl.h',
+        # Add your vendor sources here:
+        's3_accel/vendor_name/client.cpp',
+        's3_accel/vendor_name/client.h',
+        's3_accel/vendor_name/engine_impl.cpp',
+        's3_accel/vendor_name/engine_impl.h',
+    ]
+    plugin_deps += [ cuobj_dep ]
+else
+    message('Could not find CUObjClient Library. Skipping S3 Accelerated engines')
+endif
+```
+
+This ensures your vendor implementation is only compiled when the `cuobjclient` library is available.
+
+#### 5. Usage
+
+```cpp
+nixl_b_params_t params = {
+    {"bucket", "my-bucket"},
+    {"accelerated", "true"},
+    {"type", "vendor_name"}
+};
+agent.createBackend("obj", params);
+```
+
+### Engine Method Overrides
+
+Common methods to override for vendor-specific behavior:
+
+- `getSupportedMems()` - Memory segment types supported by this engine (override to add `VRAM_SEG` for GPU-direct transfers)
+- `registerMem()` - Custom memory registration logic
+- `deregisterMem()` - Custom cleanup logic
+- `queryMem()` - Vendor-specific object existence checks
+- `prepXfer()` / `postXfer()` - Custom transfer logic
+- `getClient()` - Return vendor-specific client
+
+**Note:** Vendor engines must explicitly override `getSupportedMems()` to include `VRAM_SEG` if they support GPU-direct transfers. Example:
+
+```cpp
+nixl_mem_list_t
+getSupportedMems() const override {
+    return {DRAM_SEG, OBJ_SEG, VRAM_SEG};
+}
+```
