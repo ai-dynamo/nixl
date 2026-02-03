@@ -639,7 +639,8 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
     };
     const auto status = ucp_context_query(ctx, &attr);
     if (status != UCS_OK) {
-        NIXL_ERROR << "Failed to query UCX context: " << ucs_status_string(status);
+        NIXL_WARN << "Failed to query UCX context: " << ucs_status_string(status) << ", "
+                  << "hardware support mismatch check will be skipped";
         return;
     }
 
