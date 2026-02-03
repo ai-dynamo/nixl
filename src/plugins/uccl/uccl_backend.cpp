@@ -462,7 +462,6 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         deserialize_fifo_item(rmd->fifo_item, &uccl_handle->fifo_items[i]);
 
         uccl_engine_update_fifo(uccl_handle->fifo_items[i], remote_addr, rsize);
-
     }
 
     return NIXL_SUCCESS;
@@ -615,8 +614,7 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
                 NIXL_ERROR << "Failed to send notify message";
                 return NIXL_ERR_BACKEND;
             }
-            NIXL_DEBUG << "Transfer complete, sent notification: "
-                       << uccl_handle->notif_msg;
+            NIXL_DEBUG << "Transfer complete, sent notification: " << uccl_handle->notif_msg;
         }
         return NIXL_SUCCESS;
     }
