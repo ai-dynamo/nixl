@@ -80,10 +80,7 @@
 #define NIXL_SEQ_ID_MASK 0xFU // 0x0000000F (4 bits)
 
 // Message type constants
-#define NIXL_LIBFABRIC_MSG_CONNECT 0
-#define NIXL_LIBFABRIC_MSG_ACK 1
 #define NIXL_LIBFABRIC_MSG_NOTIFICTION 2
-#define NIXL_LIBFABRIC_MSG_DISCONNECT 3
 #define NIXL_LIBFABRIC_MSG_TRANSFER 4
 
 // Single-operation immediate data extraction (no intermediate shifts)

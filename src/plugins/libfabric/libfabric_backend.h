@@ -176,9 +176,6 @@ class nixlLibfabricEngine : public nixlBackendEngine {
     friend class nixlLibfabricRail; // Allow nixlLibfabricRail to access private members
 
 private:
-    // Threading infrastructure - declared first to match initialization order
-    std::atomic<bool> cm_thread_stop_;
-
     // Store user's original progress thread preference
     bool progress_thread_enabled_;
 
@@ -283,9 +280,6 @@ private:
     bool cuda_addr_wa_; // CUDA address workaround flag
 #endif
 
-    // ConnectionManagement thread and completion processing
-    nixl_status_t
-    cmThread();
     void
     postShutdownCompletion();
     // Progress thread for data rail CQs only
@@ -296,14 +290,6 @@ private:
     // Engine message processing methods
     void
     processNotification(const std::string &serialized_notif);
-    void
-    processConnectionAck(uint16_t agent_idx,
-                         nixlLibfabricConnection *conn_info,
-                         ConnectionState state);
-    nixl_status_t
-    processConnectionRequest(uint16_t agent_idx,
-                             const std::string &serialized_data,
-                             nixlLibfabricRail *rail);
     nixl_status_t
     loadMetadataHelper(const std::vector<uint64_t> &rail_keys,
                        void *buffer,
