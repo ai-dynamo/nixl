@@ -449,7 +449,6 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         lmd = (nixlUcclBackendMD *)local[i].metadataP;
         rmd = (nixlUcclBackendMD *)remote[i].metadataP;
         size_t rsize = remote[i].len;
-        uintptr_t local_addr = local[i].addr;
         uintptr_t remote_addr = remote[i].addr;
 
         // Validate the local address is registered
@@ -521,11 +520,6 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         uintptr_t local_addr = local[i].addr;
         uintptr_t remote_addr = remote[i].addr;
 
-        NIXL_DEBUG << "postXfer iovec[" << i << "]: local[i].addr=" << std::hex << local_addr
-                   << ", lsize=" << std::dec << lsize << ", remote[i].addr=" << std::hex
-                   << remote_addr << ", rsize=" << std::dec << rsize << ", lmd->addr=" << std::hex
-                   << lmd->addr << ", rmd->addr=" << std::hex << rmd->addr;
-
         if (lsize != rsize) {
             NIXL_ERROR << "Local and remote sizes don't match: " << lsize << " != " << rsize;
             return NIXL_ERR_INVALID_PARAM;
@@ -545,7 +539,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         size_v.push_back(lsize);
     }
 
-    // Perform a vector operation
+    // Perform a vector read/write operation
     int result = 0;
     uint64_t transfer_id = 0;
     uccl_handle = static_cast<nixlUcclReqH *>(handle);
