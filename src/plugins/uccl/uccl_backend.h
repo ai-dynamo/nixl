@@ -34,9 +34,6 @@
 
 #include "uccl_engine.h"
 
-#define FIFO_ITEM_SIZE 64
-// FifoItem and deserialize_fifo_item are now provided by uccl_engine.h
-
 class nixlUcclBackendMD;
 class nixlUcclReqH;
 
@@ -142,7 +139,7 @@ private:
 class nixlUcclBackendMD : public nixlBackendMD {
 public:
     nixlUcclBackendMD(bool isPrivate) : nixlBackendMD(isPrivate) {
-        memset(fifo_item, 0, FIFO_ITEM_SIZE);
+        memset(fifo_item, 0, FIFO_SIZE);
     }
 
     virtual ~nixlUcclBackendMD() {}
@@ -151,7 +148,7 @@ public:
     size_t length;
     int ref_cnt;
     uccl_mr_t mr_id; // UCCL memory region id
-    char fifo_item[FIFO_ITEM_SIZE];
+    char fifo_item[FIFO_SIZE];
 };
 
 // UCCL Backend Request Handle

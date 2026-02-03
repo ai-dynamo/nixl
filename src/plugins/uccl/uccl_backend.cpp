@@ -148,7 +148,6 @@ nixlUcclEngine::startListener() {
     // The listener waits for connections from remote agents
     NIXL_DEBUG << "UCCL accepting connections";
     while (!stop_listener_) {
-        // Check if engine is still valid before using it
         if (!engine_) {
             NIXL_DEBUG << "Engine destroyed, listener thread exiting";
             break;
@@ -174,7 +173,6 @@ nixlUcclEngine::startListener() {
             connected_agents_[ip_buf] = reinterpret_cast<uint64_t>(conn);
         }
     }
-    NIXL_DEBUG << "UCCL listener thread exiting";
 }
 
 nixl_mem_list_t
@@ -190,10 +188,11 @@ nixl_status_t
 nixlUcclEngine::getPublicData(const nixlBackendMD *meta, std::string &str) const {
     nixlUcclBackendMD *priv = (nixlUcclBackendMD *)meta;
 
-    // Export fifo_item as hex string
+    // Export fifo_item as hex string.
+    // The fifo_item is used to perform one-sided operation
     str.clear();
-    str.reserve(FIFO_ITEM_SIZE * 2);
-    for (int i = 0; i < FIFO_ITEM_SIZE; i++) {
+    str.reserve(FIFO_SIZE * 2);
+    for (int i = 0; i < FIFO_SIZE; i++) {
         char hex[3];
         snprintf(hex, sizeof(hex), "%02x", static_cast<unsigned char>(priv->fifo_item[i]));
         str += hex;
@@ -379,15 +378,14 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
     // Decode fifo_item from hex string
     const std::string &hex_str = input.metaInfo;
 
-    if (hex_str.length() == FIFO_ITEM_SIZE * 2) {
-        for (int i = 0; i < FIFO_ITEM_SIZE; i++) {
+    if (hex_str.length() == FIFO_SIZE * 2) {
+        for (int i = 0; i < FIFO_SIZE; i++) {
             std::string byte_str = hex_str.substr(i * 2, 2);
             output_md->fifo_item[i] = static_cast<char>(strtoul(byte_str.c_str(), NULL, 16));
         }
-        NIXL_DEBUG << "Parsed fifo_item from remote metadata";
     } else {
         NIXL_ERROR << "Invalid fifo_item hex string length: " << hex_str.length() << " (expected "
-                   << FIFO_ITEM_SIZE * 2 << ")";
+                   << FIFO_SIZE * 2 << ")";
         delete output_md;
         output = nullptr;
         return NIXL_ERR_INVALID_PARAM;
@@ -454,12 +452,6 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         uintptr_t local_addr = local[i].addr;
         uintptr_t remote_addr = remote[i].addr;
 
-        NIXL_DEBUG << "prepXfer iovec[" << i << "]: local[i].addr=" << std::hex << local_addr
-                   << ", lmd->addr=" << std::hex << lmd->addr << ", lmd->mr_id=" << std::dec
-                   << lmd->mr_id << ", remote[i].addr=" << std::hex << remote_addr
-                   << ", rmd->addr=" << std::hex << rmd->addr << ", rmd->mr_id=" << std::dec
-                   << rmd->mr_id;
-
         // Validate the local address is registered
         auto local_mem_iter = mem_reg_info_.find((uint64_t)lmd->addr);
         if (local_mem_iter == mem_reg_info_.end()) {
@@ -472,8 +464,6 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
 
         uccl_engine_update_fifo(uccl_handle->fifo_items[i], remote_addr, rsize);
 
-        NIXL_DEBUG << "Using pre-shared fifo_item[" << i << "]: addr=" << std::hex << remote_addr
-                   << ", size=" << std::dec << rsize;
     }
 
     return NIXL_SUCCESS;
@@ -634,7 +624,7 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
                 NIXL_ERROR << "Failed to send notify message";
                 return NIXL_ERR_BACKEND;
             }
-            NIXL_DEBUG << "All transfers in handle completed, sent notification: "
+            NIXL_DEBUG << "Transfer complete, sent notification: "
                        << uccl_handle->notif_msg;
         }
         return NIXL_SUCCESS;
