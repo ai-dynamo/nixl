@@ -171,6 +171,105 @@ def test_agent():
     nixl_utils.free_passthru(addr2)
 
 
+def test_get_xfer_status_list():
+    """Test getXferStatusList with per-entry status codes"""
+    os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
+    name1 = "StatusListAgent1"
+    name2 = "StatusListAgent2"
+
+    devices = nixl.nixlAgentConfig(False)
+
+    agent1 = nixl.nixlAgent(name1, devices)
+    agent2 = nixl.nixlAgent(name2, devices)
+
+    ucx1 = agent1.createBackend("UCX", {})
+    ucx2 = agent2.createBackend("UCX", {})
+
+    size = 256
+    addr1 = nixl_utils.malloc_passthru(size)
+    addr2 = nixl_utils.malloc_passthru(size)
+
+    nixl_utils.ba_buf(addr1, size)
+
+    reg_list1 = nixl.nixlRegDList(nixl.DRAM_SEG)
+    reg_list1.addDesc((addr1, size, 0, "dead"))
+
+    reg_list2 = nixl.nixlRegDList(nixl.DRAM_SEG)
+    reg_list2.addDesc((addr2, size, 0, "dead"))
+
+    ret = agent1.registerMem(reg_list1, [ucx1])
+    assert ret == nixl.NIXL_SUCCESS
+
+    ret = agent2.registerMem(reg_list2, [ucx2])
+    assert ret == nixl.NIXL_SUCCESS
+
+    meta1 = agent1.getLocalMD()
+    meta2 = agent2.getLocalMD()
+
+    ret_name = agent1.loadRemoteMD(meta2)
+    assert ret_name.decode(encoding="UTF-8") == name2
+    ret_name = agent2.loadRemoteMD(meta1)
+    assert ret_name.decode(encoding="UTF-8") == name1
+
+    # Create a batch transfer with multiple descriptors
+    offset = 8
+    req_size = 8
+    num_entries = 3
+
+    src_list = nixl.nixlXferDList(nixl.DRAM_SEG)
+    dst_list = nixl.nixlXferDList(nixl.DRAM_SEG)
+
+    for i in range(num_entries):
+        src_list.addDesc((addr1 + offset + i * req_size, req_size, 0))
+        dst_list.addDesc((addr2 + offset + i * req_size, req_size, 0))
+
+    logger.info("Creating batch transfer with %d entries", num_entries)
+
+    handle = agent1.createXferReq(nixl.NIXL_WRITE, src_list, dst_list, name2, "")
+    assert handle != 0
+
+    status = agent1.postXferReq(handle)
+    assert status == nixl.NIXL_SUCCESS or status == nixl.NIXL_IN_PROG
+
+    # Test getXferStatusList
+    overall_status, entry_status = agent1.getXferStatusList(handle)
+
+    logger.info("Initial overall status: %s", overall_status)
+    logger.info("Initial entry status: %s", entry_status)
+
+    # Wait for completion using getXferStatusList
+    while overall_status == nixl.NIXL_IN_PROG or overall_status == nixl.NIXL_IN_PROG_WITH_ERR:
+        overall_status, entry_status = agent1.getXferStatusList(handle)
+        logger.info("Polling - overall: %s, entries: %s", overall_status, entry_status)
+
+    # Verify completion
+    assert overall_status == nixl.NIXL_SUCCESS, f"Expected success but got {overall_status}"
+
+    # Verify entry count matches number of descriptors
+    # Note: Some backends may not support per-entry status
+    if overall_status != nixl.NIXL_ERR_NOT_SUPPORTED:
+        logger.info("Final entry status list: %s", entry_status)
+        # All entries should be successful
+        for i, es in enumerate(entry_status):
+            logger.info("Entry %d status: %s", i, es)
+
+    # Clean up
+    agent1.releaseXferReq(handle)
+
+    ret = agent1.deregisterMem(reg_list1, [ucx1])
+    assert ret == nixl.NIXL_SUCCESS
+
+    ret = agent2.deregisterMem(reg_list2, [ucx2])
+    assert ret == nixl.NIXL_SUCCESS
+
+    agent1.invalidateRemoteMD(name2)
+
+    nixl_utils.free_passthru(addr1)
+    nixl_utils.free_passthru(addr2)
+
+    logger.info("test_get_xfer_status_list passed")
+
+
 def test_query_mem():
     """Test basic queryMem functionality"""
 

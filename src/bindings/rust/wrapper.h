@@ -32,6 +32,8 @@ typedef enum {
     NIXL_CAPI_ERROR_INVALID_STATE = -3,
     NIXL_CAPI_ERROR_EXCEPTION = -4,
     NIXL_CAPI_IN_PROG = 1,
+    NIXL_CAPI_IN_PROG_WITH_ERR = 2,  // In progress but at least one entry failed
+    NIXL_CAPI_ERROR_NOT_SUPPORTED = -6,
     NIXL_CAPI_ERROR_NO_TELEMETRY = -5,
 } nixl_capi_status_t;
 
@@ -275,6 +277,15 @@ nixl_capi_status_t nixl_capi_post_xfer_req(
     nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl, nixl_capi_opt_args_t opt_args);
 
 nixl_capi_status_t nixl_capi_get_xfer_status(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl);
+
+// Get per-entry status for batch transfers
+// entry_status_out must be pre-allocated array of size entry_count
+// entry_count is both input (array size) and output (number of entries filled)
+nixl_capi_status_t nixl_capi_get_xfer_status_list(
+    nixl_capi_agent_t agent,
+    nixl_capi_xfer_req_t req_hndl,
+    int32_t *entry_status_out,
+    size_t *entry_count);
 
 nixl_capi_status_t
 nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
