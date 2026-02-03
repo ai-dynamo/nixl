@@ -510,15 +510,13 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     std::vector<void *> addr_v;
     std::vector<size_t> size_v;
 
-    std::lock_guard<std::mutex> lock(mem_mutex_); // Lock once for the entire operation
+    std::lock_guard<std::mutex> lock(mem_mutex_);
     for (size_t i = 0; i < lcnt; i++) {
         lmd = (nixlUcclBackendMD *)local[i].metadataP;
-        rmd = (nixlUcclBackendMD *)remote[i].metadataP;
         size_t lsize = local[i].len;
         size_t rsize = remote[i].len;
         // Use local[i].addr for the actual iovec address, not lmd->addr (which is base address)
         uintptr_t local_addr = local[i].addr;
-        uintptr_t remote_addr = remote[i].addr;
 
         if (lsize != rsize) {
             NIXL_ERROR << "Local and remote sizes don't match: " << lsize << " != " << rsize;
