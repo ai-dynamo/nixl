@@ -51,6 +51,7 @@ enum nixl_xfer_op_t {NIXL_READ, NIXL_WRITE};
  * @brief  An enumeration of status values and error codes for NIXL
  */
 enum nixl_status_t {
+    NIXL_IN_PROG_WITH_ERR = 2,  // In progress but at least one entry has failed
     NIXL_IN_PROG = 1,
     NIXL_SUCCESS = 0,
     NIXL_ERR_NOT_POSTED = -1,

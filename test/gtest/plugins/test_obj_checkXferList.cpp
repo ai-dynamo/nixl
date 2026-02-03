@@ -59,6 +59,11 @@ static const nixlBackendInitParams obj_test_params = {.localAgent = local_agent_
                                                .pthrDelay = 0,
                                                .syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW};
 
+// Helper to check if status indicates transfer is still in progress
+static bool isInProgress(nixl_status_t status) {
+    return status == NIXL_IN_PROG || status == NIXL_IN_PROG_WITH_ERR;
+}
+
 class ObjCheckXferListTest : public setupBackendTestFixture {
 protected:
     ObjCheckXferListTest() {
@@ -102,11 +107,11 @@ TEST_P(ObjCheckXferListTest, BatchTransferAllSuccess) {
 
     do {
         overall_status = localBackendEngine_->checkXferList(handle, entry_status);
-        if (overall_status == NIXL_IN_PROG) {
+        if (isInProgress(overall_status)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             poll_count++;
         }
-    } while (overall_status == NIXL_IN_PROG && poll_count < max_polls);
+    } while (isInProgress(overall_status) && poll_count < max_polls);
 
     ASSERT_EQ(overall_status, NIXL_SUCCESS);
     ASSERT_EQ(entry_status.size(), num_buffers);
@@ -156,11 +161,11 @@ TEST_P(ObjCheckXferListTest, SharedFutureMultipleCalls) {
 
     do {
         overall_status = localBackendEngine_->checkXferList(handle, entry_status1);
-        if (overall_status == NIXL_IN_PROG) {
+        if (isInProgress(overall_status)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             poll_count++;
         }
-    } while (overall_status == NIXL_IN_PROG && poll_count < max_polls);
+    } while (isInProgress(overall_status) && poll_count < max_polls);
 
     ASSERT_EQ(overall_status, NIXL_SUCCESS);
 
@@ -214,7 +219,7 @@ TEST_P(ObjCheckXferListTest, ResultCaching) {
     auto status_progress = localBackendEngine_->checkXferList(handle, entry_status_progress);
 
     // Should be in progress or success
-    EXPECT_TRUE(status_progress == NIXL_IN_PROG || status_progress == NIXL_SUCCESS);
+    EXPECT_TRUE(isInProgress(status_progress) || status_progress == NIXL_SUCCESS);
 
     // Wait for completion
     std::vector<nixl_status_t> entry_status_final;
@@ -224,11 +229,11 @@ TEST_P(ObjCheckXferListTest, ResultCaching) {
 
     do {
         overall_status = localBackendEngine_->checkXferList(handle, entry_status_final);
-        if (overall_status == NIXL_IN_PROG) {
+        if (isInProgress(overall_status)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             poll_count++;
         }
-    } while (overall_status == NIXL_IN_PROG && poll_count < max_polls);
+    } while (isInProgress(overall_status) && poll_count < max_polls);
 
     ASSERT_EQ(overall_status, NIXL_SUCCESS);
     ASSERT_EQ(entry_status_final.size(), num_buffers);
@@ -284,11 +289,11 @@ TEST_P(ObjCheckXferListTest, PerEntryStatus) {
         overall_status = localBackendEngine_->checkXferList(handle, entry_status);
         status_history.push_back(entry_status);
 
-        if (overall_status == NIXL_IN_PROG) {
+        if (isInProgress(overall_status)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             poll_count++;
         }
-    } while (overall_status == NIXL_IN_PROG && poll_count < max_polls);
+    } while (isInProgress(overall_status) && poll_count < max_polls);
 
     ASSERT_EQ(overall_status, NIXL_SUCCESS);
 
@@ -360,11 +365,11 @@ TEST_P(ObjCheckXferListTest, CheckXferCompatibility) {
         // Both should return the same overall status
         EXPECT_EQ(overall_status_list, overall_status_single);
 
-        if (overall_status_list == NIXL_IN_PROG) {
+        if (isInProgress(overall_status_list)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             poll_count++;
         }
-    } while (overall_status_list == NIXL_IN_PROG && poll_count < max_polls);
+    } while (isInProgress(overall_status_list) && poll_count < max_polls);
 
     ASSERT_EQ(overall_status_list, NIXL_SUCCESS);
     ASSERT_EQ(overall_status_single, NIXL_SUCCESS);
@@ -463,11 +468,11 @@ TEST_P(ObjCheckXferListTest, PartialFailureOnRead) {
     nixl_status_t status;
     do {
         status = localBackendEngine_->checkXfer(write_handle);
-        if (status == NIXL_IN_PROG) {
+        if (isInProgress(status)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             poll_count++;
         }
-    } while (status == NIXL_IN_PROG && poll_count < max_polls);
+    } while (isInProgress(status) && poll_count < max_polls);
     ASSERT_EQ(status, NIXL_SUCCESS) << "Write to first 2 objects failed";
     localBackendEngine_->releaseReqH(write_handle);
 
@@ -496,11 +501,11 @@ TEST_P(ObjCheckXferListTest, PartialFailureOnRead) {
 
     do {
         overall_status = localBackendEngine_->checkXferList(read_handle, entry_status);
-        if (overall_status == NIXL_IN_PROG) {
+        if (isInProgress(overall_status)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             poll_count++;
         }
-    } while (overall_status == NIXL_IN_PROG && poll_count < max_polls);
+    } while (isInProgress(overall_status) && poll_count < max_polls);
 
     // Overall status should indicate failure (since some entries failed)
     EXPECT_LT(overall_status, 0) << "Expected overall failure status";

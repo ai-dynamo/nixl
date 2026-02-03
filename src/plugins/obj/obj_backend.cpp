@@ -133,7 +133,8 @@ public:
             cachedResults_.resize(num_futures, NIXL_IN_PROG);
         }
 
-        nixl_status_t overall_status = NIXL_SUCCESS;
+        bool any_in_progress = false;
+        nixl_status_t first_error = NIXL_SUCCESS;
 
         // Update cached results
         for (size_t i = 0; i < num_futures; ++i) {
@@ -144,16 +145,26 @@ public:
                 }
             }
 
-            // Track overall status
-            if (cachedResults_[i] < 0 && overall_status >= 0) {
-                overall_status = cachedResults_[i];
-            } else if (cachedResults_[i] == NIXL_IN_PROG && overall_status == NIXL_SUCCESS) {
-                overall_status = NIXL_IN_PROG;
+            // Track status
+            if (cachedResults_[i] == NIXL_IN_PROG) {
+                any_in_progress = true;
+            } else if (cachedResults_[i] < 0 && first_error == NIXL_SUCCESS) {
+                first_error = cachedResults_[i];
             }
         }
 
         entry_status = cachedResults_;
-        return overall_status;
+
+        // Determine overall status
+        if (any_in_progress) {
+            // Some entries still in progress
+            if (first_error < 0) {
+                return NIXL_IN_PROG_WITH_ERR;  // In progress but some already failed
+            }
+            return NIXL_IN_PROG;  // In progress, no failures yet
+        }
+        // All entries complete
+        return first_error;  // NIXL_SUCCESS if no errors, else first error
     }
 };
 

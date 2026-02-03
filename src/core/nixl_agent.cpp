@@ -1194,8 +1194,11 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl,
         return status;
     }
 
+    // Check if transfer is still in progress (either fully or with some errors)
+    bool in_progress = (status == NIXL_IN_PROG || status == NIXL_IN_PROG_WITH_ERR);
+
     // Update overall request status and handle errors/completion
-    if (status != NIXL_IN_PROG) {
+    if (!in_progress) {
         req_hndl->status = status;
 
         if (status < 0) {
