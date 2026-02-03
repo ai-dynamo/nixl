@@ -743,11 +743,7 @@ nixlLibfabricRailManager::deserializeMemoryKeys(const std::string &serialized_da
                                                 std::vector<uint64_t> &keys_out,
                                                 uint64_t &remote_addr_out) const {
     nixlSerDes ser_des;
-    // v87: Check importStr return for corrupted metadata
-    if (ser_des.importStr(serialized_data) != NIXL_SUCCESS) {
-        NIXL_ERROR << "v87: importStr failed, metadata may be corrupted";
-        return NIXL_ERR_MISMATCH;
-    }
+    ser_des.importStr(serialized_data);
     // Load all rail keys instead of just one
     keys_out.clear();
     keys_out.reserve(num_keys);
@@ -797,11 +793,7 @@ nixlLibfabricRailManager::deserializeConnectionInfo(
     std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &control_endpoints_out) const {
 
     nixlSerDes ser_des;
-    // v87: Check importStr return for corrupted metadata
-    if (ser_des.importStr(serialized_data) != NIXL_SUCCESS) {
-        NIXL_ERROR << "v87: importStr failed, metadata may be corrupted";
-        return NIXL_ERR_MISMATCH;
-    }
+    ser_des.importStr(serialized_data);
 
     // Use user prefix with standard suffixes
     std::string data_prefix = user_prefix + "_data_ep_";
