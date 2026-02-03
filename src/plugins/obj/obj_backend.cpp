@@ -30,11 +30,13 @@
 
 std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params) {
-#if defined HAVE_CUOBJ_CLIENT
     if (isAcceleratedRequested(init_params->customParams)) {
+#if defined HAVE_CUOBJ_CLIENT
         return std::make_unique<S3AccelObjEngineImpl>(init_params);
-    }
+#else
+        throw std::runtime_error("Accelerated Engine support not available!");
 #endif
+    }
 
     if (getCrtMinLimit(init_params->customParams) > 0) {
         return std::make_unique<S3CrtObjEngineImpl>(init_params);
@@ -47,11 +49,13 @@ std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params,
                     std::shared_ptr<iS3Client> s3_client,
                     std::shared_ptr<iS3Client> s3_client_crt) {
-#if defined HAVE_CUOBJ_CLIENT
     if (isAcceleratedRequested(init_params->customParams)) {
-        return std::make_unique<S3AccelObjEngineImpl>(init_params, s3_client);
-    }
+#if defined HAVE_CUOBJ_CLIENT
+        return std::make_unique<S3AccelObjEngineImpl>(init_params);
+#else
+        throw std::runtime_error("Accelerated Engine support not available!");
 #endif
+    }
 
     if (getCrtMinLimit(init_params->customParams) > 0) {
         return std::make_unique<S3CrtObjEngineImpl>(init_params, s3_client, s3_client_crt);
