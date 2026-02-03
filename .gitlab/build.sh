@@ -33,7 +33,7 @@ LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
-UCCL_COMMIT_SHA="a962f611021afc2e3c9358f6da4ae96539cbca0f"
+UCCL_COMMIT_SHA="3af0d38dd6ba5b1070a718ab631826999fef695f"
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
