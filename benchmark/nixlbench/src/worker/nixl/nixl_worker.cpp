@@ -223,6 +223,12 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         }
 
         if (xferBenchConfig::obj_crt_min_limit > 0) {
+            // Warn if both CRT and accelerated options are set - CRT takes precedence
+            if (xferBenchConfig::obj_accelerated_enable) {
+                std::cerr << "Warning: Both obj_crt_min_limit and obj_accelerated_enable are set. "
+                          << "CRT client will be used (takes precedence over accelerated)."
+                          << std::endl;
+            }
             backend_params["crtMinLimit"] = std::to_string(xferBenchConfig::obj_crt_min_limit);
             std::cout << "OBJ backend with S3 CRT client enabled for objects >= "
                       << xferBenchConfig::obj_crt_min_limit << " bytes" << std::endl;

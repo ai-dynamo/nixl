@@ -57,15 +57,18 @@ public:
 
     nixl_status_t
     getOverallStatus() {
-        while (!statusFutures_.empty()) {
-            if (statusFutures_.back().wait_for(std::chrono::seconds(0)) ==
-                std::future_status::ready) {
-                auto current_status = statusFutures_.back().get();
+        // Iterate front-to-back to detect failures in earlier futures even if
+        // later futures are not yet ready. This ensures we return errors as
+        // soon as they occur rather than waiting for all futures to complete.
+        auto it = statusFutures_.begin();
+        while (it != statusFutures_.end()) {
+            if (it->wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                auto current_status = it->get();
                 if (current_status != NIXL_SUCCESS) {
                     statusFutures_.clear();
                     return current_status;
                 }
-                statusFutures_.pop_back();
+                it = statusFutures_.erase(it);
             } else {
                 return NIXL_IN_PROG;
             }
@@ -109,6 +112,9 @@ DefaultObjEngineImpl::DefaultObjEngineImpl(const nixlBackendInitParams *init_par
     : executor_(std::make_shared<asioThreadPoolExecutor>(std::thread::hardware_concurrency())),
       s3Client_(s3_client),
       crtMinLimit_(getCrtMinLimit(init_params->customParams)) {
+    // DefaultObjEngineImpl only uses the standard S3 client, not the CRT client.
+    // The s3_client_crt parameter is accepted for API consistency with derived
+    // engine implementations (e.g., S3CrtObjEngineImpl) but is intentionally unused here.
     (void)s3_client_crt;
     if (s3Client_) s3Client_->setExecutor(executor_);
     NIXL_INFO << "Object storage backend initialized with injected S3 clients";

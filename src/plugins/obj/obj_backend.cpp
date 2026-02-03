@@ -28,6 +28,7 @@
 // Obj Engine Implementation
 // -----------------------------------------------------------------------------
 
+// TODO: Consider a registration pattern as more vendor engines are added.
 std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params) {
     if (isAcceleratedRequested(init_params->customParams)) {
