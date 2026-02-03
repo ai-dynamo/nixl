@@ -289,7 +289,6 @@ nixlLibfabricBackendH::is_completed() const {
 
 nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
-      cm_thread_stop_(false),
       progress_thread_enabled_(init_params->enableProgTh),
       progress_thread_delay_(std::chrono::microseconds(init_params->pthrDelay)),
       rail_manager(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
@@ -350,24 +349,6 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
                 processNotification(serialized_notif);
             });
 
-        // Set up connection state callbacks for control rails
-        NIXL_DEBUG << "Set connection state processor for CM rail 0";
-
-        rail_manager.getControlRail(control_rail_id)
-            .setConnectionAckCallback([this](const uint16_t agent_idx,
-                                             nixlLibfabricConnection *conn_info,
-                                             ConnectionState state) {
-                processConnectionAck(agent_idx, conn_info, state);
-            });
-
-        // Set up connection request callback for control rails
-        rail_manager.getControlRail(control_rail_id)
-            .setConnectionReqCallback([this](const uint16_t agent_idx,
-                                             const std::string &serialized_data,
-                                             nixlLibfabricRail *rail) -> nixl_status_t {
-                return processConnectionRequest(agent_idx, serialized_data, rail);
-            });
-
         // Set up XFER_ID tracking callbacks for all data rails
         NIXL_DEBUG << "Setting up XFER_ID tracking callbacks for " << rail_manager.getNumDataRails()
                    << " data rails";
@@ -411,16 +392,6 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
                    << rail_manager.getNumDataRails() << " data rails and "
                    << rail_manager.getNumControlRails() << " control rails";
 
-        // Threading infrastructure
-        // Start CM thread for background processing
-        NIXL_DEBUG << "Starting CM thread";
-        cm_thread_ = std::thread(&nixlLibfabricEngine::cmThread, this);
-        if (!cm_thread_.joinable()) {
-            NIXL_ERROR << "Failed to start CM thread";
-            throw std::runtime_error("Failed to start CM thread");
-        }
-        NIXL_DEBUG << "ConnectionManagement thread started successfully";
-
         // Start Progress thread for data rail completion processing
         if (progress_thread_enabled_) {
             NIXL_DEBUG << "Starting Progress thread for data rails with delay: "
@@ -448,21 +419,15 @@ nixlLibfabricEngine::~nixlLibfabricEngine() {
     NIXL_DEBUG
         << "Destructor starting, stopping all threads FIRST to prevent timing report interruption";
 
-    // STOP ALL THREADS FIRST to prevent any interference with timing report
-    cm_thread_stop_.store(true);
-
     if (progress_thread_enabled_) {
         progress_thread_stop_.store(true);
     }
 
-    // Post dummy completion to wake up blocking threads
-    postShutdownCompletion();
-
-    if (cm_thread_.joinable()) {
-        NIXL_DEBUG << "Waiting for CM thread to exit";
-        cm_thread_.join();
-        NIXL_DEBUG << "CM thread joined successfully";
+    nixl_status_t progress_status = rail_manager.progressAllControlRails();
+    if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
+        NIXL_ERROR << "Failed to progress control rails in ~nixlLibfabricEngine().";
     }
+
     if (progress_thread_enabled_ && progress_thread_.joinable()) {
         NIXL_DEBUG << "Waiting for Progress thread to exit";
         progress_thread_.join();
@@ -593,7 +558,7 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
     }
     // Connection exists - check if already disconnected
     if (it->second->overall_state_ == ConnectionState::DISCONNECTED) {
-        NIXL_DEBUG << "Connection already established for " << remote_agent
+        NIXL_DEBUG << "Connection already disconnected for " << remote_agent
                    << ", fi_addr=" << it->second->rail_remote_addr_list_[0][0];
         return NIXL_SUCCESS;
     }
@@ -697,7 +662,6 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
         return NIXL_ERR_NOT_FOUND;
     }
 
-
     // Verify we have addresses for all data rails
     if (it->second->rail_remote_addr_list_.size() != rail_manager.getNumDataRails()) {
         NIXL_ERROR << "Remote connection has " << it->second->rail_remote_addr_list_.size()
@@ -710,6 +674,10 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
 
     // Use single "Communicator" for CM
     auto *conn_info = it->second.get();
+    if (!conn_info) {
+        NIXL_ERROR << "Connection info for agent " << remote_agent << " is null";
+        return NIXL_ERR_BACKEND;
+    }
 
     NIXL_DEBUG << "Using connection info with " << conn_info->src_ep_names_.size()
                << " data rails and " << conn_info->control_ep_names_.size() << " control rails";
@@ -722,67 +690,11 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
                    << LibfabricUtils::hexdump(conn_info->control_ep_names_[i], LF_EP_NAME_MAX_LEN);
     }
     NIXL_DEBUG << "Agent index: " << it->second->agent_index_;
-    if (!conn_info) {
-        NIXL_ERROR << "Connection info for agent " << remote_agent << " is null";
-        return NIXL_ERR_BACKEND;
-    }
 
-    // Allocate control request
-    const size_t control_rail_id = 0;
+    conn_info->overall_state_ = ConnectionState::CONNECTED;
+    NIXL_DEBUG << "Connection state for agent " << remote_agent << " is now "
+               << conn_info->overall_state_;
 
-    // Serialize connection info
-    std::string serialized_conn_info;
-    nixl_status_t serialize_status =
-        rail_manager.serializeConnectionInfo("src", serialized_conn_info);
-    if (serialize_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Rail manager serializeConnectionInfo failed";
-        return serialize_status;
-    }
-
-    nixlLibfabricReq *control_request =
-        rail_manager.getControlRail(control_rail_id)
-            .allocateControlRequest(serialized_conn_info.length(), LibfabricUtils::getNextXferId());
-    if (!control_request) {
-        NIXL_ERROR << "Failed to allocate control request for connection establishment";
-        return NIXL_ERR_BACKEND;
-    }
-
-    // Copy serialized data to control request buffer
-    memcpy(control_request->buffer, serialized_conn_info.data(), serialized_conn_info.length());
-    control_request->buffer_size = serialized_conn_info.length();
-
-    nixl_status_t status = rail_manager.postControlMessage(
-        nixlLibfabricRailManager::ControlMessageType::CONNECTION_REQ,
-        control_request,
-        conn_info->control_rail_remote_addr_list_[0][0], // Always use control rail 0
-        it->second->agent_index_ // agent_index is only used in the ACK back from remote,
-                                 // to match connection request
-    );
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "postSend failed on rail " << 0;
-        // TODO, wrap req info into a nixlLibfabricRequestHandle and add retry logic
-        return NIXL_ERR_BACKEND;
-    }
-    // Register the connection state tracker with the CM thread
-    // Wait for the CM thread to establish the connection
-    // TODO: Currently blocking, update to timeout and return NIXL_IN_PROG
-    {
-        std::unique_lock<std::mutex> lock(conn_info->conn_state_mutex_);
-        NIXL_DEBUG << "Waiting for connection to be established for agent: " << remote_agent;
-        conn_info->cv_.wait(lock, [conn_info] {
-            return conn_info->overall_state_ == ConnectionState::CONNECTED ||
-                conn_info->overall_state_ == ConnectionState::FAILED;
-        });
-        NIXL_DEBUG << "Connection state for agent " << remote_agent << " is now "
-                   << conn_info->overall_state_;
-
-        if (conn_info->overall_state_ == ConnectionState::FAILED) {
-            NIXL_ERROR << "Connection failed on control rail 0";
-            return NIXL_ERR_BACKEND;
-        }
-    }
-
-    NIXL_DEBUG << "Connection already established for agent: " << remote_agent;
     return NIXL_SUCCESS;
 }
 
@@ -1383,7 +1295,7 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    auto connection = it->second;
+    const auto &connection = it->second;
     const size_t control_rail_id = 0; // Only use control rail 0 for notifications
 
     NIXL_DEBUG << "Sending " << binary_notifications.size() << " notification fragments"
@@ -1436,6 +1348,13 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
                        << " for fragment " << seq_id;
             return NIXL_ERR_BACKEND;
         }
+
+        // Progress the control rail to ensure the message is sent.
+        status = rail_manager.progressAllControlRails();
+        if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
+            NIXL_ERROR << "Failed to progress control rails in notifSendPriv.";
+            return status;
+        }
     }
 
     NIXL_DEBUG << "Successfully sent all " << binary_notifications.size()
@@ -1466,6 +1385,12 @@ nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
         }
     }
 
+    nixl_status_t progress_status = rail_manager.progressAllControlRails();
+    if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
+        NIXL_ERROR << "Failed to progress control rails in getNotifs.";
+        return progress_status;
+    }
+
     // Then check for available notifications after processing completions
     // Thread-safe access to internal notification list
     {
@@ -1486,34 +1411,6 @@ nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
     }
 
     return NIXL_IN_PROG;
-}
-
-/****************************************
- * ConnectionManagement Thread Function
- *****************************************/
-
-// Background progress function that continuously processes completions on all rails
-nixl_status_t
-nixlLibfabricEngine::cmThread() {
-    NIXL_DEBUG << "CM: Thread started successfully";
-
-    // Main progress loop - continuously process completions on all rails
-    while (!cm_thread_stop_.load()) {
-
-        nixl_status_t status = rail_manager.progressAllControlRails();
-        if (status == NIXL_SUCCESS) {
-            NIXL_DEBUG << "CM: Processed completions on control rails";
-        } else if (status != NIXL_IN_PROG && status != NIXL_SUCCESS) {
-            NIXL_ERROR << "CM: Failed to process completions on control rails";
-            return NIXL_ERR_BACKEND;
-        }
-        // Sleep briefly to avoid spinning too aggressively when blocking cq read is not used
-        if (!rail_manager.getControlRail(0).blocking_cq_sread_supported) {
-            std::this_thread::sleep_for(std::chrono::nanoseconds(10));
-        }
-    }
-    NIXL_DEBUG << "CM: Thread exiting cleanly";
-    return NIXL_SUCCESS;
 }
 
 /****************************************
@@ -1542,46 +1439,6 @@ nixlLibfabricEngine::progressThread() {
     }
     NIXL_DEBUG << "PT: Thread exiting cleanly";
     return NIXL_SUCCESS;
-}
-
-void
-nixlLibfabricEngine::postShutdownCompletion() {
-    NIXL_DEBUG << "Posting shutdown signal to wake up background thread";
-    // Send shutdown message to self on rail 0 if self-connection exists
-    auto self_conn_it = connections_.find(localAgent);
-    if (self_conn_it != connections_.end() && self_conn_it->second &&
-        rail_manager.getNumDataRails() > 0) {
-        const size_t rail_id = 0; // Use rail 0 for shutdown signal
-
-        // Allocate control request
-        const size_t control_rail_id = 0;
-        const size_t shutdown_msg_len = 8; // "SHUTDOWN" length
-        nixlLibfabricReq *control_request =
-            rail_manager.getControlRail(control_rail_id)
-                .allocateControlRequest(shutdown_msg_len, LibfabricUtils::getNextXferId());
-        if (!control_request) {
-            NIXL_ERROR << "Failed to allocate control request for shutdown";
-            return;
-        }
-
-        // Copy shutdown message to the control request buffer
-        std::strcpy(static_cast<char *>(control_request->buffer), "SHUTDOWN");
-        control_request->buffer_size = shutdown_msg_len;
-
-        nixl_status_t status = rail_manager.postControlMessage(
-            nixlLibfabricRailManager::ControlMessageType::DISCONNECT_REQ,
-            control_request,
-            self_conn_it->second->rail_remote_addr_list_[rail_id][0],
-            self_conn_it->second->agent_index_);
-
-        if (status == NIXL_SUCCESS) {
-            NIXL_DEBUG << "Shutdown signal posted successfully on rail " << rail_id;
-        } else {
-            NIXL_ERROR << "Failed to post shutdown signal on rail " << rail_id;
-        }
-    } else {
-        NIXL_ERROR << "Could not find self-connection or rails not initialized";
-    }
 }
 
 /****************************************
@@ -1672,97 +1529,6 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
 
     // Check if any notifications can now be completed (after releasing the lock)
     checkPendingNotifications();
-}
-
-void
-nixlLibfabricEngine::processConnectionAck(uint16_t agent_idx,
-                                          nixlLibfabricConnection *conn_info,
-                                          ConnectionState state) {
-    std::string remote_agent_name = agent_names_[agent_idx];
-    NIXL_DEBUG << "Connection state callback for agent " << remote_agent_name
-               << " agent_idx=" << agent_idx;
-    std::lock_guard<std::mutex> lock(connections_[remote_agent_name]->conn_state_mutex_);
-    connections_[remote_agent_name]->overall_state_ = ConnectionState::CONNECTED;
-    connections_[remote_agent_name]->cv_.notify_all();
-    NIXL_DEBUG << "Connection state updated to CONNECTED";
-}
-
-nixl_status_t
-nixlLibfabricEngine::processConnectionRequest(uint16_t agent_idx,
-                                              const std::string &serialized_data,
-                                              nixlLibfabricRail *rail) {
-    NIXL_DEBUG << "Processing connection request from agent " << agent_idx << " on rail "
-               << rail->rail_id;
-
-    // Use rail manager to deserialize ALL endpoints at once with "src" prefix (connection request
-    // contains source endpoints)
-    std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> data_endpoints;
-    std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> control_endpoints;
-    nixl_status_t status = rail_manager.deserializeConnectionInfo(
-        "src", serialized_data, data_endpoints, control_endpoints);
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to deserialize connection info";
-        return status;
-    }
-
-    // Insert ALL data rail addresses at once
-    std::unordered_map<size_t, std::vector<fi_addr_t>> data_fi_addrs;
-    std::vector<char *> data_ep_names;
-    status = rail_manager.insertAllAddresses(
-        nixlLibfabricRailManager::RailType::DATA, data_endpoints, data_fi_addrs, data_ep_names);
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to insert data rail addresses";
-        return status;
-    }
-
-    // Insert ALL control rail addresses at once
-    std::unordered_map<size_t, std::vector<fi_addr_t>> control_fi_addrs;
-    std::vector<char *> control_ep_names;
-    status = rail_manager.insertAllAddresses(nixlLibfabricRailManager::RailType::CONTROL,
-                                             control_endpoints,
-                                             control_fi_addrs,
-                                             control_ep_names);
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to insert control rail addresses";
-        return status;
-    }
-
-    // Use the first control rail's fi_addr for ACK (same as before)
-    fi_addr_t initiator_control_fi_addr = control_fi_addrs[0][0];
-
-    NIXL_DEBUG << "Successfully inserted addresses for " << data_fi_addrs.size()
-               << " data rails and " << control_fi_addrs.size() << " control rails"
-               << ", initiator_control_fi_addr=" << initiator_control_fi_addr;
-
-    // Send acknowledgement back to the initiator using the rail manager
-    size_t ep_name_len = sizeof(rail->ep_name);
-
-    // Allocate control request
-    const size_t control_rail_id = 0;
-    nixlLibfabricReq *control_request =
-        rail_manager.getControlRail(control_rail_id)
-            .allocateControlRequest(ep_name_len, LibfabricUtils::getNextXferId());
-    if (!control_request) {
-        NIXL_ERROR << "Failed to allocate control request for connection ACK";
-        return NIXL_ERR_BACKEND;
-    }
-
-    // Copy endpoint name to control request buffer
-    std::memcpy(control_request->buffer, rail->ep_name, ep_name_len);
-    control_request->buffer_size = ep_name_len;
-
-    nixl_status_t ack_status = rail_manager.postControlMessage(
-        nixlLibfabricRailManager::ControlMessageType::CONNECTION_ACK,
-        control_request,
-        initiator_control_fi_addr,
-        agent_idx);
-    if (ack_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to send ACK via rail manager";
-        return ack_status;
-    }
-
-    NIXL_DEBUG << "ACK sent successfully via rail manager";
-    return NIXL_SUCCESS;
 }
 
 /****************************************

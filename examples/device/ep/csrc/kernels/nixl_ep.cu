@@ -34,6 +34,19 @@ namespace nixl_ep {
 
 namespace ep_kernels {
 
+__device__ inline uint64_t gpu_nixl_ctx::offset_get(uint64_t ptr) {
+    return ptr - reinterpret_cast<uint64_t>(rdma_buffer_ptr);
+}
+
+__device__ inline void* gpu_nixl_ctx::p2p_ptr_get(uint64_t dst_ptr, int dst_rank) {
+    if (dst_rank == rank) return (void*) dst_ptr;
+
+    void *remote_ptr = nixlGetPtr(remote_mvh, dst_rank);
+    if (remote_ptr == nullptr) return nullptr;
+
+    return (void*) ((uint64_t) remote_ptr + offset_get(dst_ptr));
+}
+
 template<bool use_warp_sync = false>
 __forceinline__ __device__ bool is_rank_masked(int* mask_buffer_ptr, int rank) {
     if (mask_buffer_ptr == nullptr) {
@@ -44,6 +57,10 @@ __forceinline__ __device__ bool is_rank_masked(int* mask_buffer_ptr, int rank) {
     } else {
         return ld_acquire_global(mask_buffer_ptr + rank) != 0;
     }
+}
+
+__device__ __forceinline__ unsigned int doorbell_flag(int idx) {
+    return (idx + 1) % 4 == 0 ? UCP_DEVICE_FLAG_NODELAY : 0;
 }
 
 template <bool kUseFP8, bool kUseUE8M0, int kHidden>
@@ -170,13 +187,13 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
                                      dst_expert_local_idx * num_ranks * num_max_dispatch_tokens_per_rank * num_bytes_per_msg +
                                      rank * num_max_dispatch_tokens_per_rank * num_bytes_per_msg +
                                      slot_idx * num_bytes_per_msg;
-                const auto dst_p2p_ptr = nixl_ctx.rdma_p2p_ptr_get(dst_ptr, dst_rank);
+                void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
                 if (not is_rank_masked<true>(mask_buffer_ptr, dst_rank)) {
                     if (dst_p2p_ptr == 0) {
-                        nixlGpuXferReqH batch_req = nixl_ctx.batch_get(dst_rank);
-                        size_t src_offset = nixl_ctx.batch_offset_get(src_ptr);
-                        size_t dst_offset = nixl_ctx.batch_offset_get(dst_ptr);
-                        EP_DEVICE_ASSERT(nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::WARP>(batch_req, 0, src_offset, dst_offset, num_bytes_per_msg, dst_expert_local_idx, (slot_idx + 1) % 4 == 0) == NIXL_IN_PROG);
+                        nixlMemDesc src_mdesc{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(src_ptr)};
+                        nixlMemDesc dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
+                        EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(src_mdesc, dst_mdesc, num_bytes_per_msg,
+                                dst_expert_local_idx, doorbell_flag(slot_idx)) == NIXL_IN_PROG);
                     } else {
                         // NOTES: only 2 load iterations for 7K hidden with 8 unrolls
                         const auto* src_int4_ptr = reinterpret_cast<const int4*>(src_ptr);
@@ -239,11 +256,11 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
         // Wait local sends issued and send expert counts
         while (ld_acquire_global(atomic_finish_counter_per_expert + responsible_expert_idx) != FINISHED_SUM_TAG * 2);
         auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_count + dst_expert_local_idx * num_ranks + rank);
-        auto dst_p2p_ptr = nixl_ctx.rdma_p2p_ptr_get(dst_ptr, dst_rank);
+        void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
             if (dst_p2p_ptr == 0) {
-                nixlGpuXferReqH xfer = nixl_ctx.batch_get(dst_rank);
-                EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(xfer, 0, num_tokens_sent + 1, nixl_ctx.batch_offset_get(dst_ptr), dst_expert_local_idx) == NIXL_IN_PROG);
+                nixlMemDesc dst_mdesc{nixl_ctx.remote_mvh, (unsigned) dst_rank, nixl_ctx.offset_get(dst_ptr)};
+                EP_DEVICE_ASSERT(nixlAtomicAdd(num_tokens_sent + 1, dst_mdesc, dst_expert_local_idx, UCP_DEVICE_FLAG_NODELAY) == NIXL_IN_PROG);
             } else {
                 st_release_sys_global(static_cast<uint64_t*>(dst_p2p_ptr), static_cast<uint64_t>(num_tokens_sent + 1));
             }
@@ -709,7 +726,7 @@ combine(void* combined_x,
                 const auto buf_ptr = reinterpret_cast<int64_t>(rdma_send_x_vec_row);
                 const auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_x) +
                     (global_expert_idx * num_max_dispatch_tokens_per_rank + src_idx) * num_bytes_per_slot;
-                const auto dst_p2p_ptr = nixl_ctx.rdma_p2p_ptr_get(dst_ptr, dst_rank);
+                void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
                 int num_send_bytes = hidden * sizeof(nv_bfloat16);
 
                 if (not zero_copy or dst_p2p_ptr != 0) {
@@ -774,10 +791,10 @@ combine(void* combined_x,
                 // Issue RDMA
                 // NOTES: for zero-copy mode, we assume the data is already in the send buffer
                 if (dst_p2p_ptr == 0) {
-                    nixlGpuXferReqH batch_req = nixl_ctx.batch_get(dst_rank);
-                    size_t src_offset = nixl_ctx.batch_offset_get(buf_ptr);
-                    size_t dst_offset = nixl_ctx.batch_offset_get(dst_ptr);
-                    EP_DEVICE_ASSERT(nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::WARP>(batch_req, 0, src_offset, dst_offset, num_send_bytes, local_expert_idx, (token_idx - offset + 1) % 4 == 0) == NIXL_IN_PROG);
+                    nixlMemDesc src_mdesc{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(buf_ptr)};
+                    nixlMemDesc dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
+                    EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(src_mdesc, dst_mdesc, num_send_bytes,
+                            local_expert_idx, doorbell_flag(token_idx - offset)) == NIXL_IN_PROG);
                 }
             }
         }
@@ -788,11 +805,11 @@ combine(void* combined_x,
         if (sub_warp_id == 1 and lane_id == 0) {
             while (ld_acquire_global(atomic_clean_flag) == 0);
             auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_flag + global_expert_idx);
-            auto dst_p2p_ptr = nixl_ctx.rdma_p2p_ptr_get(dst_ptr, dst_rank);
+            void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
             if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
                 if (dst_p2p_ptr == 0) {
-                    nixlGpuXferReqH xfer = nixl_ctx.batch_get(dst_rank);
-                    EP_DEVICE_ASSERT(nixlGpuPostSignalXferReq<nixl_gpu_level_t::THREAD>(xfer, 0, 1, nixl_ctx.batch_offset_get(dst_ptr), local_expert_idx) == NIXL_IN_PROG);
+                    nixlMemDesc dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
+                    EP_DEVICE_ASSERT(nixlAtomicAdd(1, dst_mdesc, local_expert_idx, UCP_DEVICE_FLAG_NODELAY) == NIXL_IN_PROG);
                 } else {
                     st_release_sys_global(static_cast<uint64_t*>(dst_p2p_ptr), 1);
                 }
@@ -808,8 +825,6 @@ combine(void* combined_x,
         }
         __syncwarp();
     }
-
-    cg::this_grid().sync(); // TODO: revisit this grid sync
 
 // Receiving phase
 COMBINE_RECV:
@@ -1109,26 +1124,27 @@ void clean_mask_buffer(int* mask_buffer_ptr, int num_ranks, cudaStream_t stream)
 }
 
 template <int kNumThreads>
-__forceinline__ __device__ void barrier(int thread_id, int rank, int num_ranks,
-                                        int* mask_buffer_ptr, int* sync_buffer_ptr, ep_kernels::gpu_nixl_ctx nixl_ctx) {
-    EP_DEVICE_ASSERT(kNumThreads >= num_ranks);
+__forceinline__ __device__ void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, int thread_id) {
+    EP_DEVICE_ASSERT(kNumThreads >= nixl_ctx.max_num_ranks);
 
-    if (thread_id < num_ranks && thread_id != rank) {
+    if (thread_id < nixl_ctx.max_num_ranks && thread_id != nixl_ctx.rank) {
         const auto dst_rank = thread_id;
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
-            int expected_cnt = atomicAdd(nixl_ctx.local_barrier_cnt + dst_rank, -1) - 1;
+            int expected_cnt = atomicAdd(nixl_ctx.sync_count_ptr + dst_rank, -1) - 1;
 
-            nixlGpuXferReqH barrier_req = nixl_ctx.remote_barrier_get(dst_rank);
-            nixlGpuPostSingleWriteXferReq<nixl_gpu_level_t::THREAD>(barrier_req, 0, dst_rank * sizeof(int), rank * sizeof(int), sizeof(int), 0);
+            nixlMemDesc src_mdesc{nixl_ctx.local_mvh, 1, dst_rank * sizeof(int)};
+            nixlMemDesc dst_mdesc{nixl_ctx.barrier_mvh, (size_t) dst_rank, nixl_ctx.rank * sizeof(int)};
+            EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::THREAD>(src_mdesc, dst_mdesc, sizeof(int),
+                    0, UCP_DEVICE_FLAG_NODELAY) == NIXL_IN_PROG);
 
             auto start_time = clock64();
             uint64_t wait_recv_cost = 0;
-            while (ld_acquire_sys_global(sync_buffer_ptr + dst_rank) != expected_cnt
+            while (ld_acquire_sys_global(nixl_ctx.sync_buffer_ptr + dst_rank) != expected_cnt
                    && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES);
 
             if (wait_recv_cost > NUM_TIMEOUT_CYCLES) {
-                printf("Warning: NixlEP timeout for barrier, rank %d, dst_rank %d, expected value %d, actual value %d\n",
-                       rank, dst_rank, expected_cnt, ld_acquire_global(sync_buffer_ptr + dst_rank));
+                printf("Warning: NixlEP timeout for barrier, rank %d, thread %d, dst_rank %d, expected value %d, actual value %d\n",
+                       nixl_ctx.rank, thread_id, dst_rank, expected_cnt, ld_acquire_global(nixl_ctx.sync_buffer_ptr + dst_rank));
                 if (mask_buffer_ptr == nullptr)
                     trap();
                 atomicExch(mask_buffer_ptr + dst_rank, 1);
@@ -1139,15 +1155,15 @@ __forceinline__ __device__ void barrier(int thread_id, int rank, int num_ranks,
 }
 
 template <int kNumThreads>
-__global__ void barrier_kernel(int* mask_buffer_ptr, int* sync_buffer_ptr, ep_kernels::gpu_nixl_ctx nixl_ctx) {
+__global__ void barrier_kernel(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr) {
     const auto thread_id = static_cast<int>(threadIdx.x);
-    barrier<kNumThreads>(thread_id, nixl_ctx.rank, nixl_ctx.num_ranks, mask_buffer_ptr, sync_buffer_ptr, nixl_ctx);
+    barrier<kNumThreads>(nixl_ctx, mask_buffer_ptr, thread_id);
 }
 
-void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, int* sync_buffer_ptr, cudaStream_t stream) {
+void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, cudaStream_t stream) {
     constexpr int kNumThreads = 32;
     SETUP_LAUNCH_CONFIG(1, kNumThreads, stream);
-    LAUNCH_KERNEL(&cfg, barrier_kernel<kNumThreads>, mask_buffer_ptr, sync_buffer_ptr, nixl_ctx);
+    LAUNCH_KERNEL(&cfg, barrier_kernel<kNumThreads>, nixl_ctx, mask_buffer_ptr);
 }
 } // namespace ep_kernels
 

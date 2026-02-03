@@ -216,10 +216,7 @@ public:
 /** Connection state tracking for multi-rail connections */
 enum class ConnectionState {
     DISCONNECTED, ///< No connection attempt made, initial state
-    CONNECT_REQ_SENT, ///< Connection request sent, waiting for ACK
-    CONNECT_ACK_SENT, ///< Connection ACK sent (target side)
-    CONNECTED, ///< ACK received, ready for data transfers
-    FAILED ///< Connection attempt failed
+    CONNECTED ///< Ready for data transfers.
 };
 
 // Stream operator for ConnectionState to enable logging
@@ -228,14 +225,8 @@ operator<<(std::ostream &os, const ConnectionState &state) {
     switch (state) {
     case ConnectionState::DISCONNECTED:
         return os << "DISCONNECTED";
-    case ConnectionState::CONNECT_REQ_SENT:
-        return os << "CONNECT_REQ_SENT";
-    case ConnectionState::CONNECT_ACK_SENT:
-        return os << "CONNECT_ACK_SENT";
     case ConnectionState::CONNECTED:
         return os << "CONNECTED";
-    case ConnectionState::FAILED:
-        return os << "FAILED";
     default:
         return os << "UNKNOWN";
     }
@@ -248,7 +239,6 @@ public:
     std::string device_name; ///< EFA device name for this rail
     std::string provider_name; ///< Provider name (e.g., "efa", "efa-direct")
     char ep_name[LF_EP_NAME_MAX_LEN]; ///< Endpoint name for connection setup
-    mutable bool blocking_cq_sread_supported; ///< Whether blocking CQ reads are supported
     struct fid_ep *endpoint; ///< Libfabric endpoint handle
 
     /** Initialize libfabric rail with all resources */
@@ -338,22 +328,12 @@ public:
 
     /** Process completion queue with batching support */
     nixl_status_t
-    progressCompletionQueue(bool use_blocking = false) const;
+    progressCompletionQueue() const;
 
     // Callback registration methods
     /** Set callback for notification message processing */
     void
     setNotificationCallback(std::function<void(const std::string &)> callback);
-
-    /** Set callback for connection acknowledgment processing */
-    void
-    setConnectionAckCallback(
-        std::function<void(uint16_t, nixlLibfabricConnection *, ConnectionState)> callback);
-
-    /** Set callback for connection request processing */
-    void
-    setConnectionReqCallback(
-        std::function<nixl_status_t(uint16_t, const std::string &, nixlLibfabricRail *)> callback);
 
     /** Set callback for XFER_ID tracking */
     void
@@ -392,9 +372,6 @@ private:
 
     // Callback functions
     std::function<void(const std::string &)> notificationCallback;
-    std::function<void(uint16_t, nixlLibfabricConnection *, ConnectionState)> connectionAckCallback;
-    std::function<nixl_status_t(uint16_t, const std::string &, nixlLibfabricRail *)>
-        connectionReqCallback;
     // XFER_ID tracking callback
     std::function<void(uint32_t)> xferIdCallback;
 
