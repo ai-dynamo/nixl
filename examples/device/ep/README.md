@@ -38,7 +38,7 @@ buffer.disconnect_ranks(ranks)
 
 ## Key APIs
 
-- `Buffer(rank_id, nvlink_backend, explicitly_destroy)`: Initialize the NIXL communication buffer
+- `Buffer(rank_id, ...)`: Initialize the NIXL communication buffer
 - `update_memory_buffers(num_ranks, num_experts_per_rank, num_rdma_bytes)`: Prepare buffers for up to `num_ranks` ranks and `num_experts_per_rank` experts
 - `connect_ranks(remote_ranks)`: Establish NIXL connections to new peers (can be called multiple times)
 - `disconnect_ranks(remote_ranks)`: Clean up connections to departing peers

@@ -21,7 +21,7 @@
 import os
 from contextlib import contextmanager
 from datetime import timedelta
-from typing import TYPE_CHECKING, Callable, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -42,7 +42,7 @@ class Buffer:
     The core expert-parallel (EP) communication buffers for Mixture of Experts (MoE) model, which supports dispatch and combine operations using NVLink and RDMA.
 
     Attributes:
-        nvlink_backend: the backend for NVLink communication, you can choose from 'nixl', 'ipc' and 'none' (which disables NVLink entirely).
+        disable_ll_nvlink: whether to disable NVLink communication for low-latency kernels (default: False).
         rank: the local rank number.
         num_rdma_bytes: the buffer size for RDMA communication.
         runtime: the C++ runtime.
@@ -52,10 +52,9 @@ class Buffer:
 
     def __init__(
         self,
-        nvlink_backend: Literal["nixl", "ipc", "none"] = "nixl",
+        disable_ll_nvlink: bool = False,
         explicitly_destroy: bool = False,
         rank: int = 0,
-        enable_shrink: bool = False,
         group: Optional[dist.ProcessGroup] = None,
         comm: Optional["mpi4py.MPI.Comm"] = None,
         tcp_store_group: Optional[dist.TCPStore] = None,
@@ -64,7 +63,7 @@ class Buffer:
         Initialize the nixl communication buffer.
 
         Arguments:
-            nvlink_backend: nvlink implementation to use, you can choose from 'nixl', 'ipc' and 'none' (which disables NVLink entirely).
+            disable_ll_nvlink: whether to disable NVLink communication for low-latency kernels (default: False).
             explicitly_destroy: If this flag is set to True, you need to explicitly call `destroy()` to release resources;
                 otherwise, the resources will be released by the destructor.
                 Note: Releasing resources in the destructor may cause Python's exception handling process to hang.
@@ -81,14 +80,10 @@ class Buffer:
         self.tcp_store_group = tcp_store_group
         assert not (group and comm)
 
-        # Configure NVLINK backend
-        os.environ["NIXL_EP_NVLINK_BACKEND_IPC"] = (
-            "1" if nvlink_backend == "ipc" else "0"
-        )
-        if nvlink_backend != "nixl":
+        if disable_ll_nvlink:
             os.environ["UCX_TLS"] = "^cuda_ipc"
 
-        self.runtime = nixl_ep_cpp.Buffer(self.rank, explicitly_destroy, enable_shrink)
+        self.runtime = nixl_ep_cpp.Buffer(self.rank, explicitly_destroy)
 
     def destroy(self):
         """
