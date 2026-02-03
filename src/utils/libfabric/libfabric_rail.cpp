@@ -1418,17 +1418,20 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
     }
 
     // MRRC: Find cache entry and decrement reference count
+    bool found_in_cache = false;
+    bool should_close = false;
     {
         std::lock_guard<std::mutex> lock(mr_cache_mutex_);
         for (auto it = mr_cache_.begin(); it != mr_cache_.end(); ++it) {
             if (it->second.mr == mr) {
+                found_in_cache = true;
                 uint32_t prev_count = it->second.ref_count.fetch_sub(1, std::memory_order_acq_rel);
                 if (prev_count == 1) {
                     // Last reference - actually deregister and remove from cache
                     NIXL_DEBUG << "MRRC cache evict: rail=" << rail_id
                                << " buffer=" << (void *)it->first << " key=" << it->second.key;
                     mr_cache_.erase(it);
-                    // Proceed to fi_close below
+                    should_close = true;
                     break;
                 } else {
                     // Still has references - don't deregister
@@ -1441,11 +1444,19 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
         }
     }
 
-    // Actually close the MR (either not in cache or last reference)
-    int ret = fi_close(&mr->fid);
-    if (ret) {
-        NIXL_ERROR << "fi_close failed on rail " << rail_id << ": " << fi_strerror(-ret);
-        return NIXL_ERR_BACKEND;
+    if (!found_in_cache) {
+        // MR not in cache - caller may be trying to deregister an MR from another rail
+        NIXL_ERROR << "MRRC: Attempted to deregister uncached MR on rail " << rail_id;
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    // Actually close the MR (last reference from cache)
+    if (should_close) {
+        int ret = fi_close(&mr->fid);
+        if (ret) {
+            NIXL_ERROR << "fi_close failed on rail " << rail_id << ": " << fi_strerror(-ret);
+            return NIXL_ERR_BACKEND;
+        }
     }
 
     return NIXL_SUCCESS;
