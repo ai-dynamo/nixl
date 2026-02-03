@@ -1353,8 +1353,13 @@ nixlLibfabricRail::registerMemory(void *buffer,
             NIXL_DEBUG << "MRRC stale entry: buffer=" << buffer << " removing";
             if (entry->ref_count.load() == 0) {
                 fi_close(&entry->mr->fid);
+                mr_cache_.erase(it);
+            } else {
+                // Cannot safely remove entry with active references
+                NIXL_ERROR << "MRRC: Stale entry has " << entry->ref_count.load()
+                           << " active refs, cannot evict safely";
+                return NIXL_ERR_BACKEND;
             }
-            mr_cache_.erase(it);
         }
     }
 
