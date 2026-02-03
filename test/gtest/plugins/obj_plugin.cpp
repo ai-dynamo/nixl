@@ -16,6 +16,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstdlib>
 
 #include "plugins_common.h"
 #include "transfer_handler.h"
@@ -33,7 +34,16 @@ namespace gtest::plugins::obj {
  * used during the tests.
  */
 
-nixl_b_params_t obj_params = {{"crtMinLimit", "0"}};
+// Get endpoint override from environment variable for LocalStack testing
+static std::string getEndpointOverride() {
+    const char* endpoint = std::getenv("AWS_ENDPOINT_OVERRIDE");
+    return endpoint ? endpoint : "";
+}
+
+nixl_b_params_t obj_params = {{"crtMinLimit", "0"},
+                              {"use_virtual_addressing", "false"},
+                              {"scheme", "http"},
+                              {"endpoint_override", getEndpointOverride()}};
 nixl_b_params_t obj_crt_params = {{"crtMinLimit", "1024"}};
 const std::string local_agent_name = "Agent1";
 const std::string crt_agent_name = "Agent2-CRT";

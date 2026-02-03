@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,11 +40,16 @@ pub struct Agent {
 pub enum XferStatus {
     Success,
     InProgress,
+    InProgressWithError,  // In progress but at least one entry failed
 }
 
 impl XferStatus {
     pub fn is_success(&self) -> bool {
         return *self == XferStatus::Success;
+    }
+
+    pub fn is_in_progress(&self) -> bool {
+        return *self == XferStatus::InProgress || *self == XferStatus::InProgressWithError;
     }
 }
 
@@ -976,6 +981,50 @@ impl Agent {
         match status {
             NIXL_CAPI_SUCCESS => Ok(XferStatus::Success), // Transfer completed
             NIXL_CAPI_IN_PROG => Ok(XferStatus::InProgress),  // Transfer in progress
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Checks the status of a transfer request with per-entry status
+    ///
+    /// Returns the overall status and a vector of per-entry status codes.
+    /// Use this when you need to track individual entry completion in batch transfers.
+    ///
+    /// # Arguments
+    /// * `req` - Transfer request handle after `post_xfer_req`
+    ///
+    /// # Returns
+    /// A tuple of (XferStatus, Vec<i32>) where the vector contains per-entry status codes
+    ///
+    /// # Errors
+    /// * `NotSupported` - If the backend doesn't support per-entry status
+    /// * `InvalidParam` - If the request handle is invalid
+    /// * `BackendError` - If there was a backend error
+    pub fn get_xfer_status_list(&self, req: &XferRequest) -> Result<(XferStatus, Vec<i32>), NixlError> {
+        // Pre-allocate a reasonably sized buffer
+        let mut entry_status: Vec<i32> = vec![0; 1024];
+        let mut entry_count: usize = entry_status.len();
+
+        let status = unsafe {
+            bindings::nixl_capi_get_xfer_status_list(
+                self.inner.write().unwrap().handle.as_ptr(),
+                req.handle(),
+                entry_status.as_mut_ptr(),
+                &mut entry_count,
+            )
+        };
+
+        // Resize to actual count
+        entry_status.truncate(entry_count);
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok((XferStatus::Success, entry_status)),
+            NIXL_CAPI_IN_PROG => Ok((XferStatus::InProgress, entry_status)),
+            bindings::nixl_capi_status_t_NIXL_CAPI_IN_PROG_WITH_ERR => {
+                Ok((XferStatus::InProgressWithError, entry_status))
+            }
+            NIXL_CAPI_ERROR_NOT_SUPPORTED => Err(NixlError::NotSupported),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }

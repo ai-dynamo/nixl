@@ -95,6 +95,8 @@ throw_nixl_exception(const nixl_status_t &status) {
     switch (status) {
     case NIXL_IN_PROG:
         return; // not an error
+    case NIXL_IN_PROG_WITH_ERR:
+        return; // not an error (in progress with some failures)
     case NIXL_SUCCESS:
         return; // not an error
     case NIXL_ERR_NOT_POSTED:
@@ -174,6 +176,7 @@ PYBIND11_MODULE(_bindings, m) {
 
     py::enum_<nixl_status_t>(m, "nixl_status_t")
         .value("NIXL_IN_PROG", NIXL_IN_PROG)
+        .value("NIXL_IN_PROG_WITH_ERR", NIXL_IN_PROG_WITH_ERR)
         .value("NIXL_SUCCESS", NIXL_SUCCESS)
         .value("NIXL_ERR_NOT_POSTED", NIXL_ERR_NOT_POSTED)
         .value("NIXL_ERR_INVALID_PARAM", NIXL_ERR_INVALID_PARAM)
@@ -691,6 +694,30 @@ PYBIND11_MODULE(_bindings, m) {
                 return ret;
             },
             py::call_guard<py::gil_scoped_release>())
+        .def(
+            "getXferStatusList",
+            [](nixlAgent &agent,
+               uintptr_t reqh) -> std::pair<nixl_status_t, std::vector<nixl_status_t>> {
+                std::vector<nixl_status_t> entry_status;
+                nixl_status_t ret = agent.getXferStatus((nixlXferReqH *)reqh, entry_status);
+                // Don't throw for in-progress statuses
+                if (ret < 0 && ret != NIXL_ERR_NOT_SUPPORTED) {
+                    throw_nixl_exception(ret);
+                }
+                return std::make_pair(ret, entry_status);
+            },
+            py::arg("reqh"),
+            py::call_guard<py::gil_scoped_release>(),
+            R"pbdoc(
+                Get transfer status with per-entry status codes.
+
+                Returns a tuple of (overall_status, entry_status_list) where:
+                - overall_status: NIXL_SUCCESS (0), NIXL_IN_PROG (1),
+                  NIXL_IN_PROG_WITH_ERR (2), or error code
+                - entry_status_list: List of status codes for each entry
+
+                Use this for fine-grained tracking of batch transfers.
+            )pbdoc")
         .def(
             "getXferTelemetry",
             [](nixlAgent &agent, uintptr_t reqh) -> nixl_xfer_telem_t {

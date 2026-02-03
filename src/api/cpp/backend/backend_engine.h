@@ -153,6 +153,13 @@ class nixlBackendEngine {
         // Use a handle to progress backend engine and see if a transfer is completed or not
         virtual nixl_status_t checkXfer(nixlBackendReqH* handle) const = 0;
 
+        // Get per-entry status for batch transfers (optional)
+        // Default implementation returns NIXL_ERR_NOT_SUPPORTED
+        virtual nixl_status_t checkXferList(nixlBackendReqH* handle,
+                                             std::vector<nixl_status_t> &entry_status) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
         //Backend aborts the transfer if necessary, and destructs the relevant objects
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 

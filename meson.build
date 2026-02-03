@@ -258,6 +258,7 @@ endif
 # UCX GPU device API detection
 nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
+ucx_gpu_device_api_v2_available = false
 if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     cuda = meson.get_compiler('cuda')
     # TODO: Expose doca_gpunetio_dep through UCX

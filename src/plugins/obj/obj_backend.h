@@ -152,6 +152,9 @@ public:
     nixl_status_t
     checkXfer(nixlBackendReqH *handle) const override;
     nixl_status_t
+    checkXferList(nixlBackendReqH *handle,
+                  std::vector<nixl_status_t> &entry_status) const override;
+    nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
     nixl_status_t

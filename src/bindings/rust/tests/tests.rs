@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -1487,6 +1487,7 @@ fn test_get_xfer_telemetry_success() {
                     std::thread::sleep(std::time::Duration::from_millis(10));
                     continue;
                 }
+                Ok(status) => panic!("Unexpected status: {:?}", status),
                 Err(e) => panic!("Failed to get transfer status: {:?}", e),
             }
         }
@@ -1558,6 +1559,7 @@ fn test_get_xfer_telemetry_from_request() {
                     std::thread::sleep(std::time::Duration::from_millis(10));
                     continue;
                 }
+                Ok(status) => panic!("Unexpected status: {:?}", status),
                 Err(e) => panic!("Failed to get transfer status: {:?}", e),
             }
         }
@@ -1610,6 +1612,7 @@ fn test_get_xfer_telemetry_without_telemetry_enabled() {
                     std::thread::sleep(std::time::Duration::from_millis(10));
                     continue;
                 }
+                Ok(status) => panic!("Unexpected status: {:?}", status),
                 Err(e) => panic!("Failed to get transfer status: {:?}", e),
             }
         }
@@ -2234,4 +2237,98 @@ fn test_desc_list_serialize_with_real_storage() {
 
     test_serialization!(XferDescList, storage_list.iter());
     test_serialization!(RegDescList, storage_list.iter());
+}
+
+#[test]
+fn test_get_xfer_status_list() {
+    // Test the get_xfer_status_list method which returns per-entry status codes
+    let (agent1, opt_args) = create_agent_with_backend("status_list_agent1").expect("Failed to create agent");
+    let (agent2, opt_args_remote) = create_agent_with_backend("status_list_agent2").expect("Failed to create agent");
+
+    // Create multiple storage entries for batch transfer
+    let mut storage_list = create_storage_list(&agent1, &opt_args, 3);
+    let mut remote_storage_list = create_storage_list(&agent2, &opt_args_remote, 3);
+
+    {
+        let local_dlist = create_dlist(&mut storage_list).expect("Failed to create local descriptor list");
+        let remote_dlist = create_dlist(&mut remote_storage_list).expect("Failed to create remote descriptor list");
+
+        exchange_metadata(&agent1, &agent2).expect("Failed to exchange metadata");
+
+        // Create batch transfer request
+        let xfer_req = agent1.create_xfer_req(
+            XferOp::Write,
+            &local_dlist,
+            &remote_dlist,
+            "status_list_agent2",
+            None
+        ).expect("Failed to create transfer request");
+
+        let result = agent1.post_xfer_req(&xfer_req, Some(&opt_args));
+        assert!(result.is_ok(), "post_xfer_req failed with error: {:?}", result.err());
+
+        // Test get_xfer_status_list polling loop
+        loop {
+            match agent1.get_xfer_status_list(&xfer_req) {
+                Ok((XferStatus::Success, entry_status)) => {
+                    println!("Transfer completed successfully");
+                    println!("Entry status count: {}", entry_status.len());
+                    for (i, status) in entry_status.iter().enumerate() {
+                        println!("Entry {}: {}", i, status);
+                    }
+                    break;
+                }
+                Ok((XferStatus::InProgress, entry_status)) => {
+                    println!("Transfer in progress, {} entries tracked", entry_status.len());
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                Ok((XferStatus::InProgressWithError, entry_status)) => {
+                    println!("Transfer in progress with some failures:");
+                    for (i, status) in entry_status.iter().enumerate() {
+                        println!("  Entry {}: {}", i, status);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                Err(NixlError::NotSupported) => {
+                    println!("Backend does not support per-entry status - using fallback");
+                    // Fall back to regular get_xfer_status
+                    loop {
+                        match agent1.get_xfer_status(&xfer_req) {
+                            Ok(XferStatus::Success) => break,
+                            Ok(XferStatus::InProgress) => {
+                                std::thread::sleep(std::time::Duration::from_millis(10));
+                                continue;
+                            }
+                            Ok(XferStatus::InProgressWithError) => {
+                                std::thread::sleep(std::time::Duration::from_millis(10));
+                                continue;
+                            }
+                            Err(e) => panic!("Failed to get transfer status: {:?}", e),
+                        }
+                    }
+                    break;
+                }
+                Err(e) => panic!("Failed to get transfer status list: {:?}", e),
+            }
+        }
+
+        println!("test_get_xfer_status_list passed");
+    }
+}
+
+#[test]
+fn test_xfer_status_is_in_progress_helper() {
+    // Test the is_in_progress() helper method
+    assert!(!XferStatus::Success.is_in_progress());
+    assert!(XferStatus::InProgress.is_in_progress());
+    assert!(XferStatus::InProgressWithError.is_in_progress());
+
+    // Test is_success() helper
+    assert!(XferStatus::Success.is_success());
+    assert!(!XferStatus::InProgress.is_success());
+    assert!(!XferStatus::InProgressWithError.is_success());
+
+    println!("test_xfer_status_is_in_progress_helper passed");
 }

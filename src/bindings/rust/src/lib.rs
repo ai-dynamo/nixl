@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,7 +75,9 @@ use bindings::{
 pub use bindings::{
     nixl_capi_status_t_NIXL_CAPI_ERROR_BACKEND as NIXL_CAPI_ERROR_BACKEND,
     nixl_capi_status_t_NIXL_CAPI_ERROR_INVALID_PARAM as NIXL_CAPI_ERROR_INVALID_PARAM,
+    nixl_capi_status_t_NIXL_CAPI_ERROR_NOT_SUPPORTED as NIXL_CAPI_ERROR_NOT_SUPPORTED,
     nixl_capi_status_t_NIXL_CAPI_IN_PROG as NIXL_CAPI_IN_PROG,
+    nixl_capi_status_t_NIXL_CAPI_IN_PROG_WITH_ERR as NIXL_CAPI_IN_PROG_WITH_ERR,
     nixl_capi_status_t_NIXL_CAPI_SUCCESS as NIXL_CAPI_SUCCESS,
     nixl_capi_status_t_NIXL_CAPI_ERROR_NO_TELEMETRY as NIXL_CAPI_ERROR_NO_TELEMETRY
 };
@@ -117,6 +119,8 @@ pub enum NixlError {
     FailedToCreateBackend,
     #[error("Telemetry is not enabled or transfer is not complete")]
     NoTelemetry,
+    #[error("Operation not supported by backend")]
+    NotSupported,
 }
 
 /// A safe wrapper around NIXL memory list
