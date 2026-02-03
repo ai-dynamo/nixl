@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -124,6 +124,14 @@ class BaseModelArch(ABC):
                 from models.deepseek_r1 import DeepSeekR1
 
                 modelc = DeepSeekR1(**filtered_dict)
+            elif "gpt_oss" in model_name.lower():
+                from models.gpt_oss import GptOss
+
+                modelc = GptOss(**filtered_dict)
+            elif "qwen3" in model_name.lower():
+                from models.qwen3 import Qwen3
+
+                modelc = Qwen3(**filtered_dict)
             else:
                 raise ValueError(f"Model name {model_name} not supported")
 

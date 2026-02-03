@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,7 @@
 #include <cstring>
 #include <iostream>
 
-#include "ucx/ucx_utils.h"
+#include "ucx_utils.h"
 
 using namespace std;
 
@@ -28,33 +28,34 @@ struct sample_header {
     uint32_t test;
 };
 
-ucs_status_t check_buffer (void *arg, const void *header,
-   		                   size_t header_length, void *data,
-				           size_t length,
-				           const ucp_am_recv_param_t *param)
-{
-    struct sample_header* hdr = (struct sample_header*) header;
-    //TODO: is data 8 byte aligned?
-    uint64_t recv_data = *((uint64_t*) data);
+ucs_status_t
+check_buffer(void *arg,
+             const void *header,
+             size_t header_length,
+             void *data,
+             size_t length,
+             const ucp_am_recv_param_t *param) {
+    struct sample_header *hdr = (struct sample_header *)header;
+    // TODO: is data 8 byte aligned?
+    uint64_t recv_data = *((uint64_t *)data);
 
-    if (hdr->test != 0xcee)
-	    return UCS_ERR_INVALID_PARAM;
+    if (hdr->test != 0xcee) return UCS_ERR_INVALID_PARAM;
 
-    assert (length == 8);
-    assert (recv_data == 0xdeaddeaddeadbeef);
+    assert(length == 8);
+    assert(recv_data == 0xdeaddeaddeadbeef);
 
     std::cout << "check_buffer passed\n";
 
     return UCS_OK;
 }
 
-int main()
-{
+int
+main() {
     vector<string> devs;
     devs.push_back("mlx5_0");
 
-    nixlUcxContext c[2] = {{devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE},
-                           {devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE}};
+    nixlUcxContext c[2] = {{devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 1},
+                           {devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 1}};
 
     nixlUcxWorker w[2] = {nixlUcxWorker(c[0]), nixlUcxWorker(c[1])};
     std::unique_ptr<nixlUcxEp> ep[2];
@@ -64,25 +65,25 @@ int main()
 
     unsigned check_cb_id = 1, rndv_cb_id = 2;
 
-    void* big_buffer = calloc(1, 8192);
+    void *big_buffer = calloc(1, 8192);
     struct sample_header hdr = {0};
 
     buffer = 0xdeaddeaddeadbeef;
-    ((uint64_t*) big_buffer)[0] = 0xdeaddeaddeadbeef;
+    ((uint64_t *)big_buffer)[0] = 0xdeaddeaddeadbeef;
     hdr.test = 0xcee;
 
     /* Test control path */
     for (i = 0; i < 2; i++) {
         const std::string addr = w[i].epAddr();
         assert(!addr.empty());
-        auto result = w[!i].connect((void*)addr.data(), addr.size());
+        auto result = w[!i].connect((void *)addr.data(), addr.size());
         assert(result.ok());
         ep[!i] = std::move(*result);
     }
 
     /* Register active message callbacks */
     ret = w[0].regAmCallback(check_cb_id, check_buffer, NULL);
-    assert (ret == 0);
+    assert(ret == 0);
 
     w[0].progress();
     w[1].progress();
@@ -119,7 +120,7 @@ int main()
     assert(buffer_freed);
     std::cout << "second active message complete\n";
 
-    //make sure callbacks are complete
+    // make sure callbacks are complete
     while (w[0].progress())
         ;
 }
