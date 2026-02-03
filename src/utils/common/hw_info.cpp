@@ -69,7 +69,8 @@ hwInfo::hwInfo() {
     std::error_code ec;
     std::filesystem::directory_iterator dir_iter(kPciDevicePath, ec);
     if (ec) {
-        throw std::runtime_error("Failed to scan PCI devices directory: " + ec.message());
+        NIXL_WARN << "Failed to scan PCI devices directory: " << ec.message();
+        return;
     }
 
     for (const auto &entry : dir_iter) {
