@@ -19,6 +19,7 @@ ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
 # UCX argument is either "upstream" (default installed in base image) or "custom" (build from source)
 ARG UCX="upstream"
 ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG UCX_PREFIX="/usr"
 
 # --- Stage 1: Common OS setup ---
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS os_setup_stage
@@ -97,7 +98,7 @@ RUN echo "INFO: Starting custom UCX build..." && \
     ./contrib/configure-release --with-cuda=/usr/local/cuda \
                                 $(if [ "$BUILD_TYPE" = "debug" ]; then echo "--enable-debug"; fi) \
                                 --enable-mt \
-                                --without-go && \
+                                --without-go --prefix=$UCX_PREFIX && \
     make -j${NPROC:-$(nproc)} && \
     make install && \
     cd / && \
@@ -223,7 +224,7 @@ RUN ls -ll /workspace/nixlbench
 
 RUN rm -rf build && \
     mkdir build && \
-    meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench --buildtype=$BUILD_TYPE && \
+    meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench --buildtype=$BUILD_TYPE -Ducxpath_inc=$UCX_PREFIX/include && \
     cd build && ninja && ninja install
 
 WORKDIR /workspace/nixl

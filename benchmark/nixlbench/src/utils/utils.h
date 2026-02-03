@@ -18,7 +18,6 @@
 #ifndef __UTILS_H
 #define __UTILS_H
 
-#include "config.h"
 #include <chrono>
 #include <cstdint>
 #include <iostream>
@@ -28,6 +27,7 @@
 #include <optional>
 #include <cxxopts.hpp>
 #include <toml++/toml.hpp>
+#include <unordered_set>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
 
@@ -184,6 +184,32 @@ public:
     static std::string gusli_config_file;
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
+    static bool enable_gdaki;
+    static std::string gdaki_gpu_device_list;
+    static std::string gdaki_gpu_level;
+    static size_t gdaki_threads_per_block;
+    static size_t gdaki_blocks_per_grid;
+    static bool gdaki_enable_partial_transfers;
+
+// Device API
+#define XFERBENCH_DEV_API_MAX_THREADS 1024
+#define XFERBENCH_DEV_API_MIN_BLOCKS_PER_GRID 1
+
+#define IS_PAIRWISE_AND_SG()                                 \
+    (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
+     XFERBENCH_MODE_SG == xferBenchConfig::mode)
+#define IS_PAIRWISE_AND_MG()                                 \
+    (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
+     XFERBENCH_MODE_MG == xferBenchConfig::mode)
+
+    constexpr static std::string_view xferBenchConfigGpuLevelThread{"thread"};
+    constexpr static std::string_view xferBenchConfigGpuLevelWarp{"warp"};
+    constexpr static std::string_view xferBenchConfigGpuLevelBlock{"block"};
+
+    inline static const std::unordered_set<std::string_view> xferBenchConfigGpuLevels{
+        xferBenchConfigGpuLevelThread,
+        xferBenchConfigGpuLevelWarp,
+        xferBenchConfigGpuLevelBlock};
 
     static int
     parseConfig(int argc, char *argv[]);
