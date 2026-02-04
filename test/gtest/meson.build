@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -78,11 +78,18 @@ else
     device_api_dep = []
 endif
 
+if ucx_dep.found()
+    gtest_sources += 'ucx_hw_warning_test.cpp'
+    ucx_hw_warning_dep = [ucx_backend_interface, ucx_dep]
+else
+    ucx_hw_warning_dep = []
+endif
+
 test_exe = executable('gtest',
     sources : gtest_sources,
     include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, nixl_common_dep, cuda_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, file_utils_interface],
+    dependencies : [nixl_dep, nixl_common_dep, cuda_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface],
     link_with: [nixl_build_lib],
     install : true
 )

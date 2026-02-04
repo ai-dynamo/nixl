@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # This file incorporates material from the DeepSeek project, licensed under the MIT License.
 # The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -21,7 +21,7 @@
 import os
 from contextlib import contextmanager
 from datetime import timedelta
-from typing import TYPE_CHECKING, Callable, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -42,7 +42,7 @@ class Buffer:
     The core expert-parallel (EP) communication buffers for Mixture of Experts (MoE) model, which supports dispatch and combine operations using NVLink and RDMA.
 
     Attributes:
-        nvlink_backend: the backend for NVLink communication, you can choose from 'nixl', 'ipc' and 'none' (which disables NVLink entirely).
+        disable_ll_nvlink: whether to disable NVLink communication for low-latency kernels (default: False).
         rank: the local rank number.
         num_rdma_bytes: the buffer size for RDMA communication.
         runtime: the C++ runtime.
@@ -52,10 +52,9 @@ class Buffer:
 
     def __init__(
         self,
-        nvlink_backend: Literal["nixl", "ipc", "none"] = "nixl",
+        disable_ll_nvlink: bool = False,
         explicitly_destroy: bool = False,
         rank: int = 0,
-        enable_shrink: bool = False,
         group: Optional[dist.ProcessGroup] = None,
         comm: Optional["mpi4py.MPI.Comm"] = None,
         tcp_store_group: Optional[dist.TCPStore] = None,
@@ -64,7 +63,7 @@ class Buffer:
         Initialize the nixl communication buffer.
 
         Arguments:
-            nvlink_backend: nvlink implementation to use, you can choose from 'nixl', 'ipc' and 'none' (which disables NVLink entirely).
+            disable_ll_nvlink: whether to disable NVLink communication for low-latency kernels (default: False).
             explicitly_destroy: If this flag is set to True, you need to explicitly call `destroy()` to release resources;
                 otherwise, the resources will be released by the destructor.
                 Note: Releasing resources in the destructor may cause Python's exception handling process to hang.
@@ -81,14 +80,10 @@ class Buffer:
         self.tcp_store_group = tcp_store_group
         assert not (group and comm)
 
-        # Configure NVLINK backend
-        os.environ["NIXL_EP_NVLINK_BACKEND_IPC"] = (
-            "1" if nvlink_backend == "ipc" else "0"
-        )
-        if nvlink_backend != "nixl":
+        if disable_ll_nvlink:
             os.environ["UCX_TLS"] = "^cuda_ipc"
 
-        self.runtime = nixl_ep_cpp.Buffer(self.rank, explicitly_destroy, enable_shrink)
+        self.runtime = nixl_ep_cpp.Buffer(self.rank, explicitly_destroy)
 
     def destroy(self):
         """
@@ -230,7 +225,7 @@ class Buffer:
         Arguments:
             x: `torch.Tensor` with `torch.bfloat16`, shaped as `[num_tokens, hidden]`, only several hidden shapes are
                 supported. The number of tokens to be dispatched must be less than `num_max_dispatch_tokens_per_rank`.
-            topk_idx: `torch.Tensor` with `torch.int64`, shaped as `[num_tokens, num_topk]`, only several top-k shapes
+            topk_idx: `torch.Tensor` with `nixl_ep.topk_idx_t`, shaped as `[num_tokens, num_topk]`, only several top-k shapes
                 are supported. `-1` indices (not selecting any expert) are supported.
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
             num_experts: the number of all experts.
@@ -336,7 +331,7 @@ class Buffer:
         Arguments:
             x: `[num_local_experts, num_max_dispatch_tokens_per_rank * num_ranks, hidden]` with `torch.bfloat16`,
                 the local calculated tokens to be sent to this original rank and reduced.
-            topk_idx: `[num_combined_tokens, num_topk]` with `torch.int64`, the expert indices selected by the dispatched
+            topk_idx: `[num_combined_tokens, num_topk]` with `nixl_ep.topk_idx_t`, the expert indices selected by the dispatched
                 tokens. `-1` indices (not selecting any expert) are supported. Note that, `num_combined_tokens` equals
                 to the number of dispatched tokens.
             topk_weights: `[num_combined_tokens, num_topk]` with `torch.float`, the expert weights selected by the dispatched
@@ -459,8 +454,9 @@ class Buffer:
         """
         self.group_size = num_ranks
         self.num_rdma_bytes = num_rdma_bytes
-        os.environ["NIXL_EP_NUM_CHANNELS"] = str(num_experts_per_rank)
-        self.runtime.update_memory_buffers(num_ranks, num_rdma_bytes)
+        self.runtime.update_memory_buffers(
+            num_ranks, num_experts_per_rank, num_rdma_bytes
+        )
 
     def set_tcp_store_group(self, tcp_store_group: Optional[dist.TCPStore]) -> None:
         """
@@ -478,20 +474,12 @@ class Buffer:
         nixl_metadata_bytes = self.runtime.get_local_metadata()
         self.tcp_store_group.set(md_key, nixl_metadata_bytes)
 
-        remote_md_keys = [
-            f"NIXL_EP/{rank}" for rank in remote_ranks if rank != self.rank
-        ]
+        remote_md_keys = [f"NIXL_EP/{rank}" for rank in remote_ranks]
         if remote_md_keys:
-            self.tcp_store_group.wait(remote_md_keys, timedelta(seconds=30))
-
-        remote_mds = []
-        for rank in remote_ranks:
-            if rank != self.rank:
-                remote_md_key = f"NIXL_EP/{rank}"
-                remote_md_bytes = self.tcp_store_group.get(remote_md_key)
-                remote_mds.append(remote_md_bytes)
-            else:
-                remote_mds.append(b"")
+            self.tcp_store_group.wait(remote_md_keys, timedelta(seconds=300))
+            remote_mds = self.tcp_store_group.multi_get(remote_md_keys)
+        else:
+            remote_mds = []
 
         try:
             yield remote_mds
