@@ -38,7 +38,7 @@
 
 namespace nixl::test::device_api {
 template<typename paramType = nixl_gpu_level_t>
-class deviceApiTestBase : public testing::TestWithParam<paramType> {
+class test : public testing::TestWithParam<paramType> {
 public:
     static constexpr size_t defaultNumThreads = 32;
     static constexpr size_t defaultNumIters = 100;
@@ -52,31 +52,29 @@ public:
     static constexpr uint32_t testPattern1 = 0xDEADBEEF;
     static constexpr uint32_t testPattern2 = 0xCAFEBABE;
 
-    [[nodiscard]] static const std::vector<nixl_gpu_level_t> &
-    getTestLevels() {
-        static const std::vector<nixl_gpu_level_t> testLevels = {
+    [[nodiscard]] static std::vector<nixl_gpu_level_t>
+    getLevels() {
+        return {
             nixl_gpu_level_t::BLOCK,
             nixl_gpu_level_t::WARP,
             nixl_gpu_level_t::THREAD,
         };
-        return testLevels;
     }
 
-    [[nodiscard]] static const std::vector<nixl_gpu_level_t> &
+    [[nodiscard]] static std::vector<nixl_gpu_level_t>
     getPartialWriteTestLevels() {
-        static const std::vector<nixl_gpu_level_t> partialWriteLevels = {
+        return {
             nixl_gpu_level_t::WARP,
             nixl_gpu_level_t::THREAD,
         };
-        return partialWriteLevels;
     }
 
-    [[nodiscard]] static std::vector<device_test_params_t>
+    [[nodiscard]] static std::vector<testParams>
     getDeviceTestParams() {
-        return generateDeviceTestParams(getTestLevels());
+        return generateDeviceTestParams(getLevels());
     }
 
-    [[nodiscard]] static std::vector<device_test_params_t>
+    [[nodiscard]] static std::vector<testParams>
     getPartialWriteDeviceTestParams() {
         return generateDeviceTestParams(getPartialWriteTestLevels());
     }
@@ -97,7 +95,7 @@ public:
     }
 
     template<typename testType = paramType>
-    std::enable_if_t<std::is_same_v<testType, device_test_params_t>, nixl_mem_t>
+    std::enable_if_t<std::is_same_v<testType, testParams>, nixl_mem_t>
     getDstMemType() const {
         return this->GetParam().mem_type;
     }
@@ -117,11 +115,11 @@ protected:
         struct cleanupGuard {
             nixlXferReqH **xferReqPtr_;
             nixlGpuXferReqH *gpuReqHandlePtr_;
-            deviceApiTestBase *testBase_;
+            test *testBase_;
 
             cleanupGuard(nixlXferReqH **xfer_req_ptr,
                          nixlGpuXferReqH *gpu_req_handle_ptr,
-                         deviceApiTestBase *test_base)
+                         test *test_base)
                 : xferReqPtr_(xfer_req_ptr),
                   gpuReqHandlePtr_(gpu_req_handle_ptr),
                   testBase_(test_base) {}
@@ -138,7 +136,7 @@ protected:
         };
 
         cleanupGuard
-        makeCleanupGuard(deviceApiTestBase *test_base) {
+        makeCleanupGuard(test *test_base) {
             return cleanupGuard(&xferReq, &gpuReqHandle, test_base);
         }
     };
@@ -206,7 +204,7 @@ protected:
     void
     cleanupXferRequest(nixlXferReqH *xfer_req, nixlGpuXferReqH gpu_req_handle);
     void
-    launchAndCheckKernel(const deviceKernelParams &params);
+    launchAndCheckKernel(const kernelParams &params);
     void
     setupWriteTest(size_t size,
                    size_t count,
@@ -249,9 +247,9 @@ private:
     std::vector<std::unique_ptr<nixlAgent>> agents_;
     std::vector<nixlBackendH *> backendHandles_;
 
-    static std::vector<device_test_params_t>
+    static std::vector<testParams>
     generateDeviceTestParams(const std::vector<nixl_gpu_level_t> &levels) {
-        std::vector<device_test_params_t> params;
+        std::vector<testParams> params;
         const std::vector<send_mode_t> modes{
             send_mode_t::NODELAY_WITH_REQ,
             send_mode_t::NODELAY_WITHOUT_REQ,

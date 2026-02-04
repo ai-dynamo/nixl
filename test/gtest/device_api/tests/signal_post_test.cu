@@ -20,7 +20,7 @@
 #include <random>
 
 namespace nixl::test::device_api {
-class signalPostTest : public deviceApiTestBase<device_test_params_t> {
+class signalPostTest : public test<testParams> {
 protected:
     size_t
     getNumOpsMultiplier() const {
@@ -76,8 +76,8 @@ protected:
                   uint64_t signal_inc) {
         constexpr size_t signal_offset = 0;
 
-        deviceKernelParams post_params;
-        post_params.operation = device_operation_t::SIGNAL_POST;
+        kernelParams post_params;
+        post_params.operation = operation_t::SIGNAL_POST;
         post_params.level = getLevel();
         post_params.numThreads = defaultNumThreads;
         post_params.numBlocks = 1;
@@ -90,14 +90,14 @@ protected:
         post_params.signalPost.signalInc = signal_inc;
         post_params.signalPost.signalOffset = signal_offset;
 
-        const nixl_status_t status = launchDeviceKernel(post_params);
+        const nixl_status_t status = launchKernel(post_params);
         ASSERT_EQ(status, NIXL_SUCCESS);
     }
 
     void
     verifySignal(testSetupData &setup_data, uint64_t expected_value) {
-        deviceKernelParams read_params;
-        read_params.operation = device_operation_t::SIGNAL_WAIT;
+        kernelParams read_params;
+        read_params.operation = operation_t::SIGNAL_WAIT;
         read_params.level = getLevel();
         read_params.numThreads = defaultNumThreads;
         read_params.numBlocks = 1;
@@ -106,7 +106,7 @@ protected:
         read_params.signalWait.signalAddr = setup_data.dstBuffers[0].get();
         read_params.signalWait.expectedValue = expected_value;
 
-        const nixl_status_t status = launchDeviceKernel(read_params);
+        const nixl_status_t status = launchKernel(read_params);
         ASSERT_EQ(status, NIXL_SUCCESS);
     }
 };

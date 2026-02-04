@@ -23,7 +23,7 @@
 #include <cstdint>
 
 namespace nixl::test::device_api {
-enum class device_operation_t : uint64_t {
+enum class operation_t : uint64_t {
     SINGLE_WRITE,
     PARTIAL_WRITE,
     WRITE,
@@ -32,8 +32,8 @@ enum class device_operation_t : uint64_t {
     SIGNAL_WRITE
 };
 
-struct deviceKernelParams {
-    device_operation_t operation;
+struct kernelParams {
+    operation_t operation;
     nixl_gpu_level_t level;
     unsigned numThreads;
     unsigned numBlocks;
@@ -84,6 +84,6 @@ struct deviceKernelParams {
 };
 
 [[nodiscard]] nixl_status_t
-launchDeviceKernel(const deviceKernelParams &params);
+launchKernel(const kernelParams &params);
 } // namespace nixl::test::device_api
 #endif // NIXL_DEVICE_KERNELS_CUH

@@ -19,12 +19,12 @@
 
 namespace nixl::test::device_api {
 
-class writeTest : public deviceApiTestBase<device_test_params_t> {
+class writeTest : public test<testParams> {
 protected:
     void
     runWrite(const testSetupData &setup_data, size_t num_iters, uint64_t signal_inc) {
-        deviceKernelParams params;
-        params.operation = device_operation_t::WRITE;
+        kernelParams params;
+        params.operation = operation_t::WRITE;
         params.level = getLevel();
         params.numThreads = defaultNumThreads;
         params.numBlocks = 1;
@@ -35,7 +35,7 @@ protected:
 
         params.write.signalInc = signal_inc;
 
-        const nixl_status_t status = launchDeviceKernel(params);
+        const nixl_status_t status = launchKernel(params);
         ASSERT_EQ(status, NIXL_SUCCESS) << "Kernel execution failed with status: " << status;
     }
 };

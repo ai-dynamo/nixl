@@ -19,7 +19,7 @@
 #include "common/test_array.h"
 
 namespace nixl::test::device_api {
-class signalLocalTest : public deviceApiTestBase<nixl_gpu_level_t> {
+class signalLocalTest : public test<nixl_gpu_level_t> {
 protected:
     void
     setupLocalSignal() {
@@ -41,8 +41,8 @@ protected:
 
     void
     writeSignal(void *signal_addr, uint64_t value, size_t num_threads) {
-        deviceKernelParams params;
-        params.operation = device_operation_t::SIGNAL_WRITE;
+        kernelParams params;
+        params.operation = operation_t::SIGNAL_WRITE;
         params.level = GetParam();
         params.numThreads = num_threads;
         params.numBlocks = 1;
@@ -51,14 +51,14 @@ protected:
         params.signalWrite.signalAddr = signal_addr;
         params.signalWrite.value = value;
 
-        const nixl_status_t status = launchDeviceKernel(params);
+        const nixl_status_t status = launchKernel(params);
         ASSERT_EQ(status, NIXL_SUCCESS);
     }
 
     void
     readAndVerifySignal(const void *signal_addr, uint64_t expected_value, size_t num_threads) {
-        deviceKernelParams params;
-        params.operation = device_operation_t::SIGNAL_WAIT;
+        kernelParams params;
+        params.operation = operation_t::SIGNAL_WAIT;
         params.level = GetParam();
         params.numThreads = num_threads;
         params.numBlocks = 1;
@@ -67,7 +67,7 @@ protected:
         params.signalWait.signalAddr = signal_addr;
         params.signalWait.expectedValue = expected_value;
 
-        const nixl_status_t status = launchDeviceKernel(params);
+        const nixl_status_t status = launchKernel(params);
         ASSERT_EQ(status, NIXL_SUCCESS);
     }
 
@@ -124,6 +124,6 @@ TEST_P(signalLocalTest, MaxValue) {
 
 INSTANTIATE_TEST_SUITE_P(ucxDeviceApi,
                          signalLocalTest,
-                         testing::ValuesIn(signalLocalTest::getTestLevels()),
+                         testing::ValuesIn(signalLocalTest::getLevels()),
                          testNameGenerator::level);
 } // namespace nixl::test::device_api

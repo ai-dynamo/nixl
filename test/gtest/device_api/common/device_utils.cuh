@@ -59,12 +59,12 @@ getSendModeStr(send_mode_t mode) {
     }
 }
 
-template<typename TestBase>
+template<typename test>
 inline void
-applySendMode(deviceKernelParams &params, send_mode_t mode) {
+applySendMode(kernelParams &params, send_mode_t mode) {
     switch (mode) {
     case send_mode_t::MULTI_CHANNEL:
-        params.numChannels = TestBase::multiChannelCount;
+        params.numChannels = test::multiChannelCount;
     case send_mode_t::NODELAY_WITH_REQ:
         params.withNoDelay = true;
         params.withRequest = true;
@@ -80,12 +80,12 @@ applySendMode(deviceKernelParams &params, send_mode_t mode) {
     }
 }
 
-struct device_test_params_t {
+struct testParams {
     nixl_gpu_level_t level;
     send_mode_t mode;
     nixl_mem_t mem_type;
 
-    device_test_params_t(nixl_gpu_level_t l, send_mode_t m, nixl_mem_t mt)
+    testParams(nixl_gpu_level_t l, send_mode_t m, nixl_mem_t mt)
         : level(l),
           mode(m),
           mem_type(mt) {}
@@ -119,7 +119,7 @@ getMemTypeStr(nixl_mem_t mem_type) {
 
 struct testNameGenerator {
     static std::string
-    device(const testing::TestParamInfo<device_test_params_t> &info) {
+    device(const testing::TestParamInfo<testParams> &info) {
         const auto &p = info.param;
         return std::string(getMemTypeStr(p.mem_type)) + "_" + std::string(getGpuLevelStr(p.level)) +
             "_" + std::string(getSendModeStr(p.mode));

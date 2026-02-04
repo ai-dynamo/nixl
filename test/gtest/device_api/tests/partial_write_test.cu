@@ -21,7 +21,7 @@
 #include <algorithm>
 
 namespace nixl::test::device_api {
-class partialWriteTest : public deviceApiTestBase<device_test_params_t> {
+class partialWriteTest : public test<testParams> {
 protected:
     void
     runPartialWrite(const testSetupData &setup_data,
@@ -51,8 +51,8 @@ protected:
         const unsigned signal_desc_index = static_cast<unsigned>(setup_data.dstBuffers.size() - 1);
         constexpr size_t signal_offset = 0;
 
-        deviceKernelParams params;
-        params.operation = device_operation_t::PARTIAL_WRITE;
+        kernelParams params;
+        params.operation = operation_t::PARTIAL_WRITE;
         params.level = getLevel();
         params.numThreads = defaultNumThreads;
         params.numBlocks = 1;
@@ -70,7 +70,7 @@ protected:
         params.partialWrite.signalInc = signal_inc;
         params.partialWrite.signalOffset = signal_offset;
 
-        const nixl_status_t status = launchDeviceKernel(params);
+        const nixl_status_t status = launchKernel(params);
         ASSERT_EQ(status, NIXL_SUCCESS) << "Kernel execution failed with status: " << status;
     }
 };

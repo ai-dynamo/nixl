@@ -21,14 +21,14 @@
 
 namespace nixl::test::device_api {
 
-using single_write_params_t = device_test_params_t;
+using single_write_params_t = testParams;
 
-class singleWriteTest : public deviceApiTestBase<single_write_params_t> {
+class singleWriteTest : public test<single_write_params_t> {
 protected:
     void
     runTest(testSetupData &setup_data, size_t size, size_t num_iters) {
-        deviceKernelParams params;
-        params.operation = device_operation_t::SINGLE_WRITE;
+        kernelParams params;
+        params.operation = operation_t::SINGLE_WRITE;
         params.level = getLevel();
         params.numThreads = defaultNumThreads;
         params.numBlocks = 1;
