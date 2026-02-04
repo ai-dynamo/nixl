@@ -200,6 +200,7 @@ private:
     /* Local UCX stuff */
     ucp_context_h ctx;
     nixl_ucx_mt_t mt_type;
+    unsigned ucpVersion_;
 
 public:
     nixlUcxContext(std::vector<std::string> devices,
@@ -221,6 +222,9 @@ public:
     /* GPU signal management */
     [[nodiscard]] size_t
     getGpuSignalSize() const;
+
+    void
+    warnAboutHardwareSupportMismatch() const;
 
     friend class nixlUcxWorker;
 };

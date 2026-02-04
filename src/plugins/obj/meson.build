@@ -17,8 +17,13 @@ obj_sources = [
     'obj_backend.cpp',
     'obj_backend.h',
     'obj_plugin.cpp',
+    '../../utils/object/engine_utils.h',
     's3/client.cpp',
     's3/client.h',
+    's3/engine_impl.cpp',
+    's3/engine_impl.h',
+    's3_crt/engine_impl.cpp',
+    's3_crt/engine_impl.h',
     's3_crt/client.cpp',
     's3_crt/client.h',
 ]
@@ -30,6 +35,19 @@ if not is_variable('obj_utils_interface')
 endif
 
 plugin_deps += [obj_utils_interface, dependency('asio', required: true)]
+
+if cuobj_dep.found()
+    message('Found CUObjClient Library. Enabling S3 Accelerated engines')
+    obj_sources += [
+        's3_accel/client.cpp',
+        's3_accel/client.h',
+        's3_accel/engine_impl.cpp',
+        's3_accel/engine_impl.h',
+    ]
+    plugin_deps += [ cuobj_dep ]
+else
+    message ('Could not find CUObjClient Library. Skipping S3 Accelerated engines')
+endif
 
 if 'OBJ' in static_plugins
     obj_backend_lib = static_library(

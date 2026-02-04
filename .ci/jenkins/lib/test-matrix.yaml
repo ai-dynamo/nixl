@@ -30,7 +30,7 @@ env:
   NIXL_INSTALL_DIR: /opt/nixl
   TEST_TIMEOUT: 30
   NPROC: 32
-  CI_IMAGE_TAG: "20251218-1"
+  CI_IMAGE_TAG: "20260129-1"
 
 docker_opt: "-e NPROC -e EXECUTOR_NUMBER --security-opt seccomp=unconfined --security-opt apparmor=unconfined --shm-size=1G --ulimit nofile=65535:65535 --ulimit stack=67108864 --ulimit memlock=-1:-1 --network=host --ipc=host --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN --privileged --gpus all --device=/dev/infiniband --device=/dev/gdrdrv --entrypoint=''"
 

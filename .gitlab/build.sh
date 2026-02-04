@@ -36,6 +36,7 @@ LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
 UCCL_COMMIT_SHA="a962f611021afc2e3c9358f6da4ae96539cbca0f"
+AZURITE_VER="3.35.0"
 TMPDIR=$(mktemp -d)
 
 if [ -z "$INSTALL_DIR" ]; then
@@ -112,6 +113,7 @@ else
                                  clang \
                                  hwloc \
                                  libhwloc-dev \
+                                 libxml2-dev \
                                  libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
     # Ubuntu 22.04 specific setup
@@ -152,6 +154,15 @@ else
     chmod +x ${TMPDIR}/install_uv.sh
     ${TMPDIR}/install_uv.sh
 
+    # Install Node Version Manager then Nodejs to install Azurite
+    wget --tries=3 --waitretry=5 "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh" -O ${TMPDIR}/install_nvm.sh
+    chmod +x ${TMPDIR}/install_nvm.sh
+    ${TMPDIR}/install_nvm.sh
+    export NVM_DIR=${HOME}/.nvm
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    nvm install --lts  # install nodejs
+    npm install -g azurite@${AZURITE_VER}
+
     wget --tries=3 --waitretry=5 -O "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
     tar xjf "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -C ${TMPDIR}
     rm "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
@@ -167,7 +178,9 @@ else
                   --enable-efa && \
       make -j"$NPROC" && \
       make install && \
-      $SUDO ldconfig \
+      $SUDO ldconfig && \
+      cd .. && \
+      rm -rf libfabric-*
     )
 
     ( \
@@ -188,7 +201,9 @@ else
       cd aws_sdk_build && \
       cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
       make -j"$NPROC" && \
-      $SUDO make install
+      $SUDO make install && \
+      cd .. && \
+      rm -rf aws_sdk_build aws-sdk-cpp
     )
 
     ( \
@@ -196,7 +211,9 @@ else
       git clone https://github.com/nvidia/gusli.git && \
       cd gusli && \
       $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
-      $SUDO ldconfig
+      $SUDO ldconfig && \
+      cd .. && \
+      $SUDO rm -rf gusli
     )
 
     ( \
@@ -208,7 +225,9 @@ else
       cmake .. -DBUILD_SHARED_LIBS=ON && \
       make -j4 && \
       $SUDO make install && \
-      $SUDO ldconfig
+      $SUDO ldconfig && \
+      cd .. && \
+      rm -rf Mooncake
     )
 
     ( \
@@ -216,6 +235,21 @@ else
       git clone --depth 1 https://github.com/google/gtest-parallel.git &&
       mkdir -p ${INSTALL_DIR}/bin &&
       cp ${TMPDIR}/gtest-parallel/* ${INSTALL_DIR}/bin/
+    )
+
+    ( \
+      cd ${TMPDIR} && \
+      df -h && \
+      curl -sL https://aka.ms/InstallAzureCLIDeb | $SUDO bash && \
+      git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
+      cd azure-sdk-for-cpp/ && \
+      mkdir build && cd build && \
+      AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
+      cmake --build . --target azure-storage-blobs azure-identity && \
+      $SUDO cmake --install sdk/core && \
+      $SUDO cmake --install sdk/storage/azure-storage-common && \
+      $SUDO cmake --install sdk/storage/azure-storage-blobs && \
+      $SUDO cmake --install sdk/identity
     )
 fi # PRE_INSTALLED_ENV end
 
