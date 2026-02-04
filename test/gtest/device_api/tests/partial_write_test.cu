@@ -92,7 +92,7 @@ TEST_P(partialWriteTest, Basic) {
     ASSERT_NO_FATAL_FAILURE(initializeTestData(sizes, setup_data));
     ASSERT_NO_FATAL_FAILURE(
         runPartialWrite(setup_data, sizes, defaultNumIters, testSignalIncrement));
-    ASSERT_NO_FATAL_FAILURE(verifyTestData(sizes, setup_data));
+    EXPECT_TRUE(verifyTestData(sizes, setup_data));
 }
 
 TEST_P(partialWriteTest, WithoutSignal) {
@@ -106,7 +106,7 @@ TEST_P(partialWriteTest, WithoutSignal) {
 
     ASSERT_NO_FATAL_FAILURE(initializeTestData(sizes, setup_data));
     ASSERT_NO_FATAL_FAILURE(runPartialWrite(setup_data, sizes, defaultNumIters, signal_inc));
-    ASSERT_NO_FATAL_FAILURE(verifyTestData(sizes, setup_data));
+    EXPECT_TRUE(verifyTestData(sizes, setup_data));
 }
 
 TEST_P(partialWriteTest, SignalOnly) {

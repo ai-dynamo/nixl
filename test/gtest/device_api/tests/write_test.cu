@@ -54,7 +54,7 @@ TEST_P(writeTest, Basic) {
 
     ASSERT_NO_FATAL_FAILURE(initializeTestData(sizes, setup_data));
     ASSERT_NO_FATAL_FAILURE(runWrite(setup_data, defaultNumIters, testSignalIncrement));
-    ASSERT_NO_FATAL_FAILURE(verifyTestData(sizes, setup_data));
+    EXPECT_TRUE(verifyTestData(sizes, setup_data));
 }
 
 TEST_P(writeTest, WithoutSignal) {
@@ -68,7 +68,7 @@ TEST_P(writeTest, WithoutSignal) {
 
     ASSERT_NO_FATAL_FAILURE(initializeTestData(sizes, setup_data));
     ASSERT_NO_FATAL_FAILURE(runWrite(setup_data, 1000, signal_inc));
-    ASSERT_NO_FATAL_FAILURE(verifyTestData(sizes, setup_data));
+    EXPECT_TRUE(verifyTestData(sizes, setup_data));
 }
 
 TEST_P(writeTest, SignalOnly) {

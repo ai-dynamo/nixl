@@ -226,17 +226,16 @@ protected:
         }
     }
 
-    void
+    [[nodiscard]] bool
     verifyTestData(const std::vector<size_t> &sizes, const testSetupData &setup_data) {
         for (size_t i = 0; i < sizes.size(); ++i) {
             const auto expected_pattern = generateTestPattern(sizes[i], i);
             std::vector<uint8_t> received_data(sizes[i]);
-
             setup_data.dstBuffers[i].copyToHost(received_data.data(), sizes[i]);
-
-            ASSERT_EQ(received_data, expected_pattern)
-                << "Data verification failed for buffer " << i;
+            if (received_data != expected_pattern) return false;
         }
+
+        return true;
     }
 
     [[nodiscard]] nixlBackendH *
@@ -252,17 +251,17 @@ private:
     static std::vector<device_test_params_t>
     generateDeviceTestParams(const std::vector<nixl_gpu_level_t> &levels) {
         std::vector<device_test_params_t> params;
-        const std::vector<send_mode_t> modes = {
+        const std::vector<send_mode_t> modes{
             send_mode_t::NODELAY_WITH_REQ,
             send_mode_t::NODELAY_WITHOUT_REQ,
             send_mode_t::WITHOUT_NODELAY_WITHOUT_REQ,
             send_mode_t::MULTI_CHANNEL,
         };
-        const std::vector<nixl_mem_t> mem_types = {VRAM_SEG, DRAM_SEG};
+        const std::vector<nixl_mem_t> mem_types{VRAM_SEG, DRAM_SEG};
 
-        for (const auto level : levels) {
-            for (const auto mode : modes) {
-                for (const auto mem_type : mem_types) {
+        for (const auto &level : levels) {
+            for (const auto &mode : modes) {
+                for (const auto &mem_type : mem_types) {
                     params.emplace_back(level, mode, mem_type);
                 }
             }
