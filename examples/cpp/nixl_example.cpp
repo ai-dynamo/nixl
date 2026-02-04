@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -172,9 +172,6 @@ main(int argc, char **argv) {
     ret2 = A2.getLocalMD(meta2);
     nixl_exit_on_failure(ret1, "Failed to get local MD", agent1);
     nixl_exit_on_failure(ret2, "Failed to get local MD", agent2);
-
-    std::cout << "Agent1's Metadata: " << meta1 << "\n";
-    std::cout << "Agent2's Metadata: " << meta2 << "\n";
 
     ret1 = A1.loadRemoteMD (meta2, ret_s1);
 
