@@ -1394,6 +1394,47 @@ nixlLibfabricRail::registerMemory(void *buffer,
     // MRRC: Add to cache with ref_count=1
     {
         std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+
+        // Cache size limit and eviction logic
+        constexpr size_t NIXL_MR_CACHE_MAX_ENTRIES_DEFAULT = 1024;
+        static size_t max_cache_entries = []() {
+            const char *max_str = std::getenv("NIXL_MR_CACHE_MAX_ENTRIES");
+            return max_str ? std::stoul(max_str) : NIXL_MR_CACHE_MAX_ENTRIES_DEFAULT;
+        }();
+
+        // Check if cache is full and evict if needed
+        if (mr_cache_.size() >= max_cache_entries) {
+            NIXL_DEBUG << "MRRC: Cache at capacity (" << mr_cache_.size()
+                       << " entries), attempting eviction";
+
+            // Find and evict an entry with ref_count == 0
+            bool evicted = false;
+            for (auto it = mr_cache_.begin(); it != mr_cache_.end(); ++it) {
+                if (it->second.ref_count.load(std::memory_order_acquire) == 0) {
+                    // Close the MR
+                    int ret = fi_close(&it->second.mr->fid);
+                    if (ret != 0) {
+                        NIXL_ERROR << "MRRC: fi_close failed during eviction: "
+                                   << fi_strerror(-ret);
+                    }
+
+                    NIXL_DEBUG << "MRRC: Evicted entry with key " << it->first
+                               << " to make room for new registration";
+                    mr_cache_.erase(it);
+                    evicted = true;
+                    break;
+                }
+            }
+
+            // If couldn't evict (all entries in use), return error
+            if (!evicted) {
+                NIXL_ERROR << "MRRC: Cache full (" << mr_cache_.size()
+                           << " entries) and all entries have active references. "
+                           << "Consider increasing NIXL_MR_CACHE_MAX_ENTRIES.";
+                return NIXL_ERR_BACKEND;
+            }
+        }
+
         mr_cache_.emplace(buf_addr, MRCacheEntry(mr, actual_key, length, mem_type, gpu_id));
         NIXL_DEBUG << "MRRC cache insert: rail=" << rail_id << " buffer=" << buffer
                    << " key=" << actual_key << " cache_size=" << mr_cache_.size();
