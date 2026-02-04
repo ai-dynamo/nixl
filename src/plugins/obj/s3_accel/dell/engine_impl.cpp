@@ -313,4 +313,3 @@ iS3Client *
 S3DellObsObjEngineImpl::getClient() const {
     return s3Client_.get();
 }
-
