@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,11 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Utils to generate matrices that represent the communication patterns of an inference workload
+"""Utils to generate matrices that represent the communication patterns of an inference workload.
+
+Generates rank-to-rank RDMA communication matrices for disaggregated prefill/decode.
+Each matrix represents one LLM forward pass with compute time estimation.
 
 Disclaimers:
 - For now there is only support for TP and CP
-- The compute time estimation is very naive and assumes 36 TFlops (h100)
+- The compute time estimation is naive (configurable via --flops-per-gpu, default 1000 TFLOPS for H100)
 - The batching is very naive and just aggregates requests into batches until it exceeds max_batch_mem or batch_size
 
 Example usage:
@@ -38,24 +41,29 @@ python inference_workload_matgen.py generate \
     --min-isl 1000 \
     --max-isl 128000 \
     --max-batch-mem 100000000000 \
-    --hidden-size 16384 \
-    --num-layers 126 \
-    --num-heads 128 \
-    --num-kv-heads 8 \
-    --dtype-size 2 \
-OR instead of hidden-size/num-layers/etc.. Use a preconfigured model:
-    --model llama-405b
+    --model llama-405b \
+    --prefix-hit-rate 0.75
+
+With --prefix-hit-rate specified, the metadata.yaml includes storage configuration.
+Storage files are created by kvbench at runtime (not by matgen).
 """
 
 from dataclasses import dataclass
 from itertools import cycle
 from os import PathLike
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import yaml
-from tqdm import tqdm
+
+try:
+    from tqdm import tqdm
+except ImportError:
+
+    def tqdm(x, **kwargs):
+        return x
+
 
 from nixl.logging import get_logger
 
@@ -77,7 +85,6 @@ class ModelConfig:
         return self.hidden_size // self.num_heads
 
     def bytes_per_token(self):
-        # return 2 * self.hidden_size * self.num_layers * self.dtype_size * self.num_heads
         if self.num_kv_heads is not None:
             return (
                 2
@@ -145,7 +152,6 @@ class Batch:
 
     def kv_cache_size(self, model_config: ModelConfig):
         """KV cache size in bytes"""
-
         return sum(model_config.kv_cache_size(req.isl) for req in self.user_requests)
 
     @property
@@ -162,6 +168,7 @@ class TransferMatrix:
     matrix: np.ndarray
     compute_time: float
     isl: int
+    sender_ranks: List[int]  # Which ranks are senders in this matrix
 
 
 def gen_batches(
@@ -206,42 +213,85 @@ def gen_matrices_and_compute_time(
     model_config: ModelConfig,
     prefill_worker_config: WorkerConfig,
     decode_worker_config: WorkerConfig,
+    flops_per_gpu: float = 1000 * 1e12,
 ) -> List[TransferMatrix]:
-    """
+    """Generate communication matrices for all batches.
+
     Args:
-        - batches: List of batches
+        batches: List of batches
+        prefill_workers: List of prefill worker rank groups
+        decode_workers: List of decode worker rank groups
+        model_config: Model configuration
+        prefill_worker_config: Prefill worker configuration
+        decode_worker_config: Decode worker configuration
+
+    Returns:
+        List of TransferMatrix objects
     """
-    # For now, every prefill worker is bound to a single decode worker
-    assert len(prefill_workers) == len(
-        decode_workers
-    ), f"Prefill and decode workers must have the same number of workers, got {len(prefill_workers)} and {len(decode_workers)}"
+    # Handle storage-only mode with no decode workers
+    storage_only_no_decode = len(decode_workers) == 0
 
-    # Assertions
-    all_ranks = list(r for worker in prefill_workers + decode_workers for r in worker)
-    world_size = max(all_ranks) + 1
-    assert set(all_ranks) == set(range(world_size)), "Ranks are missing"
+    workers_coupling: list[tuple[list[int], list[int] | None]]
+    if not storage_only_no_decode:
+        # Support N:1 ratio (multiple prefill workers per decode worker)
+        assert len(prefill_workers) >= len(
+            decode_workers
+        ), f"Prefill workers ({len(prefill_workers)}) must be >= decode workers ({len(decode_workers)})"
+        assert (
+            len(prefill_workers) % len(decode_workers) == 0
+        ), f"Prefill workers ({len(prefill_workers)}) must be divisible by decode workers ({len(decode_workers)})"
 
-    workers_coupling = list(zip(prefill_workers, decode_workers))
+        # Assertions
+        all_ranks = list(
+            r for worker in prefill_workers + decode_workers for r in worker
+        )
+        world_size = max(all_ranks) + 1
+        assert set(all_ranks) == set(range(world_size)), "Ranks are missing"
+
+        # Pair prefill workers with decode workers (cycling decode if N:1)
+        ratio = len(prefill_workers) // len(decode_workers)
+        workers_coupling = [
+            (pw, decode_workers[i // ratio]) for i, pw in enumerate(prefill_workers)
+        ]
+    else:
+        # Storage-only: only prefill workers, no decode
+        all_ranks = list(r for worker in prefill_workers for r in worker)
+        world_size = max(all_ranks) + 1
+        assert set(all_ranks) == set(range(world_size)), "Ranks are missing"
+        # Pair each prefill worker with None for decode
+        workers_coupling = [(pw, None) for pw in prefill_workers]
 
     workers_pool = cycle(workers_coupling)
     matrices = []
 
     for batch in tqdm(batches, desc="Generating matrices"):
         prefill_worker, decode_worker = next(workers_pool)
-        mat = gen_matrix(
-            batch,
-            world_size,
-            prefill_worker,
-            decode_worker,
-            model_config,
-            prefill_worker_config,
-            decode_worker_config,
+
+        if decode_worker is not None:
+            # Normal mode: generate RDMA matrix
+            mat = gen_matrix(
+                batch,
+                world_size,
+                prefill_worker,
+                decode_worker,
+                model_config,
+                prefill_worker_config,
+                decode_worker_config,
+            )
+        else:
+            # Storage-only with no decode: create empty matrix placeholder
+            mat = np.zeros((world_size, world_size), dtype=np.int64)
+
+        compute_time = estimate_compute_time(
+            batch, model_config, prefill_worker_config, flops_per_gpu
+        )
+        matrix_obj = TransferMatrix(
+            matrix=mat,
+            compute_time=compute_time,
+            isl=batch.total_isl,
+            sender_ranks=prefill_worker,
         )
 
-        compute_time = estimate_compute_time(batch, model_config, prefill_worker_config)
-        matrix_obj = TransferMatrix(
-            matrix=mat, compute_time=compute_time, isl=batch.total_isl
-        )
         matrices.append(matrix_obj)
 
     return matrices
@@ -256,6 +306,11 @@ def gen_matrix(
     prefill_worker_config: WorkerConfig,
     decode_worker_config: WorkerConfig,
 ):
+    """Generate rank-to-rank RDMA communication matrix for a batch.
+
+    Matrix layout: world_size x world_size
+    Each entry [i,j] = bytes sent from rank i to rank j
+    """
     kv_size = batch.kv_cache_size(model_config)
     kv_slice_size = (
         kv_size
@@ -274,11 +329,13 @@ def gen_matrix(
 
     mat = np.zeros((world_size, world_size))
 
+    # Prefill → Decode RDMA transfers
     dst_iter = iter(decode_worker)
     for rank in prefill_worker:
         for _ in range(num_peers):
             dst = next(dst_iter)
             mat[rank, dst] = buf_size
+
     return mat
 
 
@@ -286,7 +343,7 @@ def estimate_compute_time(
     batch: Batch,
     model_config: ModelConfig,
     worker_config: WorkerConfig,
-    flops_per_gpu: float = 36 * 1e12,  # 36 TFlops (h100)
+    flops_per_gpu: float = 1000 * 1e12,  # 1000 TFlops (H100 FP16, conservative)
 ):
     """Estimate the compute time of a batch, in seconds.
 
@@ -344,30 +401,53 @@ def main(
     model_config: ModelConfig,
     results_dir: Optional[PathLike] = None,
     rail_optimized: bool = False,
+    prefix_hit_rate: Optional[float] = None,
+    flops_per_gpu: float = 1000 * 1e12,
+    storage_only: bool = False,
+    read_only: bool = False,
+    all_nodes_per_pattern: bool = False,
+    mem_type: str = "cuda",
+    iters: int = 10,
+    isolation_iters: int = 5,
 ):
-    """
+    """Generate communication matrices for inference workload.
+
     Args:
-        - prefill_gpus: List of GPUs ranks that are used for prefill
-        - rail_optimized: Whether to reorder the decode workers to match rail-optimized communication (assumption: 8 nic per nodes, nic 0 is connected to nic 0 and 4 of other nodes, 1 to 1/5 etc)
-            Only supported for 4 GPUs per prefill worker and 8 GPUs per decode worker
+        num_user_requests: Number of user requests to simulate
+        task_config: Task configuration
+        num_prefill_gpus: Number of GPUs for prefill
+        num_decode_gpus: Number of GPUs for decode
+        prefill_worker_config: Prefill worker configuration
+        decode_worker_config: Decode worker configuration
+        model_config: Model configuration
+        results_dir: Directory to save results
+        rail_optimized: Whether to reorder decode workers for rail-optimized communication
+        prefix_hit_rate: Fraction of KV cache to read from storage (0.0-1.0)
+        storage_only: If True, generate storage-only config (no RDMA matrices)
+        read_only: If True, skip write operations in storage patterns
+        all_nodes_per_pattern: If True, all prefill nodes are active in each pattern
+        mem_type: Memory type for storage operations (cuda, cpu)
+        iters: Number of iterations per traffic pattern
+        isolation_iters: Number of isolation iterations
 
     Returns:
         matrices
     """
-    # Rules of thumb
-    assert (
-        prefill_worker_config.tp <= decode_worker_config.tp
-    ), "Prefill TP must be less than or equal to decode TP"
-    assert (
-        prefill_worker_config.pp >= decode_worker_config.pp
-    ), "Prefill PP must be more or equal to decode PP"
-    assert (
-        prefill_worker_config.cp >= decode_worker_config.cp
-    ), "Prefill CP must be more or equal to decode CP"
-    assert decode_worker_config.cp == 1, "Decode CP must be 1"
-    assert (
-        prefill_worker_config.ep <= decode_worker_config.ep
-    ), "Prefill EP must be less or equal to decode EP"
+    # Rules of thumb - only apply when there are decode workers
+    if num_decode_gpus > 0:
+        assert (
+            prefill_worker_config.tp <= decode_worker_config.tp
+        ), "Prefill TP must be less than or equal to decode TP"
+        assert (
+            prefill_worker_config.pp >= decode_worker_config.pp
+        ), "Prefill PP must be more or equal to decode PP"
+        assert (
+            prefill_worker_config.cp >= decode_worker_config.cp
+        ), "Prefill CP must be more or equal to decode CP"
+        assert decode_worker_config.cp == 1, "Decode CP must be 1"
+        assert (
+            prefill_worker_config.ep <= decode_worker_config.ep
+        ), "Prefill EP must be less or equal to decode EP"
     if rail_optimized:
         assert (
             decode_worker_config.tp == 8
@@ -421,47 +501,188 @@ def main(
         model_config,
         prefill_worker_config,
         decode_worker_config,
+        flops_per_gpu,
     )
 
     # Save matrices and metadata to files
     results_dir = results_dir or Path(f"matrices_{world_size}ranks")
     results_dir = Path(results_dir)
     logger.info("Saving %d matrices to %s", len(matrices), results_dir)
-    results_dir.mkdir(parents=True, exist_ok=True)
 
+    # Create directories
+    results_dir.mkdir(parents=True, exist_ok=True)
+    if not storage_only:
+        matrices_dir = results_dir / "matrices"
+        matrices_dir.mkdir(parents=True, exist_ok=True)
+
+    storage_enabled = prefix_hit_rate is not None or storage_only
+    hit_rate = (
+        prefix_hit_rate if prefix_hit_rate is not None else 1.0
+    )  # 100% read for storage_only
+
+    if storage_enabled:
+        logger.info(
+            "Storage enabled with prefix_hit_rate=%.1f%%, mem_type=%s",
+            hit_rate * 100,
+            mem_type,
+        )
+    if storage_only:
+        logger.info("Storage-only mode: skipping RDMA matrix files")
+    if all_nodes_per_pattern:
+        logger.info(
+            "All-nodes-per-pattern mode: all prefill nodes active in each pattern"
+        )
+
+    # Build metadata
     metadata: dict[str, Any] = {
         "traffic_patterns": [],
+        "iters": iters,
+        "isolation_iters": isolation_iters,
     }
 
     for idx, matrix in enumerate(tqdm(matrices, desc="Saving matrices")):
-        # Save matrix to npy file
-        matrix_path = results_dir / f"matrix_{idx}.txt"
-        with open(matrix_path, "w") as f:
-            for row in matrix.matrix:
-                f.write(" ".join(f"{format_size(val)}" for val in row) + "\n")
+        # Save matrix to txt file (unless storage_only)
+        if not storage_only:
+            matrix_path = matrices_dir / f"matrix_{idx}.txt"
+            with open(matrix_path, "w") as f:
+                for row in matrix.matrix:
+                    f.write(" ".join(f"{format_size(val)}" for val in row) + "\n")
 
-        # Add metadata
-        metadata["traffic_patterns"].append(
-            {
-                "matrix_file": matrix_path.absolute().as_posix(),
-                "sleep_before_launch_sec": matrix.compute_time,
-                "metadata": {
-                    "isl": matrix.isl,
-                },
-            }
-        )
+        # Build traffic pattern entry
+        tp_entry: Dict[str, Any] = {
+            # Compute time reduced by prefix hit rate (if storage enabled)
+            "sleep_before_launch_sec": matrix.compute_time * (1 - hit_rate),
+            "metadata": {
+                "isl": matrix.isl,
+            },
+        }
+
+        # Add matrix_file only if not storage_only
+        if not storage_only:
+            tp_entry["matrix_file"] = f"matrices/matrix_{idx}.txt"
+
+        # Add mem_type for storage_only mode
+        if storage_only:
+            tp_entry["mem_type"] = mem_type
+
+        # Add per-rank storage requirements if enabled (array format)
+        if storage_enabled:
+            world_size = matrix.matrix.shape[0]
+            read_sizes: List[str] = ["0"] * world_size
+            write_sizes: List[str] = ["0"] * world_size
+
+            if all_nodes_per_pattern:
+                # All prefill nodes get the same size (based on this request's ISL)
+                # Calculate size per rank based on ISL
+                kv_size = model_config.kv_cache_size(matrix.isl)
+                per_rank_size = int(
+                    kv_size
+                    / prefill_worker_config.tp
+                    / prefill_worker_config.pp
+                    / prefill_worker_config.cp
+                )
+                read_size = int(per_rank_size * hit_rate)
+                write_size = 0 if read_only else int(per_rank_size * (1 - hit_rate))
+
+                # Set for ALL prefill ranks (ranks 0 to num_prefill_gpus-1)
+                for rank in range(num_prefill_gpus):
+                    if read_size > 0:
+                        read_sizes[rank] = format_size(read_size)
+                    if write_size > 0:
+                        write_sizes[rank] = format_size(write_size)
+            elif storage_only:
+                # Storage-only mode with round-robin: assign to one prefill worker at a time
+                kv_size = model_config.kv_cache_size(matrix.isl)
+                per_rank_size = int(
+                    kv_size
+                    / prefill_worker_config.tp
+                    / prefill_worker_config.pp
+                    / prefill_worker_config.cp
+                )
+                read_size = int(per_rank_size * hit_rate)
+                write_size = 0 if read_only else int(per_rank_size * (1 - hit_rate))
+
+                # Assign to one prefill worker (round-robin)
+                num_prefill_workers = num_prefill_gpus // (
+                    prefill_worker_config.tp
+                    * prefill_worker_config.pp
+                    * prefill_worker_config.cp
+                )
+                worker_idx = idx % num_prefill_workers
+                worker_size = (
+                    prefill_worker_config.tp
+                    * prefill_worker_config.pp
+                    * prefill_worker_config.cp
+                )
+                start_rank = worker_idx * worker_size
+
+                for rank in range(start_rank, start_rank + worker_size):
+                    if read_size > 0:
+                        read_sizes[rank] = format_size(read_size)
+                    if write_size > 0:
+                        write_sizes[rank] = format_size(write_size)
+            else:
+                # Original behavior: only sender ranks for this specific worker
+                for rank in matrix.sender_ranks:
+                    transfer_size = int(matrix.matrix[rank].sum())
+                    if transfer_size > 0:
+                        read_size = int(transfer_size * hit_rate)
+                        write_size = (
+                            0 if read_only else int(transfer_size * (1 - hit_rate))
+                        )
+                        if read_size > 0:
+                            read_sizes[rank] = format_size(read_size)
+                        if write_size > 0:
+                            write_sizes[rank] = format_size(write_size)
+
+            # For storage_only, only include non-zero operations
+            storage_entry = {}
+            if any(s != "0" for s in read_sizes):
+                storage_entry["read"] = read_sizes
+            if any(s != "0" for s in write_sizes):
+                storage_entry["write"] = write_sizes
+            if storage_entry:
+                tp_entry["storage"] = storage_entry
+
+        metadata["traffic_patterns"].append(tp_entry)
 
     # Save metadata to YAML
     metadata_path = results_dir / "metadata.yaml"
     with open(metadata_path, "w") as f:
-        yaml.dump(metadata, f)
+        yaml.dump(metadata, f, default_flow_style=None, width=1000, sort_keys=False)
         logger.info("Saved metadata to %s", metadata_path)
+
+    # Print summary
+    total_patterns = len(metadata["traffic_patterns"])
+    logger.info("Generated %d traffic patterns", total_patterns)
+    if storage_only:
+        logger.info(
+            "Model: %d layers, %d KV heads, head_dim=%d",
+            model_config.num_layers,
+            model_config.num_kv_heads or model_config.num_heads,
+            model_config.head_dim,
+        )
+        logger.info("Bytes per token: %s", format_size(model_config.bytes_per_token()))
 
 
 if __name__ == "__main__":
     import click
 
     PREDEFINED_MODELS = {
+        "llama-8b": ModelConfig(
+            hidden_size=4096,
+            num_layers=32,
+            num_heads=32,
+            num_kv_heads=8,
+            dtype_size=2,
+        ),
+        "llama-70b": ModelConfig(
+            hidden_size=8192,
+            num_layers=80,
+            num_heads=64,
+            num_kv_heads=8,
+            dtype_size=2,
+        ),
         "llama-405b": ModelConfig(
             hidden_size=16384,
             num_layers=126,
@@ -567,6 +788,51 @@ if __name__ == "__main__":
         help="Whether to use rail optimization",
     )
     @click.option("--ppn", default=8, type=int, help="Number of GPUs per node")
+    @click.option(
+        "--flops-per-gpu",
+        type=float,
+        default=1000e12,
+        help="GPU FLOPS for compute time estimation (default: 1000 TFLOPS for H100 FP16)",
+    )
+    @click.option(
+        "--prefix-hit-rate",
+        type=float,
+        default=None,
+        help="Prefix hit rate (0.0-1.0). Enables storage when specified. 0.0=write-only, 1.0=read-only.",
+    )
+    @click.option(
+        "--storage-only/--no-storage-only",
+        default=False,
+        help="Generate storage-only config (no RDMA matrices). Uses 100%% read if prefix-hit-rate not set.",
+    )
+    @click.option(
+        "--read-only/--no-read-only",
+        default=False,
+        help="Generate read-only storage patterns (no writes). Default: False",
+    )
+    @click.option(
+        "--all-nodes-per-pattern/--no-all-nodes-per-pattern",
+        default=False,
+        help="Make all prefill nodes active in each traffic pattern (for storage benchmarks).",
+    )
+    @click.option(
+        "--mem-type",
+        type=str,
+        default="cuda",
+        help="Memory type for storage operations (cuda, cpu). Default: cuda",
+    )
+    @click.option(
+        "--iters",
+        type=int,
+        default=10,
+        help="Number of iterations per traffic pattern. Default: 10",
+    )
+    @click.option(
+        "--isolation-iters",
+        type=int,
+        default=5,
+        help="Number of isolation iterations. Default: 5",
+    )
     def generate(
         num_user_requests,
         batch_size,
@@ -592,6 +858,14 @@ if __name__ == "__main__":
         max_batch_mem,
         rail_optimized,
         ppn,
+        flops_per_gpu,
+        prefix_hit_rate,
+        storage_only,
+        read_only,
+        all_nodes_per_pattern,
+        mem_type,
+        iters,
+        isolation_iters,
     ):
         """Generate communication matrices for given configuration"""
 
@@ -635,6 +909,14 @@ if __name__ == "__main__":
             model_config=model_config,
             results_dir=results_dir,
             rail_optimized=rail_optimized,
+            prefix_hit_rate=prefix_hit_rate,
+            flops_per_gpu=flops_per_gpu,
+            storage_only=storage_only,
+            read_only=read_only,
+            all_nodes_per_pattern=all_nodes_per_pattern,
+            mem_type=mem_type,
+            iters=iters,
+            isolation_iters=isolation_iters,
         )
 
     cli()

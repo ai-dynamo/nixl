@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,10 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Dict, Literal, Optional
 
 import numpy as np
 import torch
+
+
+@dataclass
+class StorageOp:
+    """Storage operation configuration for a single rank."""
+
+    file_path: str
+    file_size: int
+    read_offset: int
+    read_size: int
+    write_offset: int
+    write_size: int
 
 
 @dataclass
@@ -24,23 +36,25 @@ class TrafficPattern:
     """Represents a communication pattern between distributed processes.
 
     Attributes:
-        matrix: Communication matrix as numpy array
+        matrix: Communication matrix as numpy array (optional, None for storage-only)
         mem_type: Type of memory to use
         xfer_op: Transfer operation type
         shards: Number of shards for distributed processing
         dtype: PyTorch data type for the buffers
         sleep_before_launch_sec: Number of seconds to sleep before launch
-        sleep_after_launch_sec: Number of seconds to sleep after launch
+        sleep_after_launch_sec: Number of seconds to sleep after RDMA
+        storage_ops: Per-rank storage operations (loaded from external config)
         id: Unique identifier for this traffic pattern
     """
 
-    matrix: np.ndarray
     mem_type: Literal["cuda", "vram", "cpu", "dram"]
+    matrix: Optional[np.ndarray] = None  # None for storage-only patterns
     xfer_op: Literal["WRITE", "READ"] = "WRITE"
     shards: int = 1
     dtype: torch.dtype = torch.int8
-    sleep_before_launch_sec: Optional[int] = None
-    sleep_after_launch_sec: Optional[int] = None
+    sleep_before_launch_sec: Optional[float] = None
+    sleep_after_launch_sec: Optional[float] = None
+    storage_ops: Optional[Dict[int, StorageOp]] = None  # rank -> StorageOp
 
     id: int = field(default_factory=lambda: TrafficPattern._get_next_id())
     _id_counter: ClassVar[int] = 0
@@ -52,8 +66,16 @@ class TrafficPattern:
         cls._id_counter += 1
         return current_id
 
+    def has_rdma(self) -> bool:
+        """Check if this traffic pattern has any RDMA traffic."""
+        if self.matrix is None:
+            return False
+        return np.any(self.matrix > 0)
+
     def senders_ranks(self):
-        """Return the ranks that send messages"""
+        """Return the ranks (process indices) that send messages."""
+        if self.matrix is None:
+            return []
         senders_ranks = []
         for i in range(self.matrix.shape[0]):
             for j in range(self.matrix.shape[1]):
@@ -63,7 +85,9 @@ class TrafficPattern:
         return list(set(senders_ranks))
 
     def receivers_ranks(self, from_ranks: Optional[list[int]] = None):
-        """Return the ranks that receive messages"""
+        """Return the ranks (process indices) that receive messages."""
+        if self.matrix is None:
+            return []
         if from_ranks is None:
             from_ranks = list(range(self.matrix.shape[0]))
         receivers_ranks = []
@@ -75,22 +99,45 @@ class TrafficPattern:
         return list(set(receivers_ranks))
 
     def ranks(self):
-        """Return all ranks that are involved in the traffic pattern"""
+        """Return all ranks that are involved in RDMA traffic"""
         return list(set(self.senders_ranks() + self.receivers_ranks()))
 
+    def all_participating_ranks(self):
+        """Return all ranks that actively participate in this TP.
+
+        Includes:
+        - RDMA senders (they initiate transfers)
+        - Storage ranks (they do read/write ops)
+
+        Does NOT include RDMA receivers (they just have buffers registered,
+        no active operations needed).
+        """
+        all_ranks = set(self.senders_ranks())
+        if self.storage_ops:
+            all_ranks.update(self.storage_ops.keys())
+        return list(all_ranks)
+
     def buf_size(self, src, dst):
+        if self.matrix is None:
+            return 0
         return self.matrix[src, dst]
 
     def total_src_size(self, rank):
-        """Return the sum of the sizes received by <rank>"""
+        """Return the total size sent by <rank> across all destinations."""
+        if self.matrix is None:
+            return 0
         total_src_size = 0
-        for other_rank in range(self.matrix.shape[0]):
-            total_src_size += self.matrix[rank][other_rank]
+        # iterate over columns (destinations)
+        for dst in range(self.matrix.shape[1]):
+            total_src_size += self.matrix[rank][dst]
         return total_src_size
 
     def total_dst_size(self, rank):
-        """Return the sum of the sizes received by <rank>"""
+        """Return the total size received by <rank> across all sources."""
+        if self.matrix is None:
+            return 0
         total_dst_size = 0
-        for other_rank in range(self.matrix.shape[0]):
-            total_dst_size += self.matrix[other_rank][rank]
+        # iterate over rows (sources)
+        for src in range(self.matrix.shape[0]):
+            total_dst_size += self.matrix[src][rank]
         return total_dst_size

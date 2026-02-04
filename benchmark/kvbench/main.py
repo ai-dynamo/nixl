@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 import click
 import numpy as np
@@ -32,8 +33,12 @@ from models.utils import get_batch_size, override_yaml_args
 from tabulate import tabulate
 
 
-def parse_size(nbytes: str) -> int:
-    """Convert formatted string with unit to bytes"""
+def parse_size(nbytes) -> int:
+    """Convert formatted string with unit (e.g. '1M', '512K') or int to bytes."""
+    if isinstance(nbytes, int):
+        return nbytes
+    if isinstance(nbytes, float):
+        return int(nbytes)
 
     options = {"g": 1024 * 1024 * 1024, "m": 1024 * 1024, "k": 1024, "b": 1}
     unit = 1
@@ -43,8 +48,7 @@ def parse_size(nbytes: str) -> int:
         value = float(nbytes[:-1])
     else:
         value = float(nbytes)
-    count = int(unit * value)
-    return count
+    return int(unit * value)
 
 
 def load_matrix(matrix_file) -> np.ndarray:
@@ -56,6 +60,80 @@ def load_matrix(matrix_file) -> np.ndarray:
             matrix.append([parse_size(x) for x in row])
     mat = np.array(matrix)
     return mat
+
+
+def align_to_4k(size: int) -> int:
+    """Align size up to 4K boundary for O_DIRECT compatibility."""
+    ALIGNMENT = 4096
+    return ((size + ALIGNMENT - 1) // ALIGNMENT) * ALIGNMENT
+
+
+def parse_storage_config(
+    storage_config: Dict,
+    tp_idx: int,
+    storage_base_path: Path,
+) -> Optional[Dict[int, Any]]:
+    """Parse per-rank storage requirements from YAML config.
+
+    Format (array-based, index is rank):
+        storage:
+          read: [1M, 1M, 0, 1M, ...]   # 0 or omit for no read
+          write: [1M, 1M, 1M, 0, ...]  # 0 or omit for no write
+
+    Args:
+        storage_config: Storage configuration with 'read' and/or 'write' arrays
+        tp_idx: Traffic pattern index (for file path generation)
+        storage_base_path: Base path for storage files
+
+    Returns:
+        Dict mapping rank -> StorageOp, or None if empty
+
+    Note:
+        Sizes are aligned to 4K boundaries for O_DIRECT compatibility.
+    """
+    from test.traffic_pattern import StorageOp
+
+    if not storage_config:
+        return None
+
+    if "read" not in storage_config and "write" not in storage_config:
+        raise ValueError("Storage config must have 'read' and/or 'write' arrays")
+
+    storage_ops = {}
+    read_sizes = storage_config.get("read", [])
+    write_sizes = storage_config.get("write", [])
+
+    # Determine number of ranks from array lengths
+    num_ranks = max(len(read_sizes), len(write_sizes))
+
+    for rank in range(num_ranks):
+        # Get size for this rank (0 if not specified)
+        read_val = read_sizes[rank] if rank < len(read_sizes) else 0
+        write_val = write_sizes[rank] if rank < len(write_sizes) else 0
+
+        # Parse size strings (e.g., "1M", "512K")
+        read_size = parse_size(read_val) if read_val else 0
+        write_size = parse_size(write_val) if write_val else 0
+
+        # Align sizes to 4K for O_DIRECT compatibility
+        read_size = align_to_4k(read_size) if read_size > 0 else 0
+        write_size = align_to_4k(write_size) if write_size > 0 else 0
+        file_size = read_size + write_size
+
+        if file_size == 0:
+            continue
+
+        file_path = storage_base_path / f"tp_{tp_idx}" / f"rank_{rank}.bin"
+        storage_ops[rank] = StorageOp(
+            file_path=str(file_path),
+            file_size=file_size,
+            read_offset=0,
+            read_size=read_size,
+            write_offset=read_size,
+            write_size=write_size,
+        )
+
+    return storage_ops if storage_ops else None
 
 
 @click.group()
@@ -275,7 +353,7 @@ def kvcache_command(model, model_config, **kwargs):
 
     def format_bytes(size):
         power = 0 if size <= 0 else floor(log(size, 1024))
-        return f"{round(size / 1024 ** power, 2)} {['B', 'KB', 'MB', 'GB', 'TB'][int(power)]}"
+        return f"{round(size / 1024**power, 2)} {['B', 'KB', 'MB', 'GB', 'TB'][int(power)]}"
 
     labels = [
         "Model",
@@ -325,12 +403,56 @@ def kvcache_command(model, model_config, **kwargs):
     help="Path to save JSON output",
     default=None,
 )
+@click.option(
+    "--storage-path",
+    type=click.Path(),
+    help="Base path for storage files (default: <config_dir>/storage)",
+    default=None,
+)
+@click.option(
+    "--storage-backend",
+    type=click.Choice(["POSIX", "GDS", "GDS_MT"]),
+    default="POSIX",
+    help="NIXL storage backend (POSIX, GDS, or GDS_MT for multi-threaded GDS)",
+)
+@click.option(
+    "--storage-direct-io/--no-storage-direct-io",
+    default=None,
+    help="Use O_DIRECT for file I/O. Auto-enabled for GDS/GDS_MT if not specified.",
+)
+@click.option(
+    "--warmup-iters",
+    type=int,
+    default=30,
+    help="Number of warmup iterations per TP (default: 30)",
+)
+@click.option(
+    "--isolation-iters",
+    type=int,
+    default=10,
+    help="Number of isolation benchmark iterations per TP (default: 10, was 30)",
+)
 def sequential_ct_perftest(
-    config_file, verify_buffers, print_recv_buffers, json_output_path
+    config_file,
+    verify_buffers,
+    print_recv_buffers,
+    json_output_path,
+    storage_path,
+    storage_backend,
+    storage_direct_io,
+    warmup_iters,
+    isolation_iters,
 ):
-    """Run sequential custom traffic performance test using patterns defined in YAML config"""
+    """Run sequential custom traffic performance test using patterns defined in YAML config."""
     from test.sequential_custom_traffic_perftest import SequentialCTPerftest
     from test.traffic_pattern import TrafficPattern
+
+    logger = logging.getLogger(__name__)
+
+    config_path = Path(config_file)
+    config_dir = config_path.parent
+
+    logger.info("Loading config from: %s", config_file)
 
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
@@ -338,33 +460,122 @@ def sequential_ct_perftest(
     if "traffic_patterns" not in config:
         raise ValueError("Config file must contain 'traffic_patterns' key")
 
-    patterns = []
-    for instruction_config in config["traffic_patterns"]:
-        tp_config = instruction_config
-        required_fields = ["matrix_file"]
-        missing_fields = [field for field in required_fields if field not in tp_config]
+    # Determine storage base path (CLI override > default)
+    if storage_path:
+        storage_base_path = Path(storage_path)
+    else:
+        storage_base_path = config_dir / "storage"
 
-        if missing_fields:
-            raise ValueError(
-                f"Traffic pattern missing required fields: {missing_fields}"
+    logger.info("Loading %d traffic patterns...", len(config["traffic_patterns"]))
+
+    patterns = []
+    has_storage = False
+
+    for idx, tp_config in enumerate(config["traffic_patterns"]):
+        # Load matrix if provided (optional for storage-only patterns)
+        matrix = None
+        if "matrix_file" in tp_config:
+            matrix_file = tp_config["matrix_file"]
+            if not os.path.isabs(matrix_file):
+                matrix_file = config_dir / matrix_file
+            matrix = load_matrix(matrix_file)
+            logger.debug(
+                "TP %d: matrix=%s, shape=%s, mem_type=%s",
+                idx,
+                tp_config["matrix_file"],
+                matrix.shape,
+                tp_config.get("mem_type", "cuda"),
+            )
+        elif "matrix" in tp_config:
+            # Inline matrix in config
+            matrix = np.array(tp_config["matrix"])
+            logger.debug(
+                "TP %d: inline matrix, shape=%s, mem_type=%s",
+                idx,
+                matrix.shape,
+                tp_config.get("mem_type", "cuda"),
             )
 
+        # Parse per-TP storage config if present
+        storage_ops = None
+        if "storage" in tp_config:
+            storage_ops = parse_storage_config(
+                tp_config["storage"], idx, storage_base_path
+            )
+            if storage_ops:
+                has_storage = True
+                logger.debug(
+                    "TP %d: storage config, ranks=%s",
+                    idx,
+                    list(storage_ops.keys()),
+                )
+
+        # Validate: must have either RDMA matrix or storage ops
+        if matrix is None and storage_ops is None:
+            raise ValueError(
+                f"Traffic pattern {idx} must have either 'matrix_file'/'matrix' or 'storage' config"
+            )
+
+        # For storage-only patterns without matrix, log it
+        if matrix is None:
+            logger.debug("TP %d: storage-only pattern (no RDMA)", idx)
+
+        compute_time = tp_config.get("sleep_before_launch_sec")
+        if compute_time:
+            logger.debug("TP %d: compute_time=%.3f sec", idx, compute_time)
+
         pattern = TrafficPattern(
-            matrix=load_matrix(Path(tp_config["matrix_file"])),
+            mem_type=tp_config.get("mem_type", "cuda").lower(),  # Default: GPU memory
+            matrix=matrix,
             shards=tp_config.get("shards", 1),
-            mem_type=tp_config.get("mem_type", "cuda").lower(),
             xfer_op=tp_config.get("xfer_op", "WRITE").upper(),
-            sleep_after_launch_sec=tp_config.get("sleep_after_launch_sec", 0),
+            sleep_before_launch_sec=compute_time,
+            sleep_after_launch_sec=tp_config.get("sleep_after_launch_sec", None),
+            storage_ops=storage_ops,
         )
+
+        # Storage operations are flexible - any rank can have read/write:
+        #   - Storage READ happens before RDMA (for all ranks with read_h)
+        #   - Storage WRITE happens after RDMA (for all ranks with write_h)
+        #
+        # Example configurations:
+        #   - Senders: read → send → write
+        #   - Receivers: read → receive → write
+        #   - Mixed: any combination
+
         patterns.append(pattern)
 
-    output_path = json_output_path
+    # Determine direct_io setting (auto-enable for GDS if not specified)
+    use_direct_io = storage_direct_io
+    if storage_direct_io is None and storage_backend in ("GDS", "GDS_MT"):
+        use_direct_io = True  # Auto-enable for GDS backends
+    elif storage_direct_io is None:
+        use_direct_io = False  # Default off for POSIX
 
-    perftest = SequentialCTPerftest(patterns)
+    if has_storage:
+        logger.info(
+            "Loaded %d traffic patterns, storage enabled (path=%s, backend=%s, direct_io=%s)",
+            len(patterns),
+            storage_base_path,
+            storage_backend,
+            use_direct_io,
+        )
+    else:
+        logger.info("Loaded %d traffic patterns, no storage", len(patterns))
+
+    # Pass storage config to perftest - it creates the backend with its nixl_agent
+    perftest = SequentialCTPerftest(
+        patterns,
+        warmup_iters=warmup_iters,
+        n_isolation_iters=isolation_iters,
+        storage_path=storage_base_path if has_storage else None,
+        storage_nixl_backend=storage_backend if has_storage else None,
+        storage_direct_io=use_direct_io if has_storage else False,
+    )
     perftest.run(
         verify_buffers=verify_buffers,
         print_recv_buffers=print_recv_buffers,
-        json_output_path=output_path,
+        json_output_path=json_output_path,
     )
 
 
