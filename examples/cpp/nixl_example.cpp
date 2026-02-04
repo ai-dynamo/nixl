@@ -173,9 +173,6 @@ main(int argc, char **argv) {
     nixl_exit_on_failure(ret1, "Failed to get local MD", agent1);
     nixl_exit_on_failure(ret2, "Failed to get local MD", agent2);
 
-    std::cout << "Agent1's Metadata: " << meta1 << "\n";
-    std::cout << "Agent2's Metadata: " << meta2 << "\n";
-
     ret1 = A1.loadRemoteMD (meta2, ret_s1);
 
     nixl_exit_on_failure(ret1, "Failed to load remote MD", agent1);

@@ -36,8 +36,6 @@ int main() {
     std::string sdbuf = sd.exportStr();
     assert(sdbuf.size() > 0);
 
-    std::cout << "exported string: " << sdbuf << "\n";
-
     // "nixlSDBegin|i   00000004000000ff|s   0000000AtestString|nixlSDEnd
     // |token      |tag|size.  |value.  |tag|size   |          |token
 
