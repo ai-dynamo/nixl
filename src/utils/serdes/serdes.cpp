@@ -22,11 +22,10 @@
 nixlSerDes::nixlSerDes()
     : workingStr("nixlSerDes|"),
       des_offset(workingStr.size()),
-      mode(SERIALIZE) {
-}
+      mode(SERIALIZE) {}
 
 std::string nixlSerDes::_bytesToString(const void *buf, ssize_t size) {
-    return std::string(reinterpret_cast<const char*>(buf), size);
+    return std::string(reinterpret_cast<const char *>(buf), size);
 }
 
 void nixlSerDes::_stringToBytes(void* fill_buf, const std::string &s, ssize_t size){
@@ -49,7 +48,8 @@ nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str)
 std::string nixlSerDes::getStr(const std::string &tag){
 
     if (workingStr.size() < des_offset + tag.size() + sizeof(size_t)) {
-        NIXL_ERROR << "Deserialization of tag " << tag << " failed for incomplete or missing header";
+        NIXL_ERROR << "Deserialization of tag " << tag
+                   << " failed for incomplete or missing header";
         return "";
     }
 
@@ -64,7 +64,7 @@ std::string nixlSerDes::getStr(const std::string &tag){
 
     if (workingStr.size() < des_offset + len + 1) {
         NIXL_ERROR << "Deserialization of tag " << tag << " failed for incomplete data";
-	return "";
+        return "";
     }
 
     const std::string ret = workingStr.substr(des_offset, len);
@@ -91,7 +91,8 @@ nixl_status_t nixlSerDes::addBuf(const std::string &tag, const void* buf, ssize_
 
 ssize_t nixlSerDes::getBufLen(const std::string &tag) const{
     if (workingStr.size() < des_offset + tag.size() + sizeof(size_t)) {
-        NIXL_ERROR << "Deserialization of tag " << tag << " failed for incomplete or missing header";
+        NIXL_ERROR << "Deserialization of tag " << tag
+                   << " failed for incomplete or missing header";
         return -1;
     }
 
@@ -111,7 +112,8 @@ ssize_t nixlSerDes::getBufLen(const std::string &tag) const{
 
 nixl_status_t nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len){
     if (workingStr.size() < des_offset + tag.size() + sizeof(size_t)) {
-        NIXL_ERROR << "Deserialization of tag " << tag << " failed for incomplete or missing header";
+        NIXL_ERROR << "Deserialization of tag " << tag
+                   << " failed for incomplete or missing header";
         return NIXL_ERR_MISMATCH;
     }
 
@@ -135,7 +137,7 @@ nixl_status_t nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len)
 
     if (workingStr.size() < size_t(des_offset + len + 1)) {
         NIXL_ERROR << "Deserialization of tag " << tag << " failed for incomplete data";
-	return NIXL_ERR_MISMATCH;
+        return NIXL_ERR_MISMATCH;
     }
 
     std::memcpy(buf, workingStr.data() + des_offset, len);
