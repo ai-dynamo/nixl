@@ -158,30 +158,16 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
                                            const nixl_meta_dlist_t &loc,
                                            const nixl_meta_dlist_t &rem,
                                            const nixl_opt_b_args_t *args,
-                                           const nixl_b_params_t *params,
                                            std::unique_ptr<nixlPosixIOQueue> &io_queue)
     : operation(op),
       local(loc),
       remote(rem),
       opt_args(args),
-      custom_params_(params),
       queue_depth_(loc.descCount()),
       num_confirmed_ios_(queue_depth_),
       io_queue_(io_queue) {
-
-    auto it = params->find("io_queue_type");
-    if (it == params->end() || it->second.empty()) {
-        throw exception("Unsupported io queue type: no io queue type specified",
-                        NIXL_ERR_NOT_SUPPORTED);
-    }
-
-    std::string io_queue_type = it->second;
-    if (local.descCount() == 0 || remote.descCount() == 0) {
-        throw exception(absl::StrFormat("Invalid descriptor count - local: %zu, remote: %zu",
-                                        local.descCount(),
-                                        remote.descCount()),
-                        NIXL_ERR_INVALID_PARAM);
-    }
+    NIXL_ASSERT(local.descCount());
+    NIXL_ASSERT(remote.descCount());
 }
 
 void
@@ -288,12 +274,8 @@ nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
     }
 
     try {
-        // Create a params map with our backend selection
-        nixl_b_params_t params;
-        params["io_queue_type"] = io_queue_type_;
-
-        auto posix_handle = std::make_unique<nixlPosixBackendReqH>(
-            operation, local, remote, opt_args, &params, io_queue_);
+        auto posix_handle =
+            std::make_unique<nixlPosixBackendReqH>(operation, local, remote, opt_args, io_queue_);
         NIXL_LOCK_GUARD(io_queue_lock_);
         nixl_status_t status = posix_handle->prepXfer();
         if (status != NIXL_SUCCESS) {
