@@ -13,7 +13,6 @@
 #include <chrono>
 #include <algorithm>
 
-
 namespace {
 
 bool
@@ -34,8 +33,8 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
             remote_agent);
 
     if ((local.getType() != DRAM_SEG) && (local.getType() != VRAM_SEG)) {
-        NIXL_ERROR << absl::StrFormat("Error: Local memory type must be VRAM_SEG or DRAM_SEG, got %d",
-                                      local.getType());
+        NIXL_ERROR << absl::StrFormat(
+            "Error: Local memory type must be VRAM_SEG or DRAM_SEG, got %d", local.getType());
         return false;
     }
 
@@ -49,26 +48,28 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
 }
 
 class obsObjTransferRequestH {
-    public:
-        uintptr_t addr;
-        size_t size;
-        size_t offset;
-        std::string rdma_desc;
-        std::string obj_key;
+public:
+    uintptr_t addr;
+    size_t size;
+    size_t offset;
+    std::string rdma_desc;
+    std::string obj_key;
 
-        obsObjTransferRequestH() {
-            addr = 0;
-            size = 0;
-            offset = 0;
-            rdma_desc = "";
-            obj_key = "";
-        }
-        obsObjTransferRequestH(uintptr_t a, size_t s, size_t offset) {
-            addr = a;
-            size = s;
-            this->offset = offset;
-        }
-        ~obsObjTransferRequestH() = default;
+    obsObjTransferRequestH() {
+        addr = 0;
+        size = 0;
+        offset = 0;
+        rdma_desc = "";
+        obj_key = "";
+    }
+
+    obsObjTransferRequestH(uintptr_t a, size_t s, size_t offset) {
+        addr = a;
+        size = s;
+        this->offset = offset;
+    }
+
+    ~obsObjTransferRequestH() = default;
 };
 
 class nixlObsObjBackendReqH : public nixlBackendReqH {
@@ -105,10 +106,12 @@ public:
           nixlMem(nixl_mem),
           devId(dev_id),
           objKey(obj_key) {}
+
     nixlObsObjMetadata(nixl_mem_t nixl_mem, uintptr_t addr)
         : nixlBackendMD(true),
           nixlMem(nixl_mem),
           localAddr(addr) {}
+
     ~nixlObsObjMetadata() = default;
 
     nixl_mem_t nixlMem;
@@ -121,27 +124,32 @@ typedef struct rdma_ctx {
     std::string rdma_desc;
 } rdma_ctx_t;
 
-static ssize_t objectGet(const void *handle, char* buf, size_t size, loff_t offset, const cufileRDMAInfo_t *infop) {
+static ssize_t
+objectGet(const void *handle,
+          char *buf,
+          size_t size,
+          loff_t offset,
+          const cufileRDMAInfo_t *infop) {
     void *ctx = cuObjClient::getCtx(handle);
     rdma_ctx_t *rctx = static_cast<rdma_ctx_t *>(ctx);
     rctx->rdma_desc = infop->desc_str;
     return 0;
 }
 
-static ssize_t objectPut(const void *handle, const char* buf, size_t size, loff_t offset, const cufileRDMAInfo_t *infop) {
+static ssize_t
+objectPut(const void *handle,
+          const char *buf,
+          size_t size,
+          loff_t offset,
+          const cufileRDMAInfo_t *infop) {
     void *ctx = cuObjClient::getCtx(handle);
     rdma_ctx_t *rctx = static_cast<rdma_ctx_t *>(ctx);
     rctx->rdma_desc = infop->desc_str;
     return 0;
 }
 
-CUObjIOOps obs_ops = {
-    .get  = objectGet,
-    .put  = objectPut
-};
-}
-
-
+CUObjIOOps obs_ops = {.get = objectGet, .put = objectPut};
+} // namespace
 
 S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params)
     : S3AccelObjEngineImpl(init_params) {
@@ -156,8 +164,8 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
 }
 
 S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params,
-                                           std::shared_ptr<iS3Client> s3_client,
-                                           std::shared_ptr<iS3Client> s3_client_accel)
+                                               std::shared_ptr<iS3Client> s3_client,
+                                               std::shared_ptr<iS3Client> s3_client_accel)
     : S3AccelObjEngineImpl(init_params, s3_client) {
     s3Client_ = std::make_shared<awsS3DellObsClient>(init_params->customParams, executor_);
 
@@ -170,8 +178,8 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
 
 nixl_status_t
 S3DellObsObjEngineImpl::registerMem(const nixlBlobDesc &mem,
-                           const nixl_mem_t &nixl_mem,
-                           nixlBackendMD *&out) {
+                                    const nixl_mem_t &nixl_mem,
+                                    nixlBackendMD *&out) {
     if (!cuClient_->isConnected()) {
         NIXL_ERROR << "CUObjClient is not connected.";
         return NIXL_ERR_BACKEND;
@@ -187,8 +195,9 @@ S3DellObsObjEngineImpl::registerMem(const nixlBlobDesc &mem,
         devIdToObjKey_[mem.devId] = obj_md->objKey;
         out = obj_md.release();
     } else if ((nixl_mem == DRAM_SEG) || (nixl_mem == VRAM_SEG)) {
-        std::unique_ptr<nixlObsObjMetadata> mem_md = std::make_unique<nixlObsObjMetadata>(nixl_mem, mem.addr);
-        cuClient_->cuMemObjGetDescriptor((void*)(mem.addr), mem.len);
+        std::unique_ptr<nixlObsObjMetadata> mem_md =
+            std::make_unique<nixlObsObjMetadata>(nixl_mem, mem.addr);
+        cuClient_->cuMemObjGetDescriptor((void *)(mem.addr), mem.len);
         out = mem_md.release();
     }
 
@@ -200,26 +209,26 @@ S3DellObsObjEngineImpl::deregisterMem(nixlBackendMD *meta) {
     nixlObsObjMetadata *md = static_cast<nixlObsObjMetadata *>(meta);
     if (md) {
         if (md->nixlMem == OBJ_SEG) {
-            std::unique_ptr<nixlObsObjMetadata> obj_md_ptr = std::unique_ptr<nixlObsObjMetadata>(md);
+            std::unique_ptr<nixlObsObjMetadata> obj_md_ptr =
+                std::unique_ptr<nixlObsObjMetadata>(md);
             devIdToObjKey_.erase(obj_md_ptr->devId);
+        } else if ((md->nixlMem == DRAM_SEG) || (md->nixlMem == VRAM_SEG)) {
+            std::unique_ptr<nixlObsObjMetadata> mem_md_ptr =
+                std::unique_ptr<nixlObsObjMetadata>(md);
+            cuClient_->cuMemObjPutDescriptor((void *)(mem_md_ptr->localAddr));
         }
-        else if ((md->nixlMem == DRAM_SEG) || (md->nixlMem == VRAM_SEG)) {
-            std::unique_ptr<nixlObsObjMetadata> mem_md_ptr = std::unique_ptr<nixlObsObjMetadata>(md);
-            cuClient_->cuMemObjPutDescriptor((void*)(mem_md_ptr->localAddr));
-        }
-
     }
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 S3DellObsObjEngineImpl::prepXfer(const nixl_xfer_op_t &operation,
-                        const nixl_meta_dlist_t &local,
-                        const nixl_meta_dlist_t &remote,
-                        const std::string &remote_agent,
-                        const std::string &local_agent,
-                        nixlBackendReqH *&handle,
-                        const nixl_opt_b_args_t *opt_args) const {
+                                 const nixl_meta_dlist_t &local,
+                                 const nixl_meta_dlist_t &remote,
+                                 const std::string &remote_agent,
+                                 const std::string &local_agent,
+                                 nixlBackendReqH *&handle,
+                                 const nixl_opt_b_args_t *opt_args) const {
 
     if (!cuClient_->isConnected()) {
         NIXL_ERROR << "CUObjClient is not connected.";
@@ -230,16 +239,15 @@ S3DellObsObjEngineImpl::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixlObsObjBackendReqH* req_h = new nixlObsObjBackendReqH();
+    nixlObsObjBackendReqH *req_h = new nixlObsObjBackendReqH();
 
     for (int i = 0; i < local.descCount(); ++i) {
         obsObjTransferRequestH req(local[i].addr, local[i].len, remote[i].addr);
         rdma_ctx ctx;
 
-         if (operation == NIXL_WRITE) {
+        if (operation == NIXL_WRITE) {
             cuClient_->cuObjPut(&ctx, (void *)req.addr, req.size, req.offset);
-        }
-        else if (operation == NIXL_READ) {
+        } else if (operation == NIXL_READ) {
             cuClient_->cuObjGet(&ctx, (void *)req.addr, req.size, req.offset);
         }
         req.rdma_desc = ctx.rdma_desc;
@@ -264,11 +272,11 @@ S3DellObsObjEngineImpl::prepXfer(const nixl_xfer_op_t &operation,
 
 nixl_status_t
 S3DellObsObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
-                        const nixl_meta_dlist_t &local,
-                        const nixl_meta_dlist_t &remote,
-                        const std::string &remote_agent,
-                        nixlBackendReqH *&handle,
-                        const nixl_opt_b_args_t *opt_args) const {
+                                 const nixl_meta_dlist_t &local,
+                                 const nixl_meta_dlist_t &remote,
+                                 const std::string &remote_agent,
+                                 nixlBackendReqH *&handle,
+                                 const nixl_opt_b_args_t *opt_args) const {
     nixlObsObjBackendReqH *req_h = static_cast<nixlObsObjBackendReqH *>(handle);
 
     for (auto req : req_h->reqs_) {
@@ -279,16 +287,25 @@ S3DellObsObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
         // S3 client interface signals completion via a callback, but NIXL API polls request handle
         // for the status code. Use future/promise pair to bridge the gap.
         if (operation == NIXL_WRITE) {
-            s3Client_->putObjectRdmaAsync(
-                req.obj_key, req.addr, req.size, req.offset, req.rdma_desc, [status_promise](bool success) {
-                    status_promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
-                });
-        }
-        else {
-            s3Client_->getObjectRdmaAsync(
-                req.obj_key, req.addr, req.size, req.offset, req.rdma_desc, [status_promise](bool success) {
-                    status_promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
-                });
+            s3Client_->putObjectRdmaAsync(req.obj_key,
+                                          req.addr,
+                                          req.size,
+                                          req.offset,
+                                          req.rdma_desc,
+                                          [status_promise](bool success) {
+                                              status_promise->set_value(success ? NIXL_SUCCESS :
+                                                                                  NIXL_ERR_BACKEND);
+                                          });
+        } else {
+            s3Client_->getObjectRdmaAsync(req.obj_key,
+                                          req.addr,
+                                          req.size,
+                                          req.offset,
+                                          req.rdma_desc,
+                                          [status_promise](bool success) {
+                                              status_promise->set_value(success ? NIXL_SUCCESS :
+                                                                                  NIXL_ERR_BACKEND);
+                                          });
         }
     }
 
