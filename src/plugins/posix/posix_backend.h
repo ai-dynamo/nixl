@@ -32,7 +32,6 @@ private:
     const nixl_meta_dlist_t &local; // Local memory descriptor list
     const nixl_meta_dlist_t &remote; // Remote memory descriptor list
     const nixl_opt_b_args_t *opt_args; // Optional backend-specific arguments
-    const nixl_b_params_t *custom_params_; // Custom backend parameters
     const int queue_depth_; // Queue depth for async I/O
     int num_confirmed_ios_; // Number of confirmed IOs
     std::unique_ptr<nixlPosixIOQueue> &io_queue_; // Async I/O queue instance
@@ -47,7 +46,6 @@ public:
                          const nixl_meta_dlist_t &local,
                          const nixl_meta_dlist_t &remote,
                          const nixl_opt_b_args_t *opt_args,
-                         const nixl_b_params_t *custom_params,
                          std::unique_ptr<nixlPosixIOQueue> &io_queue);
     ~nixlPosixBackendReqH() {};
 
