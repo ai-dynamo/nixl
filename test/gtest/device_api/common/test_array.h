@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,8 @@
 #include <string>
 #include <vector>
 
-template<typename elementType> class testArray {
+namespace nixl::test::device_api {
+template<typename T> class testArray {
 public:
     explicit testArray(size_t count, nixl_mem_t mem_type = VRAM_SEG)
         : count_{count},
@@ -37,21 +38,21 @@ public:
           ptr_{malloc(count, mem_type), deleter{mem_type}} {}
 
     void
-    copyFromHost(const elementType *host_data, size_t count) {
+    copyFromHost(const T *host_data, size_t count) {
         copy(ptr_.get(), host_data, count, cudaMemcpyHostToDevice);
     }
 
     void
-    copyFromHost(const std::vector<elementType> &host_vector) {
+    copyFromHost(const std::vector<T> &host_vector) {
         copyFromHost(host_vector.data(), host_vector.size());
     }
 
     void
-    copyToHost(elementType *host_data, size_t count) const {
+    copyToHost(T *host_data, size_t count) const {
         copy(host_data, ptr_.get(), count, cudaMemcpyDeviceToHost);
     }
 
-    [[nodiscard]] elementType *
+    [[nodiscard]] T *
     get() const noexcept {
         return ptr_.get();
     }
@@ -71,7 +72,7 @@ private:
         nixl_mem_t mem_type;
 
         void
-        operator()(elementType *ptr) const {
+        operator()(T *ptr) const {
             if (ptr == nullptr) {
                 return;
             }
@@ -92,12 +93,12 @@ private:
 
     size_t count_;
     nixl_mem_t mem_type_;
-    std::unique_ptr<elementType, deleter> ptr_;
+    std::unique_ptr<T, deleter> ptr_;
 
-    [[nodiscard]] static elementType *
+    [[nodiscard]] static T *
     malloc(size_t count, nixl_mem_t mem_type) {
-        elementType *ptr = nullptr;
-        const size_t bytes = count * sizeof(elementType);
+        T *ptr = nullptr;
+        const size_t bytes = count * sizeof(T);
         cudaError_t err;
 
         switch (mem_type) {
@@ -110,7 +111,7 @@ private:
             break;
 
         case DRAM_SEG:
-            ptr = static_cast<elementType *>(::operator new(bytes, std::nothrow));
+            ptr = static_cast<T *>(::operator new(bytes, std::nothrow));
             if (ptr == nullptr) {
                 throw std::runtime_error("testArray: operator new failed");
             }
@@ -130,16 +131,16 @@ private:
             throw std::out_of_range("testArray: copy count exceeds array size");
         }
         if (mem_type_ == DRAM_SEG) {
-            std::memcpy(dst, src, count * sizeof(elementType));
+            std::memcpy(dst, src, count * sizeof(T));
             return;
         }
 
-        const cudaError_t err = cudaMemcpy(dst, src, count * sizeof(elementType), kind);
+        const cudaError_t err = cudaMemcpy(dst, src, count * sizeof(T), kind);
         if (err != cudaSuccess) {
             throw std::runtime_error(std::string("testArray: cudaMemcpy failed: ") +
                                      cudaGetErrorString(err));
         }
     }
 };
-
+} // namespace nixl::test::device_api
 #endif // NIXL_DEVICE_API_TEST_ARRAY_H

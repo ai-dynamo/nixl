@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,32 +17,28 @@
 
 #include "common/device_test_base.cuh"
 
-namespace gtest::nixl::gpu::write {
+namespace nixl::test::device_api {
 
-namespace {
+class writeTest : public deviceApiTestBase<device_test_params_t> {
+protected:
+    void
+    runWrite(const testSetupData &setup_data, size_t num_iters, uint64_t signal_inc) {
+        deviceKernelParams params;
+        params.operation = device_operation_t::WRITE;
+        params.level = getLevel();
+        params.numThreads = defaultNumThreads;
+        params.numBlocks = 1;
+        params.numIters = num_iters;
+        params.reqHandle = setup_data.gpuReqHandle;
 
-    class writeTest : public deviceApiTestBase<device_test_params_t> {
-    protected:
-        void
-        runWrite(const testSetupData &setup_data, size_t num_iters, uint64_t signal_inc) {
-            nixlDeviceKernelParams params;
-            params.operation = nixl_device_operation_t::WRITE;
-            params.level = getLevel();
-            params.numThreads = defaultNumThreads;
-            params.numBlocks = 1;
-            params.numIters = num_iters;
-            params.reqHandle = setup_data.gpuReqHandle;
+        applySendMode<writeTest>(params, getSendMode());
 
-            applySendMode<writeTest>(params, getSendMode());
+        params.write.signalInc = signal_inc;
 
-            params.write.signalInc = signal_inc;
-
-            const nixl_status_t status = launchNixlDeviceKernel(params);
-            ASSERT_EQ(status, NIXL_SUCCESS) << "Kernel execution failed with status: " << status;
-        }
-    };
-
-} // namespace
+        const nixl_status_t status = launchDeviceKernel(params);
+        ASSERT_EQ(status, NIXL_SUCCESS) << "Kernel execution failed with status: " << status;
+    }
+};
 
 TEST_P(writeTest, Basic) {
     const std::vector<size_t> sizes(defaultBufferCount, defaultBufferSize);
@@ -82,11 +78,8 @@ TEST_P(writeTest, SignalOnly) {
     ASSERT_NO_FATAL_FAILURE(runWrite(setup_data, 1000, testSignalIncrement));
 }
 
-} // namespace gtest::nixl::gpu::write
-
-using gtest::nixl::gpu::write::writeTest;
-
 INSTANTIATE_TEST_SUITE_P(ucxDeviceApi,
                          writeTest,
                          testing::ValuesIn(writeTest::getPartialWriteDeviceTestParams()),
                          testNameGenerator::device);
+} // namespace nixl::test::device_api

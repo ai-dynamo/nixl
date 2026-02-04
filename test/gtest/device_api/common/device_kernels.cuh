@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +15,15 @@
  * limitations under the License.
  */
 
-#ifndef NIXL_DEVICE_KERNELS_CUH
-#define NIXL_DEVICE_KERNELS_CUH
+#ifndef TEST_GTEST_DEVICE_API_COMMON_DEVICE_KERNELS_CUH
+#define TEST_GTEST_DEVICE_API_COMMON_DEVICE_KERNELS_CUH
 
 #include <nixl_device.cuh>
 #include <cstddef>
 #include <cstdint>
 
-enum class nixl_device_operation_t : uint64_t {
+namespace nixl::test::device_api {
+enum class device_operation_t : uint64_t {
     SINGLE_WRITE,
     PARTIAL_WRITE,
     WRITE,
@@ -31,8 +32,8 @@ enum class nixl_device_operation_t : uint64_t {
     SIGNAL_WRITE
 };
 
-struct nixlDeviceKernelParams {
-    nixl_device_operation_t operation;
+struct deviceKernelParams {
+    device_operation_t operation;
     nixl_gpu_level_t level;
     unsigned numThreads;
     unsigned numBlocks;
@@ -83,6 +84,6 @@ struct nixlDeviceKernelParams {
 };
 
 [[nodiscard]] nixl_status_t
-launchNixlDeviceKernel(const nixlDeviceKernelParams &params);
-
+launchDeviceKernel(const deviceKernelParams &params);
+} // namespace nixl::test::device_api
 #endif // NIXL_DEVICE_KERNELS_CUH

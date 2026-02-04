@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 
 #include "device_test_base.cuh"
 
+namespace nixl::test::device_api {
 template class deviceApiTestBase<nixl_gpu_level_t>;
 template class deviceApiTestBase<device_test_params_t>;
 
@@ -170,8 +171,8 @@ deviceApiTestBase<paramType>::cleanupXferRequest(nixlXferReqH *xfer_req,
 
 template<typename paramType>
 void
-deviceApiTestBase<paramType>::launchAndCheckKernel(const nixlDeviceKernelParams &params) {
-    const nixl_status_t status = launchNixlDeviceKernel(params);
+deviceApiTestBase<paramType>::launchAndCheckKernel(const deviceKernelParams &params) {
+    const nixl_status_t status = launchDeviceKernel(params);
     ASSERT_EQ(status, NIXL_SUCCESS) << "Kernel execution failed with status: " << status;
 }
 
@@ -232,3 +233,4 @@ deviceApiTestBase<paramType>::setupWithSignal(const std::vector<size_t> &sizes,
                       setup_data.xferReq,
                       setup_data.gpuReqHandle);
 }
+} // namespace nixl::test::device_api

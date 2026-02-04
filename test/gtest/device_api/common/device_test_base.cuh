@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef NIXL_DEVICE_TEST_BASE_CUH
-#define NIXL_DEVICE_TEST_BASE_CUH
+#ifndef TEST_GTEST_DEVICE_API_COMMON_DEVICE_TEST_BASE_CUH
+#define TEST_GTEST_DEVICE_API_COMMON_DEVICE_TEST_BASE_CUH
 
 #include <gtest/gtest.h>
 #include <nixl.h>
@@ -36,6 +36,7 @@
 #include <vector>
 #include <tuple>
 
+namespace nixl::test::device_api {
 template<typename paramType = nixl_gpu_level_t>
 class deviceApiTestBase : public testing::TestWithParam<paramType> {
 public:
@@ -205,7 +206,7 @@ protected:
     void
     cleanupXferRequest(nixlXferReqH *xfer_req, nixlGpuXferReqH gpu_req_handle);
     void
-    launchAndCheckKernel(const nixlDeviceKernelParams &params);
+    launchAndCheckKernel(const deviceKernelParams &params);
     void
     setupWriteTest(size_t size,
                    size_t count,
@@ -269,5 +270,5 @@ private:
         return params;
     }
 };
-
-#endif // NIXL_DEVICE_TEST_BASE_CUH
+} // namespace nixl::test::device_api
+#endif // TEST_GTEST_DEVICE_API_COMMON_DEVICE_TEST_BASE_CUH

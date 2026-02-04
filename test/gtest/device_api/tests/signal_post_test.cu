@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,95 +19,97 @@
 #include "common/test_array.h"
 #include <random>
 
-namespace gtest::nixl::gpu::signal_post {
-
-namespace {
-
-    class signalPostTest : public deviceApiTestBase<device_test_params_t> {
-    protected:
-        size_t
-        getNumOpsMultiplier() const {
-            switch (getLevel()) {
-            case nixl_gpu_level_t::THREAD:
-                return defaultNumThreads;
-            case nixl_gpu_level_t::WARP:
-                return defaultNumThreads / 32;
-            case nixl_gpu_level_t::BLOCK:
-            default:
-                return 1;
-            }
+namespace nixl::test::device_api {
+class signalPostTest : public deviceApiTestBase<device_test_params_t> {
+protected:
+    size_t
+    getNumOpsMultiplier() const {
+        switch (getLevel()) {
+        case nixl_gpu_level_t::THREAD:
+            return defaultNumThreads;
+        case nixl_gpu_level_t::WARP:
+            return defaultNumThreads / 32;
+        case nixl_gpu_level_t::BLOCK:
+        default:
+            return 1;
         }
+    }
 
-        void
-        setupSignalPost(testSetupData &data) {
-            nixl_opt_args_t extra_params = {.backends = {getBackendHandle(receiverAgent)}};
-            size_t signal_size;
-            nixl_status_t status =
-                getAgent(receiverAgent).getGpuSignalSize(signal_size, &extra_params);
-            ASSERT_EQ(status, NIXL_SUCCESS);
+    void
+    setupSignalPost(testSetupData &data) {
+        nixl_opt_args_t extra_params = {.backends = {getBackendHandle(receiverAgent)}};
+        size_t signal_size;
+        nixl_status_t status = getAgent(receiverAgent).getGpuSignalSize(signal_size, &extra_params);
+        ASSERT_EQ(status, NIXL_SUCCESS);
 
-            const nixl_mem_t dst_mem_type = getDstMemType();
-            createRegisteredMem(getAgent(receiverAgent), signal_size, defaultBufferAllocCount, dst_mem_type, data.dstBuffers);
+        const nixl_mem_t dst_mem_type = getDstMemType();
+        createRegisteredMem(getAgent(receiverAgent),
+                            signal_size,
+                            defaultBufferAllocCount,
+                            dst_mem_type,
+                            data.dstBuffers);
 
-            auto signal_desc_list = makeDescList<nixlBlobDesc>(data.dstBuffers, dst_mem_type);
-            status = getAgent(receiverAgent).prepGpuSignal(signal_desc_list, &extra_params);
-            ASSERT_EQ(status, NIXL_SUCCESS);
+        auto signal_desc_list = makeDescList<nixlBlobDesc>(data.dstBuffers, dst_mem_type);
+        status = getAgent(receiverAgent).prepGpuSignal(signal_desc_list, &extra_params);
+        ASSERT_EQ(status, NIXL_SUCCESS);
 
-            createRegisteredMem(getAgent(senderAgent), signal_size, defaultBufferAllocCount, srcMemType, data.srcBuffers);
+        createRegisteredMem(getAgent(senderAgent),
+                            signal_size,
+                            defaultBufferAllocCount,
+                            srcMemType,
+                            data.srcBuffers);
 
-            ASSERT_NO_FATAL_FAILURE(exchangeMD(senderAgent, receiverAgent));
+        ASSERT_NO_FATAL_FAILURE(exchangeMD(senderAgent, receiverAgent));
 
-            createXferRequest(data.srcBuffers,
-                              srcMemType,
-                              data.dstBuffers,
-                              dst_mem_type,
-                              data.xferReq,
-                              data.gpuReqHandle);
-        }
+        createXferRequest(data.srcBuffers,
+                          srcMemType,
+                          data.dstBuffers,
+                          dst_mem_type,
+                          data.xferReq,
+                          data.gpuReqHandle);
+    }
 
-        void
-        runSignalPost(testSetupData &setup_data,
-                      size_t num_iters,
-                      unsigned index,
-                      uint64_t signal_inc) {
-            constexpr size_t signal_offset = 0;
+    void
+    runSignalPost(testSetupData &setup_data,
+                  size_t num_iters,
+                  unsigned index,
+                  uint64_t signal_inc) {
+        constexpr size_t signal_offset = 0;
 
-            nixlDeviceKernelParams post_params;
-            post_params.operation = nixl_device_operation_t::SIGNAL_POST;
-            post_params.level = getLevel();
-            post_params.numThreads = defaultNumThreads;
-            post_params.numBlocks = 1;
-            post_params.numIters = num_iters;
-            post_params.reqHandle = setup_data.gpuReqHandle;
+        deviceKernelParams post_params;
+        post_params.operation = device_operation_t::SIGNAL_POST;
+        post_params.level = getLevel();
+        post_params.numThreads = defaultNumThreads;
+        post_params.numBlocks = 1;
+        post_params.numIters = num_iters;
+        post_params.reqHandle = setup_data.gpuReqHandle;
 
-            applySendMode<signalPostTest>(post_params, getSendMode());
+        applySendMode<signalPostTest>(post_params, getSendMode());
 
-            post_params.signalPost.signalDescIndex = index;
-            post_params.signalPost.signalInc = signal_inc;
-            post_params.signalPost.signalOffset = signal_offset;
+        post_params.signalPost.signalDescIndex = index;
+        post_params.signalPost.signalInc = signal_inc;
+        post_params.signalPost.signalOffset = signal_offset;
 
-            const nixl_status_t status = launchNixlDeviceKernel(post_params);
-            ASSERT_EQ(status, NIXL_SUCCESS);
-        }
+        const nixl_status_t status = launchDeviceKernel(post_params);
+        ASSERT_EQ(status, NIXL_SUCCESS);
+    }
 
-        void
-        verifySignal(testSetupData &setup_data, uint64_t expected_value) {
-            nixlDeviceKernelParams read_params;
-            read_params.operation = nixl_device_operation_t::SIGNAL_WAIT;
-            read_params.level = getLevel();
-            read_params.numThreads = defaultNumThreads;
-            read_params.numBlocks = 1;
-            read_params.numIters = 1;
+    void
+    verifySignal(testSetupData &setup_data, uint64_t expected_value) {
+        deviceKernelParams read_params;
+        read_params.operation = device_operation_t::SIGNAL_WAIT;
+        read_params.level = getLevel();
+        read_params.numThreads = defaultNumThreads;
+        read_params.numBlocks = 1;
+        read_params.numIters = 1;
 
-            read_params.signalWait.signalAddr = setup_data.dstBuffers[0].get();
-            read_params.signalWait.expectedValue = expected_value;
+        read_params.signalWait.signalAddr = setup_data.dstBuffers[0].get();
+        read_params.signalWait.expectedValue = expected_value;
 
-            const nixl_status_t status = launchNixlDeviceKernel(read_params);
-            ASSERT_EQ(status, NIXL_SUCCESS);
-        }
-    };
-
-} // namespace
+        const nixl_status_t status = launchDeviceKernel(read_params);
+        ASSERT_EQ(status, NIXL_SUCCESS);
+    }
+};
 
 TEST_P(signalPostTest, Basic) {
 #ifndef HAVE_UCX_GPU_DEVICE_API
@@ -122,18 +124,14 @@ TEST_P(signalPostTest, Basic) {
     constexpr uint64_t signal_inc = testSignalIncrement;
     const uint64_t expected_value = signal_inc * num_iters * getNumOpsMultiplier();
 
-    ASSERT_NO_FATAL_FAILURE(
-        runSignalPost(setup_data, num_iters, index, signal_inc));
+    ASSERT_NO_FATAL_FAILURE(runSignalPost(setup_data, num_iters, index, signal_inc));
 
     ASSERT_NO_FATAL_FAILURE(verifySignal(setup_data, expected_value));
 #endif
 }
 
-} // namespace gtest::nixl::gpu::signal_post
-
-using gtest::nixl::gpu::signal_post::signalPostTest;
-
 INSTANTIATE_TEST_SUITE_P(ucxDeviceApi,
                          signalPostTest,
                          testing::ValuesIn(signalPostTest::getDeviceTestParams()),
                          testNameGenerator::device);
+} // namespace nixl::test::device_api

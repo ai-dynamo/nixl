@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,68 +18,62 @@
 #include "common/device_test_base.cuh"
 #include "common/test_array.h"
 
-namespace gtest::nixl::gpu::signal_local {
+namespace nixl::test::device_api {
+class signalLocalTest : public deviceApiTestBase<nixl_gpu_level_t> {
+protected:
+    void
+    setupLocalSignal() {
+        nixl_opt_args_t extra_params = {.backends = {getBackendHandle(senderAgent)}};
+        size_t signal_size = 0;
+        nixl_status_t status = getAgent(senderAgent).getGpuSignalSize(signal_size, &extra_params);
+        ASSERT_EQ(status, NIXL_SUCCESS);
 
-namespace {
+        signalBuffers_.clear();
+        signalBuffers_.emplace_back(signal_size, VRAM_SEG);
 
-    class signalLocalTest : public deviceApiTestBase<nixl_gpu_level_t> {
-    protected:
-        void
-        setupLocalSignal() {
-            nixl_opt_args_t extra_params = {.backends = {getBackendHandle(senderAgent)}};
-            size_t signal_size = 0;
-            nixl_status_t status =
-                getAgent(senderAgent).getGpuSignalSize(signal_size, &extra_params);
-            ASSERT_EQ(status, NIXL_SUCCESS);
+        cudaMemset(signalBuffers_[0].get(), 0, signal_size);
+    }
 
-            signalBuffers_.clear();
-            signalBuffers_.emplace_back(signal_size, VRAM_SEG);
+    void *
+    getSignalBuffer() {
+        return signalBuffers_.empty() ? nullptr : signalBuffers_[0].get();
+    }
 
-            cudaMemset(signalBuffers_[0].get(), 0, signal_size);
-        }
+    void
+    writeSignal(void *signal_addr, uint64_t value, size_t num_threads) {
+        deviceKernelParams params;
+        params.operation = device_operation_t::SIGNAL_WRITE;
+        params.level = GetParam();
+        params.numThreads = num_threads;
+        params.numBlocks = 1;
+        params.numIters = 1;
 
-        void *
-        getSignalBuffer() {
-            return signalBuffers_.empty() ? nullptr : signalBuffers_[0].get();
-        }
+        params.signalWrite.signalAddr = signal_addr;
+        params.signalWrite.value = value;
 
-        void
-        writeSignal(void *signal_addr, uint64_t value, size_t num_threads) {
-            nixlDeviceKernelParams params;
-            params.operation = nixl_device_operation_t::SIGNAL_WRITE;
-            params.level = GetParam();
-            params.numThreads = num_threads;
-            params.numBlocks = 1;
-            params.numIters = 1;
+        const nixl_status_t status = launchDeviceKernel(params);
+        ASSERT_EQ(status, NIXL_SUCCESS);
+    }
 
-            params.signalWrite.signalAddr = signal_addr;
-            params.signalWrite.value = value;
+    void
+    readAndVerifySignal(const void *signal_addr, uint64_t expected_value, size_t num_threads) {
+        deviceKernelParams params;
+        params.operation = device_operation_t::SIGNAL_WAIT;
+        params.level = GetParam();
+        params.numThreads = num_threads;
+        params.numBlocks = 1;
+        params.numIters = 1;
 
-            const nixl_status_t status = launchNixlDeviceKernel(params);
-            ASSERT_EQ(status, NIXL_SUCCESS);
-        }
+        params.signalWait.signalAddr = signal_addr;
+        params.signalWait.expectedValue = expected_value;
 
-        void
-        readAndVerifySignal(const void *signal_addr, uint64_t expected_value, size_t num_threads) {
-            nixlDeviceKernelParams params;
-            params.operation = nixl_device_operation_t::SIGNAL_WAIT;
-            params.level = GetParam();
-            params.numThreads = num_threads;
-            params.numBlocks = 1;
-            params.numIters = 1;
+        const nixl_status_t status = launchDeviceKernel(params);
+        ASSERT_EQ(status, NIXL_SUCCESS);
+    }
 
-            params.signalWait.signalAddr = signal_addr;
-            params.signalWait.expectedValue = expected_value;
-
-            const nixl_status_t status = launchNixlDeviceKernel(params);
-            ASSERT_EQ(status, NIXL_SUCCESS);
-        }
-
-    private:
-        std::vector<testArray<uint8_t>> signalBuffers_;
-    };
-
-} // namespace
+private:
+    std::vector<testArray<uint8_t>> signalBuffers_;
+};
 
 TEST_P(signalLocalTest, WriteRead) {
     ASSERT_NO_FATAL_FAILURE(setupLocalSignal());
@@ -128,11 +122,8 @@ TEST_P(signalLocalTest, MaxValue) {
     ASSERT_NO_FATAL_FAILURE(readAndVerifySignal(getSignalBuffer(), max_value, defaultNumThreads));
 }
 
-} // namespace gtest::nixl::gpu::signal_local
-
-using gtest::nixl::gpu::signal_local::signalLocalTest;
-
 INSTANTIATE_TEST_SUITE_P(ucxDeviceApi,
                          signalLocalTest,
                          testing::ValuesIn(signalLocalTest::getTestLevels()),
                          testNameGenerator::level);
+} // namespace nixl::test::device_api

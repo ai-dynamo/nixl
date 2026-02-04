@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +19,7 @@
 #include "device_utils.cuh"
 #include "test_array.h"
 
-namespace {
+namespace nixl::test::device_api {
 
 constexpr size_t max_threads_per_block = 1024;
 
@@ -76,12 +76,12 @@ getChannelId(unsigned num_channels) {
 
 template<nixl_gpu_level_t level>
 __device__ nixl_status_t
-doOperation(const nixlDeviceKernelParams &params, nixlGpuXferStatusH *req_ptr) {
+doOperation(const deviceKernelParams &params, nixlGpuXferStatusH *req_ptr) {
     nixl_status_t status;
     const unsigned channel_id = getChannelId<level>(params.numChannels);
 
     switch (params.operation) {
-    case nixl_device_operation_t::SINGLE_WRITE:
+    case device_operation_t::SINGLE_WRITE:
         status = nixlGpuPostSingleWriteXferReq<level>(params.reqHandle,
                                                       params.singleWrite.index,
                                                       params.singleWrite.localOffset,
@@ -92,7 +92,7 @@ doOperation(const nixlDeviceKernelParams &params, nixlGpuXferStatusH *req_ptr) {
                                                       req_ptr);
         break;
 
-    case nixl_device_operation_t::PARTIAL_WRITE:
+    case device_operation_t::PARTIAL_WRITE:
         status = nixlGpuPostPartialWriteXferReq<level>(params.reqHandle,
                                                        params.partialWrite.count,
                                                        params.partialWrite.descIndices,
@@ -107,15 +107,12 @@ doOperation(const nixlDeviceKernelParams &params, nixlGpuXferStatusH *req_ptr) {
                                                        req_ptr);
         break;
 
-    case nixl_device_operation_t::WRITE:
-        status = nixlGpuPostWriteXferReq<level>(params.reqHandle,
-                                                params.write.signalInc,
-                                                channel_id,
-                                                params.withNoDelay,
-                                                req_ptr);
+    case device_operation_t::WRITE:
+        status = nixlGpuPostWriteXferReq<level>(
+            params.reqHandle, params.write.signalInc, channel_id, params.withNoDelay, req_ptr);
         break;
 
-    case nixl_device_operation_t::SIGNAL_POST:
+    case device_operation_t::SIGNAL_POST:
         status = nixlGpuPostSignalXferReq<level>(params.reqHandle,
                                                  params.signalPost.signalDescIndex,
                                                  params.signalPost.signalInc,
@@ -125,7 +122,7 @@ doOperation(const nixlDeviceKernelParams &params, nixlGpuXferStatusH *req_ptr) {
                                                  req_ptr);
         break;
 
-    case nixl_device_operation_t::SIGNAL_WAIT: {
+    case device_operation_t::SIGNAL_WAIT: {
         if (params.signalWait.signalAddr == nullptr) {
             return NIXL_ERR_INVALID_PARAM;
         }
@@ -138,7 +135,7 @@ doOperation(const nixlDeviceKernelParams &params, nixlGpuXferStatusH *req_ptr) {
         return NIXL_SUCCESS;
     }
 
-    case nixl_device_operation_t::SIGNAL_WRITE:
+    case device_operation_t::SIGNAL_WRITE:
         if (params.signalWrite.signalAddr == nullptr) {
             return NIXL_ERR_INVALID_PARAM;
         }
@@ -176,7 +173,7 @@ getRequestPtr(bool withRequest, nixlGpuXferStatusH *shared_reqs) {
 
 template<nixl_gpu_level_t level>
 __device__ nixl_status_t
-kernelJob(const nixlDeviceKernelParams &params, nixlGpuXferStatusH *shared_reqs) {
+kernelJob(const deviceKernelParams &params, nixlGpuXferStatusH *shared_reqs) {
     if (blockDim.x > max_threads_per_block) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -195,7 +192,7 @@ kernelJob(const nixlDeviceKernelParams &params, nixlGpuXferStatusH *shared_reqs)
     }
 
     // Last iteration forces completion to ensure all operations are finished
-    nixlDeviceKernelParams params_force_completion = params;
+    deviceKernelParams params_force_completion = params;
     params_force_completion.withNoDelay = true;
     nixlGpuXferStatusH *status_ptr = getRequestPtr<level>(params.withRequest, shared_reqs);
 
@@ -204,7 +201,7 @@ kernelJob(const nixlDeviceKernelParams &params, nixlGpuXferStatusH *shared_reqs)
 
 template<nixl_gpu_level_t level>
 __global__ void
-nixlTestKernel(const nixlDeviceKernelParams params, nixl_status_t *status_ptr) {
+testKernel(const deviceKernelParams params, nixl_status_t *status_ptr) {
     extern __shared__ nixlGpuXferStatusH shared_reqs[];
     if (status_ptr != nullptr) {
         *status_ptr = kernelJob<level>(params, shared_reqs);
@@ -212,10 +209,8 @@ nixlTestKernel(const nixlDeviceKernelParams params, nixl_status_t *status_ptr) {
     __threadfence_system();
 }
 
-} // namespace
-
 nixl_status_t
-launchNixlDeviceKernel(const nixlDeviceKernelParams &params) {
+launchDeviceKernel(const deviceKernelParams &params) {
     testArray<nixl_status_t> result{1};
     nixl_status_t init_status = NIXL_ERR_INVALID_PARAM;
     result.copyFromHost(&init_status, 1);
@@ -225,15 +220,15 @@ launchNixlDeviceKernel(const nixlDeviceKernelParams &params) {
 
     switch (params.level) {
     case nixl_gpu_level_t::THREAD:
-        nixlTestKernel<nixl_gpu_level_t::THREAD>
+        testKernel<nixl_gpu_level_t::THREAD>
             <<<params.numBlocks, params.numThreads, shared_mem_size>>>(params, result.get());
         break;
     case nixl_gpu_level_t::WARP:
-        nixlTestKernel<nixl_gpu_level_t::WARP>
+        testKernel<nixl_gpu_level_t::WARP>
             <<<params.numBlocks, params.numThreads, shared_mem_size>>>(params, result.get());
         break;
     case nixl_gpu_level_t::BLOCK:
-        nixlTestKernel<nixl_gpu_level_t::BLOCK>
+        testKernel<nixl_gpu_level_t::BLOCK>
             <<<params.numBlocks, params.numThreads, shared_mem_size>>>(params, result.get());
         break;
     default:
@@ -249,3 +244,4 @@ launchNixlDeviceKernel(const nixlDeviceKernelParams &params) {
     result.copyToHost(&host_status, 1);
     return host_status;
 }
+} // namespace nixl::test::device_api

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,33 +19,28 @@
 
 #include <cstring>
 
-namespace gtest::nixl::gpu::single_write {
+namespace nixl::test::device_api {
 
 using single_write_params_t = device_test_params_t;
 
-namespace {
+class singleWriteTest : public deviceApiTestBase<single_write_params_t> {
+protected:
+    void
+    runTest(testSetupData &setup_data, size_t size, size_t num_iters) {
+        deviceKernelParams params;
+        params.operation = device_operation_t::SINGLE_WRITE;
+        params.level = getLevel();
+        params.numThreads = defaultNumThreads;
+        params.numBlocks = 1;
+        params.numIters = num_iters;
+        params.reqHandle = setup_data.gpuReqHandle;
+        params.singleWrite = {0, 0, 0, size};
 
-    class singleWriteTest : public deviceApiTestBase<single_write_params_t> {
-    protected:
+        applySendMode<singleWriteTest>(params, getSendMode());
 
-        void
-        runTest(testSetupData &setup_data, size_t size, size_t num_iters) {
-            nixlDeviceKernelParams params;
-            params.operation = nixl_device_operation_t::SINGLE_WRITE;
-            params.level = getLevel();
-            params.numThreads = defaultNumThreads;
-            params.numBlocks = 1;
-            params.numIters = num_iters;
-            params.reqHandle = setup_data.gpuReqHandle;
-            params.singleWrite = {0, 0, 0, size};
-
-            applySendMode<singleWriteTest>(params, getSendMode());
-
-            launchAndCheckKernel(params);
-        }
-    };
-
-} // namespace
+        launchAndCheckKernel(params);
+    }
+};
 
 TEST_P(singleWriteTest, Basic) {
     constexpr size_t size = defaultBufferSize;
@@ -75,13 +70,10 @@ TEST_P(singleWriteTest, Basic) {
     ASSERT_EQ(dst, pattern);
 }
 
-} // namespace gtest::nixl::gpu::single_write
-
 // TODO: Create separate multi-worker test with dedicated fixture that creates 32 workers
-
-using gtest::nixl::gpu::single_write::singleWriteTest;
 
 INSTANTIATE_TEST_SUITE_P(ucxDeviceApi,
                          singleWriteTest,
                          testing::ValuesIn(singleWriteTest::getDeviceTestParams()),
                          testNameGenerator::device);
+} // namespace nixl::test::device_api

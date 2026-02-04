@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef NIXL_DEVICE_UTILS_CUH
-#define NIXL_DEVICE_UTILS_CUH
+#ifndef TEST_GTEST_DEVICE_API_COMMON_DEVICE_UTILS_CUH
+#define TEST_GTEST_DEVICE_API_COMMON_DEVICE_UTILS_CUH
 
 #include <cuda_runtime.h>
 #include <nixl.h>
@@ -33,6 +33,8 @@
 #include <tuple>
 #include <iostream>
 #include "device_kernels.cuh"
+
+namespace nixl::test::device_api {
 
 enum class send_mode_t {
     NODELAY_WITH_REQ,
@@ -59,7 +61,7 @@ getSendModeStr(send_mode_t mode) {
 
 template<typename TestBase>
 inline void
-applySendMode(nixlDeviceKernelParams &params, send_mode_t mode) {
+applySendMode(deviceKernelParams &params, send_mode_t mode) {
     switch (mode) {
     case send_mode_t::MULTI_CHANNEL:
         params.numChannels = TestBase::multiChannelCount;
@@ -84,7 +86,9 @@ struct device_test_params_t {
     nixl_mem_t mem_type;
 
     device_test_params_t(nixl_gpu_level_t l, send_mode_t m, nixl_mem_t mt)
-        : level(l), mode(m), mem_type(mt) {}
+        : level(l),
+          mode(m),
+          mem_type(mt) {}
 };
 
 inline std::string_view
@@ -117,9 +121,8 @@ struct testNameGenerator {
     static std::string
     device(const testing::TestParamInfo<device_test_params_t> &info) {
         const auto &p = info.param;
-        return std::string(getMemTypeStr(p.mem_type)) + "_" +
-               std::string(getGpuLevelStr(p.level)) + "_" +
-               std::string(getSendModeStr(p.mode));
+        return std::string(getMemTypeStr(p.mem_type)) + "_" + std::string(getGpuLevelStr(p.level)) +
+            "_" + std::string(getSendModeStr(p.mode));
     }
 
     static std::string
@@ -144,5 +147,5 @@ checkCudaErrors() {
 
     return NIXL_SUCCESS;
 }
-
+} // namespace nixl::test::device_api
 #endif // NIXL_DEVICE_UTILS_CUH
