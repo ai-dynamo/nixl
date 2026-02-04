@@ -13,18 +13,18 @@
 #include "common/nixl_log.h"
 
 awsS3DellObsClient::awsS3DellObsClient(nixl_b_params_t *custom_params,
-                                   std::shared_ptr<Aws::Utils::Threading::Executor> executor)
+                                       std::shared_ptr<Aws::Utils::Threading::Executor> executor)
     : awsS3Client(custom_params, executor) {
-        NIXL_INFO << "Initialized Dell ObjectScale Client";
+    NIXL_INFO << "Initialized Dell ObjectScale Client";
 }
 
 void
 awsS3DellObsClient::putObjectRdmaAsync(std::string_view key,
-                                 uintptr_t data_ptr,
-                                 size_t data_len,
-                                 size_t offset,
-                                 const std::string &rdma_desc,
-                                 put_object_callback_t callback) {
+                                       uintptr_t data_ptr,
+                                       size_t data_len,
+                                       size_t offset,
+                                       const std::string &rdma_desc,
+                                       put_object_callback_t callback) {
     if (offset != 0) {
         callback(false);
         return;
@@ -40,11 +40,10 @@ awsS3DellObsClient::putObjectRdmaAsync(std::string_view key,
 
     s3Client_->PutObjectAsync(
         request,
-        [callback](
-            const Aws::S3::S3Client *,
-            const Aws::S3::Model::PutObjectRequest &,
-            const Aws::S3::Model::PutObjectOutcome &outcome,
-            const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
+        [callback](const Aws::S3::S3Client *,
+                   const Aws::S3::Model::PutObjectRequest &,
+                   const Aws::S3::Model::PutObjectOutcome &outcome,
+                   const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
             callback(outcome.IsSuccess());
         },
         nullptr);
@@ -52,11 +51,11 @@ awsS3DellObsClient::putObjectRdmaAsync(std::string_view key,
 
 void
 awsS3DellObsClient::getObjectRdmaAsync(std::string_view key,
-                                 uintptr_t data_ptr,
-                                 size_t data_len,
-                                 size_t offset,
-                                 const std::string &rdma_desc,
-                                 get_object_callback_t callback) {
+                                       uintptr_t data_ptr,
+                                       size_t data_len,
+                                       size_t offset,
+                                       const std::string &rdma_desc,
+                                       get_object_callback_t callback) {
     Aws::S3::Model::GetObjectRequest request;
     request.WithBucket(bucketName_)
         .WithKey(Aws::String(key))
@@ -68,11 +67,10 @@ awsS3DellObsClient::getObjectRdmaAsync(std::string_view key,
 
     s3Client_->GetObjectAsync(
         request,
-        [callback]
-        (const Aws::S3::S3Client *,
-                                   const Aws::S3::Model::GetObjectRequest &,
-                                   const Aws::S3::Model::GetObjectOutcome &outcome,
-                                   const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
+        [callback](const Aws::S3::S3Client *,
+                   const Aws::S3::Model::GetObjectRequest &,
+                   const Aws::S3::Model::GetObjectOutcome &outcome,
+                   const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
             callback(outcome.IsSuccess());
         },
         nullptr);

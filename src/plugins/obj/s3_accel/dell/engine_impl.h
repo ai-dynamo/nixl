@@ -14,14 +14,14 @@ class S3DellObsObjEngineImpl : public S3AccelObjEngineImpl {
 public:
     explicit S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params);
     S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params,
-                         std::shared_ptr<iS3Client> s3_client,
-                         std::shared_ptr<iS3Client> s3_client_accel = nullptr);
+                           std::shared_ptr<iS3Client> s3_client,
+                           std::shared_ptr<iS3Client> s3_client_accel = nullptr);
 
-    nixl_status_t registerMem(const nixlBlobDesc &mem,
-                             const nixl_mem_t &nixl_mem,
-                             nixlBackendMD *&out) override;
+    nixl_status_t
+    registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
 
-    nixl_status_t deregisterMem(nixlBackendMD *meta) override;
+    nixl_status_t
+    deregisterMem(nixlBackendMD *meta) override;
 
     nixl_status_t
     prepXfer(const nixl_xfer_op_t &operation,
