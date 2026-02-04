@@ -16,36 +16,37 @@
 
 /**
  * S3 Accelerated Object Client for use with Dell Objectscale - Inherits from Vannila S3 client.
- * This client presents Put and GetObject interfaces to enable RDMA for S3-compatible storage using the
- * cuObject API
+ * This client presents Put and GetObject interfaces to enable RDMA for S3-compatible storage using
+ * the cuObject API
  */
 class awsS3DellObsClient : public awsS3Client {
 public:
     /**
-     * Constructor that creates an AWS S3 client for use with Dell ObjectScale from custom parameters.
+     * Constructor that creates an AWS S3 client for use with Dell ObjectScale from custom
+     * parameters.
      * @param custom_params Custom parameters containing S3 configuration
      * @param executor Optional executor for async operations
      */
     awsS3DellObsClient(nixl_b_params_t *custom_params,
-                     std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr);
+                       std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr);
 
     virtual ~awsS3DellObsClient() = default;
 
     void
     putObjectRdmaAsync(std::string_view key,
-                   uintptr_t data_ptr,
-                   size_t data_len,
-                   size_t offset,
-                   const std::string &rdma_desc,
-                   put_object_callback_t callback);
+                       uintptr_t data_ptr,
+                       size_t data_len,
+                       size_t offset,
+                       const std::string &rdma_desc,
+                       put_object_callback_t callback);
 
     void
     getObjectRdmaAsync(std::string_view key,
-                   uintptr_t data_ptr,
-                   size_t data_len,
-                   size_t offset,
-                   const std::string &rdma_desc,
-                   get_object_callback_t callback);
+                       uintptr_t data_ptr,
+                       size_t data_len,
+                       size_t offset,
+                       const std::string &rdma_desc,
+                       get_object_callback_t callback);
 
     // S3 client from base S3
 };
