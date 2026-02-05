@@ -71,13 +71,13 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 |------------|----------|---------|-------|-----------|
 | `agent_memory_registered` | `NIXL_TELEMETRY_MEMORY` | Next version | Yes | No |
 | `agent_memory_deregistered` | `NIXL_TELEMETRY_MEMORY` | Next version | Yes | No |
-| `agent_tx_bytes` | `NIXL_TELEMETRY_TRANSFER` | Yes | Next version | No |
-| `agent_rx_bytes` | `NIXL_TELEMETRY_TRANSFER` | Yes | Next version | No |
-| `agent_tx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | Next version | No |
-| `agent_rx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | Next version | No |
-| `agent_xfer_time` | `NIXL_TELEMETRY_PERFORMANCE` | Yes | No | Next Version |
-| `agent_xfer_post_time` | `NIXL_TELEMETRY_PERFORMANCE` | Yes | No | Next Version |
-| Backend-specific events | `NIXL_TELEMETRY_BACKEND` | - | Yes | Next version | No |
+| `agent_tx_bytes` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
+| `agent_rx_bytes` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
+| `agent_tx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
+| `agent_rx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
+| `agent_xfer_time` | `NIXL_TELEMETRY_PERFORMANCE` | Next Version | Yes, will be removed | No |
+| `agent_xfer_post_time` | `NIXL_TELEMETRY_PERFORMANCE` | Next Version | Yes, will be removed | No |
+| Backend-specific events | `NIXL_TELEMETRY_BACKEND` | - | Yes | Future | No |
 | Error status strings | `NIXL_TELEMETRY_ERROR` | No | No | No |
 
 **Counter, Gauge, Histogram** - as implemented by the Prometheus exporter
