@@ -164,8 +164,7 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
 }
 
 S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params,
-                                               std::shared_ptr<iS3Client> s3_client,
-                                               std::shared_ptr<iS3Client> s3_client_accel)
+                                               std::shared_ptr<iS3Client> s3_client)
     : S3AccelObjEngineImpl(init_params, s3_client) {
     // Use the injected client if provided, otherwise create a new one
     if (s3_client) {

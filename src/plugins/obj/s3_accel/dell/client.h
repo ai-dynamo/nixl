@@ -11,15 +11,15 @@
 #include <cstdint>
 #include <aws/s3/S3Client.h>
 #include <aws/core/utils/memory/stl/AWSString.h>
-#include "s3/client.h"
+#include "s3_accel/client.h"
 #include "nixl_types.h"
 
 /**
- * S3 Accelerated Object Client for use with Dell Objectscale - Inherits from Vannila S3 client.
+ * S3 Accelerated Object Client for use with Dell Objectscale - Inherits from Accelerated S3 Client.
  * This client presents Put and GetObject interfaces to enable RDMA for S3-compatible storage using
  * the cuObject API
  */
-class awsS3DellObsClient : public awsS3Client {
+class awsS3DellObsClient : public awsS3AccelClient {
 public:
     /**
      * Constructor that creates an AWS S3 client for use with Dell ObjectScale from custom
