@@ -69,21 +69,25 @@ size_t parse_size(const char* size_str) {
 void print_usage(const char* program_name) {
     std::cerr << "Usage: " << program_name << " [options] <directory_path>\n"
               << "Options:\n"
-              << "  -a, --accelerated ACCEL_TYPE   Accelerated engine type (default: " << DEFAULT_ACCEL_TYPE << ")\n"
+              << "  -a, --accelerated ACCEL_TYPE   Accelerated engine type (default: "
+              << DEFAULT_ACCEL_TYPE << ")\n"
               << "  -d, --dram              Use DRAM for memory operations (default)\n"
               << "  -v, --vram              Use VRAM for memory operations\n"
-              << "  -n, --num-transfers N   Number of transfers to perform (default: " << DEFAULT_NUM_TRANSFERS << ")\n"
-              << "  -s, --size SIZE         Size of each transfer (default: " << DEFAULT_TRANSFER_SIZE << " bytes)\n"
+              << "  -n, --num-transfers N   Number of transfers to perform (default: "
+              << DEFAULT_NUM_TRANSFERS << ")\n"
+              << "  -s, --size SIZE         Size of each transfer (default: "
+              << DEFAULT_TRANSFER_SIZE << " bytes)\n"
               << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
               << "  -r, --no-read           Skip read test\n"
               << "  -w, --no-write          Skip write test\n"
-              << "  -t, --iterations N      Number of iterations for each transfer (default: " << DEFAULT_ITERATIONS << ")\n"
+              << "  -t, --iterations N      Number of iterations for each transfer (default: "
+              << DEFAULT_ITERATIONS << ")\n"
               << "  -e, --endpoint ENDPOINT S3 Endpoint URL\n"
               << "  -u, --bucket BUCKET     S3 Bucket name\n"
               << "  -h, --help              Show this help message\n"
               << "\nExamples:\n"
               << "  " << program_name << " -d -n 100 -s 16M -t 5\n"
-              << "  " << program_name << " -a dell -v -n 100 -s 16M -t 5\n";
+              << "  " << program_name << " -a default -d -n 100 -s 16M -t 5\n";
 }
 
 void printProgress(float progress) {
@@ -347,9 +351,13 @@ int main(int argc, char *argv[])
         {"req_checksum", "required"}
     };
 
+    // Check for an accelerated engine type.  If it is not "default", set it to true and set the
+    // vendor specific type.
     if (!accel_type.empty() && accel_type != DEFAULT_ACCEL_TYPE) {
         params["accelerated"] = "true";
-        params["type"] = accel_type;
+        if (accel_type != "default") {
+            params["type"] = accel_type;
+        }
     }
 
     // Create backends
