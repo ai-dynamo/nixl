@@ -94,7 +94,7 @@ protected:
         ASSERT_EQ(status, NIXL_SUCCESS);
     }
 
-    void
+    [[nodiscard]] nixl_status_t
     verifySignal(testSetupData &setup_data, uint64_t expected_value) {
         kernelParams read_params;
         read_params.operation = operation_t::SIGNAL_WAIT;
@@ -106,15 +106,11 @@ protected:
         read_params.signalWait.signalAddr = setup_data.dstBuffers[0].get();
         read_params.signalWait.expectedValue = expected_value;
 
-        const nixl_status_t status = launchKernel(read_params);
-        ASSERT_EQ(status, NIXL_SUCCESS);
+        return launchKernel(read_params);
     }
 };
 
 TEST_P(signalPostTest, Basic) {
-#ifndef HAVE_UCX_GPU_DEVICE_API
-    GTEST_SKIP() << "UCX GPU device API not available, skipping test";
-#else
     testSetupData setup_data;
     auto guard = setup_data.makeCleanupGuard(this);
     ASSERT_NO_FATAL_FAILURE(setupSignalPost(setup_data));
@@ -126,8 +122,7 @@ TEST_P(signalPostTest, Basic) {
 
     ASSERT_NO_FATAL_FAILURE(runSignalPost(setup_data, num_iters, index, signal_inc));
 
-    ASSERT_NO_FATAL_FAILURE(verifySignal(setup_data, expected_value));
-#endif
+    EXPECT_EQ(verifySignal(setup_data, expected_value), NIXL_SUCCESS);
 }
 
 INSTANTIATE_TEST_SUITE_P(ucxDeviceApi,

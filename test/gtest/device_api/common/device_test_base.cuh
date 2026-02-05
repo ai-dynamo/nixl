@@ -256,11 +256,10 @@ private:
             send_mode_t::WITHOUT_NODELAY_WITHOUT_REQ,
             send_mode_t::MULTI_CHANNEL,
         };
-        const std::vector<nixl_mem_t> mem_types{VRAM_SEG, DRAM_SEG};
 
         for (const auto &level : levels) {
             for (const auto &mode : modes) {
-                for (const auto &mem_type : mem_types) {
+                for (const auto &mem_type : {VRAM_SEG, DRAM_SEG}) {
                     params.emplace_back(level, mode, mem_type);
                 }
             }

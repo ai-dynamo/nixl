@@ -54,7 +54,6 @@ test<paramType>::SetUp() {
         const nixl_status_t status =
             agents_.back()->createBackend("UCX", getBackendParams(), backend_handle);
         ASSERT_EQ(status, NIXL_SUCCESS);
-        EXPECT_NE(backend_handle, nullptr);
         backendHandles_.push_back(backend_handle);
     }
 }

@@ -87,7 +87,7 @@ TEST_P(signalLocalTest, WriteRead) {
 TEST_P(signalLocalTest, MultipleWrites) {
     ASSERT_NO_FATAL_FAILURE(setupLocalSignal());
 
-    const std::vector<uint64_t> test_values = {testPattern1, testPattern2, testSignalIncrement};
+    const std::vector<uint64_t> test_values{testPattern1, testPattern2, testSignalIncrement};
 
     for (const auto &value : test_values) {
         ASSERT_NO_FATAL_FAILURE(writeSignal(getSignalBuffer(), value, defaultNumThreads));
