@@ -98,3 +98,5 @@ if enabled_plugins.get('GUSLI')
         subdir('gusli')
     endif
 endif
+
+subdir('object')
