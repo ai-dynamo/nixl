@@ -16,7 +16,7 @@
  */
 
 #include "common/device_test_base.cuh"
-#include "common/test_array.h"
+#include "common/mem_type_array.h"
 
 namespace nixl::test::device_api {
 class signalLocalTest : public test<nixl_gpu_level_t> {
@@ -39,7 +39,7 @@ protected:
         return signalBuffers_.empty() ? nullptr : signalBuffers_[0].get();
     }
 
-    void
+    [[nodiscard]] nixl_status_t
     writeSignal(void *signal_addr, uint64_t value, size_t num_threads) {
         kernelParams params;
         params.operation = operation_t::SIGNAL_WRITE;
@@ -51,11 +51,10 @@ protected:
         params.signalWrite.signalAddr = signal_addr;
         params.signalWrite.value = value;
 
-        const nixl_status_t status = launchKernel(params);
-        ASSERT_EQ(status, NIXL_SUCCESS);
+        return launchKernel(params);
     }
 
-    void
+    [[nodiscard]] nixl_status_t
     readAndVerifySignal(const void *signal_addr, uint64_t expected_value, size_t num_threads) {
         kernelParams params;
         params.operation = operation_t::SIGNAL_WAIT;
@@ -67,12 +66,11 @@ protected:
         params.signalWait.signalAddr = signal_addr;
         params.signalWait.expectedValue = expected_value;
 
-        const nixl_status_t status = launchKernel(params);
-        ASSERT_EQ(status, NIXL_SUCCESS);
+        return launchKernel(params);
     }
 
 private:
-    std::vector<testArray<uint8_t>> signalBuffers_;
+    std::vector<memTypeArray<uint8_t>> signalBuffers_;
 };
 
 TEST_P(signalLocalTest, WriteRead) {
@@ -80,8 +78,8 @@ TEST_P(signalLocalTest, WriteRead) {
 
     constexpr uint64_t test_value = testPattern1;
 
-    ASSERT_NO_FATAL_FAILURE(writeSignal(getSignalBuffer(), test_value, defaultNumThreads));
-    ASSERT_NO_FATAL_FAILURE(readAndVerifySignal(getSignalBuffer(), test_value, defaultNumThreads));
+    ASSERT_EQ(writeSignal(getSignalBuffer(), test_value, defaultNumThreads), NIXL_SUCCESS);
+    EXPECT_EQ(readAndVerifySignal(getSignalBuffer(), test_value, defaultNumThreads), NIXL_SUCCESS);
 }
 
 TEST_P(signalLocalTest, MultipleWrites) {
@@ -90,8 +88,8 @@ TEST_P(signalLocalTest, MultipleWrites) {
     const std::vector<uint64_t> test_values{testPattern1, testPattern2, testSignalIncrement};
 
     for (const auto &value : test_values) {
-        ASSERT_NO_FATAL_FAILURE(writeSignal(getSignalBuffer(), value, defaultNumThreads));
-        ASSERT_NO_FATAL_FAILURE(readAndVerifySignal(getSignalBuffer(), value, defaultNumThreads));
+        ASSERT_EQ(writeSignal(getSignalBuffer(), value, defaultNumThreads), NIXL_SUCCESS);
+        EXPECT_EQ(readAndVerifySignal(getSignalBuffer(), value, defaultNumThreads), NIXL_SUCCESS);
     }
 }
 
@@ -100,8 +98,8 @@ TEST_P(signalLocalTest, SingleThread) {
 
     constexpr uint64_t test_value = testPattern1;
 
-    ASSERT_NO_FATAL_FAILURE(writeSignal(getSignalBuffer(), test_value, 1));
-    ASSERT_NO_FATAL_FAILURE(readAndVerifySignal(getSignalBuffer(), test_value, 1));
+    ASSERT_EQ(writeSignal(getSignalBuffer(), test_value, 1), NIXL_SUCCESS);
+    EXPECT_EQ(readAndVerifySignal(getSignalBuffer(), test_value, 1), NIXL_SUCCESS);
 }
 
 TEST_P(signalLocalTest, ZeroValue) {
@@ -109,8 +107,8 @@ TEST_P(signalLocalTest, ZeroValue) {
 
     constexpr uint64_t zero_value = 0;
 
-    ASSERT_NO_FATAL_FAILURE(writeSignal(getSignalBuffer(), zero_value, defaultNumThreads));
-    ASSERT_NO_FATAL_FAILURE(readAndVerifySignal(getSignalBuffer(), zero_value, defaultNumThreads));
+    ASSERT_EQ(writeSignal(getSignalBuffer(), zero_value, defaultNumThreads), NIXL_SUCCESS);
+    EXPECT_EQ(readAndVerifySignal(getSignalBuffer(), zero_value, defaultNumThreads), NIXL_SUCCESS);
 }
 
 TEST_P(signalLocalTest, MaxValue) {
@@ -118,8 +116,8 @@ TEST_P(signalLocalTest, MaxValue) {
 
     constexpr uint64_t max_value = UINT64_MAX;
 
-    ASSERT_NO_FATAL_FAILURE(writeSignal(getSignalBuffer(), max_value, defaultNumThreads));
-    ASSERT_NO_FATAL_FAILURE(readAndVerifySignal(getSignalBuffer(), max_value, defaultNumThreads));
+    ASSERT_EQ(writeSignal(getSignalBuffer(), max_value, defaultNumThreads), NIXL_SUCCESS);
+    EXPECT_EQ(readAndVerifySignal(getSignalBuffer(), max_value, defaultNumThreads), NIXL_SUCCESS);
 }
 
 INSTANTIATE_TEST_SUITE_P(ucxDeviceApi,

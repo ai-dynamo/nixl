@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef NIXL_DEVICE_API_mem_type_array_H
-#define NIXL_DEVICE_API_mem_type_array_H
+#ifndef NIXL_DEVICE_API_COMMON_MEM_TYPE_ARRAY_H
+#define NIXL_DEVICE_API_COMMON_MEM_TYPE_ARRAY_H
 
 #include <cuda_runtime.h>
 #include <nixl.h>
@@ -138,4 +138,4 @@ private:
     std::unique_ptr<T, deleter> ptr_;
 };
 } // namespace nixl::test::device_api
-#endif // NIXL_DEVICE_API_mem_type_array_H
+#endif // NIXL_DEVICE_API_COMMON_MEM_TYPE_ARRAY_H

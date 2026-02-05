@@ -61,7 +61,7 @@ test<paramType>::SetUp() {
 template<typename paramType>
 void
 test<paramType>::registerMem(nixlAgent &agent,
-                             const std::vector<testArray<uint8_t>> &buffers,
+                             const std::vector<memTypeArray<uint8_t>> &buffers,
                              nixl_mem_t mem_type) {
     auto reg_list = makeDescList<nixlBlobDesc>(buffers, mem_type);
     agent.registerMem(reg_list);
@@ -103,7 +103,7 @@ test<paramType>::createRegisteredMem(nixlAgent &agent,
                                      size_t size,
                                      size_t count,
                                      nixl_mem_t mem_type,
-                                     std::vector<testArray<uint8_t>> &buffers_out) {
+                                     std::vector<memTypeArray<uint8_t>> &buffers_out) {
     while (count-- != 0) {
         buffers_out.emplace_back(size, mem_type);
     }
@@ -124,9 +124,9 @@ test<paramType>::getAgentName(size_t idx) const {
 
 template<typename paramType>
 void
-test<paramType>::createXferRequest(const std::vector<testArray<uint8_t>> &src_buffers,
+test<paramType>::createXferRequest(const std::vector<memTypeArray<uint8_t>> &src_buffers,
                                    nixl_mem_t src_mem_type,
-                                   const std::vector<testArray<uint8_t>> &dst_buffers,
+                                   const std::vector<memTypeArray<uint8_t>> &dst_buffers,
                                    nixl_mem_t dst_mem_type,
                                    nixlXferReqH *&xfer_req,
                                    nixlGpuXferReqH &gpu_req_handle,
@@ -165,13 +165,6 @@ test<paramType>::cleanupXferRequest(nixlXferReqH *xfer_req, nixlGpuXferReqH gpu_
     const nixl_status_t status = getAgent(senderAgent).releaseXferReq(xfer_req);
     ASSERT_EQ(status, NIXL_SUCCESS);
     invalidateMD();
-}
-
-template<typename paramType>
-void
-test<paramType>::launchAndCheckKernel(const kernelParams &params) {
-    const nixl_status_t status = launchKernel(params);
-    ASSERT_EQ(status, NIXL_SUCCESS) << "Kernel execution failed with status: " << status;
 }
 
 template<typename paramType>

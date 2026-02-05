@@ -24,7 +24,7 @@
 #include "common.h"
 #include "device_utils.cuh"
 #include "device_kernels.cuh"
-#include "test_array.h"
+#include "mem_type_array.h"
 
 #include <cuda_runtime.h>
 #include <absl/strings/str_format.h>
@@ -107,8 +107,8 @@ protected:
     static constexpr size_t defaultBufferAllocCount = 1;
 
     struct testSetupData {
-        std::vector<testArray<uint8_t>> srcBuffers;
-        std::vector<testArray<uint8_t>> dstBuffers;
+        std::vector<memTypeArray<uint8_t>> srcBuffers;
+        std::vector<memTypeArray<uint8_t>> dstBuffers;
         nixlXferReqH *xferReq = nullptr;
         nixlGpuXferReqH gpuReqHandle = nullptr;
 
@@ -162,7 +162,7 @@ protected:
 
     template<typename descType>
     [[nodiscard]] nixlDescList<descType>
-    makeDescList(const std::vector<testArray<uint8_t>> &buffers, nixl_mem_t mem_type) {
+    makeDescList(const std::vector<memTypeArray<uint8_t>> &buffers, nixl_mem_t mem_type) {
         nixlDescList<descType> desc_list(mem_type);
         for (const auto &buffer : buffers) {
             desc_list.addDesc(descType(
@@ -173,7 +173,7 @@ protected:
 
     void
     registerMem(nixlAgent &agent,
-                const std::vector<testArray<uint8_t>> &buffers,
+                const std::vector<memTypeArray<uint8_t>> &buffers,
                 nixl_mem_t mem_type);
     void
     exchangeMD(size_t from_agent, size_t to_agent);
@@ -185,7 +185,7 @@ protected:
                         size_t size,
                         size_t count,
                         nixl_mem_t mem_type,
-                        std::vector<testArray<uint8_t>> &buffers_out);
+                        std::vector<memTypeArray<uint8_t>> &buffers_out);
 
     [[nodiscard]] nixlAgent &
     getAgent(size_t idx) const;
@@ -193,9 +193,9 @@ protected:
     getAgentName(size_t idx) const;
 
     void
-    createXferRequest(const std::vector<testArray<uint8_t>> &src_buffers,
+    createXferRequest(const std::vector<memTypeArray<uint8_t>> &src_buffers,
                       nixl_mem_t src_mem_type,
-                      const std::vector<testArray<uint8_t>> &dst_buffers,
+                      const std::vector<memTypeArray<uint8_t>> &dst_buffers,
                       nixl_mem_t dst_mem_type,
                       nixlXferReqH *&xfer_req,
                       nixlGpuXferReqH &gpu_req_handle,
@@ -203,8 +203,7 @@ protected:
 
     void
     cleanupXferRequest(nixlXferReqH *xfer_req, nixlGpuXferReqH gpu_req_handle);
-    void
-    launchAndCheckKernel(const kernelParams &params);
+
     void
     setupWriteTest(size_t size,
                    size_t count,

@@ -17,7 +17,7 @@
 
 #include "device_kernels.cuh"
 #include "device_utils.cuh"
-#include "test_array.h"
+#include "mem_type_array.h"
 
 namespace nixl::test::device_api {
 
@@ -211,7 +211,7 @@ testKernel(const kernelParams params, nixl_status_t *status_ptr) {
 
 nixl_status_t
 launchKernel(const kernelParams &params) {
-    testArray<nixl_status_t> result{1};
+    memTypeArray<nixl_status_t> result{1};
     nixl_status_t init_status = NIXL_ERR_INVALID_PARAM;
     result.copyFromHost(&init_status, 1);
 

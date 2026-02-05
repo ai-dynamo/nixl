@@ -16,7 +16,7 @@
  */
 
 #include "common/device_test_base.cuh"
-#include "common/test_array.h"
+#include "common/mem_type_array.h"
 #include <random>
 
 namespace nixl::test::device_api {

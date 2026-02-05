@@ -20,12 +20,9 @@
 #include <cstring>
 
 namespace nixl::test::device_api {
-
-using single_write_params_t = testParams;
-
-class singleWriteTest : public test<single_write_params_t> {
+class singleWriteTest : public test<testParams> {
 protected:
-    void
+    [[nodiscard]] nixl_status_t
     runTest(testSetupData &setup_data, size_t size, size_t num_iters) {
         kernelParams params;
         params.operation = operation_t::SINGLE_WRITE;
@@ -38,7 +35,7 @@ protected:
 
         applySendMode<singleWriteTest>(params, getSendMode());
 
-        launchAndCheckKernel(params);
+        return launchKernel(params);
     }
 };
 
@@ -51,12 +48,12 @@ TEST_P(singleWriteTest, Basic) {
     auto guard = setup_data.makeCleanupGuard(this);
     ASSERT_NO_FATAL_FAILURE(setupWriteTest(size, count, srcMemType, dst_mem_type, setup_data));
 
-    auto *src = reinterpret_cast<uint32_t *>(setup_data.srcBuffers[0].get());
+    auto src = reinterpret_cast<uint32_t *>(setup_data.srcBuffers[0].get());
     constexpr uint32_t pattern = testPattern2;
     cudaMemset(src, 0, size);
     cudaMemcpy(src, &pattern, sizeof(pattern), cudaMemcpyHostToDevice);
 
-    ASSERT_NO_FATAL_FAILURE(runTest(setup_data, size, defaultNumIters));
+    ASSERT_EQ(runTest(setup_data, size, defaultNumIters), NIXL_SUCCESS);
 
     uint32_t dst = 0;
     if (dst_mem_type == DRAM_SEG) {
@@ -67,7 +64,7 @@ TEST_P(singleWriteTest, Basic) {
                    sizeof(uint32_t),
                    cudaMemcpyDeviceToHost);
     }
-    ASSERT_EQ(dst, pattern);
+    EXPECT_EQ(dst, pattern);
 }
 
 // TODO: Create separate multi-worker test with dedicated fixture that creates 32 workers

@@ -17,7 +17,7 @@
 
 #include "common/device_test_base.cuh"
 #include "common/device_kernels.cuh"
-#include "common/test_array.h"
+#include "common/mem_type_array.h"
 #include <algorithm>
 
 namespace nixl::test::device_api {
@@ -38,10 +38,10 @@ protected:
             indices_host[i] = static_cast<unsigned>(i);
         }
 
-        testArray<unsigned> indices_gpu(data_buf_count);
-        testArray<size_t> sizes_gpu(data_buf_count);
-        testArray<size_t> local_offsets_gpu(data_buf_count);
-        testArray<size_t> remote_offsets_gpu(data_buf_count);
+        memTypeArray<unsigned> indices_gpu(data_buf_count);
+        memTypeArray<size_t> sizes_gpu(data_buf_count);
+        memTypeArray<size_t> local_offsets_gpu(data_buf_count);
+        memTypeArray<size_t> remote_offsets_gpu(data_buf_count);
 
         indices_gpu.copyFromHost(indices_host);
         sizes_gpu.copyFromHost(sizes);
