@@ -167,7 +167,12 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
                                                std::shared_ptr<iS3Client> s3_client,
                                                std::shared_ptr<iS3Client> s3_client_accel)
     : S3AccelObjEngineImpl(init_params, s3_client) {
-    s3Client_ = std::make_shared<awsS3DellObsClient>(init_params->customParams, executor_);
+    // Use the injected client if provided, otherwise create a new one
+    if (s3_client) {
+        s3Client_ = s3_client;  // Use the injected mock client for testing
+    } else {
+        s3Client_ = std::make_shared<awsS3DellObsClient>(init_params->customParams, executor_);
+    }
 
     cuClient_ = std::make_shared<cuObjClient>(obs_ops, CUOBJ_PROTO_RDMA_DC_V1);
     if (!cuClient_->isConnected()) {

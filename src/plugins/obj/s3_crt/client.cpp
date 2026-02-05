@@ -129,3 +129,23 @@ awsS3CrtClient::checkObjectExists(std::string_view key) {
         throw std::runtime_error("Failed to check if object exists (CRT): " +
                                  outcome.GetError().GetMessage());
 }
+
+void
+awsS3CrtClient::putObjectRdmaAsync(std::string_view key,
+                                     uintptr_t data_ptr,
+                                     size_t data_len,
+                                     size_t offset,
+                                     const std::string &rdma_desc,
+                                     put_object_callback_t callback) {
+    throw std::runtime_error("RDMA operations not supported by S3 CRT client");
+}
+
+void
+awsS3CrtClient::getObjectRdmaAsync(std::string_view key,
+                                     uintptr_t data_ptr,
+                                     size_t data_len,
+                                     size_t offset,
+                                     const std::string &rdma_desc,
+                                     get_object_callback_t callback) {
+    throw std::runtime_error("RDMA operations not supported by S3 CRT client");
+}
