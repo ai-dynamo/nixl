@@ -136,20 +136,20 @@ awsS3Client::checkObjectExists(std::string_view key) {
 
 void
 awsS3Client::putObjectRdmaAsync(std::string_view key,
-                                 uintptr_t data_ptr,
-                                 size_t data_len,
-                                 size_t offset,
-                                 const std::string &rdma_desc,
-                                 put_object_callback_t callback) {
+                                uintptr_t data_ptr,
+                                size_t data_len,
+                                size_t offset,
+                                const std::string &rdma_desc,
+                                put_object_callback_t callback) {
     throw std::runtime_error("RDMA operations not supported by standard S3 client");
 }
 
 void
 awsS3Client::getObjectRdmaAsync(std::string_view key,
-                                 uintptr_t data_ptr,
-                                 size_t data_len,
-                                 size_t offset,
-                                 const std::string &rdma_desc,
-                                 get_object_callback_t callback) {
+                                uintptr_t data_ptr,
+                                size_t data_len,
+                                size_t offset,
+                                const std::string &rdma_desc,
+                                get_object_callback_t callback) {
     throw std::runtime_error("RDMA operations not supported by standard S3 client");
 }

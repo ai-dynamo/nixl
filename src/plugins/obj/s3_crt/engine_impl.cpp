@@ -39,7 +39,7 @@ S3CrtObjEngineImpl::S3CrtObjEngineImpl(const nixlBackendInitParams *init_params,
     if (s3_client_crt) {
         s3ClientCrt_ = s3_client_crt;
     } else if (s3_client) {
-        s3ClientCrt_ = s3_client;  // Use the same mock client for both
+        s3ClientCrt_ = s3_client; // Use the same mock client for both
     } else {
         s3ClientCrt_ = std::make_shared<awsS3CrtClient>(init_params->customParams, executor_);
     }
