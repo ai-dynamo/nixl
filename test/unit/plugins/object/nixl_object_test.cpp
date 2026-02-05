@@ -34,12 +34,12 @@
 
 // Default values
 #define DEFAULT_NUM_TRANSFERS 64
-#define DEFAULT_TRANSFER_SIZE (16 * 1024 * 1024)  // 16MB
-#define DEFAULT_ITERATIONS 1  // Default number of iterations
+#define DEFAULT_TRANSFER_SIZE (16 * 1024 * 1024) // 16MB
+#define DEFAULT_ITERATIONS 1 // Default number of iterations
 #define DEFAULT_BACKEND "OBJ"
 #define DEFAULT_ACCEL_TYPE "NONE"
 #define TEST_PHRASE "NIXL Storage Test Pattern 2026"
-#define TEST_PHRASE_LEN (sizeof(TEST_PHRASE) - 1)  // -1 to exclude null terminator
+#define TEST_PHRASE_LEN (sizeof(TEST_PHRASE) - 1) // -1 to exclude null terminator
 
 // Get system page size
 static size_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
@@ -48,25 +48,34 @@ static size_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
 #define PROGRESS_WIDTH 50
 
 // Helper function to parse size strings like "1K", "2M", "3G"
-size_t parse_size(const char* size_str) {
-    char* end;
+size_t
+parse_size(const char *size_str) {
+    char *end;
     size_t size = strtoull(size_str, &end, 10);
     if (end == size_str) {
-        return 0;  // Invalid number
+        return 0; // Invalid number
     }
 
     if (*end) {
         switch (toupper(*end)) {
-            case 'K': size *= 1024; break;
-            case 'M': size *= 1024 * 1024; break;
-            case 'G': size *= 1024 * 1024 * 1024; break;
-            default: return 0;  // Invalid suffix
+        case 'K':
+            size *= 1024;
+            break;
+        case 'M':
+            size *= 1024 * 1024;
+            break;
+        case 'G':
+            size *= 1024 * 1024 * 1024;
+            break;
+        default:
+            return 0; // Invalid suffix
         }
     }
     return size;
 }
 
-void print_usage(const char* program_name) {
+void
+print_usage(const char *program_name) {
     std::cerr << "Usage: " << program_name << " [options] <directory_path>\n"
               << "Options:\n"
               << "  -a, --accelerated ACCEL_TYPE   Accelerated engine type (default: "
@@ -90,15 +99,19 @@ void print_usage(const char* program_name) {
               << "  " << program_name << " -a default -d -n 100 -s 16M -t 5\n";
 }
 
-void printProgress(float progress) {
+void
+printProgress(float progress) {
     int barWidth = PROGRESS_WIDTH;
 
     std::cout << "[";
     int pos = barWidth * progress;
     for (int i = 0; i < barWidth; ++i) {
-        if (i < pos) std::cout << "=";
-        else if (i == pos) std::cout << ">";
-        else std::cout << " ";
+        if (i < pos)
+            std::cout << "=";
+        else if (i == pos)
+            std::cout << ">";
+        else
+            std::cout << " ";
     }
     std::cout << "] " << std::fixed << std::setprecision(1) << (progress * 100.0) << "% ";
 
@@ -111,7 +124,8 @@ void printProgress(float progress) {
     }
 }
 
-void validateBuffer(void* expected, void* actual, size_t size, const char* operation) {
+void
+validateBuffer(void *expected, void *actual, size_t size, const char *operation) {
     if (memcmp(expected, actual, size) != 0) {
         std::cerr << "Data validation failed for " << operation << std::endl;
         exit(-1);
@@ -119,8 +133,9 @@ void validateBuffer(void* expected, void* actual, size_t size, const char* opera
 }
 
 // Helper function to fill buffer with repeating pattern
-void fill_test_pattern(void* buffer, size_t size) {
-    char* buf = (char*)buffer;
+void
+fill_test_pattern(void *buffer, size_t size) {
+    char *buf = (char *)buffer;
     size_t phrase_len = TEST_PHRASE_LEN;
     size_t offset = 0;
 
@@ -133,8 +148,9 @@ void fill_test_pattern(void* buffer, size_t size) {
 }
 
 // Helper function to fill GPU buffer with repeating pattern
-cudaError_t fill_gpu_test_pattern(void* gpu_buffer, size_t size) {
-    char* host_buffer = (char*)malloc(size);
+cudaError_t
+fill_gpu_test_pattern(void *gpu_buffer, size_t size) {
+    char *host_buffer = (char *)malloc(size);
     if (!host_buffer) {
         return cudaErrorMemoryAllocation;
     }
@@ -145,18 +161,21 @@ cudaError_t fill_gpu_test_pattern(void* gpu_buffer, size_t size) {
     return err;
 }
 
-void clear_buffer(void* buffer, size_t size) {
+void
+clear_buffer(void *buffer, size_t size) {
     memset(buffer, 0, size);
 }
 
-cudaError_t clear_gpu_buffer(void* gpu_buffer, size_t size) {
+cudaError_t
+clear_gpu_buffer(void *gpu_buffer, size_t size) {
     return cudaMemset(gpu_buffer, 0, size);
 }
 
 // Helper function to validate GPU buffer
-bool validate_gpu_buffer(void* gpu_buffer, size_t size) {
-    char* host_buffer = (char*)malloc(size);
-    char* expected_buffer = (char*)malloc(size);
+bool
+validate_gpu_buffer(void *gpu_buffer, size_t size) {
+    char *host_buffer = (char *)malloc(size);
+    char *expected_buffer = (char *)malloc(size);
     if (!host_buffer || !expected_buffer) {
         free(host_buffer);
         free(expected_buffer);
@@ -183,8 +202,9 @@ bool validate_gpu_buffer(void* gpu_buffer, size_t size) {
 }
 
 // Helper function to format duration
-std::string format_duration(nixlTime::us_t us) {
-    nixlTime::ms_t ms = us/1000.0;
+std::string
+format_duration(nixlTime::us_t us) {
+    nixlTime::ms_t ms = us / 1000.0;
     if (ms < 1000) {
         return std::to_string(ms) + " ms";
     }
@@ -194,94 +214,92 @@ std::string format_duration(nixlTime::us_t us) {
     return ss.str();
 }
 
-int main(int argc, char *argv[])
-{
-    nixl_status_t               ret = NIXL_SUCCESS;
-    void                        **vram_addr = NULL;
-    void                        **dram_addr = NULL;
-    int                         status = 0;
-    int                         i;
-    bool                        use_dram = false;
-    bool                        use_vram = false;
-    int                         opt;
-    size_t                      transfer_size = DEFAULT_TRANSFER_SIZE;
-    int                         num_transfers = DEFAULT_NUM_TRANSFERS;
-    bool                        skip_read = false;
-    bool                        skip_write = false;
-    nixlTime::us_t              total_time(0);
-    nixlTime::us_t              reg_time(0);
-    double                      total_data_gb = 0;
-    unsigned int                iterations = DEFAULT_ITERATIONS;
-    std::string                 accel_type = DEFAULT_ACCEL_TYPE;
-    std::string			        endpoint;
-    std::string			        bucket;
+int
+main(int argc, char *argv[]) {
+    nixl_status_t ret = NIXL_SUCCESS;
+    void **vram_addr = NULL;
+    void **dram_addr = NULL;
+    int status = 0;
+    int i;
+    bool use_dram = false;
+    bool use_vram = false;
+    int opt;
+    size_t transfer_size = DEFAULT_TRANSFER_SIZE;
+    int num_transfers = DEFAULT_NUM_TRANSFERS;
+    bool skip_read = false;
+    bool skip_write = false;
+    nixlTime::us_t total_time(0);
+    nixlTime::us_t reg_time(0);
+    double total_data_gb = 0;
+    unsigned int iterations = DEFAULT_ITERATIONS;
+    std::string accel_type = DEFAULT_ACCEL_TYPE;
+    std::string endpoint;
+    std::string bucket;
 
     // Parse command line options
-    static struct option long_options[] = {
-        {"accelerated",    required_argument, 0, 'a'},
-        {"dram",           no_argument,       0, 'd'},
-        {"vram",           no_argument,       0, 'v'},
-        {"num-transfers",  required_argument, 0, 'n'},
-        {"size",           required_argument, 0, 's'},
-        {"no-read",        no_argument,       0, 'r'},
-        {"no-write",       no_argument,       0, 'w'},
-        {"iterations",     required_argument, 0, 't'},
-	    {"endpoint",       required_argument, 0, 'e'},
-	    {"bucket",         required_argument, 0, 'u'},
-        {"help",           no_argument,       0, 'h'},
-        {0,                0,                 0,  0}
-    };
+    static struct option long_options[] = {{"accelerated", required_argument, 0, 'a'},
+                                           {"dram", no_argument, 0, 'd'},
+                                           {"vram", no_argument, 0, 'v'},
+                                           {"num-transfers", required_argument, 0, 'n'},
+                                           {"size", required_argument, 0, 's'},
+                                           {"no-read", no_argument, 0, 'r'},
+                                           {"no-write", no_argument, 0, 'w'},
+                                           {"iterations", required_argument, 0, 't'},
+                                           {"endpoint", required_argument, 0, 'e'},
+                                           {"bucket", required_argument, 0, 'u'},
+                                           {"help", no_argument, 0, 'h'},
+                                           {0, 0, 0, 0}};
 
     while ((opt = getopt_long(argc, argv, "a:dvn:s:rwt:he:u:", long_options, NULL)) != -1) {
         switch (opt) {
-            case 'a':
-                accel_type = optarg;
-                break;
-	        case 'e':
-	            endpoint = optarg;
-		        break;
-	        case 'u':
-	            bucket = optarg;
-	            break;
-            case 'd':
-                use_dram = true;
-                break;
-            case 'v':
-                use_vram = true;
-                break;
-            case 'n':
-                num_transfers = atoi(optarg);
-                if (num_transfers <= 0) {
-                    std::cerr << "Error: Number of transfers must be positive\n";
-                    return 1;
-                }
-                break;
-            case 's':
-                transfer_size = parse_size(optarg);
-                if (transfer_size == 0) {
-                    std::cerr << "Error: Invalid transfer size format\n";
-                    return 1;
-                }
-                break;
-            case 'r':
-                skip_read = true;
-                break;
-            case 'w':
-                skip_write = true;
-                break;
-            case 't':
-                iterations = atoi(optarg);
-                if (iterations <= 0) {
-                    std::cerr << "Error: Number of iterations must be positive\n";
-                    return 1;
-                }
-                break;
-            case 'h':
-                print_usage(argv[0]);
-                return 0;
-            default:
-                print_usage(argv[0]);
+        case 'a':
+            accel_type = optarg;
+            break;
+        case 'e':
+            endpoint = optarg;
+            break;
+        case 'u':
+            bucket = optarg;
+            break;
+        case 'd':
+            use_dram = true;
+            break;
+        case 'v':
+            use_vram = true;
+            break;
+        case 'n':
+            num_transfers = atoi(optarg);
+            if (num_transfers <= 0) {
+                std::cerr << "Error: Number of transfers must be positive\n";
                 return 1;
+            }
+            break;
+        case 's':
+            transfer_size = parse_size(optarg);
+            if (transfer_size == 0) {
+                std::cerr << "Error: Invalid transfer size format\n";
+                return 1;
+            }
+            break;
+        case 'r':
+            skip_read = true;
+            break;
+        case 'w':
+            skip_write = true;
+            break;
+        case 't':
+            iterations = atoi(optarg);
+            if (iterations <= 0) {
+                std::cerr << "Error: Number of iterations must be positive\n";
+                return 1;
+            }
+            break;
+        case 'h':
+            print_usage(argv[0]);
+            return 0;
+        default:
+            print_usage(argv[0]);
+            return 1;
         }
     }
 
@@ -304,38 +322,40 @@ int main(int argc, char *argv[])
 
     // Allocate arrays based on num_transfers
     if (use_vram) {
-        vram_addr = new void*[num_transfers];
+        vram_addr = new void *[num_transfers];
     }
     if (use_dram) {
-        dram_addr = new void*[num_transfers];
+        dram_addr = new void *[num_transfers];
     }
 
     // Initialize NIXL components
-    nixlAgentConfig             cfg(true);
-    nixlBlobDesc                *vram_buf = use_vram ? new nixlBlobDesc[num_transfers] : NULL;
-    nixlBlobDesc                *dram_buf = use_dram ? new nixlBlobDesc[num_transfers] : NULL;
-    nixlBlobDesc                *objects = new nixlBlobDesc[num_transfers];
-    nixlBackendH                *obj;
-    nixl_reg_dlist_t            vram_for_obj(VRAM_SEG);
-    nixl_reg_dlist_t            dram_for_obj(DRAM_SEG);
-    nixl_reg_dlist_t            obj_for_obj(OBJ_SEG);
+    nixlAgentConfig cfg(true);
+    nixlBlobDesc *vram_buf = use_vram ? new nixlBlobDesc[num_transfers] : NULL;
+    nixlBlobDesc *dram_buf = use_dram ? new nixlBlobDesc[num_transfers] : NULL;
+    nixlBlobDesc *objects = new nixlBlobDesc[num_transfers];
+    nixlBackendH *obj;
+    nixl_reg_dlist_t vram_for_obj(VRAM_SEG);
+    nixl_reg_dlist_t dram_for_obj(DRAM_SEG);
+    nixl_reg_dlist_t obj_for_obj(OBJ_SEG);
 
     std::cout << "\n============================================================" << std::endl;
-    std::cout << "                 NIXL STORAGE TEST STARTING ( OBJ PLUGIN)                     " << std::endl;
+    std::cout << "                 NIXL STORAGE TEST STARTING ( OBJ PLUGIN)                     "
+              << std::endl;
     std::cout << "============================================================" << std::endl;
     std::cout << "Configuration:" << std::endl;
     std::cout << "- Mode: " << (use_dram ? "DRAM" : "VRAM") << std::endl;
     std::cout << "- Number of transfers: " << num_transfers << std::endl;
     std::cout << "- Transfer size: " << transfer_size << " bytes" << std::endl;
     std::cout << "- Total data: " << std::fixed << std::setprecision(2)
-              << ((transfer_size * num_transfers) / (1024.0 * 1024.0 * 1024.0)) << " GB" << std::endl;
+              << ((transfer_size * num_transfers) / (1024.0 * 1024.0 * 1024.0)) << " GB"
+              << std::endl;
     std::cout << "- Number of iterations: " << iterations << std::endl;
     std::cout << "- Operation: ";
     if (!skip_read && !skip_write) {
         std::cout << "Read and Write";
     } else if (skip_read) {
         std::cout << "Write Only";
-    } else {  // skip_write
+    } else { // skip_write
         std::cout << "Read Only";
     }
     std::cout << std::endl;
@@ -343,13 +363,11 @@ int main(int argc, char *argv[])
 
     nixlAgent agent("ObjTester", cfg);
 
-    nixl_b_params_t params = {
-        {"bucket", bucket},
-        {"endpoint_override", endpoint},
-        {"scheme", "http"},
-        {"use_virtual_addressing", "false"},
-        {"req_checksum", "required"}
-    };
+    nixl_b_params_t params = {{"bucket", bucket},
+                              {"endpoint_override", endpoint},
+                              {"scheme", "http"},
+                              {"use_virtual_addressing", "false"},
+                              {"req_checksum", "required"}};
 
     // Check for an accelerated engine type.  If it is not "default", set it to true and set the
     // vendor specific type.
@@ -396,21 +414,21 @@ int main(int argc, char *argv[])
 
         // Set up descriptors
         if (use_vram) {
-            vram_buf[i].addr   = (uintptr_t)(vram_addr[i]);
-            vram_buf[i].len    = transfer_size;
-            vram_buf[i].devId  = 0;
+            vram_buf[i].addr = (uintptr_t)(vram_addr[i]);
+            vram_buf[i].len = transfer_size;
+            vram_buf[i].devId = 0;
             vram_for_obj.addDesc(vram_buf[i]);
         }
 
         if (use_dram) {
-            dram_buf[i].addr   = (uintptr_t)(dram_addr[i]);
-            dram_buf[i].len    = transfer_size;
-            dram_buf[i].devId  = 0;
+            dram_buf[i].addr = (uintptr_t)(dram_addr[i]);
+            dram_buf[i].len = transfer_size;
+            dram_buf[i].devId = 0;
             dram_for_obj.addDesc(dram_buf[i]);
         }
 
-        objects[i].addr  = 0;
-        objects[i].len   = transfer_size;
+        objects[i].addr = 0;
+        objects[i].len = transfer_size;
         objects[i].devId = i;
         objects[i].metaInfo = "test-write-key" + std::to_string(i);
         obj_for_obj.addDesc(objects[i]);
@@ -456,7 +474,6 @@ int main(int argc, char *argv[])
     nixl_xfer_dlist_t src_list = use_dram ? dram_for_obj.trim() : vram_for_obj.trim();
 
 
-
     // Perform write test if not skipped
     if (!skip_write) {
         std::cout << "\n============================================================" << std::endl;
@@ -464,7 +481,7 @@ int main(int argc, char *argv[])
         std::cout << "============================================================" << std::endl;
 
         us_t write_duration(0);
-        nixlXferReqH* write_req = nullptr;
+        nixlXferReqH *write_req = nullptr;
 
         // Create descriptor lists for all transfers
         nixl_reg_dlist_t src_reg(use_dram ? DRAM_SEG : VRAM_SEG);
@@ -487,8 +504,7 @@ int main(int argc, char *argv[])
         nixl_xfer_dlist_t obj_list = obj_reg.trim();
 
         // Create single transfer request for all transfers
-        ret = agent.createXferReq(NIXL_WRITE, src_list, obj_list,
-                                "ObjTester", write_req);
+        ret = agent.createXferReq(NIXL_WRITE, src_list, obj_list, "ObjTester", write_req);
         if (ret != NIXL_SUCCESS) {
             std::cerr << "Failed to create write transfer request" << std::endl;
             goto cleanup;
@@ -532,7 +548,8 @@ int main(int argc, char *argv[])
 
         std::cout << "Write completed:" << std::endl;
         std::cout << "- Time: " << format_duration(write_duration) << std::endl;
-        std::cout << "- Data: " << std::fixed << std::setprecision(2) << data_gb << " GB" << std::endl;
+        std::cout << "- Data: " << std::fixed << std::setprecision(2) << data_gb << " GB"
+                  << std::endl;
         std::cout << "- Speed: " << gbps << " GB/s" << std::endl;
     }
 
@@ -555,7 +572,7 @@ int main(int argc, char *argv[])
         }
     }
 
-     // Create extra params with backend
+    // Create extra params with backend
     nixl_opt_args_t extra_params;
     extra_params.backends = {obj};
     std::vector<nixl_query_resp_t> resp;
@@ -569,7 +586,7 @@ int main(int argc, char *argv[])
     std::cout << "============================================================" << std::endl;
     std::cout << "\nQueryMem Results:" << std::endl;
     std::cout << "response count: " << resp.size() << std::endl;
-    for (const auto& r : resp) {
+    for (const auto &r : resp) {
         if (!r.has_value()) {
             std::cerr << "Error: QueryMem response has no value\n";
             goto cleanup;
@@ -585,7 +602,7 @@ int main(int argc, char *argv[])
         std::cout << "============================================================" << std::endl;
 
         us_t read_duration(0);
-        nixlXferReqH* read_req = nullptr;
+        nixlXferReqH *read_req = nullptr;
 
         // Create descriptor lists for all transfers
         nixl_reg_dlist_t src_reg(use_dram ? DRAM_SEG : VRAM_SEG);
@@ -608,8 +625,7 @@ int main(int argc, char *argv[])
         nixl_xfer_dlist_t obj_list = obj_reg.trim();
 
         // Create single transfer request for all transfers
-        ret = agent.createXferReq(NIXL_READ, src_list, obj_list,
-                                "ObjTester", read_req);
+        ret = agent.createXferReq(NIXL_READ, src_list, obj_list, "ObjTester", read_req);
         if (ret != NIXL_SUCCESS) {
             std::cerr << "Failed to create read transfer request" << std::endl;
             goto cleanup;
@@ -653,7 +669,8 @@ int main(int argc, char *argv[])
 
         std::cout << "Read completed:" << std::endl;
         std::cout << "- Time: " << format_duration(read_duration) << std::endl;
-        std::cout << "- Data: " << std::fixed << std::setprecision(2) << data_gb << " GB" << std::endl;
+        std::cout << "- Data: " << std::fixed << std::setprecision(2) << data_gb << " GB"
+                  << std::endl;
         std::cout << "- Speed: " << gbps << " GB/s" << std::endl;
 
         std::cout << "\n============================================================" << std::endl;
@@ -667,7 +684,7 @@ int main(int argc, char *argv[])
                 }
             }
             if (use_dram) {
-                char* expected_buffer = (char*)malloc(transfer_size);
+                char *expected_buffer = (char *)malloc(transfer_size);
                 if (!expected_buffer) {
                     std::cerr << "Failed to allocate validation buffer\n";
                     goto cleanup;
@@ -717,7 +734,8 @@ cleanup:
     std::cout << "                    TEST SUMMARY                             " << std::endl;
     std::cout << "============================================================" << std::endl;
     std::cout << "Total time: " << format_duration(total_time) << std::endl;
-    std::cout << "Total data: " << std::fixed << std::setprecision(2) << total_data_gb << " GB" << std::endl;
+    std::cout << "Total data: " << std::fixed << std::setprecision(2) << total_data_gb << " GB"
+              << std::endl;
     std::cout << "============================================================" << std::endl;
     return 0;
 }
