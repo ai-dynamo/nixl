@@ -59,7 +59,7 @@ protected:
                             srcMemType,
                             data.srcBuffers);
 
-        ASSERT_NO_FATAL_FAILURE(exchangeMD(senderAgent, receiverAgent));
+        ASSERT_EQ(exchangeMD(), NIXL_SUCCESS);
 
         createXferRequest(data.srcBuffers,
                           srcMemType,
@@ -69,7 +69,7 @@ protected:
                           data.gpuReqHandle);
     }
 
-    void
+    [[nodiscard]] nixl_status_t
     runSignalPost(testSetupData &setup_data,
                   size_t num_iters,
                   unsigned index,
@@ -90,8 +90,7 @@ protected:
         post_params.signalPost.signalInc = signal_inc;
         post_params.signalPost.signalOffset = signal_offset;
 
-        const nixl_status_t status = launchKernel(post_params);
-        ASSERT_EQ(status, NIXL_SUCCESS);
+        return launchKernel(post_params);
     }
 
     [[nodiscard]] nixl_status_t
@@ -120,8 +119,7 @@ TEST_P(signalPostTest, Basic) {
     constexpr uint64_t signal_inc = testSignalIncrement;
     const uint64_t expected_value = signal_inc * num_iters * getNumOpsMultiplier();
 
-    ASSERT_NO_FATAL_FAILURE(runSignalPost(setup_data, num_iters, index, signal_inc));
-
+    ASSERT_EQ(runSignalPost(setup_data, num_iters, index, signal_inc), NIXL_SUCCESS);
     EXPECT_EQ(verifySignal(setup_data, expected_value), NIXL_SUCCESS);
 }
 

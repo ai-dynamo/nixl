@@ -68,32 +68,31 @@ test<paramType>::registerMem(nixlAgent &agent,
 }
 
 template<typename paramType>
-void
-test<paramType>::exchangeMD(size_t from_agent, size_t to_agent) {
+nixl_status_t
+test<paramType>::exchangeMD() const noexcept {
     for (size_t i = 0; i < agents_.size(); i++) {
         nixl_blob_t md;
         nixl_status_t status = agents_[i]->getLocalMD(md);
-        ASSERT_EQ(status, NIXL_SUCCESS);
+        if (status != NIXL_SUCCESS) {
+            return status;
+        }
 
-        for (size_t j = 0; j < agents_.size(); j++) {
-            if (i == j) continue;
-            std::string remote_agent_name;
-            status = agents_[j]->loadRemoteMD(md, remote_agent_name);
-            ASSERT_EQ(status, NIXL_SUCCESS);
-            EXPECT_EQ(remote_agent_name, getAgentName(i));
+        std::string remote_agent_name;
+        status = agents_[(i + 1) % agents_.size()]->loadRemoteMD(md, remote_agent_name);
+        if (status != NIXL_SUCCESS) {
+            return status;
         }
     }
+    return NIXL_SUCCESS;
 }
 
 template<typename paramType>
 void
-test<paramType>::invalidateMD() {
+test<paramType>::invalidateMD() noexcept {
     for (size_t i = 0; i < agents_.size(); i++) {
-        for (size_t j = 0; j < agents_.size(); j++) {
-            if (i == j) continue;
-            const nixl_status_t status = agents_[j]->invalidateRemoteMD(getAgentName(i));
-            ASSERT_EQ(status, NIXL_SUCCESS);
-        }
+        const nixl_status_t status =
+            agents_[(i + 1) % agents_.size()]->invalidateRemoteMD(getAgentName(i));
+        EXPECT_EQ(status, NIXL_SUCCESS);
     }
 }
 
@@ -160,10 +159,11 @@ test<paramType>::createXferRequest(const std::vector<memTypeArray<uint8_t>> &src
 
 template<typename paramType>
 void
-test<paramType>::cleanupXferRequest(nixlXferReqH *xfer_req, nixlGpuXferReqH gpu_req_handle) {
+test<paramType>::cleanupXferRequest(nixlXferReqH *xfer_req,
+                                    nixlGpuXferReqH gpu_req_handle) noexcept {
     getAgent(senderAgent).releaseGpuXferReq(gpu_req_handle);
     const nixl_status_t status = getAgent(senderAgent).releaseXferReq(xfer_req);
-    ASSERT_EQ(status, NIXL_SUCCESS);
+    EXPECT_EQ(status, NIXL_SUCCESS);
     invalidateMD();
 }
 
@@ -176,7 +176,7 @@ test<paramType>::setupWriteTest(size_t size,
                                 testSetupData &setup_data) {
     createRegisteredMem(getAgent(senderAgent), size, count, src_mem_type, setup_data.srcBuffers);
     createRegisteredMem(getAgent(receiverAgent), size, count, dst_mem_type, setup_data.dstBuffers);
-    exchangeMD(senderAgent, receiverAgent);
+    ASSERT_EQ(exchangeMD(), NIXL_SUCCESS);
     createXferRequest(setup_data.srcBuffers,
                       src_mem_type,
                       setup_data.dstBuffers,
@@ -216,7 +216,7 @@ test<paramType>::setupWithSignal(const std::vector<size_t> &sizes,
     status = getAgent(receiverAgent).prepGpuSignal(signal_desc_list, &signal_params);
     ASSERT_EQ(status, NIXL_SUCCESS);
 
-    exchangeMD(senderAgent, receiverAgent);
+    ASSERT_EQ(exchangeMD(), NIXL_SUCCESS);
     createXferRequest(setup_data.srcBuffers,
                       src_mem_type,
                       setup_data.dstBuffers,

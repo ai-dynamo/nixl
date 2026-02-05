@@ -18,10 +18,9 @@
 #include "common/device_test_base.cuh"
 
 namespace nixl::test::device_api {
-
 class writeTest : public test<testParams> {
 protected:
-    void
+    [[nodiscard]] nixl_status_t
     runWrite(const testSetupData &setup_data, size_t num_iters, uint64_t signal_inc) {
         kernelParams params;
         params.operation = operation_t::WRITE;
@@ -35,8 +34,7 @@ protected:
 
         params.write.signalInc = signal_inc;
 
-        const nixl_status_t status = launchKernel(params);
-        ASSERT_EQ(status, NIXL_SUCCESS) << "Kernel execution failed with status: " << status;
+        return launchKernel(params);
     }
 };
 
@@ -49,7 +47,7 @@ TEST_P(writeTest, Basic) {
     ASSERT_NO_FATAL_FAILURE(setupWithSignal(sizes, srcMemType, dst_mem_type, setup_data));
 
     ASSERT_NO_FATAL_FAILURE(initializeTestData(sizes, setup_data));
-    ASSERT_NO_FATAL_FAILURE(runWrite(setup_data, defaultNumIters, testSignalIncrement));
+    ASSERT_EQ(runWrite(setup_data, defaultNumIters, testSignalIncrement), NIXL_SUCCESS);
     EXPECT_TRUE(verifyTestData(sizes, setup_data));
 }
 
@@ -63,7 +61,7 @@ TEST_P(writeTest, WithoutSignal) {
     ASSERT_NO_FATAL_FAILURE(setupWithSignal(sizes, srcMemType, dst_mem_type, setup_data));
 
     ASSERT_NO_FATAL_FAILURE(initializeTestData(sizes, setup_data));
-    ASSERT_NO_FATAL_FAILURE(runWrite(setup_data, 1000, signal_inc));
+    ASSERT_EQ(runWrite(setup_data, 1000, signal_inc), NIXL_SUCCESS);
     EXPECT_TRUE(verifyTestData(sizes, setup_data));
 }
 
@@ -75,7 +73,7 @@ TEST_P(writeTest, SignalOnly) {
     auto guard = setup_data.makeCleanupGuard(this);
     ASSERT_NO_FATAL_FAILURE(setupWithSignal(sizes, srcMemType, dst_mem_type, setup_data));
 
-    ASSERT_NO_FATAL_FAILURE(runWrite(setup_data, 1000, testSignalIncrement));
+    EXPECT_EQ(runWrite(setup_data, 1000, testSignalIncrement), NIXL_SUCCESS);
 }
 
 INSTANTIATE_TEST_SUITE_P(ucxDeviceApi,

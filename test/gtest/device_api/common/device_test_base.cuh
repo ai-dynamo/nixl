@@ -175,10 +175,12 @@ protected:
     registerMem(nixlAgent &agent,
                 const std::vector<memTypeArray<uint8_t>> &buffers,
                 nixl_mem_t mem_type);
+
+    [[nodiscard]] nixl_status_t
+    exchangeMD() const noexcept;
+
     void
-    exchangeMD(size_t from_agent, size_t to_agent);
-    void
-    invalidateMD();
+    invalidateMD() noexcept;
 
     void
     createRegisteredMem(nixlAgent &agent,
@@ -202,7 +204,7 @@ protected:
                       std::string_view custom_param = "");
 
     void
-    cleanupXferRequest(nixlXferReqH *xfer_req, nixlGpuXferReqH gpu_req_handle);
+    cleanupXferRequest(nixlXferReqH *xfer_req, nixlGpuXferReqH gpu_req_handle) noexcept;
 
     void
     setupWriteTest(size_t size,
