@@ -26,6 +26,13 @@ endif
 subdir('agent')
 unit_test_deps += [agent_unit_test_dep]
 
+cpp = meson.get_compiler('cpp')
+azure_storage_blobs = cpp.find_library('azure-storage-blobs', required: false)
+if enabled_plugins.get('AZURE_BLOB') and azure_storage_blobs.found()
+    subdir('azure_blob')
+    unit_test_deps += [azure_blob_unit_test_dep]
+endif
+
 unit_test_exe = executable('unit',
     sources : [
         'main.cpp',

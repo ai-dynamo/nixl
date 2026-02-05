@@ -857,6 +857,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
                                           num_device_channels,
                                           engine_config);
 
+    uc->warnAboutHardwareSupportMismatch();
+
     for (size_t i = 0; i < num_workers; i++) {
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
     }
