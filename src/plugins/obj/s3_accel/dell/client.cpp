@@ -14,8 +14,8 @@
 
 awsS3DellObsClient::awsS3DellObsClient(nixl_b_params_t *custom_params,
                                        std::shared_ptr<Aws::Utils::Threading::Executor> executor)
-    : awsS3Client(custom_params, executor) {
-    NIXL_INFO << "Initialized Dell ObjectScale Client";
+    : awsS3AccelClient(custom_params, executor) {
+    NIXL_DEBUG << "Initialized Dell ObjectScale Client";
 }
 
 void
