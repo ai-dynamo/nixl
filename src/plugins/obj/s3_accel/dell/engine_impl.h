@@ -56,7 +56,7 @@ protected:
     getClient() const override;
 
 private:
-    std::shared_ptr<awsS3DellObsClient> s3Client_;
+    std::shared_ptr<iS3Client> s3Client_;
     std::shared_ptr<cuObjClient> cuClient_;
     std::unordered_map<std::string, std::string> objKeyToRDMADesc_;
 };

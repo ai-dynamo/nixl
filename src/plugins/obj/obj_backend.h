@@ -79,6 +79,40 @@ public:
      */
     virtual bool
     checkObjectExists(std::string_view key) = 0;
+
+    /**
+     * Asynchronously put an object to S3 using RDMA.
+     * @param key The object key
+     * @param data_ptr Pointer to the data to upload
+     * @param data_len Length of the data in bytes
+     * @param offset Offset within the object
+     * @param rdma_desc RDMA descriptor for the transfer
+     * @param callback Callback function to handle the result
+     */
+    virtual void
+    putObjectRdmaAsync(std::string_view key,
+                       uintptr_t data_ptr,
+                       size_t data_len,
+                       size_t offset,
+                       const std::string &rdma_desc,
+                       put_object_callback_t callback) = 0;
+
+    /**
+     * Asynchronously get an object from S3 using RDMA.
+     * @param key The object key
+     * @param data_ptr Pointer to the buffer to store the downloaded data
+     * @param data_len Maximum length of data to read
+     * @param offset Offset within the object to start reading from
+     * @param rdma_desc RDMA descriptor for the transfer
+     * @param callback Callback function to handle the result
+     */
+    virtual void
+    getObjectRdmaAsync(std::string_view key,
+                       uintptr_t data_ptr,
+                       size_t data_len,
+                       size_t offset,
+                       const std::string &rdma_desc,
+                       get_object_callback_t callback) = 0;
 };
 
 /**
