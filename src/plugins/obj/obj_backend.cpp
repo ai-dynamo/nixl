@@ -60,14 +60,14 @@ createObjEngineImpl(const nixlBackendInitParams *init_params,
                     std::shared_ptr<iS3Client> s3_client_crt) {
     if (isDellOBSRequested(init_params->customParams)) {
 #if defined HAVE_CUOBJ_CLIENT
-        return std::make_unique<S3DellObsObjEngineImpl>(init_params);
+        return std::make_unique<S3DellObsObjEngineImpl>(init_params, s3_client);
 #else
         throw std::runtime_error("Dell ObjectScale Engine support not available!");
 #endif
     }
     if (isAcceleratedRequested(init_params->customParams)) {
 #if defined HAVE_CUOBJ_CLIENT
-        return std::make_unique<S3AccelObjEngineImpl>(init_params);
+        return std::make_unique<S3AccelObjEngineImpl>(init_params, s3_client);
 #else
         throw std::runtime_error("Accelerated Engine support not available!");
 #endif
