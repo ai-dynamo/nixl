@@ -109,6 +109,11 @@ def nixl_bench_args(func):
         "--total_buffer_size", type=int, help="Total buffer size (default: 8GiB)"
     )(func)
     func = click.option(
+        "--recreate_xfer",
+        is_flag=True,
+        help="Recreate xfer for every iteration (default: false for all backends, true for GUSLI)",
+    )(func)
+    func = click.option(
         "--start_block_size", type=int, help="Starting block size (default: 4KiB)"
     )(func)
     func = click.option(
