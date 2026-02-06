@@ -608,6 +608,13 @@ class nixlAgent {
         checkRemoteMD (const std::string remote_name,
                        const nixl_xfer_dlist_t &descs) const;
 
+        /**
+         * @brief Warn if hardware is detected that would benefit from a different backend.
+         *
+         * @param type The backend type being used
+         */
+        void
+        warnAboutHardwareSupportMismatch(const nixl_backend_t &type);
 };
 
 #endif

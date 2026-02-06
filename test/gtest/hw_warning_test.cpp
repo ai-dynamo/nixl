@@ -16,14 +16,16 @@
  */
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <string>
 #include <vector>
 
 #include "common.h"
+#include "nixl.h"
 #include "ucx_utils.h"
 #include "common/hw_info.h"
 
-class UcxHardwareWarningTest : public ::testing::Test {
+class HardwareWarningTest : public ::testing::Test {
 protected:
     gtest::ScopedEnv envHelper_;
 };
@@ -32,7 +34,7 @@ protected:
  * Test that a warning is logged when NVIDIA GPUs are present but UCX
  * CUDA support is not available.
  */
-TEST_F(UcxHardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
+TEST_F(HardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
     const nixl::hwInfo hw_info;
     if (hw_info.numNvidiaGpus == 0) {
         GTEST_SKIP() << "No NVIDIA GPUs detected, skipping test";
@@ -61,7 +63,7 @@ TEST_F(UcxHardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
  *
  * Note: This warning only triggers for UCX >= 1.21.
  */
-TEST_F(UcxHardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
+TEST_F(HardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
     unsigned major, minor, release;
     ucp_get_version(&major, &minor, &release);
     if (UCP_VERSION(major, minor) < UCP_VERSION(1, 21)) {
@@ -94,7 +96,7 @@ TEST_F(UcxHardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
 /**
  * Test that no warnings are logged when UCX_TLS includes both ib and cuda.
  */
-TEST_F(UcxHardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
+TEST_F(HardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
     const nixl::hwInfo hw_info;
     if (hw_info.numNvidiaGpus == 0 || hw_info.numIbDevices == 0) {
         GTEST_SKIP() << "No NVIDIA GPUs or IB devices detected, skipping test";
@@ -112,4 +114,54 @@ TEST_F(UcxHardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
     EXPECT_EQ(log_sink.warningCount(), 0);
 
     envHelper_.popVar();
+}
+
+/**
+ * Test that a warning is logged when EFA devices are present but a
+ * non-LIBFABRIC backend is created.
+ */
+TEST_F(HardwareWarningTest, WarnWhenEfaPresentAndNonLibfabricBackend) {
+    const nixl::hwInfo hw_info;
+    if (hw_info.numEfaDevices == 0) {
+        GTEST_SKIP() << "No EFA devices detected, skipping test";
+    }
+
+    envHelper_.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
+    nixlAgent agent("EfaTestAgent", nixlAgentConfig(true));
+
+    gtest::scopedTestLogSink log_sink;
+
+    nixlBackendH *backend;
+    EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
+
+    EXPECT_EQ(log_sink.warningCount(), 1);
+    EXPECT_EQ(
+        log_sink.countWarningsMatching("Amazon EFA(s) were detected, it is recommended to use "
+                                       "the LIBFABRIC backend for best performance"),
+        1);
+}
+
+/**
+ * Test that no warning is logged when EFA devices are present and the
+ * LIBFABRIC backend is created.
+ */
+TEST_F(HardwareWarningTest, NoWarningWhenEfaPresentAndLibfabricBackend) {
+#ifndef HAVE_LIBFABRIC
+    GTEST_SKIP() << "LIBFABRIC plugin not built";
+#endif
+
+    const nixl::hwInfo hw_info;
+    if (hw_info.numEfaDevices == 0) {
+        GTEST_SKIP() << "No EFA devices detected, skipping test";
+    }
+
+    envHelper_.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/libfabric");
+    nixlAgent agent("EfaTestAgent", nixlAgentConfig(true));
+
+    gtest::scopedTestLogSink log_sink;
+
+    nixlBackendH *backend;
+    EXPECT_EQ(agent.createBackend("LIBFABRIC", {}, backend), NIXL_SUCCESS);
+
+    EXPECT_EQ(log_sink.warningCount(), 0);
 }
