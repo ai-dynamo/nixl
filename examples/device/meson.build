@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,3 +16,6 @@
 if get_option('build_nixl_ep')
     subdir('ep')
 endif
+
+# 2proc example - demonstrates GPU-initiated RDMA with Device API V2
+subdir('2proc')
