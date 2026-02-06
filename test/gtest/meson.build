@@ -79,7 +79,7 @@ else
 endif
 
 if ucx_dep.found()
-    gtest_sources += 'ucx_hw_warning_test.cpp'
+    gtest_sources += 'hw_warning_test.cpp'
     ucx_hw_warning_dep = [ucx_backend_interface, ucx_dep]
 else
     ucx_hw_warning_dep = []

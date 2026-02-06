@@ -25,7 +25,7 @@
 #include "ucx_utils.h"
 #include "common/hw_info.h"
 
-class UcxHardwareWarningTest : public ::testing::Test {
+class HardwareWarningTest : public ::testing::Test {
 protected:
     gtest::ScopedEnv envHelper_;
 };
@@ -34,7 +34,7 @@ protected:
  * Test that a warning is logged when NVIDIA GPUs are present but UCX
  * CUDA support is not available.
  */
-TEST_F(UcxHardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
+TEST_F(HardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
     const nixl::hwInfo hw_info;
     if (hw_info.numNvidiaGpus == 0) {
         GTEST_SKIP() << "No NVIDIA GPUs detected, skipping test";
@@ -63,7 +63,7 @@ TEST_F(UcxHardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
  *
  * Note: This warning only triggers for UCX >= 1.21.
  */
-TEST_F(UcxHardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
+TEST_F(HardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
     unsigned major, minor, release;
     ucp_get_version(&major, &minor, &release);
     if (UCP_VERSION(major, minor) < UCP_VERSION(1, 21)) {
@@ -96,7 +96,7 @@ TEST_F(UcxHardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
 /**
  * Test that no warnings are logged when UCX_TLS includes both ib and cuda.
  */
-TEST_F(UcxHardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
+TEST_F(HardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
     const nixl::hwInfo hw_info;
     if (hw_info.numNvidiaGpus == 0 || hw_info.numIbDevices == 0) {
         GTEST_SKIP() << "No NVIDIA GPUs or IB devices detected, skipping test";
@@ -120,7 +120,7 @@ TEST_F(UcxHardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
  * Test that a warning is logged when EFA devices are present but a
  * non-LIBFABRIC backend is created.
  */
-TEST_F(UcxHardwareWarningTest, WarnWhenEfaPresentAndNonLibfabricBackend) {
+TEST_F(HardwareWarningTest, WarnWhenEfaPresentAndNonLibfabricBackend) {
     const nixl::hwInfo hw_info;
     if (hw_info.numEfaDevices == 0) {
         GTEST_SKIP() << "No EFA devices detected, skipping test";
