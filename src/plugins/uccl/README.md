@@ -34,20 +34,18 @@ UCCL engine would auto discover the right NIC to be used for the GPU based on th
 
 Refer to [README](https://github.com/uccl-project/uccl/tree/main/collective/rdma#environment-variables-in-uccl) for the complete list of environment variables that can be set to customize UCCL.
 
-**Important**: For `NIXL_READ` operations set `UCCL_RCMODE=1`. By default, UCCL uses RDMA UC (Unreliable Connection). However, `READ` operations need to operate on RDMA RC (Reliable Connection). `WRITE` operations can work on both RDMA UC and RC.
-
 ### Usage References
 
 1) [NIXL Benchmark](https://github.com/uccl-project/uccl/blob/main/p2p/benchmarks/benchmark_nixl.py) in UCCL P2P: Refer to  this [README](https://github.com/uccl-project/uccl/tree/main/p2p) on how to run the script.
 
-2) [NIXL connector](https://github.com/vllm-project/vllm/commit/e731733d30d0aed3252dc60427927768bfc0ca73) in vLLM. vLLM's NIXL connector uses `NIXL_READ` operations, hence set env `UCCL_RCMODE` to 1.
+2) [NIXL connector](https://github.com/vllm-project/vllm/commit/e731733d30d0aed3252dc60427927768bfc0ca73) in vLLM.
 
 ### Road Map
 
-- [ ] Add Intra-node communication support
+- ✅ Add asynchronous posting of reads over multiple workers to mitigate latency increase upon fragmentation
 
-- [ ] Add Progress Thread support
+- 🚧 Add Intra-node communication support
 
-- [ ] Add asynchronous posting of reads over multiple workers to mitigate latency increase upon fragmentation
+- 🚧 Add Progress Thread support
 
-- [ ] Add support for other transport (TCP, TCP-X, etc.)
+- 🚧 Add support for other transport (TCP, TCP-X, etc.)
