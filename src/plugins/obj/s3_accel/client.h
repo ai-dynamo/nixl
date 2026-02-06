@@ -31,6 +31,23 @@ public:
 
     virtual ~awsS3AccelClient() = default;
 
+    // RDMA methods - not supported by the base accelerated S3 client
+    void
+    putObjectRdmaAsync(std::string_view key,
+                       uintptr_t data_ptr,
+                       size_t data_len,
+                       size_t offset,
+                       const std::string &rdma_desc,
+                       put_object_callback_t callback) override;
+
+    void
+    getObjectRdmaAsync(std::string_view key,
+                       uintptr_t data_ptr,
+                       size_t data_len,
+                       size_t offset,
+                       const std::string &rdma_desc,
+                       get_object_callback_t callback) override;
+
     // Inherits all methods from awsS3Client:
     // - setExecutor()
     // - putObjectAsync()
