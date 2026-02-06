@@ -25,6 +25,8 @@
 #include <mutex>
 #include <ostream>
 #include <stack>
+#include <unordered_map>
+#include <atomic>
 
 #include "nixl.h"
 #include "backend/backend_aux.h"
@@ -32,6 +34,34 @@
 
 // Forward declarations
 class nixlLibfabricConnection;
+
+/**
+ * @brief Memory Registration Cache Entry
+ *
+ * Reference-counted cache entry for fi_mr_reg results to avoid repeated
+ * expensive memory registration calls for the same buffers.
+ *
+ * Based on He et al. "An efficient design for fast memory registration in RDMA"
+ * (JNCA 2009) showing memory registration costs can exceed RDMA latency.
+ */
+struct MRCacheEntry {
+    struct fid_mr *mr; ///< Libfabric memory registration handle
+    uint64_t key; ///< Remote access key
+    std::atomic<uint32_t> ref_count; ///< Reference count for safe deregistration
+    size_t length; ///< Buffer length for validation
+    nixl_mem_t mem_type; ///< Memory type (DRAM_SEG or VRAM_SEG)
+    int gpu_id; ///< GPU ID for VRAM validation (-1 for DRAM)
+
+    MRCacheEntry() : mr(nullptr), key(0), ref_count(0), length(0), mem_type(DRAM_SEG), gpu_id(-1) {}
+
+    MRCacheEntry(struct fid_mr *mr_, uint64_t key_, size_t len_, nixl_mem_t type_, int gpu_)
+        : mr(mr_),
+          key(key_),
+          ref_count(1),
+          length(len_),
+          mem_type(type_),
+          gpu_id(gpu_) {}
+};
 
 /**
  * @brief Request structure for libfabric operations
@@ -278,6 +308,23 @@ public:
     nixl_status_t
     deregisterMemory(struct fid_mr *mr) const;
 
+    // Memory Registration Cache Statistics
+    /** Get number of MR cache hits */
+    uint64_t
+    getMRCacheHits() const {
+        return mr_cache_hits_.load(std::memory_order_relaxed);
+    }
+
+    /** Get number of MR cache misses */
+    uint64_t
+    getMRCacheMisses() const {
+        return mr_cache_misses_.load(std::memory_order_relaxed);
+    }
+
+    /** Get current MR cache size */
+    size_t
+    getMRCacheSize() const;
+
     // Address vector management methods
     /** Insert remote endpoint address into address vector */
     nixl_status_t
@@ -382,6 +429,12 @@ private:
     // Provider capability flags
     bool provider_supports_hmem_;
 
+    // Memory Registration Resource Cache (MRRC)
+    // Based on He et al. "An efficient design for fast memory registration in RDMA" (JNCA 2009)
+    mutable std::unordered_map<uintptr_t, MRCacheEntry> mr_cache_;
+    mutable std::mutex mr_cache_mutex_;
+    mutable std::atomic<uint64_t> mr_cache_hits_{0};
+    mutable std::atomic<uint64_t> mr_cache_misses_{0};
 
     nixl_status_t
     processCompletionQueueEntry(struct fi_cq_data_entry *comp) const;
