@@ -488,9 +488,8 @@ def worker(torch_rank: int, args: argparse.Namespace):
 
     buffer = nixl_ep.Buffer(
         rank=global_rank,
-        nvlink_backend=args.nvlink_backend,
+        disable_ll_nvlink=args.disable_ll_nvlink,
         explicitly_destroy=True,
-        enable_shrink=True,
         tcp_store_group=tcp_store,
     )
     buffer.update_memory_buffers(
@@ -621,10 +620,9 @@ def main():
     )
     parser.add_argument("--kineto", action="store_true", help="Enable kineto profiling")
     parser.add_argument(
-        "--nvlink-backend",
-        choices=["nixl", "ipc", "none"],
-        default="ipc",
-        help="NVLink backend to use",
+        "--disable-ll-nvlink",
+        action="store_true",
+        help="Disable NVLink communication for low-latency kernels",
     )
 
     args = parser.parse_args()

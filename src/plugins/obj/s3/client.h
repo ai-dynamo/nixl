@@ -18,18 +18,18 @@
 #ifndef OBJ_PLUGIN_S3_CLIENT_H
 #define OBJ_PLUGIN_S3_CLIENT_H
 
-#include <functional>
 #include <memory>
 #include <string_view>
 #include <cstdint>
 #include <aws/s3/S3Client.h>
 #include <aws/core/utils/memory/stl/AWSString.h>
 #include <aws/core/Aws.h>
-#include "nixl_types.h"
 #include "obj_backend.h"
+#include "nixl_types.h"
 
 /**
- * Concrete implementation of IS3Client using AWS SDK S3Client.
+ * S3 Vanilla Object Client - Base implementation using AWS SDK S3Client.
+ * This is the standard S3 client implementation that other S3-based clients can inherit from.
  */
 class awsS3Client : public iS3Client {
 public:
@@ -40,6 +40,8 @@ public:
      */
     awsS3Client(nixl_b_params_t *custom_params,
                 std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr);
+
+    virtual ~awsS3Client() = default;
 
     void
     setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) override;
@@ -61,7 +63,7 @@ public:
     bool
     checkObjectExists(std::string_view key) override;
 
-private:
+protected:
     std::unique_ptr<Aws::S3::S3Client> s3Client_;
     Aws::String bucketName_;
 };

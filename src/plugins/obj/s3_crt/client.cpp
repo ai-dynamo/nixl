@@ -1,18 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 #include "client.h"
@@ -28,17 +16,18 @@
 #include "common/nixl_log.h"
 
 awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
-                               std::shared_ptr<Aws::Utils::Threading::Executor> executor) {
+                               std::shared_ptr<Aws::Utils::Threading::Executor> executor)
+    : awsS3Client(custom_params, executor) {
     // Initialize AWS SDK (thread-safe, only happens once)
     nixl_s3_utils::initAWSSDK();
 
+    // Create S3 CRT client configuration
     Aws::S3Crt::ClientConfiguration config;
     nixl_s3_utils::configureClientCommon(config, custom_params);
     if (executor) config.executor = executor;
 
     auto credentials_opt = nixl_s3_utils::createAWSCredentials(custom_params);
     bool use_virtual_addressing = nixl_s3_utils::getUseVirtualAddressing(custom_params);
-    bucketName_ = Aws::String(nixl_s3_utils::getBucketName(custom_params));
 
     if (credentials_opt.has_value())
         s3CrtClient_ = std::make_unique<Aws::S3Crt::S3CrtClient>(

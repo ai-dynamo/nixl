@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,15 +23,17 @@
 // Plugin type alias for convenience
 using obj_plugin_t = nixlBackendPluginCreator<nixlObjEngine>;
 
+static const nixl_mem_list_t supported_segments = {DRAM_SEG, OBJ_SEG};
+
 #ifdef STATIC_PLUGIN_OBJ
 nixlBackendPlugin *
 createStaticOBJPlugin() {
-    return obj_plugin_t::create(NIXL_PLUGIN_API_VERSION, "OBJ", "0.1.0", {}, {DRAM_SEG, OBJ_SEG});
+    return obj_plugin_t::create(NIXL_PLUGIN_API_VERSION, "OBJ", "0.10.0", {}, supported_segments);
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return obj_plugin_t::create(NIXL_PLUGIN_API_VERSION, "OBJ", "0.1.0", {}, {DRAM_SEG, OBJ_SEG});
+    return obj_plugin_t::create(NIXL_PLUGIN_API_VERSION, "OBJ", "0.10.0", {}, supported_segments);
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
