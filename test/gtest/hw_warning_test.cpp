@@ -140,3 +140,28 @@ TEST_F(HardwareWarningTest, WarnWhenEfaPresentAndNonLibfabricBackend) {
                                        "the LIBFABRIC backend for best performance"),
         1);
 }
+
+/**
+ * Test that no warning is logged when EFA devices are present and the
+ * LIBFABRIC backend is created.
+ */
+TEST_F(HardwareWarningTest, NoWarningWhenEfaPresentAndLibfabricBackend) {
+#ifndef HAVE_LIBFABRIC
+    GTEST_SKIP() << "LIBFABRIC plugin not built";
+#endif
+
+    const nixl::hwInfo hw_info;
+    if (hw_info.numEfaDevices == 0) {
+        GTEST_SKIP() << "No EFA devices detected, skipping test";
+    }
+
+    envHelper_.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/libfabric");
+    nixlAgent agent("EfaTestAgent", nixlAgentConfig(true));
+
+    gtest::scopedTestLogSink log_sink;
+
+    nixlBackendH *backend;
+    EXPECT_EQ(agent.createBackend("LIBFABRIC", {}, backend), NIXL_SUCCESS);
+
+    EXPECT_EQ(log_sink.warningCount(), 0);
+}

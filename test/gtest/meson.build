@@ -50,6 +50,10 @@ else
     cuda_dependencies = []
 endif
 
+if libfabric_dep.found()
+    cpp_flags += '-DHAVE_LIBFABRIC'
+endif
+
 if get_option('test_all_plugins')
   cpp_flags+='-DTEST_ALL_PLUGINS'
 endif
