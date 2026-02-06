@@ -23,12 +23,12 @@ namespace nixl {
 /**
  * @brief Hardware information gathered by scanning PCI devices.
  *
- * Scans the sysfs PCI device directory to detect available
- * NVIDIA GPUs and InfiniBand devices on the system.
+ * Scans the sysfs PCI device directory to detect available hardware.
  */
 struct hwInfo {
     unsigned numNvidiaGpus = 0;
     unsigned numIbDevices = 0;
+    unsigned numEfaDevices = 0;
 
     hwInfo();
 };

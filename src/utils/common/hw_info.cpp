@@ -17,6 +17,7 @@
 
 #include "hw_info.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -31,11 +32,22 @@ namespace nixl {
 namespace {
 
     constexpr const char *kPciDevicePath = "/sys/bus/pci/devices";
+
     constexpr unsigned long kPciVendorMellanox = 0x15b3;
     constexpr unsigned long kPciVendorNvidia = 0x10de;
+    constexpr unsigned long kPciVendorAmazon = 0x1d0f;
+
     constexpr unsigned long kPciClassIb = 0x0207;
     constexpr unsigned long kPciClassGpuDisplay = 0x0300;
     constexpr unsigned long kPciClassGpu3d = 0x0302;
+
+    constexpr unsigned long kPciDeviceEfa[] = {0xefa0, 0xefa1, 0xefa2, 0xefa3};
+
+    [[nodiscard]] bool
+    isEfaDevice(unsigned long device_id) noexcept {
+        return std::find(std::begin(kPciDeviceEfa), std::end(kPciDeviceEfa), device_id) !=
+            std::end(kPciDeviceEfa);
+    }
 
     [[nodiscard]] std::optional<unsigned long>
     readSysfsUlong(const std::filesystem::path &sysfs_path,
@@ -110,7 +122,23 @@ hwInfo::hwInfo() {
             NIXL_DEBUG << "Found GPU #" << numNvidiaGpus << ": " << device_name << " vendor=0x"
                        << std::hex << *vendor_id << " class=0x" << *class_id << std::dec;
         }
+
+        // Check for EFA device
+        if (*vendor_id == kPciVendorAmazon) {
+            const auto device_id = readSysfsUlong(device_path, "device", device_name);
+            if (device_id && isEfaDevice(*device_id)) {
+                numEfaDevices++;
+                NIXL_DEBUG << "Found EFA device #" << numEfaDevices << ": " << device_name
+                           << " vendor=0x" << std::hex << *vendor_id << " device=0x" << *device_id
+                           << std::dec;
+            }
+        }
     }
+
+    NIXL_DEBUG << "hwInfo { "
+               << "numNvidiaGpus=" << numNvidiaGpus << ", "
+               << "numIbDevices=" << numIbDevices << ", "
+               << "numEfaDevices=" << numEfaDevices << " }";
 }
 
 } // namespace nixl

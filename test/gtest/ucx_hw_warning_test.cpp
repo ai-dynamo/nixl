@@ -16,10 +16,12 @@
  */
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <string>
 #include <vector>
 
 #include "common.h"
+#include "nixl.h"
 #include "ucx_utils.h"
 #include "common/hw_info.h"
 
@@ -112,4 +114,29 @@ TEST_F(UcxHardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
     EXPECT_EQ(log_sink.warningCount(), 0);
 
     envHelper_.popVar();
+}
+
+/**
+ * Test that a warning is logged when EFA devices are present but a
+ * non-LIBFABRIC backend is created.
+ */
+TEST_F(UcxHardwareWarningTest, WarnWhenEfaPresentAndNonLibfabricBackend) {
+    const nixl::hwInfo hw_info;
+    if (hw_info.numEfaDevices == 0) {
+        GTEST_SKIP() << "No EFA devices detected, skipping test";
+    }
+
+    envHelper_.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
+    nixlAgent agent("EfaTestAgent", nixlAgentConfig(true));
+
+    gtest::scopedTestLogSink log_sink;
+
+    nixlBackendH *backend;
+    EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
+
+    EXPECT_EQ(log_sink.warningCount(), 1);
+    EXPECT_EQ(
+        log_sink.countWarningsMatching("Amazon EFA(s) were detected, it is recommended to use "
+                                       "the LIBFABRIC backend for best performance"),
+        1);
 }

@@ -28,6 +28,7 @@
 #include "plugin_manager.h"
 #include "common/nixl_log.h"
 #include "common/operators.h"
+#include "common/hw_info.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 
@@ -282,6 +283,19 @@ nixlAgent::getBackendParams (const nixlBackendH* backend,
     return NIXL_SUCCESS;
 }
 
+void
+nixlAgent::warnAboutHardwareSupportMismatch(const nixl_backend_t &type) {
+    if (type != "LIBFABRIC") {
+        static const nixl::hwInfo hw_info;
+        
+        if (hw_info.numEfaDevices > 0) {
+            NIXL_WARN << hw_info.numEfaDevices
+                      << " Amazon EFA(s) were detected, it is recommended to use "
+                         "the LIBFABRIC backend for best performance.";
+        }
+    }
+}
+
 nixl_status_t
 nixlAgent::createBackend(const nixl_backend_t &type,
                          const nixl_b_params_t &params,
@@ -395,6 +409,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         //       when threading is in agent
 
         NIXL_DEBUG << "Created backend: " << type;
+
+        warnAboutHardwareSupportMismatch(type);
 
         return NIXL_SUCCESS;
     }
