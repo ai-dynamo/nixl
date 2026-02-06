@@ -3,6 +3,8 @@
 # Files to check for changes
 CI_FILES=(
     ".ci/dockerfiles/Dockerfile.ci"
+    ".ci/dockerfiles/Dockerfile.gpu-test"
+    ".ci/dockerfiles/Dockerfile.build_helper"
     ".gitlab/build.sh"
     ".ci/scripts/common.sh"
 )

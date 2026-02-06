@@ -1,25 +1,9 @@
-# NIXL GPU Test Environment Dockerfile
+# NIXL CI Build Environment
 #
-# This Dockerfile creates a GPU-enabled test environment for NIXL (NVIDIA I/O eXchange Layer)
-# development and testing. It provides a containerized environment with:
-#
-# - NVIDIA cuda-dl-base image with CUDA support
-# - Non-root user setup for security
-# - Sudo access for package installation and system configuration
-# - Optimized for CI/CD pipeline testing
+# CI/CD pipeline build container with full user setup and sudo access.
 #
 # Usage:
-#   docker build -f .ci/dockerfiles/Dockerfile.gpu_test -t nixl-gpu-test .
-#   docker run --gpus all --privileged -it nixl-gpu-test
-#
-# Build arguments:
-#   BASE_IMAGE: Base NVIDIA cuda-dl-base image (default: nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04)
-#   _UID: User ID for the non-root user (default: 148069)
-#   _GID: Group ID for the user (default: 30)
-#   _LOGIN: Username (default: svc-nixl)
-#   _GROUP: Group name (default: hardware)
-#   _HOME: Home directory path (default: /home/svc-nixl)
-#   WORKSPACE: Workspace directory path
+#   docker build -f .ci/dockerfiles/Dockerfile.ci -t nixl-ci .
 #
 
 ARG BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04
@@ -45,13 +29,12 @@ LABEL version="1.0"
 
 # Update package list and install required packages in one layer
 RUN apt-get update && \
-    apt-get install -y sudo python3 python3-pip kmod \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    apt-get install -y sudo python3 python3-pip kmod && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create group and user in one RUN command to reduce layers
 RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \
-        groupadd -g "${_GID}" "${_GROUP}"; \
+    groupadd -g "${_GID}" "${_GROUP}"; \
     fi && \
     useradd -u "${_UID}" -g "${_GID}" -m -s /bin/bash "${_LOGIN}" && \
     mkdir -p "${_HOME}" && \
@@ -76,6 +59,7 @@ ENV USER=${_LOGIN}
 
 RUN /.gitlab/build.sh ${NIXL_INSTALL_DIR}
 RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
+
 # Set working directory
 WORKDIR ${_HOME}
 
