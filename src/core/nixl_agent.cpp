@@ -287,7 +287,7 @@ void
 nixlAgent::warnAboutHardwareSupportMismatch(const nixl_backend_t &type) {
     if (type != "LIBFABRIC") {
         static const nixl::hwInfo hw_info;
-        
+
         if (hw_info.numEfaDevices > 0) {
             NIXL_WARN << hw_info.numEfaDevices
                       << " Amazon EFA(s) were detected, it is recommended to use "
