@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,19 +14,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <cstring>
+
 #include "serdes.h"
 #include "common/nixl_log.h"
 
-nixlSerDes::nixlSerDes() {
-    workingStr = "nixlSerDes|";
-    des_offset = 11;
-
-    mode = SERIALIZE;
-}
+nixlSerDes::nixlSerDes()
+    : workingStr("nixlSerDes|"),
+      des_offset(workingStr.size()),
+      mode(SERIALIZE) {}
 
 std::string nixlSerDes::_bytesToString(const void *buf, ssize_t size) {
-    std::string ret_str = std::string(reinterpret_cast<const char*>(buf), size);
-    return ret_str;
+    return std::string(reinterpret_cast<const char *>(buf), size);
 }
 
 void nixlSerDes::_stringToBytes(void* fill_buf, const std::string &s, ssize_t size){
@@ -36,7 +35,7 @@ void nixlSerDes::_stringToBytes(void* fill_buf, const std::string &s, ssize_t si
 // Strings serialization
 nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str){
 
-    size_t len = str.size();
+    const size_t len = str.size();
 
     workingStr.append(tag);
     workingStr.append(_bytesToString(&len, sizeof(size_t)));
@@ -48,28 +47,34 @@ nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str)
 
 std::string nixlSerDes::getStr(const std::string &tag){
 
-    if(workingStr.compare(des_offset, tag.size(), tag) != 0){
-        NIXL_ERROR << "Deserialization of tag " << tag << " failed";
+    if (workingStr.size() < des_offset + tag.size() + sizeof(size_t)) {
+        NIXL_ERROR << "Deserialization of tag " << tag
+                   << " failed for incomplete or missing header";
         return "";
     }
-    ssize_t len;
 
-    //skip tag
-    des_offset += tag.size();
+    if (std::memcmp(workingStr.data() + des_offset, tag.data(), tag.size()) != 0) {
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed for tag mismatch";
+        return "";
+    }
 
-    //get len
-    //_stringToBytes(&len, workingStr.data() + des_offset, sizeof(ssize_t));
-    _stringToBytes(&len, workingStr.substr(des_offset, sizeof(ssize_t)), sizeof(ssize_t));
-    des_offset += sizeof(ssize_t);
+    size_t len;
+    std::memcpy(&len, workingStr.data() + des_offset + tag.size(), sizeof(len));
+    des_offset += tag.size() + sizeof(len);
 
-    //get string
-    std::string ret = workingStr.substr(des_offset, len);
+    if (workingStr.size() < des_offset + len + 1) {
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed for incomplete data";
+        return "";
+    }
 
-    //move past string plus | delimiter
+    const std::string ret = workingStr.substr(des_offset, len);
+
+    // Skip string plus trailing '|'.
     des_offset += len + 1;
 
-    if (ret.empty()) NIXL_ERROR << "Deserialization of tag " << tag << " failed";
-
+    if (ret.empty()) {
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed for empty data";
+    }
     return ret;
 }
 
@@ -85,35 +90,59 @@ nixl_status_t nixlSerDes::addBuf(const std::string &tag, const void* buf, ssize_
 }
 
 ssize_t nixlSerDes::getBufLen(const std::string &tag) const{
-    if(workingStr.compare(des_offset, tag.size(), tag) != 0){
-        NIXL_ERROR << "Deserialization of tag " << tag << " failed";
+    if (workingStr.size() < des_offset + tag.size() + sizeof(size_t)) {
+        NIXL_ERROR << "Deserialization of tag " << tag
+                   << " failed for incomplete or missing header";
         return -1;
     }
 
-    ssize_t len;
+    if (std::memcmp(workingStr.data() + des_offset, tag.data(), tag.size()) != 0) {
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed for tag mismatch";
+        return -1;
+    }
 
-    //get len
-    //_stringToBytes(&len, workingStr.data() + des_offset + tag.size(), sizeof(ssize_t));
-    _stringToBytes(&len, workingStr.substr(des_offset + tag.size(), sizeof(ssize_t)), sizeof(ssize_t));
+    size_t len;
+    std::memcpy(&len, workingStr.data() + des_offset + tag.size(), sizeof(len));
 
-    if (len == 0) NIXL_WARN << "In deserialization of tag " << tag << " the buffer length ios 0";
-
+    if (len == 0) {
+        NIXL_WARN << "Deserialization of tag " << tag << " has data length zero";
+    }
     return len;
 }
 
 nixl_status_t nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len){
-    if(workingStr.compare(des_offset, tag.size(), tag) != 0){
-        NIXL_ERROR << "Deserialization of tag " << tag << " failed";
+    if (workingStr.size() < des_offset + tag.size() + sizeof(size_t)) {
+        NIXL_ERROR << "Deserialization of tag " << tag
+                   << " failed for incomplete or missing header";
         return NIXL_ERR_MISMATCH;
     }
 
-    //skip over tag and size, which we assume has been read previously
-    des_offset += tag.size() + sizeof(ssize_t);
+    if (std::memcmp(workingStr.data() + des_offset, tag.data(), tag.size()) != 0) {
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed for tag mismatch";
+        return NIXL_ERR_MISMATCH;
+    }
 
-    //_stringToBytes(buf, workingStr.data() + des_offset, len);
-    _stringToBytes(buf, workingStr.substr(des_offset, len), len);
+    size_t tmp;
+    std::memcpy(&tmp, workingStr.data() + des_offset + tag.size(), sizeof(tmp));
+    des_offset += tag.size() + sizeof(tmp);
 
-    //bytes in string form are twice as long, skip those plus | delimiter
+
+    // In existing code the value of len is often assumed instead
+    // of the return value from a preceding call to getBufLen().
+
+    if (size_t(len) != tmp) {
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed for data length mismatch";
+        return NIXL_ERR_MISMATCH;
+    }
+
+    if (workingStr.size() < size_t(des_offset + len + 1)) {
+        NIXL_ERROR << "Deserialization of tag " << tag << " failed for incomplete data";
+        return NIXL_ERR_MISMATCH;
+    }
+
+    std::memcpy(buf, workingStr.data() + des_offset, len);
+
+    // Skip data and trailing '|'.
     des_offset += len + 1;
 
     return NIXL_SUCCESS;

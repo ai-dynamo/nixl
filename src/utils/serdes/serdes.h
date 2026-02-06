@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,10 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __SERDES_H
-#define __SERDES_H
+#ifndef NIXL_SRC_UTILS_SERDES_SERDES_H
+#define NIXL_SRC_UTILS_SERDES_SERDES_H
 
-#include <cstring>
 #include <string>
 #include <cstdint>
 
