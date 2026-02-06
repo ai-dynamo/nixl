@@ -696,26 +696,38 @@ PYBIND11_MODULE(_bindings, m) {
             py::call_guard<py::gil_scoped_release>())
         .def(
             "getXferStatusList",
-            [](nixlAgent &agent,
-               uintptr_t reqh) -> std::pair<nixl_status_t, std::vector<nixl_status_t>> {
-                std::vector<nixl_status_t> entry_status;
-                nixl_status_t ret = agent.getXferStatus((nixlXferReqH *)reqh, entry_status);
-                // Don't throw for in-progress statuses
-                if (ret < 0 && ret != NIXL_ERR_NOT_SUPPORTED) {
-                    throw_nixl_exception(ret);
+            [](nixlAgent &agent, uintptr_t reqh, py::list entry_status) -> nixl_status_t {
+                std::vector<nixl_status_t> cpp_status;
+                nixl_status_t ret = agent.getXferStatus((nixlXferReqH *)reqh, cpp_status);
+
+                // Resize the Python list to match the C++ vector size
+                size_t n = cpp_status.size();
+                while (py::len(entry_status) < n) entry_status.append(py::int_(0));
+                while (py::len(entry_status) > n) entry_status.attr("pop")();
+
+                // Copy status values to the Python list
+                for (size_t i = 0; i < n; i++) {
+                    entry_status[i] = py::int_(static_cast<int>(cpp_status[i]));
                 }
-                return std::make_pair(ret, entry_status);
+
+                return ret;
             },
             py::arg("reqh"),
+            py::arg("entry_status"),
             py::call_guard<py::gil_scoped_release>(),
             R"pbdoc(
                 Get transfer status with per-entry status codes.
 
-                Returns a tuple of (overall_status, entry_status_list) where:
-                - overall_status: NIXL_SUCCESS (0), NIXL_IN_PROG (1),
-                  NIXL_IN_PROG_WITH_ERR (2), or error code
-                - entry_status_list: List of status codes for each entry
+                Args:
+                    reqh: Request handle
+                    entry_status: A list that will be populated with per-entry status codes.
+                                  Pass a reusable list to avoid allocation on each call.
 
+                Returns:
+                    overall_status: NIXL_SUCCESS (0), NIXL_IN_PROG (1),
+                    NIXL_IN_PROG_WITH_ERR (2), or error code (negative).
+
+                Note: Does not throw exceptions - check the return value for errors.
                 Use this for fine-grained tracking of batch transfers.
             )pbdoc")
         .def(

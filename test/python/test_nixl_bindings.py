@@ -231,8 +231,9 @@ def test_get_xfer_status_list():
     status = agent1.postXferReq(handle)
     assert status == nixl.NIXL_SUCCESS or status == nixl.NIXL_IN_PROG
 
-    # Test getXferStatusList
-    overall_status, entry_status = agent1.getXferStatusList(handle)
+    # Test getXferStatusList - use a reusable list to avoid allocation on each call
+    entry_status = []
+    overall_status = agent1.getXferStatusList(handle, entry_status)
 
     logger.info("Initial overall status: %s", overall_status)
     logger.info("Initial entry status: %s", entry_status)
@@ -242,7 +243,7 @@ def test_get_xfer_status_list():
         overall_status == nixl.NIXL_IN_PROG
         or overall_status == nixl.NIXL_IN_PROG_WITH_ERR
     ):
-        overall_status, entry_status = agent1.getXferStatusList(handle)
+        overall_status = agent1.getXferStatusList(handle, entry_status)
         logger.info("Polling - overall: %s, entries: %s", overall_status, entry_status)
 
     # Verify completion

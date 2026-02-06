@@ -1006,9 +1006,10 @@ impl Agent {
         let mut entry_status: Vec<i32> = vec![0; 1024];
         let mut entry_count: usize = entry_status.len();
 
+        let inner = self.inner.write().unwrap();
         let status = unsafe {
             bindings::nixl_capi_get_xfer_status_list(
-                self.inner.write().unwrap().handle.as_ptr(),
+                inner.handle.as_ptr(),
                 req.handle(),
                 entry_status.as_mut_ptr(),
                 &mut entry_count,

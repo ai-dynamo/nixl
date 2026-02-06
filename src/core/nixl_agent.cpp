@@ -1195,29 +1195,26 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl,
     }
 
     // Check if transfer is still in progress (either fully or with some errors)
-    bool in_progress = (status == NIXL_IN_PROG || status == NIXL_IN_PROG_WITH_ERR);
+    if ((status == NIXL_IN_PROG || status == NIXL_IN_PROG_WITH_ERR)) return status;
 
     // Update overall request status and handle errors/completion
-    if (!in_progress) {
-        req_hndl->status = status;
-
-        if (status < 0) {
-            if (status == NIXL_ERR_REMOTE_DISCONNECT) {
-                data->invalidateRemoteData(req_hndl->remoteAgent);
-                return NIXL_ERR_REMOTE_DISCONNECT;
-            } else {
-                NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
-                                << "' returned error status " << req_hndl->status;
-            }
+    req_hndl->status = status;
+    if (status < 0) {
+        if (status == NIXL_ERR_REMOTE_DISCONNECT) {
+            data->invalidateRemoteData(req_hndl->remoteAgent);
+            return NIXL_ERR_REMOTE_DISCONNECT;
+        } else {
+            NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
+                            << "' returned error status " << req_hndl->status;
         }
+    }
 
-        // Update telemetry
-        if (data->telemetryEnabled) {
-            if (status == NIXL_SUCCESS) {
-                req_hndl->updateRequestStats(data->telemetry_, NIXL_TELEMETRY_FINISH);
-            } else if (status < 0) {
-                data->addErrorTelemetry(status);
-            }
+    // Update telemetry
+    if (data->telemetryEnabled) {
+        if (status == NIXL_SUCCESS) {
+            req_hndl->updateRequestStats(data->telemetry_, NIXL_TELEMETRY_FINISH);
+        } else if (status < 0) {
+            data->addErrorTelemetry(status);
         }
     }
 
