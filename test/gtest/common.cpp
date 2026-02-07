@@ -134,14 +134,13 @@ PortAllocator::next_tcp_port() {
                              " - " + std::to_string(instance._max_port));
 }
 
-namespace
-{
+namespace {
     std::mutex log_problem_mutex;
     size_t global_problem_count = 0;
     size_t local_ignored_count = 0;
     std::list<std::regex> log_problem_ignore;
 
-}  // namespace
+} // namespace
 
 LogIgnoreGuard::LogIgnoreGuard(const std::regex &rx) {
     const std::lock_guard lock(log_problem_mutex);
@@ -165,11 +164,11 @@ LogIgnoreGuard::getIgnoredCount() const noexcept {
 }
 
 LogProblemCounter::LogProblemCounter() {
-    absl::AddLogSink(static_cast<absl::LogSink*>(this));
+    absl::AddLogSink(static_cast<absl::LogSink *>(this));
 }
 
 LogProblemCounter::~LogProblemCounter() {
-    absl::RemoveLogSink(static_cast<absl::LogSink*>(this));
+    absl::RemoveLogSink(static_cast<absl::LogSink *>(this));
 }
 
 size_t
@@ -181,19 +180,19 @@ LogProblemCounter::getProblemCount() noexcept {
 void
 LogProblemCounter::Send(const absl::LogEntry &entry) {
     if (entry.log_severity() == absl::LogSeverity::kInfo) {
-	return;
+        return;
     }
 
     const std::string msg(entry.text_message());
     {
-	const std::lock_guard lock(log_problem_mutex);
-	for (const auto &rx : log_problem_ignore) {
-	    if (std::regex_search(msg, rx)) {
-		++local_ignored_count;
-		return;
-	    }
-	}
-	++global_problem_count;
+        const std::lock_guard lock(log_problem_mutex);
+        for (const auto &rx : log_problem_ignore) {
+            if (std::regex_search(msg, rx)) {
+                ++local_ignored_count;
+                return;
+            }
+        }
+        ++global_problem_count;
     }
     std::cerr << "ATTENTION: Unexpected NIXL warning or error detected!" << std::endl;
     std::cerr << "ATTENTION: Message is '" << msg << '\'' << std::endl;

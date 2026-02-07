@@ -65,7 +65,8 @@ void ParseArguments(int argc, char **argv) {
   }
 }
 
-int RunAllTests() {
+int
+RunAllTests() {
     LogProblemCounter lpc;
     return RUN_ALL_TESTS();
 }
@@ -76,9 +77,9 @@ int RunTests(int argc, char **argv) {
     const int result = RunAllTests();
 
     if (const size_t problems = LogProblemCounter::getProblemCount(); problems > 0) {
-	std::cerr << "ATTENTION: Unexpected NIXL warnings and/or errors detected!" << std::endl;
-	std::cerr << "ATTENTION: Problem count is " << problems << std::endl;
-	return 42;
+        std::cerr << "ATTENTION: Unexpected NIXL warnings and/or errors detected!" << std::endl;
+        std::cerr << "ATTENTION: Problem count is " << problems << std::endl;
+        return 42;
     }
     return result;
 }

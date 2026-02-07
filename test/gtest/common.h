@@ -135,8 +135,10 @@ public:
     LogIgnoreGuard(LogIgnoreGuard &&) = delete;
     LogIgnoreGuard(const LogIgnoreGuard &) = delete;
 
-    void operator=(LogIgnoreGuard &&) = delete;
-    void operator=(const LogIgnoreGuard &) = delete;
+    void
+    operator=(LogIgnoreGuard &&) = delete;
+    void
+    operator=(const LogIgnoreGuard &) = delete;
 
     [[nodiscard]] size_t
     getIgnoredCount() const noexcept;
@@ -153,14 +155,17 @@ public:
     LogProblemCounter(LogProblemCounter &&) = delete;
     LogProblemCounter(const LogProblemCounter &) = delete;
 
-    void operator=(LogProblemCounter &&) = delete;
-    void operator=(const LogProblemCounter &) = delete;
+    void
+    operator=(LogProblemCounter &&) = delete;
+    void
+    operator=(const LogProblemCounter &) = delete;
 
     [[nodiscard]] static size_t
     getProblemCount() noexcept;
 
 private:
-    void Send(const absl::LogEntry &entry) override;
+    void
+    Send(const absl::LogEntry &entry) override;
 };
 
 struct nixlTestParam {

@@ -422,22 +422,22 @@ protected:
                              << "(" << bandwidth << " GB/s)";
                 }
 
-		nixl_xfer_telem_t telemetry;
-		if (expected_telem_status == NIXL_ERR_NO_TELEMETRY) {
-		    const std::string rx = "cannot return values when telemetry is not enabled";
-		    gtest::LogIgnoreGuard lig(rx);
-		    status = from.getXferTelemetry(xfer_req, telemetry);
-		    EXPECT_EQ(status, expected_telem_status);
-		} else {
-		    status = from.getXferTelemetry(xfer_req, telemetry);
-		    EXPECT_EQ(status, expected_telem_status);
-		    if (expected_telem_status == NIXL_SUCCESS) {
-		        EXPECT_TRUE(telemetry.startTime > min_chrono_time);
-			EXPECT_TRUE(telemetry.postDuration > chrono_period_us_t(0));
-			EXPECT_TRUE(telemetry.xferDuration > chrono_period_us_t(0));
-			EXPECT_TRUE(telemetry.xferDuration >= telemetry.postDuration);
-		    }
-		}
+                nixl_xfer_telem_t telemetry;
+                if (expected_telem_status == NIXL_ERR_NO_TELEMETRY) {
+                    const std::string rx = "cannot return values when telemetry is not enabled";
+                    gtest::LogIgnoreGuard lig(rx);
+                    status = from.getXferTelemetry(xfer_req, telemetry);
+                    EXPECT_EQ(status, expected_telem_status);
+                } else {
+                    status = from.getXferTelemetry(xfer_req, telemetry);
+                    EXPECT_EQ(status, expected_telem_status);
+                    if (expected_telem_status == NIXL_SUCCESS) {
+                        EXPECT_TRUE(telemetry.startTime > min_chrono_time);
+                        EXPECT_TRUE(telemetry.postDuration > chrono_period_us_t(0));
+                        EXPECT_TRUE(telemetry.xferDuration > chrono_period_us_t(0));
+                        EXPECT_TRUE(telemetry.xferDuration >= telemetry.postDuration);
+                    }
+                }
 
                 status = from.releaseXferReq(xfer_req);
                 EXPECT_EQ(status, NIXL_SUCCESS);

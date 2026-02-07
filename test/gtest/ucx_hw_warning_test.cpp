@@ -78,7 +78,8 @@ TEST_F(UcxHardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
     std::vector<std::string> devs;
     nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
 
-    const std::string rx = "IB device\\(s\\) were detected, but accelerated IB support was not found";
+    const std::string rx =
+        "IB device\\(s\\) were detected, but accelerated IB support was not found";
     gtest::LogIgnoreGuard lig(rx);
     ctx.warnAboutHardwareSupportMismatch();
 
