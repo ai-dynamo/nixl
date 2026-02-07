@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,11 +65,22 @@ void ParseArguments(int argc, char **argv) {
   }
 }
 
-int RunTests(int argc, char **argv) {
-  testing::InitGoogleTest(&argc, argv);
-  ParseArguments(argc, argv);
+int RunAllTests() {
+    LogProblemCounter lpc;
+    return RUN_ALL_TESTS();
+}
 
-  return RUN_ALL_TESTS();
+int RunTests(int argc, char **argv) {
+    testing::InitGoogleTest(&argc, argv);
+    ParseArguments(argc, argv);
+    const int result = RunAllTests();
+
+    if (const size_t problems = LogProblemCounter::getProblemCount(); problems > 0) {
+	std::cerr << "ATTENTION: Unexpected NIXL warnings and/or errors detected!" << std::endl;
+	std::cerr << "ATTENTION: Problem count is " << problems << std::endl;
+	return 42;
+    }
+    return result;
 }
 } // namespace gtest
 

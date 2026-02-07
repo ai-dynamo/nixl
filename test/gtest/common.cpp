@@ -134,38 +134,69 @@ PortAllocator::next_tcp_port() {
                              " - " + std::to_string(instance._max_port));
 }
 
-scopedTestLogSink::scopedTestLogSink() {
-    absl::AddLogSink(&sink_);
+namespace
+{
+    std::mutex log_problem_mutex;
+    size_t global_problem_count = 0;
+    size_t local_ignored_count = 0;
+    std::list<std::regex> log_problem_ignore;
+
+}  // namespace
+
+LogIgnoreGuard::LogIgnoreGuard(const std::regex &rx) {
+    const std::lock_guard lock(log_problem_mutex);
+    log_problem_ignore.emplace_front(rx);
+    iter_ = log_problem_ignore.begin();
 }
 
-scopedTestLogSink::~scopedTestLogSink() {
-    absl::RemoveLogSink(&sink_);
+LogIgnoreGuard::LogIgnoreGuard(const std::string &rx)
+    : LogIgnoreGuard(std::regex(rx, std::regex_constants::extended)) {}
+
+LogIgnoreGuard::~LogIgnoreGuard() {
+    const std::lock_guard lock(log_problem_mutex);
+    log_problem_ignore.erase(iter_);
+    local_ignored_count = 0;
+}
+
+size_t
+LogIgnoreGuard::getIgnoredCount() const noexcept {
+    const std::lock_guard lock(log_problem_mutex);
+    return local_ignored_count;
+}
+
+LogProblemCounter::LogProblemCounter() {
+    absl::AddLogSink(static_cast<absl::LogSink*>(this));
+}
+
+LogProblemCounter::~LogProblemCounter() {
+    absl::RemoveLogSink(static_cast<absl::LogSink*>(this));
+}
+
+size_t
+LogProblemCounter::getProblemCount() noexcept {
+    const std::lock_guard lock(log_problem_mutex);
+    return global_problem_count;
 }
 
 void
-scopedTestLogSink::testLogSink::Send(const absl::LogEntry &entry) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (entry.log_severity() == absl::LogSeverity::kWarning) {
-        warnings_.emplace_back(entry.text_message());
+LogProblemCounter::Send(const absl::LogEntry &entry) {
+    if (entry.log_severity() == absl::LogSeverity::kInfo) {
+	return;
     }
-}
 
-size_t
-scopedTestLogSink::warningCount() const {
-    std::lock_guard<std::mutex> lock(sink_.mutex_);
-    return sink_.warnings_.size();
-}
-
-size_t
-scopedTestLogSink::countWarningsMatching(const std::string &substring) const {
-    std::lock_guard<std::mutex> lock(sink_.mutex_);
-    size_t count = 0;
-    for (const auto &w : sink_.warnings_) {
-        if (w.find(substring) != std::string::npos) {
-            ++count;
-        }
+    const std::string msg(entry.text_message());
+    {
+	const std::lock_guard lock(log_problem_mutex);
+	for (const auto &rx : log_problem_ignore) {
+	    if (std::regex_search(msg, rx)) {
+		++local_ignored_count;
+		return;
+	    }
+	}
+	++global_problem_count;
     }
-    return count;
+    std::cerr << "ATTENTION: Unexpected NIXL warning or error detected!" << std::endl;
+    std::cerr << "ATTENTION: Message is '" << msg << '\'' << std::endl;
 }
 
 } // namespace gtest
