@@ -265,7 +265,8 @@ nixlUcxEp::sendAm(unsigned msg_id,
         param.user_data = ctx.get();
     }
 
-    const ucs_status_ptr_t request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
+    const ucs_status_ptr_t request =
+        ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
     if (UCS_PTR_IS_PTR(request)) {
         ctx.release();
         if (req != nullptr) {

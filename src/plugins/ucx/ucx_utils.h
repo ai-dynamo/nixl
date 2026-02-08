@@ -214,8 +214,10 @@ public:
     nixlUcxContext(nixlUcxContext &&) = delete;
     nixlUcxContext(const nixlUcxContext &) = delete;
 
-    void operator=(nixlUcxContext &&) = delete;
-    void operator=(const nixlUcxContext &) = delete;
+    void
+    operator=(nixlUcxContext &&) = delete;
+    void
+    operator=(const nixlUcxContext &) = delete;
 
     /* Memory management */
     int
