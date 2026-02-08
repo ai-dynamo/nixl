@@ -220,7 +220,7 @@ else
       cd ${TMPDIR} && \
       git clone --depth 1 https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
-      $SUDO bash dependencies.sh && \
+      $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
       cmake .. -DBUILD_SHARED_LIBS=ON && \
       make -j4 && \
