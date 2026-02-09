@@ -58,6 +58,7 @@
 // TODO: This is true for CX-7, need support for other CX cards and NVLink
 #define MAXBW 50.0 // 400 Gbps or 50 GB/sec
 #define LARGE_BLOCK_SIZE (1LL * (1 << 20))
+#define HUGEPAGE_SIZE (2 * 1024 * 1024)
 
 #define XFERBENCH_INITIATOR_BUFFER_ELEMENT 0xbb
 #define XFERBENCH_TARGET_BUFFER_ELEMENT 0xaa
@@ -159,6 +160,7 @@ public:
     static std::string filepath;
     static std::string filenames;
     static bool enable_vmm;
+    static bool use_hugepages;
     static int num_files;
     static std::string posix_api_type;
     static int posix_ios_pool_size;
