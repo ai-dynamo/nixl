@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 import time
 from test.traffic_pattern import TrafficPattern
@@ -557,33 +558,42 @@ class CTPerftest:
         return latencies
 
     def _wait(self, handles: list[NixlHandle]):
-        """Wait for transfers to complete."""
+        """Wait for transfers to complete using in-place swap-remove."""
         if not handles:
             return
-        logger.debug(
-            "[Rank %d] Waiting for %d handles to complete...",
-            self.my_rank,
-            len(handles),
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "[Rank %d] Waiting for %d handles to complete...",
+                self.my_rank,
+                len(handles),
+            )
+        # Make a mutable copy to avoid modifying caller's list
+        remaining = list(handles)
         poll_count = 0
-        while True:
-            pending = []
-            for h in handles:
-                state = self.nixl_agent.check_xfer_state(h.handle)
-                assert state != "ERR", "Transfer got to Error state."
-                if state != "DONE":
-                    pending.append(h)
-
-            if not pending:
-                break
-            handles = pending
+        while remaining:
+            i = 0
+            while i < len(remaining):
+                state = self.nixl_agent.check_xfer_state(remaining[i].handle)
+                if state == "ERR":
+                    raise RuntimeError(
+                        f"[Rank {self.my_rank}] Transfer {remaining[i]} got to Error state."
+                    )
+                if state == "DONE":
+                    # Swap-remove: O(1) removal without shifting
+                    remaining[i] = remaining[-1]
+                    remaining.pop()
+                else:
+                    i += 1
             poll_count += 1
+            if remaining:
+                time.sleep(0)  # yield CPU timeslice
 
-        logger.debug(
-            "[Rank %d] All handles completed (polled %d times)",
-            self.my_rank,
-            poll_count,
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "[Rank %d] All handles completed (polled %d times)",
+                self.my_rank,
+                poll_count,
+            )
 
     def _destroy(self, handles: list[NixlHandle]):
         logger.debug("[Rank %d] Releasing XFER handles", self.my_rank)

@@ -59,6 +59,11 @@ class TrafficPattern:
     id: int = field(default_factory=lambda: TrafficPattern._get_next_id())
     _id_counter: ClassVar[int] = 0
 
+    # Cached rank lists (computed once in __post_init__, matrix is immutable)
+    _senders: list = field(default_factory=list, init=False, repr=False)
+    _receivers: list = field(default_factory=list, init=False, repr=False)
+    _all_participating: list = field(default_factory=list, init=False, repr=False)
+
     @classmethod
     def _get_next_id(cls) -> int:
         """Get the next available ID and increment the counter"""
@@ -66,56 +71,63 @@ class TrafficPattern:
         cls._id_counter += 1
         return current_id
 
+    def __post_init__(self):
+        """Pre-compute and cache rank lists from the immutable matrix."""
+        if self.matrix is not None:
+            senders = set()
+            receivers = set()
+            for i in range(self.matrix.shape[0]):
+                for j in range(self.matrix.shape[1]):
+                    if self.matrix[i, j] > 0:
+                        senders.add(i)
+                        receivers.add(j)
+            self._senders = sorted(senders)
+            self._receivers = sorted(receivers)
+        else:
+            self._senders = []
+            self._receivers = []
+
+        # All participating ranks: senders + receivers + storage ranks
+        all_ranks = set(self._senders + self._receivers)
+        if self.storage_ops:
+            all_ranks.update(self.storage_ops.keys())
+        self._all_participating = sorted(all_ranks)
+
     def has_rdma(self) -> bool:
         """Check if this traffic pattern has any RDMA traffic."""
-        if self.matrix is None:
-            return False
-        return np.any(self.matrix > 0)
+        return len(self._senders) > 0
 
     def senders_ranks(self):
         """Return the ranks (process indices) that send messages."""
-        if self.matrix is None:
-            return []
-        senders_ranks = []
-        for i in range(self.matrix.shape[0]):
-            for j in range(self.matrix.shape[1]):
-                if self.matrix[i, j] > 0:
-                    senders_ranks.append(i)
-                    break
-        return list(set(senders_ranks))
+        return self._senders
 
     def receivers_ranks(self, from_ranks: Optional[list[int]] = None):
         """Return the ranks (process indices) that receive messages."""
+        if from_ranks is None:
+            return self._receivers
+        # Filtered case: only receivers that receive from specified senders
         if self.matrix is None:
             return []
-        if from_ranks is None:
-            from_ranks = list(range(self.matrix.shape[0]))
-        receivers_ranks = []
+        result = set()
         for i in from_ranks:
             for j in range(self.matrix.shape[1]):
                 if self.matrix[i, j] > 0:
-                    receivers_ranks.append(j)
-                    break
-        return list(set(receivers_ranks))
+                    result.add(j)
+        return sorted(result)
 
     def ranks(self):
         """Return all ranks that are involved in RDMA traffic"""
-        return list(set(self.senders_ranks() + self.receivers_ranks()))
+        return sorted(set(self._senders + self._receivers))
 
     def all_participating_ranks(self):
         """Return all ranks that actively participate in this TP.
 
         Includes:
         - RDMA senders (they initiate transfers)
+        - RDMA receivers (they wait for notifications and participate in barriers)
         - Storage ranks (they do read/write ops)
-
-        Does NOT include RDMA receivers (they just have buffers registered,
-        no active operations needed).
         """
-        all_ranks = set(self.senders_ranks())
-        if self.storage_ops:
-            all_ranks.update(self.storage_ops.keys())
-        return list(all_ranks)
+        return self._all_participating
 
     def buf_size(self, src, dst):
         if self.matrix is None:
