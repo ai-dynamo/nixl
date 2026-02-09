@@ -199,7 +199,7 @@ class nixlUcxContext {
 private:
     /* Local UCX stuff */
     ucp_context_h ctx;
-    const nixl_ucx_mt_t mt_type;
+    const nixl_ucx_mt_t mtType_;
     const unsigned ucpVersion_;
 
 public:

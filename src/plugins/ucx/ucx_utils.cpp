@@ -425,7 +425,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
                                nixl_thread_sync_t sync_mode,
                                size_t num_device_channels,
                                const std::string &engine_config)
-    : mt_type(makeMtType(prog_thread, sync_mode)),
+    : mtType_(makeMtType(prog_thread, sync_mode)),
       ucpVersion_(makeUcpVersion()) {
 
     ucp_params_t ucp_params;
@@ -518,7 +518,7 @@ static_assert(sizeof(nixlUcpWorkerParams) == sizeof(ucp_worker_params_t));
 ucp_worker *
 nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
     ucp_worker *worker = nullptr;
-    const nixlUcpWorkerParams params(ctx.mt_type);
+    const nixlUcpWorkerParams params(ctx.mtType_);
     const ucs_status_t status = ucp_worker_create(ctx.ctx, &params, &worker);
     if (status != UCS_OK) {
         throw std::runtime_error(std::string("Failed to create UCX worker: ") +
