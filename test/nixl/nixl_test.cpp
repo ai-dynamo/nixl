@@ -263,12 +263,12 @@ static void runInitiator(const std::string &target_ip, int target_port, nixl_thr
 }
 
 namespace {
-const std::string expected =
+const std::string expected_for_target =
     "genNotif: no specified or potential backend could send the inter-agent notifications";
 
 class logProblemGuard : private absl::LogSink {
 public:
-    explicit logProblemGuard(const bool target) : target_(target) {
+    explicit logProblemGuard(const std::string& expected = "") : expected_(expected) {
         absl::AddLogSink(static_cast<absl::LogSink *>(this));
     }
 
@@ -284,17 +284,20 @@ public:
     void
     operator=(const logProblemGuard &) = delete;
 
-    [[nodiscard]] static size_t
-    getProblemCount() noexcept;
-
 private:
-    const bool target_;
+    const std::string expected_;
 
     void
     Send(const absl::LogEntry &entry) override {
-        if ((!target_) || (entry.text_message() != expected)) {
-            throw std::runtime_error("Unexpected NIXL warning or error detected!");
+       if (entry.log_severity() == absl::LogSeverity::kInfo) {
+           return;
+       }
+
+       if ((!expected_.empty()) && (entry.text_message() == expected_)) {
+           return;
         }
+
+       throw std::runtime_error("Unexpected NIXL warning or error detected!");
     }
 };
 
@@ -340,10 +343,10 @@ int main(int argc, char *argv[]) {
     /*** End - Argument Parsing */
 
     if (role == target) {
-        logProblemGuard lpg(true);
+        logProblemGuard lpg(expected_for_target);
         runTarget(target_ip, target_port, sync_mode);
     } else {
-        logProblemGuard lpg(false);
+        logProblemGuard lpg;
         runInitiator(target_ip, target_port, sync_mode);
     }
 
