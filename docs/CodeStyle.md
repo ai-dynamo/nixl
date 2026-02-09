@@ -190,17 +190,31 @@ limitations under the License.
 ### Switch Statements
 
 * Case labels are **not indented** relative to the switch statement
+* Avoid using `default` when switching on enum types - handle all cases explicitly to enable compiler warnings when new enum values are added
 * Example:
 
   ```cpp
-  switch (value) {
-  case SUCCESS:      // case label aligned with switch
+  // For enum class - avoid default to get compiler warnings for unhandled cases
+  switch (status) {
+  case status_t::SUCCESS: // case label aligned with switch
       handleSuccess();
       break;
-  case ERROR:        // case label aligned with switch
+  case status_t::ERROR:
       handleError();
       break;
-  default:           // default aligned with switch
+  case status_t::PENDING:
+      handlePending();
+      break;
+  // No default - compiler will warn if new enum values are added
+  }
+
+  // For non-enum types, default is acceptable
+  switch (value) {
+  case 1:
+      handleOne();
+      break;
+  default:
+      handleOther();
       break;
   }
   ```
