@@ -28,6 +28,14 @@
 class HardwareWarningTest : public ::testing::Test {
 protected:
     gtest::ScopedEnv envHelper_;
+    unsigned ucpVersion_;
+
+    void
+    SetUp() override {
+        unsigned major, minor, release;
+        ucp_get_version(&major, &minor, &release);
+        ucpVersion_ = UCP_VERSION(major, minor);
+    }
 };
 
 /**
@@ -64,11 +72,8 @@ TEST_F(HardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
  * Note: This warning only triggers for UCX >= 1.21.
  */
 TEST_F(HardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
-    unsigned major, minor, release;
-    ucp_get_version(&major, &minor, &release);
-    if (UCP_VERSION(major, minor) < UCP_VERSION(1, 21)) {
-        GTEST_SKIP() << "UCX version " << major << "." << minor
-                     << " is less than 1.21, skipping test";
+    if (ucpVersion_ < UCP_VERSION(1, 21)) {
+        GTEST_SKIP() << "UCX version is less than 1.21, skipping test";
     }
 
     const nixl::hwInfo hw_info;
@@ -134,11 +139,19 @@ TEST_F(HardwareWarningTest, WarnWhenEfaPresentAndNonLibfabricBackend) {
     nixlBackendH *backend;
     EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
 
-    EXPECT_EQ(log_sink.warningCount(), 1);
+    unsigned expected_warnings = 1;
+
+    if (ucpVersion_ < UCP_VERSION(1, 19)) {
+        /* Ignore possible warning about UCX version */
+        EXPECT_EQ(log_sink.countWarningsMatching("UCX version is less than 1.19"), 1);
+        expected_warnings++;
+    }
+
     EXPECT_EQ(
         log_sink.countWarningsMatching("Amazon EFA(s) were detected, it is recommended to use "
                                        "the LIBFABRIC backend for best performance"),
         1);
+    EXPECT_EQ(log_sink.warningCount(), expected_warnings);
 }
 
 /**
