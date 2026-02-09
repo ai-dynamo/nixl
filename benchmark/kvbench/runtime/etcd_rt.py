@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +30,7 @@ logger = get_logger(__name__)
 
 
 def int_to_bytes(val: int) -> bytes:
-    return int.to_bytes(val, length=4)
+    return val.to_bytes(length=4, byteorder="big")
 
 
 class _EtcdDistUtils(_RTUtils):
@@ -76,16 +76,37 @@ class _EtcdDistUtils(_RTUtils):
                 f"Invalid etcd endpoint format: {etcd_endpoints}, expected format is [http://]host[:port]"
             )
 
-        logger.info("ETCD client initialized with host %s & port %d", host, port)
+        logger.info(
+            "ETCD client initialized with host %s & port %d, rank=%d, world_size=%d",
+            host,
+            port,
+            self.rank,
+            self.world_size,
+        )
 
         try:
             self.client = etcd3.client(host=host, port=port)
         except Exception as e:
             raise ValueError(f"Failed to initialize ETCD client: {e}")
 
+        # Rank 0 wipes prefix, then signals ready. Others wait for signal.
+        init_key = f"{self.prefix}/__init_ready__"
+        init_timeout_sec = 120
         if self.rank == 0:
             logger.info("Wiping ETCD prefix %s", self.prefix)
             self.client.delete_prefix(self.prefix)
+            self.client.put(init_key, b"1")
+            logger.info("Rank 0 init complete, signaled ready")
+        else:
+            logger.info("Rank %d waiting for rank 0 init...", self.rank)
+            start_time = time.time()
+            while self.client.get(init_key)[0] is None:
+                if time.time() - start_time > init_timeout_sec:
+                    raise TimeoutError(
+                        f"[Rank {self.rank}] Timeout waiting for rank 0 init after {init_timeout_sec}s"
+                    )
+                time.sleep(0.05)
+            logger.info("Rank %d: rank 0 ready, proceeding", self.rank)
 
     def destroy_dist(self):
         self.client.delete_prefix(self.prefix)
@@ -94,7 +115,7 @@ class _EtcdDistUtils(_RTUtils):
         val = self.client.get(key)[0]
         if val is None:
             return None
-        return int.from_bytes(val)
+        return int.from_bytes(val, byteorder="big")
 
     def barrier(self, ranks: Optional[List[int]] = None, timeout_sec=600):
         """Barrier for a group of ranks using etcd barrier"""
@@ -108,7 +129,6 @@ class _EtcdDistUtils(_RTUtils):
         root = ranks[0]
         # Create barrier for specific group of ranks
         group_id = self._get_group_id(ranks)
-        group_size = len(ranks)
         barrier_ix = self.ops_counter["barrier"][group_id]
         self.ops_counter["barrier"][group_id] += 1
 
@@ -123,15 +143,14 @@ class _EtcdDistUtils(_RTUtils):
             while not self.client.replace(
                 key, int_to_bytes(len(ranks)), int_to_bytes(0)
             ):
+                current_val = self._get_int_val(key)
                 if timeout_sec and time.time() - start_time > timeout_sec:
+                    missing_ranks = (
+                        [r for r in ranks[current_val:]] if current_val else ranks[1:]
+                    )
                     raise TimeoutError(
-                        "[Rank %d] ROOT - Barrier %s timed out after %.3f seconds, current value: %s, waiting for val=%d (i.e all the ranks have entered the barrier), (ranks: %s)",
-                        self.rank,
-                        key,
-                        timeout_sec,
-                        self.client.get(key),
-                        len(ranks),
-                        ranks,
+                        f"[Rank {self.rank}] Barrier timed out after {timeout_sec:.0f}s: {current_val}/{len(ranks)} ranks arrived. "
+                        f"Missing ranks: {missing_ranks[:10]}{'...' if len(missing_ranks) > 10 else ''}"
                     )
         else:
             my_index = ranks.index(self.rank)
@@ -140,14 +159,26 @@ class _EtcdDistUtils(_RTUtils):
                 key, int_to_bytes(my_index), int_to_bytes(my_index + 1)
             ):
                 if timeout_sec and time.time() - start_time > timeout_sec:
+                    current_val = self._get_int_val(key) or 0
+                    waiting_for_rank = (
+                        ranks[my_index - 1] if my_index > 0 else "unknown"
+                    )
                     raise TimeoutError(
-                        f"[Rank {self.rank}] Barrier {key} timed out after {timeout_sec} seconds, current value: {self.client.get(key)}, waiting for val={my_index} (i.e rank {ranks[my_index - 1]} entered barrier), (ranks: {ranks})"
+                        f"[Rank {self.rank}] Barrier timed out after {timeout_sec:.0f}s: {current_val}/{len(ranks)} ranks arrived. "
+                        f"Waiting for rank {waiting_for_rank} to enter barrier."
                     )
             # Fan out - wait for root to set 0 again
             while not self._get_int_val(key) == 0:
                 if timeout_sec and time.time() - start_time > timeout_sec:
+                    current_val = self._get_int_val(key) or 0
+                    missing_ranks = (
+                        [r for r in ranks[current_val:]]
+                        if current_val < len(ranks)
+                        else []
+                    )
                     raise TimeoutError(
-                        f"[Rank {self.rank}] Barrier {key} timed out after {timeout_sec} seconds, current value: {self.client.get(key)}, waiting for val={group_size} (i.e all the ranks have entered the barrier), (ranks: {ranks})"
+                        f"[Rank {self.rank}] Barrier timed out after {timeout_sec:.0f}s: {current_val}/{len(ranks)} ranks arrived. "
+                        f"Missing ranks: {missing_ranks[:10]}{'...' if len(missing_ranks) > 10 else ''}"
                     )
 
     def get_rank(self) -> int:
@@ -156,7 +187,7 @@ class _EtcdDistUtils(_RTUtils):
     def get_world_size(self) -> int:
         return self.world_size
 
-    def allgather_obj(self, obj: Any) -> List[Any]:
+    def allgather_obj(self, obj: Any, timeout_sec: float = 120) -> List[Any]:
         allgather_ix = self.ops_counter["allgather"]["world"]
         self.ops_counter["allgather"]["world"] += 1
 
@@ -168,18 +199,24 @@ class _EtcdDistUtils(_RTUtils):
             f"{self.prefix}/allgather/{allgather_ix}/{self.rank}", serialized_obj
         )
 
-        for dest_rank in range(self.world_size):
-            val = None
-            while val is None:
-                val = self.client.get(
-                    f"{self.prefix}/allgather/{allgather_ix}/{dest_rank}"
-                )[0]
+        self.barrier()
 
+        for dest_rank in range(self.world_size):
+            key = f"{self.prefix}/allgather/{allgather_ix}/{dest_rank}"
+            val = self.client.get(key)[0]
+            # Retry if value is None (etcd consistency delay)
+            start_time = time.time()
+            while val is None:
+                if time.time() - start_time > timeout_sec:
+                    raise TimeoutError(
+                        f"[Rank {self.rank}] allgather_obj timeout waiting for rank {dest_rank} after {timeout_sec}s"
+                    )
+                val = self.client.get(key)[0]
             result[dest_rank] = pickle.loads(val)
 
         return result
 
-    def alltoall_obj(self, send_objs: List[Any]) -> List[Any]:
+    def alltoall_obj(self, send_objs: List[Any], timeout_sec: float = 120) -> List[Any]:
         result = [None for _ in range(self.world_size)]
         serialized_objs = [pickle.dumps(obj) for obj in send_objs]
 
@@ -192,15 +229,26 @@ class _EtcdDistUtils(_RTUtils):
 
         self.barrier()
         for src_rank in range(self.world_size):
-            val = self.client.get(f"{self.prefix}/alltoall/{src_rank}_to_{self.rank}")[
-                0
-            ]
+            key = f"{self.prefix}/alltoall/{src_rank}_to_{self.rank}"
+            val = self.client.get(key)[0]
+            # Retry if value is None (etcd consistency delay)
+            start_time = time.time()
+            while val is None:
+                if time.time() - start_time > timeout_sec:
+                    raise TimeoutError(
+                        f"[Rank {self.rank}] alltoall_obj timeout waiting for rank {src_rank} after {timeout_sec}s"
+                    )
+                val = self.client.get(key)[0]
             result[src_rank] = pickle.loads(val)
 
         return result
 
     def all_reduce(
-        self, vals: List[float | int], op: ReduceOp, root: int = 0
+        self,
+        vals: List[float | int],
+        op: ReduceOp,
+        root: int = 0,
+        timeout_sec: float = 120,
     ) -> List[float | int]:
         self.barrier()
         self.client.put(f"{self.prefix}/all_reduce/{self.rank}", pickle.dumps(vals))
@@ -209,29 +257,43 @@ class _EtcdDistUtils(_RTUtils):
         self.barrier()
 
         if self.rank == root:
-            vals = []
+            all_vals = []
+            start_time = time.time()
             for dest_rank in range(self.world_size):
                 val = self.client.get(f"{self.prefix}/all_reduce/{dest_rank}")[0]
-                vals.append(pickle.loads(val))
+                while val is None:
+                    if time.time() - start_time > timeout_sec:
+                        raise TimeoutError(
+                            f"[Rank {self.rank}] all_reduce timeout waiting for rank {dest_rank} after {timeout_sec}s"
+                        )
+                    val = self.client.get(f"{self.prefix}/all_reduce/{dest_rank}")[0]
+                all_vals.append(pickle.loads(val))
 
-            logger.debug("All reduce values: %s", vals)
+            logger.debug("All reduce values: %s", all_vals)
             if op == ReduceOp.SUM:
-                final_val = [sum(col) for col in zip(*vals)]
+                final_val = [sum(col) for col in zip(*all_vals)]
             elif op == ReduceOp.AVG:
-                final_val = [sum(col) / self.world_size for col in zip(*vals)]
+                final_val = [sum(col) / self.world_size for col in zip(*all_vals)]
             elif op == ReduceOp.MIN:
-                final_val = [min(col) for col in zip(*vals)]
+                final_val = [min(col) for col in zip(*all_vals)]
             elif op == ReduceOp.MAX:
-                final_val = [max(col) for col in zip(*vals)]
+                final_val = [max(col) for col in zip(*all_vals)]
             else:
                 raise ValueError(f"Unsupported reduce operation: {op}")
 
             self.client.put(f"{self.prefix}/all_reduce/result", pickle.dumps(final_val))
-        else:
-            while self.client.get(f"{self.prefix}/all_reduce/result")[0] is None:
-                pass
+
+        self.barrier()
+
+        val = self.client.get(f"{self.prefix}/all_reduce/result")[0]
+        start_time = time.time()
+        while val is None:
+            if time.time() - start_time > timeout_sec:
+                raise TimeoutError(
+                    f"[Rank {self.rank}] all_reduce timeout waiting for result after {timeout_sec}s"
+                )
             val = self.client.get(f"{self.prefix}/all_reduce/result")[0]
-            final_val = pickle.loads(val)
+        final_val = pickle.loads(val)
 
         return final_val
 
