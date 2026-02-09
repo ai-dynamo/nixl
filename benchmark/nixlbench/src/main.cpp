@@ -63,6 +63,12 @@ static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int nu
     }
     stride = buffer_size / count;
 
+    // For hugepages: ensure stride is a multiple of 2MB so addresses stay 2MB-aligned
+    // This ensures dev_offset = (i * stride) % iov.len is always a multiple of 2MB
+    if (xferBenchConfig::use_hugepages) {
+        stride = ROUND_UP(stride, HUGEPAGE_SIZE);
+    }
+
     return std::make_pair(count, stride);
 }
 

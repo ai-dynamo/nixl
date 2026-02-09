@@ -17,6 +17,7 @@
 
 #include "worker/nixl/nixl_worker.h"
 #include <algorithm>
+#include <cassert>
 #include <cctype>
 #include <chrono>
 #include <cstring>
@@ -27,6 +28,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <iomanip>
+#include <memory>
 #include <sstream>
 #include "utils/neuron.h"
 #include "utils/utils.h"
@@ -34,11 +36,14 @@
 #include <utility>
 #include <sys/time.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <utils/serdes/serdes.h>
 #include <omp.h>
 
-#define ROUND_UP(value, granularity) \
-    ((((value) + (granularity) - 1) / (granularity)) * (granularity))
+// MAP_HUGE_2MB may not be defined on all systems, define it if needed
+#ifndef MAP_HUGE_2MB
+#define MAP_HUGE_2MB (21 << 26) // 2MB hugepage size encoding
+#endif
 
 #define CHECK_NIXL_ERROR(result, message)                                                     \
     do {                                                                                      \
@@ -363,42 +368,156 @@ iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list, nixl_xfer_dlis
     }
 }
 
-static bool
-allocateXferMemory(size_t buffer_size, void **addr) {
-    if (!addr) {
-        std::cerr << "Invalid address" << std::endl;
-        return false;
+namespace {
+
+// RAII wrapper for an xfer-memory buffer. The factory make() selects heap or
+// hugepages based on xferBenchConfig::use_hugepages; subclass destructors
+// handle the matching deallocation. Code paths that store the raw address in
+// xferBenchIOV use release() to hand off ownership and adopt() to take it
+// back at cleanup time.
+class nixlAlloc {
+public:
+    static std::unique_ptr<nixlAlloc>
+    make(size_t size);
+    static std::unique_ptr<nixlAlloc>
+    adopt(void *addr, size_t size);
+
+    virtual ~nixlAlloc() = default;
+
+    nixlAlloc(const nixlAlloc &) = delete;
+    nixlAlloc &
+    operator=(const nixlAlloc &) = delete;
+
+    void *
+    addr() const noexcept {
+        return addr_;
     }
-    if (buffer_size == 0) {
+
+    size_t
+    size() const noexcept {
+        return size_;
+    }
+
+    void *
+    release() noexcept {
+        void *p = addr_;
+        addr_ = nullptr;
+        return p;
+    }
+
+protected:
+    nixlAlloc(void *addr, size_t size) : addr_(addr), size_(size) {}
+
+    void *addr_;
+    size_t size_;
+};
+
+class nixlHeapAlloc final : public nixlAlloc {
+public:
+    nixlHeapAlloc(void *addr, size_t size) : nixlAlloc(addr, size) {}
+
+    ~nixlHeapAlloc() override {
+        if (addr_) {
+            free(addr_);
+        }
+    }
+};
+
+class nixlHugepagesAlloc final : public nixlAlloc {
+public:
+    nixlHugepagesAlloc(void *addr, size_t size) : nixlAlloc(addr, size) {}
+
+    ~nixlHugepagesAlloc() override {
+        if (!addr_) {
+            return;
+        }
+        const size_t aligned = ROUND_UP(size_, HUGEPAGE_SIZE);
+        if (munmap(addr_, aligned) != 0) {
+            std::cerr << "Warning: Failed to unmap hugepage memory: " << strerror(errno)
+                      << std::endl;
+        }
+    }
+};
+
+static std::unique_ptr<nixlAlloc>
+makeHugepagesAlloc(size_t size) {
+    const size_t aligned = ROUND_UP(size, HUGEPAGE_SIZE);
+    void *addr = mmap(nullptr,
+                      aligned,
+                      PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_HUGE_2MB | MAP_POPULATE,
+                      -1,
+                      0);
+    if (addr == MAP_FAILED) {
+        std::cerr << "Error: Hugepage allocation failed (" << strerror(errno) << ")" << std::endl;
+        std::cerr << "Hugepages may not be available. Check /proc/sys/vm/nr_hugepages and "
+                  << "ensure sufficient hugepages are configured, or run without "
+                  << "--use_hugepages" << std::endl;
+        return nullptr;
+    }
+
+    assert(reinterpret_cast<uintptr_t>(addr) % HUGEPAGE_SIZE == 0);
+
+    std::cout << "Allocated hugepage buffer: addr=0x" << std::hex
+              << reinterpret_cast<uintptr_t>(addr) << std::dec << ", requested_size=" << size
+              << ", allocated_size=" << aligned << std::endl;
+
+    return std::make_unique<nixlHugepagesAlloc>(addr, size);
+}
+
+static std::unique_ptr<nixlAlloc>
+makeHeapAlloc(size_t size) {
+    void *addr = nullptr;
+    int rc = posix_memalign(&addr, xferBenchConfig::page_size, size);
+    if (rc != 0 || !addr) {
+        std::cerr << "Failed to allocate " << size << " bytes of page-aligned DRAM memory"
+                  << std::endl;
+        return nullptr;
+    }
+    memset(addr, 0, size);
+    return std::make_unique<nixlHeapAlloc>(addr, size);
+}
+
+std::unique_ptr<nixlAlloc>
+nixlAlloc::make(size_t size) {
+    if (size == 0) {
         std::cerr << "Invalid buffer size" << std::endl;
-        return false;
+        return nullptr;
     }
     if (xferBenchConfig::page_size == 0) {
         std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
-        return false;
+        return nullptr;
     }
 
-    int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
-    if (rc != 0 || !*addr) {
-        std::cerr << "Failed to allocate " << buffer_size << " bytes of page-aligned DRAM memory"
-                  << std::endl;
-        return false;
+    if (xferBenchConfig::use_hugepages) {
+        return makeHugepagesAlloc(size);
     }
-    memset(*addr, 0, buffer_size);
-    return true;
+    return makeHeapAlloc(size);
 }
+
+std::unique_ptr<nixlAlloc>
+nixlAlloc::adopt(void *addr, size_t size) {
+    if (xferBenchConfig::use_hugepages) {
+        return std::make_unique<nixlHugepagesAlloc>(addr, size);
+    }
+    return std::make_unique<nixlHeapAlloc>(addr, size);
+}
+
+} // namespace
 
 std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
-    void *addr;
-
-    if (!allocateXferMemory(buffer_size, &addr)) {
+    auto alloc = nixlAlloc::make(buffer_size);
+    if (!alloc) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
         return std::nullopt;
     }
 
+    // Ownership of the underlying buffer is handed off to the iov; the matching
+    // cleanupBasicDescDram() reclaims it via nixlAlloc::adopt().
     // TODO: Does device id need to be set for DRAM?
-    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, mem_dev_id);
+    return std::optional<xferBenchIOV>(
+        std::in_place, reinterpret_cast<uintptr_t>(alloc->release()), buffer_size, mem_dev_id);
 }
 
 static std::optional<xferBenchIOV>
@@ -637,31 +756,31 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
     }
 
     // Fill up with data
-    void *buf;
-    if (!allocateXferMemory(buffer_size, &buf)) {
+    auto alloc = nixlAlloc::make(buffer_size);
+    if (!alloc) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
         return std::nullopt;
     }
+    void *buf = alloc->addr();
 
     // File is always initialized with XFERBENCH_TARGET_BUFFER_ELEMENT
     memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
 
     size_t offset = start_offset;
     char *write_ptr = static_cast<char *>(buf);
-    while (buffer_size > 0) {
-        ssize_t rc = pwrite(fd, write_ptr, buffer_size, offset);
+    size_t remaining = buffer_size;
+    while (remaining > 0) {
+        ssize_t rc = pwrite(fd, write_ptr, remaining, offset);
         if (rc < 0) {
             std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
                       << std::endl;
             return std::nullopt;
         }
 
-        buffer_size -= rc;
+        remaining -= rc;
         offset += rc;
         write_ptr += rc;
     }
-
-    free(buf);
 
     if (end_offset > fstate.file_size) fstate.file_size = end_offset;
 
@@ -675,7 +794,9 @@ xferBenchNixlWorker::initBasicDescObj(size_t buffer_size, int mem_dev_id, std::s
 
 void
 xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
-    free((void *)iov.addr);
+    // Reclaim ownership of the buffer handed out by initBasicDescDram(); the
+    // returned wrapper goes out of scope here and frees the buffer.
+    nixlAlloc::adopt(reinterpret_cast<void *>(iov.addr), iov.len);
 }
 
 void
@@ -734,9 +855,9 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
     }
 
     // Sample one page at the offset GUSLI will read from
-    void *check_buf;
     bool needs_write = true;
-    if (allocateXferMemory(xferBenchConfig::page_size, &check_buf)) {
+    if (auto check_alloc = nixlAlloc::make(xferBenchConfig::page_size)) {
+        void *check_buf = check_alloc->addr();
         ssize_t rd = pread(fd, check_buf, xferBenchConfig::page_size, device.dev_offset);
         if (rd == (ssize_t)xferBenchConfig::page_size) {
             needs_write = false;
@@ -748,7 +869,6 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
                 }
             }
         }
-        free(check_buf);
     }
 
     if (needs_write) {
@@ -757,11 +877,12 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
                   << (int)XFERBENCH_TARGET_BUFFER_ELEMENT << std::dec << "). Overwriting."
                   << std::endl;
 
-        void *buf;
-        if (!allocateXferMemory(size, &buf)) {
+        auto alloc = nixlAlloc::make(size);
+        if (!alloc) {
             close(fd);
             return false;
         }
+        void *buf = alloc->addr();
         memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, size);
 
         size_t remaining = size;
@@ -772,7 +893,6 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
             if (rc < 0) {
                 std::cerr << "Failed to write to " << device.device_path << " at offset " << offset
                           << ": " << strerror(errno) << std::endl;
-                free(buf);
                 close(fd);
                 return false;
             }
@@ -780,7 +900,6 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
             offset += rc;
             write_ptr += rc;
         }
-        free(buf);
     } else {
         std::cout << "GUSLI file '" << device.device_path << "' at offset " << device.dev_offset
                   << " already contains expected pattern (0x" << std::hex
