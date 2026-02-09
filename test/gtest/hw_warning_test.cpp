@@ -142,7 +142,7 @@ TEST_F(HardwareWarningTest, WarnWhenEfaPresentAndNonLibfabricBackend) {
     unsigned expected_warnings = 1;
 
     if (ucpVersion_ < UCP_VERSION(1, 19)) {
-        /* Ignore possible warning about UCX version */
+        // Ignore possible warning about UCX version
         EXPECT_EQ(log_sink.countWarningsMatching("UCX version is less than 1.19"), 1);
         expected_warnings++;
     }
