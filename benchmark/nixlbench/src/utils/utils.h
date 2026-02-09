@@ -159,6 +159,7 @@ public:
     static std::string filepath;
     static std::string filenames;
     static bool enable_vmm;
+    static bool use_hugepages;
     static int num_files;
     static std::string posix_api_type;
     static int posix_ios_pool_size;

@@ -32,6 +32,7 @@
 static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int num_threads) {
     int initiator_device, target_device;
     size_t buffer_size, count, stride;
+    constexpr size_t HUGEPAGE_SIZE = 2 * 1024 * 1024; // 2MB
 
     initiator_device = xferBenchConfig::num_initiator_dev;
     target_device = xferBenchConfig::num_target_dev;
@@ -62,6 +63,12 @@ static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int nu
         }
     }
     stride = buffer_size / count;
+
+    // For hugepages: ensure stride is a multiple of 2MB so addresses stay 2MB-aligned
+    // This ensures dev_offset = (i * stride) % iov.len is always a multiple of 2MB
+    if (xferBenchConfig::use_hugepages) {
+        stride = ((stride + HUGEPAGE_SIZE - 1) / HUGEPAGE_SIZE) * HUGEPAGE_SIZE;
+    }
 
     return std::make_pair(count, stride);
 }
