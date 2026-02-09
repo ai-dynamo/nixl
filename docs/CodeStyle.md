@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,11 +25,11 @@ limitations under the License.
   * Class/struct members - public and protected data members (e.g., `myField`)
   * Functions - both member and non-member (e.g., `getValue()`, `processCompletions()`)
 * **Snake case** (e.g., `my_variable`):
-  * Function arguments and local variables
+  * Variables - function arguments, local variables, global variables, and constants
+    (e.g., `my_var`, `constexpr int default_port = 8080`)
   * Namespaces (e.g., `namespace nixl_utils`)
   * Type aliases with `_t` suffix (e.g., `using test_params_t = std::vector<int>`)
   * Enum class names with `_t` suffix (e.g., `enum class status_t`)
-  * Constants - `const` and `constexpr` variables (e.g., `constexpr int default_port = 8080`)
   * File names (e.g., `my_backend.h`, `data_processor.cpp`)
 * **Upper snake case** (e.g., `MY_CONSTANT`):
   * Enum values (e.g., `SUCCESS`, `ERROR_TIMEOUT`)
@@ -48,7 +48,7 @@ limitations under the License.
 * Within each access level section, group declarations logically:
   1. Type definitions and nested classes
   2. Static member variables
-  3. Constructors and destructor
+  3. Constructors, assignment operators, and destructor
   4. Member functions
   5. Data members
 
@@ -61,9 +61,9 @@ limitations under the License.
   ```cpp
   class plugin {
   public:
-      plugin(int id);
+      explicit plugin(int id);
 
-      int
+      [[nodiscard]] int
       getId() const;
 
   private:
@@ -208,7 +208,7 @@ limitations under the License.
 ### Parentheses
 
 * **No space** before parentheses in function calls and declarations
-* **Space required** before parentheses in control statements (`if`, `for`, `while`, `switch`, `catch`)
+* **Space required** before parentheses in control statements (`if`, `if constexpr`, `for`, `while`, `switch`, `catch`)
 * Example:
 
   ```cpp
@@ -229,16 +229,18 @@ limitations under the License.
 
 ### Pointer and Reference Alignment
 
-* Pointers and references are **right-aligned** - the `*` and `&` are placed next to the variable name, not the type
+* Pointers and references are **right-aligned** - the `*`, `&`, and `&&` are placed next to the variable name, not the type
 * Example:
 
   ```cpp
-  int *ptr;              // Correct - asterisk next to variable
-  int &ref = value;      // Correct - ampersand next to variable
-  const char *str;       // Correct
+  int *ptr;                // Correct - asterisk next to variable
+  int &ref = value;        // Correct - ampersand next to variable
+  int &&rref = getValue(); // Correct - double ampersand next to variable
+  const char *str;         // Correct
 
-  int* ptr;              // Avoid - asterisk next to type
-  int & ref = value;     // Avoid - spaces around ampersand
+  int* ptr;                // Avoid - asterisk next to type
+  int & ref = value;       // Avoid - spaces around ampersand
+  int&& rref = getValue(); // Avoid - no space before variable
   ```
 
 ### Constructor Initializers
@@ -272,11 +274,11 @@ limitations under the License.
   ```cpp
   /**
    * @brief Process completions on active data rails
-   * @param timeout_ms Timeout in milliseconds
+   * @param timeout Timeout duration
    * @return NIXL_SUCCESS if completions processed, error code on failure
    */
-  nixl_status_t
-  processCompletions(int timeout_ms);
+  [[nodiscard]] nixl_status_t
+  processCompletions(std::chrono::milliseconds timeout);
   ```
 
 ### Inline Comments
@@ -293,15 +295,41 @@ limitations under the License.
   };
 
   // Initialize connection state (regular comment, not documentation)
-  auto state = ConnectionState::DISCONNECTED;
+  auto state = connection_state_t::DISCONNECTED;
   ```
 
 ## General Coding Practices
 
+### Prefer Functions over Macros
+
+* Prefer `constexpr` functions, `inline` functions, or templates over preprocessor macros
+* Functions provide type safety, scoping, and debugging support that macros lack
+* Use macros only when absolutely necessary (e.g., conditional compilation, stringification)
+* Example:
+
+  ```cpp
+  // Preferred
+  constexpr int
+  square(int x) {
+      return x * x;
+  }
+
+  template<typename T>
+  inline T
+  max(T a, T b) {
+      return (a > b) ? a : b;
+  }
+
+  // Avoid
+  #define SQUARE(x) ((x) * (x))
+  #define MAX(a, b) ((a) > (b) ? (a) : (b))
+  ```
+
 ### Anonymous Namespaces
 
-* Prefer anonymous namespaces over `static` for file-local classes and functions
+* In implementation files (.cpp), prefer anonymous namespaces over `static` for file-local classes and functions
 * Anonymous namespaces provide better type safety and clearer intent for internal linkage
+* Do not use anonymous namespaces in header files - use `static` or named namespaces instead
 * Example:
 
   ```cpp
