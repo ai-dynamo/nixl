@@ -22,10 +22,12 @@
 #include <nixl_descriptors.h>
 #include <nixl_params.h>
 #include <nixl.h>
+#include "absl/log/log_sink_registry.h"
 #include "test_utils.h"
 #include "stream/metadata_stream.h"
 #include "serdes/serdes.h"
 #include <mutex>
+#include <stdexcept>
 #include <vector>
 
 #define NUM_TRANSFERS 2
@@ -219,7 +221,8 @@ static void runTarget(const std::string &ip, int port, nixl_thread_sync_t sync_m
         { "num_workers", "4" },
     };
     nixlBackendH *ucx;
-    agent.createBackend("UCX", params, ucx);
+    const auto status = agent.createBackend("UCX", params, ucx);
+    nixl_exit_on_failure(status, "Failed to create UCX backend");
 
     nixl_opt_args_t extra_params;
     extra_params.backends.push_back(ucx);
@@ -242,7 +245,8 @@ static void runInitiator(const std::string &target_ip, int target_port, nixl_thr
         { "num_workers", "4" },
     };
     nixlBackendH *ucx;
-    agent.createBackend("UCX", params, ucx);
+    const auto status = agent.createBackend("UCX", params, ucx);
+    nixl_exit_on_failure(status, "Failed to create UCX backend");
 
     nixl_opt_args_t extra_params;
     extra_params.backends.push_back(ucx);
@@ -257,6 +261,44 @@ static void runInitiator(const std::string &target_ip, int target_port, nixl_thr
     for (auto &thread : threads)
         thread.join();
 }
+
+namespace {
+const std::string expected = "genNotif: no specified or potential backend could send the inter-agent notifications";
+
+class logProblemGuard : private absl::LogSink {
+public:
+    explicit logProblemGuard(const bool target)
+        : target_(target) {
+        absl::AddLogSink(static_cast<absl::LogSink *>(this));
+    }
+
+    ~logProblemGuard() {
+        absl::RemoveLogSink(static_cast<absl::LogSink *>(this));
+    }
+
+    logProblemGuard(logProblemGuard &&) = delete;
+    logProblemGuard(const logProblemGuard &) = delete;
+
+    void
+    operator=(logProblemGuard &&) = delete;
+    void
+    operator=(const logProblemGuard &) = delete;
+
+    [[nodiscard]] static size_t
+    getProblemCount() noexcept;
+
+private:
+    const bool target_;
+
+    void
+    Send(const absl::LogEntry &entry) override {
+        if ((!target_) || (entry.text_message() != expected)) {
+            throw std::runtime_error("Unexpected NIXL warning or error detected!");
+        }
+    }
+};
+
+} // namespace
 
 int main(int argc, char *argv[]) {
     /** Argument Parsing */
@@ -297,10 +339,13 @@ int main(int argc, char *argv[]) {
 
     /*** End - Argument Parsing */
 
-    if (role == target)
+    if (role == target) {
+        logProblemGuard lpg(true);
         runTarget(target_ip, target_port, sync_mode);
-    else
+    } else {
+        logProblemGuard lpg(false);
         runInitiator(target_ip, target_port, sync_mode);
+    }
 
     return 0;
 }
