@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.9.0',
+project('nixl', 'CPP', version: '0.10.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB']
 
 enabled_plugins = {}
 
@@ -98,6 +98,12 @@ has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', depen
 
 # Check whether the POSIX plugin is enabled
 has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
+
+# Check for CUObject Client library
+cuobj_dep = dependency('cuobjclient-13.1', required: false)
+if cuobj_dep.found()
+    add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
+endif
 
 # Forced to ignore this error due to:
 # https://github.com/abseil/abseil-cpp/issues/1779
@@ -281,12 +287,22 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
         add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API', language: ['cpp', 'cuda'])
     endif
 
+    have_host_side_v2 = cpp.has_function('ucp_device_remote_mem_list_create', dependencies: ucx_dep)
+    if have_gpu_side and have_host_side_v2
+        ucx_gpu_device_api_v2_available = true
+        add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API_V2', language: ['cpp', 'cuda'])
+    else
+        ucx_gpu_device_api_v2_available = false
+    endif
+
     summary({
-    'UCX GPU Device API' : ucx_gpu_device_api_available,
-    'GPU-side compile'   : have_gpu_side,
-    'Host-side compile'  : have_host_side,
-    'nvcc available'     : nvcc_prog.found(),
-    'DOCA GPUNETIO found': doca_gpunetio_dep.found(),
+    'UCX GPU Device API'    : ucx_gpu_device_api_available,
+    'GPU-side compile'      : have_gpu_side,
+    'Host-side compile'     : have_host_side,
+    'nvcc available'        : nvcc_prog.found(),
+    'DOCA GPUNETIO found'   : doca_gpunetio_dep.found(),
+    'UCX GPU Device API V2' : ucx_gpu_device_api_v2_available,
+    'Host-side compile V2'  : have_host_side_v2,
   }, section: 'UCX GPU Device API', bool_yn: true)
 endif
 
@@ -342,11 +358,15 @@ if get_option('install_headers')
   install_headers('src/api/cpp/nixl_descriptors.h', install_dir: prefix_inc)
   install_headers('src/utils/serdes/serdes.h', install_dir: prefix_inc + '/utils/serdes')
   install_headers('src/utils/common/nixl_time.h', install_dir: prefix_inc + '/utils/common')
+  install_headers('src/utils/common/nixl_log.h', install_dir: prefix_inc + '/utils/common')
   install_headers('src/api/cpp/backend/backend_engine.h', install_dir: prefix_inc + '/backend')
   install_headers('src/api/cpp/backend/backend_aux.h', install_dir: prefix_inc + '/backend')
+  install_headers('src/api/cpp/backend/backend_plugin.h', install_dir: prefix_inc + '/backend')
   install_headers('src/core/transfer_request.h', install_dir: prefix_inc)
   install_headers('src/core/agent_data.h', install_dir: prefix_inc)
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
+  install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
+
   if ucx_gpu_device_api_available
     install_headers('src/api/gpu/ucx/nixl_device.cuh', install_dir: prefix_inc + '/gpu/ucx')
   endif

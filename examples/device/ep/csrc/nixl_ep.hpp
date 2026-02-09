@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * This file incorporates material from the DeepSeek project, licensed under the MIT License.
  * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -30,6 +30,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/pytypes.h>
 #include <torch/types.h>
+#include <optional>
 #include <tuple>
 #include <vector>
 #include <string>
@@ -42,25 +43,14 @@
 
 #include "nixl.h"
 
-#define EP_EXECUTE_ONCE(func) do { static bool _ = ((func), true); } while(0)
-
 #ifndef TORCH_EXTENSION_NAME
 #define TORCH_EXTENSION_NAME nixl_ep_cpp
 #endif
 
 namespace nixl_ep {
 
-#define MAX_IP_LENGTH 16
-#define MAX_BOOT_ID_LENGTH 37
-
 struct NixlPeerInfo {
-    char ip[MAX_IP_LENGTH];
-    char boot_id[MAX_BOOT_ID_LENGTH];
-    ino_t ipc_namespace_inode;
-    void *rdma_buffer_ptr;
-    uint64_t *counters_buffer_ptr;
-    cudaIpcMemHandle_t rdma_ipc_handle;
-    cudaIpcMemHandle_t counters_ipc_handle;
+    void* rdma_buffer_ptr;
     int* sync_buffer_ptr;
     int device_id;
     int rank;
@@ -81,21 +71,6 @@ struct NixlAgentInfo
     std::vector<bool> wire_up_done; // [num_peers]
 };
 
-struct nixl_ep_ctx {
-    std::vector<nixlXferReqH *> cpu_remote_counter_reqs_0; // [dest_expert_id,remote_rank], cpu ptrs to nixlXferReqH
-    std::vector<nixlXferReqH *> cpu_remote_counter_reqs_1; // [dest_expert_id,remote_rank], cpu ptrs to nixlXferReqH
-    std::vector<nixlGpuXferReqH> gpu_remote_counter_reqs_0; // [dest_expert_id,remote_rank], gpu ptrs to nixlGpuXferReqH
-    std::vector<nixlGpuXferReqH> gpu_remote_counter_reqs_1; // [dest_expert_id,remote_rank], gpu ptrs to nixlGpuXferReqH
-    std::vector<std::vector<nixlXferReqH*>> cpu_batch_reqs; // [num_local_experts][num_peers]
-    std::vector<std::vector<nixlGpuXferReqH>> gpu_batch_reqs; // [num_local_experts][num_peers]
-    std::vector<std::vector<nixlXferReqH*>> cpu_barrier_reqs;
-    std::vector<std::vector<nixlGpuXferReqH>> gpu_barrier_reqs;
-
-    std::vector<void *> rdma_p2p_ptrs; // [num_ranks]
-    std::vector<uint64_t *> counters_p2p_ptrs; // [num_ranks]
-    ep_kernels::gpu_nixl_ctx gpu[2]; // Double buffering
-};
-
 struct Buffer {
 private:
     int buffer_idx = 0; // Double buffering index
@@ -104,10 +79,9 @@ private:
     int64_t num_rdma_bytes;
     void* rdma_buffer_ptr = nullptr;
 
-    // Shrink mode buffer
-    bool enable_shrink = false;
     int *mask_buffer_ptr = nullptr;
     int *sync_buffer_ptr = nullptr;
+    int *sync_count_ptr = nullptr;
 
     // Device info and communication
     int device_id;
@@ -132,46 +106,33 @@ private:
 
     std::unique_ptr<NixlAgentInfo> nixl_agent_info;
     std::vector<NixlPeerInfo> nixl_peer_info;
-    uint64_t *counters_buffer_ptr = nullptr;
     NixlPeerInfo my_peer_info;
-    uint64_t num_counters;
-    uint64_t max_num_ranks;
-    int env_num_channels;
-    nixl_xfer_dlist_t dummy_src_dlist; // TODO: Remove once NIXL supports null src dlist for signals
-    std::unique_ptr<nixl_ep_ctx> nixl_ctx = nullptr;
+    int max_num_ranks;
+    int max_experts_per_rank;
+    ep_kernels::gpu_nixl_ctx gpu_ctx;
 
     /* Common private funcs */
     void _nixl_agent_init();
-    void _nixl_agents_connect(const std::vector<int>& ranks);
+    void _nixl_agents_connect(const std::vector<int>& ranks, const std::vector<nixl_blob_t>& remote_mds = {});
     void _nixl_agents_disconnect(const std::vector<int>& ranks);
     void _nixl_agents_peer_info_gather(std::vector<int>& ranks);
     void _nixl_agents_peer_info_cleanup(const std::vector<int>& ranks);
 
-    /* NIXL EP private funcs */
-    void _nixl_ep_init(const std::vector<int>& ranks);
-    void _nixl_ep_context_init();
-    void _nixl_ep_counters_prepare(const std::vector<int>& ranks);
-    void _nixl_ep_batches_prepare(const std::vector<int>& ranks);
-    void _nixl_ep_p2p_ptrs_prepare(const std::vector<int>& ranks);
-    void _nixl_ep_gpu_ctx_update();
-
-    /* NIXL EP cleanup funcs */
-    void _nixl_ep_cleanup(const std::vector<int>& ranks_to_remove);
-    void _nixl_ep_counters_cleanup(const std::vector<int>& ranks_to_remove);
-    void _nixl_ep_batches_cleanup(const std::vector<int>& ranks_to_remove);
-    void _nixl_ep_p2p_ptrs_cleanup(const std::vector<int>& ranks_to_remove);
-    void _nixl_ep_barrier_buffer_clear();
+    void _nixl_ep_init(void);
+    void _nixl_ep_memory_views_create(void);
+    void _nixl_ep_memory_views_destroy(void);
+    void _nixl_ep_destroy(void);
 
 public:
-    Buffer(int rank, bool explicitly_destroy, bool enable_shrink);
+    Buffer(int rank, bool explicitly_destroy);
 
-    void update_memory_buffers(int num_ranks, int64_t num_rdma_bytes);
+    void update_memory_buffers(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes);
 
-    void connect_ranks(const std::vector<int>& remote_ranks_list);
+    void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt);
 
     void disconnect_ranks(const std::vector<int>& remote_ranks_list);
 
-    void init(int num_ranks, int64_t num_rdma_bytes);
+    void init(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes);
 
     ~Buffer() noexcept(false);
 
@@ -213,6 +174,8 @@ public:
     void query_mask_buffer(const torch::Tensor& mask_status);
 
     void clean_mask_buffer();
+
+    std::string get_local_metadata() const;
 };
 
 } // namespace nixl_ep
