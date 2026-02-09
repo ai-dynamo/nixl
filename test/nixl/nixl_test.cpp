@@ -263,12 +263,12 @@ static void runInitiator(const std::string &target_ip, int target_port, nixl_thr
 }
 
 namespace {
-const std::string expected = "genNotif: no specified or potential backend could send the inter-agent notifications";
+const std::string expected =
+    "genNotif: no specified or potential backend could send the inter-agent notifications";
 
 class logProblemGuard : private absl::LogSink {
 public:
-    explicit logProblemGuard(const bool target)
-        : target_(target) {
+    explicit logProblemGuard(const bool target) : target_(target) {
         absl::AddLogSink(static_cast<absl::LogSink *>(this));
     }
 
