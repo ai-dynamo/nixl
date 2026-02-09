@@ -17,6 +17,7 @@
 
 #include "worker/nixl/nixl_worker.h"
 #include <algorithm>
+#include <cassert>
 #include <cctype>
 #include <cstring>
 #if HAVE_CUDA
@@ -33,11 +34,14 @@
 #include <utility>
 #include <sys/time.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <utils/serdes/serdes.h>
 #include <omp.h>
 
-#define ROUND_UP(value, granularity) \
-    ((((value) + (granularity) - 1) / (granularity)) * (granularity))
+// MAP_HUGE_2MB may not be defined on all systems, define it if needed
+#ifndef MAP_HUGE_2MB
+#define MAP_HUGE_2MB (21 << 26) // 2MB hugepage size encoding
+#endif
 
 #define CHECK_NIXL_ERROR(result, message)                                                       \
     do {                                                                                        \
@@ -357,6 +361,59 @@ iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list, nixl_xfer_dlis
     }
 }
 
+// Helper function to free memory allocated with allocateXferMemory
+static void
+freeXferMemory(void *addr, size_t size) {
+    if (!addr) {
+        return;
+    }
+
+    if (xferBenchConfig::use_hugepages) {
+        // Round up to hugepage size for munmap
+        size_t hugepage_aligned_size = ROUND_UP(size, HUGEPAGE_SIZE);
+        if (munmap(addr, hugepage_aligned_size) != 0) {
+            std::cerr << "Warning: Failed to unmap hugepage memory: " << strerror(errno)
+                      << std::endl;
+        }
+    } else {
+        free(addr);
+    }
+}
+
+static bool
+allocateHugepageMemory(size_t buffer_size, void **addr) {
+    size_t hugepage_aligned_size = ROUND_UP(buffer_size, HUGEPAGE_SIZE);
+
+    void *hugepage_addr = mmap(nullptr,
+                               hugepage_aligned_size,
+                               PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_HUGE_2MB |
+                               MAP_POPULATE,
+                               -1,
+                               0);
+
+    if (hugepage_addr == MAP_FAILED) {
+        std::cerr << "Error: Hugepage allocation failed (" << strerror(errno) << ")"
+                  << std::endl;
+        std::cerr << "Hugepages may not be available. Check /proc/sys/vm/nr_hugepages and "
+                  << "ensure sufficient hugepages are configured, or run without "
+                  << "--use_hugepages" << std::endl;
+        return false;
+    }
+
+    assert(reinterpret_cast<uintptr_t>(hugepage_addr) % HUGEPAGE_SIZE == 0);
+
+    *addr = hugepage_addr;
+
+    std::cout << "Allocated hugepage buffer: addr=0x" << std::hex
+              << reinterpret_cast<uintptr_t>(hugepage_addr) << std::dec
+              << ", requested_size=" << buffer_size
+              << ", allocated_size=" << hugepage_aligned_size
+              << std::endl;
+
+    return true;
+}
+
 static bool
 allocateXferMemory(size_t buffer_size, void **addr) {
     if (!addr) {
@@ -370,6 +427,10 @@ allocateXferMemory(size_t buffer_size, void **addr) {
     if (xferBenchConfig::page_size == 0) {
         std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
         return false;
+    }
+
+    if (xferBenchConfig::use_hugepages) {
+        return allocateHugepageMemory(buffer_size, addr);
     }
 
     int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
@@ -619,20 +680,22 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
     size_t offset = start_offset;
     char *write_ptr = static_cast<char *>(buf);
-    while (buffer_size > 0) {
-        ssize_t rc = pwrite(fd, write_ptr, buffer_size, offset);
+    size_t remaining = buffer_size;
+    while (remaining > 0) {
+        ssize_t rc = pwrite(fd, write_ptr, remaining, offset);
         if (rc < 0) {
             std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
                       << std::endl;
+            freeXferMemory(buf, buffer_size);
             return std::nullopt;
         }
 
-        buffer_size -= rc;
+        remaining -= rc;
         offset += rc;
         write_ptr += rc;
     }
 
-    free(buf);
+    freeXferMemory(buf, buffer_size);
 
     if (end_offset > fstate.file_size) fstate.file_size = end_offset;
 
@@ -646,7 +709,7 @@ xferBenchNixlWorker::initBasicDescObj(size_t buffer_size, int mem_dev_id, std::s
 
 void
 xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
-    free((void *)iov.addr);
+    freeXferMemory((void *)iov.addr, iov.len);
 }
 
 #if HAVE_CUDA
@@ -737,7 +800,7 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
                 }
             }
         }
-        free(check_buf);
+        freeXferMemory(check_buf, xferBenchConfig::page_size);
     }
 
     if (needs_write) {
@@ -761,7 +824,7 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
             if (rc < 0) {
                 std::cerr << "Failed to write to " << device.device_path << " at offset " << offset
                           << ": " << strerror(errno) << std::endl;
-                free(buf);
+                freeXferMemory(buf, size);
                 close(fd);
                 return false;
             }
@@ -769,7 +832,7 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
             offset += rc;
             write_ptr += rc;
         }
-        free(buf);
+        freeXferMemory(buf, size);
     } else {
         std::cout << "GUSLI file '" << device.device_path << "' at offset " << device.dev_offset
                   << " already contains expected pattern (0x" << std::hex
