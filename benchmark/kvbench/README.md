@@ -53,12 +53,12 @@ KVBench simulates real application workloads combining:
 ### Execution Flow Per Traffic Pattern
 
 ```
-Each Rank:
+Each Rank (per traffic pattern):
   ┌─────────────────────────────────────┐
-  │ 1. STORAGE READ (blocking)          │  Read cached data from file
-  │ 2. COMPUTE (sleep)                  │  Simulate reduced compute time
-  │ 3. STORAGE WRITE (blocking)         │  Write new KV cache to file
-  │ 4. RDMA TRANSFER (blocking)         │  Send/receive data to other ranks
+  │ 1. COMPUTE (sleep)                  │  Simulate reduced compute time
+  │ 2. STORAGE READ (blocking)          │  Read cached data from file
+  │ 3. RDMA TRANSFER (blocking)         │  Send/receive data to other ranks
+  │ 4. STORAGE WRITE (blocking)         │  Write new KV cache to file
   └─────────────────────────────────────┘
 ```
 

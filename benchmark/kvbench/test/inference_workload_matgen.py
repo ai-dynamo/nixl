@@ -796,7 +796,7 @@ if __name__ == "__main__":
     )
     @click.option(
         "--prefix-hit-rate",
-        type=float,
+        type=click.FloatRange(0.0, 1.0),
         default=None,
         help="Prefix hit rate (0.0-1.0). Enables storage when specified. 0.0=write-only, 1.0=read-only.",
     )

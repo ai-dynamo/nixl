@@ -221,10 +221,17 @@ class FilesystemBackend(StorageBackend):
                     f.write(chunk[:to_write])
                     written += to_write
 
-            # Extend to full size (WRITE region)
+            # Preallocate WRITE region blocks (avoids first-write block allocation
+            # latency, which is especially important with O_DIRECT)
             if file_size > read_size:
-                f.seek(file_size - 1)
-                f.write(b"\0")
+                try:
+                    os.posix_fallocate(f.fileno(), read_size, file_size - read_size)
+                except OSError:
+                    # Fallback for filesystems that don't support fallocate
+                    f.seek(file_size - 1)
+                    f.write(b"\0")
+            f.flush()
+            os.fsync(f.fileno())
 
     def prepare(
         self,
