@@ -268,7 +268,7 @@ const std::string expected_for_target =
 
 class logProblemGuard : private absl::LogSink {
 public:
-    explicit logProblemGuard(const std::string& expected = "") : expected_(expected) {
+    explicit logProblemGuard(const std::string &expected = "") : expected_(expected) {
         absl::AddLogSink(static_cast<absl::LogSink *>(this));
     }
 
@@ -289,15 +289,15 @@ private:
 
     void
     Send(const absl::LogEntry &entry) override {
-       if (entry.log_severity() == absl::LogSeverity::kInfo) {
-           return;
-       }
-
-       if ((!expected_.empty()) && (entry.text_message() == expected_)) {
-           return;
+        if (entry.log_severity() == absl::LogSeverity::kInfo) {
+            return;
         }
 
-       throw std::runtime_error("Unexpected NIXL warning or error detected!");
+        if ((!expected_.empty()) && (entry.text_message() == expected_)) {
+            return;
+        }
+
+        throw std::runtime_error("Unexpected NIXL warning or error detected!");
     }
 };
 
