@@ -36,14 +36,6 @@ class nixlAgent {
         /** @var  data  The members in agent class wrapped into single nixlAgentData member. */
         std::unique_ptr<nixlAgentData> data;
 
-        /**
-         * @brief Warn if hardware is detected that would benefit from a different backend.
-         *
-         * @param type The backend type being used
-         */
-        void
-        warnAboutHardwareSupportMismatch(const nixl_backend_t &type);
-
     public:
         /*** Initialization and Registering Methods ***/
 

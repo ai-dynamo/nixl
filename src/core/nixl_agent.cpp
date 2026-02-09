@@ -283,8 +283,10 @@ nixlAgent::getBackendParams (const nixlBackendH* backend,
     return NIXL_SUCCESS;
 }
 
+namespace {
+
 void
-nixlAgent::warnAboutHardwareSupportMismatch(const nixl_backend_t &type) {
+warnAboutHardwareSupportMismatch(const nixl_backend_t &type) {
     if (type != "LIBFABRIC") {
         static const nixl::hwInfo hw_info;
 
@@ -295,6 +297,8 @@ nixlAgent::warnAboutHardwareSupportMismatch(const nixl_backend_t &type) {
         }
     }
 }
+
+} // namespace
 
 nixl_status_t
 nixlAgent::createBackend(const nixl_backend_t &type,
