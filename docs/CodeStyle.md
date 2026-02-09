@@ -253,7 +253,8 @@ limitations under the License.
       : public baseClass {
   public:
       myClass(int id, std::string name)
-          : id_(id), name_(std::move(name)) {
+          : id_(id),
+            name_(std::move(name)) {
           // Constructor body
       }
 
