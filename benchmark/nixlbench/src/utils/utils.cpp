@@ -25,6 +25,8 @@
 #include <utility>
 #include <iomanip>
 #include <omp.h>
+#include <set>
+
 #if HAVE_CUDA
 #include <cuda_runtime.h>
 #endif
@@ -253,6 +255,24 @@ std::string xferBenchConfig::gusli_device_security = "";
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
+    std::string usage("NIXL Benchmark.  Sample usage:\n\n");
+    usage += std::string(argv[0]) + " [flags]";
+    gflags::SetUsageMessage(usage);
+
+    // Check for the flags that are disabled in favor of --config_file
+    std::set<std::string_view> disabledFlags = {"flagfile", "fromenv", "tryfromenv"};
+    for (int i = 1; i < argc; i++) {
+        std::string_view arg(argv[i]);
+        for (const auto &disabledFlag : disabledFlags) {
+            if (arg.find(disabledFlag) != std::string_view::npos) {
+                std::cerr << "--" << disabledFlag
+                          << " is disabled for nixlbench. Use --config_file instead." << std::endl;
+                gflags::ShowUsageWithFlags(argv[0]);
+                return -1;
+            }
+        }
+    }
+
     gflags::ParseCommandLineFlags(&argc, &argv, true);
 
     return loadParams();
