@@ -39,7 +39,7 @@ TEST_F(UcxHardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
     }
 
     // Disable CUDA transport in UCX
-    envHelper_.addVar("UCX_TLS", "^cuda");
+    envHelper_.addVar("UCX_TLS", "^cuda,rc_gda");
 
     std::vector<std::string> devs;
     nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
@@ -75,7 +75,7 @@ TEST_F(UcxHardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
     }
 
     // Disable IB transport in UCX
-    envHelper_.addVar("UCX_TLS", "^ib");
+    envHelper_.addVar("UCX_TLS", "^ib,rc_gda");
 
     std::vector<std::string> devs;
     nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
