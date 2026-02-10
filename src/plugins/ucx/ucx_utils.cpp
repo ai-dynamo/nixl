@@ -407,7 +407,7 @@ makeUcpVersion() noexcept {
 }
 
 [[nodiscard]] nixl_ucx_mt_t
-makeMtType(const bool prog_thread, const nixl_thread_sync_t sync_mode) {
+makeMtType(const bool prog_thread, const nixl_thread_sync_t sync_mode) noexcept {
     // With strict synchronization model nixlAgent serializes access to backends, with more
     // permissive models backends need to account for concurrent access and ensure their internal
     // state is properly protected. Progress thread creates internal concurrency in UCX backend
