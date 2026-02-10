@@ -814,7 +814,7 @@ parseGusliDeviceList(const std::string &device_list,
     return devices;
 }
 
-void
+bool
 xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
     int i = 0, j = 0;
     static bool gusli_devmap_init = false;
@@ -992,8 +992,34 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
     }
     if (!pass_check_consistency) {
         std::cerr << "Consistency check failed" << std::endl;
-        exit(EXIT_FAILURE);
     }
+    return pass_check_consistency;
+}
+
+bool
+xferBenchUtils::validateTransfer(bool is_initiator,
+                                 std::vector<std::vector<xferBenchIOV>> &local_lists,
+                                 std::vector<std::vector<xferBenchIOV>> &remote_lists) {
+    if (!xferBenchConfig::check_consistency) {
+        return true;
+    }
+
+    if (is_initiator) {
+        if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+            return checkConsistency(local_lists);
+        } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
+            if (xferBenchConfig::isStorageBackend()) {
+                return checkConsistency(remote_lists);
+            }
+        }
+    } else {
+        // Target
+        if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
+            return checkConsistency(local_lists);
+        }
+    }
+
+    return true;
 }
 
 void
