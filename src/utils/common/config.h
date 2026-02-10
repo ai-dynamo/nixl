@@ -89,7 +89,7 @@ private:
             return strcasecmp(ref.c_str(), value.c_str()) == 0;
         };
         return std::find_if(haystack.begin(), haystack.end(), pred) != haystack.end();
-    }   
+    }
 };
 
 template<>
@@ -174,7 +174,7 @@ template<typename type, template<typename...> class traits = convertTraits>
 getDefaulted(const std::string &env, const type &fallback) {
     return getOptional<type, traits>(env).value_or(fallback);
 }
- 
+
 } // namespace nixl::config
 
 #endif
