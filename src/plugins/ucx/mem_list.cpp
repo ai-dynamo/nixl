@@ -17,76 +17,133 @@
 
 #include "mem_list.h"
 
-#include <stdexcept>
-
 #ifdef HAVE_UCX_GPU_DEVICE_API_V2
+#include "rkey.h"
+#include "ucx_backend.h"
+#include "ucx_utils.h"
+
 extern "C" {
 #include <ucp/api/device/ucp_host.h>
 }
+#endif
 
-#include "rkey.h"
-#include "ucx_utils.h"
+#include <stdexcept>
 
-namespace {
-using remoteMem = nixl::ucx::remoteMem;
+#ifdef HAVE_UCX_GPU_DEVICE_API_V2
+namespace nixl::ucx {
+using device_mem_vector_t = std::vector<ucp_device_mem_list_elem_t>;
+
+class memListElement {
+public:
+    template<typename T>
+    [[nodiscard]] static ucp_device_mem_list_elem_t
+    get(const T &desc, size_t worker_id) {
+        return memListElement(desc, worker_id).element_;
+    }
+
+private:
+    memListElement(const nixlRemoteMetaDesc &desc, size_t worker_id)
+        : element_(create(desc, worker_id)) {}
+
+    memListElement(const nixlMetaDesc &desc, size_t) : element_(create(desc)) {}
+
+    [[nodiscard]] static ucp_device_mem_list_elem_t
+    create(const nixlRemoteMetaDesc &, size_t);
+
+    [[nodiscard]] static ucp_device_mem_list_elem_t
+    create(const nixlMetaDesc &);
+
+    const ucp_device_mem_list_elem_t element_;
+};
+
+class memListParams {
+public:
+    explicit memListParams(const device_mem_vector_t &elements,
+                           const nixlUcxWorker *worker = nullptr) noexcept;
+    memListParams(const device_mem_vector_t &&, const nixlUcxWorker *worker = nullptr) = delete;
+
+    [[nodiscard]] const ucp_device_mem_list_params_t *
+    get() const noexcept {
+        return &params_;
+    }
+
+private:
+    ucp_device_mem_list_params_t params_;
+};
 
 ucp_device_mem_list_elem_t
-createElement(const std::unique_ptr<remoteMem> &mem) {
+memListElement::create(const nixlRemoteMetaDesc &desc, size_t worker_id) {
     ucp_device_mem_list_elem_t element;
-    if (mem) {
-        element.field_mask = UCP_DEVICE_MEM_LIST_ELEM_FIELD_RKEY |
-            UCP_DEVICE_MEM_LIST_ELEM_FIELD_REMOTE_ADDR | UCP_DEVICE_MEM_LIST_ELEM_FIELD_EP;
-        element.rkey = mem->rkey_.get();
-        element.remote_addr = mem->addr_;
-        element.ep = mem->ep_.getEp();
-    } else {
+    if (desc.remoteAgent == nixl_invalid_agent) {
         element.field_mask = 0;
+        return element;
     }
+
+    const auto md = static_cast<const nixlUcxPublicMetadata *>(desc.metadataP);
+    if (!md) {
+        throw std::runtime_error("No public metadata found in remote descriptor");
+    }
+
+    if (!md->conn) {
+        throw std::runtime_error("No connection found in public metadata");
+    }
+
+    element.field_mask = UCP_DEVICE_MEM_LIST_ELEM_FIELD_RKEY |
+        UCP_DEVICE_MEM_LIST_ELEM_FIELD_REMOTE_ADDR | UCP_DEVICE_MEM_LIST_ELEM_FIELD_EP;
+    element.rkey = md->getRkey(worker_id).get();
+    element.remote_addr = static_cast<uint64_t>(desc.addr);
+    element.ep = md->conn->getEp(worker_id)->getEp();
     return element;
 }
 
 ucp_device_mem_list_elem_t
-createElement(const nixlUcxMem &mem) {
+memListElement::create(const nixlMetaDesc &desc) {
+    const auto md = static_cast<const nixlUcxPrivateMetadata *>(desc.metadataP);
+    if (!md) {
+        throw std::runtime_error("No private metadata found in local descriptor");
+    }
+
     ucp_device_mem_list_elem_t element;
     element.field_mask =
         UCP_DEVICE_MEM_LIST_ELEM_FIELD_MEMH | UCP_DEVICE_MEM_LIST_ELEM_FIELD_LOCAL_ADDR;
-    element.memh = mem.getMemh();
-    element.local_addr = mem.getBase();
+    element.memh = md->getMem().getMemh();
+    element.local_addr = md->getMem().getBase();
     return element;
 }
 
+memListParams::memListParams(const device_mem_vector_t &elements,
+                             const nixlUcxWorker *worker) noexcept {
+    params_.field_mask = UCP_DEVICE_MEM_LIST_PARAMS_FIELD_ELEMENTS |
+        UCP_DEVICE_MEM_LIST_PARAMS_FIELD_ELEMENT_SIZE |
+        UCP_DEVICE_MEM_LIST_PARAMS_FIELD_NUM_ELEMENTS;
+    params_.elements = elements.data();
+    params_.element_size = sizeof(ucp_device_mem_list_elem_t);
+    params_.num_elements = elements.size();
+    if (worker) {
+        params_.field_mask |= UCP_DEVICE_MEM_LIST_PARAMS_FIELD_WORKER;
+        params_.worker = worker->get();
+    }
+}
+
 template<typename T>
-std::vector<ucp_device_mem_list_elem_t>
-createElements(const std::vector<T> &mems) {
-    std::vector<ucp_device_mem_list_elem_t> elements;
-    for (const auto &mem : mems) {
-        elements.emplace_back(createElement(mem));
+[[nodiscard]] device_mem_vector_t
+createElements(const T &dlist, size_t worker_id = 0) {
+    device_mem_vector_t elements;
+    elements.reserve(dlist.descCount());
+    for (const auto &desc : dlist) {
+        elements.emplace_back(memListElement::get(desc, worker_id));
     }
     return elements;
 }
 
-ucp_device_mem_list_params_t
-addElements(const std::vector<ucp_device_mem_list_elem_t> &elements) {
-    ucp_device_mem_list_params_t params;
-    params.field_mask = UCP_DEVICE_MEM_LIST_PARAMS_FIELD_ELEMENTS |
-        UCP_DEVICE_MEM_LIST_PARAMS_FIELD_ELEMENT_SIZE |
-        UCP_DEVICE_MEM_LIST_PARAMS_FIELD_NUM_ELEMENTS;
-    params.elements = elements.data();
-    params.element_size = sizeof(ucp_device_mem_list_elem_t);
-    params.num_elements = elements.size();
-    return params;
-}
-} // namespace
-
-namespace nixl::ucx {
 void *
-createMemList(const std::vector<std::unique_ptr<remoteMem>> &mems, nixlUcxWorker &worker) {
-    const auto elements = createElements(mems);
-    const auto params = addElements(elements);
+createMemList(const nixl_remote_meta_dlist_t &dlist, size_t worker_id, nixlUcxWorker &worker) {
+    const device_mem_vector_t elements = createElements(dlist, worker_id);
+    const memListParams params{elements};
 
     ucp_device_remote_mem_list_h handle{nullptr};
     ucs_status_t status;
-    while ((status = ucp_device_remote_mem_list_create(&params, &handle)) ==
+    while ((status = ucp_device_remote_mem_list_create(params.get(), &handle)) ==
            UCS_ERR_NOT_CONNECTED) {
         worker.progress();
     }
@@ -100,14 +157,12 @@ createMemList(const std::vector<std::unique_ptr<remoteMem>> &mems, nixlUcxWorker
 }
 
 void *
-createMemList(const std::vector<nixlUcxMem> &mems, const nixlUcxWorker &worker) {
-    const auto elements = createElements(mems);
-    auto params = addElements(elements);
-    params.field_mask |= UCP_DEVICE_MEM_LIST_PARAMS_FIELD_WORKER;
-    params.worker = worker.get();
+createMemList(const nixl_meta_dlist_t &dlist, const nixlUcxWorker &worker) {
+    const device_mem_vector_t elements = createElements(dlist);
+    const memListParams params{elements, &worker};
 
     ucp_device_local_mem_list_h handle{nullptr};
-    const auto status = ucp_device_local_mem_list_create(&params, &handle);
+    const auto status = ucp_device_local_mem_list_create(params.get(), &handle);
     if (status != UCS_OK) {
         throw std::runtime_error(std::string("Failed to create device local memory list: ") +
                                  ucs_status_string(status));
@@ -122,18 +177,24 @@ releaseMemList(void *mvh) noexcept {
 }
 } // namespace nixl::ucx
 #else
+namespace {
+const std::string error_message{"UCX GPU device API V2 is not supported"};
+}
+
 namespace nixl::ucx {
 void *
-createMemList(const std::vector<std::unique_ptr<remoteMem>> &mems, nixlUcxWorker &worker) {
-    throw std::runtime_error("UCX GPU device API is not supported");
+createMemList(const nixl_remote_meta_dlist_t &, size_t, nixlUcxWorker &) {
+    throw std::runtime_error(error_message);
 }
 
 void *
-createMemList(const std::vector<nixlUcxMem> &mems, const nixlUcxWorker &worker) {
-    throw std::runtime_error("UCX GPU device API is not supported");
+createMemList(const nixl_meta_dlist_t &, const nixlUcxWorker &) {
+    throw std::runtime_error(error_message);
 }
 
 void
-releaseMemList(void *mvh) noexcept {}
+releaseMemList(void *) noexcept {
+    std::terminate();
+}
 } // namespace nixl::ucx
 #endif

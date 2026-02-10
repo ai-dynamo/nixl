@@ -70,6 +70,11 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
             return rkeyStr;
         }
 
+        [[nodiscard]] const nixlUcxMem &
+        getMem() const noexcept {
+            return mem;
+        }
+
     friend class nixlUcxEngine;
 };
 
