@@ -83,4 +83,4 @@ strJoin(const container &strings, const std::string &delim = ", ") {
     return result;
 }
 
-#endif
+#endif // NIXL_SRC_UTILS_COMMON_STR_TOOLS_H
