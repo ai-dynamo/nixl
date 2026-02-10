@@ -265,6 +265,8 @@ static void runInitiator(const std::string &target_ip, int target_port, nixl_thr
 namespace {
 const std::string expected_for_target =
     "genNotif: no specified or potential backend could send the inter-agent notifications";
+const std::string expected_for_old_ucx =
+    "UCX version is less than 1.19, CUDA support is limited, including the lack of support for multi-GPU within a single process.";
 
 class logProblemGuard : private absl::LogSink {
 public:
@@ -290,6 +292,10 @@ private:
     void
     Send(const absl::LogEntry &entry) override {
         if (entry.log_severity() == absl::LogSeverity::kInfo) {
+            return;
+        }
+
+        if (entry.text_message() == expected_for_old_ucx) {
             return;
         }
 
