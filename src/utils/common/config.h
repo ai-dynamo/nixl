@@ -48,21 +48,17 @@ getenvOptional(const std::string &name) {
 [[nodiscard]] inline std::string
 getenvDefaulted(const std::string &name, const std::string &fallback) {
     return getenvOptional(name).value_or(fallback);
- }
+}
 
 template<typename, typename = void> struct convertTraits;
 
-template<>
-struct convertTraits<bool> {
+template<> struct convertTraits<bool> {
     [[nodiscard]] static bool
     convert(const std::string &value) {
-        static const std::vector<std::string> positive = {
-            "y", "yes", "on", "1", "true", "enable"
-        };
+        static const std::vector<std::string> positive = {"y", "yes", "on", "1", "true", "enable"};
 
         static const std::vector<std::string> negative = {
-            "n", "no", "off", "0", "false", "disable"
-        };
+            "n", "no", "off", "0", "false", "disable"};
 
         if (match(value, positive)) {
             return true;
@@ -72,13 +68,8 @@ struct convertTraits<bool> {
             return false;
         }
 
-        NIXL_ERROR << "Unknown value for bool '"
-                   << value
-                   << "' known are "
-                   << strJoin(positive)
-                   << " as positive and "
-                   << strJoin(negative)
-                   << " as negative (case insensitive)";
+        NIXL_ERROR << "Unknown value for bool '" << value << "' known are " << strJoin(positive)
+                   << " as positive and " << strJoin(negative) << " as negative (case insensitive)";
         throw std::runtime_error("Conversion to bool failed");
     }
 
@@ -92,23 +83,22 @@ private:
     }
 };
 
-template<>
-struct convertTraits<std::string> {
+template<> struct convertTraits<std::string> {
     [[nodiscard]] static std::string
     convert(const std::string &value) {
         return value;
     }
 };
 
-template<typename integer, typename longLong>
-struct integerTraits {
+template<typename integer, typename longLong> struct integerTraits {
     static_assert(std::is_signed_v<integer> == std::is_signed_v<longLong>);
     static_assert(std::is_unsigned_v<integer> == std::is_unsigned_v<longLong>);
 
     [[nodiscard]] static integer
     convert(const std::string &value) {
         size_t pos = 0;
-        const longLong ll = std::is_unsigned_v<integer> ? std::stoull(value, &pos) : std::stoll(value, &pos);
+        const longLong ll =
+            std::is_unsigned_v<integer> ? std::stoull(value, &pos) : std::stoll(value, &pos);
         if (pos != value.size()) {
             throw std::runtime_error("Invalid integer");
         }
@@ -137,13 +127,9 @@ getNothrow(type &result, const std::string &env) {
             result = traits<std::decay_t<type>>::convert(*opt);
             return NIXL_SUCCESS;
         }
-        catch(const std::exception &e) {
-            NIXL_DEBUG << "Unable to convert value '"
-                       << *opt
-                       << "' from environment variable '"
-                       << env
-                       << "' to target type "
-                       << typeid(type).name();
+        catch (const std::exception &e) {
+            NIXL_DEBUG << "Unable to convert value '" << *opt << "' from environment variable '"
+                       << env << "' to target type " << typeid(type).name();
             // TODO: Demangle? Manual name?
             return NIXL_ERR_MISMATCH;
         }
@@ -158,7 +144,7 @@ getValue(const std::string &env) {
         return traits<type>::convert(*opt);
     }
     throw std::runtime_error("Missing environment variable '" + env + "'");
- }
+}
 
 template<typename type, template<typename...> class traits = convertTraits>
 [[nodiscard]] std::optional<type>

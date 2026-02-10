@@ -68,7 +68,7 @@ class strEqual
 
 template<typename container>
 std::string
-strJoin(const container &strings, const std::string& delim = ", ") {
+strJoin(const container &strings, const std::string &delim = ", ") {
     if (strings.empty()) {
         return "";
     }
