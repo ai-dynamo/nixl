@@ -89,6 +89,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
         initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
         void
         cleanupBasicDescBlk(xferBenchIOV &basic_desc);
+        bool
+        ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
 };
 
 #endif // __NIXL_WORKER_H

@@ -355,8 +355,12 @@ public:
     static bool
     rmObjS3(const std::string &name);
 
-    static void
+    static bool
     checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
+    static bool
+    validateTransfer(bool is_initiator,
+                     std::vector<std::vector<xferBenchIOV>> &local_lists,
+                     std::vector<std::vector<xferBenchIOV>> &remote_lists);
     static void
     printStatsHeader();
     static void
