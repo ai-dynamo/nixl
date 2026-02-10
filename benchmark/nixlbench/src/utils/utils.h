@@ -26,7 +26,6 @@
 #include <variant>
 #include <vector>
 #include <optional>
-#include <cxxopts.hpp>
 #include <toml++/toml.hpp>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
@@ -207,12 +206,7 @@ public:
 
 protected:
     static int
-    loadParams(cxxopts::ParseResult &results);
-    template<class T>
-    static T
-    getParamValue(const std::unique_ptr<toml::table> &tbl,
-                  const cxxopts::ParseResult &result,
-                  const std::string_view name);
+    loadParams(void);
 };
 
 // Shared GUSLI device config used by utils and nixl_worker
