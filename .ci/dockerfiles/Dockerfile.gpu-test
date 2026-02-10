@@ -1,9 +1,9 @@
-# NIXL SLURM Test Environment
+# NIXL GPU Test Environment
 #
-# GPU cluster testing container for SLURM-based test execution.
+# GPU cluster testing container for GPU-based test execution.
 #
 # Usage:
-#   docker build -f .ci/dockerfiles/Dockerfile.slurm -t nixl-slurm .
+#   docker build -f .ci/dockerfiles/Dockerfile.gpu-test -t nixl-gpu-test .
 #
 
 ARG BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04
@@ -13,7 +13,7 @@ FROM ${BASE_IMAGE}
 # Build arguments
 ARG _UID=148069
 ARG _GID=30
-ARG NIXL_INSTALL_DIR
+ARG NIXL_INSTALL_DIR=/opt/nixl
 ARG NIXL_BUILD_DIR
 ARG PRE_INSTALLED_ENV
 ARG PRE_INSTALLED_NIXL_ENV

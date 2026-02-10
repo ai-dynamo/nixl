@@ -33,10 +33,8 @@ while getopts ":h-:" optchar; do
                     workspace=${OPTARG#*=}
                     ;;
                 *)
-                    if [ "$OPTERR" = 1 ] && [ "${optspec:0:1}" != ":" ]; then
-                        echo "Unknown option --${OPTARG}" >&2
-                        exit 1
-                    fi
+                    echo "Unknown option --${OPTARG}" >&2
+                    exit 1
                     ;;
             esac;;
         h | *)
@@ -87,7 +85,7 @@ case "${slurm_head_node}" in
             echo "INFO: Creating scctl client"
             scctl --raw-errors client create
         fi
-        echo "INFO: Using scctl client to stop Slurm resources"
+        echo "INFO: Executing scancel for job ${slurm_job_id}"
         scctl --raw-errors client connect -- "${SLURM_STOP_ALLOCATION_CMD}"
         ;;
     *)

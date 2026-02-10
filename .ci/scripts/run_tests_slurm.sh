@@ -45,10 +45,8 @@ while getopts ":h-:" optchar; do
                     container_name=${OPTARG#*=}
                     ;;
                 *)
-                    if [ "$OPTERR" = 1 ] && [ "${optspec:0:1}" != ":" ]; then
-                        echo "Unknown option --${OPTARG}" >&2
-                        exit 1
-                    fi
+                    echo "Unknown option --${OPTARG}" >&2
+                    exit 1
                     ;;
             esac;;
         h | *)
@@ -58,8 +56,6 @@ while getopts ":h-:" optchar; do
     esac
 done
 
-# Required parameter
-: ${test_script_path:?Missing --test_script_path}
 
 # Use environment variables as fallback
 nixl_install_dir=${nixl_install_dir:-${NIXL_INSTALL_DIR}}
@@ -68,6 +64,11 @@ slurm_job_id=${slurm_job_id:-${SLURM_JOB_ID}}
 slurm_nodes=${slurm_nodes:-${SLURM_NODES}}
 slurm_head_node=${slurm_head_node:-${SLURM_HEAD_NODE}}
 container_name=${container_name:-"nixl-${BUILD_NUMBER}"}
+
+# Validate required parameters
+: ${docker_image:?Missing --docker_image}
+: ${nixl_install_dir:?Missing --nixl_install_dir}
+: ${test_script_path:?Missing --test_script_path}
 
 # Build SLURM command using bash arrays (professional approach)
 SLURM_CMD=(

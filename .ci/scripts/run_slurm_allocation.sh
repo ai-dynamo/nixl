@@ -65,10 +65,8 @@ while getopts ":h-:" optchar; do
                     workspace=${OPTARG#*=}
                     ;;
                 *)
-                    if [ "$OPTERR" = 1 ] && [ "${optspec:0:1}" != ":" ]; then
-                        echo "Unknown option --${OPTARG}" >&2
-                        exit 1
-                    fi
+                    echo "Unknown option --${OPTARG}" >&2
+                    exit 1
                     ;;
             esac;;
         h | *)
