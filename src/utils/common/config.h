@@ -76,7 +76,7 @@ template<> struct convertTraits<bool> {
 private:
     [[nodiscard]] static bool
     match(const std::string &value, const std::vector<std::string> &haystack) noexcept {
-        static const auto pred = [&](const std::string &ref) {
+        const auto pred = [&](const std::string &ref) {
             return strcasecmp(ref.c_str(), value.c_str()) == 0;
         };
         return std::find_if(haystack.begin(), haystack.end(), pred) != haystack.end();
