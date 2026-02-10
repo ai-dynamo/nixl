@@ -173,4 +173,53 @@ resetSeqId() {
     g_seq_id_counter.store(0);
 }
 
+nixl_status_t
+getCustomStringParam(const nixl_b_params_t &custom_params,
+                     const std::string &key,
+                     std::string &value) {
+    // first check for environment variable override
+    // we do this by using upper case name with NIXL_LIBFABRIC_ prefix
+    std::string upper_key = key;
+    std::transform(key.begin(), key.end(), upper_key.begin(), ::toupper);
+    upper_key = std::string("NIXL_LIBFABRIC_") + upper_key;
+    NIXL_DEBUG << "Checking override from env var: " << upper_key;
+    char *env_value = getenv(upper_key.c_str());
+    if (env_value != nullptr) {
+        value = env_value;
+        NIXL_TRACE << "Overriding configuration item " << key << " by corresponding environment "
+                   << "variable " << upper_key << " with value: " << value;
+        return NIXL_SUCCESS;
+    }
+
+    nixl_b_params_t::const_iterator itr = custom_params.find(key);
+    if (itr != custom_params.end()) {
+        value = itr->second;
+        return NIXL_SUCCESS;
+    }
+    return NIXL_ERR_NOT_FOUND;
+}
+
+nixl_status_t
+getCustomIntParam(const nixl_b_params_t &custom_params, const std::string &key, uint64_t &value) {
+    // first get string value
+    std::string value_str;
+    nixl_status_t res = getCustomStringParam(custom_params, key, value_str);
+    if (res != NIXL_SUCCESS) {
+        NIXL_DEBUG << "Using default " << key << ": " << value;
+        return res;
+    }
+
+    // attempt to convert to integer
+    try {
+        value = std::stoull(value_str);
+        NIXL_DEBUG << "Using custom " << key << ": " << value;
+    }
+    catch (const std::exception &e) {
+        NIXL_WARN << "Invalid " << key << " value '" << value_str << "': " << e.what()
+                  << ", expecting non-negative integer, using default: " << value;
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    return NIXL_SUCCESS;
+}
+
 } // namespace LibfabricUtils

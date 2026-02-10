@@ -319,6 +319,11 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
     }
 #endif
 
+    // this is required for loading rail selection policy by configuration
+    if (rail_manager.init(getCustomParams()) != NIXL_SUCCESS) {
+        throw std::runtime_error("Failed to initialize the rail manager");
+    }
+
     // Parse striping threshold parameter
     std::string threshold_str;
     striping_threshold_ = NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD;
