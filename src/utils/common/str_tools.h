@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,9 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __STR_TOOLS_H
-#define __STR_TOOLS_H
+#ifndef NIXL_SRC_UTILS_COMMON_STR_TOOLS_H
+#define NIXL_SRC_UTILS_COMMON_STR_TOOLS_H
+
 #include <regex>
+#include <string>
+#include <vector>
 
 inline std::vector<std::string> str_split(const std::string& str, const std::string& delims) {
     std::regex re(delims);
@@ -62,4 +65,22 @@ class strEqual
           return true;
       }
 };
+
+template<typename container>
+std::string
+strJoin(const container &strings, const std::string& delim = ", ") {
+    if (strings.empty()) {
+        return "";
+    }
+
+    auto iter = strings.begin();
+    std::string result = *iter;
+
+    for (++iter; iter != strings.end(); ++iter) {
+        result += delim;
+        result += *iter;
+    }
+    return result;
+}
+
 #endif
