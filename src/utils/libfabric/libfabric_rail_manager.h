@@ -34,6 +34,37 @@
 
 // Forward declarations
 class nixlLibfabricTopology;
+class nixlLibfabricRailManager;
+
+/** @brief Rail selection policy parent interface type. */
+class nixlLibfabricRailSelectionPolicy {
+public:
+    virtual ~nixlLibfabricRailSelectionPolicy() {}
+
+    nixlLibfabricRailSelectionPolicy(const nixlLibfabricRailSelectionPolicy &) = delete;
+    nixlLibfabricRailSelectionPolicy &
+    operator=(const nixlLibfabricRailSelectionPolicy &) = delete;
+
+    /**
+     * @brief Loads the policy from custom engine configuration.
+     * @param rail_manager The rail manager.
+     * @return True if succeeded.
+     */
+    virtual bool
+    load(nixlLibfabricRailManager &rail_manager) = 0;
+
+    /**
+     * @brief Selects a set of rails for memory registration.
+     * @param buffer The memory buffer for which data rails are to be selected.
+     * @param[out] selected_rails The resulting selected rail (index list).
+     * @return True if succeeded.
+     */
+    virtual bool
+    selectRails(void *buffer, std::vector<size_t> &selected_rails) = 0;
+
+protected:
+    nixlLibfabricRailSelectionPolicy() {}
+};
 
 /** Central manager for multi-rail RDMA operations with topology awareness */
 class nixlLibfabricRailManager {
@@ -46,6 +77,14 @@ public:
     nixlLibfabricRailManager(size_t striping_threshold);
     /** Destroy rail manager and cleanup all resources */
     ~nixlLibfabricRailManager();
+
+    /**
+     * @brief Initialize rail manager with provided configuration.
+     * @param custom_params Custom configuration parameters from engine.
+     * @return NIXL_SUCCESS on success, error code on failure
+     */
+    nixl_status_t
+    init(const nixl_b_params_t &custom_params);
 
     // Rail management
     /** Create data rails for high-bandwidth transfers (one per EFA device)
@@ -302,6 +341,15 @@ public:
         return topology.get();
     }
 
+    /**
+     * @brief Retrieves the rail selection policy in use for DRAM_SEG memory type.
+     * @return The rail selection policy.
+     */
+    const std::unique_ptr<nixlLibfabricRailSelectionPolicy> &
+    getDramRailSelectionPolicy() const {
+        return dram_rail_selection_policy_;
+    }
+
     /** Get the system's runtime type.
      * @return fi_hmem_iface runtime type (CUDA, NEURON, or SYSTEM)
      */
@@ -329,6 +377,13 @@ private:
     // Active Rail Tracking System
     std::unordered_set<size_t> active_rails_;
     mutable std::mutex active_rails_mutex_;
+
+    // rail selection policy for DRAM memory type
+    std::unique_ptr<nixlLibfabricRailSelectionPolicy> dram_rail_selection_policy_;
+
+    // get rail count limit for DRAM memory type, either computed or from user
+    bool
+    getDramRailLimit(const nixl_b_params_t &custom_params, size_t &max_bw, size_t &max_rails);
 
     // Internal rail selection method
     std::vector<size_t>

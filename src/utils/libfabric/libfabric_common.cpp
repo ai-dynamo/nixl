@@ -27,6 +27,8 @@
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
 
+#include <numa.h>
+
 namespace LibfabricUtils {
 
 
@@ -119,6 +121,53 @@ hexdump(const void *data, size_t size) {
     return ss.str();
 }
 
+std::string
+railIdsToString(const std::vector<size_t> &rail_ids) {
+    std::stringstream ss;
+    ss << "[";
+    for (size_t i = 0; i < rail_ids.size(); ++i) {
+        if (i > 0) {
+            ss << ", ";
+        }
+        ss << rail_ids[i];
+    }
+    ss << "]";
+    return ss.str();
+}
+
+bool
+getMaxNumaNode(int &node_id) {
+    if (numa_available() < 0) {
+        NIXL_ERROR << "Failed to retrieve maximum NUMA node id: libnuma is unavailable";
+        return false;
+    }
+    int max_node = numa_max_node();
+    if (max_node < 0) {
+        NIXL_ERROR << "Failed to retrieve maximum NUMA node id, numa_max_node() returned: "
+                   << max_node;
+        return false;
+    }
+    node_id = max_node;
+    return true;
+}
+
+bool
+getNumConfiguredNumaNodes(int &node_count) {
+    if (numa_available() < 0) {
+        NIXL_ERROR << "Failed to retrieve number of configured NUMA nodes: libnuma is unavailable";
+        return false;
+    }
+    int num_nodes = numa_num_configured_nodes();
+    if (num_nodes < 0) {
+        NIXL_ERROR << "Failed to retrieve number of configured NUMA nodes, "
+                      "numa_num_configured_nodes() returned: "
+                   << num_nodes;
+        return false;
+    }
+    node_count = num_nodes;
+    return true;
+}
+
 // Thread-safe atomic counters for optimized ID generation
 static std::atomic<uint16_t> g_xfer_id_counter{1}; // 16-bit XFER_ID counter, start from 1
 static std::atomic<uint8_t> g_seq_id_counter{0}; // 4-bit SEQ_ID counter, start from 0
@@ -171,6 +220,72 @@ void
 resetSeqId() {
     // Reset SEQ_ID counter for new postXfer
     g_seq_id_counter.store(0);
+}
+
+nixl_status_t
+getCustomStringParam(const nixl_b_params_t &custom_params,
+                     const std::string &key,
+                     std::string &value) {
+    // first check for environment variable override
+    // we do this by using upper case name with NIXL_LIBFABRIC_ prefix
+    std::string upper_key = key;
+    std::transform(key.begin(), key.end(), upper_key.begin(), ::toupper);
+    upper_key = std::string("NIXL_LIBFABRIC_") + upper_key;
+    NIXL_DEBUG << "Checking override from env var: " << upper_key;
+    char *env_value = getenv(upper_key.c_str());
+    if (env_value != nullptr) {
+        value = env_value;
+        NIXL_TRACE << "Overriding configuration item " << key << " by corresponding environment "
+                   << "variable " << upper_key;
+        return NIXL_SUCCESS;
+    }
+
+    nixl_b_params_t::const_iterator itr = custom_params.find(key);
+    if (itr != custom_params.end()) {
+        value = itr->second;
+        return NIXL_SUCCESS;
+    }
+    return NIXL_ERR_NOT_FOUND;
+}
+
+nixl_status_t
+getCustomIntParam(const nixl_b_params_t &custom_params, const std::string &key, uint64_t &value) {
+    // first get string value
+    std::string value_str;
+    nixl_status_t res = getCustomStringParam(custom_params, key, value_str);
+    if (res != NIXL_SUCCESS) {
+        NIXL_DEBUG << "Using default " << key << ": " << value;
+        return res;
+    }
+
+    // attempt to convert to integer
+    try {
+        if (value_str.empty()) {
+            NIXL_WARN << "Empty " << key << " configuration value, using default: " << value;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        if (value_str[0] == '-') {
+            NIXL_WARN << "Invalid " << key << " value '" << value_str
+                      << "': expecting non-negative integer, using default: " << value;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        std::size_t pos = 0;
+        uint64_t parsed_value = std::stoull(value_str, &pos, 10);
+        if (pos != value_str.size()) {
+            NIXL_ERROR << "Invalid integer value for configuration item " << key << ": "
+                       << value_str << ", seeing excess non-digit characters from position " << pos
+                       << ": '" << value_str.substr(pos) << "', using default: " << value;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        value = parsed_value;
+        NIXL_DEBUG << "Using custom " << key << ": " << value;
+    }
+    catch (const std::exception &e) {
+        NIXL_WARN << "Invalid " << key << " value '" << value_str << "': " << e.what()
+                  << ", expecting non-negative integer, using default: " << value;
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    return NIXL_SUCCESS;
 }
 
 } // namespace LibfabricUtils

@@ -296,6 +296,11 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
 
     NIXL_DEBUG << "Initializing Libfabric Backend";
 
+    // this is required for loading rail selection policy by configuration
+    if (rail_manager.init(getCustomParams()) != NIXL_SUCCESS) {
+        throw std::runtime_error("Failed to initialize the rail manager");
+    }
+
     // Query system runtime type from rail manager (determined once at topology discovery)
     runtime_ = rail_manager.getRuntime();
 

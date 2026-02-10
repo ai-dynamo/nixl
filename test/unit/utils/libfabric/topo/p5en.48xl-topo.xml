@@ -1,0 +1,675 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE topology SYSTEM "hwloc2.dtd">
+<topology version="2.0">
+  <object type="Machine" os_index="0" cpuset="0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff" complete_cpuset="0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff" allowed_cpuset="0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff" nodeset="0x00000003" complete_nodeset="0x00000003" allowed_nodeset="0x00000003" gp_index="1">
+    <object type="Package" os_index="0" cpuset="0x0000ffff,0xffffffff,,0x0000ffff,0xffffffff" complete_cpuset="0x0000ffff,0xffffffff,,0x0000ffff,0xffffffff" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="3">
+      <object type="NUMANode" os_index="0" cpuset="0x0000ffff,0xffffffff,,0x0000ffff,0xffffffff" complete_cpuset="0x0000ffff,0xffffffff,,0x0000ffff,0xffffffff" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="678" local_memory="1073701388288">
+        <page_type size="4096" count="256726896"/>
+        <page_type size="2097152" count="10561"/>
+        <page_type size="1073741824" count="0"/>
+      </object>
+      <object type="Bridge" gp_index="905" bridge_type="0-1" depth="0" bridge_pci="0000:[00-00]">
+        <object type="PCIDev" gp_index="802" pci_busid="0000:00:01.3" pci_type="0000 [8086:7113] [0000:0000] 08" pci_link_speed="0.000000">
+          <info name="PCISlot" value="1"/>
+          <info name="PCIVendor" value="Intel Corporation"/>
+          <info name="PCIDevice" value="82371AB/EB/MB PIIX4 ACPI"/>
+        </object>
+        <object type="PCIDev" gp_index="811" pci_busid="0000:00:03.0" pci_type="0300 [1d0f:1111] [0000:0000] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="3"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+        </object>
+        <object type="PCIDev" gp_index="739" pci_busid="0000:00:04.0" pci_type="0108 [1d0f:8061] [1d0f:0000] 00" pci_link_speed="15.753846">
+          <info name="PCISlot" value="4"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="NVMe EBS Controller"/>
+          <object type="OSDev" gp_index="912" name="nvme0n1" subtype="Disk" osdev_type="0">
+            <info name="Size" value="209715200"/>
+            <info name="SectorSize" value="512"/>
+            <info name="LinuxDeviceID" value="259:0"/>
+            <info name="Model" value="Amazon Elastic Block Store"/>
+            <info name="Revision" value="2.0"/>
+          </object>
+        </object>
+      </object>
+      <object type="Bridge" gp_index="907" bridge_type="0-1" depth="0" bridge_pci="0000:[44-5c]">
+        <object type="Bridge" gp_index="894" bridge_type="1-1" depth="1" bridge_pci="0000:[45-5c]" pci_busid="0000:44:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+          <info name="PCISlot" value="64"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <object type="Bridge" gp_index="862" bridge_type="1-1" depth="2" bridge_pci="0000:[46-5c]" pci_busid="0000:45:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+            <info name="PCISlot" value="1-1"/>
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+            <object type="Bridge" gp_index="828" bridge_type="1-1" depth="3" bridge_pci="0000:[47-47]" pci_busid="0000:46:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="792" pci_busid="0000:47:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="70-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="930" name="enp71s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="699" bridge_type="1-1" depth="3" bridge_pci="0000:[48-48]" pci_busid="0000:46:00.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="757" pci_busid="0000:48:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="71-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="925" name="enp72s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="806" bridge_type="1-1" depth="3" bridge_pci="0000:[49-49]" pci_busid="0000:46:00.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="720" pci_busid="0000:49:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="72-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="936" name="enp73s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="681" bridge_type="1-1" depth="3" bridge_pci="0000:[4a-4a]" pci_busid="0000:46:00.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="780" pci_busid="0000:4a:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="73-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="932" name="enp74s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="689" bridge_type="1-1" depth="3" bridge_pci="0000:[55-55]" pci_busid="0000:46:01.6" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="693" pci_busid="0000:55:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="84-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="943" name="rdmap85s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="796" bridge_type="1-1" depth="3" bridge_pci="0000:[56-56]" pci_busid="0000:46:01.7" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="886" pci_busid="0000:56:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="85-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="938" name="rdmap86s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="686" bridge_type="1-1" depth="3" bridge_pci="0000:[57-57]" pci_busid="0000:46:02.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="851" pci_busid="0000:57:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="86-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="949" name="rdmap87s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="793" bridge_type="1-1" depth="3" bridge_pci="0000:[58-58]" pci_busid="0000:46:02.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="820" pci_busid="0000:58:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="87-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="945" name="rdmap88s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="891" bridge_type="1-1" depth="3" bridge_pci="0000:[59-59]" pci_busid="0000:46:02.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="782" pci_busid="0000:59:00.0" pci_type="0302 [10de:2335] [10de:18be] a1" pci_link_speed="63.015385">
+                <info name="PCISlot" value="88-1"/>
+                <info name="PCIVendor" value="NVIDIA Corporation"/>
+                <info name="PCIDevice" value="GH100 [H200 SXM 141GB]"/>
+                <object type="OSDev" gp_index="953" name="opencl0d0" subtype="OpenCL" osdev_type="5">
+                  <info name="Backend" value="OpenCL"/>
+                  <info name="OpenCLDeviceType" value="GPU"/>
+                  <info name="GPUVendor" value="NVIDIA Corporation"/>
+                  <info name="GPUModel" value="NVIDIA H200"/>
+                  <info name="OpenCLPlatformIndex" value="0"/>
+                  <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+                  <info name="OpenCLPlatformDeviceIndex" value="0"/>
+                  <info name="OpenCLComputeUnits" value="132"/>
+                  <info name="OpenCLGlobalMemorySize" value="146591680"/>
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="769" bridge_type="1-1" depth="3" bridge_pci="0000:[5a-5a]" pci_busid="0000:46:02.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="846" pci_busid="0000:5a:00.0" pci_type="0302 [10de:2335] [10de:18be] a1" pci_link_speed="63.015385">
+                <info name="PCISlot" value="89-1"/>
+                <info name="PCIVendor" value="NVIDIA Corporation"/>
+                <info name="PCIDevice" value="GH100 [H200 SXM 141GB]"/>
+                <object type="OSDev" gp_index="954" name="opencl0d1" subtype="OpenCL" osdev_type="5">
+                  <info name="Backend" value="OpenCL"/>
+                  <info name="OpenCLDeviceType" value="GPU"/>
+                  <info name="GPUVendor" value="NVIDIA Corporation"/>
+                  <info name="GPUModel" value="NVIDIA H200"/>
+                  <info name="OpenCLPlatformIndex" value="0"/>
+                  <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+                  <info name="OpenCLPlatformDeviceIndex" value="1"/>
+                  <info name="OpenCLComputeUnits" value="132"/>
+                  <info name="OpenCLGlobalMemorySize" value="146591680"/>
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="873" bridge_type="1-1" depth="3" bridge_pci="0000:[5b-5b]" pci_busid="0000:46:02.4" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="812" pci_busid="0000:5b:00.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="90-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="NVMe SSD Controller"/>
+                <object type="OSDev" gp_index="915" name="nvme2n1" subtype="Disk" osdev_type="0">
+                  <info name="Size" value="3710937500"/>
+                  <info name="SectorSize" value="512"/>
+                  <info name="LinuxDeviceID" value="259:8"/>
+                  <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+                  <info name="Revision" value="0"/>
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="746" bridge_type="1-1" depth="3" bridge_pci="0000:[5c-5c]" pci_busid="0000:46:02.5" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="772" pci_busid="0000:5c:00.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="91-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="NVMe SSD Controller"/>
+                <object type="OSDev" gp_index="916" name="nvme5n1" subtype="Disk" osdev_type="0">
+                  <info name="Size" value="3710937500"/>
+                  <info name="SectorSize" value="512"/>
+                  <info name="LinuxDeviceID" value="259:6"/>
+                  <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+                  <info name="Revision" value="0"/>
+                </object>
+              </object>
+            </object>
+          </object>
+        </object>
+      </object>
+      <object type="Bridge" gp_index="908" bridge_type="0-1" depth="0" bridge_pci="0000:[5d-75]">
+        <object type="Bridge" gp_index="736" bridge_type="1-1" depth="1" bridge_pci="0000:[5e-75]" pci_busid="0000:5d:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+          <info name="PCISlot" value="96"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <object type="Bridge" gp_index="698" bridge_type="1-1" depth="2" bridge_pci="0000:[5f-75]" pci_busid="0000:5e:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+            <info name="PCISlot" value="2-1"/>
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+            <object type="Bridge" gp_index="889" bridge_type="1-1" depth="3" bridge_pci="0000:[60-60]" pci_busid="0000:5f:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="706" pci_busid="0000:60:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="92-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="927" name="enp96s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="767" bridge_type="1-1" depth="3" bridge_pci="0000:[61-61]" pci_busid="0000:5f:00.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="901" pci_busid="0000:61:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="93-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="921" name="enp97s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="871" bridge_type="1-1" depth="3" bridge_pci="0000:[62-62]" pci_busid="0000:5f:00.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="869" pci_busid="0000:62:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="94-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="933" name="enp98s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="744" bridge_type="1-1" depth="3" bridge_pci="0000:[63-63]" pci_busid="0000:5f:00.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="835" pci_busid="0000:63:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="95-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="928" name="enp99s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="760" bridge_type="1-1" depth="3" bridge_pci="0000:[6e-6e]" pci_busid="0000:5f:01.6" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="766" pci_busid="0000:6e:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="106-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="940" name="rdmap110s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="861" bridge_type="1-1" depth="3" bridge_pci="0000:[6f-6f]" pci_busid="0000:5f:01.7" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="727" pci_busid="0000:6f:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="107-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="951" name="rdmap111s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="755" bridge_type="1-1" depth="3" bridge_pci="0000:[70-70]" pci_busid="0000:5f:02.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="775" pci_busid="0000:70:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="108-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="947" name="rdmap112s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="855" bridge_type="1-1" depth="3" bridge_pci="0000:[71-71]" pci_busid="0000:5f:02.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="738" pci_busid="0000:71:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="109-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="941" name="rdmap113s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="730" bridge_type="1-1" depth="3" bridge_pci="0000:[72-72]" pci_busid="0000:5f:02.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="701" pci_busid="0000:72:00.0" pci_type="0302 [10de:2335] [10de:18be] a1" pci_link_speed="63.015385">
+                <info name="PCISlot" value="110-1"/>
+                <info name="PCIVendor" value="NVIDIA Corporation"/>
+                <info name="PCIDevice" value="GH100 [H200 SXM 141GB]"/>
+                <object type="OSDev" gp_index="955" name="opencl0d2" subtype="OpenCL" osdev_type="5">
+                  <info name="Backend" value="OpenCL"/>
+                  <info name="OpenCLDeviceType" value="GPU"/>
+                  <info name="GPUVendor" value="NVIDIA Corporation"/>
+                  <info name="GPUModel" value="NVIDIA H200"/>
+                  <info name="OpenCLPlatformIndex" value="0"/>
+                  <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+                  <info name="OpenCLPlatformDeviceIndex" value="2"/>
+                  <info name="OpenCLComputeUnits" value="132"/>
+                  <info name="OpenCLGlobalMemorySize" value="146591680"/>
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="838" bridge_type="1-1" depth="3" bridge_pci="0000:[73-73]" pci_busid="0000:5f:02.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="892" pci_busid="0000:73:00.0" pci_type="0302 [10de:2335] [10de:18be] a1" pci_link_speed="63.015385">
+                <info name="PCISlot" value="111-1"/>
+                <info name="PCIVendor" value="NVIDIA Corporation"/>
+                <info name="PCIDevice" value="GH100 [H200 SXM 141GB]"/>
+                <object type="OSDev" gp_index="956" name="opencl0d3" subtype="OpenCL" osdev_type="5">
+                  <info name="Backend" value="OpenCL"/>
+                  <info name="OpenCLDeviceType" value="GPU"/>
+                  <info name="GPUVendor" value="NVIDIA Corporation"/>
+                  <info name="GPUModel" value="NVIDIA H200"/>
+                  <info name="OpenCLPlatformIndex" value="0"/>
+                  <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+                  <info name="OpenCLPlatformDeviceIndex" value="3"/>
+                  <info name="OpenCLComputeUnits" value="132"/>
+                  <info name="OpenCLGlobalMemorySize" value="146591680"/>
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="707" bridge_type="1-1" depth="3" bridge_pci="0000:[74-74]" pci_busid="0000:5f:02.4" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="857" pci_busid="0000:74:00.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="112-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="NVMe SSD Controller"/>
+                <object type="OSDev" gp_index="914" name="nvme6n1" subtype="Disk" osdev_type="0">
+                  <info name="Size" value="3710937500"/>
+                  <info name="SectorSize" value="512"/>
+                  <info name="LinuxDeviceID" value="259:11"/>
+                  <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+                  <info name="Revision" value="0"/>
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="814" bridge_type="1-1" depth="3" bridge_pci="0000:[75-75]" pci_busid="0000:5f:02.5" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="824" pci_busid="0000:75:00.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="113-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="NVMe SSD Controller"/>
+                <object type="OSDev" gp_index="917" name="nvme8n1" subtype="Disk" osdev_type="0">
+                  <info name="Size" value="3710937500"/>
+                  <info name="SectorSize" value="512"/>
+                  <info name="LinuxDeviceID" value="259:12"/>
+                  <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+                  <info name="Revision" value="0"/>
+                </object>
+              </object>
+            </object>
+          </object>
+        </object>
+      </object>
+    </object>
+    <object type="Package" os_index="1" cpuset="0xffffffff,0xffff0000,,0xffffffff,0xffff0000,0x0" complete_cpuset="0xffffffff,0xffff0000,,0xffffffff,0xffff0000,0x0" nodeset="0x00000002" complete_nodeset="0x00000002" gp_index="293">
+      <object type="NUMANode" os_index="1" cpuset="0xffffffff,0xffff0000,,0xffffffff,0xffff0000,0x0" complete_cpuset="0xffffffff,0xffff0000,,0xffffffff,0xffff0000,0x0" nodeset="0x00000002" complete_nodeset="0x00000002" gp_index="679" local_memory="1073721700352">
+        <page_type size="4096" count="256732367"/>
+        <page_type size="2097152" count="10560"/>
+        <page_type size="1073741824" count="0"/>
+      </object>
+      <object type="Bridge" gp_index="909" bridge_type="0-1" depth="0" bridge_pci="0000:[76-8e]">
+        <object type="Bridge" gp_index="789" bridge_type="1-1" depth="1" bridge_pci="0000:[77-8e]" pci_busid="0000:76:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+          <info name="PCISlot" value="128"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <object type="Bridge" gp_index="752" bridge_type="1-1" depth="2" bridge_pci="0000:[78-8e]" pci_busid="0000:77:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+            <info name="PCISlot" value="3-1"/>
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+            <object type="Bridge" gp_index="821" bridge_type="1-1" depth="3" bridge_pci="0000:[7a-7a]" pci_busid="0000:78:00.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="742" pci_busid="0000:7a:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="115-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="922" name="enp122s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="691" bridge_type="1-1" depth="3" bridge_pci="0000:[7b-7b]" pci_busid="0000:78:00.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="704" pci_busid="0000:7b:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="116-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="934" name="enp123s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="799" bridge_type="1-1" depth="3" bridge_pci="0000:[7c-7c]" pci_busid="0000:78:00.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="896" pci_busid="0000:7c:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="117-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="929" name="enp124s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="899" bridge_type="1-1" depth="3" bridge_pci="0000:[7d-7d]" pci_busid="0000:78:00.4" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="864" pci_busid="0000:7d:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="118-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="923" name="enp125s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="813" bridge_type="1-1" depth="3" bridge_pci="0000:[87-87]" pci_busid="0000:78:01.6" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="816" pci_busid="0000:87:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="128-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="952" name="rdmap135s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="685" bridge_type="1-1" depth="3" bridge_pci="0000:[88-88]" pci_busid="0000:78:01.7" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="777" pci_busid="0000:88:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="129-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="948" name="rdmap136s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="808" bridge_type="1-1" depth="3" bridge_pci="0000:[89-89]" pci_busid="0000:78:02.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="743" pci_busid="0000:89:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="130-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="942" name="rdmap137s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="683" bridge_type="1-1" depth="3" bridge_pci="0000:[8a-8a]" pci_busid="0000:78:02.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="807" pci_busid="0000:8a:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="131-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="937" name="rdmap138s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="785" bridge_type="1-1" depth="3" bridge_pci="0000:[8b-8b]" pci_busid="0000:78:02.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="770" pci_busid="0000:8b:00.0" pci_type="0302 [10de:2335] [10de:18be] a1" pci_link_speed="63.015385">
+                <info name="PCISlot" value="132-1"/>
+                <info name="PCIVendor" value="NVIDIA Corporation"/>
+                <info name="PCIDevice" value="GH100 [H200 SXM 141GB]"/>
+                <object type="OSDev" gp_index="957" name="opencl0d4" subtype="OpenCL" osdev_type="5">
+                  <info name="Backend" value="OpenCL"/>
+                  <info name="OpenCLDeviceType" value="GPU"/>
+                  <info name="GPUVendor" value="NVIDIA Corporation"/>
+                  <info name="GPUModel" value="NVIDIA H200"/>
+                  <info name="OpenCLPlatformIndex" value="0"/>
+                  <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+                  <info name="OpenCLPlatformDeviceIndex" value="4"/>
+                  <info name="OpenCLComputeUnits" value="132"/>
+                  <info name="OpenCLGlobalMemorySize" value="146591680"/>
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="885" bridge_type="1-1" depth="3" bridge_pci="0000:[8c-8c]" pci_busid="0000:78:02.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="732" pci_busid="0000:8c:00.0" pci_type="0302 [10de:2335] [10de:18be] a1" pci_link_speed="63.015385">
+                <info name="PCISlot" value="133-1"/>
+                <info name="PCIVendor" value="NVIDIA Corporation"/>
+                <info name="PCIDevice" value="GH100 [H200 SXM 141GB]"/>
+                <object type="OSDev" gp_index="958" name="opencl0d5" subtype="OpenCL" osdev_type="5">
+                  <info name="Backend" value="OpenCL"/>
+                  <info name="OpenCLDeviceType" value="GPU"/>
+                  <info name="GPUVendor" value="NVIDIA Corporation"/>
+                  <info name="GPUModel" value="NVIDIA H200"/>
+                  <info name="OpenCLPlatformIndex" value="0"/>
+                  <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+                  <info name="OpenCLPlatformDeviceIndex" value="5"/>
+                  <info name="OpenCLComputeUnits" value="132"/>
+                  <info name="OpenCLGlobalMemorySize" value="146591680"/>
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="765" bridge_type="1-1" depth="3" bridge_pci="0000:[8d-8d]" pci_busid="0000:78:02.4" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="694" pci_busid="0000:8d:00.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="134-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="NVMe SSD Controller"/>
+                <object type="OSDev" gp_index="918" name="nvme1n1" subtype="Disk" osdev_type="0">
+                  <info name="Size" value="3710937500"/>
+                  <info name="SectorSize" value="512"/>
+                  <info name="LinuxDeviceID" value="259:7"/>
+                  <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+                  <info name="Revision" value="0"/>
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="868" bridge_type="1-1" depth="3" bridge_pci="0000:[8e-8e]" pci_busid="0000:78:02.5" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="887" pci_busid="0000:8e:00.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="135-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="NVMe SSD Controller"/>
+                <object type="OSDev" gp_index="913" name="nvme3n1" subtype="Disk" osdev_type="0">
+                  <info name="Size" value="3710937500"/>
+                  <info name="SectorSize" value="512"/>
+                  <info name="LinuxDeviceID" value="259:5"/>
+                  <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+                  <info name="Revision" value="0"/>
+                </object>
+              </object>
+            </object>
+          </object>
+        </object>
+      </object>
+      <object type="Bridge" gp_index="910" bridge_type="0-1" depth="0" bridge_pci="0000:[8f-a7]">
+        <object type="Bridge" gp_index="852" bridge_type="1-1" depth="1" bridge_pci="0000:[90-a7]" pci_busid="0000:8f:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+          <info name="PCISlot" value="160"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <object type="Bridge" gp_index="898" bridge_type="1-1" depth="2" bridge_pci="0000:[91-a7]" pci_busid="0000:90:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+            <info name="PCISlot" value="4-1"/>
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+            <object type="Bridge" gp_index="867" bridge_type="1-1" depth="3" bridge_pci="0000:[92-92]" pci_busid="0000:91:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="832" pci_busid="0000:92:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="136-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="924" name="enp146s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="741" bridge_type="1-1" depth="3" bridge_pci="0000:[93-93]" pci_busid="0000:91:00.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="794" pci_busid="0000:93:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="137-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="935" name="enp147s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="845" bridge_type="1-1" depth="3" bridge_pci="0000:[94-94]" pci_busid="0000:91:00.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="759" pci_busid="0000:94:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="138-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="931" name="enp148s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="718" bridge_type="1-1" depth="3" bridge_pci="0000:[95-95]" pci_busid="0000:91:00.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="722" pci_busid="0000:95:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="139-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+                <object type="OSDev" gp_index="926" name="enp149s0" osdev_type="2">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="729" bridge_type="1-1" depth="3" bridge_pci="0000:[a0-a0]" pci_busid="0000:91:01.6" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="888" pci_busid="0000:a0:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="150-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="944" name="rdmap160s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="836" bridge_type="1-1" depth="3" bridge_pci="0000:[a1-a1]" pci_busid="0000:91:01.7" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="854" pci_busid="0000:a1:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="151-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="939" name="rdmap161s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="726" bridge_type="1-1" depth="3" bridge_pci="0000:[a2-a2]" pci_busid="0000:91:02.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="822" pci_busid="0000:a2:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="152-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="950" name="rdmap162s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="833" bridge_type="1-1" depth="3" bridge_pci="0000:[a3-a3]" pci_busid="0000:91:02.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="31.507692">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="786" pci_busid="0000:a3:00.0" pci_type="0200 [1d0f:efa2] [1d0f:efa2] 00" pci_link_speed="31.507692">
+                <info name="PCISlot" value="153-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+                <object type="OSDev" gp_index="946" name="rdmap163s0" osdev_type="3">
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="703" bridge_type="1-1" depth="3" bridge_pci="0000:[a4-a4]" pci_busid="0000:91:02.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="748" pci_busid="0000:a4:00.0" pci_type="0302 [10de:2335] [10de:18be] a1" pci_link_speed="63.015385">
+                <info name="PCISlot" value="154-1"/>
+                <info name="PCIVendor" value="NVIDIA Corporation"/>
+                <info name="PCIDevice" value="GH100 [H200 SXM 141GB]"/>
+                <object type="OSDev" gp_index="959" name="opencl0d6" subtype="OpenCL" osdev_type="5">
+                  <info name="Backend" value="OpenCL"/>
+                  <info name="OpenCLDeviceType" value="GPU"/>
+                  <info name="GPUVendor" value="NVIDIA Corporation"/>
+                  <info name="GPUModel" value="NVIDIA H200"/>
+                  <info name="OpenCLPlatformIndex" value="0"/>
+                  <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+                  <info name="OpenCLPlatformDeviceIndex" value="6"/>
+                  <info name="OpenCLComputeUnits" value="132"/>
+                  <info name="OpenCLGlobalMemorySize" value="146591680"/>
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="810" bridge_type="1-1" depth="3" bridge_pci="0000:[a5-a5]" pci_busid="0000:91:02.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="711" pci_busid="0000:a5:00.0" pci_type="0302 [10de:2335] [10de:18be] a1" pci_link_speed="63.015385">
+                <info name="PCISlot" value="155-1"/>
+                <info name="PCIVendor" value="NVIDIA Corporation"/>
+                <info name="PCIDevice" value="GH100 [H200 SXM 141GB]"/>
+                <object type="OSDev" gp_index="960" name="opencl0d7" subtype="OpenCL" osdev_type="5">
+                  <info name="Backend" value="OpenCL"/>
+                  <info name="OpenCLDeviceType" value="GPU"/>
+                  <info name="GPUVendor" value="NVIDIA Corporation"/>
+                  <info name="GPUModel" value="NVIDIA H200"/>
+                  <info name="OpenCLPlatformIndex" value="0"/>
+                  <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+                  <info name="OpenCLPlatformDeviceIndex" value="7"/>
+                  <info name="OpenCLComputeUnits" value="132"/>
+                  <info name="OpenCLGlobalMemorySize" value="146591680"/>
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="684" bridge_type="1-1" depth="3" bridge_pci="0000:[a6-a6]" pci_busid="0000:91:02.4" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="904" pci_busid="0000:a6:00.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="156-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="NVMe SSD Controller"/>
+                <object type="OSDev" gp_index="919" name="nvme4n1" subtype="Disk" osdev_type="0">
+                  <info name="Size" value="3710937500"/>
+                  <info name="SectorSize" value="512"/>
+                  <info name="LinuxDeviceID" value="259:9"/>
+                  <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+                  <info name="Revision" value="0"/>
+                </object>
+              </object>
+            </object>
+            <object type="Bridge" gp_index="787" bridge_type="1-1" depth="3" bridge_pci="0000:[a7-a7]" pci_busid="0000:91:02.5" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="63.015385">
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <object type="PCIDev" gp_index="870" pci_busid="0000:a7:00.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="15.753846">
+                <info name="PCISlot" value="157-1"/>
+                <info name="PCIVendor" value="Amazon.com, Inc."/>
+                <info name="PCIDevice" value="NVMe SSD Controller"/>
+                <object type="OSDev" gp_index="920" name="nvme7n1" subtype="Disk" osdev_type="0">
+                  <info name="Size" value="3710937500"/>
+                  <info name="SectorSize" value="512"/>
+                  <info name="LinuxDeviceID" value="259:10"/>
+                  <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+                  <info name="Revision" value="0"/>
+                </object>
+              </object>
+            </object>
+          </object>
+        </object>
+      </object>
+    </object>
+  </object>
+</topology>
