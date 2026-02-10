@@ -609,8 +609,9 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
     memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
 
     size_t offset = start_offset;
+    char *write_ptr = static_cast<char *>(buf);
     while (buffer_size > 0) {
-        ssize_t rc = pwrite(fd, buf, buffer_size, offset);
+        ssize_t rc = pwrite(fd, write_ptr, buffer_size, offset);
         if (rc < 0) {
             std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
                       << std::endl;
@@ -619,6 +620,7 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
         buffer_size -= rc;
         offset += rc;
+        write_ptr += rc;
     }
 
     free(buf);
@@ -744,8 +746,9 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
 
         size_t remaining = size;
         size_t offset = device.dev_offset;
+        char *write_ptr = static_cast<char *>(buf);
         while (remaining > 0) {
-            ssize_t rc = pwrite(fd, buf, remaining, offset);
+            ssize_t rc = pwrite(fd, write_ptr, remaining, offset);
             if (rc < 0) {
                 std::cerr << "Failed to write to " << device.device_path << " at offset " << offset
                           << ": " << strerror(errno) << std::endl;
@@ -755,6 +758,7 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
             }
             remaining -= rc;
             offset += rc;
+            write_ptr += rc;
         }
         free(buf);
     } else {
