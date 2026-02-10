@@ -1,0 +1,331 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE topology SYSTEM "hwloc2.dtd">
+<topology version="2.0">
+  <object type="Machine" os_index="0" cpuset="0x0000ffff,0xffffffff" complete_cpuset="0xffffffff,0xffffffff,0xffffffff" allowed_cpuset="0x0000ffff,0xffffffff" nodeset="0x00000003" complete_nodeset="0x00000003" allowed_nodeset="0x00000003" gp_index="1">
+    <object type="Package" os_index="0" cpuset="0x00ffffff" complete_cpuset="0x00ffffff" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="3">
+      <object type="NUMANode" os_index="0" cpuset="0x00ffffff" complete_cpuset="0x00ffffff" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="246" local_memory="602251575296">
+        <page_type size="4096" count="144330204"/>
+        <page_type size="2097152" count="5281"/>
+        <page_type size="1073741824" count="0"/>
+      </object>
+      <object type="Bridge" gp_index="284" bridge_type="0-1" depth="0" bridge_pci="0000:[10-10]">
+        <object type="PCIDev" gp_index="274" pci_busid="0000:10:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="32"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+          <object type="OSDev" gp_index="299" name="ens32" osdev_type="2">
+          </object>
+        </object>
+        <object type="PCIDev" gp_index="266" pci_busid="0000:10:1b.0" pci_type="0200 [1d0f:efa0] [1d0f:efa0] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="59"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+          <object type="OSDev" gp_index="304" name="rdmap16s27" osdev_type="3">
+          </object>
+        </object>
+        <object type="PCIDev" gp_index="255" pci_busid="0000:10:1c.0" pci_type="0302 [10de:20b0] [10de:134f] a1" pci_link_speed="31.507692">
+          <info name="PCISlot" value="60"/>
+          <info name="PCIVendor" value="NVIDIA Corporation"/>
+          <info name="PCIDevice" value="GA100 [A100 SXM4 40GB]"/>
+        </object>
+        <object type="PCIDev" gp_index="248" pci_busid="0000:10:1d.0" pci_type="0302 [10de:20b0] [10de:134f] a1" pci_link_speed="31.507692">
+          <info name="PCISlot" value="61"/>
+          <info name="PCIVendor" value="NVIDIA Corporation"/>
+          <info name="PCIDevice" value="GA100 [A100 SXM4 40GB]"/>
+        </object>
+        <object type="PCIDev" gp_index="272" pci_busid="0000:10:1e.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="62"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="NVMe SSD Controller"/>
+          <object type="OSDev" gp_index="296" name="nvme1n1" subtype="Disk" osdev_type="0">
+            <info name="Size" value="917968750"/>
+            <info name="SectorSize" value="512"/>
+            <info name="LinuxDeviceID" value="259:1"/>
+            <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+            <info name="Revision" value="0"/>
+          </object>
+        </object>
+        <object type="PCIDev" gp_index="257" pci_busid="0000:10:1f.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="63"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="NVMe SSD Controller"/>
+          <object type="OSDev" gp_index="297" name="nvme4n1" subtype="Disk" osdev_type="0">
+            <info name="Size" value="917968750"/>
+            <info name="SectorSize" value="512"/>
+            <info name="LinuxDeviceID" value="259:5"/>
+            <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+            <info name="Revision" value="0"/>
+          </object>
+        </object>
+        <object type="OSDev" gp_index="307" name="opencl0d0" subtype="OpenCL" osdev_type="5">
+          <info name="Backend" value="OpenCL"/>
+          <info name="OpenCLDeviceType" value="GPU"/>
+          <info name="GPUVendor" value="NVIDIA Corporation"/>
+          <info name="GPUModel" value="NVIDIA A100-SXM4-40GB"/>
+          <info name="OpenCLPlatformIndex" value="0"/>
+          <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+          <info name="OpenCLPlatformDeviceIndex" value="0"/>
+          <info name="OpenCLComputeUnits" value="108"/>
+          <info name="OpenCLGlobalMemorySize" value="41410944"/>
+        </object>
+        <object type="OSDev" gp_index="308" name="opencl0d1" subtype="OpenCL" osdev_type="5">
+          <info name="Backend" value="OpenCL"/>
+          <info name="OpenCLDeviceType" value="GPU"/>
+          <info name="GPUVendor" value="NVIDIA Corporation"/>
+          <info name="GPUModel" value="NVIDIA A100-SXM4-40GB"/>
+          <info name="OpenCLPlatformIndex" value="0"/>
+          <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+          <info name="OpenCLPlatformDeviceIndex" value="1"/>
+          <info name="OpenCLComputeUnits" value="108"/>
+          <info name="OpenCLGlobalMemorySize" value="41410944"/>
+        </object>
+      </object>
+      <object type="Bridge" gp_index="285" bridge_type="0-1" depth="0" bridge_pci="0000:[20-20]">
+        <object type="PCIDev" gp_index="273" pci_busid="0000:20:01.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="65"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+          <object type="OSDev" gp_index="301" name="ens65" osdev_type="2">
+          </object>
+        </object>
+        <object type="PCIDev" gp_index="279" pci_busid="0000:20:1b.0" pci_type="0200 [1d0f:efa0] [1d0f:efa0] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="91"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+          <object type="OSDev" gp_index="303" name="rdmap32s27" osdev_type="3">
+          </object>
+        </object>
+        <object type="PCIDev" gp_index="265" pci_busid="0000:20:1c.0" pci_type="0302 [10de:20b0] [10de:134f] a1" pci_link_speed="31.507692">
+          <info name="PCISlot" value="92"/>
+          <info name="PCIVendor" value="NVIDIA Corporation"/>
+          <info name="PCIDevice" value="GA100 [A100 SXM4 40GB]"/>
+        </object>
+        <object type="PCIDev" gp_index="254" pci_busid="0000:20:1d.0" pci_type="0302 [10de:20b0] [10de:134f] a1" pci_link_speed="31.507692">
+          <info name="PCISlot" value="93"/>
+          <info name="PCIVendor" value="NVIDIA Corporation"/>
+          <info name="PCIDevice" value="GA100 [A100 SXM4 40GB]"/>
+        </object>
+        <object type="PCIDev" gp_index="282" pci_busid="0000:20:1e.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="94"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="NVMe SSD Controller"/>
+          <object type="OSDev" gp_index="294" name="nvme5n1" subtype="Disk" osdev_type="0">
+            <info name="Size" value="917968750"/>
+            <info name="SectorSize" value="512"/>
+            <info name="LinuxDeviceID" value="259:2"/>
+            <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+            <info name="Revision" value="0"/>
+          </object>
+        </object>
+        <object type="PCIDev" gp_index="271" pci_busid="0000:20:1f.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="95"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="NVMe SSD Controller"/>
+          <object type="OSDev" gp_index="298" name="nvme7n1" subtype="Disk" osdev_type="0">
+            <info name="Size" value="917968750"/>
+            <info name="SectorSize" value="512"/>
+            <info name="LinuxDeviceID" value="259:3"/>
+            <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+            <info name="Revision" value="0"/>
+          </object>
+        </object>
+        <object type="OSDev" gp_index="309" name="opencl0d2" subtype="OpenCL" osdev_type="5">
+          <info name="Backend" value="OpenCL"/>
+          <info name="OpenCLDeviceType" value="GPU"/>
+          <info name="GPUVendor" value="NVIDIA Corporation"/>
+          <info name="GPUModel" value="NVIDIA A100-SXM4-40GB"/>
+          <info name="OpenCLPlatformIndex" value="0"/>
+          <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+          <info name="OpenCLPlatformDeviceIndex" value="2"/>
+          <info name="OpenCLComputeUnits" value="108"/>
+          <info name="OpenCLGlobalMemorySize" value="41410944"/>
+        </object>
+        <object type="OSDev" gp_index="310" name="opencl0d3" subtype="OpenCL" osdev_type="5">
+          <info name="Backend" value="OpenCL"/>
+          <info name="OpenCLDeviceType" value="GPU"/>
+          <info name="GPUVendor" value="NVIDIA Corporation"/>
+          <info name="GPUModel" value="NVIDIA A100-SXM4-40GB"/>
+          <info name="OpenCLPlatformIndex" value="0"/>
+          <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+          <info name="OpenCLPlatformDeviceIndex" value="3"/>
+          <info name="OpenCLComputeUnits" value="108"/>
+          <info name="OpenCLGlobalMemorySize" value="41410944"/>
+        </object>
+      </object>
+    </object>
+    <object type="Package" os_index="1" cpuset="0x0000ffff,0xff000000" complete_cpuset="0x0000ffff,0xff000000" nodeset="0x00000002" complete_nodeset="0x00000002" gp_index="125">
+      <object type="NUMANode" os_index="1" cpuset="0x0000ffff,0xff000000" complete_cpuset="0x0000ffff,0xff000000" nodeset="0x00000002" complete_nodeset="0x00000002" gp_index="247" local_memory="602268844032">
+        <page_type size="4096" count="144334932"/>
+        <page_type size="2097152" count="5280"/>
+        <page_type size="1073741824" count="0"/>
+      </object>
+      <object type="Bridge" gp_index="287" bridge_type="0-1" depth="0" bridge_pci="0000:[90-90]">
+        <object type="PCIDev" gp_index="270" pci_busid="0000:90:01.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="129"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+          <object type="OSDev" gp_index="302" name="ens129" osdev_type="2">
+          </object>
+        </object>
+        <object type="PCIDev" gp_index="276" pci_busid="0000:90:1b.0" pci_type="0200 [1d0f:efa0] [1d0f:efa0] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="155"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+          <object type="OSDev" gp_index="306" name="rdmap144s27" osdev_type="3">
+          </object>
+        </object>
+        <object type="PCIDev" gp_index="260" pci_busid="0000:90:1c.0" pci_type="0302 [10de:20b0] [10de:134f] a1" pci_link_speed="31.507692">
+          <info name="PCISlot" value="156"/>
+          <info name="PCIVendor" value="NVIDIA Corporation"/>
+          <info name="PCIDevice" value="GA100 [A100 SXM4 40GB]"/>
+        </object>
+        <object type="PCIDev" gp_index="251" pci_busid="0000:90:1d.0" pci_type="0302 [10de:20b0] [10de:134f] a1" pci_link_speed="31.507692">
+          <info name="PCISlot" value="157"/>
+          <info name="PCIVendor" value="NVIDIA Corporation"/>
+          <info name="PCIDevice" value="GA100 [A100 SXM4 40GB]"/>
+        </object>
+        <object type="PCIDev" gp_index="280" pci_busid="0000:90:1e.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="158"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="NVMe SSD Controller"/>
+          <object type="OSDev" gp_index="293" name="nvme2n1" subtype="Disk" osdev_type="0">
+            <info name="Size" value="917968750"/>
+            <info name="SectorSize" value="512"/>
+            <info name="LinuxDeviceID" value="259:8"/>
+            <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+            <info name="Revision" value="0"/>
+          </object>
+        </object>
+        <object type="PCIDev" gp_index="267" pci_busid="0000:90:1f.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="159"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="NVMe SSD Controller"/>
+          <object type="OSDev" gp_index="291" name="nvme3n1" subtype="Disk" osdev_type="0">
+            <info name="Size" value="917968750"/>
+            <info name="SectorSize" value="512"/>
+            <info name="LinuxDeviceID" value="259:4"/>
+            <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+            <info name="Revision" value="0"/>
+          </object>
+        </object>
+        <object type="OSDev" gp_index="311" name="opencl0d4" subtype="OpenCL" osdev_type="5">
+          <info name="Backend" value="OpenCL"/>
+          <info name="OpenCLDeviceType" value="GPU"/>
+          <info name="GPUVendor" value="NVIDIA Corporation"/>
+          <info name="GPUModel" value="NVIDIA A100-SXM4-40GB"/>
+          <info name="OpenCLPlatformIndex" value="0"/>
+          <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+          <info name="OpenCLPlatformDeviceIndex" value="4"/>
+          <info name="OpenCLComputeUnits" value="108"/>
+          <info name="OpenCLGlobalMemorySize" value="41410944"/>
+        </object>
+        <object type="OSDev" gp_index="312" name="opencl0d5" subtype="OpenCL" osdev_type="5">
+          <info name="Backend" value="OpenCL"/>
+          <info name="OpenCLDeviceType" value="GPU"/>
+          <info name="GPUVendor" value="NVIDIA Corporation"/>
+          <info name="GPUModel" value="NVIDIA A100-SXM4-40GB"/>
+          <info name="OpenCLPlatformIndex" value="0"/>
+          <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+          <info name="OpenCLPlatformDeviceIndex" value="5"/>
+          <info name="OpenCLComputeUnits" value="108"/>
+          <info name="OpenCLGlobalMemorySize" value="41410944"/>
+        </object>
+      </object>
+      <object type="Bridge" gp_index="288" bridge_type="0-1" depth="0" bridge_pci="0000:[a0-a0]">
+        <object type="PCIDev" gp_index="268" pci_busid="0000:a0:01.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="161"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+          <object type="OSDev" gp_index="300" name="ens161" osdev_type="2">
+          </object>
+        </object>
+        <object type="PCIDev" gp_index="275" pci_busid="0000:a0:1b.0" pci_type="0200 [1d0f:efa0] [1d0f:efa0] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="187"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="Elastic Fabric Adapter (EFA)"/>
+          <object type="OSDev" gp_index="305" name="rdmap160s27" osdev_type="3">
+          </object>
+        </object>
+        <object type="PCIDev" gp_index="259" pci_busid="0000:a0:1c.0" pci_type="0302 [10de:20b0] [10de:134f] a1" pci_link_speed="31.507692">
+          <info name="PCISlot" value="188"/>
+          <info name="PCIVendor" value="NVIDIA Corporation"/>
+          <info name="PCIDevice" value="GA100 [A100 SXM4 40GB]"/>
+        </object>
+        <object type="PCIDev" gp_index="250" pci_busid="0000:a0:1d.0" pci_type="0302 [10de:20b0] [10de:134f] a1" pci_link_speed="31.507692">
+          <info name="PCISlot" value="189"/>
+          <info name="PCIVendor" value="NVIDIA Corporation"/>
+          <info name="PCIDevice" value="GA100 [A100 SXM4 40GB]"/>
+        </object>
+        <object type="PCIDev" gp_index="278" pci_busid="0000:a0:1e.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="190"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="NVMe SSD Controller"/>
+          <object type="OSDev" gp_index="292" name="nvme6n1" subtype="Disk" osdev_type="0">
+            <info name="Size" value="917968750"/>
+            <info name="SectorSize" value="512"/>
+            <info name="LinuxDeviceID" value="259:6"/>
+            <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+            <info name="Revision" value="0"/>
+          </object>
+        </object>
+        <object type="PCIDev" gp_index="264" pci_busid="0000:a0:1f.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="0.000000">
+          <info name="PCISlot" value="191"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <info name="PCIDevice" value="NVMe SSD Controller"/>
+          <object type="OSDev" gp_index="295" name="nvme8n1" subtype="Disk" osdev_type="0">
+            <info name="Size" value="917968750"/>
+            <info name="SectorSize" value="512"/>
+            <info name="LinuxDeviceID" value="259:7"/>
+            <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+            <info name="Revision" value="0"/>
+          </object>
+        </object>
+        <object type="OSDev" gp_index="313" name="opencl0d6" subtype="OpenCL" osdev_type="5">
+          <info name="Backend" value="OpenCL"/>
+          <info name="OpenCLDeviceType" value="GPU"/>
+          <info name="GPUVendor" value="NVIDIA Corporation"/>
+          <info name="GPUModel" value="NVIDIA A100-SXM4-40GB"/>
+          <info name="OpenCLPlatformIndex" value="0"/>
+          <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+          <info name="OpenCLPlatformDeviceIndex" value="6"/>
+          <info name="OpenCLComputeUnits" value="108"/>
+          <info name="OpenCLGlobalMemorySize" value="41410944"/>
+        </object>
+        <object type="OSDev" gp_index="314" name="opencl0d7" subtype="OpenCL" osdev_type="5">
+          <info name="Backend" value="OpenCL"/>
+          <info name="OpenCLDeviceType" value="GPU"/>
+          <info name="GPUVendor" value="NVIDIA Corporation"/>
+          <info name="GPUModel" value="NVIDIA A100-SXM4-40GB"/>
+          <info name="OpenCLPlatformIndex" value="0"/>
+          <info name="OpenCLPlatformName" value="NVIDIA CUDA"/>
+          <info name="OpenCLPlatformDeviceIndex" value="7"/>
+          <info name="OpenCLComputeUnits" value="108"/>
+          <info name="OpenCLGlobalMemorySize" value="41410944"/>
+        </object>
+      </object>
+    </object>
+    <object type="Bridge" gp_index="283" bridge_type="0-1" depth="0" bridge_pci="0000:[00-00]">
+      <object type="PCIDev" gp_index="261" pci_busid="0000:00:01.3" pci_type="0000 [8086:7113] [0000:0000] 08" pci_link_speed="0.000000">
+        <info name="PCISlot" value="1"/>
+        <info name="PCIVendor" value="Intel Corporation"/>
+        <info name="PCIDevice" value="82371AB/EB/MB PIIX4 ACPI"/>
+      </object>
+      <object type="PCIDev" gp_index="263" pci_busid="0000:00:03.0" pci_type="0300 [1d0f:1111] [0000:0000] 00" pci_link_speed="0.000000">
+        <info name="PCISlot" value="3"/>
+        <info name="PCIVendor" value="Amazon.com, Inc."/>
+      </object>
+      <object type="PCIDev" gp_index="253" pci_busid="0000:00:04.0" pci_type="0108 [1d0f:8061] [1d0f:0000] 00" pci_link_speed="0.000000">
+        <info name="PCISlot" value="4"/>
+        <info name="PCIVendor" value="Amazon.com, Inc."/>
+        <info name="PCIDevice" value="NVMe EBS Controller"/>
+        <object type="OSDev" gp_index="290" name="nvme0n1" subtype="Disk" osdev_type="0">
+          <info name="Size" value="209715200"/>
+          <info name="SectorSize" value="512"/>
+          <info name="LinuxDeviceID" value="259:0"/>
+          <info name="Model" value="Amazon Elastic Block Store"/>
+          <info name="Revision" value="1.0"/>
+        </object>
+      </object>
+    </object>
+  </object>
+</topology>
