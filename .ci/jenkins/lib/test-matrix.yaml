@@ -45,7 +45,7 @@ env:
   SLURM_HEAD_NODE: scctl
   SLURM_GRES: gpu:2
   SLURM_MEM: 64G
-  SLURM_MINCPUS: 16
+  SLURM_MINCPUS: 24
   SLURM_JOB_TIMEOUT: '01:30:00'
   TEST_TIMEOUT: 50
   STORAGE_DRIVER: overlay
@@ -83,19 +83,6 @@ matrix:
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
 
-pipeline_start:
-  containerSelector:
-    - "{name: 'build_helper'}"
-  run: |
-    set -x
-    # Create container tag file based on githubData
-    if [ -z "${githubData}" ]; then
-      echo "${BUILD_NUMBER}" > /mnt/pvc/container_tag
-    else
-      PR_NUMBER=$(echo "${githubData}" | jq -r '.issue.number')
-      echo "PR${PR_NUMBER}" > /mnt/pvc/container_tag
-    fi
-
 steps:
   - name: Compiling NIXL Docker Image
     containerSelector: "{name: 'build_helper'}"
@@ -103,7 +90,6 @@ steps:
     parallel: false
     run: |
       set -x
-      CONTAINER_TAG=$(cat /mnt/pvc/container_tag)
       rm -rf /etc/containers/storage.conf && rm -f /usr/share/containers/storage.conf
       podman build --network host \
       --build-arg UCX_VERSION=${ucx_version} \
@@ -112,17 +98,16 @@ steps:
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
       --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-test-25.10-cuda13.0-ubuntu24.04:${CI_IMAGE_TAG} \
-      --tag ${registry_host}/nixl/${arch}/nixl-slurm-${ucx_version}:${CONTAINER_TAG} \
+      --tag ${registry_host}/nixl/pr/${arch}/nixl-slurm-${ucx_version}:${BUILD_NUMBER} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
-      podman push --creds ${REPO_USER}:${REPO_PASS} ${registry_host}/nixl/${arch}/nixl-slurm-${ucx_version}:${CONTAINER_TAG}
+      podman push --creds ${REPO_USER}:${REPO_PASS} ${registry_host}/nixl/pr/${arch}/nixl-slurm-${ucx_version}:${BUILD_NUMBER}
 
   - name: Allocate Environment
     containerSelector: "{name: 'build_helper'}"
     credentialsId: "svc-nixl-scctl"
     parallel: false
     run: |
-      CONTAINER_TAG=$(cat /mnt/pvc/container_tag)
-      export SLURM_JOB_NAME=nixl-${ucx_version}-${CONTAINER_TAG}
+      export SLURM_JOB_NAME=nixl-${ucx_version}-${BUILD_NUMBER}
 
       .ci/scripts/run_slurm_allocation.sh --slurm_partition=${SLURM_PARTITION} \
       --slurm_nodes=${SLURM_NODES} \
@@ -132,7 +117,7 @@ steps:
       --slurm_mem=${SLURM_MEM} \
       --slurm_mincpus=${SLURM_MINCPUS} \
       --slurm_exclude=mizu01 \
-      --slurm_job_id_file=/mnt/pvc/job_id_${ucx_version}_${CONTAINER_TAG}.txt
+      --slurm_job_id_file=/mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt
 
   - name: Run CPP tests
     containerSelector: "{name: 'build_helper'}"
@@ -141,10 +126,10 @@ steps:
     parallel: false
     run: |
       set -x
-      CONTAINER_TAG=$(cat /mnt/pvc/container_tag)
-      export DOCKER_IMAGE_NAME="${registry_host}#nixl/${arch}/nixl-slurm-${ucx_version}:${CONTAINER_TAG}"
-      export SLURM_JOB_ID=$(cat /mnt/pvc/job_id_${ucx_version}_${CONTAINER_TAG}.txt)
-      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_cpp.sh"
+      export DOCKER_IMAGE_NAME="${registry_host}#nixl/pr/${arch}/nixl-slurm-${ucx_version}:${BUILD_NUMBER}"
+      export SLURM_JOB_ID=$(cat /mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt)
+      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_cpp.sh" \
+        --container_name=nixl-${ucx_version}-${BUILD_NUMBER}
 
   - name: Run Python tests
     containerSelector: "{name: 'build_helper'}"
@@ -153,10 +138,10 @@ steps:
     parallel: false
     run: |
       set -x
-      CONTAINER_TAG=$(cat /mnt/pvc/container_tag)
-      export DOCKER_IMAGE_NAME="${registry_host}#nixl/${arch}/nixl-slurm-${ucx_version}:${CONTAINER_TAG}"
-      export SLURM_JOB_ID=$(cat /mnt/pvc/job_id_${ucx_version}_${CONTAINER_TAG}.txt)
-      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_python.sh"
+      export DOCKER_IMAGE_NAME="${registry_host}#nixl/pr/${arch}/nixl-slurm-${ucx_version}:${BUILD_NUMBER}"
+      export SLURM_JOB_ID=$(cat /mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt)
+      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_python.sh" \
+        --container_name=nixl-${ucx_version}-${BUILD_NUMBER}
 
   - name: Run Rust tests
     containerSelector: "{name: 'build_helper'}"
@@ -165,10 +150,10 @@ steps:
     parallel: false
     run: |
       set -x
-      CONTAINER_TAG=$(cat /mnt/pvc/container_tag)
-      export DOCKER_IMAGE_NAME="${registry_host}#nixl/${arch}/nixl-slurm-${ucx_version}:${CONTAINER_TAG}"
-      export SLURM_JOB_ID=$(cat /mnt/pvc/job_id_${ucx_version}_${CONTAINER_TAG}.txt)
-      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_rust.sh"
+      export DOCKER_IMAGE_NAME="${registry_host}#nixl/pr/${arch}/nixl-slurm-${ucx_version}:${BUILD_NUMBER}"
+      export SLURM_JOB_ID=$(cat /mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt)
+      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_rust.sh" \
+        --container_name=nixl-${ucx_version}-${BUILD_NUMBER}
 
   - name: Run Nixlbench tests
     containerSelector: "{name: 'build_helper'}"
@@ -177,10 +162,10 @@ steps:
     parallel: false
     run: |
       set -x
-      CONTAINER_TAG=$(cat /mnt/pvc/container_tag)
-      export DOCKER_IMAGE_NAME="${registry_host}#nixl/${arch}/nixl-slurm-${ucx_version}:${CONTAINER_TAG}"
-      export SLURM_JOB_ID=$(cat /mnt/pvc/job_id_${ucx_version}_${CONTAINER_TAG}.txt)
-      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_nixlbench.sh"
+      export DOCKER_IMAGE_NAME="${registry_host}#nixl/pr/${arch}/nixl-slurm-${ucx_version}:${BUILD_NUMBER}"
+      export SLURM_JOB_ID=$(cat /mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt)
+      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_nixlbench.sh" \
+        --container_name=nixl-${ucx_version}-${BUILD_NUMBER}
 
 pipeline_stop:
   containerSelector:
@@ -189,10 +174,9 @@ pipeline_stop:
   parallel: false
   run: |
     set -x
-    CONTAINER_TAG=$(cat /mnt/pvc/container_tag)
     # Find all job_id_*.txt files and stop each allocation
     shopt -s nullglob
-    job_files=(/mnt/pvc/job_id_*_${CONTAINER_TAG}.txt)
+    job_files=(/mnt/pvc/job_id_*_${BUILD_NUMBER}.txt)
     shopt -u nullglob
 
     if [ ${#job_files[@]} -eq 0 ]; then
