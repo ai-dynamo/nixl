@@ -23,7 +23,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <strings.h> // strcasecmp
+#include <strings.h>
 #include <type_traits>
 #include <typeinfo>
 #include <vector>
