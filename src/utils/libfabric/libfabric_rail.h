@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -109,7 +109,7 @@ public:
 protected:
     /** Common allocation logic shared by both pool types */
     nixlLibfabricReq *
-    allocateReq();
+    allocateReq(uint32_t req_id);
 
 public:
     // Non-copyable and non-movable since we use unique_ptr for management
@@ -162,7 +162,7 @@ public:
 
     /** Allocate control request with size validation */
     nixlLibfabricReq *
-    allocate(size_t needed_size);
+    allocate(size_t needed_size, uint32_t req_id);
 
     /** Expand pool by adding new buffer chunk - implements pure virtual */
     nixl_status_t
@@ -205,7 +205,7 @@ public:
 
     /** Allocate data request for specified operation type */
     nixlLibfabricReq *
-    allocate(nixlLibfabricReq::OpType op_type);
+    allocate(nixlLibfabricReq::OpType op_type, uint32_t req_id);
 
     /** Expand pool by doubling request count - implements pure virtual */
     nixl_status_t
@@ -216,10 +216,7 @@ public:
 /** Connection state tracking for multi-rail connections */
 enum class ConnectionState {
     DISCONNECTED, ///< No connection attempt made, initial state
-    CONNECT_REQ_SENT, ///< Connection request sent, waiting for ACK
-    CONNECT_ACK_SENT, ///< Connection ACK sent (target side)
-    CONNECTED, ///< ACK received, ready for data transfers
-    FAILED ///< Connection attempt failed
+    CONNECTED ///< Ready for data transfers.
 };
 
 // Stream operator for ConnectionState to enable logging
@@ -228,14 +225,8 @@ operator<<(std::ostream &os, const ConnectionState &state) {
     switch (state) {
     case ConnectionState::DISCONNECTED:
         return os << "DISCONNECTED";
-    case ConnectionState::CONNECT_REQ_SENT:
-        return os << "CONNECT_REQ_SENT";
-    case ConnectionState::CONNECT_ACK_SENT:
-        return os << "CONNECT_ACK_SENT";
     case ConnectionState::CONNECTED:
         return os << "CONNECTED";
-    case ConnectionState::FAILED:
-        return os << "FAILED";
     default:
         return os << "UNKNOWN";
     }
@@ -248,7 +239,6 @@ public:
     std::string device_name; ///< EFA device name for this rail
     std::string provider_name; ///< Provider name (e.g., "efa", "efa-direct")
     char ep_name[LF_EP_NAME_MAX_LEN]; ///< Endpoint name for connection setup
-    mutable bool blocking_cq_sread_supported; ///< Whether blocking CQ reads are supported
     struct fid_ep *endpoint; ///< Libfabric endpoint handle
 
     /** Initialize libfabric rail with all resources */
@@ -279,7 +269,8 @@ public:
     registerMemory(void *buffer,
                    size_t length,
                    nixl_mem_t mem_type,
-                   int gpu_id,
+                   int device_id,
+                   enum fi_hmem_iface iface,
                    struct fid_mr **mr_out,
                    uint64_t *key_out) const;
 
@@ -337,22 +328,12 @@ public:
 
     /** Process completion queue with batching support */
     nixl_status_t
-    progressCompletionQueue(bool use_blocking = false) const;
+    progressCompletionQueue() const;
 
     // Callback registration methods
     /** Set callback for notification message processing */
     void
     setNotificationCallback(std::function<void(const std::string &)> callback);
-
-    /** Set callback for connection acknowledgment processing */
-    void
-    setConnectionAckCallback(
-        std::function<void(uint16_t, nixlLibfabricConnection *, ConnectionState)> callback);
-
-    /** Set callback for connection request processing */
-    void
-    setConnectionReqCallback(
-        std::function<nixl_status_t(uint16_t, const std::string &, nixlLibfabricRail *)> callback);
 
     /** Set callback for XFER_ID tracking */
     void
@@ -361,11 +342,11 @@ public:
     // Optimized resource management methods
     /** Allocate control request with size validation */
     [[nodiscard]] nixlLibfabricReq *
-    allocateControlRequest(size_t needed_size) const;
+    allocateControlRequest(size_t needed_size, uint32_t req_id) const;
 
     /** Allocate data request for specified operation */
     [[nodiscard]] nixlLibfabricReq *
-    allocateDataRequest(nixlLibfabricReq::OpType op_type) const;
+    allocateDataRequest(nixlLibfabricReq::OpType op_type, uint32_t req_id) const;
 
     /** Release request back to appropriate pool */
     void
@@ -374,6 +355,9 @@ public:
     /** Find request from libfabric context pointer */
     nixlLibfabricReq *
     findRequestFromContext(void *context) const;
+
+    fi_info *
+    getRailInfo() const;
 
 private:
     // Core libfabric resources
@@ -388,9 +372,6 @@ private:
 
     // Callback functions
     std::function<void(const std::string &)> notificationCallback;
-    std::function<void(uint16_t, nixlLibfabricConnection *, ConnectionState)> connectionAckCallback;
-    std::function<nixl_status_t(uint16_t, const std::string &, nixlLibfabricRail *)>
-        connectionReqCallback;
     // XFER_ID tracking callback
     std::function<void(uint32_t)> xferIdCallback;
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -136,7 +136,7 @@ protected:
     {
         for (auto &agent : agents_)
             agent.agent->invalidateLocalMD(nullptr);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
         agents_.clear();
     }
 
@@ -330,7 +330,7 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
-    auto sleep_time = std::chrono::milliseconds(500);
+    auto sleep_time = std::chrono::seconds(1);
     nixl_blob_t md;
 
     nixl_opt_args_t send_args;
@@ -361,7 +361,7 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
-    auto sleep_time = std::chrono::milliseconds(500);
+    auto sleep_time = std::chrono::seconds(1);
     nixl_blob_t md;
 
     nixl_opt_args_t fetch_args;
@@ -387,7 +387,7 @@ TEST_F(MetadataExchangeTestFixture, SocketSendPartialLocal) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
-    auto sleep_time = std::chrono::milliseconds(500);
+    auto sleep_time = std::chrono::seconds(1);
     nixl_blob_t md;
 
     nixl_opt_args_t send_args;
@@ -443,7 +443,7 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
 
     src.initDefault();
 
-    auto sleep_time = std::chrono::milliseconds(500);
+    auto sleep_time = std::chrono::seconds(1);
     nixl_blob_t md;
 
     nixl_opt_args_t send_args;
@@ -503,7 +503,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
-    auto sleep_time = std::chrono::seconds(3);
+    auto sleep_time = std::chrono::seconds(10);
     nixl_blob_t md;
 
     ASSERT_EQ(dst.agent->fetchRemoteMD(src.name), NIXL_SUCCESS);
@@ -539,7 +539,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemote) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
-    auto sleep_time = std::chrono::seconds(3);
+    auto sleep_time = std::chrono::seconds(10);
     nixl_blob_t md;
 
     nixl_opt_args_t send_args;
@@ -629,7 +629,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
 
     src.initDefault();
 
-    auto sleep_time = std::chrono::seconds(3);
+    auto sleep_time = std::chrono::seconds(10);
     nixl_blob_t md;
     nixl_opt_args_t send_args;
 

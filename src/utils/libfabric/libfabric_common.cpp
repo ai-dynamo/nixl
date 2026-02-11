@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +50,17 @@ getAvailableNetworkDevices() {
     hints->mode = FI_CONTEXT;
     hints->ep_attr->type = FI_EP_RDM;
 
+    /*
+     * Allow providers to advertise their supported mr_mode (excluding deprecated bits 0-1)
+     *
+     * This is the means used in the code for the fi_info command to retrieve all providers
+     * from libfabric.  It excludes FI_MR_BASIC and FI_MR_SCALABLE, which are deprecated.
+     *
+     * It's not ideal to hard-code a constant but this makes the Slingshot (CXI) provider work
+     * and it is constent with the libfabric fi_info example.
+     */
+    hints->domain_attr->mr_mode = ~3;
+
     int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
     if (ret) {
         NIXL_ERROR << "fi_getinfo failed " << fi_strerror(-ret);
@@ -85,7 +96,9 @@ getAvailableNetworkDevices() {
         }
     }
 
-    if (provider_device_map.find("efa") != provider_device_map.end()) {
+    if (provider_device_map.find("cxi") != provider_device_map.end()) {
+        return {"cxi", provider_device_map["cxi"]};
+    } else if (provider_device_map.find("efa") != provider_device_map.end()) {
         return {"efa", provider_device_map["efa"]};
     } else if (provider_device_map.find("sockets") != provider_device_map.end()) {
         return {"sockets", {provider_device_map["sockets"][0]}};
@@ -96,12 +109,11 @@ getAvailableNetworkDevices() {
 }
 
 std::string
-hexdump(const void *data) {
-    static constexpr uint HEXDUMP_MAX_LENGTH = 56;
+hexdump(const void *data, size_t size) {
     std::stringstream ss;
-    ss.str().reserve(HEXDUMP_MAX_LENGTH * 3);
+    ss.str().reserve(size * 3);
     const unsigned char *bytes = static_cast<const unsigned char *>(data);
-    for (size_t i = 0; i < HEXDUMP_MAX_LENGTH; ++i) {
+    for (size_t i = 0; i < size; ++i) {
         ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytes[i]) << " ";
     }
     return ss.str();
