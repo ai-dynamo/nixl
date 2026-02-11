@@ -85,14 +85,18 @@ nixlTelemetryPrometheusExporter::initializeMetrics() {
     registerCounter("agent_rx_requests_num",
                     "Number of requests received by the agent",
                     prometheusExporterTransferCategory);
-    registerCounter("agent_memory_registered", "Cumulative memory registered", prometheusExporterMemoryCategory);
-    registerCounter("agent_memory_deregistered", "Cumulative memory deregistered", prometheusExporterMemoryCategory);
+    registerCounter("agent_memory_registered",
+                    "Cumulative memory registered",
+                    prometheusExporterMemoryCategory);
+    registerCounter("agent_memory_deregistered",
+                    "Cumulative memory deregistered",
+                    prometheusExporterMemoryCategory);
     registerCounter("agent_xfer_time",
-                  "Start to Complete (per request)",
-                  prometheusExporterPerformanceCategory);
+                    "Start to Complete (per request)",
+                    prometheusExporterPerformanceCategory);
     registerCounter("agent_xfer_post_time",
-                  "Start to posting to Back-End (per request)",
-                  prometheusExporterPerformanceCategory);
+                    "Start to posting to Back-End (per request)",
+                    prometheusExporterPerformanceCategory);
 
     registerGauge("agent_memory_registered", "Memory registered", prometheusExporterMemoryCategory);
     registerGauge(
