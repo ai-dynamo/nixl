@@ -185,6 +185,7 @@ public:
     static std::string obj_accelerated_type;
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
+    static std::string azure_blob_connection_string;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;
