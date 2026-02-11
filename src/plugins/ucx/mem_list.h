@@ -18,30 +18,16 @@
 #ifndef NIXL_SRC_UTILS_UCX_MEM_LIST_H
 #define NIXL_SRC_UTILS_UCX_MEM_LIST_H
 
-#include <memory>
-#include <vector>
+#include "backend/backend_aux.h"
 
-extern "C" {
-#include <ucp/api/ucp_def.h>
-}
-
-class nixlUcxMem;
 class nixlUcxWorker;
-class nixlUcxEp;
 
 namespace nixl::ucx {
-class rkey;
+[[nodiscard]] void *
+createMemList(const nixl_remote_meta_dlist_t &, size_t, nixlUcxWorker &);
 
-struct remoteMem {
-    const nixlUcxEp &ep_;
-    uint64_t addr_;
-    const rkey &rkey_;
-};
-
-void *
-createMemList(const std::vector<std::unique_ptr<remoteMem>> &, nixlUcxWorker &);
-void *
-createMemList(const std::vector<nixlUcxMem> &, const nixlUcxWorker &);
+[[nodiscard]] void *
+createMemList(const nixl_meta_dlist_t &, const nixlUcxWorker &);
 
 void
 releaseMemList(void *mvh) noexcept;
