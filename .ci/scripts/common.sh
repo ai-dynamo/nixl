@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,7 +76,9 @@ min_gtest_port=$((tcp_port_min + gtest_offset))
 max_gtest_port=$((tcp_port_max + gtest_offset))
 
 # Check if a GPU is present
-nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+if [ -z "${HAS_GPU}" ]; then
+    nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+fi
 
 # Ensure CUDA_HOME is set if CUDA is installed (cuda-dl-base images don't set it by default)
 if [ -d "/usr/local/cuda" ] && [ -z "$CUDA_HOME" ]; then
@@ -116,3 +118,17 @@ if [ -z "$NPROC" ]; then
     fi
     export NPROC=$nproc
 fi
+
+wait_for_etcd() {
+    local timeout=30
+    echo "Waiting for etcd to be ready (timeout: ${timeout}s)..."
+    while ! curl -s "${NIXL_ETCD_ENDPOINTS}/health" | grep -q 'true'; do
+        timeout=$((timeout - 1))
+        if [ $timeout -eq 0 ]; then
+            echo "Etcd failed to start"
+            exit 1
+        fi
+        sleep 1
+    done
+    echo "Etcd is ready"
+}

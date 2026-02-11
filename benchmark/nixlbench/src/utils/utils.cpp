@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
-#include <gflags/gflags.h>
 #include <numeric>
 #include <sstream>
 #include <sys/time.h>
@@ -26,129 +25,173 @@
 #include <utility>
 #include <iomanip>
 #include <omp.h>
+#include <set>
+
 #if HAVE_CUDA
 #include <cuda_runtime.h>
 #endif
 #include <fcntl.h>
 #include <filesystem>
+#include <gflags/gflags.h>
 
 #include "runtime/etcd/etcd_rt.h"
+#include "utils/neuron.h"
 #include "utils/utils.h"
+
+// Define command line parameters
+#define NB_ARG_STRING(param_name, def_val, help_text) DEFINE_string(param_name, def_val, help_text)
+#define NB_ARG_BOOL(param_name, def_val, help_text) DEFINE_bool(param_name, def_val, help_text)
+#define NB_ARG_UINT64(param_name, def_val, help_text) DEFINE_uint64(param_name, def_val, help_text)
+#define NB_ARG_INT32(param_name, def_val, help_text) DEFINE_int32(param_name, def_val, help_text)
 
 /**********
  * xferBench Config
  **********/
-DEFINE_string(benchmark_group,
-              "default",
-              "Name of benchmark group. Use different names to run multiple benchmarks in parallel "
-              "(Default: default)");
-DEFINE_string(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]");
-DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
-DEFINE_string(
-    backend,
-    XFERBENCH_BACKEND_UCX,
-    "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] \
-              (only used with nixl worker)");
-DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
-              [DRAM, VRAM]. Note: Storage backends always use DRAM locally.");
-DEFINE_string(target_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for target \
-              [DRAM, VRAM]. Note: Storage backends determine remote type automatically.");
-DEFINE_string(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, maytoone, onetomany, tp");
-DEFINE_string(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc) [default: SG]");
-DEFINE_string(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
-DEFINE_bool(check_consistency, false, "Enable Consistency Check");
-DEFINE_uint64(total_buffer_size, 8LL * 1024 * (1 << 20), "Total buffer \
-              size across device for each process (Default: 80 GiB)");
-DEFINE_uint64(start_block_size, 4 * (1 << 10), "Max size of block \
-              (Default: 4 KiB)");
-DEFINE_uint64(max_block_size, 64 * (1 << 20), "Max size of block \
-              (Default: 64 MiB)");
-DEFINE_uint64(start_batch_size, 1, "Starting size of batch (Default: 1)");
-DEFINE_uint64(max_batch_size, 1, "Max size of batch (starts from 1)");
-DEFINE_int32(num_iter, 1000, "Max iterations");
-DEFINE_int32(large_blk_iter_ftr,
+NB_ARG_STRING(config_file, "", "Config file to load parameters from");
+
+NB_ARG_STRING(
+    benchmark_group,
+    "default",
+    "Name of benchmark group. Use different names to run multiple benchmarks in parallel");
+NB_ARG_STRING(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]");
+NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
+NB_ARG_STRING(backend,
+              XFERBENCH_BACKEND_UCX,
+              "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
+              "GUSLI, AZURE_BLOB] (only used with nixl worker)");
+NB_ARG_STRING(initiator_seg_type,
+              XFERBENCH_SEG_TYPE_DRAM,
+              "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
+              "use DRAM locally.");
+NB_ARG_STRING(target_seg_type,
+              XFERBENCH_SEG_TYPE_DRAM,
+              "Type of memory segment for target [DRAM, VRAM]. Note: Storage backends determine "
+              "remote type automatically.");
+NB_ARG_STRING(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, manytoone, onetomany, tp");
+NB_ARG_STRING(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc)");
+NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
+NB_ARG_BOOL(check_consistency, false, "Enable Consistency Check");
+NB_ARG_UINT64(total_buffer_size,
+              8LL * 1024 * (1 << 20),
+              "Total buffer size across device for each process");
+NB_ARG_UINT64(start_block_size, 4 * (1 << 10), "Max size of block");
+NB_ARG_UINT64(max_block_size, 64 * (1 << 20), "Max size of block");
+NB_ARG_UINT64(start_batch_size, 1, "Starting size of batch");
+NB_ARG_UINT64(max_batch_size, 1, "Max size of batch");
+NB_ARG_INT32(num_iter, 1000, "Max iterations");
+NB_ARG_INT32(large_blk_iter_ftr,
              16,
              "factor to reduce test iteration when testing large block size(>1MB)");
-DEFINE_int32(warmup_iter, 100, "Number of warmup iterations before timing");
-DEFINE_int32 (
-    num_threads,
-    1,
-    "Number of threads used by benchmark."
-    " Num_iter must be greater or equal than num_threads and equally divisible by num_threads."
-    " (Default: 1)");
-DEFINE_int32(num_initiator_dev, 1, "Number of device in initiator process");
-DEFINE_int32(num_target_dev, 1, "Number of device in target process");
-DEFINE_bool(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
-DEFINE_uint64(progress_threads, 0, "Number of progress threads (default: 0)");
-DEFINE_bool(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
+NB_ARG_INT32(warmup_iter, 100, "Number of warmup iterations before timing");
+NB_ARG_INT32(num_threads,
+             1,
+             "Number of threads used by benchmark."
+             " Num_iter must be greater or equal than num_threads and equally divisible by"
+             " num_threads.");
+NB_ARG_INT32(num_initiator_dev, 1, "Number of device in initiator process");
+NB_ARG_INT32(num_target_dev, 1, "Number of device in target process");
+NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
+NB_ARG_UINT64(progress_threads, 0, "Number of progress threads");
+NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
 
 // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
-DEFINE_string (filepath, "", "File path for storage operations");
-DEFINE_int32 (num_files, 1, "Number of files used by benchmark");
-DEFINE_bool (storage_enable_direct, false, "Enable direct I/O for storage operations");
+NB_ARG_STRING(filepath, "", "File path for storage operations");
+NB_ARG_STRING(filenames, "", "Comma-separated filenames for storage operations");
+NB_ARG_INT32(num_files, 1, "Number of files used by benchmark");
+NB_ARG_BOOL(storage_enable_direct, false, "Enable direct I/O for storage operations");
 
 // GDS options - only used when backend is GDS
-DEFINE_int32(gds_batch_pool_size, 32, "Batch pool size for GDS operations (default: 32, only used with GDS backend)");
-DEFINE_int32(gds_batch_limit, 128, "Batch limit for GDS operations (default: 128, only used with GDS backend)");
-DEFINE_int32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin (Default: 1)");
+NB_ARG_INT32(gds_batch_pool_size,
+             32,
+             "Batch pool size for GDS operations (only used with GDS backend)");
+NB_ARG_INT32(gds_batch_limit, 128, "Batch limit for GDS operations (only used with GDS backend)");
+NB_ARG_INT32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin");
 
 // TODO: We should take rank wise device list as input to extend support
 // <rank>:<device_list>, ...
 // For example- 0:mlx5_0,mlx5_1,mlx5_2,1:mlx5_3,mlx5_4, ...
-DEFINE_string(device_list, "all", "Comma-separated device name to use for \
-		      communication (only used with nixl worker)");
-DEFINE_string(etcd_endpoints,
+NB_ARG_STRING(device_list,
+              "all",
+              "Comma-separated device name to use for communication (only used with nixl worker)");
+NB_ARG_STRING(etcd_endpoints,
               "",
               "ETCD server endpoints for communication (optional for storage backends)");
 
 // POSIX options - only used when backend is POSIX
-DEFINE_string(
+NB_ARG_STRING(
     posix_api_type,
     XFERBENCH_POSIX_API_AIO,
     "API type for POSIX operations [AIO, URING, POSIXAIO] (only used with POSIX backend)");
 
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
-DEFINE_string(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for \
-		      communication (only used with nixl worker)");
+NB_ARG_STRING(
+    gpunetio_device_list,
+    "0",
+    "Comma-separated GPU CUDA device id to use for communication (only used with nixl worker)");
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
-DEFINE_string(gpunetio_oob_list, "", "Comma-separated OOB network interface name \
-		      for control path (only used with nixl worker)");
+NB_ARG_STRING(
+    gpunetio_oob_list,
+    "",
+    "Comma-separated OOB network interface name for control path (only used with nixl worker)");
 
 // OBJ options - only used when backend is OBJ
-DEFINE_string(obj_access_key, "", "Access key for S3 backend");
-DEFINE_string(obj_secret_key, "", "Secret key for S3 backend");
-DEFINE_string(obj_session_token, "", "Session token for S3 backend");
-DEFINE_string(obj_bucket_name, XFERBENCH_OBJ_BUCKET_NAME_DEFAULT, "Bucket name for S3 backend");
-DEFINE_string(obj_scheme, XFERBENCH_OBJ_SCHEME_HTTP, "HTTP scheme for S3 backend [http, https]");
-DEFINE_string(obj_region, XFERBENCH_OBJ_REGION_EU_CENTRAL_1, "Region for S3 backend");
-DEFINE_bool(obj_use_virtual_addressing, false, "Use virtual addressing for S3 backend");
-DEFINE_string(obj_endpoint_override, "", "Endpoint override for S3 backend");
-DEFINE_string(obj_req_checksum,
+NB_ARG_STRING(obj_access_key, "", "Access key for S3 backend");
+NB_ARG_STRING(obj_secret_key, "", "Secret key for S3 backend");
+NB_ARG_STRING(obj_session_token, "", "Session token for S3 backend");
+NB_ARG_STRING(obj_bucket_name, XFERBENCH_OBJ_BUCKET_NAME_DEFAULT, "Bucket name for S3 backend");
+NB_ARG_STRING(obj_scheme, XFERBENCH_OBJ_SCHEME_HTTP, "HTTP scheme for S3 backend [http, https]");
+NB_ARG_STRING(obj_region, XFERBENCH_OBJ_REGION_EU_CENTRAL_1, "Region for S3 backend");
+NB_ARG_BOOL(obj_use_virtual_addressing, false, "Use virtual addressing for S3 backend");
+NB_ARG_STRING(obj_endpoint_override, "", "Endpoint override for S3 backend");
+NB_ARG_STRING(obj_req_checksum,
               XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
               "Required checksum for S3 backend [supported, required]");
-DEFINE_string(obj_ca_bundle, "", "Path to CA bundle for S3 backend");
+NB_ARG_STRING(obj_ca_bundle, "", "Path to CA bundle for S3 backend");
+NB_ARG_UINT64(obj_crt_min_limit,
+              0,
+              "Minimum object size (bytes) to use S3 CRT client for high-performance transfers. "
+              "0 means CRT client is disabled");
+NB_ARG_BOOL(obj_accelerated_enable,
+            false,
+            "Enable S3 Accelerated client for GPU-direct transfers (requires cuobjclient "
+            "library)");
+NB_ARG_STRING(obj_accelerated_type,
+              "",
+              "S3 Accelerated client vendor type to use. "
+              "Only used when obj_accelerated_enable=true");
+
+// AZURE BLOB options - only used when backend is AZURE_BLOB
+NB_ARG_STRING(azure_blob_account_url, "", "Account URL for Azure Blob backend");
+NB_ARG_STRING(azure_blob_container_name, "", "Container name for Azure Blob backend");
 
 // HF3FS options - only used when backend is HF3FS
-DEFINE_int32(hf3fs_iopool_size, 64, "Size of io memory pool");
+NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool");
 
 // GUSLI options - only used when backend is GUSLI
-DEFINE_string(gusli_client_name, "NIXLBench", "Client name for GUSLI backend");
-DEFINE_int32(gusli_max_simultaneous_requests,
+NB_ARG_STRING(gusli_client_name, "NIXLBench", "Client name for GUSLI backend");
+NB_ARG_INT32(gusli_max_simultaneous_requests,
              32,
              "Maximum number of simultaneous requests for GUSLI backend");
-DEFINE_string(
+NB_ARG_STRING(
     gusli_config_file,
     "",
     "Configuration file content for GUSLI backend (if empty, auto-generated from device_list)");
-DEFINE_uint64(gusli_bdev_byte_offset,
-              1048576,
-              "Byte offset in block device for GUSLI operations (default: 1MB)");
-DEFINE_string(gusli_device_security,
+NB_ARG_STRING(gusli_device_byte_offsets,
+              "",
+              "Comma-separated list of byte offsets per device for GUSLI operations "
+              "If empty or fewer than devices, uses 1MB as default.");
+NB_ARG_STRING(gusli_device_security,
               "",
               "Comma-separated list of security flags per device (e.g. 'sec=0x3,sec=0x71'). "
               "If empty or fewer than devices, uses 'sec=0x3' as default. "
               "For GUSLI backend, use device_list in format 'id:type:path' where type is F (file) "
               "or K (kernel device).");
+
+
+#undef NB_ARG_INT32
+#undef NB_ARG_UINT64
+#undef NB_ARG_BOOL
+#undef NB_ARG_STRING
 
 std::string xferBenchConfig::runtime_type = "";
 std::string xferBenchConfig::worker_type = "";
@@ -181,10 +224,11 @@ int xferBenchConfig::gds_batch_limit = 0;
 int xferBenchConfig::gds_mt_num_threads = 0;
 std::string xferBenchConfig::gpunetio_device_list = "";
 std::string xferBenchConfig::gpunetio_oob_list = "";
-std::vector<std::string> devices = { };
+std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
 std::string xferBenchConfig::filepath = "";
+std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
@@ -197,26 +241,87 @@ bool xferBenchConfig::obj_use_virtual_addressing = false;
 std::string xferBenchConfig::obj_endpoint_override = "";
 std::string xferBenchConfig::obj_req_checksum = "";
 std::string xferBenchConfig::obj_ca_bundle = "";
+size_t xferBenchConfig::obj_crt_min_limit = 0;
+bool xferBenchConfig::obj_accelerated_enable = false;
+std::string xferBenchConfig::obj_accelerated_type = "";
+std::string xferBenchConfig::azure_blob_account_url = "";
+std::string xferBenchConfig::azure_blob_container_name = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
 std::string xferBenchConfig::gusli_config_file = "";
-uint64_t xferBenchConfig::gusli_bdev_byte_offset = 0;
+std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
 
 int
-xferBenchConfig::loadFromFlags() {
-    benchmark_group = FLAGS_benchmark_group;
-    runtime_type = FLAGS_runtime_type;
-    worker_type = FLAGS_worker_type;
+xferBenchConfig::parseConfig(int argc, char *argv[]) {
+    std::string usage("NIXL Benchmark.  Sample usage:\n\n");
+    usage += std::string(argv[0]) + " [flags]";
+    gflags::SetUsageMessage(usage);
+
+    // Check for the flags that are disabled in favor of --config_file
+    std::set<std::string_view> disabledFlags = {"flagfile", "fromenv", "tryfromenv"};
+    for (int i = 1; i < argc; i++) {
+        std::string_view arg(argv[i]);
+        for (const auto &disabledFlag : disabledFlags) {
+            if (arg.find(disabledFlag) != std::string_view::npos) {
+                std::cerr << "--" << disabledFlag
+                          << " is disabled for nixlbench. Use --config_file instead." << std::endl;
+                gflags::ShowUsageWithFlags(argv[0]);
+                return -1;
+            }
+        }
+    }
+
+    gflags::ParseCommandLineFlags(&argc, &argv, true);
+
+    return loadParams();
+}
+
+int
+xferBenchConfig::loadParams(void) {
+    std::unique_ptr<toml::table> tbl;
+
+    if (!FLAGS_config_file.empty()) {
+        try {
+            tbl = std::make_unique<toml::table>(toml::parse_file(FLAGS_config_file));
+        }
+        catch (const toml::parse_error &err) {
+            std::cerr << "Failed to load config file: " << FLAGS_config_file << ": " << err.what()
+                      << std::endl;
+            return -1;
+        }
+    }
+
+    // NB_ARG() provides a parameter value, giving priority to explicitly passed
+    // parameters over those specified in the config_file or set as defaults.
+#define NB_ARG(name)                                                                        \
+    ({                                                                                      \
+        auto retval = FLAGS_##name;                                                         \
+        if (tbl != nullptr && gflags::GetCommandLineFlagInfoOrDie(#name).is_default) {      \
+            /* config_file exists and the parameter is not specified explicitly -> */       \
+            /*/ try to read the value from config_file first */                             \
+            try {                                                                           \
+                retval = tbl->at_path(#name).value<decltype(name)>().value();               \
+            }                                                                               \
+            catch (const std::exception &) {                                                \
+                /* the parameter is not in the config_file -> fall back to default value */ \
+            }                                                                               \
+        }                                                                                   \
+        retval;                                                                             \
+    })
+
+    benchmark_group = NB_ARG(benchmark_group);
+    runtime_type = NB_ARG(runtime_type);
+    worker_type = NB_ARG(worker_type);
 
     // Only load NIXL-specific configurations if using NIXL worker
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        backend = FLAGS_backend;
-        enable_pt = FLAGS_enable_pt;
-        progress_threads = FLAGS_progress_threads;
-        device_list = FLAGS_device_list;
-        enable_vmm = FLAGS_enable_vmm;
+        backend = NB_ARG(backend);
+        enable_pt = NB_ARG(enable_pt);
+        progress_threads = NB_ARG(progress_threads);
+        device_list = NB_ARG(device_list);
+        enable_vmm = NB_ARG(enable_vmm);
 
 #if defined(HAVE_CUDA) && !defined(HAVE_CUDA_FABRIC)
         if (enable_vmm) {
@@ -226,17 +331,17 @@ xferBenchConfig::loadFromFlags() {
 #endif
         // Load GDS-specific configurations if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
-            gds_batch_pool_size = FLAGS_gds_batch_pool_size;
-            gds_batch_limit = FLAGS_gds_batch_limit;
+            gds_batch_pool_size = NB_ARG(gds_batch_pool_size);
+            gds_batch_limit = NB_ARG(gds_batch_limit);
         }
 
         if (backend == XFERBENCH_BACKEND_GDS_MT) {
-            gds_mt_num_threads = FLAGS_gds_mt_num_threads;
+            gds_mt_num_threads = NB_ARG(gds_mt_num_threads);
         }
 
         // Load POSIX-specific configurations if backend is POSIX
         if (backend == XFERBENCH_BACKEND_POSIX) {
-            posix_api_type = FLAGS_posix_api_type;
+            posix_api_type = NB_ARG(posix_api_type);
 
             // Validate POSIX API type
             if (posix_api_type != XFERBENCH_POSIX_API_AIO &&
@@ -250,36 +355,39 @@ xferBenchConfig::loadFromFlags() {
 
         // Load DOCA-specific configurations if backend is DOCA
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
-            gpunetio_device_list = FLAGS_gpunetio_device_list;
-            gpunetio_oob_list = FLAGS_gpunetio_oob_list;
+            gpunetio_device_list = NB_ARG(gpunetio_device_list);
+            gpunetio_oob_list = NB_ARG(gpunetio_oob_list);
         }
 
         // Load HD3FS-specific configurations if backend is HD3FS
         if (backend == XFERBENCH_BACKEND_HF3FS) {
-            hf3fs_iopool_size = FLAGS_hf3fs_iopool_size;
+            hf3fs_iopool_size = NB_ARG(hf3fs_iopool_size);
         }
 
         // Load GUSLI-specific configurations if backend is GUSLI
         if (backend == XFERBENCH_BACKEND_GUSLI) {
-            gusli_client_name = FLAGS_gusli_client_name;
-            gusli_max_simultaneous_requests = FLAGS_gusli_max_simultaneous_requests;
-            gusli_config_file = FLAGS_gusli_config_file;
-            gusli_bdev_byte_offset = FLAGS_gusli_bdev_byte_offset;
-            gusli_device_security = FLAGS_gusli_device_security;
+            gusli_client_name = NB_ARG(gusli_client_name);
+            gusli_max_simultaneous_requests = NB_ARG(gusli_max_simultaneous_requests);
+            gusli_config_file = NB_ARG(gusli_config_file);
+            gusli_device_byte_offsets = NB_ARG(gusli_device_byte_offsets);
+            gusli_device_security = NB_ARG(gusli_device_security);
         }
 
         // Load OBJ-specific configurations if backend is OBJ
         if (backend == XFERBENCH_BACKEND_OBJ) {
-            obj_access_key = FLAGS_obj_access_key;
-            obj_secret_key = FLAGS_obj_secret_key;
-            obj_session_token = FLAGS_obj_session_token;
-            obj_bucket_name = FLAGS_obj_bucket_name;
-            obj_scheme = FLAGS_obj_scheme;
-            obj_region = FLAGS_obj_region;
-            obj_use_virtual_addressing = FLAGS_obj_use_virtual_addressing;
-            obj_endpoint_override = FLAGS_obj_endpoint_override;
-            obj_req_checksum = FLAGS_obj_req_checksum;
-            obj_ca_bundle = FLAGS_obj_ca_bundle;
+            obj_access_key = NB_ARG(obj_access_key);
+            obj_secret_key = NB_ARG(obj_secret_key);
+            obj_session_token = NB_ARG(obj_session_token);
+            obj_bucket_name = NB_ARG(obj_bucket_name);
+            obj_scheme = NB_ARG(obj_scheme);
+            obj_region = NB_ARG(obj_region);
+            obj_use_virtual_addressing = NB_ARG(obj_use_virtual_addressing);
+            obj_endpoint_override = NB_ARG(obj_endpoint_override);
+            obj_req_checksum = NB_ARG(obj_req_checksum);
+            obj_ca_bundle = NB_ARG(obj_ca_bundle);
+            obj_crt_min_limit = NB_ARG(obj_crt_min_limit);
+            obj_accelerated_enable = NB_ARG(obj_accelerated_enable);
+            obj_accelerated_type = NB_ARG(obj_accelerated_type);
 
             // Validate OBJ S3 scheme
             if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
@@ -296,30 +404,37 @@ xferBenchConfig::loadFromFlags() {
                 return -1;
             }
         }
+
+        // Load AZURE_BLOB-specific configurations if backend is AZURE_BLOB
+        if (backend == XFERBENCH_BACKEND_AZURE_BLOB) {
+            azure_blob_account_url = NB_ARG(azure_blob_account_url);
+            azure_blob_container_name = NB_ARG(azure_blob_container_name);
+        }
     }
 
-    initiator_seg_type = FLAGS_initiator_seg_type;
-    target_seg_type = FLAGS_target_seg_type;
-    scheme = FLAGS_scheme;
-    mode = FLAGS_mode;
-    op_type = FLAGS_op_type;
-    check_consistency = FLAGS_check_consistency;
-    total_buffer_size = FLAGS_total_buffer_size;
-    num_initiator_dev = FLAGS_num_initiator_dev;
-    num_target_dev = FLAGS_num_target_dev;
-    start_block_size = FLAGS_start_block_size;
-    max_block_size = FLAGS_max_block_size;
-    start_batch_size = FLAGS_start_batch_size;
-    max_batch_size = FLAGS_max_batch_size;
-    num_iter = FLAGS_num_iter;
-    large_blk_iter_ftr = FLAGS_large_blk_iter_ftr;
-    warmup_iter = FLAGS_warmup_iter;
-    num_threads = FLAGS_num_threads;
-    etcd_endpoints = FLAGS_etcd_endpoints;
-    filepath = FLAGS_filepath;
-    num_files = FLAGS_num_files;
-    posix_api_type = FLAGS_posix_api_type;
-    storage_enable_direct = FLAGS_storage_enable_direct;
+    initiator_seg_type = NB_ARG(initiator_seg_type);
+    target_seg_type = NB_ARG(target_seg_type);
+    scheme = NB_ARG(scheme);
+    mode = NB_ARG(mode);
+    op_type = NB_ARG(op_type);
+    check_consistency = NB_ARG(check_consistency);
+    total_buffer_size = NB_ARG(total_buffer_size);
+    num_initiator_dev = NB_ARG(num_initiator_dev);
+    num_target_dev = NB_ARG(num_target_dev);
+    start_block_size = NB_ARG(start_block_size);
+    max_block_size = NB_ARG(max_block_size);
+    start_batch_size = NB_ARG(start_batch_size);
+    max_batch_size = NB_ARG(max_batch_size);
+    num_iter = NB_ARG(num_iter);
+    large_blk_iter_ftr = NB_ARG(large_blk_iter_ftr);
+    warmup_iter = NB_ARG(warmup_iter);
+    num_threads = NB_ARG(num_threads);
+    etcd_endpoints = NB_ARG(etcd_endpoints);
+    filepath = NB_ARG(filepath);
+    filenames = NB_ARG(filenames);
+    num_files = NB_ARG(num_files);
+    posix_api_type = NB_ARG(posix_api_type);
+    storage_enable_direct = NB_ARG(storage_enable_direct);
 
     // Validate ETCD configuration
     if (!isStorageBackend() && etcd_endpoints.empty()) {
@@ -331,10 +446,8 @@ xferBenchConfig::loadFromFlags() {
 
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
         if (!((XFERBENCH_SEG_TYPE_VRAM == initiator_seg_type) &&
-              (XFERBENCH_SEG_TYPE_VRAM == target_seg_type) &&
-              (1 == num_threads) &&
-              (1 == num_initiator_dev) &&
-              (1 == num_target_dev) &&
+              (XFERBENCH_SEG_TYPE_VRAM == target_seg_type) && (1 == num_threads) &&
+              (1 == num_initiator_dev) && (1 == num_target_dev) &&
               (XFERBENCH_SCHEME_PAIRWISE == scheme))) {
             std::cerr << "Unsupported configuration for NVSHMEM worker" << std::endl;
             std::cerr << "Supported configuration: " << std::endl;
@@ -351,19 +464,22 @@ xferBenchConfig::loadFromFlags() {
     }
 
     if ((max_block_size * max_batch_size) > (total_buffer_size / num_initiator_dev)) {
-        std::cerr << "Incorrect buffer size configuration for Initiator"
-                  << "(max_block_size * max_batch_size) is > (total_buffer_size / num_initiator_dev)"
-                  << std::endl;
+        std::cerr
+            << "Incorrect buffer size configuration for Initiator"
+            << "(max_block_size * max_batch_size) is > (total_buffer_size / num_initiator_dev)"
+            << std::endl;
         return -1;
     }
     if ((max_block_size * max_batch_size) > (total_buffer_size / num_target_dev)) {
-        std::cerr << "Incorrect buffer size configuration for Target"
-                  << "(max_block_size * max_batch_size) is > (total_buffer_size / num_initiator_dev)"
-                  << std::endl;
+        std::cerr
+            << "Incorrect buffer size configuration for Target"
+            << "(max_block_size * max_batch_size) is > (total_buffer_size / num_initiator_dev)"
+            << std::endl;
         return -1;
     }
     if ((max_block_size * max_batch_size) > (total_buffer_size / num_threads)) {
-        std::cerr << "Incorrect buffer size configuration " << "(max_block_size * max_batch_size) "
+        std::cerr << "Incorrect buffer size configuration "
+                  << "(max_block_size * max_batch_size) "
                   << "(" << (max_block_size * max_batch_size) << ")"
                   << " is > (total_buffer_size / num_threads) ("
                   << (total_buffer_size / num_threads) << ")" << std::endl;
@@ -379,31 +495,32 @@ xferBenchConfig::loadFromFlags() {
     if (num_iter % partition) {
         num_iter += partition - (num_iter % partition);
         std::cout << "WARNING: Adjusting num_iter to " << num_iter
-                  << " to allow equal distribution to " << num_threads << " threads"
-                  << std::endl;
+                  << " to allow equal distribution to " << num_threads << " threads" << std::endl;
     }
     if (warmup_iter % partition) {
         warmup_iter += partition - (warmup_iter % partition);
         std::cout << "WARNING: Adjusting warmup_iter to " << warmup_iter
-                  << " to allow equal distribution to " << num_threads << " threads"
-                  << std::endl;
+                  << " to allow equal distribution to " << num_threads << " threads" << std::endl;
     }
     partition = (num_initiator_dev * num_threads);
     if (total_buffer_size % partition) {
-        std::cerr << "Total_buffer_size must be divisible by the product of num_threads and num_initiator_dev"
-                  << ", next such value is " << total_buffer_size + partition - (total_buffer_size % partition)
-                  << std::endl;
+        std::cerr << "Total_buffer_size must be divisible by the product of num_threads and "
+                     "num_initiator_dev"
+                  << ", next such value is "
+                  << total_buffer_size + partition - (total_buffer_size % partition) << std::endl;
         return -1;
     }
     partition = (num_target_dev * num_threads);
     if (total_buffer_size % partition) {
-        std::cerr << "Total_buffer_size must be divisible by the product of num_threads and num_target_dev"
-                  << ", next such value is " << total_buffer_size + partition - (total_buffer_size % partition)
-                  << std::endl;
+        std::cerr << "Total_buffer_size must be divisible by the product of num_threads and "
+                     "num_target_dev"
+                  << ", next such value is "
+                  << total_buffer_size + partition - (total_buffer_size % partition) << std::endl;
         return -1;
     }
 
     return 0;
+#undef NB_ARG
 }
 
 void
@@ -431,17 +548,18 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ])", backend);
-        printOption ("Enable pt (--enable_pt=[0,1])", std::to_string (enable_pt));
+        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB])",
+                    backend);
+        printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
-        printOption ("Device list (--device_list=dev1,dev2,...)", device_list);
-        printOption ("Enable VMM (--enable_vmm=[0,1])", std::to_string (enable_vmm));
+        printOption("Device list (--device_list=dev1,dev2,...)", device_list);
+        printOption("Enable VMM (--enable_vmm=[0,1])", std::to_string(enable_vmm));
 
         // Print GDS options if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
-            printOption ("GDS batch pool size (--gds_batch_pool_size=N)",
-                         std::to_string (gds_batch_pool_size));
-            printOption ("GDS batch limit (--gds_batch_limit=N)", std::to_string (gds_batch_limit));
+            printOption("GDS batch pool size (--gds_batch_pool_size=N)",
+                        std::to_string(gds_batch_pool_size));
+            printOption("GDS batch limit (--gds_batch_limit=N)", std::to_string(gds_batch_limit));
         }
 
         if (backend == XFERBENCH_BACKEND_GDS_MT) {
@@ -469,47 +587,64 @@ xferBenchConfig::printConfig() {
             printOption("OBJ S3 required checksum (--obj_req_checksum=[supported, required])",
                         obj_req_checksum);
             printOption("OBJ S3 CA bundle (--obj_ca_bundle=cert-path)", obj_ca_bundle);
+            printOption("OBJ S3 CRT min limit (--obj_crt_min_limit=N bytes)",
+                        obj_crt_min_limit > 0 ?
+                            std::to_string(obj_crt_min_limit) + " (CRT enabled)" :
+                            "0 (CRT disabled)");
+            printOption("OBJ S3 Accelerated enable (--obj_accelerated_enable=[true|false])",
+                        obj_accelerated_enable ? "true (Accelerated enabled)" :
+                                                 "false (Accelerated disabled)");
+            printOption("OBJ S3 Accelerated type (--obj_accelerated_type=type)",
+                        obj_accelerated_type.empty() ? "(default)" : obj_accelerated_type);
+        }
+
+        if (backend == XFERBENCH_BACKEND_AZURE_BLOB) {
+            printOption("Azure Blob Storage account URL (--azure_blob_account_url=url)",
+                        azure_blob_account_url);
+            printOption("Azure Blob Storage container name (--azure_blob_container_name=name)",
+                        azure_blob_container_name);
         }
 
         if (xferBenchConfig::isStorageBackend()) {
-            printOption ("filepath (--filepath=path)", filepath);
-            printOption ("Number of files (--num_files=N)", std::to_string (num_files));
-            printOption ("Storage enable direct (--storage_enable_direct=[0,1])",
-                         std::to_string (storage_enable_direct));
+            printOption("filepath (--filepath=path)", filepath);
+            printOption("filenames (--filenames=filename1,filename2,...)", filenames);
+            printOption("Number of files (--num_files=N)", std::to_string(num_files));
+            printOption("Storage enable direct (--storage_enable_direct=[0,1])",
+                        std::to_string(storage_enable_direct));
         }
 
         // Print DOCA GPUNetIO options if backend is DOCA GPUNetIO
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
-            printOption ("GPU CUDA Device id list (--device_list=dev1,dev2,...)",
-                         gpunetio_device_list);
+            printOption("GPU CUDA Device id list (--device_list=dev1,dev2,...)",
+                        gpunetio_device_list);
             printOption("OOB network interface name for control path (--oob_list=ifface)",
                         gpunetio_oob_list);
         }
     }
-    printOption ("Initiator seg type (--initiator_seg_type=[DRAM,VRAM])", initiator_seg_type);
-    printOption ("Target seg type (--target_seg_type=[DRAM,VRAM])", target_seg_type);
-    printOption ("Scheme (--scheme=[pairwise,manytoone,onetomany,tp])", scheme);
-    printOption ("Mode (--mode=[SG,MG])", mode);
-    printOption ("Op type (--op_type=[READ,WRITE])", op_type);
-    printOption ("Check consistency (--check_consistency=[0,1])",
-                 std::to_string (check_consistency));
-    printOption ("Total buffer size (--total_buffer_size=N)", std::to_string (total_buffer_size));
-    printOption ("Num initiator dev (--num_initiator_dev=N)", std::to_string (num_initiator_dev));
-    printOption ("Num target dev (--num_target_dev=N)", std::to_string (num_target_dev));
-    printOption ("Start block size (--start_block_size=N)", std::to_string (start_block_size));
-    printOption ("Max block size (--max_block_size=N)", std::to_string (max_block_size));
-    printOption ("Start batch size (--start_batch_size=N)", std::to_string (start_batch_size));
-    printOption ("Max batch size (--max_batch_size=N)", std::to_string (max_batch_size));
-    printOption ("Num iter (--num_iter=N)", std::to_string (num_iter));
-    printOption ("Warmup iter (--warmup_iter=N)", std::to_string (warmup_iter));
+    printOption("Initiator seg type (--initiator_seg_type=[DRAM,VRAM])", initiator_seg_type);
+    printOption("Target seg type (--target_seg_type=[DRAM,VRAM])", target_seg_type);
+    printOption("Scheme (--scheme=[pairwise,manytoone,onetomany,tp])", scheme);
+    printOption("Mode (--mode=[SG,MG])", mode);
+    printOption("Op type (--op_type=[READ,WRITE])", op_type);
+    printOption("Check consistency (--check_consistency=[0,1])", std::to_string(check_consistency));
+    printOption("Total buffer size (--total_buffer_size=N)", std::to_string(total_buffer_size));
+    printOption("Num initiator dev (--num_initiator_dev=N)", std::to_string(num_initiator_dev));
+    printOption("Num target dev (--num_target_dev=N)", std::to_string(num_target_dev));
+    printOption("Start block size (--start_block_size=N)", std::to_string(start_block_size));
+    printOption("Max block size (--max_block_size=N)", std::to_string(max_block_size));
+    printOption("Start batch size (--start_batch_size=N)", std::to_string(start_batch_size));
+    printOption("Max batch size (--max_batch_size=N)", std::to_string(max_batch_size));
+    printOption("Num iter (--num_iter=N)", std::to_string(num_iter));
+    printOption("Warmup iter (--warmup_iter=N)", std::to_string(warmup_iter));
     printOption("Large block iter factor (--large_blk_iter_ftr=N)",
                 std::to_string(large_blk_iter_ftr));
-    printOption ("Num threads (--num_threads=N)", std::to_string (num_threads));
+    printOption("Num threads (--num_threads=N)", std::to_string(num_threads));
     printSeparator('-');
     std::cout << std::endl;
 }
 
-std::vector<std::string> xferBenchConfig::parseDeviceList() {
+std::vector<std::string>
+xferBenchConfig::parseDeviceList() {
     std::vector<std::string> devices;
     std::string dev;
     std::stringstream ss(xferBenchConfig::device_list);
@@ -517,17 +652,17 @@ std::vector<std::string> xferBenchConfig::parseDeviceList() {
     // TODO: Add support for other schemes
     if (xferBenchConfig::scheme == XFERBENCH_SCHEME_PAIRWISE &&
         xferBenchConfig::device_list != "all") {
-	    while (std::getline(ss, dev, ',')) {
+        while (std::getline(ss, dev, ',')) {
             devices.push_back(dev);
-	    }
+        }
 
-	    if ((int)devices.size() != xferBenchConfig::num_initiator_dev ||
+        if ((int)devices.size() != xferBenchConfig::num_initiator_dev ||
             (int)devices.size() != xferBenchConfig::num_target_dev) {
-	    	std::cerr << "Incorrect device list " << xferBenchConfig::device_list
-                      << " provided for pairwise scheme " << devices.size()
-                      << "# devices" << std::endl;
-	    	return {};
-	    }
+            std::cerr << "Incorrect device list " << xferBenchConfig::device_list
+                      << " provided for pairwise scheme " << devices.size() << "# devices"
+                      << std::endl;
+            return {};
+        }
     } else {
         devices.push_back("all");
     }
@@ -542,28 +677,40 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
 }
+
+bool
+xferBenchConfig::isObjStorageBackend() {
+    return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
+};
+
 /**********
  * xferBench Utils
  **********/
 xferBenchRT *xferBenchUtils::rt = nullptr;
 std::string xferBenchUtils::dev_to_use = "";
 
-void xferBenchUtils::setRT(xferBenchRT *rt) {
+void
+xferBenchUtils::setRT(xferBenchRT *rt) {
     xferBenchUtils::rt = rt;
 }
 
-void xferBenchUtils::setDevToUse(std::string dev) {
+void
+xferBenchUtils::setDevToUse(std::string dev) {
     dev_to_use = dev;
 }
 
-std::string xferBenchUtils::getDevToUse() {
+std::string
+xferBenchUtils::getDevToUse() {
     return dev_to_use;
 }
 
-static bool allBytesAre(void* buffer, size_t size, uint8_t value) {
-    uint8_t* byte_buffer = static_cast<uint8_t*>(buffer);
+static bool
+allBytesAre(void *buffer, size_t size, uint8_t value) {
+    uint8_t *byte_buffer = static_cast<uint8_t *>(buffer);
 
     // Iterate over each byte in the buffer
     for (size_t i = 0; i < size; ++i) {
@@ -578,6 +725,7 @@ static bool allBytesAre(void* buffer, size_t size, uint8_t value) {
 std::vector<GusliDeviceConfig>
 parseGusliDeviceList(const std::string &device_list,
                      const std::string &security_list,
+                     const std::string &dev_offset_list,
                      int num_devices) {
     std::vector<GusliDeviceConfig> devices;
 
@@ -588,6 +736,15 @@ parseGusliDeviceList(const std::string &device_list,
         std::string sec_flag;
         while (std::getline(sec_ss, sec_flag, ',')) {
             security_flags.push_back(sec_flag);
+        }
+    }
+
+    std::vector<size_t> dev_offsets;
+    if (!dev_offset_list.empty()) {
+        std::stringstream dev_ss(dev_offset_list);
+        std::string offset;
+        while (std::getline(dev_ss, offset, ',')) {
+            dev_offsets.push_back(std::stoull(offset));
         }
     }
 
@@ -625,7 +782,9 @@ parseGusliDeviceList(const std::string &device_list,
             }
             std::string sec_flag =
                 (device_count < security_flags.size()) ? security_flags[device_count] : "sec=0x3";
-            devices.push_back({device_id, device_type, path, sec_flag});
+            size_t offset =
+                (device_count < dev_offsets.size()) ? dev_offsets[device_count] : 1048576;
+            devices.push_back({device_id, device_type, path, sec_flag, offset});
             device_count++;
         } else {
             std::cerr << "Invalid GUSLI device specification: " << device_spec
@@ -640,6 +799,12 @@ parseGusliDeviceList(const std::string &device_list,
                   << "). Using 'sec=0x3' for missing entries." << std::endl;
     }
 
+    if (!dev_offsets.empty() && dev_offsets.size() != devices.size()) {
+        std::cerr << "Warning: Number of device offsets (" << dev_offsets.size()
+                  << ") doesn't match number of devices (" << devices.size()
+                  << "). Using 'offset=1048576' for missing entries." << std::endl;
+    }
+
     if (num_devices > 0 && devices.size() != static_cast<size_t>(num_devices)) {
         std::cerr << "Error: Number of devices in device_list (" << devices.size()
                   << ") must match num_devices (" << num_devices << ")" << std::endl;
@@ -649,19 +814,21 @@ parseGusliDeviceList(const std::string &device_list,
     return devices;
 }
 
-void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
+bool
+xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
     int i = 0, j = 0;
     static bool gusli_devmap_init = false;
     static std::vector<GusliDeviceConfig> gusli_devs;
     if (!gusli_devmap_init && xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
         gusli_devs = parseGusliDeviceList(xferBenchConfig::device_list,
                                           xferBenchConfig::gusli_device_security,
+                                          xferBenchConfig::gusli_device_byte_offsets,
                                           xferBenchConfig::num_initiator_dev);
         gusli_devmap_init = true;
     }
     bool pass_check_consistency = true;
-    for (const auto &iov_list: iov_lists) {
-        for(const auto &iov: iov_list) {
+    for (const auto &iov_list : iov_lists) {
+        for (const auto &iov : iov_list) {
             void *addr = NULL;
             size_t len;
             uint8_t check_val = 0x00;
@@ -681,10 +848,21 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                             exit(EXIT_FAILURE);
                         }
                         is_allocated = true;
-                        CHECK_CUDA_ERROR(cudaMemcpy(addr, (void *)iov.addr, len,
-                                                    cudaMemcpyDeviceToHost), "cudaMemcpy failed");
+                        // Assume no CUDA cores exist if Neuron cores are found.
+                        // There are no AWS instance types with both NVIDIA GPUs and Neuron
+                        // accelerators.
+                        if (neuronCoreCount() > 0) {
+                            CHECK_NEURON_ERROR(
+                                neuronMemcpy(addr, (void *)iov.addr, len, neuronMemcpyDeviceToHost),
+                                "nrt_tensor_read failed");
+                        } else {
+                            CHECK_CUDA_ERROR(
+                                cudaMemcpy(addr, (void *)iov.addr, len, cudaMemcpyDeviceToHost),
+                                "cudaMemcpy failed");
+                        }
 #else
-                        std::cerr << "Failure in consistency check: VRAM segment type not supported without CUDA"
+                        std::cerr << "Failure in consistency check: VRAM segment type not "
+                                     "supported without CUDA"
                                   << std::endl;
                         exit(EXIT_FAILURE);
 #endif
@@ -698,9 +876,9 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                         exit(EXIT_FAILURE);
                     }
                     is_allocated = true;
-                    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
-                        if (!getObjS3(iov.metaInfo)) {
-                            std::cerr << "Failed to get S3 object: " << iov.metaInfo << std::endl;
+                    if (xferBenchConfig::isObjStorageBackend()) {
+                        if (!xferBenchUtils::getObj(iov.metaInfo)) {
+                            std::cerr << "Failed to get object: " << iov.metaInfo << std::endl;
                             exit(EXIT_FAILURE);
                         }
                         int fd = open(iov.metaInfo.c_str(), O_RDONLY);
@@ -762,16 +940,27 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                 // This will be called on target process in case of write and
                 // on initiator process in case of read
                 if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
-                 xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_VRAM) ||
-                (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
-                 xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM)) {
+                     xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_VRAM) ||
+                    (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
+                     xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM)) {
 #if HAVE_CUDA
                     addr = calloc(1, len);
                     is_allocated = true;
-                    CHECK_CUDA_ERROR(cudaMemcpy(addr, (void *)iov.addr, len,
-                                                cudaMemcpyDeviceToHost), "cudaMemcpy failed");
+                    // Assume no CUDA cores exist if Neuron cores are found.
+                    // There are no AWS instance types with both NVIDIA GPUs and Neuron
+                    // accelerators.
+                    if (neuronCoreCount() > 0) {
+                        CHECK_NEURON_ERROR(
+                            neuronMemcpy(addr, (void *)iov.addr, len, neuronMemcpyDeviceToHost),
+                            "nrt_tensor_read failed");
+                    } else {
+                        CHECK_CUDA_ERROR(
+                            cudaMemcpy(addr, (void *)iov.addr, len, cudaMemcpyDeviceToHost),
+                            "cudaMemcpy failed");
+                    }
 #else
-                    std::cerr << "Failure in consistency check: VRAM segment type not supported without CUDA"
+                    std::cerr << "Failure in consistency check: VRAM segment type not supported "
+                                 "without CUDA"
                               << std::endl;
                     exit(EXIT_FAILURE);
 #endif
@@ -783,9 +972,9 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
                 }
             }
 
-            if("WRITE" == xferBenchConfig::op_type) {
+            if ("WRITE" == xferBenchConfig::op_type) {
                 check_val = XFERBENCH_INITIATOR_BUFFER_ELEMENT;
-            } else if("READ" == xferBenchConfig::op_type) {
+            } else if ("READ" == xferBenchConfig::op_type) {
                 check_val = XFERBENCH_TARGET_BUFFER_ELEMENT;
             }
             rc = allBytesAre(addr, len, check_val);
@@ -803,8 +992,34 @@ void xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &io
     }
     if (!pass_check_consistency) {
         std::cerr << "Consistency check failed" << std::endl;
-        exit(EXIT_FAILURE);
     }
+    return pass_check_consistency;
+}
+
+bool
+xferBenchUtils::validateTransfer(bool is_initiator,
+                                 std::vector<std::vector<xferBenchIOV>> &local_lists,
+                                 std::vector<std::vector<xferBenchIOV>> &remote_lists) {
+    if (!xferBenchConfig::check_consistency) {
+        return true;
+    }
+
+    if (is_initiator) {
+        if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+            return checkConsistency(local_lists);
+        } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
+            if (xferBenchConfig::isStorageBackend()) {
+                return checkConsistency(remote_lists);
+            }
+        }
+    } else {
+        // Target
+        if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
+            return checkConsistency(local_lists);
+        }
+    }
+
+    return true;
 }
 
 void
@@ -877,8 +1092,8 @@ xferBenchUtils::printStats(bool is_target,
         avg_latency /= xferBenchConfig::num_initiator_dev; // In microsec
     }
 
-    throughput_gb = (((double) total_data_transferred / (1000 * 1000 * 1000)) /
-                   (total_duration / 1e6));   // In GB/Sec
+    throughput_gb = (((double)total_data_transferred / (1000 * 1000 * 1000)) /
+                     (total_duration / 1e6)); // In GB/Sec
 
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         rt->reduceSumDouble(&throughput_gb, &totalbw, 0);
@@ -956,31 +1171,51 @@ xferBenchUtils::buildAwsCredentials() {
 }
 
 bool
+xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+        return putObjS3(buffer_size, name);
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
+        return putObjAzure(buffer_size, name);
+    } else {
+        std::cerr << "Error: putObj called with unsupported object storage backend: "
+                  << xferBenchConfig::backend << std::endl;
+        return false;
+    }
+}
+
+bool
+xferBenchUtils::getObj(const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+        return getObjS3(name);
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
+        return getObjAzure(name);
+    } else {
+        std::cerr << "Error: getObj called with unsupported object storage backend: "
+                  << xferBenchConfig::backend << std::endl;
+        return false;
+    }
+}
+
+bool
+xferBenchUtils::rmObj(const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+        return rmObjS3(name);
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
+        return rmObjAzure(name);
+    } else {
+        std::cerr << "Error: rmObj called with unsupported object storage backend: "
+                  << xferBenchConfig::backend << std::endl;
+        return false;
+    }
+}
+
+bool
 xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
     std::string filename = "/tmp/" + name;
-    int fd = open(filename.c_str(), O_RDWR | O_CREAT, 0744);
+    int fd = createFile(buffer_size, filename);
     if (fd < 0) {
-        std::cerr << "Failed to open file: " << name << " with error: " << strerror(errno)
-                  << std::endl;
         return false;
     }
-    // Create buffer filled with XFERBENCH_TARGET_BUFFER_ELEMENT
-    void *buf = (void *)malloc(buffer_size);
-    if (!buf) {
-        std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
-        close(fd);
-        return false;
-    }
-    memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
-    int rc = pwrite(fd, buf, buffer_size, 0);
-    if (rc < 0) {
-        std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
-                  << std::endl;
-        free(buf);
-        close(fd);
-        return false;
-    }
-    free(buf);
 
     std::string bucket_name = xferBenchConfig::obj_bucket_name;
     if (bucket_name.empty()) {
@@ -1002,13 +1237,11 @@ xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
     if (result != 0) {
         std::cerr << "Failed to put S3 object " << name << " in bucket " << bucket_name
                   << " (exit code: " << result << ")" << std::endl;
-        close(fd);
-        unlink(filename.c_str());
+        cleanupFile(fd, filename);
         return false;
     }
 
-    close(fd);
-    unlink(filename.c_str());
+    cleanupFile(fd, filename);
     return true;
 }
 
@@ -1060,6 +1293,121 @@ xferBenchUtils::rmObjS3(const std::string &name) {
         return false;
     }
     return true;
+}
+
+int
+xferBenchUtils::createFile(size_t buffer_size, const std::string &filename) {
+    int fd = open(filename.c_str(), O_RDWR | O_CREAT, 0744);
+    if (fd < 0) {
+        std::cerr << "Failed to open file: " << filename << " with error: " << strerror(errno)
+                  << std::endl;
+        return -1;
+    }
+    // Create buffer filled with XFERBENCH_TARGET_BUFFER_ELEMENT
+    void *buf = (void *)malloc(buffer_size);
+    if (!buf) {
+        std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
+        close(fd);
+        return -1;
+    }
+    memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+    int rc = pwrite(fd, buf, buffer_size, 0);
+    if (rc < 0) {
+        std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
+                  << std::endl;
+        free(buf);
+        close(fd);
+        return -1;
+    }
+    free(buf);
+    return fd;
+}
+
+void
+xferBenchUtils::cleanupFile(const int fd, const std::string &filename) {
+    close(fd);
+    unlink(filename.c_str());
+}
+
+bool
+xferBenchUtils::putObjAzure(size_t buffer_size, const std::string &name) {
+    std::string filename = "/tmp/" + name;
+    int fd = createFile(buffer_size, filename);
+    if (fd < 0) {
+        return false;
+    }
+
+    std::string az_cli_params = buildCommonAzCliBlobParams(name);
+    if (az_cli_params.empty()) {
+        return false;
+    }
+    std::string full_cmd = "az storage blob upload " + az_cli_params + " -f " + filename;
+    std::cout << "Putting Azure blob: " << name << std::endl;
+
+    int result = system(full_cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Warning: Failed to put Azure blob " << name << " (exit code: " << result
+                  << ")" << std::endl;
+        cleanupFile(fd, filename);
+        return false;
+    }
+
+    cleanupFile(fd, filename);
+    return true;
+}
+
+bool
+xferBenchUtils::getObjAzure(const std::string &name) {
+    std::string az_cli_params = buildCommonAzCliBlobParams(name);
+    if (az_cli_params.empty()) {
+        return false;
+    }
+    std::string full_cmd = "az storage blob download " + az_cli_params + " -f " + name;
+    std::cout << "Getting Azure blob: " << name << std::endl;
+
+    int result = system(full_cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Warning: Failed to get Azure blob " << name << " (exit code: " << result
+                  << ")" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool
+xferBenchUtils::rmObjAzure(const std::string &name) {
+    std::string az_cli_params = buildCommonAzCliBlobParams(name);
+    if (az_cli_params.empty()) {
+        return false;
+    }
+    std::string full_cmd = "az storage blob delete " + az_cli_params;
+    std::cout << "Removing Azure blob: " << name << std::endl;
+
+    int result = system(full_cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Warning: Failed to remove Azure blob " << name << " (exit code: " << result
+                  << ")" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+std::string
+xferBenchUtils::buildCommonAzCliBlobParams(const std::string &blob_name) {
+    std::string account_url = xferBenchConfig::azure_blob_account_url;
+    if (account_url.empty()) {
+        std::cerr << "Error: Invalid Azure Storage account url" << std::endl;
+        return "";
+    }
+
+    std::string container_name = xferBenchConfig::azure_blob_container_name;
+    if (container_name.empty()) {
+        std::cerr << "Error: Invalid Azure Storage container name" << std::endl;
+        return "";
+    }
+
+    return "--blob-url " + account_url + "/" + container_name + "/" + blob_name +
+        " --auth-mode login  --output none";
 }
 
 /*

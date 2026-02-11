@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * This file incorporates material from the DeepSeek project, licensed under the MIT License.
  * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -26,72 +26,24 @@
 #include <iostream>
 #include "nixl_types.h"
 #include "exception.cuh"
+#include "configs.cuh"
 
 namespace nixl_ep {
 
 // EP kernels
 namespace ep_kernels {
 struct gpu_nixl_ctx {
-    uint64_t *local_counters; // [local_expert_id][src_rank]
-    uint64_t *clean_counters; // Counters to be cleaned for the next iteration
-    nixlGpuXferReqH *remote_counter_reqs; // [local_expert_id,dest_rank]
-    nixlGpuXferReqH *batch_reqs; // [local_expert_id,dest_rank]
-    int *local_barrier_buffer; // [src_rank]
-    nixlGpuXferReqH *remote_barrier_reqs; // [local_expert_idx,dest_rank]
-    void **rdma_p2p_ptrs; // [num_ranks]
-    uint64_t **counters_p2p_ptrs; // [num_ranks]
+    nixlMemoryViewH local_mvh;
+    nixlMemoryViewH barrier_mvh;
+    nixlMemoryViewH remote_mvh;
+    int *sync_buffer_ptr; // [src_rank]
+    int *sync_count_ptr; // [dst_rank]
     void *rdma_buffer_ptr;
-    int num_local_experts;
-    int num_ranks;
+    int max_num_ranks;
     int rank;
 
-    /* Double buffering considerations are handled by the caller */
-    __device__ inline void *rdma_p2p_ptr_get(uint64_t ptr, int dst_rank) {
-        if (rdma_p2p_ptrs[dst_rank] == nullptr)
-            return nullptr;
-
-        return (void *)(reinterpret_cast<uint64_t>(rdma_p2p_ptrs[dst_rank]) + batch_offset_get(ptr));
-    }
-
-    /* Double buffering considerations are handled by nixl_ctx */
-    __device__ inline uint64_t *counter_p2p_ptr_get(int local_expert_idx, int dst_rank) {
-        if (counters_p2p_ptrs[dst_rank] == nullptr)
-            return nullptr;
-
-        return counters_p2p_ptrs[dst_rank] + (local_expert_idx * num_ranks + rank);
-    }
-
-    __device__ inline uint64_t *local_counter_get(int local_expert_idx, int src_rank) {
-        return &local_counters[local_expert_idx * num_ranks + src_rank];
-    }
-
-    __device__ inline nixlGpuXferReqH remote_counter_get(int local_expert_idx, int dest_rank) {
-        return remote_counter_reqs[local_expert_idx * num_ranks + dest_rank];
-    }
-
-    __device__ inline nixlGpuXferReqH remote_barrier_get(int local_expert_idx, int dest_rank) {
-        return remote_barrier_reqs[local_expert_idx * num_ranks + dest_rank];
-    }
-
-    __device__ inline int* local_barrier_buffer_get(int src_rank) {
-        return &local_barrier_buffer[src_rank];
-    }
-
-    __device__ inline nixlGpuXferReqH batch_get(int local_expert_idx, int dest_rank) {
-        return batch_reqs[local_expert_idx * num_ranks + dest_rank];
-    }
-
-    __device__ inline size_t batch_offset_get(uint64_t ptr) {
-        return ptr - reinterpret_cast<uint64_t>(rdma_buffer_ptr);
-    }
-
-    __device__ inline void clean_counters_warp(int lane_id) {
-#ifdef __CUDACC__
-        #pragma unroll
-#endif
-        for (int i = lane_id; i < num_ranks * num_local_experts; i += 32)
-            clean_counters[i] = 0;
-    }
+    __device__ inline uint64_t offset_get(uint64_t ptr);
+    __device__ inline void* p2p_ptr_get(uint64_t dst_ptr, int dst_rank);
 };
 
 void clean_buffer(int* clean_0, int num_clean_int_0,
@@ -105,9 +57,9 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               int* mask_buffer,
               int* cumulative_local_expert_recv_stats,
               int64_t* dispatch_wait_recv_cost_stats,
-              void* rdma_recv_x, int* rdma_recv_count, void* rdma_x,
-              const void* x, const int64_t* topk_idx,
-              int* next_clean, int num_next_clean_int,
+              void* rdma_recv_x, uint64_t* rdma_recv_count, void* rdma_x,
+              const void* x, const topk_idx_t* topk_idx,
+              uint64_t* next_clean, int num_next_clean_int,
               int num_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
               int num_topk, int num_experts, int rank, int num_ranks,
               bool use_fp8, bool round_scale, bool use_ue8m0,
@@ -115,19 +67,19 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               cudaStream_t stream, int phases, ep_kernels::gpu_nixl_ctx nixl_ctx);
 
 void combine(void* combined_x,
-             void* rdma_recv_x, int* rdma_recv_flag, void* rdma_send_x,
-             const void* x, const int64_t* topk_idx, const float* topk_weights,
+             void* rdma_recv_x, uint64_t* rdma_recv_flag, void* rdma_send_x,
+             const void* x, const topk_idx_t* topk_idx, const float* topk_weights,
              const int* src_info, const int64_t* layout_range,
              int* mask_buffer,
              int64_t* combine_wait_recv_cost_stats,
-             int* next_clean, int num_next_clean_int,
+             uint64_t* next_clean, int num_next_clean_int,
              int num_combined_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
              int num_topk, int num_experts, int rank, int num_ranks,
              bool use_logfmt,
              void* workspace, int num_device_sms,
              cudaStream_t stream, int phases, bool zero_copy, ep_kernels::gpu_nixl_ctx nixl_ctx);
 
-void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, int* sync_buffer_ptr, cudaStream_t stream);
+void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, cudaStream_t stream);
 
 void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* output_mask_tensor, cudaStream_t stream);
 

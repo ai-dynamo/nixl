@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,7 +25,11 @@
 #include <stack>
 #include <optional>
 #include <mutex>
+#include <vector>
+#include <string>
 #include "gtest/gtest.h"
+#include "absl/log/log_sink.h"
+#include "absl/log/log_entry.h"
 
 #ifdef HAVE_CUDA
 #include <cuda_runtime.h>
@@ -117,6 +121,47 @@ private:
     uint16_t _port = MIN_PORT;
     uint16_t _min_port = MIN_PORT;
     uint16_t _max_port = MAX_PORT;
+};
+
+/**
+ * @brief A scoped LogSink that captures log messages for testing assertions.
+ *
+ * This class registers itself with Abseil's logging system to intercept
+ * log messages on construction and unregisters on destruction. It can be
+ * used in tests to verify that expected warnings or errors are logged.
+ *
+ * Usage:
+ *   scopedTestLogSink sink;
+ *   // ... code that logs warnings ...
+ *   EXPECT_EQ(sink.warningCount(), 1);
+ *   EXPECT_EQ(sink.countWarnings("expected message"), 1);
+ */
+class scopedTestLogSink {
+public:
+    scopedTestLogSink();
+    ~scopedTestLogSink();
+
+    scopedTestLogSink(const scopedTestLogSink &) = delete;
+    scopedTestLogSink &
+    operator=(const scopedTestLogSink &) = delete;
+
+    [[nodiscard]] size_t
+    warningCount() const;
+
+    [[nodiscard]] size_t
+    countWarningsMatching(const std::string &substring) const;
+
+private:
+    class testLogSink : public absl::LogSink {
+    public:
+        void
+        Send(const absl::LogEntry &entry) override;
+
+        mutable std::mutex mutex_;
+        std::vector<std::string> warnings_;
+    };
+
+    testLogSink sink_;
 };
 
 struct nixlTestParam {

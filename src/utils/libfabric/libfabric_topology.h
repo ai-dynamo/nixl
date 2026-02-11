@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,19 +21,19 @@
 #include "libfabric_common.h"
 #include "nixl.h"
 #include <hwloc.h>
-#include <map>
+#include <unordered_map>
 
 /**
  * @brief Topology discovery and management for AWS instances with EFA devices
  *
- * Automatically discovers system topology using hwloc and maps GPUs to EFA devices
+ * Automatically discovers system topology using hwloc and maps accelerators to EFA devices
  * based on PCIe proximity for optimal performance. Falls back to TCP/sockets
  * when EFA devices are not available.
  */
 class nixlLibfabricTopology {
 private:
-    // GPU to EFA device mapping: GPU 0→[efa0,efa1], GPU 1→[efa2,efa3], etc.
-    std::map<int, std::vector<std::string>> gpu_to_efa_devices;
+    // PCI bus ID to EFA device mapping: "0000:72:00.0"→[efa0,efa1], etc.
+    std::unordered_map<std::string, std::vector<std::string>> pci_to_efa_devices;
 
     // All available network devices discovered on this system
     std::vector<std::string> all_devices;
@@ -42,7 +42,8 @@ private:
     std::string provider_name;
 
     // System information
-    int num_gpus;
+    int num_aws_accel; // AWS Trainium accelerators
+    int num_nvidia_accel; // NVIDIA GPU accelerators
     int num_numa_nodes;
     int num_devices;
 
@@ -53,8 +54,8 @@ private:
     hwloc_topology_t hwloc_topology;
 
     // PCIe to Libfabric device mapping
-    std::map<std::string, std::string> pcie_to_libfabric_map;
-    std::map<std::string, std::string> libfabric_to_pcie_map;
+    std::unordered_map<std::string, std::string> pcie_to_libfabric_map;
+    std::unordered_map<std::string, std::string> libfabric_to_pcie_map;
 
     // Helper methods
     nixl_status_t
@@ -70,11 +71,11 @@ private:
     nixl_status_t
     buildPcieToLibfabricMapping();
     nixl_status_t
-    discoverGpusWithHwloc();
+    discoverAccelWithHwloc();
     nixl_status_t
     discoverEfaDevicesWithHwloc();
     nixl_status_t
-    buildGpuToEfaMapping();
+    buildAccelToEfaMapping();
     void
     cleanupHwlocTopology();
 
@@ -88,7 +89,7 @@ private:
         uint8_t function_id;
     };
 
-    struct GpuInfo {
+    struct AccelInfo {
         hwloc_obj_t hwloc_node;
         uint16_t domain_id;
         uint8_t bus_id;
@@ -98,9 +99,9 @@ private:
 
     struct NicGroup {
         std::vector<NicInfo> nics;
-        GpuInfo closest_gpu;
+        AccelInfo closest_accel;
         hwloc_obj_t common_ancestor;
-        bool has_gpu;
+        bool has_accel;
     };
 
     // NIXL topology-aware grouping algorithm methods
@@ -109,15 +110,17 @@ private:
     nixl_status_t
     buildFallbackMapping();
     nixl_status_t
-    groupNicsWithGpus(const std::vector<NicInfo> &discovered_nics,
-                      const std::vector<GpuInfo> &discovered_gpus,
-                      std::vector<NicGroup> &nic_groups);
+    groupNicsWithAccel(const std::vector<NicInfo> &discovered_nics,
+                       const std::vector<AccelInfo> &discovered_accel,
+                       std::vector<NicGroup> &nic_groups);
 
     // hwloc helper methods
     std::string
     getPcieAddressFromHwlocObj(hwloc_obj_t obj) const;
     bool
-    isNvidiaGpu(hwloc_obj_t obj) const;
+    isNvidiaAccel(hwloc_obj_t obj) const;
+    bool
+    isNeuronAccel(hwloc_obj_t obj) const;
     bool
     isEfaDevice(hwloc_obj_t obj) const;
 
@@ -125,14 +128,19 @@ public:
     nixlLibfabricTopology(); // Automatically discovers topology
     ~nixlLibfabricTopology();
 
-    // GPU-based queries (main interface)
+    // Accelerator-based queries (main interface)
     std::vector<std::string>
-    getEfaDevicesForGpu(int gpu_id) const;
+    getEfaDevicesForPci(const std::string &pci_bus_id) const;
 
     // System information
     int
-    getNumGpus() const {
-        return num_gpus;
+    getNumAwsAccel() const {
+        return num_aws_accel;
+    }
+
+    int
+    getNumNvidiaAccel() const {
+        return num_nvidia_accel;
     }
 
     const std::vector<std::string> &
@@ -152,9 +160,12 @@ public:
     }
 
     bool
-    isValidGpuId(int gpu_id) const;
-    bool
     isValidDevice(const std::string &efa_device) const;
+
+    enum fi_hmem_iface
+    getMrAttrIface(int device_id) const {
+        return (device_id < num_nvidia_accel) ? FI_HMEM_CUDA : FI_HMEM_NEURON;
+    }
 
     // Debug/info
     void
