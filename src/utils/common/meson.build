@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +35,7 @@ git_commit = git_hash.returncode() == 0 ? git_hash.stdout().strip() : 'unknown'
 
 # Define a shared library for common utilities
 nixl_common_lib = shared_library('nixl_common',
+    'hw_info.cpp',
     'nixl_log.cpp',
     'uuid_v4.cpp',
     dependencies: nixl_common_deps,

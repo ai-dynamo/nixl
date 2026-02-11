@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,10 +60,6 @@ if ucx_dep.found()
     ucx_build_deps = [ucx_dep]
 endif
 
-doca_build_deps = []
-if doca_gpunetio_dep.found()
-    doca_build_deps = [doca_gpunetio_dep]
-endif
 
 nixl_ep_sources = [
     'csrc/nixl_ep.cpp',
@@ -77,6 +73,11 @@ nixl_ep_inc_dirs = [
     include_directories('csrc/kernels'),
     torch_inc_dirs,
 ]
+
+doca_build_deps = []
+if doca_gpunetio_dep.found()
+    doca_build_deps = [doca_gpunetio_dep]
+endif
 
 nixl_ep_cpp_args = [
     '-DHAVE_CUDA',
@@ -99,8 +100,11 @@ nixl_ep_cuda_args = [
     '-Xcompiler', '-Wno-sign-compare',
     '-Xcompiler', '-Wno-reorder',
     '-Xcompiler', '-Wno-attributes',
-    '-DENABLE_FAST_DEBUG=1',
 ]
+
+topk_idx_bits = meson.get_external_property('topk_idx_bits', '64')
+nixl_ep_cpp_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]
+nixl_ep_cuda_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]
 
 # NVCC 12.9 workaround for bug (https://nvbugspro.nvidia.com/bug/5595631)
 # This workaround is needed because NVCC 12.9 has a bug which fails UCX compilation
@@ -120,6 +124,12 @@ nixl_ep_override_options = []
 if get_option('buildtype') == 'debug'
     nixl_ep_override_options = ['optimization=3']
     nixl_ep_cpp_args += ['-g']
+endif
+
+enable_fast_debug = get_option('buildtype') != 'release'
+
+if enable_fast_debug
+    nixl_ep_cuda_args += ['-DENABLE_FAST_DEBUG']
 endif
 
 nixl_ep_install_rpath = join_paths(get_option('prefix'), get_option('libdir'))
