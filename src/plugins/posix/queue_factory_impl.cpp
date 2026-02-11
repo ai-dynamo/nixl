@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,7 @@
 #include "posix_queue.h"
 #include "posix_backend.h"
 
-#ifdef HAVE_LIBAIO
+#ifdef HAVE_POSIXAIO
 #include "aio_queue.h"
 #endif
 
@@ -35,7 +35,7 @@
 // Public functions implementation
 std::unique_ptr<nixlPosixQueue>
 QueueFactory::createPosixAioQueue(int num_entries, nixl_xfer_op_t operation) {
-#ifdef HAVE_LIBAIO
+#ifdef HAVE_POSIXAIO
     return std::make_unique<aioQueue>(num_entries, operation);
 #else
     throw nixlPosixBackendReqH::exception(
@@ -71,7 +71,7 @@ QueueFactory::createLinuxAioQueue(int num_entries, nixl_xfer_op_t operation) {
 
 bool
 QueueFactory::isPosixAioAvailable() {
-#ifdef HAVE_LIBAIO
+#ifdef HAVE_POSIXAIO
     return true;
 #else
     return false;
