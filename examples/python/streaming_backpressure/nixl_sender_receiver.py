@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +47,7 @@ from multiprocessing import Process
 # Add parent directory to path for utils import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import nixl._utils as nixl_utils  # noqa: E402
 from common_utils import (  # noqa: E402
     clear_metadata,
     publish_agent_metadata,
@@ -57,8 +58,6 @@ from common_utils import (  # noqa: E402
     start_server,
     write_uint64,
 )
-
-import nixl._utils as nixl_utils  # noqa: E402
 from nixl._api import nixl_agent, nixl_agent_config  # noqa: E402
 from nixl.logging import get_logger  # noqa: E402
 
@@ -154,7 +153,9 @@ def receiver_process(num_buffers, buffer_size, num_transfers, tcp_host, tcp_port
             logger.info("[receiver] Sent buffer descriptors to sender")
         else:
             publish_agent_metadata(receiver_agent, "receiver_metadata")
-            publish_descriptors(receiver_agent, buffers_xfer_descs, "receiver_buffers_desc")
+            publish_descriptors(
+                receiver_agent, buffers_xfer_descs, "receiver_buffers_desc"
+            )
             sender_name = retrieve_agent_metadata(
                 receiver_agent, "sender_metadata", role_name="receiver"
             )
@@ -212,12 +213,16 @@ def receiver_process(num_buffers, buffer_size, num_transfers, tcp_host, tcp_port
             # Send progress notification to sender (batched for efficiency)
             if transfers_received % progress_update_interval == 0:
                 t0 = time.perf_counter()
-                receiver_agent.send_notif(sender_name, f"P:{transfers_received}".encode())
+                receiver_agent.send_notif(
+                    sender_name, f"P:{transfers_received}".encode()
+                )
                 progress_updates_sent += 1
                 time_notify += time.perf_counter() - t0
 
             if transfers_received % 100 == 0:
-                logger.info(f"[receiver] Processed {transfers_received}/{num_transfers}")
+                logger.info(
+                    f"[receiver] Processed {transfers_received}/{num_transfers}"
+                )
 
         end_time = time.time()
 
@@ -243,7 +248,9 @@ def receiver_process(num_buffers, buffer_size, num_transfers, tcp_host, tcp_port
         if sequence_mismatches == 0:
             logger.info("[receiver] ✓ No buffer overrun (0 mismatches)")
         else:
-            logger.error(f"[receiver] ⚠️  BUFFER OVERRUN: {sequence_mismatches} mismatches!")
+            logger.error(
+                f"[receiver] ⚠️  BUFFER OVERRUN: {sequence_mismatches} mismatches!"
+            )
 
         # Timing breakdown
         logger.info("[receiver] Timing breakdown:")
@@ -264,7 +271,7 @@ def receiver_process(num_buffers, buffer_size, num_transfers, tcp_host, tcp_port
         # Wait a bit for sender to finish its final checks before cleanup
         time.sleep(0.5)
 
-    except Exception as e:
+    except Exception:
         logger.exception("[receiver] Fatal error during transfer")
         raise
     finally:
@@ -275,13 +282,13 @@ def receiver_process(num_buffers, buffer_size, num_transfers, tcp_host, tcp_port
         try:
             if receiver_agent and memory_reg_descs:
                 receiver_agent.deregister_memory(memory_reg_descs)
-        except Exception as e:
+        except Exception:
             logger.exception("[receiver] Error deregistering memory")
 
         try:
             if memory_addr:
                 nixl_utils.free_passthru(memory_addr)
-        except Exception as e:
+        except Exception:
             logger.exception("[receiver] Error freeing memory")
 
         logger.info("[receiver] Teardown complete")
@@ -536,7 +543,9 @@ def sender_process(num_buffers, buffer_size, num_transfers, tcp_host, tcp_port):
         send_time = (
             send_end_time - first_transfer_time if first_transfer_time else total_time
         )
-        send_bandwidth = (total_bytes / send_time) / (1024 * 1024) if send_time > 0 else 0
+        send_bandwidth = (
+            (total_bytes / send_time) / (1024 * 1024) if send_time > 0 else 0
+        )
 
         logger.info(
             f"[sender] Completed {transfers_sent} transfers in {actual_transfer_time:.3f}s"
@@ -564,13 +573,16 @@ def sender_process(num_buffers, buffer_size, num_transfers, tcp_host, tcp_port):
             f"  Backpressure:     {time_backpressure * 1000:.2f} ms ({time_backpressure / actual_transfer_time * 100:.1f}%)"
         )
         total_measured = (
-            time_write_header + time_transfer_buffer + time_wait_buffer + time_backpressure
+            time_write_header
+            + time_transfer_buffer
+            + time_wait_buffer
+            + time_backpressure
         )
         logger.info(
             f"  Other/overhead:   {(actual_transfer_time - total_measured) * 1000:.2f} ms ({(actual_transfer_time - total_measured) / actual_transfer_time * 100:.1f}%)"
         )
 
-    except Exception as e:
+    except Exception:
         logger.exception("[sender] Fatal error during transfer")
         raise
     finally:
@@ -581,31 +593,31 @@ def sender_process(num_buffers, buffer_size, num_transfers, tcp_host, tcp_port):
         try:
             for handle in buffer_xfer_handles:
                 sender_agent.release_xfer_handle(handle)
-        except Exception as e:
+        except Exception:
             logger.exception("[sender] Error releasing transfer handles")
 
         try:
             if sender_agent and local_buffers_prep:
                 sender_agent.release_dlist_handle(local_buffers_prep)
-        except Exception as e:
+        except Exception:
             logger.exception("[sender] Error releasing local prep handle")
 
         try:
             if sender_agent and remote_buffers_prep:
                 sender_agent.release_dlist_handle(remote_buffers_prep)
-        except Exception as e:
+        except Exception:
             logger.exception("[sender] Error releasing remote prep handle")
 
         try:
             if sender_agent and buffers_reg_descs:
                 sender_agent.deregister_memory(buffers_reg_descs)
-        except Exception as e:
+        except Exception:
             logger.exception("[sender] Error deregistering memory")
 
         try:
             if buffers_addr:
                 nixl_utils.free_passthru(buffers_addr)
-        except Exception as e:
+        except Exception:
             logger.exception("[sender] Error freeing memory")
 
         logger.info("[sender] Teardown complete")
@@ -796,7 +808,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("[main] Interrupted by user")
         exit(130)
-    except Exception as e:
+    except Exception:
         logger.exception("[main] Fatal error")
         exit(1)
 
