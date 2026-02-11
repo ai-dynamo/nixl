@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,7 +52,7 @@ else
 endif
 
 if has_posix_aio
-    compile_defs += ['-DHAVE_LIBAIO']
+    compile_defs += ['-DHAVE_POSIXAIO']
     posix_sources += ['aio_queue.cpp']
     plugin_deps += [ rt_dep ]
     message('POSIX AIO found, adding POSIX AIO support')

@@ -24,28 +24,55 @@ timeout_minutes: 240
 
 registry_host: harbor.mellanox.com
 registry_auth: nixl_harbor_credentials
-registry_path: /nixl/ci
+registry_path: /nixl/base
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: "{memory: 16Gi, cpu: 16000m}"
+  requests: "{memory: 8Gi, cpu: 8000m}"
+  privileged: true
+
+credentials:
+  - {credentialsId: 'nixl_harbor_credentials', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+  - {credentialsId: 'svc-nixl-scctl', usernameVariable: 'SERVICE_USER_USERNAME', passwordVariable: 'SERVICE_USER_PASSWORD'}
 
 env:
   NIXL_INSTALL_DIR: /opt/nixl
-  TEST_TIMEOUT: 30
-  NPROC: 32
-  CI_IMAGE_TAG: "20260129-1"
+  NIXL_BUILD_DIR: nixl_build
+  SLURM_NODES: 1
+  SLURM_PARTITION: mizu
+  SLURM_HEAD_NODE: scctl
+  SLURM_GRES: gpu:2
+  SLURM_MEM: 64G
+  SLURM_MINCPUS: 24
+  SLURM_JOB_TIMEOUT: '01:30:00'
+  TEST_TIMEOUT: 50
+  STORAGE_DRIVER: overlay
+  CI_IMAGE_TAG: "20260209-2"
 
-docker_opt: "-e NPROC -e EXECUTOR_NUMBER --security-opt seccomp=unconfined --security-opt apparmor=unconfined --shm-size=1G --ulimit nofile=65535:65535 --ulimit stack=67108864 --ulimit memlock=-1:-1 --network=host --ipc=host --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN --privileged --gpus all --device=/dev/infiniband --device=/dev/gdrdrv --entrypoint=''"
+empty_volumes:
+  - {mountPath: /var/lib/containers/storage, memory: false}
+
+pvc_volumes:
+  - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
 # label is defined at jenkins slave configuration, we want to run the job on a gpu agent and be able to esaly replace it without having to change this file
 runs_on_dockers:
   - {
-     file: '.ci/dockerfiles/Dockerfile.ci', name: 'nixl-ci-test-25.10-cuda13.0-ubuntu24.04', tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache',
-     nodeLabel: 'H100'
+     file: '.ci/dockerfiles/Dockerfile.base',
+     name: 'nixl-ci-gpu-base-25.10-cuda13.0-ubuntu24.04',
+     tag: "${CI_IMAGE_TAG}",
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
     }
-  #- {
-  #   file: '.ci/dockerfiles/Dockerfile.ci', name: 'nixl-ci-test1-25.10-cuda13.0-ubuntu24.04', tag: "${CI_IMAGE_TAG}",
-  #   build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache',
-  #   nodeLabel: 'DGX'
-  #  }
+  - {
+     file: '.ci/dockerfiles/Dockerfile.build_helper',
+     name: 'build_helper',
+     tag: "${CI_IMAGE_TAG}",
+     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04',
+     limits: "{memory: 4Gi, cpu: 2000m}",
+     requests: "{memory: 2Gi, cpu: 1000m}"
+    }
 
 matrix:
   axes:
@@ -57,74 +84,109 @@ matrix:
 
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
+
 steps:
-  - name: Get Environment Info
+  - name: Compiling NIXL Docker Image
+    containerSelector: "{name: 'build_helper'}"
+    credentialsId: "nixl_harbor_credentials"
     parallel: false
     run: |
       set -x
-      set +e
-      # print kernel version
-      uname -r
-      # print nvidia drivers info
-      lsmod | grep nvidia_peermem
-      lsmod | grep gdrdrv
-      lsmod | grep nvidia_fs
-      # print nvidia-smi
-      nvidia-smi
-      nvidia-smi topo -m
-      # print compute mode
-      nvidia-smi -q | grep -i "compute mode"
-      # check rdma status
-      ibv_devinfo
-      #ib_write_bw
-      # Check and configure GPU compute mode
-      # Exclusive_Process mode is required for MPS workloads
-      GPU_COUNT=$(nvidia-smi -L | wc -l)
-      if [ "$GPU_COUNT" -gt 0 ]; then
-        for i in $(seq 0 $((GPU_COUNT-1))); do
-          # Query current compute mode for each GPU
-          COMPUTE_MODE=$(nvidia-smi -i $i --query-gpu=compute_mode --format=csv,noheader)
-          echo "GPU $i compute mode: $COMPUTE_MODE"
+      export PR_IMAGE=${registry_host}/nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}
+      rm -rf /etc/containers/storage.conf && rm -f /usr/share/containers/storage.conf
+      podman build --network host \
+      --build-arg UCX_VERSION=${ucx_version} \
+      --build-arg PRE_INSTALLED_ENV="true" \
+      --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} \
+      --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
+      --build-arg HAS_GPU=true \
+      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-gpu-base-25.10-cuda13.0-ubuntu24.04:${CI_IMAGE_TAG} \
+      --tag ${PR_IMAGE} \
+      -f .ci/dockerfiles/Dockerfile.gpu-test .
+      podman push --creds ${REPO_USER}:${REPO_PASS} ${PR_IMAGE}
 
-          # Set to EXCLUSIVE_PROCESS mode if not already set
-          if [ "$COMPUTE_MODE" != "Exclusive_Process" ]; then
-            echo "Setting GPU $i to EXCLUSIVE_PROCESS mode"
-            sudo nvidia-smi -i $i -c EXCLUSIVE_PROCESS || echo "Warning: Failed to set compute mode for GPU $i"
-          else
-            echo "GPU $i is already in EXCLUSIVE_PROCESS mode"
-          fi
-        done
+  - name: Allocate Environment
+    containerSelector: "{name: 'build_helper'}"
+    credentialsId: "svc-nixl-scctl"
+    parallel: false
+    run: |
+      .ci/scripts/run_slurm_allocation.sh --slurm_partition=${SLURM_PARTITION} \
+      --slurm_nodes=${SLURM_NODES} \
+      --slurm_head_node=${SLURM_HEAD_NODE} \
+      --slurm_job_timeout=${SLURM_JOB_TIMEOUT} \
+      --slurm_gres=${SLURM_GRES} \
+      --slurm_mem=${SLURM_MEM} \
+      --slurm_mincpus=${SLURM_MINCPUS} \
+      --slurm_exclude=mizu01 \
+      --slurm_job_name=nixl-${ucx_version}-${BUILD_NUMBER} \
+      --slurm_job_id_file=/mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt
+
+  - name: Run CPP tests
+    containerSelector: "{name: 'build_helper'}"
+    timeout: "${TEST_TIMEOUT}"
+    parallel: false
+    run: |
+      set -x
+      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_cpp.sh" \
+        --container_name=nixl-${ucx_version}-${BUILD_NUMBER} \
+        --slurm_job_id=$(cat /mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt) \
+        --docker_image="${registry_host}#nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+
+  - name: Run Python tests
+    containerSelector: "{name: 'build_helper'}"
+    timeout: "${TEST_TIMEOUT}"
+    parallel: false
+    run: |
+      set -x
+      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_python.sh" \
+        --container_name=nixl-${ucx_version}-${BUILD_NUMBER} \
+        --slurm_job_id=$(cat /mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt) \
+        --docker_image="${registry_host}#nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+
+  - name: Run Rust tests
+    containerSelector: "{name: 'build_helper'}"
+    timeout: "${TEST_TIMEOUT}"
+    parallel: false
+    run: |
+      set -x
+      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_rust.sh" \
+        --container_name=nixl-${ucx_version}-${BUILD_NUMBER} \
+        --slurm_job_id=$(cat /mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt) \
+        --docker_image="${registry_host}#nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+
+  - name: Run Nixlbench tests
+    containerSelector: "{name: 'build_helper'}"
+    timeout: "${TEST_TIMEOUT}"
+    parallel: false
+    run: |
+      set -x
+      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_nixlbench.sh" \
+        --container_name=nixl-${ucx_version}-${BUILD_NUMBER} \
+        --slurm_job_id=$(cat /mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt) \
+        --docker_image="${registry_host}#nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+
+pipeline_stop:
+  containerSelector:
+    - "{name: 'build_helper'}"
+  credentialsId: "svc-nixl-scctl"
+  parallel: false
+  run: |
+    set -x
+    # Find all job_id_*.txt files and stop each allocation
+    shopt -s nullglob
+    job_files=(/mnt/pvc/job_id_*_${BUILD_NUMBER}.txt)
+    shopt -u nullglob
+
+    if [ ${#job_files[@]} -eq 0 ]; then
+      echo "WARNING: No job ID files found in /mnt/pvc/"
+      exit 0
+    fi
+
+    echo "INFO: Found ${#job_files[@]} job ID file(s) to stop"
+    for job_file in "${job_files[@]}"; do
+      if [ -f "${job_file}" ]; then
+        echo "INFO: Stopping allocation from ${job_file}"
+        .ci/scripts/stop_slurm_allocation.sh --slurm_job_id_file="${job_file}"
+        rm -f "${job_file}"
       fi
-
-  - name: Build
-    parallel: false
-    run: |
-      export UCX_VERSION=${ucx_version}
-      export PRE_INSTALLED_ENV="true"
-      export NIXL_BUILD_DIR=nixl_build_${ucx_version}
-      export NIXLBENCH_BUILD_DIR=nixlbench_build_${ucx_version}
-      .gitlab/build.sh ${NIXL_INSTALL_DIR}
-
-  - name: Test CPP
-    parallel: false
-    timeout: "${TEST_TIMEOUT}"
-    run: |
-      .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}
-
-  - name: Test Python
-    parallel: false
-    timeout: "${TEST_TIMEOUT}"
-    run: |
-      .gitlab/test_python.sh ${NIXL_INSTALL_DIR}
-
-  - name: Test Nixlbench
-    parallel: false
-    timeout: "${TEST_TIMEOUT}"
-    run: |
-      .gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}
-
-  - name: Test Rust
-    parallel: false
-    timeout: "${TEST_TIMEOUT}"
-    run: |
-      .gitlab/test_rust.sh ${NIXL_INSTALL_DIR}
+    done
