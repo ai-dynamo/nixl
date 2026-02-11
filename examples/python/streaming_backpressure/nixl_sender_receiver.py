@@ -47,7 +47,6 @@ from multiprocessing import Process
 # Add parent directory to path for utils import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import nixl._utils as nixl_utils  # noqa: E402
 from common_utils import (  # noqa: E402
     clear_metadata,
     publish_agent_metadata,
@@ -58,6 +57,8 @@ from common_utils import (  # noqa: E402
     start_server,
     write_uint64,
 )
+
+import nixl._utils as nixl_utils  # noqa: E402
 from nixl._api import nixl_agent, nixl_agent_config  # noqa: E402
 from nixl.logging import get_logger  # noqa: E402
 
