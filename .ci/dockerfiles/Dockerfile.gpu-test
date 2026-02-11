@@ -1,0 +1,36 @@
+# NIXL GPU Test Environment
+#
+# GPU cluster testing container for GPU-based test execution.
+#
+# Usage:
+#   docker build -f .ci/dockerfiles/Dockerfile.gpu-test -t nixl-gpu-test .
+#
+
+ARG BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04
+
+FROM ${BASE_IMAGE}
+
+# Build arguments
+ARG _UID=148069
+ARG _GID=30
+ARG NIXL_INSTALL_DIR=/opt/nixl
+ARG NIXL_BUILD_DIR
+ARG PRE_INSTALLED_ENV
+ARG PRE_INSTALLED_NIXL_ENV
+ARG PRE_INSTALLED_UCX_ENV
+ARG UCX_VERSION=v1.20.x
+ARG HAS_GPU=true
+ARG WORKSPACE=/workspace/nixl
+
+
+WORKDIR ${WORKSPACE}
+COPY --chown="${_UID}":"${_GID}" . .
+
+RUN .gitlab/build.sh ${NIXL_INSTALL_DIR}
+RUN sudo apt-get clean && \
+    sudo rm -rf /var/lib/apt/lists/*
+
+ENTRYPOINT ["/bin/bash", "-c", "exec \"$@\"", "--"]
+
+# Default command
+CMD ["/bin/bash"]

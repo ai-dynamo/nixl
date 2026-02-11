@@ -1,0 +1,57 @@
+# NIXL Build Helper
+#
+# Jenkins CI helper container with SLURM client (scctl) and container tools.
+#
+# Usage:
+#   docker build -f .ci/dockerfiles/Dockerfile.build_helper -t nixl-build-helper .
+#
+
+ARG BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04
+
+FROM ${BASE_IMAGE}
+
+# Build arguments
+ARG _UID=148069
+ARG _GID=30
+ARG _LOGIN=svc-nixl
+ARG _GROUP=dip
+ARG _HOME=/home/$_LOGIN
+ARG WORKSPACE=/workspace/nixl
+
+# Labels for documentation
+LABEL maintainer="NVIDIA NIXL Team"
+LABEL description="NIXL development environment"
+LABEL version="1.0.0"
+
+RUN apt update && \
+    apt install -y sudo podman curl jq && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install scctl for slurm client management
+RUN curl -s https://urm.nvidia.com/artifactory/sw-swx-lab-infra-generic/scctl/get-app.sh | bash -s -- --output-dir /usr/local/bin
+
+# Create group and user in one RUN command to reduce layers
+RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \
+    groupadd -g "${_GID}" "${_GROUP}"; \
+    fi && \
+    useradd -u "${_UID}" -g "${_GID}" -m -s /bin/bash "${_LOGIN}" && \
+    mkdir -p "${_HOME}" && \
+    chown -R "${_UID}":"${_GID}" "${_HOME}" && \
+    mkdir -p /etc/sudoers.d && \
+    echo "${_LOGIN} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/${_LOGIN} && \
+    chmod 440 /etc/sudoers.d/${_LOGIN} && \
+    chown root:root /etc/sudoers.d/${_LOGIN}
+
+# Switch to non-root user
+USER ${_LOGIN}
+
+# Set environment variables
+ENV HOME=${_HOME}
+ENV USER=${_LOGIN}
+
+# Set working directory
+WORKDIR ${WORKSPACE}
+
+# Default command
+CMD ["/bin/bash"]

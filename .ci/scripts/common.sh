@@ -76,7 +76,9 @@ min_gtest_port=$((tcp_port_min + gtest_offset))
 max_gtest_port=$((tcp_port_max + gtest_offset))
 
 # Check if a GPU is present
-nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+if [ -z "${HAS_GPU}" ]; then
+    nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+fi
 
 # Ensure CUDA_HOME is set if CUDA is installed (cuda-dl-base images don't set it by default)
 if [ -d "/usr/local/cuda" ] && [ -z "$CUDA_HOME" ]; then
