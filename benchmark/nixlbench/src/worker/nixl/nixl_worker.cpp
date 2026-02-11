@@ -609,8 +609,9 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
     memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
 
     size_t offset = start_offset;
+    char *write_ptr = static_cast<char *>(buf);
     while (buffer_size > 0) {
-        ssize_t rc = pwrite(fd, buf, buffer_size, offset);
+        ssize_t rc = pwrite(fd, write_ptr, buffer_size, offset);
         if (rc < 0) {
             std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
                       << std::endl;
@@ -619,6 +620,7 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
         buffer_size -= rc;
         offset += rc;
+        write_ptr += rc;
     }
 
     free(buf);
@@ -699,6 +701,77 @@ xferBenchNixlWorker::cleanupBasicDescBlk(xferBenchIOV &iov) {
     // The block device backend handles the device lifecycle
 }
 
+bool
+xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size) {
+    int flags = O_RDWR | O_CREAT | O_LARGEFILE;
+    if (xferBenchConfig::storage_enable_direct) flags |= O_DIRECT;
+
+    int fd = open(device.device_path.c_str(), flags, 0744);
+    if (fd < 0) {
+        std::cerr << "Failed to open GUSLI file: " << device.device_path << ": " << strerror(errno)
+                  << std::endl;
+        return false;
+    }
+
+    // Sample one page at the offset GUSLI will read from
+    void *check_buf;
+    bool needs_write = true;
+    if (allocateXferMemory(xferBenchConfig::page_size, &check_buf)) {
+        ssize_t rd = pread(fd, check_buf, xferBenchConfig::page_size, device.dev_offset);
+        if (rd == (ssize_t)xferBenchConfig::page_size) {
+            needs_write = false;
+            uint8_t *bytes = static_cast<uint8_t *>(check_buf);
+            for (ssize_t i = 0; i < rd; i++) {
+                if (bytes[i] != XFERBENCH_TARGET_BUFFER_ELEMENT) {
+                    needs_write = true;
+                    break;
+                }
+            }
+        }
+        free(check_buf);
+    }
+
+    if (needs_write) {
+        std::cout << "Warning: GUSLI file '" << device.device_path << "' at offset "
+                  << device.dev_offset << " does not contain expected pattern (0x" << std::hex
+                  << (int)XFERBENCH_TARGET_BUFFER_ELEMENT << std::dec << "). Overwriting."
+                  << std::endl;
+
+        void *buf;
+        if (!allocateXferMemory(size, &buf)) {
+            close(fd);
+            return false;
+        }
+        memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, size);
+
+        size_t remaining = size;
+        size_t offset = device.dev_offset;
+        char *write_ptr = static_cast<char *>(buf);
+        while (remaining > 0) {
+            ssize_t rc = pwrite(fd, write_ptr, remaining, offset);
+            if (rc < 0) {
+                std::cerr << "Failed to write to " << device.device_path << " at offset " << offset
+                          << ": " << strerror(errno) << std::endl;
+                free(buf);
+                close(fd);
+                return false;
+            }
+            remaining -= rc;
+            offset += rc;
+            write_ptr += rc;
+        }
+        free(buf);
+    } else {
+        std::cout << "GUSLI file '" << device.device_path << "' at offset " << device.dev_offset
+                  << " already contains expected pattern (0x" << std::hex
+                  << (int)XFERBENCH_TARGET_BUFFER_ELEMENT << std::dec
+                  << "). Skipping initialization." << std::endl;
+    }
+
+    close(fd);
+    return true;
+}
+
 std::vector<std::vector<xferBenchIOV>>
 xferBenchNixlWorker::allocateMemory(int num_threads) {
     std::vector<std::vector<xferBenchIOV>> iov_lists;
@@ -763,17 +836,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
         if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
             for (auto &device : gusli_devices) {
-                if (device.device_type == 'F') {
-                    std::vector<xferFileState> fstate =
-                        createFileFds(getName(), 1, {device.device_path});
-                    if (!initBasicDescFile(
-                            xferBenchConfig::total_buffer_size, fstate[0], device.device_id)) {
-                        std::cerr << "Failed to create file: " << device.device_path << std::endl;
-                        for (auto &f : fstate) {
-                            close(f.fd);
-                        }
-                        exit(EXIT_FAILURE);
-                    }
+                if (device.device_type == 'F' &&
+                    !ensureFileHasConsistencyData(device, buffer_size)) {
+                    exit(EXIT_FAILURE);
                 }
             }
         }
