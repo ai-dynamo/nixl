@@ -1097,11 +1097,8 @@ xferBenchUtils::printStats(bool is_target,
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
-    // TODO: We can avoid this by creating a sub-communicator across initiator ranks
-    // if (isTarget() && IS_PAIRWISE_AND_SG() && rt->getSize() > 2) { - Fix this isTarget can not be
-    // called here
+    // Targets don't participate in reduction - they have no throughput to contribute
     if (is_target && IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
-        rt->reduceSumDouble(&throughput_gb, &totalbw, 0);
         return;
     }
 
@@ -1248,7 +1245,8 @@ xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
     }
     std::string aws_cmd = "aws s3 cp " + filename + " s3://" + bucket_name;
     if (!xferBenchConfig::obj_endpoint_override.empty()) {
-        aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
+        aws_cmd +=
+            " --checksum-algorithm SHA256 --endpoint-url " + xferBenchConfig::obj_endpoint_override;
     }
 
     std::string full_cmd = buildAwsCredentials() + aws_cmd;
