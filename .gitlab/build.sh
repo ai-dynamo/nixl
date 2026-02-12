@@ -35,6 +35,7 @@ LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
+#UCCL_COMMIT_SHA="412500973e796aefcb03d154133cdded612c3da2"
 UCCL_COMMIT_SHA="a962f611021afc2e3c9358f6da4ae96539cbca0f"
 AZURITE_VER="3.35.0"
 TMPDIR=$(mktemp -d)
@@ -262,8 +263,11 @@ else
         git clone https://github.com/uccl-project/uccl.git && \
         cd uccl && git checkout -q "${UCCL_COMMIT_SHA}" && \
         cd p2p && \
-        make -j"$NPROC" && \
+        make -j"$NPROC" -e && \
         $SUDO make install && \
+        #$SUDO install -m 755 libuccl_p2p.so /usr/local/lib/ && \
+        #$SUDO install -D -m 644 uccl_engine.h /usr/local/include/uccl_engine.h && \
+        #$SUDO install -D -m 644 include/common.h /usr/local/include/common.h && \
         $SUDO ldconfig
         )
     else
