@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,6 @@
 #include <fcntl.h>
 #include "nixl.h"
 #include "common/nixl_time.h"
-#include "common/str_tools.h"
 #include "agent_data.h"
 #include "common/nixl_log.h"
 #if HAVE_ETCD
@@ -27,6 +26,7 @@
 #include <future>
 #endif // HAVE_ETCD
 #include <absl/strings/str_format.h>
+#include <absl/strings/str_split.h>
 #include <poll.h>
 
 const std::string default_metadata_label = "metadata";
@@ -658,7 +658,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                 continue;
             }
 
-            command_list = str_split_substr(commands, "NIXLCOMM:");
+            command_list = absl::StrSplit(commands, "NIXLCOMM:");
 
             for(const auto &command : command_list) {
 
