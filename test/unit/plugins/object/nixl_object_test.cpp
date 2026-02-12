@@ -19,7 +19,6 @@
 #include <string>
 #include <algorithm>
 #include <cassert>
-#include <cuda_runtime.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <iomanip>
@@ -81,7 +80,6 @@ print_usage(const char *program_name) {
               << "  -a, --accelerated ACCEL_TYPE   Accelerated engine type (default: "
               << DEFAULT_ACCEL_TYPE << ")\n"
               << "  -d, --dram              Use DRAM for memory operations (default)\n"
-              << "  -v, --vram              Use VRAM for memory operations\n"
               << "  -n, --num-transfers N   Number of transfers to perform (default: "
               << DEFAULT_NUM_TRANSFERS << ")\n"
               << "  -s, --size SIZE         Size of each transfer (default: "
@@ -147,58 +145,9 @@ fill_test_pattern(void *buffer, size_t size) {
     }
 }
 
-// Helper function to fill GPU buffer with repeating pattern
-cudaError_t
-fill_gpu_test_pattern(void *gpu_buffer, size_t size) {
-    char *host_buffer = (char *)malloc(size);
-    if (!host_buffer) {
-        return cudaErrorMemoryAllocation;
-    }
-
-    fill_test_pattern(host_buffer, size);
-    cudaError_t err = cudaMemcpy(gpu_buffer, host_buffer, size, cudaMemcpyHostToDevice);
-    free(host_buffer);
-    return err;
-}
-
 void
 clear_buffer(void *buffer, size_t size) {
     memset(buffer, 0, size);
-}
-
-cudaError_t
-clear_gpu_buffer(void *gpu_buffer, size_t size) {
-    return cudaMemset(gpu_buffer, 0, size);
-}
-
-// Helper function to validate GPU buffer
-bool
-validate_gpu_buffer(void *gpu_buffer, size_t size) {
-    char *host_buffer = (char *)malloc(size);
-    char *expected_buffer = (char *)malloc(size);
-    if (!host_buffer || !expected_buffer) {
-        free(host_buffer);
-        free(expected_buffer);
-        return false;
-    }
-
-    // Copy GPU data to host
-    cudaError_t err = cudaMemcpy(host_buffer, gpu_buffer, size, cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess) {
-        free(host_buffer);
-        free(expected_buffer);
-        return false;
-    }
-
-    // Create expected pattern
-    fill_test_pattern(expected_buffer, size);
-
-    // Compare
-    bool match = (memcmp(host_buffer, expected_buffer, size) == 0);
-
-    free(host_buffer);
-    free(expected_buffer);
-    return match;
 }
 
 // Helper function to format duration
@@ -217,12 +166,10 @@ format_duration(nixlTime::us_t us) {
 int
 main(int argc, char *argv[]) {
     nixl_status_t ret = NIXL_SUCCESS;
-    void **vram_addr = NULL;
     void **dram_addr = NULL;
     int status = 0;
     int i;
     bool use_dram = false;
-    bool use_vram = false;
     int opt;
     size_t transfer_size = DEFAULT_TRANSFER_SIZE;
     int num_transfers = DEFAULT_NUM_TRANSFERS;
@@ -239,7 +186,6 @@ main(int argc, char *argv[]) {
     // Parse command line options
     static struct option long_options[] = {{"accelerated", required_argument, 0, 'a'},
                                            {"dram", no_argument, 0, 'd'},
-                                           {"vram", no_argument, 0, 'v'},
                                            {"num-transfers", required_argument, 0, 'n'},
                                            {"size", required_argument, 0, 's'},
                                            {"no-read", no_argument, 0, 'r'},
@@ -250,7 +196,7 @@ main(int argc, char *argv[]) {
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
-    while ((opt = getopt_long(argc, argv, "a:dvn:s:rwt:he:u:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "a:dn:s:rwt:he:u:", long_options, NULL)) != -1) {
         switch (opt) {
         case 'a':
             accel_type = optarg;
@@ -263,9 +209,6 @@ main(int argc, char *argv[]) {
             break;
         case 'd':
             use_dram = true;
-            break;
-        case 'v':
-            use_vram = true;
             break;
         case 'n':
             num_transfers = atoi(optarg);
@@ -308,33 +251,17 @@ main(int argc, char *argv[]) {
         return 1;
     }
 
-    // If neither is specified, default to DRAM
-    if (!use_dram && !use_vram) {
-        use_dram = true;
-    }
+    // Default to DRAM
+    use_dram = true;
 
-    // Check if both DRAM and VRAM are specified
-    if (use_dram && use_vram) {
-        std::cerr << "Error: Cannot specify both DRAM (-d) and VRAM (-v) options\n";
-        print_usage(argv[0]);
-        return 1;
-    }
-
-    // Allocate arrays based on num_transfers
-    if (use_vram) {
-        vram_addr = new void *[num_transfers];
-    }
-    if (use_dram) {
-        dram_addr = new void *[num_transfers];
-    }
+    // Allocate DRAM array
+    dram_addr = new void *[num_transfers];
 
     // Initialize NIXL components
     nixlAgentConfig cfg(true);
-    nixlBlobDesc *vram_buf = use_vram ? new nixlBlobDesc[num_transfers] : NULL;
-    nixlBlobDesc *dram_buf = use_dram ? new nixlBlobDesc[num_transfers] : NULL;
+    nixlBlobDesc *dram_buf = new nixlBlobDesc[num_transfers];
     nixlBlobDesc *objects = new nixlBlobDesc[num_transfers];
     nixlBackendH *obj;
-    nixl_reg_dlist_t vram_for_obj(VRAM_SEG);
     nixl_reg_dlist_t dram_for_obj(DRAM_SEG);
     nixl_reg_dlist_t obj_for_obj(OBJ_SEG);
 
@@ -343,7 +270,7 @@ main(int argc, char *argv[]) {
               << std::endl;
     std::cout << "============================================================" << std::endl;
     std::cout << "Configuration:" << std::endl;
-    std::cout << "- Mode: " << (use_dram ? "DRAM" : "VRAM") << std::endl;
+    std::cout << "- Mode: DRAM" << std::endl;
     std::cout << "- Number of transfers: " << num_transfers << std::endl;
     std::cout << "- Transfer size: " << transfer_size << " bytes" << std::endl;
     std::cout << "- Total data: " << std::fixed << std::setprecision(2)
@@ -391,41 +318,18 @@ main(int argc, char *argv[]) {
     std::cout << "PHASE 1: Allocating and initializing buffers" << std::endl;
     std::cout << "============================================================" << std::endl;
     for (i = 0; i < num_transfers; i++) {
-        if (use_vram) {
-            // Allocate and initialize VRAM buffer
-            if (cudaMalloc(&vram_addr[i], transfer_size) != cudaSuccess) {
-                std::cerr << "CUDA malloc failed\n";
-                goto cleanup;
-            }
-            if (fill_gpu_test_pattern(vram_addr[i], transfer_size) != cudaSuccess) {
-                std::cerr << "CUDA buffer initialization failed\n";
-                goto cleanup;
-            }
+        // Allocate and initialize DRAM buffer
+        if (posix_memalign(&dram_addr[i], PAGE_SIZE, transfer_size) != 0) {
+            std::cerr << "DRAM allocation failed\n";
+            goto cleanup;
         }
+        fill_test_pattern(dram_addr[i], transfer_size);
 
-        if (use_dram) {
-            // Allocate and initialize DRAM buffer
-            if (posix_memalign(&dram_addr[i], PAGE_SIZE, transfer_size) != 0) {
-                std::cerr << "DRAM allocation failed\n";
-                goto cleanup;
-            }
-            fill_test_pattern(dram_addr[i], transfer_size);
-        }
-
-        // Set up descriptors
-        if (use_vram) {
-            vram_buf[i].addr = (uintptr_t)(vram_addr[i]);
-            vram_buf[i].len = transfer_size;
-            vram_buf[i].devId = 0;
-            vram_for_obj.addDesc(vram_buf[i]);
-        }
-
-        if (use_dram) {
-            dram_buf[i].addr = (uintptr_t)(dram_addr[i]);
-            dram_buf[i].len = transfer_size;
-            dram_buf[i].devId = 0;
-            dram_for_obj.addDesc(dram_buf[i]);
-        }
+        // Set up DRAM descriptor
+        dram_buf[i].addr = (uintptr_t)(dram_addr[i]);
+        dram_buf[i].len = transfer_size;
+        dram_buf[i].devId = 0;
+        dram_for_obj.addDesc(dram_buf[i]);
 
         objects[i].addr = 0;
         objects[i].len = transfer_size;
@@ -446,14 +350,6 @@ main(int argc, char *argv[]) {
         goto cleanup;
     }
 
-    if (use_vram) {
-        ret = agent.registerMem(vram_for_obj);
-        if (ret != NIXL_SUCCESS) {
-            std::cerr << "Failed to register VRAM memory\n";
-            goto cleanup;
-        }
-    }
-
     if (use_dram) {
         ret = agent.registerMem(dram_for_obj);
         if (ret != NIXL_SUCCESS) {
@@ -471,7 +367,7 @@ main(int argc, char *argv[]) {
 
     // Prepare transfer lists
     nixl_xfer_dlist_t obj_for_obj_list = obj_for_obj.trim();
-    nixl_xfer_dlist_t src_list = use_dram ? dram_for_obj.trim() : vram_for_obj.trim();
+    nixl_xfer_dlist_t src_list = dram_for_obj.trim();
 
 
     // Perform write test if not skipped
@@ -484,16 +380,12 @@ main(int argc, char *argv[]) {
         nixlXferReqH *write_req = nullptr;
 
         // Create descriptor lists for all transfers
-        nixl_reg_dlist_t src_reg(use_dram ? DRAM_SEG : VRAM_SEG);
+        nixl_reg_dlist_t src_reg(DRAM_SEG);
         nixl_reg_dlist_t obj_reg(OBJ_SEG);
 
         // Add all descriptors
         for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
-            if (use_dram) {
-                src_reg.addDesc(dram_buf[transfer_idx]);
-            } else {
-                src_reg.addDesc(vram_buf[transfer_idx]);
-            }
+            src_reg.addDesc(dram_buf[transfer_idx]);
             obj_reg.addDesc(objects[transfer_idx]);
             printProgress(float(transfer_idx + 1) / num_transfers);
         }
@@ -559,15 +451,7 @@ main(int argc, char *argv[]) {
         std::cout << "PHASE 3: Clearing buffers for read test" << std::endl;
         std::cout << "============================================================" << std::endl;
         for (i = 0; i < num_transfers; i++) {
-            if (use_vram && vram_addr[i]) {
-                if (clear_gpu_buffer(vram_addr[i], transfer_size) != cudaSuccess) {
-                    std::cerr << "Failed to clear VRAM buffer " << i << std::endl;
-                    goto cleanup;
-                }
-            }
-            if (use_dram && dram_addr[i]) {
-                clear_buffer(dram_addr[i], transfer_size);
-            }
+            clear_buffer(dram_addr[i], transfer_size);
             printProgress(float(i + 1) / num_transfers);
         }
     }
@@ -605,16 +489,12 @@ main(int argc, char *argv[]) {
         nixlXferReqH *read_req = nullptr;
 
         // Create descriptor lists for all transfers
-        nixl_reg_dlist_t src_reg(use_dram ? DRAM_SEG : VRAM_SEG);
+        nixl_reg_dlist_t src_reg(DRAM_SEG);
         nixl_reg_dlist_t obj_reg(OBJ_SEG);
 
         // Add all descriptors
         for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
-            if (use_dram) {
-                src_reg.addDesc(dram_buf[transfer_idx]);
-            } else {
-                src_reg.addDesc(vram_buf[transfer_idx]);
-            }
+            src_reg.addDesc(dram_buf[transfer_idx]);
             obj_reg.addDesc(objects[transfer_idx]);
             printProgress(float(transfer_idx + 1) / num_transfers);
         }
@@ -677,26 +557,18 @@ main(int argc, char *argv[]) {
         std::cout << "PHASE 6: Validating read data" << std::endl;
         std::cout << "============================================================" << std::endl;
         for (i = 0; i < num_transfers; i++) {
-            if (use_vram) {
-                if (!validate_gpu_buffer(vram_addr[i], transfer_size)) {
-                    std::cerr << "VRAM buffer " << i << " validation failed\n";
-                    goto cleanup;
-                }
+            char *expected_buffer = (char *)malloc(transfer_size);
+            if (!expected_buffer) {
+                std::cerr << "Failed to allocate validation buffer\n";
+                goto cleanup;
             }
-            if (use_dram) {
-                char *expected_buffer = (char *)malloc(transfer_size);
-                if (!expected_buffer) {
-                    std::cerr << "Failed to allocate validation buffer\n";
-                    goto cleanup;
-                }
-                fill_test_pattern(expected_buffer, transfer_size);
-                if (memcmp(dram_addr[i], expected_buffer, transfer_size) != 0) {
-                    std::cerr << "DRAM buffer " << i << " validation failed\n";
-                    free(expected_buffer);
-                    goto cleanup;
-                }
+            fill_test_pattern(expected_buffer, transfer_size);
+            if (memcmp(dram_addr[i], expected_buffer, transfer_size) != 0) {
+                std::cerr << "DRAM buffer " << i << " validation failed\n";
                 free(expected_buffer);
+                goto cleanup;
             }
+            free(expected_buffer);
             printProgress(float(i + 1) / num_transfers);
         }
         std::cout << "\nVerification completed successfully!" << std::endl;
@@ -711,22 +583,12 @@ cleanup:
 
     // Cleanup resources
     agent.deregisterMem(obj_for_obj);
-    if (use_vram) {
-        agent.deregisterMem(vram_for_obj);
-        for (i = 0; i < num_transfers; i++) {
-            if (vram_addr[i]) cudaFree(vram_addr[i]);
-        }
-        delete[] vram_addr;
-        delete[] vram_buf;
+    agent.deregisterMem(dram_for_obj);
+    for (i = 0; i < num_transfers; i++) {
+        if (dram_addr[i]) free(dram_addr[i]);
     }
-    if (use_dram) {
-        agent.deregisterMem(dram_for_obj);
-        for (i = 0; i < num_transfers; i++) {
-            if (dram_addr[i]) free(dram_addr[i]);
-        }
-        delete[] dram_addr;
-        delete[] dram_buf;
-    }
+    delete[] dram_addr;
+    delete[] dram_buf;
 
     delete[] objects;
 
