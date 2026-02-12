@@ -258,11 +258,20 @@ if [ -n "$PRE_INSTALLED_UCX_ENV" ]; then
 else
     if $HAS_GPU && test -d "$CUDA_HOME"; then
        ( \
+        case "$(uname -m)" in
+          aarch64)
+            export CXXFLAGS="${CXXFLAGS} --param destructive-interference-size=64"
+            #export CXXFLAGS="${CXXFLAGS} -mcpu=native -mtune=native"
+          ;;
+          *)
+            # Usually not needed, but just in case
+          ;;
+        esac
         cd ${TMPDIR} && \
         git clone https://github.com/uccl-project/uccl.git && \
         cd uccl && git checkout -q "${UCCL_COMMIT_SHA}" && \
         cd p2p && \
-        make -j"$NPROC" && \
+        make -j"$NPROC" -e && \
         $SUDO make install && \
         $SUDO ldconfig
         )
