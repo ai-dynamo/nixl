@@ -69,9 +69,7 @@ runs_on_dockers:
      file: '.ci/dockerfiles/Dockerfile.build_helper',
      name: 'build_helper',
      tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04',
-     limits: "{memory: 4Gi, cpu: 2000m}",
-     requests: "{memory: 2Gi, cpu: 1000m}"
+     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
     }
 
 matrix:
