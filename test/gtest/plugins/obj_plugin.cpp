@@ -129,8 +129,8 @@ TEST_P(setupObjCrtTestFixture, CrtXferTest) {
     // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
     transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
                                                 localBackendEngine_,
-                                                local_agent_name,
-                                                local_agent_name,
+                                                crt_agent_name,
+                                                crt_agent_name,
                                                 false,
                                                 1,
                                                 2048);
@@ -145,8 +145,8 @@ TEST_P(setupObjCrtTestFixture, CrtXferMultiBufsTest) {
     // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
     transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
                                                 localBackendEngine_,
-                                                local_agent_name,
-                                                local_agent_name,
+                                                crt_agent_name,
+                                                crt_agent_name,
                                                 false,
                                                 3,
                                                 2048);
@@ -161,8 +161,8 @@ TEST_P(setupObjCrtTestFixture, CrtQueryMemTest) {
     // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
     transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
                                                 localBackendEngine_,
-                                                local_agent_name,
-                                                local_agent_name,
+                                                crt_agent_name,
+                                                crt_agent_name,
                                                 false,
                                                 3,
                                                 2048);
