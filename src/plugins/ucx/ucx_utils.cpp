@@ -246,8 +246,8 @@ nixlUcxEp::sendAm(unsigned msg_id,
                   size_t len,
                   uint32_t flags,
                   nixlUcxReq *req,
-                  am_deleter_t deleter) {
-    nixl_status_t status = checkTxState();
+                  const am_deleter_t &deleter) {
+    const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         return status;
     }
@@ -265,7 +265,8 @@ nixlUcxEp::sendAm(unsigned msg_id,
         param.user_data = ctx.get();
     }
 
-    ucs_status_ptr_t request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
+    const ucs_status_ptr_t request =
+        ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
     if (UCS_PTR_IS_PTR(request)) {
         ctx.release();
         if (req != nullptr) {
@@ -396,23 +397,36 @@ nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept {
     std::terminate();
 }
 
-nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
-                               bool prog_thread,
-                               unsigned long num_workers,
-                               nixl_thread_sync_t sync_mode,
-                               size_t num_device_channels,
-                               const std::string &engine_config) {
+namespace {
+
+[[nodiscard]] unsigned
+makeUcpVersion() noexcept {
     unsigned major_version, minor_version, release_number;
     ucp_get_version(&major_version, &minor_version, &release_number);
-    ucpVersion_ = UCP_VERSION(major_version, minor_version);
+    return UCP_VERSION(major_version, minor_version);
+}
 
+[[nodiscard]] nixl_ucx_mt_t
+makeMtType(const bool prog_thread, const nixl_thread_sync_t sync_mode) noexcept {
     // With strict synchronization model nixlAgent serializes access to backends, with more
     // permissive models backends need to account for concurrent access and ensure their internal
     // state is properly protected. Progress thread creates internal concurrency in UCX backend
     // irrespective of nixlAgent synchronization model.
-    mt_type = (sync_mode == nixl_thread_sync_t::NIXL_THREAD_SYNC_RW || prog_thread) ?
+    return (sync_mode == nixl_thread_sync_t::NIXL_THREAD_SYNC_RW || prog_thread) ?
         nixl_ucx_mt_t::WORKER :
         nixl_ucx_mt_t::SINGLE;
+}
+
+} // namespace
+
+nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
+                               bool prog_thread,
+                               unsigned long num_workers,
+                               nixl_thread_sync_t sync_mode,
+                               size_t num_device_channels,
+                               const std::string &engine_config)
+    : mtType_(makeMtType(prog_thread, sync_mode)),
+      ucpVersion_(makeUcpVersion()) {
 
     ucp_params_t ucp_params;
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED;
@@ -504,7 +518,7 @@ static_assert(sizeof(nixlUcpWorkerParams) == sizeof(ucp_worker_params_t));
 ucp_worker *
 nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
     ucp_worker *worker = nullptr;
-    const nixlUcpWorkerParams params(ctx.mt_type);
+    const nixlUcpWorkerParams params(ctx.mtType_);
     const ucs_status_t status = ucp_worker_create(ctx.ctx, &params, &worker);
     if (status != UCS_OK) {
         throw std::runtime_error(std::string("Failed to create UCX worker: ") +
