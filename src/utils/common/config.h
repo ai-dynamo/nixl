@@ -102,12 +102,15 @@ template<typename integer> struct integralTraits {
     [[nodiscard]] static integer
     convert(const std::string &value) {
         integer result;
-        const auto status = std::from_chars(begin(value), value.data() + value.size(), result, base(value));
+        const auto status =
+            std::from_chars(begin(value), value.data() + value.size(), result, base(value));
         switch (status.ec) {
         case std::errc::invalid_argument:
-            throw std::runtime_error("Invalid integer string '" + value + "' for type " + typeid(integer).name());
+            throw std::runtime_error("Invalid integer string '" + value + "' for type " +
+                                     typeid(integer).name());
         case std::errc::result_out_of_range:
-            throw std::runtime_error("Integer string '" + value + "' out of range for type " + typeid(integer).name());
+            throw std::runtime_error("Integer string '" + value + "' out of range for type " +
+                                     typeid(integer).name());
         default:
             if (status.ptr != value.data() + value.size()) {
                 throw std::runtime_error("Trailing garbage in integer string '" + value + "'");
@@ -119,17 +122,17 @@ template<typename integer> struct integralTraits {
 
 private:
     [[nodiscard]] static bool
-    isHex(const std::string& value) noexcept {
+    isHex(const std::string &value) noexcept {
         return std::is_unsigned_v<integer> && (value.size() > 2) && (value[1] == 'x');
     }
 
     [[nodiscard]] static int
-    base(const std::string& value) noexcept {
+    base(const std::string &value) noexcept {
         return isHex(value) ? 16 : 10;
     }
 
     [[nodiscard]] static const char *
-    begin(const std::string& value) noexcept {
+    begin(const std::string &value) noexcept {
         return value.data() + (isHex(value) ? 2 : 0);
     }
 };
