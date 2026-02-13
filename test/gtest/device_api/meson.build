@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,13 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Device API test utilities and sources
-device_api_inc_dirs = include_directories('.')
-
-device_api_sources = [
+# Device API test sources (common + tests)
+device_api_test_sources = files(
+    'agent.cu',
+    'kernel.cu',
+    'p2p_test.cu',
+    'params.cu',
+    'partial_write_test.cu',
+    'signal_local_test.cu',
+    'signal_post_test.cu',
     'single_write_test.cu',
-    'utils.cu'
-]
-
-# Export for parent meson.build
-device_api_test_sources = files(device_api_sources)
+    'write_test.cu',
+)
