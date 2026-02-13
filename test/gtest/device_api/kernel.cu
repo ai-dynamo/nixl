@@ -15,14 +15,34 @@
  * limitations under the License.
  */
 
-#include "device_kernels.cuh"
-#include "device_utils.cuh"
+#include "kernel.h"
+
 #include "mem_type_array.h"
 
-namespace nixl::test::device_api {
+#include <iostream>
 
+namespace {
 constexpr size_t max_threads_per_block = 1024;
 
+[[nodiscard]] nixl_status_t
+checkCudaErrors() {
+    const cudaError_t launch_error = cudaGetLastError();
+    if (launch_error != cudaSuccess) {
+        std::cerr << "CUDA kernel launch error: " << cudaGetErrorString(launch_error) << std::endl;
+        return NIXL_ERR_BACKEND;
+    }
+
+    const cudaError_t sync_error = cudaDeviceSynchronize();
+    if (sync_error != cudaSuccess) {
+        std::cerr << "CUDA synchronization error: " << cudaGetErrorString(sync_error) << std::endl;
+        return NIXL_ERR_BACKEND;
+    }
+
+    return NIXL_SUCCESS;
+}
+} // namespace
+
+namespace nixl::device_api {
 template<nixl_gpu_level_t level>
 __device__ size_t
 threadsPerRequest() {
@@ -88,7 +108,7 @@ doOperation(const kernelParams &params, nixlGpuXferStatusH *req_ptr) {
                                                       params.singleWrite.remoteOffset,
                                                       params.singleWrite.size,
                                                       channel_id,
-                                                      params.withNoDelay,
+                                                      params.noDelay,
                                                       req_ptr);
         break;
 
@@ -103,13 +123,13 @@ doOperation(const kernelParams &params, nixlGpuXferStatusH *req_ptr) {
                                                        params.partialWrite.signalInc,
                                                        params.partialWrite.signalOffset,
                                                        channel_id,
-                                                       params.withNoDelay,
+                                                       params.noDelay,
                                                        req_ptr);
         break;
 
     case operation_t::WRITE:
         status = nixlGpuPostWriteXferReq<level>(
-            params.reqHandle, params.write.signalInc, channel_id, params.withNoDelay, req_ptr);
+            params.reqHandle, params.write.signalInc, channel_id, params.noDelay, req_ptr);
         break;
 
     case operation_t::SIGNAL_POST:
@@ -118,7 +138,7 @@ doOperation(const kernelParams &params, nixlGpuXferStatusH *req_ptr) {
                                                  params.signalPost.signalInc,
                                                  params.signalPost.signalOffset,
                                                  channel_id,
-                                                 params.withNoDelay,
+                                                 params.noDelay,
                                                  req_ptr);
         break;
 
@@ -150,7 +170,7 @@ doOperation(const kernelParams &params, nixlGpuXferStatusH *req_ptr) {
         return status;
     }
 
-    if (!params.withNoDelay || (req_ptr == nullptr)) {
+    if (!params.noDelay || (req_ptr == nullptr)) {
         return NIXL_SUCCESS;
     }
 
@@ -193,7 +213,7 @@ kernelJob(const kernelParams &params, nixlGpuXferStatusH *shared_reqs) {
 
     // Last iteration forces completion to ensure all operations are finished
     kernelParams params_force_completion = params;
-    params_force_completion.withNoDelay = true;
+    params_force_completion.noDelay = true;
     nixlGpuXferStatusH *status_ptr = getRequestPtr<level>(params.withRequest, shared_reqs);
 
     return doOperation<level>(params_force_completion, status_ptr);
@@ -244,4 +264,4 @@ launchKernel(const kernelParams &params) {
     result.copyToHost(&host_status, 1);
     return host_status;
 }
-} // namespace nixl::test::device_api
+} // namespace nixl::device_api

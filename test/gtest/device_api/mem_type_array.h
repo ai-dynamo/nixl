@@ -21,7 +21,6 @@
 #include <cuda_runtime.h>
 #include <nixl.h>
 
-#include <cstddef>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -29,7 +28,7 @@
 #include <string>
 #include <vector>
 
-namespace nixl::test::device_api {
+namespace nixl::device_api {
 template<typename T> class memTypeArray {
 public:
     explicit memTypeArray(size_t count, nixl_mem_t mem_type = VRAM_SEG)
@@ -137,5 +136,5 @@ private:
     nixl_mem_t mem_type_;
     std::unique_ptr<T, deleter> ptr_;
 };
-} // namespace nixl::test::device_api
+} // namespace nixl::device_api
 #endif // NIXL_DEVICE_API_COMMON_MEM_TYPE_ARRAY_H

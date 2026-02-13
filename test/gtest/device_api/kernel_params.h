@@ -15,14 +15,14 @@
  * limitations under the License.
  */
 
-#ifndef TEST_GTEST_DEVICE_API_COMMON_DEVICE_KERNELS_CUH
-#define TEST_GTEST_DEVICE_API_COMMON_DEVICE_KERNELS_CUH
+#ifndef TEST_GTEST_DEVICE_API_KERNEL_PARAMS_H
+#define TEST_GTEST_DEVICE_API_KERNEL_PARAMS_H
+
+#include "send_mode.h"
 
 #include <nixl_device.cuh>
-#include <cstddef>
-#include <cstdint>
 
-namespace nixl::test::device_api {
+namespace nixl::device_api {
 enum class operation_t : uint64_t {
     SINGLE_WRITE,
     PARTIAL_WRITE,
@@ -33,16 +33,32 @@ enum class operation_t : uint64_t {
 };
 
 struct kernelParams {
-    operation_t operation;
-    nixl_gpu_level_t level;
-    unsigned numThreads;
-    unsigned numBlocks;
-    size_t numIters;
-    bool withRequest;
-    bool withNoDelay;
+    kernelParams(operation_t op, nixl_gpu_level_t l, send_mode_t sm, nixlGpuXferReqH req_handle)
+        : operation(op),
+          level(l),
+          withRequest(request(sm)),
+          noDelay(!delay(sm)),
+          numChannels(sm == send_mode_t::MULTI_CHANNEL ? 32 : 1),
+          reqHandle(req_handle) {}
+
+    kernelParams(operation_t op, nixl_gpu_level_t l) : operation(op), level(l), numIters(1) {}
+
+    kernelParams(operation_t op, nixl_gpu_level_t l, size_t num_threads)
+        : operation(op),
+          level(l),
+          numThreads(num_threads),
+          numIters(1) {}
+
+    const operation_t operation;
+    const nixl_gpu_level_t level;
+    const unsigned numThreads = 32;
+    const unsigned numBlocks = 1;
+    const size_t numIters = 100;
+    bool withRequest = false;
+    bool noDelay = false;
     unsigned numChannels = 1;
 
-    nixlGpuXferReqH reqHandle;
+    const nixlGpuXferReqH reqHandle = nullptr;
 
     struct {
         unsigned index;
@@ -82,8 +98,5 @@ struct kernelParams {
         uint64_t value;
     } signalWrite;
 };
-
-[[nodiscard]] nixl_status_t
-launchKernel(const kernelParams &params);
-} // namespace nixl::test::device_api
-#endif // NIXL_DEVICE_KERNELS_CUH
+} // namespace nixl::device_api
+#endif // TEST_GTEST_DEVICE_API_KERNEL_PARAMS_H

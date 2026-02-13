@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,11 +15,14 @@
 
 # Device API test sources (common + tests)
 device_api_test_sources = files(
-    'common/device_kernels.cu',
-    'common/device_test_base.cu',
-    'tests/single_write_test.cu',
-    'tests/partial_write_test.cu',
-    'tests/write_test.cu',
-    'tests/signal_post_test.cu',
-    'tests/signal_local_test.cu',
+    'agent.cu',
+    'kernel_params.cu',
+    'kernel.cu',
+    'p2p_test.cu',
+    'params.cu',
+    'partial_write_test.cu',
+    'signal_local_test.cu',
+    'signal_post_test.cu',
+    'single_write_test.cu',
+    'write_test.cu',
 )
