@@ -316,17 +316,18 @@ public:
      */
     inline bool
     isEmpty() const {
-        return (descs.size() == 0);
+        return (descs.empty());
     }
 
-    /**
-     * @brief Operator [] overloading, get/set descriptor at [index].
-     *        Can throw std::out_of_range exception.
-     */
-    const T &
-    operator[](unsigned int index) const;
-    virtual T &
-    operator[](unsigned int index);
+    inline const T &
+    operator[](unsigned int index) const {
+        return descs[index];
+    }
+
+    inline T &
+    operator[](unsigned int index) {
+        return descs[index];
+    }
 
     /**
      * @brief Vector like iterators for const and non-const elements

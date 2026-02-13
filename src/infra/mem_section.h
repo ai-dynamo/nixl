@@ -71,7 +71,7 @@ public:
     verifySorted() const;
 
     nixlSectionDesc &
-    operator[](unsigned int index) override;
+    operator[](unsigned int index);
 
     int
     getIndex(const nixlBasicDesc &query) const override;

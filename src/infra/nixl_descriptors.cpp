@@ -206,22 +206,6 @@ nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
     }
 }
 
-// Getter
-template <class T>
-inline const T& nixlDescList<T>::operator[](unsigned int index) const {
-    // To be added only in debug mode
-    // if (index >= descs.size())
-    //     throw std::out_of_range("Index is out of range");
-    return descs[index];
-}
-
-// Setter
-template <class T>
-inline T& nixlDescList<T>::operator[](unsigned int index) {
-    assert(index < descs.size());
-    return descs[index];
-}
-
 template <class T>
 void nixlDescList<T>::addDesc (const T &desc) {
     descs.push_back(desc);
