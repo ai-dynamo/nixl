@@ -121,11 +121,11 @@ gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port=
 # Run NIXL client-server test
 nixl_test_port=$(get_next_tcp_port)
 ./bin/nixl_test target 127.0.0.1 "$nixl_test_port" &
-pid_one=$!
+pid_target=$!
 sleep 5
 ./bin/nixl_test initiator 127.0.0.1 "$nixl_test_port" &
-pid_two=$!
-wait_for_two_pids $pid_one $pid_two
+pid_initiator=$!
+wait_for_two_pids $pid_target $pid_initiator
 
 echo "${TEXT_YELLOW}==== Disabled tests==="
 echo "./bin/md_streamer disabled"
