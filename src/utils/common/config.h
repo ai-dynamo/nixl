@@ -123,7 +123,8 @@ template<typename integer> struct integralTraits {
 private:
     [[nodiscard]] static bool
     isHex(const std::string &value) noexcept {
-        return std::is_unsigned_v<integer> && (value.size() > 2) && (value[1] == 'x');
+        return std::is_unsigned_v<integer> && (value.size() > 2) && (value[0] == '0') &&
+           ((value[1] == 'x') || (value[1] == 'X'));
     }
 
     [[nodiscard]] static int
@@ -141,7 +142,6 @@ template<typename integer>
 struct convertTraits<integer, std::enable_if_t<std::is_integral_v<integer>>>
     : integralTraits<integer> {};
 
-// Keep this function, too, or just the regular three below?
 template<typename type, template<typename...> class traits = convertTraits>
 [[nodiscard]] nixl_status_t
 getValueWithStatus(type &result, const std::string &env) {

@@ -51,6 +51,13 @@ TEST(Config, Undefined) {
     ASSERT_EQ(nixl::config::getValueDefaulted<char>(undefined, 42), 42);
     const std::string value = "foo";
     ASSERT_EQ(nixl::config::getValueDefaulted<std::string>(undefined, value), value);
+
+    bool b;
+    ASSERT_EQ(nixl::config::getValueWithStatus(b, undefined), NIXL_ERR_NOT_FOUND);
+    char c;
+    ASSERT_EQ(nixl::config::getValueWithStatus(c, undefined), NIXL_ERR_NOT_FOUND);
+    std::string s;
+    ASSERT_EQ(nixl::config::getValueWithStatus(s, undefined), NIXL_ERR_NOT_FOUND);
 }
 
 namespace {
@@ -65,6 +72,12 @@ namespace {
         EXPECT_EQ(nixl::config::getValue<std::string>(variable), input);
         EXPECT_EQ(nixl::config::getValueOptional<std::string>(variable), input);
         EXPECT_EQ(nixl::config::getValueDefaulted<std::string>(variable, variable), input);
+        T out;
+        EXPECT_EQ(nixl::config::getValueWithStatus(out, variable), NIXL_SUCCESS);
+        EXPECT_EQ(out, value);
+        std::string str;
+        EXPECT_EQ(nixl::config::getValueWithStatus(str, variable), NIXL_SUCCESS);
+        EXPECT_EQ(str, input);
     }
 
     template<typename T>
@@ -77,6 +90,8 @@ namespace {
         EXPECT_EQ(nixl::config::getValue<std::string>(variable), input);
         EXPECT_EQ(nixl::config::getValueOptional<std::string>(variable), input);
         EXPECT_EQ(nixl::config::getValueDefaulted<std::string>(variable, variable), input);
+        T out;
+        EXPECT_EQ(nixl::config::getValueWithStatus(out, variable), NIXL_ERR_MISMATCH);
     }
 
 } // namespace
@@ -155,8 +170,12 @@ namespace {
         testSimpleFailure<T>("0 ");
         testSimpleFailure<T>("-");
         testSimpleFailure<T>("+");
+        testSimpleFailure<T>("-0");
         testSimpleFailure<T>("-1");
+        testSimpleFailure<T>("-42");
         testSimpleFailure<T>("+1");
+        testSimpleFailure<T>("+0");
+        testSimpleFailure<T>("+42");
         testSimpleFailure<T>("-m");
         testSimpleFailure<T>("r");
         testSimpleFailure<T>("0y");
@@ -166,9 +185,18 @@ namespace {
         testSimpleSuccess<T>("0x0", T(0));
         testSimpleSuccess<T>("0x000", T(0));
         testSimpleSuccess<T>("0x01", T(1));
+
+        testSimpleSuccess<T>("0X0", T(0));
+        testSimpleSuccess<T>("0X000", T(0));
+        testSimpleSuccess<T>("0X01", T(1));
+
         testSimpleSuccess<T>("0x1f", T(31));
+        testSimpleSuccess<T>("0X1f", T(31));
+        testSimpleSuccess<T>("0X1F", T(31));
+        testSimpleSuccess<T>("0x1F", T(31));
 
         testSimpleFailure<T>("+0x00");
+        testSimpleFailure<T>("1x00");
     }
 
 } // namespace
