@@ -62,6 +62,12 @@ class nixlAgentConfig {
         std::chrono::microseconds etcdWatchTimeout;
 
         /**
+         * @var Heartbeat interval in seconds
+         *      Interval for heartbeat that keeps remote metadata valid.
+         */
+        std::chrono::seconds heartbeatInterval;
+
+        /**
          * @brief  Agent configuration constructor for enabling various features.
          * @param use_prog_thread    flag to determine use of progress thread
          * @param use_listen_thread  Optional flag to determine use of listener thread
@@ -72,6 +78,8 @@ class nixlAgentConfig {
          * @param lthr_delay_us      Optional delay for listener thread in us
          * @param capture_telemetry  Optional flag to enable telemetry capture
          * @param etcd_watch_timeout Optional timeout for etcd watch operations in microseconds
+         * @param heartbeat_interval Optional  timeout for how often an agent should send a
+         * keepalive heartbeat. Only supported in ETCD for now.
          */
         nixlAgentConfig(const bool use_prog_thread,
                         const bool use_listen_thread = false,
@@ -82,7 +90,8 @@ class nixlAgentConfig {
                         const uint64_t lthr_delay_us = 100000,
                         const bool capture_telemetry = false,
                         const std::chrono::microseconds &etcd_watch_timeout =
-                            std::chrono::microseconds(5000000))
+                            std::chrono::microseconds(5000000),
+                        const std::chrono::seconds &heartbeat_interval = std::chrono::seconds(2))
             : useProgThread(use_prog_thread),
               useListenThread(use_listen_thread),
               listenPort(port),
@@ -90,7 +99,8 @@ class nixlAgentConfig {
               captureTelemetry(capture_telemetry),
               pthrDelay(pthr_delay_us),
               lthrDelay(lthr_delay_us),
-              etcdWatchTimeout(etcd_watch_timeout) {}
+              etcdWatchTimeout(etcd_watch_timeout),
+              heartbeatInterval(heartbeat_interval) {}
 
         /**
          * @brief Copy constructor for nixlAgentConfig object
