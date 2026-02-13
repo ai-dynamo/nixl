@@ -28,19 +28,21 @@ azure_storage_common = cpp.find_library('azure-storage-common', required: false)
 azure_storage_blobs = cpp.find_library('azure-storage-blobs', required: false)
 azure_identity = cpp.find_library('azure-identity', required: false)
 
+azure_deps = [nixl_infra, nixl_common_dep]
+
 if azure_core.found() and azure_storage_common.found() and azure_storage_blobs.found() and azure_identity.found()
-    plugin_deps += [azure_core, azure_storage_common, azure_storage_blobs, azure_identity]
+    azure_deps += [azure_core, azure_storage_common, azure_storage_blobs, azure_identity]
 else
     warning('Azure SDK dependencies not found, skipping AZURE_BLOB plugin build')
     subdir_done()
 endif
-plugin_deps += [dependency('asio', required: true)]
+azure_deps += [dependency('asio', required: true)]
 
 if 'AZURE_BLOB' in static_plugins
     azure_blob_backend_lib = static_library(
         'AZURE_BLOB',
         azure_sources,
-        dependencies: plugin_deps,
+        dependencies: azure_deps,
         cpp_args: compile_defs + compile_flags,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: false,
@@ -49,7 +51,7 @@ else
     azure_blob_backend_lib = shared_library(
         'AZURE_BLOB',
         azure_sources,
-        dependencies: plugin_deps,
+        dependencies: azure_deps,
         cpp_args: compile_defs + ['-fPIC'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
