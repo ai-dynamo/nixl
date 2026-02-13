@@ -30,7 +30,7 @@
 namespace nixl::device_api {
 class agent {
 public:
-    explicit agent(const std::string &);
+    explicit agent(const std::string &, std::optional<unsigned> = std::nullopt);
 
     [[nodiscard]] nixlAgent &
     get() noexcept {
@@ -57,8 +57,7 @@ public:
     prepGpuSignal(memTypeArray<uint8_t> &);
 
 private:
-    [[nodiscard]] nixlBackendH *
-    createBackend();
+    [[nodiscard]] nixlBackendH *createBackend(std::optional<unsigned>);
 
     [[nodiscard]] nixlXferReqH *
     createXferReq(const std::vector<memTypeArray<uint8_t>> &,

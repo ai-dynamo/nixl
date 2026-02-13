@@ -82,6 +82,6 @@ TEST_P(signalPostTest, Basic) {
 
 INSTANTIATE_TEST_SUITE_P(ucxDeviceApi,
                          signalPostTest,
-                         testing::ValuesIn(paramsWithBlockLevel()),
+                         testing::ValuesIn(allParams()),
                          paramsInfoToString);
 } // namespace nixl::device_api

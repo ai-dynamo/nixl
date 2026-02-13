@@ -19,13 +19,9 @@
 
 namespace nixl::device_api {
 p2pTest::p2pTest(const std::vector<size_t> &sizes)
-    : sender_("sender"),
-      receiver_("receiver"),
-      sizes_(sizes) {
-    if (GetParam().mode == send_mode_t::MULTI_CHANNEL) {
-        setenv("UCX_RC_GDA_NUM_CHANNELS", "32", 1);
-    }
-}
+    : sender_("sender", getNumChannels()),
+      receiver_("receiver", getNumChannels()),
+      sizes_(sizes) {}
 
 void
 p2pTest::addDataBuffers() {

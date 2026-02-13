@@ -22,23 +22,22 @@
 namespace {
 namespace da = nixl::device_api;
 
-const std::vector<nixl::device_api::send_mode_t> modes = {
+const std::vector<nixl::device_api::send_mode_t> modes_wo_multi_channel = {
     da::send_mode_t::NODELAY_WITH_REQ,
     da::send_mode_t::NODELAY_WITHOUT_REQ,
-    da::send_mode_t::DELAY_WITHOUT_REQ,
-    da::send_mode_t::MULTI_CHANNEL,
-};
+    da::send_mode_t::DELAY_WITHOUT_REQ};
 
-const std::vector<nixl_gpu_level_t> levels_wo_block = {
-    nixl_gpu_level_t::WARP,
-    nixl_gpu_level_t::THREAD,
-};
+const std::vector<nixl::device_api::send_mode_t> modes = {da::send_mode_t::NODELAY_WITH_REQ,
+                                                          da::send_mode_t::NODELAY_WITHOUT_REQ,
+                                                          da::send_mode_t::DELAY_WITHOUT_REQ,
+                                                          da::send_mode_t::MULTI_CHANNEL};
 
-const std::vector<nixl_gpu_level_t> levels = {
-    nixl_gpu_level_t::BLOCK,
-    nixl_gpu_level_t::WARP,
-    nixl_gpu_level_t::THREAD,
-};
+const std::vector<nixl_gpu_level_t> levels_wo_block = {nixl_gpu_level_t::WARP,
+                                                       nixl_gpu_level_t::THREAD};
+
+const std::vector<nixl_gpu_level_t> levels = {nixl_gpu_level_t::BLOCK,
+                                              nixl_gpu_level_t::WARP,
+                                              nixl_gpu_level_t::THREAD};
 
 [[nodiscard]] std::string_view
 memTypetoString(nixl_mem_t mem_type) {
@@ -83,7 +82,7 @@ sendModeToString(da::send_mode_t mode) {
 }
 
 [[nodiscard]] std::vector<da::params>
-getParams(const std::vector<nixl_gpu_level_t> &levels) {
+getParams(const std::vector<nixl_gpu_level_t> &levels, const std::vector<da::send_mode_t> &modes) {
     std::vector<da::params> params;
     for (const auto &level : levels) {
         for (const auto &mode : modes) {
@@ -109,12 +108,17 @@ paramsLevelToString(const testing::TestParamInfo<nixl_gpu_level_t> &info) {
 }
 
 std::vector<params>
-paramsWithoutBlockLevel() {
-    return getParams(levels_wo_block);
+allParams() {
+    return getParams(levels, modes);
 }
 
 std::vector<params>
-paramsWithBlockLevel() {
-    return getParams(levels);
+paramsWithoutBlockLevel() {
+    return getParams(levels_wo_block, modes);
+}
+
+std::vector<params>
+paramsWithoutMultiChannel() {
+    return getParams(levels, modes_wo_multi_channel);
 }
 } // namespace nixl::device_api

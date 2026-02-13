@@ -17,10 +17,10 @@
 
 #include "agent.h"
 
-#include <nixl_descriptors.h>
+#include "nixl_descriptors.h"
 
 namespace {
-constexpr size_t default_num_ucx_workers = 1;
+constexpr size_t num_ucx_workers = 1;
 constexpr size_t device_id = 0;
 constexpr std::string_view notification_message = "notification";
 
@@ -30,9 +30,12 @@ createConfig() noexcept {
 }
 
 [[nodiscard]] nixl_b_params_t
-createBackendParams() {
+createBackendParams(std::optional<unsigned> num_channels) {
     nixl_b_params_t params;
-    params["num_workers"] = std::to_string(default_num_ucx_workers);
+    params["num_workers"] = std::to_string(num_ucx_workers);
+    if (num_channels) {
+        params["ucx_num_device_channels"] = std::to_string(*num_channels);
+    }
     return params;
 }
 
@@ -54,9 +57,9 @@ makeDescList(const std::vector<nixl::device_api::memTypeArray<uint8_t>> &buffers
 } // namespace
 
 namespace nixl::device_api {
-agent::agent(const std::string &name)
+agent::agent(const std::string &name, std::optional<unsigned> num_channels)
     : agent_(name, createConfig()),
-      backendHandle_(createBackend()) {}
+      backendHandle_(createBackend(num_channels)) {}
 
 void
 agent::registerMem(const std::vector<memTypeArray<uint8_t>> &buffers) {
@@ -135,9 +138,10 @@ agent::prepGpuSignal(memTypeArray<uint8_t> &signal_buffer) {
 }
 
 [[nodiscard]] nixlBackendH *
-agent::createBackend() {
+agent::createBackend(std::optional<unsigned> num_channels) {
     nixlBackendH *backendHandle;
-    const nixl_status_t status = agent_.createBackend("UCX", createBackendParams(), backendHandle);
+    const nixl_status_t status =
+        agent_.createBackend("UCX", createBackendParams(num_channels), backendHandle);
     if (status != NIXL_SUCCESS) {
         throw std::runtime_error("Failed to create backend");
     }

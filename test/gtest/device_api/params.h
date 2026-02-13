@@ -49,9 +49,12 @@ paramsInfoToString(const testing::TestParamInfo<params> &info) {
 paramsLevelToString(const testing::TestParamInfo<nixl_gpu_level_t> &);
 
 [[nodiscard]] std::vector<params>
+allParams();
+
+[[nodiscard]] std::vector<params>
 paramsWithoutBlockLevel();
 
 [[nodiscard]] std::vector<params>
-paramsWithBlockLevel();
+paramsWithoutMultiChannel();
 } // namespace nixl::device_api
 #endif // TEST_GTEST_DEVICE_API_PARAMS_H

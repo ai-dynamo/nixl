@@ -67,6 +67,13 @@ protected:
     createGpuXferReq();
 
 private:
+    [[nodiscard]] static std::optional<unsigned>
+    getNumChannels() {
+        return GetParam().mode == send_mode_t::MULTI_CHANNEL ?
+            std::make_optional(multi_num_channels) :
+            std::nullopt;
+    }
+
     agent sender_;
     agent receiver_;
     const std::vector<size_t> sizes_;

@@ -35,6 +35,8 @@ enum class operation_t : uint64_t {
 static constexpr size_t default_num_iters = 100;
 static constexpr size_t default_num_threads = 32;
 static constexpr uint64_t default_signal_increment = 42;
+static constexpr unsigned default_num_channels = 1;
+static constexpr unsigned multi_num_channels = 32;
 
 struct kernelParams {
     kernelParams(operation_t op, nixl_gpu_level_t l, send_mode_t sm, nixlGpuXferReqH req_handle)
@@ -42,7 +44,7 @@ struct kernelParams {
           level(l),
           withRequest(request(sm)),
           noDelay(!delay(sm)),
-          numChannels(sm == send_mode_t::MULTI_CHANNEL ? 32 : 1),
+          numChannels(sm == send_mode_t::MULTI_CHANNEL ? multi_num_channels : default_num_channels),
           reqHandle(req_handle) {}
 
     kernelParams(operation_t op, nixl_gpu_level_t l) : operation(op), level(l), numIters(1) {}
@@ -60,7 +62,7 @@ struct kernelParams {
     const size_t numIters = default_num_iters;
     bool withRequest = false;
     bool noDelay = false;
-    unsigned numChannels = 1;
+    unsigned numChannels = default_num_channels;
 
     const nixlGpuXferReqH reqHandle = nullptr;
 

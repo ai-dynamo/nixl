@@ -79,6 +79,6 @@ TEST_P(singleWriteTest, Basic) {
 
 INSTANTIATE_TEST_SUITE_P(ucxDeviceApi,
                          singleWriteTest,
-                         testing::ValuesIn(paramsWithBlockLevel()),
+                         testing::ValuesIn(allParams()),
                          paramsInfoToString);
 } // namespace nixl::device_api

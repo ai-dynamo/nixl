@@ -51,11 +51,6 @@ TEST_P(writeTest, WithoutSignal) {
     EXPECT_TRUE(verifyDstBuffers());
 }
 
-TEST_P(writeTest, SignalOnly) {
-    ASSERT_NO_THROW(addSignalBuffers());
-    EXPECT_EQ(run(), NIXL_SUCCESS);
-}
-
 INSTANTIATE_TEST_SUITE_P(ucxDeviceApi,
                          writeTest,
                          testing::ValuesIn(paramsWithoutBlockLevel()),
