@@ -82,10 +82,11 @@ run_nixlbench_two_workers() {
     benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
     args="$@"
     run_nixlbench --benchmark_group $benchmark_group $args &
-    pid=$!
+    pid_one=$!
     sleep 5
-    run_nixlbench --benchmark_group $benchmark_group $args
-    wait $pid
+    run_nixlbench --benchmark_group $benchmark_group $args &
+    pid_two=$!
+    wait_for_two_pids $pid_one $pid_two
 }
 
 if $HAS_GPU ; then

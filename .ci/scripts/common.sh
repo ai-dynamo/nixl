@@ -132,3 +132,23 @@ wait_for_etcd() {
     done
     echo "Etcd is ready"
 }
+
+# Helper function
+choose_other_pid() {
+    (( $# != 3 )) && { echo "Expected 3 PIDs"; exit 42; }
+    [[ $1 == $2 ]] && { echo "$3"; return; }
+    [[ $1 == $3 ]] && { echo "$2"; return; }
+    echo "Invalid arguments"
+    exit 42
+}
+
+kill_all_jobs() {
+    kill $(jobs -p)
+}
+
+# Wait for two PIDs independent of the order in which they terminate
+wait_for_two_pids() {
+    (( $# != 2 )) && { echo "Expected 2 PIDs"; exit 42; }
+    trap kill_all_jobs EXIT
+    wait -fn -p wait_done_pid $1 $2 && wait -fn $(choose_other_pid $wait_done_pid $1 $2)
+}
