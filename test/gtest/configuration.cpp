@@ -22,8 +22,6 @@
 #include <stdlib.h>
 #include <string>
 
-namespace gtest {
-
 namespace {
 
     const std::string variable = "NIXL_CONFIG_TEST";
@@ -31,33 +29,35 @@ namespace {
 
 } // namespace
 
+namespace nixl::config {
+
 TEST(Config, EnvWrapper) {
     const std::string value = "foo";
     ASSERT_EQ(::setenv(variable.c_str(), value.c_str(), 1), 0);
-    ASSERT_EQ(nixl::config::getenvOptional(variable), value);
+    ASSERT_EQ(getenvOptional(variable), value);
     const std::string fallback = "bar";
-    ASSERT_EQ(nixl::config::getenvDefaulted(variable, fallback), value);
-    ASSERT_FALSE(nixl::config::getenvOptional(undefined).has_value());
-    ASSERT_EQ(nixl::config::getenvDefaulted(undefined, fallback), fallback);
+    ASSERT_EQ(getenvDefaulted(variable, fallback), value);
+    ASSERT_FALSE(getenvOptional(undefined).has_value());
+    ASSERT_EQ(getenvDefaulted(undefined, fallback), fallback);
 }
 
 TEST(Config, Undefined) {
-    ASSERT_EQ(nixl::config::getValueOptional<bool>(undefined), std::nullopt);
-    ASSERT_EQ(nixl::config::getValueOptional<char>(undefined), std::nullopt);
-    ASSERT_EQ(nixl::config::getValueOptional<std::string>(undefined), std::nullopt);
+    ASSERT_EQ(getValueOptional<bool>(undefined), std::nullopt);
+    ASSERT_EQ(getValueOptional<char>(undefined), std::nullopt);
+    ASSERT_EQ(getValueOptional<std::string>(undefined), std::nullopt);
 
-    ASSERT_EQ(nixl::config::getValueDefaulted<bool>(undefined, true), true);
-    ASSERT_EQ(nixl::config::getValueDefaulted<bool>(undefined, false), false);
-    ASSERT_EQ(nixl::config::getValueDefaulted<char>(undefined, 42), 42);
+    ASSERT_EQ(getValueDefaulted<bool>(undefined, true), true);
+    ASSERT_EQ(getValueDefaulted<bool>(undefined, false), false);
+    ASSERT_EQ(getValueDefaulted<char>(undefined, 42), 42);
     const std::string value = "foo";
-    ASSERT_EQ(nixl::config::getValueDefaulted<std::string>(undefined, value), value);
+    ASSERT_EQ(getValueDefaulted<std::string>(undefined, value), value);
 
     bool b;
-    ASSERT_EQ(nixl::config::getValueWithStatus(b, undefined), NIXL_ERR_NOT_FOUND);
+    ASSERT_EQ(getValueWithStatus(b, undefined), NIXL_ERR_NOT_FOUND);
     char c;
-    ASSERT_EQ(nixl::config::getValueWithStatus(c, undefined), NIXL_ERR_NOT_FOUND);
+    ASSERT_EQ(getValueWithStatus(c, undefined), NIXL_ERR_NOT_FOUND);
     std::string s;
-    ASSERT_EQ(nixl::config::getValueWithStatus(s, undefined), NIXL_ERR_NOT_FOUND);
+    ASSERT_EQ(getValueWithStatus(s, undefined), NIXL_ERR_NOT_FOUND);
 }
 
 namespace {
@@ -66,17 +66,17 @@ namespace {
     void
     testSimpleSuccess(const std::string &input, const T value) {
         ASSERT_EQ(::setenv(variable.c_str(), input.c_str(), 1), 0);
-        EXPECT_EQ(nixl::config::getValue<T>(variable), value);
-        EXPECT_EQ(nixl::config::getValueOptional<T>(variable), value);
-        EXPECT_EQ(nixl::config::getValueDefaulted<T>(variable, !value), value);
-        EXPECT_EQ(nixl::config::getValue<std::string>(variable), input);
-        EXPECT_EQ(nixl::config::getValueOptional<std::string>(variable), input);
-        EXPECT_EQ(nixl::config::getValueDefaulted<std::string>(variable, variable), input);
+        EXPECT_EQ(getValue<T>(variable), value);
+        EXPECT_EQ(getValueOptional<T>(variable), value);
+        EXPECT_EQ(getValueDefaulted<T>(variable, !value), value);
+        EXPECT_EQ(getValue<std::string>(variable), input);
+        EXPECT_EQ(getValueOptional<std::string>(variable), input);
+        EXPECT_EQ(getValueDefaulted<std::string>(variable, variable), input);
         T out;
-        EXPECT_EQ(nixl::config::getValueWithStatus(out, variable), NIXL_SUCCESS);
+        EXPECT_EQ(getValueWithStatus(out, variable), NIXL_SUCCESS);
         EXPECT_EQ(out, value);
         std::string str;
-        EXPECT_EQ(nixl::config::getValueWithStatus(str, variable), NIXL_SUCCESS);
+        EXPECT_EQ(getValueWithStatus(str, variable), NIXL_SUCCESS);
         EXPECT_EQ(str, input);
     }
 
@@ -84,14 +84,14 @@ namespace {
     void
     testSimpleFailure(const std::string &input) {
         ASSERT_EQ(::setenv(variable.c_str(), input.c_str(), 1), 0);
-        EXPECT_ANY_THROW((void)nixl::config::getValue<T>(variable));
-        EXPECT_ANY_THROW((void)nixl::config::getValueOptional<T>(variable));
-        EXPECT_ANY_THROW((void)nixl::config::getValueDefaulted<T>(variable, T()));
-        EXPECT_EQ(nixl::config::getValue<std::string>(variable), input);
-        EXPECT_EQ(nixl::config::getValueOptional<std::string>(variable), input);
-        EXPECT_EQ(nixl::config::getValueDefaulted<std::string>(variable, variable), input);
+        EXPECT_ANY_THROW((void)getValue<T>(variable));
+        EXPECT_ANY_THROW((void)getValueOptional<T>(variable));
+        EXPECT_ANY_THROW((void)getValueDefaulted<T>(variable, T()));
+        EXPECT_EQ(getValue<std::string>(variable), input);
+        EXPECT_EQ(getValueOptional<std::string>(variable), input);
+        EXPECT_EQ(getValueDefaulted<std::string>(variable, variable), input);
         T out;
-        EXPECT_EQ(nixl::config::getValueWithStatus(out, variable), NIXL_ERR_MISMATCH);
+        EXPECT_EQ(getValueWithStatus(out, variable), NIXL_ERR_MISMATCH);
     }
 
 } // namespace
@@ -215,4 +215,4 @@ TEST(Config, ConvertUnsigned) {
     testUnsigned<std::uint64_t>();
 }
 
-} // namespace gtest
+} // namespace nixl::config
