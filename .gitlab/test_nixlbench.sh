@@ -38,6 +38,7 @@ export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
+export UCX_GDR_COPY_SHARED_MD=n
 
 echo "==== Show system info ===="
 env
