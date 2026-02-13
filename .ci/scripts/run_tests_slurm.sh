@@ -101,8 +101,13 @@ case "${slurm_head_node}" in
         echo "INFO: Using scctl client to connect and execute SLURM command"
         scctl --raw-errors client connect -- "${SLURM_CMD[@]}"
         ;;
+    dlcluster*)
+        echo "INFO: Using SSH to connect to ${slurm_head_node} and execute SLURM command"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${slurm_head_node}" "${SLURM_CMD[*]}"
+        ;;
     *)
         echo "ERROR: Invalid SLURM_HEAD_NODE value: ${slurm_head_node}"
+        echo "Supported values: scctl, dlcluster, dlcluster.nvidia.com"
         exit 1
         ;;
 esac

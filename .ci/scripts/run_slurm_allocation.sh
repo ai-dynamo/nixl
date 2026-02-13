@@ -105,6 +105,13 @@ readonly SLURM_IMMEDIATE_TIMEOUT=${SLURM_IMMEDIATE_TIMEOUT:-600} # time to wait 
 # Build SLURM allocation command
 SLURM_ALLOC_ARGS=(
     "salloc"
+)
+
+# Add optional account specification
+[ -n "${SLURM_ACCOUNT}" ] && SLURM_ALLOC_ARGS+=("--account=${SLURM_ACCOUNT}")
+
+# Add required allocation parameters
+SLURM_ALLOC_ARGS+=(
     "-N" "${slurm_nodes}"
     "-p" "${slurm_partition}"
 )
@@ -144,8 +151,26 @@ case "${slurm_head_node}" in
         scctl --raw-errors client connect -- "${SLURM_ALLOCATION_CMD}"
         JOB_ID=$(scctl --raw-errors client connect -- "${SLURM_GET_JOB_ID_CMD}")
         ;;
+    dlcluster*)
+        echo "INFO: Using SSH to connect to ${slurm_head_node} and allocate Slurm resources"
+        echo "INFO: Allocating Slurm resources via SSH to ${slurm_head_node}"
+
+        allocation_output=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${slurm_head_node}" "${SLURM_ALLOCATION_CMD}" 2>&1)
+        echo "${allocation_output}"
+
+        # Extract job ID from salloc output (format: "Granted job allocation 123456")
+        # Note: squeue doesn't reliably work on dlcluster immediately after allocation
+        JOB_ID=$(echo "${allocation_output}" | grep -oP "Granted job allocation \K[0-9]+")
+
+        if [ -z "${JOB_ID}" ]; then
+            echo "ERROR: Failed to extract job ID from allocation output"
+            echo "Allocation output: ${allocation_output}"
+            exit 1
+        fi
+        ;;
     *)
         echo "ERROR: Invalid SLURM_HEAD_NODE value: ${slurm_head_node}"
+        echo "Supported values: scctl, dlcluster, dlcluster.nvidia.com"
         exit 1
         ;;
 esac

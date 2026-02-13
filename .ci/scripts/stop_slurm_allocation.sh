@@ -88,8 +88,14 @@ case "${slurm_head_node}" in
         echo "INFO: Executing scancel for job ${slurm_job_id}"
         scctl --raw-errors client connect -- "${SLURM_STOP_ALLOCATION_CMD}"
         ;;
+    dlcluster*)
+        echo "INFO: Using SSH to connect to ${slurm_head_node} to stop Slurm resources"
+        echo "INFO: Executing scancel for job ${slurm_job_id}"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${slurm_head_node}" "${SLURM_STOP_ALLOCATION_CMD}"
+        ;;
     *)
         echo "ERROR: Invalid SLURM_HEAD_NODE value: ${slurm_head_node}"
+        echo "Supported values: scctl, dlcluster, dlcluster.nvidia.com"
         exit 1
         ;;
 esac
