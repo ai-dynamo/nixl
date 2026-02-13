@@ -194,6 +194,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         }
         std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
                   << std::endl;
+        backend_params["ios_pool_size"] = std::to_string(xferBenchConfig::posix_ios_pool_size);
+        backend_params["kernel_queue_size"] =
+            std::to_string(xferBenchConfig::posix_kernel_queue_size);
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO)) {
         std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device "
                   << xferBenchConfig::gpunetio_device_list << " OOB interface "
@@ -1338,8 +1341,6 @@ execTransfer(nixlAgent *agent,
         }
 
         // Execute transfers
-        // GUSLI requires per-iteration request creation due to library bug
-        const bool recreate_per_iteration = (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
         const int result = execTransferIterations(agent,
                                                   op,
                                                   local_desc,
@@ -1349,7 +1350,7 @@ execTransfer(nixlAgent *agent,
                                                   num_iter,
                                                   timer,
                                                   thread_stats,
-                                                  recreate_per_iteration);
+                                                  xferBenchConfig::recreate_xfer);
 
         if (__builtin_expect(result != 0, 0)) {
             ret = result;
