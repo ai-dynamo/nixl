@@ -17,31 +17,7 @@
 #ifndef NIXL_SRC_UTILS_COMMON_STR_TOOLS_H
 #define NIXL_SRC_UTILS_COMMON_STR_TOOLS_H
 
-#include <regex>
 #include <string>
-#include <vector>
-
-inline std::vector<std::string> str_split(const std::string& str, const std::string& delims) {
-    std::regex re(delims);
-    std::sregex_token_iterator first{str.begin(), str.end(), re, -1}, last;
-    std::vector<std::string> output {first, last};
-    return output;
-}
-
-inline std::vector<std::string> str_split_substr(const std::string& str, const std::string& delimiter) {
-    std::vector<std::string> substrings;
-    std::string::size_type start = 0;
-    std::string::size_type end = str.find(delimiter);
-
-    while (end != std::string::npos) {
-        substrings.push_back(str.substr(start, end - start));
-        start = end + delimiter.length();
-        end = str.find(delimiter, start);
-    }
-
-    substrings.push_back(str.substr(start));
-    return substrings;
-}
 
 class strEqual
 {
@@ -65,22 +41,5 @@ class strEqual
           return true;
       }
 };
-
-template<typename container>
-std::string
-strJoin(const container &strings, const std::string &delim = ", ") {
-    if (strings.empty()) {
-        return "";
-    }
-
-    auto iter = strings.begin();
-    std::string result = *iter;
-
-    for (++iter; iter != strings.end(); ++iter) {
-        result += delim;
-        result += *iter;
-    }
-    return result;
-}
 
 #endif // NIXL_SRC_UTILS_COMMON_STR_TOOLS_H
