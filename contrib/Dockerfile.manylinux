@@ -61,6 +61,12 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     wget \
     zlib
 
+# Build xz from source
+RUN wget https://github.com/tukaani-project/xz/releases/download/v5.8.2/xz-5.8.2.tar.gz && \
+    tar xzf xz-5.8.2.tar.gz && cd xz-5.8.2 && \
+    ./configure --prefix=/usr/local && \
+    make -j$(nproc) && make install
+
 # Build OpenSSL 3.x
 RUN yum install -y perl-IPC-Cmd perl-Test-Simple perl-Data-Dumper
 RUN cd /tmp && \
