@@ -28,10 +28,11 @@
 #include <typeinfo>
 #include <vector>
 
+#include <absl/strings/str_join.h>
+
 #include "nixl_types.h"
 
 #include "common/nixl_log.h"
-#include "common/str_tools.h"
 
 namespace nixl::config {
 
@@ -47,7 +48,12 @@ getenvOptional(const std::string &name) {
 
 [[nodiscard]] inline std::string
 getenvDefaulted(const std::string &name, const std::string &fallback) {
-    return getenvOptional(name).value_or(fallback);
+    if (const char *value = std::getenv(name.c_str())) {
+        NIXL_DEBUG << "Obtained environment variable " << name << "=" << value;
+        return std::string(value);
+    }
+    NIXL_DEBUG << "Using default '" << fallback << "' for missing environment variable " << name;
+    return fallback;
 }
 
 template<typename, typename = void> struct convertTraits;
@@ -68,9 +74,10 @@ template<> struct convertTraits<bool> {
             return false;
         }
 
-        NIXL_ERROR << "Unknown value for bool '" << value << "' known are " << strJoin(positive)
-                   << " as positive and " << strJoin(negative) << " as negative (case insensitive)";
-        throw std::runtime_error("Conversion to bool failed");
+       const std::string msg = "Conversion to bool failed for string  '" + value + "' known are "
+         + absl::StrJoin(positive, ", ") + " as positive and "
+         + absl::StrJoin(negative, ", ") + " as negative (case insensitive)";
+        throw std::runtime_error(msg);
     }
 
 private:
@@ -119,9 +126,10 @@ template<typename integer>
 struct convertTraits<integer, std::enable_if_t<std::is_unsigned_v<integer>>>
     : integerTraits<integer, unsigned long long> {};
 
+// Keep this function, too, or just the regular three below?
 template<typename type, template<typename...> class traits = convertTraits>
 [[nodiscard]] nixl_status_t
-getNothrow(type &result, const std::string &env) {
+getValueWithStatus(type &result, const std::string &env) {
     if (const auto opt = getenvOptional(env)) {
         try {
             result = traits<std::decay_t<type>>::convert(*opt);
@@ -130,7 +138,6 @@ getNothrow(type &result, const std::string &env) {
         catch (const std::exception &e) {
             NIXL_DEBUG << "Unable to convert value '" << *opt << "' from environment variable '"
                        << env << "' to target type " << typeid(type).name();
-            // TODO: Demangle? Manual name?
             return NIXL_ERR_MISMATCH;
         }
     }
@@ -148,7 +155,7 @@ getValue(const std::string &env) {
 
 template<typename type, template<typename...> class traits = convertTraits>
 [[nodiscard]] std::optional<type>
-getOptional(const std::string &env) {
+getValueOptional(const std::string &env) {
     if (const auto opt = getenvOptional(env)) {
         return traits<type>::convert(*opt);
     }
@@ -157,8 +164,8 @@ getOptional(const std::string &env) {
 
 template<typename type, template<typename...> class traits = convertTraits>
 [[nodiscard]] type
-getDefaulted(const std::string &env, const type &fallback) {
-    return getOptional<type, traits>(env).value_or(fallback);
+getValueDefaulted(const std::string &env, const type &fallback) {
+    return getValueOptional<type, traits>(env).value_or(fallback);
 }
 
 } // namespace nixl::config
