@@ -124,7 +124,7 @@ private:
     [[nodiscard]] static bool
     isHex(const std::string &value) noexcept {
         return std::is_unsigned_v<integer> && (value.size() > 2) && (value[0] == '0') &&
-           ((value[1] == 'x') || (value[1] == 'X'));
+            ((value[1] == 'x') || (value[1] == 'X'));
     }
 
     [[nodiscard]] static int
