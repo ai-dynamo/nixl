@@ -24,8 +24,8 @@
 
 namespace {
 
-    const std::string variable = "NIXL_CONFIG_TEST";
-    const std::string undefined = "ASDLFHASLK1298159816";
+const std::string variable = "NIXL_CONFIG_TEST";
+const std::string undefined = "ASDLFHASLK1298159816";
 
 } // namespace
 
