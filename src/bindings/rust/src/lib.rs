@@ -39,6 +39,25 @@ mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
+/// Raw FFI bindings to the NIXL C API.
+///
+/// # Safety
+///
+/// These are unsafe functions that require careful handling:
+/// - Manual memory management (create/destroy pairs)
+/// - Thread safety is the caller's responsibility
+/// - Pointers must be valid for the duration of calls
+///
+/// Prefer using the safe wrapper types (`Agent`, `RegDescList`, etc.) when possible.
+pub mod ffi {
+    #![allow(non_upper_case_globals)]
+    #![allow(non_camel_case_types)]
+    #![allow(non_snake_case)]
+    #![allow(dead_code)]
+
+    pub use super::bindings::*;
+}
+
 // Re-export types from the included bindings
 use bindings::{
     nixl_capi_create_agent, nixl_capi_create_backend, nixl_capi_create_notif_map,
