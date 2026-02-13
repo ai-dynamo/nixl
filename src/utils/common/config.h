@@ -74,9 +74,9 @@ template<> struct convertTraits<bool> {
             return false;
         }
 
-       const std::string msg = "Conversion to bool failed for string  '" + value + "' known are "
-         + absl::StrJoin(positive, ", ") + " as positive and "
-         + absl::StrJoin(negative, ", ") + " as negative (case insensitive)";
+        const std::string msg = "Conversion to bool failed for string  '" + value + "' known are " +
+            absl::StrJoin(positive, ", ") + " as positive and " + absl::StrJoin(negative, ", ") +
+            " as negative (case insensitive)";
         throw std::runtime_error(msg);
     }
 

@@ -26,8 +26,8 @@ namespace gtest {
 
 namespace {
 
-const std::string variable = "NIXL_CONFIG_TEST";
-const std::string undefined = "ASDLFHASLK1298159816";
+    const std::string variable = "NIXL_CONFIG_TEST";
+    const std::string undefined = "ASDLFHASLK1298159816";
 
 } // namespace
 
@@ -43,27 +43,29 @@ TEST(Config, EnvWrapper) {
 
 namespace {
 
-template<typename T>
-void testSimpleSuccess(const std::string &input, const T value) {
-    ASSERT_EQ(::setenv(variable.c_str(), input.c_str(), 1), 0);
-    EXPECT_EQ(nixl::config::getValue<T>(variable), value);
-    EXPECT_EQ(nixl::config::getValueOptional<T>(variable), value);
-    EXPECT_EQ(nixl::config::getValueDefaulted<T>(variable, !value), value);
-    EXPECT_EQ(nixl::config::getValue<std::string>(variable), input);
-    EXPECT_EQ(nixl::config::getValueOptional<std::string>(variable), input);
-    EXPECT_EQ(nixl::config::getValueDefaulted<std::string>(variable, variable), input);
-}
+    template<typename T>
+    void
+    testSimpleSuccess(const std::string &input, const T value) {
+        ASSERT_EQ(::setenv(variable.c_str(), input.c_str(), 1), 0);
+        EXPECT_EQ(nixl::config::getValue<T>(variable), value);
+        EXPECT_EQ(nixl::config::getValueOptional<T>(variable), value);
+        EXPECT_EQ(nixl::config::getValueDefaulted<T>(variable, !value), value);
+        EXPECT_EQ(nixl::config::getValue<std::string>(variable), input);
+        EXPECT_EQ(nixl::config::getValueOptional<std::string>(variable), input);
+        EXPECT_EQ(nixl::config::getValueDefaulted<std::string>(variable, variable), input);
+    }
 
-template<typename T>
-void testSimpleFailure(const std::string &input) {
-    ASSERT_EQ(::setenv(variable.c_str(), input.c_str(), 1), 0);
-    EXPECT_ANY_THROW((void)nixl::config::getValue<T>(variable));
-    EXPECT_ANY_THROW((void)nixl::config::getValueOptional<T>(variable));
-    EXPECT_ANY_THROW((void)nixl::config::getValueDefaulted<T>(variable, T()));
-    EXPECT_EQ(nixl::config::getValue<std::string>(variable), input);
-    EXPECT_EQ(nixl::config::getValueOptional<std::string>(variable), input);
-    EXPECT_EQ(nixl::config::getValueDefaulted<std::string>(variable, variable), input);
-}
+    template<typename T>
+    void
+    testSimpleFailure(const std::string &input) {
+        ASSERT_EQ(::setenv(variable.c_str(), input.c_str(), 1), 0);
+        EXPECT_ANY_THROW((void)nixl::config::getValue<T>(variable));
+        EXPECT_ANY_THROW((void)nixl::config::getValueOptional<T>(variable));
+        EXPECT_ANY_THROW((void)nixl::config::getValueDefaulted<T>(variable, T()));
+        EXPECT_EQ(nixl::config::getValue<std::string>(variable), input);
+        EXPECT_EQ(nixl::config::getValueOptional<std::string>(variable), input);
+        EXPECT_EQ(nixl::config::getValueDefaulted<std::string>(variable, variable), input);
+    }
 
 } // namespace
 
@@ -93,46 +95,48 @@ TEST(Config, ConvertBool) {
 }
 
 namespace {
-template<typename T>
-void testSigned() {
-    testSimpleSuccess("0", T(0));
-    testSimpleSuccess("1", T(1));
-    testSimpleSuccess("-1", T(-1));
-    testSimpleSuccess("42", T(42));
-    testSimpleSuccess("-42", T(-42));
-    const T minValue = std::numeric_limits<T>::min();
-    const std::string minString = std::to_string(minValue);
-    testSimpleSuccess(minString, minValue);
-    const T maxValue = std::numeric_limits<T>::max();
-    const std::string maxString = std::to_string(maxValue);
-    testSimpleSuccess(maxString, maxValue);
+    template<typename T>
+    void
+    testSigned() {
+        testSimpleSuccess("0", T(0));
+        testSimpleSuccess("1", T(1));
+        testSimpleSuccess("-1", T(-1));
+        testSimpleSuccess("42", T(42));
+        testSimpleSuccess("-42", T(-42));
+        const T minValue = std::numeric_limits<T>::min();
+        const std::string minString = std::to_string(minValue);
+        testSimpleSuccess(minString, minValue);
+        const T maxValue = std::numeric_limits<T>::max();
+        const std::string maxString = std::to_string(maxValue);
+        testSimpleSuccess(maxString, maxValue);
 
-    testSimpleFailure<T>("");
-    testSimpleFailure<T>("-");
-    testSimpleFailure<T>("+");
-    testSimpleFailure<T>("r");
-    testSimpleFailure<T>("0y");
-    testSimpleFailure<T>(maxString + '0');
-    testSimpleFailure<T>(minString + '0');
-}
+        testSimpleFailure<T>("");
+        testSimpleFailure<T>("-");
+        testSimpleFailure<T>("+");
+        testSimpleFailure<T>("r");
+        testSimpleFailure<T>("0y");
+        testSimpleFailure<T>(maxString + '0');
+        testSimpleFailure<T>(minString + '0');
+    }
 
-template<typename T>
-void testUnsigned() {
-    testSimpleSuccess("0", T(0));
-    testSimpleSuccess("1", T(1));
-    testSimpleSuccess("42", T(42));
-    const T maxValue = std::numeric_limits<T>::max();
-    const std::string maxString = std::to_string(maxValue);
-    testSimpleSuccess(maxString, maxValue);
+    template<typename T>
+    void
+    testUnsigned() {
+        testSimpleSuccess("0", T(0));
+        testSimpleSuccess("1", T(1));
+        testSimpleSuccess("42", T(42));
+        const T maxValue = std::numeric_limits<T>::max();
+        const std::string maxString = std::to_string(maxValue);
+        testSimpleSuccess(maxString, maxValue);
 
-    testSimpleFailure<T>("");
-    testSimpleFailure<T>("-");
-    testSimpleFailure<T>("-m");
-    testSimpleFailure<T>("+");
-    testSimpleFailure<T>("r");
-    testSimpleFailure<T>("0y");
-    testSimpleFailure<T>(maxString + '0');
-}
+        testSimpleFailure<T>("");
+        testSimpleFailure<T>("-");
+        testSimpleFailure<T>("-m");
+        testSimpleFailure<T>("+");
+        testSimpleFailure<T>("r");
+        testSimpleFailure<T>("0y");
+        testSimpleFailure<T>(maxString + '0');
+    }
 
 } // namespace
 
