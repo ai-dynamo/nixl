@@ -19,6 +19,7 @@
 #define NIXL_SRC_UTILS_COMMON_CONFIG_H
 
 #include <algorithm>
+#include <charconv>
 #include <cstdlib>
 #include <optional>
 #include <stdexcept>
@@ -74,7 +75,7 @@ template<> struct convertTraits<bool> {
             return false;
         }
 
-        const std::string msg = "Conversion to bool failed for string  '" + value + "' known are " +
+        const std::string msg = "Conversion to bool failed for string '" + value + "' known are " +
             absl::StrJoin(positive, ", ") + " as positive and " + absl::StrJoin(negative, ", ") +
             " as negative (case insensitive)";
         throw std::runtime_error(msg);
@@ -97,34 +98,45 @@ template<> struct convertTraits<std::string> {
     }
 };
 
-template<typename integer, typename longLong> struct integerTraits {
-    static_assert(std::is_signed_v<integer> == std::is_signed_v<longLong>);
-    static_assert(std::is_unsigned_v<integer> == std::is_unsigned_v<longLong>);
-
+template<typename integer> struct integralTraits {
     [[nodiscard]] static integer
     convert(const std::string &value) {
-        size_t pos = 0;
-        const longLong ll =
-            std::is_unsigned_v<integer> ? std::stoull(value, &pos) : std::stoll(value, &pos);
-        if (pos != value.size()) {
-            throw std::runtime_error("Invalid integer");
-        }
-        if constexpr (sizeof(integer) < sizeof(longLong)) {
-            if (longLong(integer(ll)) != ll) {
-                throw std::runtime_error("Integer overflow");
+        integer result;
+        const auto status = std::from_chars(begin(value), value.data() + value.size(), result, base(value));
+        switch (status.ec) {
+        case std::errc::invalid_argument:
+            throw std::runtime_error("Invalid integer string '" + value + "' for type " + typeid(integer).name());
+        case std::errc::result_out_of_range:
+            throw std::runtime_error("Integer string '" + value + "' out of range for type " + typeid(integer).name());
+        default:
+            if (status.ptr != value.data() + value.size()) {
+                throw std::runtime_error("Trailing garbage in integer string '" + value + "'");
             }
+            break;
         }
-        return integer(ll);
+        return result;
+    }
+
+private:
+    [[nodiscard]] static bool
+    isHex(const std::string& value) noexcept {
+        return std::is_unsigned_v<integer> && (value.size() > 2) && (value[1] == 'x');
+    }
+
+    [[nodiscard]] static int
+    base(const std::string& value) noexcept {
+        return isHex(value) ? 16 : 10;
+    }
+
+    [[nodiscard]] static const char *
+    begin(const std::string& value) noexcept {
+        return value.data() + (isHex(value) ? 2 : 0);
     }
 };
 
 template<typename integer>
-struct convertTraits<integer, std::enable_if_t<std::is_signed_v<integer>>>
-    : integerTraits<integer, long long> {};
-
-template<typename integer>
-struct convertTraits<integer, std::enable_if_t<std::is_unsigned_v<integer>>>
-    : integerTraits<integer, unsigned long long> {};
+struct convertTraits<integer, std::enable_if_t<std::is_integral_v<integer>>>
+    : integralTraits<integer> {};
 
 // Keep this function, too, or just the regular three below?
 template<typename type, template<typename...> class traits = convertTraits>
