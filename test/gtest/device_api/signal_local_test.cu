@@ -21,10 +21,8 @@
 #include "mem_type_array.h"
 
 namespace {
-constexpr size_t default_num_threads = 32;
 constexpr uint32_t test_pattern1 = 0xDEADBEEF;
 constexpr uint32_t test_pattern2 = 0xCAFEBABE;
-constexpr uint64_t test_signal_increment = 42;
 
 const std::vector<nixl_gpu_level_t> levels = {
     nixl_gpu_level_t::BLOCK,
@@ -85,7 +83,7 @@ TEST_P(signalLocalTest, WriteRead) {
 }
 
 TEST_P(signalLocalTest, MultipleWrites) {
-    const std::vector<uint64_t> test_values{test_pattern1, test_pattern2, test_signal_increment};
+    const std::vector<uint64_t> test_values{test_pattern1, test_pattern2, default_signal_increment};
     for (const auto &test_value : test_values) {
         EXPECT_EQ(writeAndVerify(test_value), NIXL_SUCCESS);
     }

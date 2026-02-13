@@ -20,9 +20,8 @@
 #include "kernel.h"
 
 namespace {
-constexpr size_t warp_size = 32;
-constexpr uint64_t signal_increment = 42;
 constexpr size_t signal_offset = 0;
+constexpr size_t warp_size = 32;
 constexpr unsigned signal_index = 0;
 } // namespace
 
@@ -40,14 +39,17 @@ protected:
 private:
     [[nodiscard]] uint64_t
     expectedSignalValue() const noexcept {
-        return signal_increment * numOpsMultiplier();
+        return default_signal_increment * default_num_iters * numOpsMultiplier();
     }
 
     [[nodiscard]] size_t
     numOpsMultiplier() const noexcept {
         switch (getLevel()) {
         case nixl_gpu_level_t::THREAD:
-            return warp_size;
+            return default_num_threads;
+        case nixl_gpu_level_t::WARP:
+            return default_num_threads / warp_size;
+        case nixl_gpu_level_t::BLOCK:
         default:
             return 1;
         }
@@ -59,7 +61,7 @@ signalPostTest::postSignal() {
     kernelParams post_params(
         operation_t::SIGNAL_POST, getLevel(), GetParam().mode, createGpuXferReq());
     post_params.signalPost.signalDescIndex = signal_index;
-    post_params.signalPost.signalInc = signal_increment;
+    post_params.signalPost.signalInc = default_signal_increment;
     post_params.signalPost.signalOffset = signal_offset;
     return launchKernel(post_params);
 }

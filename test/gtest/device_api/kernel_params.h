@@ -32,6 +32,10 @@ enum class operation_t : uint64_t {
     SIGNAL_WRITE
 };
 
+static constexpr size_t default_num_iters = 100;
+static constexpr size_t default_num_threads = 32;
+static constexpr uint64_t default_signal_increment = 42;
+
 struct kernelParams {
     kernelParams(operation_t op, nixl_gpu_level_t l, send_mode_t sm, nixlGpuXferReqH req_handle)
         : operation(op),
@@ -51,9 +55,9 @@ struct kernelParams {
 
     const operation_t operation;
     const nixl_gpu_level_t level;
-    const unsigned numThreads = 32;
+    const unsigned numThreads = default_num_threads;
     const unsigned numBlocks = 1;
-    const size_t numIters = 100;
+    const size_t numIters = default_num_iters;
     bool withRequest = false;
     bool noDelay = false;
     unsigned numChannels = 1;
