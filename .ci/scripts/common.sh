@@ -143,7 +143,7 @@ choose_other_pid() {
 }
 
 kill_all_jobs() {
-    kill $(jobs -p)
+    kill > /dev/null 2>&1 $(jobs -p) || true
 }
 
 # Wait for two PIDs independent of the order in which they terminate
