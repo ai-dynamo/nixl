@@ -56,7 +56,8 @@ private:
 
 [[nodiscard]] nixl_status_t
 signalPostTest::postSignal() {
-    kernelParams post_params(operation_t::SIGNAL_POST, getLevel(), GetParam().mode, createGpuXferReq());
+    kernelParams post_params(
+        operation_t::SIGNAL_POST, getLevel(), GetParam().mode, createGpuXferReq());
     post_params.signalPost.signalDescIndex = signal_index;
     post_params.signalPost.signalInc = signal_increment;
     post_params.signalPost.signalOffset = signal_offset;

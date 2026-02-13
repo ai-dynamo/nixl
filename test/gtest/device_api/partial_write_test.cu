@@ -36,8 +36,7 @@ const std::vector<size_t> sizes = {buffer_size, buffer_size};
 } // namespace
 
 namespace nixl::device_api {
-partialWriteTest::partialWriteTest()
-    : p2pTest(sizes) {}
+partialWriteTest::partialWriteTest() : p2pTest(sizes) {}
 
 void
 partialWriteTest::setSrcBuffers() {
@@ -72,7 +71,8 @@ partialWriteTest::run(uint64_t signal_inc) {
     const auto signal_desc_index = static_cast<unsigned>(dataBufferCount());
     constexpr size_t signal_offset = 0;
 
-    kernelParams params(operation_t::PARTIAL_WRITE, getLevel(), GetParam().mode, createGpuXferReq());
+    kernelParams params(
+        operation_t::PARTIAL_WRITE, getLevel(), GetParam().mode, createGpuXferReq());
 
     params.partialWrite.count = data_buf_count;
     params.partialWrite.descIndices = indices_gpu.get();

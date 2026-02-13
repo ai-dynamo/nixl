@@ -36,9 +36,7 @@ const std::vector<nixl_gpu_level_t> levels = {
 namespace nixl::device_api {
 class signalLocalTest : public testing::TestWithParam<nixl_gpu_level_t> {
 protected:
-    signalLocalTest()
-        : agent_("local_agent"),
-          signalBuffer_(agent_.getGpuSignalSize(), VRAM_SEG) {}
+    signalLocalTest() : agent_("local_agent"), signalBuffer_(agent_.getGpuSignalSize(), VRAM_SEG) {}
 
     [[nodiscard]] nixl_status_t
     writeAndVerify(uint64_t value, size_t num_threads = default_num_threads);

@@ -16,7 +16,6 @@
 # Device API test sources (common + tests)
 device_api_test_sources = files(
     'agent.cu',
-    'kernel_params.cu',
     'kernel.cu',
     'p2p_test.cu',
     'params.cu',
