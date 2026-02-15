@@ -62,6 +62,60 @@ def load_matrix(matrix_file) -> np.ndarray:
     return mat
 
 
+def load_tp_file(tp_file) -> dict:
+    """Load unified TP file with [rdma], [read], [write] sections.
+
+    File format:
+        [rdma]
+        0 710M 0 0
+        0 0 0 0
+
+        [read]
+        710M 710M 0 0
+
+        [write]
+        710M 710M 0 0
+
+    All sections are optional. Files without [section] headers are parsed
+    as legacy RDMA-only matrix files (backward compatible).
+
+    Returns:
+        dict with keys: 'rdma' (np.ndarray or None),
+        'read' (list[str] or None), 'write' (list[str] or None)
+    """
+    sections: Dict[str, list] = {}
+    current_section = None
+
+    with open(tp_file, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                current_section = line[1:-1].lower()
+                sections[current_section] = []
+            elif current_section is not None:
+                sections[current_section].append(line.split())
+            else:
+                # No section header yet -> legacy matrix file
+                sections.setdefault("rdma", []).append(line.split())
+
+    result: Dict[str, Any] = {"rdma": None, "read": None, "write": None}
+
+    if "rdma" in sections:
+        matrix = [[parse_size(x) for x in row] for row in sections["rdma"]]
+        result["rdma"] = np.array(matrix)
+
+    if "read" in sections and sections["read"]:
+        # Flatten to single list (read section is one row of values)
+        result["read"] = [val for row in sections["read"] for val in row]
+
+    if "write" in sections and sections["write"]:
+        result["write"] = [val for row in sections["write"] for val in row]
+
+    return result
+
+
 def align_to_4k(size: int) -> int:
     """Align size up to 4K boundary for O_DIRECT compatibility."""
     ALIGNMENT = 4096
@@ -432,6 +486,21 @@ def kvcache_command(model, model_config, **kwargs):
     default=10,
     help="Number of isolation benchmark iterations per TP (default: 10, was 30)",
 )
+@click.option(
+    "--storage-block-size",
+    type=str,
+    default="0",
+    help="Split storage I/O into blocks of this size for higher queue depth. "
+    "Accepts size suffixes: K, M, G (e.g., '1M' = 1MB). "
+    "0 = no splitting (legacy). Recommended: '1M' for NFS/VAST.",
+)
+@click.option(
+    "--storage-posix-api",
+    type=click.Choice(["auto", "aio", "uring"]),
+    default="auto",
+    help="POSIX async I/O API. auto=best available (libaio), "
+    "aio=Linux AIO (libaio), uring=io_uring.",
+)
 def sequential_ct_perftest(
     config_file,
     verify_buffers,
@@ -442,6 +511,8 @@ def sequential_ct_perftest(
     storage_direct_io,
     warmup_iters,
     isolation_iters,
+    storage_block_size,
+    storage_posix_api,
 ):
     """Run sequential custom traffic performance test using patterns defined in YAML config."""
     from test.sequential_custom_traffic_perftest import SequentialCTPerftest
@@ -472,48 +543,74 @@ def sequential_ct_perftest(
     has_storage = False
 
     for idx, tp_config in enumerate(config["traffic_patterns"]):
-        # Load matrix if provided (optional for storage-only patterns)
         matrix = None
-        if "matrix_file" in tp_config:
-            matrix_file = tp_config["matrix_file"]
-            if not os.path.isabs(matrix_file):
-                matrix_file = config_dir / matrix_file
-            matrix = load_matrix(matrix_file)
-            logger.debug(
-                "TP %d: matrix=%s, shape=%s, mem_type=%s",
-                idx,
-                tp_config["matrix_file"],
-                matrix.shape,
-                tp_config.get("mem_type", "cuda"),
-            )
-        elif "matrix" in tp_config:
-            # Inline matrix in config
-            matrix = np.array(tp_config["matrix"])
-            logger.debug(
-                "TP %d: inline matrix, shape=%s, mem_type=%s",
-                idx,
-                matrix.shape,
-                tp_config.get("mem_type", "cuda"),
-            )
-
-        # Parse per-TP storage config if present
         storage_ops = None
-        if "storage" in tp_config:
-            storage_ops = parse_storage_config(
-                tp_config["storage"], idx, storage_base_path
-            )
-            if storage_ops:
-                has_storage = True
-                logger.debug(
-                    "TP %d: storage config, ranks=%s",
-                    idx,
-                    list(storage_ops.keys()),
+
+        if "tp_file" in tp_config:
+            # Unified TP file with [rdma], [read], [write] sections
+            tp_file = tp_config["tp_file"]
+            if not os.path.isabs(tp_file):
+                tp_file = config_dir / tp_file
+            tp_data = load_tp_file(tp_file)
+            matrix = tp_data["rdma"]
+            # Build storage config from read/write arrays in the TP file
+            if tp_data["read"] or tp_data["write"]:
+                storage_config = {}
+                if tp_data["read"]:
+                    storage_config["read"] = tp_data["read"]
+                if tp_data["write"]:
+                    storage_config["write"] = tp_data["write"]
+                storage_ops = parse_storage_config(
+                    storage_config, idx, storage_base_path
                 )
+                if storage_ops:
+                    has_storage = True
+            logger.debug(
+                "TP %d: tp_file=%s, rdma=%s, storage=%s",
+                idx,
+                tp_config["tp_file"],
+                matrix.shape if matrix is not None else None,
+                list(storage_ops.keys()) if storage_ops else None,
+            )
+        else:
+            # Legacy: separate matrix_file + inline storage config
+            if "matrix_file" in tp_config:
+                matrix_file = tp_config["matrix_file"]
+                if not os.path.isabs(matrix_file):
+                    matrix_file = config_dir / matrix_file
+                matrix = load_matrix(matrix_file)
+                logger.debug(
+                    "TP %d: matrix=%s, shape=%s, mem_type=%s",
+                    idx,
+                    tp_config["matrix_file"],
+                    matrix.shape,
+                    tp_config.get("mem_type", "cuda"),
+                )
+            elif "matrix" in tp_config:
+                matrix = np.array(tp_config["matrix"])
+                logger.debug(
+                    "TP %d: inline matrix, shape=%s, mem_type=%s",
+                    idx,
+                    matrix.shape,
+                    tp_config.get("mem_type", "cuda"),
+                )
+
+            if "storage" in tp_config:
+                storage_ops = parse_storage_config(
+                    tp_config["storage"], idx, storage_base_path
+                )
+                if storage_ops:
+                    has_storage = True
+                    logger.debug(
+                        "TP %d: storage config, ranks=%s",
+                        idx,
+                        list(storage_ops.keys()),
+                    )
 
         # Validate: must have either RDMA matrix or storage ops
         if matrix is None and storage_ops is None:
             raise ValueError(
-                f"Traffic pattern {idx} must have either 'matrix_file'/'matrix' or 'storage' config"
+                f"Traffic pattern {idx} must have either 'tp_file', 'matrix_file'/'matrix', or 'storage' config"
             )
 
         # For storage-only patterns without matrix, log it
@@ -563,6 +660,17 @@ def sequential_ct_perftest(
     else:
         logger.info("Loaded %d traffic patterns, no storage", len(patterns))
 
+    # Parse block size string (supports K, M, G suffixes)
+    block_size_bytes = 0
+    if storage_block_size and storage_block_size != "0":
+        bs = storage_block_size.strip().upper()
+        multipliers = {"K": 1024, "M": 1024**2, "G": 1024**3}
+        if bs[-1] in multipliers:
+            block_size_bytes = int(float(bs[:-1]) * multipliers[bs[-1]])
+        else:
+            block_size_bytes = int(bs)
+        logger.info("Storage block size: %d bytes (%s)", block_size_bytes, storage_block_size)
+
     # Pass storage config to perftest - it creates the backend with its nixl_agent
     perftest = SequentialCTPerftest(
         patterns,
@@ -571,6 +679,8 @@ def sequential_ct_perftest(
         storage_path=storage_base_path if has_storage else None,
         storage_nixl_backend=storage_backend if has_storage else None,
         storage_direct_io=use_direct_io if has_storage else False,
+        storage_block_size=block_size_bytes,
+        storage_posix_api=storage_posix_api,
     )
     perftest.run(
         verify_buffers=verify_buffers,

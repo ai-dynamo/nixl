@@ -163,6 +163,8 @@ class FilesystemBackend(StorageBackend):
         base_path: Path,
         nixl_backend: str = "POSIX",
         use_direct_io: bool = False,
+        block_size: int = 0,
+        backend_params: dict = None,
     ):
         """Initialize filesystem backend.
 
@@ -171,28 +173,36 @@ class FilesystemBackend(StorageBackend):
             base_path: Base directory for storage files
             nixl_backend: NIXL backend to use ("POSIX", "GDS", or "GDS_MT")
             use_direct_io: Use O_DIRECT for file I/O (recommended for GDS)
+            block_size: Split I/O into blocks of this size for higher queue depth.
+                        0 = no splitting (legacy single-descriptor mode).
+                        Recommended: 1048576 (1MB) to match NFS rsize and maximize
+                        I/O concurrency across nconnect sessions.
+            backend_params: Optional dict of backend-specific params (e.g.,
+                           {"use_uring": "true"} for io_uring).
         """
         self._agent = agent
         self._base_path = Path(base_path)
         self._nixl_backend = nixl_backend
         self._use_direct_io = use_direct_io
+        self._block_size = block_size
         self._handles: Dict[str, StorageHandle] = {}  # key -> handle
         self._file_descriptors: Dict[str, int] = {}  # file_path -> fd
         self._file_reg_descs: Dict[str, Any] = {}  # file_path -> nixl reg_descs
 
         # Ensure backend is created
         try:
-            self._agent.create_backend(nixl_backend)
+            self._agent.create_backend(nixl_backend, backend_params or {})
         except Exception as e:
             logger.debug(
                 "create_backend(%s) returned: %s (may already exist)", nixl_backend, e
             )
 
         logger.debug(
-            "FilesystemBackend initialized: base_path=%s, backend=%s, direct_io=%s",
+            "FilesystemBackend initialized: base_path=%s, backend=%s, direct_io=%s, block_size=%d",
             base_path,
             nixl_backend,
             use_direct_io,
+            block_size,
         )
 
     def _get_file_path(self, tp_idx: int, rank: int) -> Path:
@@ -286,6 +296,60 @@ class FilesystemBackend(StorageBackend):
 
         return handle
 
+    def _create_chunked_descs(self, fd, file_offset, total_size, buffer):
+        """Create file and local memory descriptors, optionally chunked for high queue depth.
+
+        When block_size > 0, splits the transfer into multiple small descriptors.
+        This increases the async I/O queue depth in the POSIX/GDS backend, allowing
+        the NFS client to pipeline requests across nconnect sessions.
+
+        Both local and file descriptor lists must have matching entry counts
+        (required by the POSIX backend: posix_backend.cpp line 57).
+
+        Args:
+            fd: File descriptor
+            file_offset: Starting offset in file
+            total_size: Total bytes to transfer
+            buffer: Memory buffer (torch tensor)
+
+        Returns:
+            (local_descs, file_descs) tuple of NIXL descriptor lists
+        """
+        bs = self._block_size
+        if bs <= 0 or total_size <= bs:
+            # Legacy: single descriptor (queue_depth = 1)
+            file_descs = self._agent.get_xfer_descs(
+                [(file_offset, total_size, fd)], "FILE"
+            )
+            local_descs = self._agent.get_xfer_descs(buffer)
+            return local_descs, file_descs
+
+        # Chunked: N descriptors of block_size each (queue_depth = N)
+        # This mimics nixlbench's approach: 64 x 1MB = 64 outstanding I/Os
+        buf_addr = buffer.data_ptr()
+        dev_id = buffer.device.index if buffer.is_cuda else 0
+
+        file_tuples = []
+        local_tuples = []
+        for off in range(0, total_size, bs):
+            chunk = min(bs, total_size - off)
+            file_tuples.append((file_offset + off, chunk, fd))
+            local_tuples.append((buf_addr + off, chunk, dev_id or 0))
+
+        file_descs = self._agent.get_xfer_descs(file_tuples, "FILE")
+        local_mem_type = "VRAM" if buffer.is_cuda else "DRAM"
+        local_descs = self._agent.get_xfer_descs(local_tuples, local_mem_type)
+
+        logger.debug(
+            "Chunked I/O: %d descs x %d bytes (total %d, queue_depth=%d)",
+            len(file_tuples),
+            bs,
+            total_size,
+            len(file_tuples),
+        )
+
+        return local_descs, file_descs
+
     def get_read_handle(
         self,
         handle: StorageHandle,
@@ -296,10 +360,9 @@ class FilesystemBackend(StorageBackend):
             return None
 
         fd = handle.backend_data["fd"]
-
-        # File descriptors: (offset, size, fd)
-        file_descs = self._agent.get_xfer_descs([(0, handle.read_size, fd)], "FILE")
-        local_descs = self._agent.get_xfer_descs(buffer)
+        local_descs, file_descs = self._create_chunked_descs(
+            fd, 0, handle.read_size, buffer
+        )
 
         xfer_handle = self._agent.initialize_xfer(
             "READ",
@@ -322,12 +385,9 @@ class FilesystemBackend(StorageBackend):
 
         fd = handle.backend_data["fd"]
         write_offset = handle.read_size  # Write starts after read region
-
-        # File descriptors: (offset, size, fd)
-        file_descs = self._agent.get_xfer_descs(
-            [(write_offset, handle.write_size, fd)], "FILE"
+        local_descs, file_descs = self._create_chunked_descs(
+            fd, write_offset, handle.write_size, buffer
         )
-        local_descs = self._agent.get_xfer_descs(buffer)
 
         xfer_handle = self._agent.initialize_xfer(
             "WRITE",
