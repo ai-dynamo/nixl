@@ -511,6 +511,8 @@ def main(
 
     # Create directories
     results_dir.mkdir(parents=True, exist_ok=True)
+    tps_dir = results_dir / "tps"
+    tps_dir.mkdir(parents=True, exist_ok=True)
     if not storage_only:
         matrices_dir = results_dir / "matrices"
         matrices_dir.mkdir(parents=True, exist_ok=True)
@@ -540,40 +542,19 @@ def main(
         "isolation_iters": isolation_iters,
     }
 
-    for idx, matrix in enumerate(tqdm(matrices, desc="Saving matrices")):
-        # Save matrix to txt file (unless storage_only)
-        if not storage_only:
-            matrix_path = matrices_dir / f"matrix_{idx}.txt"
-            with open(matrix_path, "w") as f:
-                for row in matrix.matrix:
-                    f.write(" ".join(f"{format_size(val)}" for val in row) + "\n")
+    for idx, matrix in enumerate(tqdm(matrices, desc="Saving traffic patterns")):
+        # Compute per-rank storage sizes (if storage enabled)
+        has_read = False
+        has_write = False
+        read_sizes: List[str] = []
+        write_sizes: List[str] = []
 
-        # Build traffic pattern entry
-        tp_entry: Dict[str, Any] = {
-            # Compute time reduced by prefix hit rate (if storage enabled)
-            "sleep_before_launch_sec": matrix.compute_time * (1 - hit_rate),
-            "metadata": {
-                "isl": matrix.isl,
-            },
-        }
-
-        # Add matrix_file only if not storage_only
-        if not storage_only:
-            tp_entry["matrix_file"] = f"matrices/matrix_{idx}.txt"
-
-        # Add mem_type for storage_only mode
-        if storage_only:
-            tp_entry["mem_type"] = mem_type
-
-        # Add per-rank storage requirements if enabled (array format)
         if storage_enabled:
             world_size = matrix.matrix.shape[0]
-            read_sizes: List[str] = ["0"] * world_size
-            write_sizes: List[str] = ["0"] * world_size
+            read_sizes = ["0"] * world_size
+            write_sizes = ["0"] * world_size
 
             if all_nodes_per_pattern:
-                # All prefill nodes get the same size (based on this request's ISL)
-                # Calculate size per rank based on ISL
                 kv_size = model_config.kv_cache_size(matrix.isl)
                 per_rank_size = int(
                     kv_size
@@ -584,14 +565,12 @@ def main(
                 read_size = int(per_rank_size * hit_rate)
                 write_size = 0 if read_only else int(per_rank_size * (1 - hit_rate))
 
-                # Set for ALL prefill ranks (ranks 0 to num_prefill_gpus-1)
                 for rank in range(num_prefill_gpus):
                     if read_size > 0:
                         read_sizes[rank] = format_size(read_size)
                     if write_size > 0:
                         write_sizes[rank] = format_size(write_size)
             elif storage_only:
-                # Storage-only mode with round-robin: assign to one prefill worker at a time
                 kv_size = model_config.kv_cache_size(matrix.isl)
                 per_rank_size = int(
                     kv_size
@@ -602,7 +581,6 @@ def main(
                 read_size = int(per_rank_size * hit_rate)
                 write_size = 0 if read_only else int(per_rank_size * (1 - hit_rate))
 
-                # Assign to one prefill worker (round-robin)
                 num_prefill_workers = num_prefill_gpus // (
                     prefill_worker_config.tp
                     * prefill_worker_config.pp
@@ -622,7 +600,6 @@ def main(
                     if write_size > 0:
                         write_sizes[rank] = format_size(write_size)
             else:
-                # Original behavior: only sender ranks for this specific worker
                 for rank in matrix.sender_ranks:
                     transfer_size = int(matrix.matrix[rank].sum())
                     if transfer_size > 0:
@@ -635,14 +612,51 @@ def main(
                         if write_size > 0:
                             write_sizes[rank] = format_size(write_size)
 
-            # For storage_only, only include non-zero operations
-            storage_entry = {}
-            if any(s != "0" for s in read_sizes):
+            has_read = any(s != "0" for s in read_sizes)
+            has_write = any(s != "0" for s in write_sizes)
+
+        # Write unified .tp file with [rdma], [read], [write] sections
+        tp_path = tps_dir / f"tp_{idx}.tp"
+        with open(tp_path, "w") as f:
+            if not storage_only:
+                f.write("[rdma]\n")
+                for row in matrix.matrix:
+                    f.write(" ".join(format_size(val) for val in row) + "\n")
+            if has_read:
+                f.write("\n[read]\n")
+                f.write(" ".join(read_sizes) + "\n")
+            if has_write:
+                f.write("\n[write]\n")
+                f.write(" ".join(write_sizes) + "\n")
+
+        # Also write legacy matrix file for backward compatibility
+        if not storage_only:
+            matrix_path = matrices_dir / f"matrix_{idx}.txt"
+            with open(matrix_path, "w") as f:
+                for row in matrix.matrix:
+                    f.write(" ".join(format_size(val) for val in row) + "\n")
+
+        # Build YAML entry with BOTH tp_file (new) and matrix_file+storage (legacy)
+        # New main.py checks tp_file first; old main.py ignores tp_file, uses matrix_file
+        tp_entry: Dict[str, Any] = {
+            "tp_file": f"tps/tp_{idx}.tp",
+            "sleep_before_launch_sec": matrix.compute_time * (1 - hit_rate),
+            "metadata": {
+                "isl": matrix.isl,
+            },
+        }
+        # Legacy keys for backward compatibility with old main.py
+        if not storage_only:
+            tp_entry["matrix_file"] = f"matrices/matrix_{idx}.txt"
+        if storage_only or storage_enabled:
+            tp_entry["mem_type"] = mem_type
+        if has_read or has_write:
+            storage_entry: Dict[str, List[str]] = {}
+            if has_read:
                 storage_entry["read"] = read_sizes
-            if any(s != "0" for s in write_sizes):
+            if has_write:
                 storage_entry["write"] = write_sizes
-            if storage_entry:
-                tp_entry["storage"] = storage_entry
+            tp_entry["storage"] = storage_entry
 
         metadata["traffic_patterns"].append(tp_entry)
 

@@ -62,6 +62,8 @@ class SequentialCTPerftest(CTPerftest):
         storage_path: Optional[Path] = None,
         storage_nixl_backend: Optional[str] = None,
         storage_direct_io: bool = False,
+        storage_block_size: int = 0,
+        storage_posix_api: str = "auto",
     ) -> None:
         """Initialize multi-pattern performance test.
 
@@ -70,6 +72,9 @@ class SequentialCTPerftest(CTPerftest):
             storage_path: Optional base path for storage operations
             storage_nixl_backend: Storage backend type (POSIX, GDS, GDS_MT)
             storage_direct_io: Whether to use O_DIRECT for storage I/O
+            storage_block_size: Split storage I/O into blocks of this size (bytes).
+                               0 = no splitting. Recommended: 1048576 (1MB).
+            storage_posix_api: POSIX async I/O API ("auto", "aio", "uring")
         """
         self.my_rank = dist_rt.get_rank()
         self.world_size = dist_rt.get_world_size()
@@ -120,18 +125,31 @@ class SequentialCTPerftest(CTPerftest):
             nixl_backend = storage_nixl_backend or "POSIX"
             self._storage_nixl_backend = nixl_backend
             use_direct_io = storage_direct_io or nixl_backend in ("GDS", "GDS_MT")
+
+            # Build backend-specific params (e.g., io_uring selection)
+            backend_params = {}
+            if storage_posix_api == "uring":
+                backend_params = {"use_uring": "true", "use_aio": "false", "use_posix_aio": "false"}
+            elif storage_posix_api == "aio":
+                backend_params = {"use_aio": "true", "use_uring": "false", "use_posix_aio": "false"}
+            # "auto" = no params, backend picks best available (default: libaio)
+
             logger.info(
-                "[Rank %d] Storage: %s, backend=%s, O_DIRECT=%s",
+                "[Rank %d] Storage: %s, backend=%s, O_DIRECT=%s, block_size=%d, posix_api=%s",
                 self.my_rank,
                 storage_path,
                 nixl_backend,
                 use_direct_io,
+                storage_block_size,
+                storage_posix_api,
             )
             self._storage_backend = FilesystemBackend(
                 agent=self.nixl_agent,
                 base_path=storage_path,
                 nixl_backend=nixl_backend,
                 use_direct_io=use_direct_io,
+                block_size=storage_block_size,
+                backend_params=backend_params if backend_params else None,
             )
             # Only create UCX if we have RDMA traffic patterns
             if self._has_rdma:
