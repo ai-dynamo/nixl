@@ -32,7 +32,8 @@ public:
     unsigned numEfaDevices = 0;
 
     /** Return a cached singleton instance of hwInfo */
-    static const hwInfo &instance();
+    static const hwInfo &
+    instance();
 
 private:
     hwInfo();
