@@ -316,7 +316,7 @@ public:
      */
     inline bool
     isEmpty() const {
-        return (descs.empty());
+        return descs.empty();
     }
 
     inline const T &
