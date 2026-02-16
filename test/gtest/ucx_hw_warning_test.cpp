@@ -16,6 +16,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,20 @@
 class UcxHardwareWarningTest : public ::testing::Test {
 protected:
     gtest::ScopedEnv envHelper_;
+
+    void
+    SetUp() override {
+        const char *const skip = std::getenv("NIXL_SKIP_HW_WARNING_TESTS");
+        if (skip) {
+            const std::string skip_str(skip);
+
+            if (skip_str == "1") {
+                GTEST_SKIP() << "NIXL_SKIP_HW_WARNING_TESTS=1, skipping hardware warning tests";
+            } else if (skip_str != "0") {
+                throw std::invalid_argument("NIXL_SKIP_HW_WARNING_TESTS must be 1 or 0");
+            }
+        }
+    }
 };
 
 /**
