@@ -42,7 +42,7 @@ protected:
  * CUDA support is not available.
  */
 TEST_F(HardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
-    const nixl::hwInfo hw_info;
+    const auto &hw_info = nixl::hwInfo::instance();
     if (hw_info.numNvidiaGpus == 0) {
         GTEST_SKIP() << "No NVIDIA GPUs detected, skipping test";
     }
@@ -75,7 +75,7 @@ TEST_F(HardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
         GTEST_SKIP() << "UCX version is less than 1.21, skipping test";
     }
 
-    const nixl::hwInfo hw_info;
+    const auto &hw_info = nixl::hwInfo::instance();
     if (hw_info.numIbDevices == 0) {
         GTEST_SKIP() << "No IB devices detected, skipping test";
     }
@@ -101,7 +101,7 @@ TEST_F(HardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
  * Test that no warnings are logged when UCX_TLS includes both ib and cuda.
  */
 TEST_F(HardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
-    const nixl::hwInfo hw_info;
+    const auto &hw_info = nixl::hwInfo::instance();
     if (hw_info.numNvidiaGpus == 0 || hw_info.numIbDevices == 0) {
         GTEST_SKIP() << "No NVIDIA GPUs or IB devices detected, skipping test";
     }
@@ -125,7 +125,7 @@ TEST_F(HardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
  * non-LIBFABRIC backend is created.
  */
 TEST_F(HardwareWarningTest, WarnWhenEfaPresentAndNonLibfabricBackend) {
-    const nixl::hwInfo hw_info;
+    const auto &hw_info = nixl::hwInfo::instance();
     if (hw_info.numEfaDevices == 0) {
         GTEST_SKIP() << "No EFA devices detected, skipping test";
     }
@@ -147,8 +147,9 @@ TEST_F(HardwareWarningTest, WarnWhenEfaPresentAndNonLibfabricBackend) {
     }
 
     EXPECT_EQ(
-        log_sink.countWarningsMatching("Amazon EFA(s) were detected, it is recommended to use "
-                                       "the LIBFABRIC backend for best performance"),
+        log_sink.countWarningsMatching("Amazon EFA(s) were detected, but the UCX backend was "
+                                       "instantiated. It is recommended to use the LIBFABRIC "
+                                       "backend for best performance"),
         1);
     EXPECT_EQ(log_sink.warningCount(), expected_warnings);
 }
@@ -162,7 +163,7 @@ TEST_F(HardwareWarningTest, NoWarningWhenEfaPresentAndLibfabricBackend) {
     GTEST_SKIP() << "LIBFABRIC plugin not built";
 #endif
 
-    const nixl::hwInfo hw_info;
+    const auto &hw_info = nixl::hwInfo::instance();
     if (hw_info.numEfaDevices == 0) {
         GTEST_SKIP() << "No EFA devices detected, skipping test";
     }

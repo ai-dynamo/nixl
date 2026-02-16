@@ -644,11 +644,7 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
         return;
     }
 
-    const nixl::hwInfo hw_info;
-
-    NIXL_DEBUG << "hwInfo { "
-               << "numNvidiaGpus=" << hw_info.numNvidiaGpus << ", "
-               << "numIbDevices=" << hw_info.numIbDevices << " }";
+    const auto &hw_info = nixl::hwInfo::instance();
 
     if (hw_info.numNvidiaGpus > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_CUDA)) {
         NIXL_WARN << hw_info.numNvidiaGpus

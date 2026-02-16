@@ -25,11 +25,16 @@ namespace nixl {
  *
  * Scans the sysfs PCI device directory to detect available hardware.
  */
-struct hwInfo {
+class hwInfo {
+public:
     unsigned numNvidiaGpus = 0;
     unsigned numIbDevices = 0;
     unsigned numEfaDevices = 0;
 
+    /** Return a cached singleton instance of hwInfo */
+    static const hwInfo &instance();
+
+private:
     hwInfo();
 };
 

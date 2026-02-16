@@ -141,4 +141,9 @@ hwInfo::hwInfo() {
                << "numEfaDevices=" << numEfaDevices << " }";
 }
 
+const hwInfo &hwInfo::instance() {
+    static const hwInfo hw_info;
+    return hw_info;
+}
+
 } // namespace nixl

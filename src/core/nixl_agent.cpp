@@ -288,12 +288,12 @@ namespace {
 void
 warnAboutHardwareSupportMismatch(const nixl_backend_t &type) {
     if (type != "LIBFABRIC") {
-        static const nixl::hwInfo hw_info;
+        const auto &hw_info = nixl::hwInfo::instance();
 
         if (hw_info.numEfaDevices > 0) {
-            NIXL_WARN << hw_info.numEfaDevices
-                      << " Amazon EFA(s) were detected, it is recommended to use "
-                         "the LIBFABRIC backend for best performance.";
+            NIXL_WARN << hw_info.numEfaDevices << " Amazon EFA(s) were detected, but the " << type
+                      << " backend was set. It's recommended to use the LIBFABRIC backend for "
+                         "best performance.";
         }
     }
 }
