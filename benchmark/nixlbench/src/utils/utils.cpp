@@ -1075,11 +1075,8 @@ xferBenchUtils::printStats(bool is_target,
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
-    // TODO: We can avoid this by creating a sub-communicator across initiator ranks
-    // if (isTarget() && IS_PAIRWISE_AND_SG() && rt->getSize() > 2) { - Fix this isTarget can not be
-    // called here
+    // Targets don't participate in reduction - they have no throughput to contribute
     if (is_target && IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
-        rt->reduceSumDouble(&throughput_gb, &totalbw, 0);
         return;
     }
 

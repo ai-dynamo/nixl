@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,31 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __STR_TOOLS_H
-#define __STR_TOOLS_H
-#include <regex>
+#ifndef NIXL_SRC_UTILS_COMMON_STR_TOOLS_H
+#define NIXL_SRC_UTILS_COMMON_STR_TOOLS_H
 
-inline std::vector<std::string> str_split(const std::string& str, const std::string& delims) {
-    std::regex re(delims);
-    std::sregex_token_iterator first{str.begin(), str.end(), re, -1}, last;
-    std::vector<std::string> output {first, last};
-    return output;
-}
-
-inline std::vector<std::string> str_split_substr(const std::string& str, const std::string& delimiter) {
-    std::vector<std::string> substrings;
-    std::string::size_type start = 0;
-    std::string::size_type end = str.find(delimiter);
-
-    while (end != std::string::npos) {
-        substrings.push_back(str.substr(start, end - start));
-        start = end + delimiter.length();
-        end = str.find(delimiter, start);
-    }
-
-    substrings.push_back(str.substr(start));
-    return substrings;
-}
+#include <string>
 
 class strEqual
 {
@@ -62,4 +41,5 @@ class strEqual
           return true;
       }
 };
-#endif
+
+#endif // NIXL_SRC_UTILS_COMMON_STR_TOOLS_H
