@@ -94,6 +94,7 @@ if $TEST_LIBFABRIC ; then
     ./bin/nixl_example LIBFABRIC
 fi
 ./bin/nixl_etcd_example
+# Remove setting UCX_GDR_COPY_SHARED one all tests use a UCX version with UCX PR #11149
 UCX_GDR_COPY_SHARED_MD=n ./bin/ucx_backend_test
 mkdir -p /tmp/telemetry_test
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
@@ -107,6 +108,7 @@ kill -s INT $telePID
 
 ./bin/nixl_posix_test -n 128 -s 1048576
 ./bin/nixl_gusli_test -n 4 -s 16
+# Remove setting UCX_GDR_COPY_SHARED one all tests use a UCX version with UCX PR #11149
 UCX_GDR_COPY_SHARED_MD=n ./bin/ucx_backend_multi
 ./bin/serdes_test
 # TODO: Enable Mooncake test once data corruption issue is resolved
