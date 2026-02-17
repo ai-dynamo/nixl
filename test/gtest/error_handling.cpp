@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -398,7 +398,7 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, size_t iter) {
 
 namespace {
     const std::string expected_log =
-       "postXferReq: remote agent 'target' was disconnected after transfer request creation";
+        "postXferReq: remote agent 'target' was disconnected after transfer request creation";
 
 } // namespace
 
