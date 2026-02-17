@@ -186,7 +186,7 @@ LogProblemCounter::Send(const absl::LogEntry &entry) {
         const std::lock_guard lock(log_problem_mutex);
         for (auto &[rx, count] : log_problem_ignore) {
             if (std::regex_search(msg, rx)) {
-		++count;
+                ++count;
                 return;
             }
         }

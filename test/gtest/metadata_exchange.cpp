@@ -42,8 +42,7 @@ namespace gtest {
 namespace metadata_exchange {
 class MemBuffer {
 public:
-    explicit MemBuffer(size_t size)
-        : vec_(size) {}
+    explicit MemBuffer(size_t size) : vec_(size) {}
 
     operator uintptr_t() const
     {
@@ -136,7 +135,7 @@ protected:
             if (agent.agent) {
                 agent.agent->invalidateLocalMD(nullptr);
             }
-	}
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         agents_.clear();
     }
@@ -335,7 +334,8 @@ TEST_F(MetadataExchangeTestFixture, GetLocalPartialWithErrors) {
 
     // Agent 1 has no connection info of agent 0
     {
-        const LogIgnoreGuard lig("loadRemoteMD: error loading remote metadata for agent 'agent_0' with status NIXL_ERR_NOT_FOUND");
+        const LogIgnoreGuard lig("loadRemoteMD: error loading remote metadata for agent 'agent_0' "
+                                 "with status NIXL_ERR_NOT_FOUND");
 
         ASSERT_NE(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
 
@@ -352,7 +352,8 @@ TEST_F(MetadataExchangeTestFixture, GetLocalPartialWithErrors) {
 
     // Change the metadata before loading
     {
-        const LogIgnoreGuard lig("loadRemoteMD: error loading connection info for backend 'UCX' with status NIXL_ERR_NOT_ALLOWED");
+        const LogIgnoreGuard lig("loadRemoteMD: error loading connection info for backend 'UCX' "
+                                 "with status NIXL_ERR_NOT_ALLOWED");
 
         md[100] += 1;
         ASSERT_NE(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
@@ -386,7 +387,8 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     send_args.port = 1234;
     {
         const LogIgnoreGuard lig1("poll timed out for ip_addr: 10.10.10.10 and port: 1234");
-        const LogIgnoreGuard lig2("Listener thread could not connect to IP 10.10.10.10 and port 1234");
+        const LogIgnoreGuard lig2(
+            "Listener thread could not connect to IP 10.10.10.10 and port 1234");
 
         ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
 
@@ -501,7 +503,8 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
 
     {
         const LogIgnoreGuard lig1("getLocalPartialMD: serialization failed");
-        const LogIgnoreGuard lig2("sendLocalPartialMD: error getting local partial metadata with status NIXL_ERR_NOT_FOUND");
+        const LogIgnoreGuard lig2("sendLocalPartialMD: error getting local partial metadata with "
+                                  "status NIXL_ERR_NOT_FOUND");
 
         ASSERT_NE(src.agent->sendLocalPartialMD(unregistered_descs, &send_args), NIXL_SUCCESS);
 
@@ -512,7 +515,8 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
     // Case 2: Attempt to load connection info on agent without backend
     {
         const LogIgnoreGuard lig1("loadRemoteMD: no common backend found");
-        const LogIgnoreGuard lig2(std::regex("loadRemoteMD in listener thread failed for md from peer 127.0.0.1:[0-9]+ with error NIXL_ERR_BACKEND"));
+        const LogIgnoreGuard lig2(std::regex("loadRemoteMD in listener thread failed for md from "
+                                             "peer 127.0.0.1:[0-9]+ with error NIXL_ERR_BACKEND"));
 
         ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
 
@@ -568,7 +572,8 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
 
     {
         // Expected due to failure of checkRemoteMd() below?
-        const LogIgnoreGuard lig1(std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/agent_0/metadata"));
+        const LogIgnoreGuard lig1(
+            std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/agent_0/metadata"));
         const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
         ASSERT_EQ(dst.agent->fetchRemoteMD(src.name), NIXL_SUCCESS);
@@ -598,7 +603,8 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
 
     // Fetch invalid agent name. This should not block the commWorker thread forever
     {
-        const LogIgnoreGuard lig1(std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/invalid_agent_name/metadata"));
+        const LogIgnoreGuard lig1(
+            std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/invalid_agent_name/metadata"));
         const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
         ASSERT_EQ(dst.agent->fetchRemoteMD("invalid_agent_name"), NIXL_SUCCESS);
@@ -722,11 +728,12 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
 
     // Case 1: Send without label
     {
-	const LogIgnoreGuard lig("sendLocalPartialMD: metadata label is required for etcd send of local partial metadata");
+        const LogIgnoreGuard lig("sendLocalPartialMD: metadata label is required for etcd send of "
+                                 "local partial metadata");
 
-	ASSERT_NE(src.agent->sendLocalPartialMD({DRAM_SEG}, nullptr), NIXL_SUCCESS);
+        ASSERT_NE(src.agent->sendLocalPartialMD({DRAM_SEG}, nullptr), NIXL_SUCCESS);
 
-	ASSERT_NE(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
+        ASSERT_NE(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
 
         EXPECT_EQ(lig.getIgnoredCount(), 2);
     }
@@ -737,7 +744,8 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
     ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
 
     {
-        const LogIgnoreGuard lig1(std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/agent_0/metadata"));
+        const LogIgnoreGuard lig1(
+            std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/agent_0/metadata"));
         const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
         nixl_opt_args_t fetch_args;
@@ -753,7 +761,8 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
 
     // Case 3: Fetch with invalid label (should not block the test)
     {
-        const LogIgnoreGuard lig1(std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/agent_0/invalid_label"));
+        const LogIgnoreGuard lig1(
+            std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/agent_0/invalid_label"));
         const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
         nixl_opt_args_t fetch_args;
