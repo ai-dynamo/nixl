@@ -32,7 +32,7 @@ extern "C" {
 
 enum class nixl_ucx_mt_t { SINGLE, CTX, WORKER };
 
-constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
+inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
 
 template<typename Enum>
 [[nodiscard]] constexpr auto
@@ -137,7 +137,7 @@ public:
            size_t len,
            uint32_t flags,
            nixlUcxReq *req = nullptr,
-           am_deleter_t deleter = nullptr);
+           const am_deleter_t &deleter = nullptr);
 
     /* Data access */
     [[nodiscard]] nixl_status_t
@@ -199,17 +199,25 @@ class nixlUcxContext {
 private:
     /* Local UCX stuff */
     ucp_context_h ctx;
-    nixl_ucx_mt_t mt_type;
-    unsigned ucpVersion_;
+    const nixl_ucx_mt_t mtType_;
+    const unsigned ucpVersion_;
 
 public:
-    nixlUcxContext(std::vector<std::string> devices,
+    nixlUcxContext(const std::vector<std::string> &devs,
                    bool prog_thread,
                    unsigned long num_workers,
                    nixl_thread_sync_t sync_mode,
                    size_t num_device_channels,
                    const std::string &engine_conf = "");
     ~nixlUcxContext();
+
+    nixlUcxContext(nixlUcxContext &&) = delete;
+    nixlUcxContext(const nixlUcxContext &) = delete;
+
+    void
+    operator=(nixlUcxContext &&) = delete;
+    void
+    operator=(const nixlUcxContext &) = delete;
 
     /* Memory management */
     int
