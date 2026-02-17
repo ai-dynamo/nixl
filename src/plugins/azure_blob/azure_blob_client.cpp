@@ -18,6 +18,7 @@
 
 #include "azure_blob_client.h"
 #include <asio.hpp>
+#include <azure/core/http/curl_transport.hpp>
 #include <azure/storage/blobs.hpp>
 #include <azure/identity/default_azure_credential.hpp>
 #include <optional>
@@ -60,6 +61,19 @@ getContainerName(nixl_b_params_t *custom_params) {
         "set AZURE_STORAGE_CONTAINER_NAME environment variable");
 }
 
+std::string
+getCaBundle(nixl_b_params_t *custom_params) {
+    if (custom_params) {
+        auto ca_bundle_it = custom_params->find("ca_bundle");
+        if (ca_bundle_it != custom_params->end() && !ca_bundle_it->second.empty()) {
+            return ca_bundle_it->second;
+        }
+    }
+    const char *env_ca_bundle = std::getenv("AZURE_CA_BUNDLE");
+    if (env_ca_bundle && env_ca_bundle[0] != '\0') return std::string(env_ca_bundle);
+    return ""; // Return empty string if not provided, which means use default CA bundle
+}
+
 } // namespace
 
 azureBlobClient::azureBlobClient(nixl_b_params_t *custom_params,
@@ -69,6 +83,15 @@ azureBlobClient::azureBlobClient(nixl_b_params_t *custom_params,
     std::string containerName = ::getContainerName(custom_params);
     Azure::Storage::Blobs::BlobClientOptions options;
     options.Telemetry.ApplicationId = "azpartner-nixl/0.1.0";
+
+    std::string caBundle = ::getCaBundle(custom_params);
+    if (!caBundle.empty()) {
+        Azure::Core::Http::CurlTransportOptions curlOptions;
+        curlOptions.CAInfo = caBundle;
+        options.Transport.Transport =
+            std::make_shared<Azure::Core::Http::CurlTransport>(curlOptions);
+    }
+
     auto blobServiceClient = std::make_unique<Azure::Storage::Blobs::BlobServiceClient>(
         accountUrl, std::make_shared<Azure::Identity::DefaultAzureCredential>(), options);
     blobContainerClient_ = std::make_unique<Azure::Storage::Blobs::BlobContainerClient>(

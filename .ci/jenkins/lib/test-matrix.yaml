@@ -46,10 +46,9 @@ env:
   SLURM_GRES: gpu:2
   SLURM_MEM: 64G
   SLURM_MINCPUS: 24
-  SLURM_JOB_TIMEOUT: '01:30:00'
-  TEST_TIMEOUT: 50
+  SLURM_JOB_TIMEOUT: '02:10:00'
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260209-2"
+  CI_IMAGE_TAG: "20260210-1"
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
@@ -69,9 +68,7 @@ runs_on_dockers:
      file: '.ci/dockerfiles/Dockerfile.build_helper',
      name: 'build_helper',
      tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04',
-     limits: "{memory: 4Gi, cpu: 2000m}",
-     requests: "{memory: 2Gi, cpu: 1000m}"
+     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
     }
 
 matrix:
@@ -123,7 +120,7 @@ steps:
 
   - name: Run CPP tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: "${TEST_TIMEOUT}"
+    timeout: 50
     parallel: false
     run: |
       set -x
@@ -134,7 +131,7 @@ steps:
 
   - name: Run Python tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: "${TEST_TIMEOUT}"
+    timeout: 10
     parallel: false
     run: |
       set -x
@@ -145,7 +142,7 @@ steps:
 
   - name: Run Rust tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: "${TEST_TIMEOUT}"
+    timeout: 10
     parallel: false
     run: |
       set -x
@@ -156,7 +153,7 @@ steps:
 
   - name: Run Nixlbench tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: "${TEST_TIMEOUT}"
+    timeout: 50
     parallel: false
     run: |
       set -x
