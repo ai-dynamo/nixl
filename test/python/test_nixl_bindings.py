@@ -231,12 +231,12 @@ def test_get_xfer_status_list():
     status = agent1.postXferReq(handle)
     assert status == nixl.NIXL_SUCCESS or status == nixl.NIXL_IN_PROG
 
-    # Test getXferStatusList - use a reusable list to avoid allocation on each call
-    entry_status = []
+    # Test getXferStatusList - use a reusable nixlStatusVector to avoid allocation on each call
+    entry_status = nixl.nixlStatusVector()
     overall_status = agent1.getXferStatusList(handle, entry_status)
 
     logger.info("Initial overall status: %s", overall_status)
-    logger.info("Initial entry status: %s", entry_status)
+    logger.info("Initial entry status: %s", entry_status.to_list())
 
     # Wait for completion using getXferStatusList
     while (
@@ -244,7 +244,7 @@ def test_get_xfer_status_list():
         or overall_status == nixl.NIXL_IN_PROG_WITH_ERR
     ):
         overall_status = agent1.getXferStatusList(handle, entry_status)
-        logger.info("Polling - overall: %s, entries: %s", overall_status, entry_status)
+        logger.info("Polling - overall: %s, entries: %s", overall_status, entry_status.to_list())
 
     # Verify completion
     assert (
@@ -254,7 +254,7 @@ def test_get_xfer_status_list():
     # Verify entry count matches number of descriptors
     # Note: Some backends may not support per-entry status
     if overall_status != nixl.NIXL_ERR_NOT_SUPPORTED:
-        logger.info("Final entry status list: %s", entry_status)
+        logger.info("Final entry status list: %s", entry_status.to_list())
         # All entries should be successful
         for i, es in enumerate(entry_status):
             logger.info("Entry %d status: %s", i, es)

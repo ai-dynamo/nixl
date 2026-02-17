@@ -22,6 +22,7 @@
 
 #include <tuple>
 #include <iostream>
+#include <stdexcept>
 
 #include "nixl.h"
 #include "serdes/serdes.h"
@@ -29,6 +30,20 @@
 namespace py = pybind11;
 
 typedef std::map<std::string, std::vector<py::bytes>> nixl_py_notifs_t;
+
+// Wrapper class to hold status vector without conflicting with pybind11's STL casters
+class nixlStatusVector {
+public:
+    std::vector<nixl_status_t> data;
+
+    nixlStatusVector() = default;
+    size_t size() const { return data.size(); }
+    nixl_status_t get(size_t i) const {
+        if (i >= data.size()) throw std::out_of_range("index out of range");
+        return data[i];
+    }
+    std::vector<nixl_status_t>& vec() { return data; }
+};
 
 class nixlNotPostedError : public std::runtime_error {
 public:
@@ -204,6 +219,22 @@ PYBIND11_MODULE(_bindings, m) {
         .def_readonly("totalBytes", &nixl_xfer_telem_t::totalBytes)
         .def_readonly("descCount", &nixl_xfer_telem_t::descCount);
 
+    // StatusVector class to avoid allocation in getXferStatusList polling loops
+    py::class_<nixlStatusVector>(m, "nixlStatusVector")
+        .def(py::init<>())
+        .def("__len__", &nixlStatusVector::size)
+        .def("__getitem__", [](const nixlStatusVector &v, size_t i) {
+            if (i >= v.size()) throw py::index_error();
+            return static_cast<int>(v.data[i]);
+        })
+        .def("__iter__", [](const nixlStatusVector &v) {
+            return py::make_iterator(v.data.begin(), v.data.end());
+        }, py::keep_alive<0, 1>())
+        .def("to_list", [](const nixlStatusVector &v) {
+            py::list result;
+            for (auto s : v.data) result.append(static_cast<int>(s));
+            return result;
+        }, "Convert to a Python list");
 
     py::register_exception<nixlNotPostedError>(m, "nixlNotPostedError");
     py::register_exception<nixlInvalidParamError>(m, "nixlInvalidParamError");
@@ -696,21 +727,10 @@ PYBIND11_MODULE(_bindings, m) {
             py::call_guard<py::gil_scoped_release>())
         .def(
             "getXferStatusList",
-            [](nixlAgent &agent, uintptr_t reqh, py::list entry_status) -> nixl_status_t {
-                std::vector<nixl_status_t> cpp_status;
-                nixl_status_t ret = agent.getXferStatus((nixlXferReqH *)reqh, cpp_status);
-
-                // Resize the Python list to match the C++ vector size
-                size_t n = cpp_status.size();
-                while (py::len(entry_status) < n) entry_status.append(py::int_(0));
-                while (py::len(entry_status) > n) entry_status.attr("pop")();
-
-                // Copy status values to the Python list
-                for (size_t i = 0; i < n; i++) {
-                    entry_status[i] = py::int_(static_cast<int>(cpp_status[i]));
-                }
-
-                return ret;
+            [](nixlAgent &agent, uintptr_t reqh,
+               nixlStatusVector &entry_status) -> nixl_status_t {
+                // Directly use the StatusVector's internal vector - no allocation after first call
+                return agent.getXferStatus((nixlXferReqH *)reqh, entry_status.vec());
             },
             py::arg("reqh"),
             py::arg("entry_status"),
@@ -720,8 +740,8 @@ PYBIND11_MODULE(_bindings, m) {
 
                 Args:
                     reqh: Request handle
-                    entry_status: A list that will be populated with per-entry status codes.
-                                  Pass a reusable list to avoid allocation on each call.
+                    entry_status: A nixlStatusVector that will be populated with per-entry status codes.
+                                  Pass a reusable nixlStatusVector to avoid allocation on each call.
 
                 Returns:
                     overall_status: NIXL_SUCCESS (0), NIXL_IN_PROG (1),
