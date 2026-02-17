@@ -320,12 +320,12 @@ public:
     }
 
     const T &
-    operator[](unsigned int index) const noexcept {
+    operator[](size_t index) const {
         return descs[index];
     }
 
     T &
-    operator[](unsigned int index) noexcept {
+    operator[](size_t index) {
         return descs[index];
     }
 

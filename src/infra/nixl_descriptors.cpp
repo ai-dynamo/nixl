@@ -388,13 +388,6 @@ nixlSecDescList::verifySorted() const {
     return true;
 }
 
-nixlSectionDesc &
-nixlSecDescList::operator[](unsigned int index) {
-    nixlSectionDesc &ref = this->descs[index];
-    assert(verifySorted());
-    return ref;
-}
-
 int
 nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
     auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
