@@ -246,13 +246,13 @@ def test_get_xfer_status_list():
         overall_status = agent1.getXferStatusList(handle, entry_status)
         logger.info("Polling - overall: %s, entries: %s", overall_status, entry_status.to_list())
 
-    # Verify completion
-    assert (
-        overall_status == nixl.NIXL_SUCCESS
-    ), f"Expected success but got {overall_status}"
+    # Verify completion: SUCCESS or NOT_SUPPORTED (backend completed but has no per-entry status)
+    assert overall_status in (
+        nixl.NIXL_SUCCESS,
+        nixl.NIXL_ERR_NOT_SUPPORTED,
+    ), f"Expected success or NOT_SUPPORTED but got {overall_status}"
 
-    # Verify entry count matches number of descriptors
-    # Note: Some backends may not support per-entry status
+    # Verify entry count matches number of descriptors when per-entry status is supported
     if overall_status != nixl.NIXL_ERR_NOT_SUPPORTED:
         logger.info("Final entry status list: %s", entry_status.to_list())
         # All entries should be successful
