@@ -43,10 +43,10 @@ env:
   SLURM_NODES: 1
   SLURM_PARTITION: mizu
   SLURM_HEAD_NODE: scctl
-  SLURM_GRES: gpu:2
-  SLURM_MEM: 64G
+  SLURM_GRES: gpu:4
+  SLURM_MEM: 128G
   SLURM_MINCPUS: 24
-  SLURM_JOB_TIMEOUT: '02:10:00'
+  SLURM_JOB_TIMEOUT: '02:20:00'
   STORAGE_DRIVER: overlay
   CI_IMAGE_TAG: "20260210-1"
 
@@ -114,13 +114,12 @@ steps:
       --slurm_gres=${SLURM_GRES} \
       --slurm_mem=${SLURM_MEM} \
       --slurm_mincpus=${SLURM_MINCPUS} \
-      --slurm_exclude=mizu01 \
       --slurm_job_name=nixl-${ucx_version}-${BUILD_NUMBER} \
       --slurm_job_id_file=/mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt
 
   - name: Run CPP tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: 50
+    timeout: 60
     parallel: false
     run: |
       set -x
