@@ -314,18 +314,18 @@ public:
     /**
      * @brief Check if nixlDescList is empty or not
      */
-    inline bool
-    isEmpty() const {
+    bool
+    isEmpty() const noexcept {
         return descs.empty();
     }
 
-    inline const T &
-    operator[](unsigned int index) const {
+    const T &
+    operator[](unsigned int index) const noexcept {
         return descs[index];
     }
 
-    inline T &
-    operator[](unsigned int index) {
+    T &
+    operator[](unsigned int index) noexcept {
         return descs[index];
     }
 
