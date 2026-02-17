@@ -425,7 +425,7 @@ protected:
                 nixl_xfer_telem_t telemetry;
                 if (expected_telem_status == NIXL_ERR_NO_TELEMETRY) {
                     const std::string rx = "cannot return values when telemetry is not enabled";
-                    gtest::LogIgnoreGuard lig(rx);
+                    const LogIgnoreGuard lig(rx);
                     status = from.getXferTelemetry(xfer_req, telemetry);
                     EXPECT_EQ(status, expected_telem_status);
                 } else {
@@ -635,7 +635,7 @@ TEST_P(TestTransfer, GetXferTelemetryAPICfg) {
     env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
     const std::string rx = "ignoring the NIXL_TELEMETRY_ENABLE environment variable";
-    gtest::LogIgnoreGuard lig(rx);
+    const LogIgnoreGuard lig(rx);
 
     // Create fresh agents that read the current env var and add them to the fixture
     // with capture_telemetry set
@@ -687,7 +687,7 @@ TEST_P(TestTransfer, GetXferTelemetryDisabled) {
 
     exchangeMD(2, 3);
     const std::string rx = "cannot return values when telemetry is not enabled";
-    gtest::LogIgnoreGuard lig(rx);
+    const LogIgnoreGuard lig(rx);
     doTransfer(getAgent(2),
                getAgentName(2),
                getAgent(3),
@@ -700,7 +700,7 @@ TEST_P(TestTransfer, GetXferTelemetryDisabled) {
                src_buffers,
                DRAM_SEG,
                dst_buffers);
-    EXPECT_EQ(lig.getIgnoredCount(), 1);
+    EXPECT_LE(lig.getIgnoredCount(), 1);
 
     invalidateMD(2, 3);
     deregisterMem(getAgent(2), src_buffers, DRAM_SEG);

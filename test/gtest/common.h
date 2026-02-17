@@ -27,6 +27,7 @@
 #include <optional>
 #include <mutex>
 #include <regex>
+#include <utility>
 #include <vector>
 #include <string>
 #include "gtest/gtest.h"
@@ -125,6 +126,8 @@ private:
     uint16_t _max_port = MAX_PORT;
 };
 
+using log_ignore_entry_t = std::pair<std::regex, size_t>;
+
 class LogIgnoreGuard {
 public:
     explicit LogIgnoreGuard(const std::regex &rx);
@@ -144,7 +147,7 @@ public:
     getIgnoredCount() const noexcept;
 
 private:
-    std::list<std::regex>::iterator iter_;
+    std::list<log_ignore_entry_t>::iterator iter_;
 };
 
 class LogProblemCounter : private absl::LogSink {

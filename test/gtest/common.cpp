@@ -137,14 +137,13 @@ PortAllocator::next_tcp_port() {
 namespace {
     std::mutex log_problem_mutex;
     size_t global_problem_count = 0;
-    size_t local_ignored_count = 0;
-    std::list<std::regex> log_problem_ignore;
+    std::list<log_ignore_entry_t> log_problem_ignore;
 
 } // namespace
 
 LogIgnoreGuard::LogIgnoreGuard(const std::regex &rx) {
     const std::lock_guard lock(log_problem_mutex);
-    log_problem_ignore.emplace_front(rx);
+    log_problem_ignore.emplace_front(rx, 0);
     iter_ = log_problem_ignore.begin();
 }
 
@@ -154,13 +153,12 @@ LogIgnoreGuard::LogIgnoreGuard(const std::string &rx)
 LogIgnoreGuard::~LogIgnoreGuard() {
     const std::lock_guard lock(log_problem_mutex);
     log_problem_ignore.erase(iter_);
-    local_ignored_count = 0;
 }
 
 size_t
 LogIgnoreGuard::getIgnoredCount() const noexcept {
     const std::lock_guard lock(log_problem_mutex);
-    return local_ignored_count;
+    return iter_->second;
 }
 
 LogProblemCounter::LogProblemCounter() {
@@ -186,9 +184,9 @@ LogProblemCounter::Send(const absl::LogEntry &entry) {
     const std::string msg(entry.text_message());
     {
         const std::lock_guard lock(log_problem_mutex);
-        for (const auto &rx : log_problem_ignore) {
+        for (auto &[rx, count] : log_problem_ignore) {
             if (std::regex_search(msg, rx)) {
-                ++local_ignored_count;
+		++count;
                 return;
             }
         }

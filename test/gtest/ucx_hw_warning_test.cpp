@@ -45,7 +45,7 @@ TEST_F(UcxHardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
     nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
 
     const std::string rx = "NVIDIA GPU\\(s\\) were detected, but UCX CUDA support was not found";
-    gtest::LogIgnoreGuard lig(rx);
+    const gtest::LogIgnoreGuard lig(rx);
     ctx.warnAboutHardwareSupportMismatch();
 
     EXPECT_EQ(lig.getIgnoredCount(), 1);
@@ -80,7 +80,7 @@ TEST_F(UcxHardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
 
     const std::string rx =
         "IB device\\(s\\) were detected, but accelerated IB support was not found";
-    gtest::LogIgnoreGuard lig(rx);
+    const gtest::LogIgnoreGuard lig(rx);
     ctx.warnAboutHardwareSupportMismatch();
 
     EXPECT_EQ(lig.getIgnoredCount(), 1);
