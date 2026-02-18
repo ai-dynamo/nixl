@@ -304,9 +304,7 @@ protected:
             FAIL() << "Failed to set CUDA device 0";
         }
 
-        const std::string rx =
-            "IB device\\(s\\) were detected, but accelerated IB support was not found";
-        lig_ = std::make_unique<LogIgnoreGuard>(rx);
+        lig_ = std::make_unique<LogIgnoreGuard>("IB device\\(s\\) were detected, but accelerated IB support was not found");
 
         for (size_t i = 0; i < 2; i++) {
             agents.emplace_back(std::make_unique<nixlAgent>(getAgentName(i), getConfig()));

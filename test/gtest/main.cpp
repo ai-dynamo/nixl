@@ -17,7 +17,9 @@
 #include "plugin_manager.h"
 #include "common.h"
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <vector>
 #include <string>
@@ -65,9 +67,19 @@ void ParseArguments(int argc, char **argv) {
   }
 }
 
+namespace {
+    const std::regex non_gpu_regex("[0-9]+ NVIDIA GPU\\(s\\) were detected, but UCX CUDA support "
+                                   "was not found! GPU memory is not supported.");
+
+} // namespace
+
 int
 RunAllTests() {
     LogProblemCounter lpc;
+    std::optional<LogIgnoreGuard> lig;
+    if (std::getenv("NIXL_CI_NON_GPU") != nullptr) {
+        lig.emplace(non_gpu_regex);
+    }
     return RUN_ALL_TESTS();
 }
 
@@ -77,7 +89,7 @@ int RunTests(int argc, char **argv) {
     const int result = RunAllTests();
 
     if (const size_t problems = LogProblemCounter::getProblemCount(); problems > 0) {
-        std::cerr << "ATTENTION: Unexpected NIXL warnings and/or errors detected!" << std::endl;
+        std::cerr << "ATTENTION: Unexpected NIXL warning(s) and/or error(s) detected!" << std::endl;
         std::cerr << "ATTENTION: Problem count is " << problems << std::endl;
         return 42;
     }

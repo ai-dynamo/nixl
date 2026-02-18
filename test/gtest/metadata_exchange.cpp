@@ -383,12 +383,14 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     ASSERT_EQ(src.agent->invalidateLocalMD(&send_args), NIXL_SUCCESS);
 
     // Send to invalid IP address, should not block the test
-    send_args.ipAddr = "10.10.10.10";
-    send_args.port = 1234;
+    const std::string ip_str = "10.10.10.10";
+    const uint16_t port = 1234;
+    const std::string port_str = std::to_string(port);
+    send_args.ipAddr = ip_str;
+    send_args.port = port;
     {
-        const LogIgnoreGuard lig1("poll timed out for ip_addr: 10.10.10.10 and port: 1234");
-        const LogIgnoreGuard lig2(
-            "Listener thread could not connect to IP 10.10.10.10 and port 1234");
+        const LogIgnoreGuard lig1("poll timed out for ip_addr: " + ip_str + " and port: " + port_str);
+        const LogIgnoreGuard lig2("Listener thread could not connect to IP " + ip_str + " and port " + port_str);
 
         ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
 
@@ -489,7 +491,6 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
 
     src.initDefault();
 
-    auto sleep_time = std::chrono::seconds(1);
     nixl_blob_t md;
 
     nixl_opt_args_t send_args;
@@ -520,7 +521,7 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
 
         ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
 
-        std::this_thread::sleep_for(sleep_time);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
 
         EXPECT_EQ(lig1.getIgnoredCount(), 1);
         EXPECT_EQ(lig2.getIgnoredCount(), 1);

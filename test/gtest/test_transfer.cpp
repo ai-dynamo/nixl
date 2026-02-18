@@ -424,8 +424,7 @@ protected:
 
                 nixl_xfer_telem_t telemetry;
                 if (expected_telem_status == NIXL_ERR_NO_TELEMETRY) {
-                    const std::string rx = "cannot return values when telemetry is not enabled";
-                    const LogIgnoreGuard lig(rx);
+                   const LogIgnoreGuard lig("cannot return values when telemetry is not enabled");
                     status = from.getXferTelemetry(xfer_req, telemetry);
                     EXPECT_EQ(status, expected_telem_status);
                 } else {
@@ -634,8 +633,7 @@ TEST_P(TestTransfer, GetXferTelemetryAPICfg) {
     // Disable telemetry from env var but through config, expecting a warning
     env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
-    const std::string rx = "ignoring the NIXL_TELEMETRY_ENABLE environment variable";
-    const LogIgnoreGuard lig(rx);
+    const LogIgnoreGuard lig("ignoring the NIXL_TELEMETRY_ENABLE environment variable");
 
     // Create fresh agents that read the current env var and add them to the fixture
     // with capture_telemetry set
@@ -686,8 +684,7 @@ TEST_P(TestTransfer, GetXferTelemetryDisabled) {
     createRegisteredMem(getAgent(3), size, count, DRAM_SEG, dst_buffers);
 
     exchangeMD(2, 3);
-    const std::string rx = "cannot return values when telemetry is not enabled";
-    const LogIgnoreGuard lig(rx);
+    const LogIgnoreGuard lig("cannot return values when telemetry is not enabled");
     doTransfer(getAgent(2),
                getAgentName(2),
                getAgent(3),
