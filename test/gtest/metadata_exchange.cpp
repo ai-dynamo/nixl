@@ -389,8 +389,10 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     send_args.ipAddr = ip_str;
     send_args.port = port;
     {
-        const LogIgnoreGuard lig1("poll timed out for ip_addr: " + ip_str + " and port: " + port_str);
-        const LogIgnoreGuard lig2("Listener thread could not connect to IP " + ip_str + " and port " + port_str);
+        const LogIgnoreGuard lig1("poll timed out for ip_addr: " + ip_str +
+                                  " and port: " + port_str);
+        const LogIgnoreGuard lig2("Listener thread could not connect to IP " + ip_str +
+                                  " and port " + port_str);
 
         ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
 
