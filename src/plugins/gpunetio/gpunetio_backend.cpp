@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +22,7 @@
 #include <stdexcept>
 #include <unistd.h>
 #include "common/nixl_log.h"
-#include <arpa/inet.h>
+#include <absl/strings/str_split.h>
 
 const char info_delimiter = '-';
 
@@ -57,7 +57,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         ndevs.push_back("mlx5_0");
         NIXL_INFO << "Using default network device mlx5_0";
     } else {
-        ndevs = str_split((*custom_params)["network_devices"], " ");
+        ndevs = absl::StrSplit((*custom_params)["network_devices"], " ");
         NIXL_INFO << "Using network devices" << ndevs[0];
     }
     NIXL_INFO << std::endl;
@@ -68,7 +68,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         if (custom_params->count("oob_interface") > 1)
             throw std::invalid_argument("Only 1 oob interface is allowed");
 
-        oobdev = str_split((*custom_params)["oob_interface"], " ");
+        oobdev = absl::StrSplit((*custom_params)["oob_interface"], " ");
         NIXL_INFO << "Using oob interface" << oobdev[0];
         NIXL_INFO << std::endl;
     }
@@ -83,7 +83,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         gdevs.push_back(std::pair((uint32_t)0, nullptr));
         NIXL_INFO << "Using default CUDA device ID 0";
     } else {
-        tmp_gdevs = str_split((*custom_params)["gpu_devices"], " ");
+        tmp_gdevs = absl::StrSplit((*custom_params)["gpu_devices"], " ");
         for (auto &cuda_id : tmp_gdevs) {
             gdevs.push_back(std::pair((uint32_t)std::stoi(cuda_id), nullptr));
             NIXL_INFO << "cuda_id " << cuda_id;
