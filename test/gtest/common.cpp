@@ -139,7 +139,7 @@ namespace {
     std::mutex log_problem_mutex;
     size_t global_problem_count = 0;
     std::list<log_ignore_entry_t> log_problem_ignore;
-    const std::regex non_gpu_regex("[0-9]+ NVIDIA GPU(s) were detected, but UCX CUDA support was "
+    const std::regex non_gpu_regex("[0-9]+ NVIDIA GPU\\(s\\) were detected, but UCX CUDA support was "
                                    "not found! GPU memory is not supported.");
 
 } // namespace
