@@ -1572,9 +1572,9 @@ nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)
 }
 
 nixl_status_t
-nixlUcxEngine::prepMemoryView(const nixl_remote_meta_dlist_t &dlist,
-                              nixlMemoryViewH &mvh,
-                              const nixl_opt_b_args_t *opt_args) const {
+nixlUcxEngine::prepMemView(const nixl_remote_meta_dlist_t &dlist,
+                           nixlMemViewH &mvh,
+                           const nixl_opt_b_args_t *opt_args) const {
     const size_t worker_id = getWorkerId(opt_args);
     try {
         mvh = nixl::ucx::createMemList(dlist, worker_id, *getWorker(worker_id));
@@ -1587,9 +1587,9 @@ nixlUcxEngine::prepMemoryView(const nixl_remote_meta_dlist_t &dlist,
 }
 
 nixl_status_t
-nixlUcxEngine::prepMemoryView(const nixl_meta_dlist_t &dlist,
-                              nixlMemoryViewH &mvh,
-                              const nixl_opt_b_args_t *opt_args) const {
+nixlUcxEngine::prepMemView(const nixl_meta_dlist_t &dlist,
+                           nixlMemViewH &mvh,
+                           const nixl_opt_b_args_t *opt_args) const {
     const size_t worker_id = getWorkerId(opt_args);
     try {
         mvh = nixl::ucx::createMemList(dlist, *getWorker(worker_id));
@@ -1602,6 +1602,6 @@ nixlUcxEngine::prepMemoryView(const nixl_meta_dlist_t &dlist,
 }
 
 void
-nixlUcxEngine::releaseMemoryView(nixlMemoryViewH mvh) const {
-    nixl::ucx::releaseMemList(mvh);
+nixlUcxEngine::releaseMemView(nixlMemViewH mem_view) const {
+    nixl::ucx::releaseMemList(mem_view);
 }

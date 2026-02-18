@@ -1852,9 +1852,9 @@ nixlAgentData::getBackends(const nixl_opt_args_t *opt_args,
 }
 
 nixl_status_t
-nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
-                          nixlMemoryViewH &mvh,
-                          const nixl_opt_args_t *extra_params) const {
+nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
+                       nixlMemViewH &mvh,
+                       const nixl_opt_args_t *extra_params) const {
     const auto desc_count = static_cast<size_t>(dlist.descCount());
     const auto mem_type = dlist.getType();
     nixl_remote_meta_dlist_t remote_meta_dlist{mem_type};
@@ -1863,8 +1863,8 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
     NIXL_SHARED_LOCK_GUARD(data->lock);
     for (size_t i = 0; i < desc_count; ++i) {
         const auto &desc = dlist[i];
-        if (desc.remoteAgent == nixl_invalid_agent) {
-            remote_meta_dlist.addDesc(nixlRemoteMetaDesc(nixl_invalid_agent));
+        if (desc.remoteAgent == nixl_null_agent) {
+            remote_meta_dlist.addDesc(nixlRemoteMetaDesc(nixl_null_agent));
             continue;
         }
 
@@ -1913,7 +1913,7 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
         opt_args.customParam = extra_params->customParam;
     }
 
-    const auto status = engine->prepMemoryView(remote_meta_dlist, mvh, &opt_args);
+    const auto status = engine->prepMemView(remote_meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
         data->mvhToEngine.emplace(mvh, *engine);
     }
@@ -1922,9 +1922,9 @@ nixlAgent::prepMemoryView(const nixl_remote_dlist_t &dlist,
 }
 
 nixl_status_t
-nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &dlist,
-                          nixlMemoryViewH &mvh,
-                          const nixl_opt_args_t *extra_params) const {
+nixlAgent::prepMemView(const nixl_xfer_dlist_t &dlist,
+                       nixlMemViewH &mvh,
+                       const nixl_opt_args_t *extra_params) const {
     const auto mem_type = dlist.getType();
     nixl_meta_dlist_t meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
@@ -1951,7 +1951,7 @@ nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &dlist,
         opt_args.customParam = extra_params->customParam;
     }
 
-    const auto status = engine->prepMemoryView(meta_dlist, mvh, &opt_args);
+    const auto status = engine->prepMemView(meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
         data->mvhToEngine.emplace(mvh, *engine);
     }
@@ -1960,7 +1960,7 @@ nixlAgent::prepMemoryView(const nixl_xfer_dlist_t &dlist,
 }
 
 void
-nixlAgent::releaseMemoryView(nixlMemoryViewH mvh) const {
+nixlAgent::releaseMemView(nixlMemViewH mvh) const {
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
     const auto it = data->mvhToEngine.find(mvh);
@@ -1969,6 +1969,6 @@ nixlAgent::releaseMemoryView(nixlMemoryViewH mvh) const {
         return;
     }
 
-    it->second.releaseMemoryView(mvh);
+    it->second.releaseMemView(mvh);
     data->mvhToEngine.erase(it);
 }

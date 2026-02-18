@@ -236,10 +236,10 @@ using nixl_opt_args_t = nixlAgentOptionalArgs;
 using nixlGpuXferReqH = void *;
 
 /**
- * @brief An alias for a nixlMemoryViewH
+ * @brief An alias for a nixlMemViewH
  *        Represents a memory view handle
  */
-using nixlMemoryViewH = void *;
+using nixlMemViewH = void *;
 
 /**
  * @brief A typedefs for a point in time
@@ -299,6 +299,6 @@ using nixl_xfer_telem_t = nixlXferTelemetry;
 /**
  * @brief A constant for an invalid agent name.
  */
-extern const std::string nixl_invalid_agent;
+extern const std::string nixl_null_agent;
 
 #endif

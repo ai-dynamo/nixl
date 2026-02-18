@@ -190,8 +190,8 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
                 void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
                 if (not is_rank_masked<true>(mask_buffer_ptr, dst_rank)) {
                     if (dst_p2p_ptr == 0) {
-                        nixlMemDesc src_mdesc{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(src_ptr)};
-                        nixlMemDesc dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
+                        nixlMemViewElement src_mdesc{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(src_ptr)};
+                        nixlMemViewElement dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
                         EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(src_mdesc, dst_mdesc, num_bytes_per_msg,
                                 dst_expert_local_idx, doorbell_flag(slot_idx)) == NIXL_IN_PROG);
                     } else {
@@ -259,7 +259,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
         void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
             if (dst_p2p_ptr == 0) {
-                nixlMemDesc dst_mdesc{nixl_ctx.remote_mvh, (unsigned) dst_rank, nixl_ctx.offset_get(dst_ptr)};
+                nixlMemViewElement dst_mdesc{nixl_ctx.remote_mvh, (unsigned) dst_rank, nixl_ctx.offset_get(dst_ptr)};
                 EP_DEVICE_ASSERT(nixlAtomicAdd(num_tokens_sent + 1, dst_mdesc, dst_expert_local_idx, UCP_DEVICE_FLAG_NODELAY) == NIXL_IN_PROG);
             } else {
                 st_release_sys_global(static_cast<uint64_t*>(dst_p2p_ptr), static_cast<uint64_t>(num_tokens_sent + 1));
@@ -791,8 +791,8 @@ combine(void* combined_x,
                 // Issue RDMA
                 // NOTES: for zero-copy mode, we assume the data is already in the send buffer
                 if (dst_p2p_ptr == 0) {
-                    nixlMemDesc src_mdesc{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(buf_ptr)};
-                    nixlMemDesc dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
+                    nixlMemViewElement src_mdesc{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(buf_ptr)};
+                    nixlMemViewElement dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
                     EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(src_mdesc, dst_mdesc, num_send_bytes,
                             local_expert_idx, doorbell_flag(token_idx - offset)) == NIXL_IN_PROG);
                 }
@@ -808,7 +808,7 @@ combine(void* combined_x,
             void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
             if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
                 if (dst_p2p_ptr == 0) {
-                    nixlMemDesc dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
+                    nixlMemViewElement dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
                     EP_DEVICE_ASSERT(nixlAtomicAdd(1, dst_mdesc, local_expert_idx, UCP_DEVICE_FLAG_NODELAY) == NIXL_IN_PROG);
                 } else {
                     st_release_sys_global(static_cast<uint64_t*>(dst_p2p_ptr), 1);
@@ -1132,8 +1132,8 @@ __forceinline__ __device__ void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* 
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
             int expected_cnt = atomicAdd(nixl_ctx.sync_count_ptr + dst_rank, -1) - 1;
 
-            nixlMemDesc src_mdesc{nixl_ctx.local_mvh, 1, dst_rank * sizeof(int)};
-            nixlMemDesc dst_mdesc{nixl_ctx.barrier_mvh, (size_t) dst_rank, nixl_ctx.rank * sizeof(int)};
+            nixlMemViewElement src_mdesc{nixl_ctx.local_mvh, 1, dst_rank * sizeof(int)};
+            nixlMemViewElement dst_mdesc{nixl_ctx.barrier_mvh, (size_t) dst_rank, nixl_ctx.rank * sizeof(int)};
             EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::THREAD>(src_mdesc, dst_mdesc, sizeof(int),
                     0, UCP_DEVICE_FLAG_NODELAY) == NIXL_IN_PROG);
 

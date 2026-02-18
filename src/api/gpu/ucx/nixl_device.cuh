@@ -60,11 +60,8 @@ struct nixlGpuXferReqParams {
     ucp_device_request_t *ucp_request;
 };
 
-/**
- * @brief Memory descriptor
- */
-struct nixlMemDesc {
-    nixlMemoryViewH mvh;
+struct nixlMemViewElement {
+    nixlMemViewH mvh;
     size_t index; /**< Index in the memory view */
     size_t offset; /**< Offset within the buffer */
 };
@@ -297,10 +294,10 @@ nixlGpuWriteSignal(void *signal, uint64_t value) {
 /**
  * @brief Post a single-region memory transfer from local to remote GPU.
  *
- * This function creates and posts a transfer request using memory descriptors @a src and @a dst.
+ * This function creates and posts a transfer request using memory view elements @a src and @a dst.
  *
- * @param src         [in]  Source memory descriptor
- * @param dst         [in]  Destination memory descriptor
+ * @param src         [in]  Source memory view element
+ * @param dst         [in]  Destination memory view element
  * @param size        [in]  Size in bytes to transfer
  * @param channel_id  [in]  Channel ID to use for the transfer
  * @param flags       [in]  Transfer flags
@@ -311,8 +308,8 @@ nixlGpuWriteSignal(void *signal, uint64_t value) {
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ nixl_status_t
-nixlPut(const nixlMemDesc &src,
-        const nixlMemDesc &dst,
+nixlPut(const nixlMemViewElement &src,
+        const nixlMemViewElement &dst,
         size_t size,
         unsigned channel_id = 0,
         unsigned flags = 0,
@@ -340,7 +337,7 @@ nixlPut(const nixlMemDesc &src,
  * The increment is visible only after previous writes complete.
  *
  * @param value       [in]  Value to add to the counter
- * @param counter     [in]  Counter memory descriptor
+ * @param counter     [in]  Counter memory view element
  * @param channel_id  [in]  Channel ID to use for the transfer
  * @param flags       [in]  Transfer flags
  * @param xfer_status [in,out] Optional status handle (use @ref nixlGpuGetXferStatus)
@@ -351,7 +348,7 @@ nixlPut(const nixlMemDesc &src,
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ nixl_status_t
 nixlAtomicAdd(uint64_t value,
-              const nixlMemDesc &counter,
+              const nixlMemViewElement &counter,
               unsigned channel_id = 0,
               unsigned flags = 0,
               nixlGpuXferStatusH *xfer_status = nullptr) {
@@ -367,15 +364,15 @@ nixlAtomicAdd(uint64_t value,
  *
  * This function returns a local pointer to the mapped memory of the
  * remote memory view handle at the given index.
- * The memory view must be prepared on the host using @ref nixlAgent::prepMemoryView.
+ * The memory view must be prepared on the host using @ref nixlAgent::prepMemView.
  *
- * @param mvh    [in]  Memory view handle (remote buffers)
- * @param index  [in]  Index in the memory view
+ * @param mem_view  [in]  Memory view handle (remote buffers)
+ * @param index     [in]  Index in the memory view
 
  * @return Pointer to the mapped memory, or nullptr if not available.
  */
 __device__ inline void *
-nixlGetPtr(nixlMemoryViewH mvh, size_t index) {
+nixlGetPtr(nixlMemViewH mvh, size_t index) {
     auto mem_list = static_cast<ucp_device_remote_mem_list_h>(mvh);
     void *ptr = nullptr;
     ucp_device_get_ptr(mem_list, index, &ptr);

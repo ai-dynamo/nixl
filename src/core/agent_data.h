@@ -84,7 +84,7 @@ class nixlAgentData {
         std::unordered_map<nixlGpuXferReqH, nixlBackendEngine *> gpuReqToEngine;
 
         // Bookkeeping from memory view handles to backend engines
-        std::unordered_map<nixlMemoryViewH, nixlBackendEngine &> mvhToEngine;
+        std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
 
         // Local section, and Remote sections and their available common backends
         nixlLocalSection*                                        memorySection;
