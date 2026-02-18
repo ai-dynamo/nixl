@@ -33,9 +33,9 @@ namespace nixl_ep {
 // EP kernels
 namespace ep_kernels {
 struct gpu_nixl_ctx {
-    nixlMemoryViewH local_mvh;
-    nixlMemoryViewH barrier_mvh;
-    nixlMemoryViewH remote_mvh;
+    nixlMemViewH local_mvh;
+    nixlMemViewH barrier_mvh;
+    nixlMemViewH remote_mvh;
     int *sync_buffer_ptr; // [src_rank]
     int *sync_count_ptr; // [dst_rank]
     void *rdma_buffer_ptr;
