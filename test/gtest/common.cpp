@@ -198,6 +198,7 @@ LogProblemCounter::Send(const absl::LogEntry &entry) {
         }
         ++global_problem_count;
     }
+
     std::cerr << "ATTENTION: Unexpected NIXL warning or error detected!" << std::endl;
     std::cerr << "ATTENTION: Message is '" << msg << '\'' << std::endl;
 }
