@@ -1225,16 +1225,16 @@ void Buffer::_nixl_ep_memory_views_destroy(void) {
 }
 
 void Buffer::_nixl_ep_init(void) {
-    // Zero-initialize first to ensure all MVH handles and pointers start as nullptr
-    gpu_ctx = {};
-    gpu_ctx.sync_buffer_ptr = sync_buffer_ptr;
-    gpu_ctx.sync_count_ptr = sync_count_ptr;
-    gpu_ctx.rdma_buffer_ptr = rdma_buffer_ptr;
-    gpu_ctx.max_num_ranks = max_num_ranks;
-    gpu_ctx.num_rdma_ranks = num_rdma_ranks;
-    gpu_ctx.rank = rank;
-    gpu_ctx.last_barrier_counter = last_barrier_counter;
-    gpu_ctx.local_barrier_counter_ptr = local_barrier_counter;
+    gpu_ctx = {
+        .sync_buffer_ptr = sync_buffer_ptr,
+        .sync_count_ptr = sync_count_ptr,
+        .rdma_buffer_ptr = rdma_buffer_ptr,
+        .max_num_ranks = max_num_ranks,
+        .num_rdma_ranks = num_rdma_ranks,
+        .rank = rank,
+        .last_barrier_counter = last_barrier_counter,
+        .local_barrier_counter_ptr = local_barrier_counter,
+    };
 }
 
 void Buffer::_nixl_ep_destroy(void) {
@@ -1264,14 +1264,6 @@ void Buffer::_nixl_agent_init() {
     init_params["ucx_num_device_channels"] = num_channels_env ? num_channels_env : "4";
     init_params["ucx_error_handling_mode"] = "none";
     init_params["num_workers"] = std::to_string(1);
-
-    // Debug: print all UCX init params
-    printf("[NixlEP] rank %d UCX init params: ", rank);
-    for (const auto& kv : init_params) {
-        printf("%s=%s ", kv.first.c_str(), kv.second.c_str());
-    }
-    printf("(num_device_sms=%d)\n", num_device_sms);
-    fflush(stdout);
 
     nixlBackendH* ucx_backend = nullptr;
     status = agent->createBackend("UCX", init_params, ucx_backend);

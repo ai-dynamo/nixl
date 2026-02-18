@@ -32,8 +32,6 @@ namespace cg = cooperative_groups;
 
 namespace nixl_ep {
 
-// gpu_nixl_ctx::offset_get is now defined inline in api.cuh (shared across TUs)
-// gpu_nixl_ctx::p2p_ptr_get is only used in this TU, so defined here
 __device__ inline void* gpu_nixl_ctx::p2p_ptr_get(uint64_t dst_ptr, int dst_rank) {
     if (dst_rank == rank) return (void*) dst_ptr;
 
