@@ -131,7 +131,8 @@ objectGet(const void *handle,
           loff_t offset,
           const cufileRDMAInfo_t *infop) {
     void *ctx = cuObjClient::getCtx(handle);
-    NIXL_DEBUG << "objectGet: handle=" << handle << ", buf=" << buf << ", size=" << size << ", offset=" << offset << ", infop=" << infop;
+    NIXL_DEBUG << "objectGet: handle=" << handle << ", buf=" << buf << ", size=" << size
+               << ", offset=" << offset << ", infop=" << infop;
     rdma_ctx_t *rctx = static_cast<rdma_ctx_t *>(ctx);
     rctx->rdma_desc = infop->desc_str;
     return 0;
@@ -142,9 +143,10 @@ objectPut(const void *handle,
           const char *buf,
           size_t size,
           loff_t offset,
-          const cufileRDMAInfo_t *infop) {  
+          const cufileRDMAInfo_t *infop) {
     void *ctx = cuObjClient::getCtx(handle);
-    NIXL_DEBUG << "objectPut: handle=" << handle << ", buf=" << buf << ", size=" << size << ", offset=" << offset << ", infop=" << infop;
+    NIXL_DEBUG << "objectPut: handle=" << handle << ", buf=" << buf << ", size=" << size
+               << ", offset=" << offset << ", infop=" << infop;
     rdma_ctx_t *rctx = static_cast<rdma_ctx_t *>(ctx);
     rctx->rdma_desc = infop->desc_str;
     return 0;
