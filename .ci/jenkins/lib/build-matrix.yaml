@@ -38,7 +38,7 @@ kubernetes:
   requests: "{memory: 8Gi, cpu: 8000m}"
 
 env:
-  NIXL_SKIP_HW_WARNING_TESTS: "1"
+  NIXL_CI_NON_GPU: 1
   NIXL_INSTALL_DIR: /opt/nixl
   TEST_TIMEOUT: 30
   UCX_TLS: "^shm"

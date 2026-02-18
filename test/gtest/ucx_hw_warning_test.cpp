@@ -30,15 +30,10 @@ protected:
 
     void
     SetUp() override {
-        const char *const skip = std::getenv("NIXL_SKIP_HW_WARNING_TESTS");
-        if (skip) {
-            const std::string skip_str(skip);
-
-            if (skip_str == "1") {
-                GTEST_SKIP() << "NIXL_SKIP_HW_WARNING_TESTS=1, skipping hardware warning tests";
-            } else if (skip_str != "0") {
-                throw std::invalid_argument("NIXL_SKIP_HW_WARNING_TESTS must be 1 or 0");
-            }
+        if (std::getenv("NIXL_CI_NON_GPU") != nullptr) {
+            // In the non-gpu CI, GPUs that are not available in the container may still be
+            // present under sysfs, causing the hardware warning tests to fail.
+            GTEST_SKIP() << "NIXL_CI_NON_GPU is set, skipping hardware warning tests";
         }
     }
 };
