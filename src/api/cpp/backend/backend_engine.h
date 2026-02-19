@@ -185,23 +185,23 @@ class nixlBackendEngine {
 
         // Prepare a memory view for remote buffers
         virtual nixl_status_t
-        prepMemoryView(const nixl_remote_meta_dlist_t &,
-                       nixlMemoryViewH &,
-                       const nixl_opt_b_args_t * = nullptr) const {
+        prepMemView(const nixl_remote_meta_dlist_t &,
+                    nixlMemViewH &,
+                    const nixl_opt_b_args_t * = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 
         // Prepare a memory view for local buffers
         virtual nixl_status_t
-        prepMemoryView(const nixl_meta_dlist_t &,
-                       nixlMemoryViewH &,
-                       const nixl_opt_b_args_t * = nullptr) const {
+        prepMemView(const nixl_meta_dlist_t &,
+                    nixlMemViewH &,
+                    const nixl_opt_b_args_t * = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 
         // Release memory view handle
         virtual void
-        releaseMemoryView(nixlMemoryViewH mvh) const {}
+        releaseMemView(nixlMemViewH) const {}
 
         // *** Needs to be implemented if supportsRemote() is true *** //
 

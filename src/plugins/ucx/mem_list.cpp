@@ -74,7 +74,7 @@ private:
 ucp_device_mem_list_elem_t
 memListElement::create(const nixlRemoteMetaDesc &desc, size_t worker_id) {
     ucp_device_mem_list_elem_t element;
-    if (desc.remoteAgent == nixl_invalid_agent) {
+    if (desc.remoteAgent == nixl_null_agent) {
         element.field_mask = 0;
         return element;
     }

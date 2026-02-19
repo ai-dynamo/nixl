@@ -613,20 +613,20 @@ void Buffer::_nixl_ep_memory_views_create(void) {
 
     std::unordered_set<int> remote_set(remote_ranks.begin(), remote_ranks.end());
     for (int r = 0; r < max_num_ranks; r++) {
-        std::string remote_agent_name = remote_set.count(r) ? nixl_agent_info->remote_agent_names[r] : nixl_invalid_agent;
+        std::string remote_agent_name = remote_set.count(r) ? nixl_agent_info->remote_agent_names[r] : nixl_null_agent;
         remote_descs.addDesc(nixlRemoteDesc((uintptr_t)nixl_peer_info[r].rdma_buffer_ptr, num_rdma_bytes, nixl_peer_info[r].device_id, remote_agent_name));
         barrier_descs.addDesc(nixlRemoteDesc((uintptr_t)nixl_peer_info[r].sync_buffer_ptr, max_num_ranks * sizeof(int), nixl_peer_info[r].device_id, remote_agent_name));
     }
 
-    EP_HOST_ASSERT(nixl_agent_info->agent->prepMemoryView(local_descs, gpu_ctx.local_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
-    EP_HOST_ASSERT(nixl_agent_info->agent->prepMemoryView(remote_descs, gpu_ctx.remote_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
-    EP_HOST_ASSERT(nixl_agent_info->agent->prepMemoryView(barrier_descs, gpu_ctx.barrier_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+    EP_HOST_ASSERT(nixl_agent_info->agent->prepMemView(local_descs, gpu_ctx.local_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+    EP_HOST_ASSERT(nixl_agent_info->agent->prepMemView(remote_descs, gpu_ctx.remote_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+    EP_HOST_ASSERT(nixl_agent_info->agent->prepMemView(barrier_descs, gpu_ctx.barrier_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
 }
 
 void Buffer::_nixl_ep_memory_views_destroy(void) {
-    if (gpu_ctx.local_mvh) nixl_agent_info->agent->releaseMemoryView(gpu_ctx.local_mvh);
-    if (gpu_ctx.remote_mvh) nixl_agent_info->agent->releaseMemoryView(gpu_ctx.remote_mvh);
-    if (gpu_ctx.barrier_mvh) nixl_agent_info->agent->releaseMemoryView(gpu_ctx.barrier_mvh);
+    if (gpu_ctx.local_mvh) nixl_agent_info->agent->releaseMemView(gpu_ctx.local_mvh);
+    if (gpu_ctx.remote_mvh) nixl_agent_info->agent->releaseMemView(gpu_ctx.remote_mvh);
+    if (gpu_ctx.barrier_mvh) nixl_agent_info->agent->releaseMemView(gpu_ctx.barrier_mvh);
     gpu_ctx.local_mvh = nullptr;
     gpu_ctx.remote_mvh = nullptr;
     gpu_ctx.barrier_mvh = nullptr;
