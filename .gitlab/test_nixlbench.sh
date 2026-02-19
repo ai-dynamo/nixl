@@ -63,11 +63,6 @@ cd ${INSTALL_DIR}
 
 DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4"
 
-run_nixlbench() {
-    args="$@"
-    ./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS $args
-}
-
 run_nixlbench_noetcd() {
     args="$@"
     ./bin/nixlbench $DEFAULT_NB_PARAMS $args
