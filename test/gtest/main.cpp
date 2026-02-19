@@ -19,7 +19,7 @@
 #include <gtest/gtest.h>
 #include <cstdlib>
 #include <iostream>
-#include <optional>
+#include <list>
 #include <sstream>
 #include <vector>
 #include <string>
@@ -68,6 +68,8 @@ void ParseArguments(int argc, char **argv) {
 }
 
 namespace {
+    const std::regex aws_regex("UCX version is less than 1.19, CUDA support is limited, including"
+                               " the lack of support for multi-GPU within a single process.");
     const std::regex non_gpu_regex("[0-9]+ NVIDIA GPU\\(s\\) were detected, but UCX CUDA support "
                                    "was not found! GPU memory is not supported.");
 
@@ -76,10 +78,16 @@ namespace {
 int
 RunAllTests() {
     LogProblemCounter lpc;
-    std::optional<LogIgnoreGuard> lig;
-    if (std::getenv("NIXL_CI_NON_GPU") != nullptr) {
-        lig.emplace(non_gpu_regex);
+    std::list<LogIgnoreGuard> ligs;
+
+    if (std::getenv("AWS_BATCH_JOB_ID") != nullptr) {
+        ligs.emplace_back(aws_regex);
     }
+
+    if (std::getenv("NIXL_CI_NON_GPU") != nullptr) {
+        ligs.emplace_back(non_gpu_regex);
+    }
+
     return RUN_ALL_TESTS();
 }
 
