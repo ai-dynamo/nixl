@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -79,14 +79,9 @@ run_nixlbench_one_worker() {
 }
 
 run_nixlbench_two_workers() {
-    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
     args="$@"
-    run_nixlbench --benchmark_group $benchmark_group $args &
-    pid_one=$!
-    sleep 5
-    run_nixlbench --benchmark_group $benchmark_group $args &
-    pid_two=$!
-    wait_for_two_pids $pid_one $pid_two
+    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+    parallel --line-buffer --halt now,fail=1 '{1}' ::: "./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group $benchmark_group $args" ::: 1 2
 }
 
 if $HAS_GPU ; then

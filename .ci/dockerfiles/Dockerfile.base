@@ -29,7 +29,7 @@ LABEL version="1.0"
 
 # Update package list and install required packages in one layer
 RUN apt-get update && \
-    apt-get install -y sudo python3 python3-pip kmod && \
+    apt-get install -y sudo python3 python3-pip kmod parallel && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create group and user in one RUN command to reduce layers
