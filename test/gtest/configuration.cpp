@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "common/config.h"
+#include "common/configuration.h"
 #include "gtest/gtest.h"
 
 #include <limits>

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef NIXL_SRC_UTILS_COMMON_CONFIG_H
-#define NIXL_SRC_UTILS_COMMON_CONFIG_H
+#ifndef NIXL_SRC_UTILS_COMMON_CONFIGURATION_H
+#define NIXL_SRC_UTILS_COMMON_CONFIGURATION_H
 
 #include <algorithm>
 #include <charconv>
@@ -31,9 +31,8 @@
 
 #include <absl/strings/str_join.h>
 
+#include "nixl_log.h"
 #include "nixl_types.h"
-
-#include "common/nixl_log.h"
 
 namespace nixl::config {
 
@@ -103,7 +102,7 @@ template<typename integer> struct integralTraits {
     convert(const std::string &value) {
         integer result;
         const auto status =
-            std::from_chars(begin(value), value.data() + value.size(), result, base(value));
+            std::from_chars(start(value), value.data() + value.size(), result, base(value));
         switch (status.ec) {
         case std::errc::invalid_argument:
             throw std::runtime_error("Invalid integer string '" + value + "' for type " +
@@ -133,7 +132,7 @@ private:
     }
 
     [[nodiscard]] static const char *
-    begin(const std::string &value) noexcept {
+    start(const std::string &value) noexcept {
         return value.data() + (isHex(value) ? 2 : 0);
     }
 };
