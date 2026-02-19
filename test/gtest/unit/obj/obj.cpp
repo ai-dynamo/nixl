@@ -27,6 +27,22 @@
 #include "obj_executor.h"
 
 namespace gtest::obj {
+/**
+ * Object Plugin Unit Tests
+ *
+ * Test suites use parameterized testing to reduce code duplication:
+ * - ObjClientTests: Runs common tests for all client types (Standard S3, S3 CRT, S3 Accel)
+ * - Specialized tests: Client-specific tests (e.g., CRT threshold testing)
+ *
+ * All tests use a mockS3Client to simulate S3 operations without requiring AWS credentials.
+ */
+
+// Test configuration for different S3 client types
+struct ObjTestConfig {
+    std::string name;
+    nixl_b_params_t customParams;
+    std::string agentName;
+};
 
 class mockS3Client : public iS3Client {
 private:
@@ -103,7 +119,8 @@ public:
     }
 };
 
-class objTestFixture : public testing::Test {
+// Base test fixture with common test helper methods
+class objTestBase {
 protected:
     std::unique_ptr<nixlObjEngine> objEngine_;
     std::shared_ptr<mockS3Client> mockS3Client_;
@@ -111,8 +128,9 @@ protected:
     nixl_b_params_t customParams_;
 
     void
-    SetUp() override {
-        initParams_.localAgent = "test-agent";
+    setupEngine(const std::string &agentName, nixl_b_params_t params = {}) {
+        customParams_ = params;
+        initParams_.localAgent = agentName;
         initParams_.type = "OBJ";
         initParams_.customParams = &customParams_;
         initParams_.enableProgTh = false;
@@ -120,20 +138,22 @@ protected:
         initParams_.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
 
         mockS3Client_ = std::make_shared<mockS3Client>();
-
-        // Initialize nixlObjEngine with the mock IS3Client
-        // The engine will create its own executor and call setExecutor on the mock client
         objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockS3Client_);
     }
 
     void
-    testAsyncTransferWithControlledExecution(nixl_xfer_op_t operation) {
+    testTransferWithSize(nixl_xfer_op_t operation,
+                         size_t buffer_size,
+                         const std::string &key_suffix = "") {
         mockS3Client_->setSimulateSuccess(true);
+
+        std::vector<char> test_buffer(buffer_size);
 
         nixlBlobDesc local_desc, remote_desc;
         local_desc.devId = 1;
         remote_desc.devId = 2;
         remote_desc.metaInfo = (operation == NIXL_READ) ? "test-read-key" : "test-write-key";
+        remote_desc.metaInfo += key_suffix;
 
         nixlBackendMD *local_metadata = nullptr;
         nixlBackendMD *remote_metadata = nullptr;
@@ -143,8 +163,6 @@ protected:
 
         nixl_meta_dlist_t local_descs(DRAM_SEG);
         nixl_meta_dlist_t remote_descs(OBJ_SEG);
-
-        std::vector<char> test_buffer(1024);
 
         nixlMetaDesc local_meta_desc(
             reinterpret_cast<uintptr_t>(test_buffer.data()), test_buffer.size(), 1);
@@ -182,11 +200,14 @@ protected:
     }
 
     void
-    testMultiDescriptorTransfer(nixl_xfer_op_t operation) {
+    testMultiDescriptorWithSizes(nixl_xfer_op_t operation,
+                                 size_t size0,
+                                 size_t size1,
+                                 const std::string &key_suffix = "") {
         mockS3Client_->setSimulateSuccess(true);
 
-        std::vector<char> test_buffer0(1024);
-        std::vector<char> test_buffer1(1024);
+        std::vector<char> test_buffer0(size0);
+        std::vector<char> test_buffer1(size1);
         nixlBlobDesc local_desc0, local_desc1;
         local_desc0.devId = 1;
         local_desc1.devId = 1;
@@ -200,7 +221,9 @@ protected:
         remote_desc0.devId = 2;
         remote_desc1.devId = 3;
         remote_desc0.metaInfo = (operation == NIXL_READ) ? "test-read-key0" : "test-write-key0";
+        remote_desc0.metaInfo += key_suffix;
         remote_desc1.metaInfo = (operation == NIXL_READ) ? "test-read-key1" : "test-write-key1";
+        remote_desc1.metaInfo += key_suffix;
         nixlBackendMD *remote_metadata0 = nullptr;
         nixlBackendMD *remote_metadata1 = nullptr;
 
@@ -255,10 +278,12 @@ protected:
     }
 
     void
-    testAsyncTransferFailureIsHandled(nixl_xfer_op_t operation) {
+    testTransferFailure(nixl_xfer_op_t operation,
+                        size_t buffer_size,
+                        const std::string &key_suffix = "") {
         mockS3Client_->setSimulateSuccess(false);
 
-        std::vector<char> test_buffer(1024, 'Z');
+        std::vector<char> test_buffer(buffer_size, 'Z');
 
         nixlBlobDesc local_desc;
         local_desc.devId = 1;
@@ -267,7 +292,7 @@ protected:
 
         nixlBlobDesc remote_desc;
         remote_desc.devId = 2;
-        remote_desc.metaInfo = "test-fail-key";
+        remote_desc.metaInfo = "test-fail-key" + key_suffix;
         nixlBackendMD *remote_metadata = nullptr;
         ASSERT_EQ(objEngine_->registerMem(remote_desc, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
 
@@ -304,18 +329,44 @@ protected:
     }
 };
 
-TEST_F(objTestFixture, EngineInitialization) {
+// Parameterized test fixture for common tests across all client types
+class objParamTestFixture : public objTestBase, public testing::TestWithParam<ObjTestConfig> {
+protected:
+    void
+    SetUp() override {
+        const auto &config = GetParam();
+        setupEngine(config.agentName, config.customParams);
+    }
+};
+
+// Non-parameterized fixture for specialized tests
+class objTestFixture : public objTestBase, public testing::Test {
+protected:
+    void
+    SetUp() override {
+        setupEngine("test-agent");
+    }
+};
+
+// Test configurations
+static const ObjTestConfig standardConfig = {"Standard", {}, "test-standard-agent"};
+static const ObjTestConfig crtConfig = {"CRT", {{"crtMinLimit", "1024"}}, "test-crt-agent"};
+
+#if defined HAVE_CUOBJ_CLIENT
+static const ObjTestConfig accelConfig = {"Accel", {{"accelerated", "true"}}, "test-accel-agent"};
+#endif
+
+// Parameterized tests - run for all client types
+TEST_P(objParamTestFixture, EngineInitialization) {
     ASSERT_NE(objEngine_, nullptr);
     EXPECT_EQ(objEngine_->getType(), "OBJ");
     EXPECT_TRUE(objEngine_->supportsLocal());
     EXPECT_FALSE(objEngine_->supportsRemote());
     EXPECT_FALSE(objEngine_->supportsNotif());
-
-    // Verify that the executor was properly set on the mock S3 client by the engine constructor
     EXPECT_TRUE(mockS3Client_->hasExecutor());
 }
 
-TEST_F(objTestFixture, GetSupportedMems) {
+TEST_P(objParamTestFixture, GetSupportedMems) {
     auto supported_mems = objEngine_->getSupportedMems();
     EXPECT_EQ(supported_mems.size(), 2);
     EXPECT_TRUE(std::find(supported_mems.begin(), supported_mems.end(), OBJ_SEG) !=
@@ -324,7 +375,7 @@ TEST_F(objTestFixture, GetSupportedMems) {
                 supported_mems.end());
 }
 
-TEST_F(objTestFixture, RegisterMemoryObjSeg) {
+TEST_P(objParamTestFixture, RegisterMemoryObjSeg) {
     nixlBlobDesc mem_desc;
     mem_desc.devId = 42;
     mem_desc.metaInfo = "test-object-key";
@@ -339,7 +390,7 @@ TEST_F(objTestFixture, RegisterMemoryObjSeg) {
     EXPECT_EQ(status, NIXL_SUCCESS);
 }
 
-TEST_F(objTestFixture, RegisterMemoryObjSegWithoutKey) {
+TEST_P(objParamTestFixture, RegisterMemoryObjSegWithoutKey) {
     nixlBlobDesc mem_desc;
     mem_desc.devId = 99;
     mem_desc.metaInfo = ""; // Empty key - engine will generate a key
@@ -354,7 +405,7 @@ TEST_F(objTestFixture, RegisterMemoryObjSegWithoutKey) {
     EXPECT_EQ(status, NIXL_SUCCESS);
 }
 
-TEST_F(objTestFixture, RegisterMemoryDramSeg) {
+TEST_P(objParamTestFixture, RegisterMemoryDramSeg) {
     nixlBlobDesc mem_desc;
     mem_desc.devId = 123;
 
@@ -368,6 +419,64 @@ TEST_F(objTestFixture, RegisterMemoryDramSeg) {
     EXPECT_EQ(status, NIXL_SUCCESS);
 }
 
+TEST_P(objParamTestFixture, WriteTransfer) {
+    testTransferWithSize(NIXL_WRITE, 1024, "-" + GetParam().name);
+}
+
+TEST_P(objParamTestFixture, ReadTransfer) {
+    testTransferWithSize(NIXL_READ, 1024, "-" + GetParam().name);
+}
+
+TEST_P(objParamTestFixture, MultiDescriptorWrite) {
+    testMultiDescriptorWithSizes(NIXL_WRITE, 1024, 1024, "-" + GetParam().name);
+}
+
+TEST_P(objParamTestFixture, MultiDescriptorRead) {
+    testMultiDescriptorWithSizes(NIXL_READ, 1024, 1024, "-" + GetParam().name);
+}
+
+TEST_P(objParamTestFixture, TransferFailureHandling) {
+    testTransferFailure(NIXL_WRITE, 1024, "-" + GetParam().name);
+}
+
+TEST_P(objParamTestFixture, CheckObjectExists) {
+    std::string suffix = "-" + GetParam().name;
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-key-1" + suffix));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-key-2" + suffix));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-key-3" + suffix));
+    std::vector<nixl_query_resp_t> resp;
+    objEngine_->queryMem(descs, resp);
+
+    EXPECT_EQ(resp.size(), 3);
+    EXPECT_EQ(resp[0].has_value(), true);
+    EXPECT_EQ(resp[1].has_value(), true);
+    EXPECT_EQ(resp[2].has_value(), true);
+
+    EXPECT_EQ(mockS3Client_->getCheckedKeys().size(), 3);
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("test-key-1" + suffix));
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("test-key-2" + suffix));
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("test-key-3" + suffix));
+}
+
+// Instantiate parameterized tests for all client configurations
+#if defined HAVE_CUOBJ_CLIENT
+INSTANTIATE_TEST_SUITE_P(ObjClientTests,
+                         objParamTestFixture,
+                         testing::Values(standardConfig, crtConfig, accelConfig),
+                         [](const testing::TestParamInfo<ObjTestConfig> &info) {
+                             return info.param.name;
+                         });
+#else
+INSTANTIATE_TEST_SUITE_P(ObjClientTests,
+                         objParamTestFixture,
+                         testing::Values(standardConfig, crtConfig),
+                         [](const testing::TestParamInfo<ObjTestConfig> &info) {
+                             return info.param.name;
+                         });
+#endif
+
+// Specialized tests for non-parameterized fixture
 TEST_F(objTestFixture, CancelTransfer) {
     mockS3Client_->setSimulateSuccess(true);
 
@@ -473,46 +582,29 @@ TEST_F(objTestFixture, ReadFromOffset) {
     objEngine_->deregisterMem(remote_metadata);
 }
 
-TEST_F(objTestFixture, AsyncReadTransferWithControlledExecution) {
-    testAsyncTransferWithControlledExecution(NIXL_READ);
+// CRT-specific tests for threshold behavior
+class objCrtTestFixture : public objTestBase, public testing::Test {
+protected:
+    void
+    SetUp() override {
+        setupEngine("test-crt-agent", {{"crtMinLimit", "1024"}});
+    }
+};
+
+TEST_F(objCrtTestFixture, TransferAboveThreshold) {
+    // Use 2048 bytes, which is above the 1024 byte CRT threshold
+    testTransferWithSize(NIXL_WRITE, 2048, "-crt-above");
 }
 
-TEST_F(objTestFixture, AsyncWriteTransferWithControlledExecution) {
-    testAsyncTransferWithControlledExecution(NIXL_WRITE);
+TEST_F(objCrtTestFixture, TransferBelowThreshold) {
+    // Use 512 bytes, which is below the 1024 byte CRT threshold
+    // Should use standard S3 client
+    testTransferWithSize(NIXL_READ, 512, "-crt-below");
 }
 
-TEST_F(objTestFixture, MultiDescriptorWrite) {
-    testMultiDescriptorTransfer(NIXL_WRITE);
+TEST_F(objCrtTestFixture, MixedSizeThreshold) {
+    // Test with mixed buffer sizes (one above, one below threshold)
+    testMultiDescriptorWithSizes(NIXL_WRITE, 512, 2048, "-crt-mixed");
 }
 
-TEST_F(objTestFixture, MultiDescriptorRead) {
-    testMultiDescriptorTransfer(NIXL_READ);
-}
-
-TEST_F(objTestFixture, AsyncReadTransferFailureIsHandled) {
-    testAsyncTransferFailureIsHandled(NIXL_READ);
-}
-
-TEST_F(objTestFixture, AsyncWriteTransferFailureIsHandled) {
-    testAsyncTransferFailureIsHandled(NIXL_WRITE);
-}
-
-TEST_F(objTestFixture, CheckObjectExists) {
-    nixl_reg_dlist_t descs(OBJ_SEG);
-    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-key-1"));
-    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-key-2"));
-    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-key-3"));
-    std::vector<nixl_query_resp_t> resp;
-    objEngine_->queryMem(descs, resp);
-
-    EXPECT_EQ(resp.size(), 3);
-    EXPECT_EQ(resp[0].has_value(), true);
-    EXPECT_EQ(resp[1].has_value(), true);
-    EXPECT_EQ(resp[2].has_value(), true);
-
-    EXPECT_EQ(mockS3Client_->getCheckedKeys().size(), 3);
-    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("test-key-1"));
-    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("test-key-2"));
-    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("test-key-3"));
-}
 } // namespace gtest::obj

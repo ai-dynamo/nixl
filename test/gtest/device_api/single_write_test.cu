@@ -95,8 +95,8 @@ TestSingleWriteKernel(nixlGpuXferReqH req_hdnl,
 
 #ifdef HAVE_UCX_GPU_DEVICE_API_V2
 struct putParams {
-    nixlMemDesc src;
-    nixlMemDesc dst;
+    nixlMemViewElement src;
+    nixlMemViewElement dst;
     size_t size;
     unsigned channelId{0};
     unsigned flags{static_cast<unsigned>(nixl_gpu_flags_t::NO_DELAY)};
@@ -154,7 +154,7 @@ putKernel(putParams put_params,
 }
 
 __global__ void
-getPtrKernel(nixlMemoryViewH mvh, size_t index, void **ptr) {
+getPtrKernel(nixlMemViewH mvh, size_t index, void **ptr) {
     *ptr = nixlGetPtr(mvh, index);
 }
 #endif
@@ -835,16 +835,16 @@ TEST_P(SingleWriteTest, SingleWorkerPut) {
 
     exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
 
-    nixlMemoryViewH src_mvh;
+    nixlMemViewH src_mvh;
     auto status = getAgent(SENDER_AGENT)
-                      .prepMemoryView(makeDescList<nixlBasicDesc>(src_buffers, mem_type), src_mvh);
+                      .prepMemView(makeDescList<nixlBasicDesc>(src_buffers, mem_type), src_mvh);
     ASSERT_EQ(status, NIXL_SUCCESS);
 
-    nixlMemoryViewH dst_mvh;
+    nixlMemViewH dst_mvh;
     status = getAgent(SENDER_AGENT)
-                 .prepMemoryView(makeDescList<nixlRemoteDesc>(
-                                     dst_buffers, mem_type, getAgentName(RECEIVER_AGENT)),
-                                 dst_mvh);
+                 .prepMemView(makeDescList<nixlRemoteDesc>(
+                                  dst_buffers, mem_type, getAgentName(RECEIVER_AGENT)),
+                              dst_mvh);
     ASSERT_EQ(status, NIXL_SUCCESS);
 
     putParams put_params{{src_mvh, 0, 0}, {dst_mvh, 0, 0}, size};
@@ -863,8 +863,8 @@ TEST_P(SingleWriteTest, SingleWorkerPut) {
     EXPECT_EQ(dst_data, pattern) << "Data transfer verification failed. Expected: 0x" << std::hex
                                  << pattern << ", Got: 0x" << dst_data;
 
-    getAgent(SENDER_AGENT).releaseMemoryView(dst_mvh);
-    getAgent(SENDER_AGENT).releaseMemoryView(src_mvh);
+    getAgent(SENDER_AGENT).releaseMemView(dst_mvh);
+    getAgent(SENDER_AGENT).releaseMemView(src_mvh);
     invalidateMD();
 }
 
@@ -894,8 +894,8 @@ TEST_P(SingleWriteTest, MultipleWorkersPut) {
 
     exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
 
-    std::vector<nixlMemoryViewH> src_mvhs(numWorkers);
-    std::vector<nixlMemoryViewH> dst_mvhs(numWorkers);
+    std::vector<nixlMemViewH> src_mvhs(numWorkers);
+    std::vector<nixlMemViewH> dst_mvhs(numWorkers);
     nixl_opt_args_t extra_params;
 
     for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
@@ -903,17 +903,17 @@ TEST_P(SingleWriteTest, MultipleWorkersPut) {
 
         auto status =
             getAgent(SENDER_AGENT)
-                .prepMemoryView(makeDescList<nixlBasicDesc>(src_buffers[worker_id], mem_type),
-                                src_mvhs[worker_id],
-                                &extra_params);
+                .prepMemView(makeDescList<nixlBasicDesc>(src_buffers[worker_id], mem_type),
+                             src_mvhs[worker_id],
+                             &extra_params);
         ASSERT_EQ(status, NIXL_SUCCESS);
 
         status =
             getAgent(SENDER_AGENT)
-                .prepMemoryView(makeDescList<nixlRemoteDesc>(
-                                    dst_buffers[worker_id], mem_type, getAgentName(RECEIVER_AGENT)),
-                                dst_mvhs[worker_id],
-                                &extra_params);
+                .prepMemView(makeDescList<nixlRemoteDesc>(
+                                 dst_buffers[worker_id], mem_type, getAgentName(RECEIVER_AGENT)),
+                             dst_mvhs[worker_id],
+                             &extra_params);
         ASSERT_EQ(status, NIXL_SUCCESS);
     }
 
@@ -939,8 +939,8 @@ TEST_P(SingleWriteTest, MultipleWorkersPut) {
              << " workers with explicit selection verified";
 
     for (size_t worker_id = 0; worker_id < numWorkers; worker_id++) {
-        getAgent(SENDER_AGENT).releaseMemoryView(src_mvhs[worker_id]);
-        getAgent(SENDER_AGENT).releaseMemoryView(dst_mvhs[worker_id]);
+        getAgent(SENDER_AGENT).releaseMemView(src_mvhs[worker_id]);
+        getAgent(SENDER_AGENT).releaseMemView(dst_mvhs[worker_id]);
     }
 
     invalidateMD();
@@ -963,15 +963,15 @@ TEST_P(SingleWriteTest, SingleWorkerPutGap) {
     exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
 
     const auto local_dlist = makeDescList<nixlBasicDesc>(src_buffers, mem_type);
-    nixlMemoryViewH src_mvh;
-    auto status = getAgent(SENDER_AGENT).prepMemoryView(local_dlist, src_mvh);
+    nixlMemViewH src_mvh;
+    auto status = getAgent(SENDER_AGENT).prepMemView(local_dlist, src_mvh);
     ASSERT_EQ(status, NIXL_SUCCESS);
 
     auto remote_dlist =
         makeDescList<nixlRemoteDesc>(dst_buffers, mem_type, getAgentName(RECEIVER_AGENT));
-    remote_dlist.addDesc({{}, nixl_invalid_agent});
-    nixlMemoryViewH dst_mvh;
-    status = getAgent(SENDER_AGENT).prepMemoryView(remote_dlist, dst_mvh);
+    remote_dlist.addDesc({{}, nixl_null_agent});
+    nixlMemViewH dst_mvh;
+    status = getAgent(SENDER_AGENT).prepMemView(remote_dlist, dst_mvh);
     ASSERT_EQ(status, NIXL_SUCCESS);
 
     putParams put_params{{src_mvh, 0, 0}, {dst_mvh, 0, 0}, size};
@@ -994,8 +994,8 @@ TEST_P(SingleWriteTest, SingleWorkerPutGap) {
     EXPECT_EQ(dst_data, pattern) << "Data transfer verification failed. Expected: 0x" << std::hex
                                  << pattern << ", Got: 0x" << dst_data;
 
-    getAgent(SENDER_AGENT).releaseMemoryView(dst_mvh);
-    getAgent(SENDER_AGENT).releaseMemoryView(src_mvh);
+    getAgent(SENDER_AGENT).releaseMemView(dst_mvh);
+    getAgent(SENDER_AGENT).releaseMemView(src_mvh);
     invalidateMD();
 }
 #endif

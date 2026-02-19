@@ -431,7 +431,8 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         hints->domain_attr->mr_key_size = 2;
     }
     hints->domain_attr->name = strdup(device_name.c_str());
-    hints->domain_attr->threading = FI_THREAD_SAFE;
+    hints->domain_attr->threading = FI_THREAD_COMPLETION;
+
     try {
         // Get fabric info for this specific device - first try with FI_HMEM
         int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
@@ -703,14 +704,11 @@ nixlLibfabricRail::setXferIdCallback(std::function<void(uint32_t)> callback) {
     xferIdCallback = callback;
 }
 
-// Per-Rail Completion Processing
-
 // Per-rail completion processing - handles one rail's CQ with configurable blocking behavior
 nixl_status_t
 nixlLibfabricRail::progressCompletionQueue() const {
     // Completion processing
-    struct fi_cq_data_entry completion;
-    memset(&completion, 0, sizeof(completion));
+    struct fi_cq_data_entry completions[NIXL_LIBFABRIC_CQ_BATCH_SIZE];
 
     int ret;
 
@@ -719,7 +717,7 @@ nixlLibfabricRail::progressCompletionQueue() const {
         std::lock_guard<std::mutex> cq_lock(cq_progress_mutex_);
 
         // Non-blocking read (used by progress thread or fallback)
-        ret = fi_cq_read(cq, &completion, 1);
+        ret = fi_cq_read(cq, completions, NIXL_LIBFABRIC_CQ_BATCH_SIZE);
 
         if (ret < 0 && ret != -FI_EAGAIN) {
             NIXL_ERROR << "fi_cq_read returned error " << ret << " on rail " << rail_id << ": "
@@ -746,19 +744,18 @@ nixlLibfabricRail::progressCompletionQueue() const {
         return NIXL_IN_PROG; // No completions available
     }
 
-    if (ret == 1) {
-        NIXL_TRACE << "Completion received on rail " << rail_id << " flags=" << std::hex
-                   << completion.flags << " data=" << completion.data
-                   << " context=" << completion.op_context << std::dec;
-
-        // Process completion using local data. Callbacks have their own thread safety
-        nixl_status_t status = processCompletionQueueEntry(&completion);
-        if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Failed to process completion on rail " << rail_id;
-            return status;
+    if (ret > 0) {
+        for (int i = 0; i < ret; ++i) {
+            // Process completion using local data. Callbacks have their own thread safety
+            nixl_status_t status = processCompletionQueueEntry(&completions[i]);
+            if (status != NIXL_SUCCESS) {
+                NIXL_ERROR << "Failed to process completion " << i << " out of batch of " << ret
+                           << " on rail " << rail_id;
+                return status;
+            }
         }
 
-        NIXL_DEBUG << "Completion processed on rail " << rail_id;
+        NIXL_DEBUG << "Processed " << ret << " completions on rail " << rail_id;
         return NIXL_SUCCESS;
     }
 

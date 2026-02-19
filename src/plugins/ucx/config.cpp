@@ -35,12 +35,14 @@ config::modify(std::string_view key, std::string_view value) const {
 
 void
 config::modifyAlways(std::string_view key, std::string_view value) const {
-    const auto status = ucp_config_modify(config_.get(), key.data(), value.data());
+    std::string key_str(key);
+    std::string value_str(value);
+    const auto status = ucp_config_modify(config_.get(), key_str.c_str(), value_str.c_str());
     if (status != UCS_OK) {
-        NIXL_DEBUG << "Failed to modify UCX config: " << key << "=" << value << ": "
+        NIXL_DEBUG << "Failed to modify UCX config: " << key_str << "=" << value_str << ": "
                    << ucs_status_string(status);
     } else {
-        NIXL_DEBUG << "Modified UCX config: " << key << "=" << value;
+        NIXL_DEBUG << "Modified UCX config: " << key_str << "=" << value_str;
     }
 }
 

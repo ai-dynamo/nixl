@@ -32,6 +32,7 @@ extern "C" {
 #endif
 }
 
+#include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
 #include "serdes/serdes.h"
@@ -245,8 +246,8 @@ nixlUcxEp::sendAm(unsigned msg_id,
                   size_t len,
                   uint32_t flags,
                   nixlUcxReq *req,
-                  am_deleter_t deleter) {
-    nixl_status_t status = checkTxState();
+                  const am_deleter_t &deleter) {
+    const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         return status;
     }
@@ -264,7 +265,8 @@ nixlUcxEp::sendAm(unsigned msg_id,
         param.user_data = ctx.get();
     }
 
-    ucs_status_ptr_t request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
+    const ucs_status_ptr_t request =
+        ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
     if (UCS_PTR_IS_PTR(request)) {
         ctx.release();
         if (req != nullptr) {
@@ -395,25 +397,38 @@ nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept {
     std::terminate();
 }
 
-nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
-                               bool prog_thread,
-                               unsigned long num_workers,
-                               nixl_thread_sync_t sync_mode,
-                               size_t num_device_channels,
-                               const std::string &engine_config) {
-    ucp_params_t ucp_params;
+namespace {
+
+[[nodiscard]] unsigned
+makeUcpVersion() noexcept {
     unsigned major_version, minor_version, release_number;
     ucp_get_version(&major_version, &minor_version, &release_number);
-    unsigned ucp_version = UCP_VERSION(major_version, minor_version);
+    return UCP_VERSION(major_version, minor_version);
+}
 
+[[nodiscard]] nixl_ucx_mt_t
+makeMtType(const bool prog_thread, const nixl_thread_sync_t sync_mode) noexcept {
     // With strict synchronization model nixlAgent serializes access to backends, with more
     // permissive models backends need to account for concurrent access and ensure their internal
     // state is properly protected. Progress thread creates internal concurrency in UCX backend
     // irrespective of nixlAgent synchronization model.
-    mt_type = (sync_mode == nixl_thread_sync_t::NIXL_THREAD_SYNC_RW || prog_thread) ?
+    return (sync_mode == nixl_thread_sync_t::NIXL_THREAD_SYNC_RW || prog_thread) ?
         nixl_ucx_mt_t::WORKER :
         nixl_ucx_mt_t::SINGLE;
+}
 
+} // namespace
+
+nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
+                               bool prog_thread,
+                               unsigned long num_workers,
+                               nixl_thread_sync_t sync_mode,
+                               size_t num_device_channels,
+                               const std::string &engine_config)
+    : mtType_(makeMtType(prog_thread, sync_mode)),
+      ucpVersion_(makeUcpVersion()) {
+
+    ucp_params_t ucp_params;
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED;
     ucp_params.features = UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64 | UCP_FEATURE_AM;
 #ifdef HAVE_UCX_GPU_DEVICE_API
@@ -443,7 +458,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
     config.modify("RCACHE_MAX_UNRELEASED", "1024");
     config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_device_channels));
 
-    if (ucp_version >= UCP_VERSION(1, 19)) {
+    if (ucpVersion_ >= UCP_VERSION(1, 19)) {
         config.modify("MAX_COMPONENT_MDS", "32");
     } else {
         NIXL_WARN << "UCX version is less than 1.19, CUDA support is limited, "
@@ -503,7 +518,7 @@ static_assert(sizeof(nixlUcpWorkerParams) == sizeof(ucp_worker_params_t));
 ucp_worker *
 nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
     ucp_worker *worker = nullptr;
-    const nixlUcpWorkerParams params(ctx.mt_type);
+    const nixlUcpWorkerParams params(ctx.mtType_);
     const ucs_status_t status = ucp_worker_create(ctx.ctx, &params, &worker);
     if (status != UCS_OK) {
         throw std::runtime_error(std::string("Failed to create UCX worker: ") +
@@ -629,6 +644,40 @@ nixlUcxContext::getGpuSignalSize() const {
 #else
     throw std::runtime_error(std::string(ucxGpuDeviceApiUnsupported));
 #endif
+}
+
+void
+nixlUcxContext::warnAboutHardwareSupportMismatch() const {
+    ucp_context_attr_t attr = {
+        .field_mask = UCP_ATTR_FIELD_MEMORY_TYPES,
+    };
+    const auto status = ucp_context_query(ctx, &attr);
+    if (status != UCS_OK) {
+        NIXL_WARN << "Failed to query UCX context: " << ucs_status_string(status) << ", "
+                  << "hardware support mismatch check will be skipped";
+        return;
+    }
+
+    const nixl::hwInfo hw_info;
+
+    NIXL_DEBUG << "hwInfo { "
+               << "numNvidiaGpus=" << hw_info.numNvidiaGpus << ", "
+               << "numIbDevices=" << hw_info.numIbDevices << " }";
+
+    if (hw_info.numNvidiaGpus > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_CUDA)) {
+        NIXL_WARN << hw_info.numNvidiaGpus
+                  << " NVIDIA GPU(s) were detected, but UCX CUDA support was not found! "
+                  << "GPU memory is not supported.";
+    }
+
+    if (ucpVersion_ >= UCP_VERSION(1, 21)) {
+        // `UCS_MEMORY_TYPE_RDMA` is included in `memory_types` only from UCX 1.21
+        if (hw_info.numIbDevices > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_RDMA)) {
+            NIXL_WARN << hw_info.numIbDevices
+                      << " IB device(s) were detected, but accelerated IB support was not found! "
+                         "Performance may be degraded.";
+        }
+    }
 }
 
 /* ===========================================

@@ -97,6 +97,8 @@
      (((uint64_t)(xfer_id) & NIXL_XFER_ID_MASK) << NIXL_XFER_ID_SHIFT) |           \
      (((uint64_t)(seq_id) & NIXL_SEQ_ID_MASK) << NIXL_SEQ_ID_SHIFT))
 
+#define NIXL_LIBFABRIC_CQ_BATCH_SIZE 16
+
 /**
  * @brief Notification header for all fragments (10 bytes)
  *
