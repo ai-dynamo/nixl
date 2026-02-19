@@ -1074,12 +1074,15 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         // Use descriptor's specific target address
         uint64_t remote_target_addr = remote[desc_idx].addr;
 
+        uint64_t remote_registered_base = remote_md->remote_buf_addr_;
+
         size_t submitted_count = 0;
         nixl_status_t status = rail_manager.prepareAndSubmitTransfer(
             op_type,
             transfer_addr,
             transfer_size,
             remote_target_addr,
+            remote_registered_base,
             local_md->selected_rails_,
             local_md->rail_mr_list_,
             remote_md->rail_remote_key_list_,
