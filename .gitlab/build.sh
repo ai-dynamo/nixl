@@ -222,7 +222,7 @@ else
       echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
       git clone --depth 1 --branch ${MOONCAKE_VERSION} https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
-      $SUDO bash dependencies.sh && \
+      $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
       cmake .. -DBUILD_SHARED_LIBS=ON && \
       make -j4 && \

@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/str_split.h"
 #include <asio.hpp>
 namespace {
     void moveNotifList(notif_list_t &src, notif_list_t &tgt)
@@ -826,7 +827,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     nixl_b_params_t *custom_params = init_params.customParams;
 
     if (custom_params->count("device_list")!=0)
-        devs = str_split((*custom_params)["device_list"], ", ");
+        devs = absl::StrSplit((*custom_params)["device_list"], ", ");
 
     size_t num_workers = nixl_b_params_get(custom_params, "num_workers", 1);
     size_t num_threads = nixl_b_params_get(custom_params, "num_threads", 0);
@@ -1571,9 +1572,9 @@ nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)
 }
 
 nixl_status_t
-nixlUcxEngine::prepMemoryView(const nixl_remote_meta_dlist_t &dlist,
-                              nixlMemoryViewH &mvh,
-                              const nixl_opt_b_args_t *opt_args) const {
+nixlUcxEngine::prepMemView(const nixl_remote_meta_dlist_t &dlist,
+                           nixlMemViewH &mvh,
+                           const nixl_opt_b_args_t *opt_args) const {
     const size_t worker_id = getWorkerId(opt_args);
     try {
         mvh = nixl::ucx::createMemList(dlist, worker_id, *getWorker(worker_id));
@@ -1586,9 +1587,9 @@ nixlUcxEngine::prepMemoryView(const nixl_remote_meta_dlist_t &dlist,
 }
 
 nixl_status_t
-nixlUcxEngine::prepMemoryView(const nixl_meta_dlist_t &dlist,
-                              nixlMemoryViewH &mvh,
-                              const nixl_opt_b_args_t *opt_args) const {
+nixlUcxEngine::prepMemView(const nixl_meta_dlist_t &dlist,
+                           nixlMemViewH &mvh,
+                           const nixl_opt_b_args_t *opt_args) const {
     const size_t worker_id = getWorkerId(opt_args);
     try {
         mvh = nixl::ucx::createMemList(dlist, *getWorker(worker_id));
@@ -1601,6 +1602,6 @@ nixlUcxEngine::prepMemoryView(const nixl_meta_dlist_t &dlist,
 }
 
 void
-nixlUcxEngine::releaseMemoryView(nixlMemoryViewH mvh) const {
-    nixl::ucx::releaseMemList(mvh);
+nixlUcxEngine::releaseMemView(nixlMemViewH mem_view) const {
+    nixl::ucx::releaseMemList(mem_view);
 }

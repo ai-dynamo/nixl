@@ -26,7 +26,7 @@
 #include "common/nixl_log.h"
 #include "absl/strings/str_join.h"
 
-const std::string nixl_invalid_agent = "INVALID_AGENT";
+const std::string nixl_null_agent = "NULL_AGENT";
 
 /*** Class nixlBasicDesc implementation ***/
 
