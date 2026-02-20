@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,14 +70,6 @@ private:
     initializeMetrics();
     void
     createOrUpdateBackendEvent(const std::string &event_name, uint64_t value);
-
-    template<typename Family>
-    void
-    registerGauge(const std::string &name,
-                  Family &family,
-                  const std::map<std::string, std::string> &labels = {}) {
-        gauges_[name] = &family.Add(labels);
-    }
 
     void
     registerCounter(const std::string &name, const std::string &help, const std::string &category);
