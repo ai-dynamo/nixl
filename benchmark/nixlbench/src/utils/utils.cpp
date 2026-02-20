@@ -1039,6 +1039,7 @@ xferBenchUtils::printStatsHeader() {
                   << std::setw(15) << "P99 Post (us)"
                   << std::setw(15) << "Avg Tx (us)"
                   << std::setw(15) << "P99 Tx (us)"
+                  << std::setw(15) << "P100 Tx (us)"
                   << std::endl;
         // clang-format on
     } else {
@@ -1054,6 +1055,7 @@ xferBenchUtils::printStatsHeader() {
                   << std::setw(15) << "P99 Post (us)"
                   << std::setw(15) << "Avg Tx (us)"
                   << std::setw(15) << "P99 Tx (us)"
+                  << std::setw(15) << "P100 Tx (us)"
                   << std::endl;
         // clang-format on
     }
@@ -1108,6 +1110,7 @@ xferBenchUtils::printStats(bool is_target,
     double post_p99_duration = stats.post_duration.p99();
     double transfer_duration = stats.transfer_duration.avg();
     double transfer_p99_duration = stats.transfer_duration.p99();
+    double transfer_p100_duration = stats.transfer_duration.max();
 
     // Tabulate print with fixed width for each string
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
@@ -1126,6 +1129,7 @@ xferBenchUtils::printStats(bool is_target,
                   << std::setw(15) << post_p99_duration
                   << std::setw(15) << transfer_duration
                   << std::setw(15) << transfer_p99_duration
+                  << std::setw(15) << transfer_p100_duration
                   << std::endl;
         // clang-format on
     } else {
@@ -1142,6 +1146,7 @@ xferBenchUtils::printStats(bool is_target,
                   << std::setw(15) << post_p99_duration
                   << std::setw(15) << transfer_duration
                   << std::setw(15) << transfer_p99_duration
+                  << std::setw(15) << transfer_p100_duration
                   << std::endl;
         // clang-format on
     }
