@@ -27,6 +27,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+namespace {
 std::vector<std::string>
 findLocalIpAddresses() {
     std::vector<std::string> ips;
@@ -69,13 +70,20 @@ findLocalIpAddresses() {
     return ips;
 }
 
+   [[nodiscard]] std::string
+   chooseIpAddress() {
+       static const std::string local = "127.0.0.1";
+       static const std::vector<std::string> ips = findLocalIpAddresses();
+       static const std::string &fallback = ips.empty() ? local : ips[0];
+       return nixl::config::getValueDefaulted("NIXL_MOONCAKE_IP_ADDR", fallback);
+   }
+
+} // namespace
+
 nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params) {
     local_agent_name_ = init_params->localAgent;
-    auto ips = findLocalIpAddresses();
-    std::string segment_name = "127.0.0.1";
-    if (!ips.empty()) segment_name = ips[0];
-    (void)nixl::config::getValueWithStatus(segment_name, "NIXL_MOONCAKE_IP_ADDR");
+    const std::string segment_name = chooseIpAddress();
     engine_ = createTransferEngine("P2PHANDSHAKE", segment_name.c_str(), "", 0, true);
 }
 
