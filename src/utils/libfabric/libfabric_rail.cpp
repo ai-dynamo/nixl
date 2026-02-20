@@ -1057,17 +1057,12 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
                            << ", retrying (attempt " << attempt << ")";
             }
 
-            // Exponential backoff with cap to avoid overwhelming the system
-            int delay_us = std::min(NIXL_LIBFABRIC_BASE_RETRY_DELAY_US * (1 + attempt / 10),
-                                    NIXL_LIBFABRIC_MAX_RETRY_DELAY_US);
-
             // Progress completion queue to drain pending completions before retry
             nixl_status_t progress_status = progressCompletionQueue();
             if (progress_status == NIXL_SUCCESS) {
                 NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
             }
 
-            usleep(delay_us);
             continue;
         } else {
             // Other error - don't retry, fail immediately
@@ -1136,17 +1131,12 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                            << ", retrying (attempt " << attempt << ")";
             }
 
-            // Exponential backoff with cap to avoid overwhelming the system
-            int delay_us = std::min(NIXL_LIBFABRIC_BASE_RETRY_DELAY_US * (1 + attempt / 10),
-                                    NIXL_LIBFABRIC_MAX_RETRY_DELAY_US);
-
             // Progress completion queue to drain pending completions before retry
             nixl_status_t progress_status = progressCompletionQueue();
             if (progress_status == NIXL_SUCCESS) {
                 NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
             }
 
-            usleep(delay_us);
             continue;
         } else {
             // Other error - don't retry, fail immediately
@@ -1213,17 +1203,12 @@ nixlLibfabricRail::postRead(void *local_buffer,
                            << ", retrying (attempt " << attempt << ")";
             }
 
-            // Exponential backoff with cap to avoid overwhelming the system
-            int delay_us = std::min(NIXL_LIBFABRIC_BASE_RETRY_DELAY_US * (1 + attempt / 10),
-                                    NIXL_LIBFABRIC_MAX_RETRY_DELAY_US);
-
             // Progress completion queue to drain pending completions before retry
             nixl_status_t progress_status = progressCompletionQueue();
             if (progress_status == NIXL_SUCCESS) {
                 NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
             }
 
-            usleep(delay_us);
             continue;
         } else {
             // Other error - don't retry, fail immediately
