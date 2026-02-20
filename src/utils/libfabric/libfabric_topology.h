@@ -57,6 +57,13 @@ private:
     std::unordered_map<std::string, std::string> pcie_to_libfabric_map;
     std::unordered_map<std::string, std::string> libfabric_to_pcie_map;
 
+    // bandwidth of each NIC
+    std::unordered_map<std::string, size_t> nic_speed_map;
+
+    // bandwidth of each NUMA node (i.e. capacity limited by PCIe switch)
+    std::vector<size_t> numa_speed_map;
+    size_t avg_numa_speed; // average (per NUMA node) PCIe capacity
+
     // Helper methods
     nixl_status_t
     discoverEfaDevices();
@@ -79,14 +86,30 @@ private:
     void
     cleanupHwlocTopology();
 
+    // invalid NUMA node id
+    const uint16_t INVALID_NUMA_NODE_ID = UINT16_MAX;
+
     // Data structures for NIXL topology-aware grouping algorithm
     struct NicInfo {
         std::string libfabric_name;
         hwloc_obj_t hwloc_node;
+        // NOTE: NIC line speed is in multiples of 1000^3, as reported by fi_info - this is compared
+        // against user env override, which is specified as 100, 200, etc, in Gbps (Gigabit per
+        // second) so we can deduce number of rails form user override
+        size_t line_speed;
+        // NOTE: upstream link speed is in multiples of 1024^3 (Gigabit per second), as reported by
+        // hwloc (originally float GB/s, converted to size_t Gbps) - this is compared against PCIe
+        // switch link speed (also in Gbps 1024^3) to deduce number of rails from topology
+        size_t upstream_link_speed;
+        uint16_t numa_node_id;
         uint16_t domain_id;
         uint8_t bus_id;
         uint8_t device_id;
         uint8_t function_id;
+        uint8_t parent_switch_bus_id;
+        // NOTE: switch link speed is in multiples of 1024^3 (Gigabit per second), see
+        // upstream_link_speed above for more details
+        size_t parent_switch_link_speed;
     };
 
     struct AccelInfo {
@@ -104,6 +127,12 @@ private:
         bool has_accel;
     };
 
+    // NIC info map (required for NUMA-aware rail selection)
+    typedef std::unordered_map<std::string, NicInfo> NicInfoMap;
+    NicInfoMap nic_info_map;
+    size_t avg_nic_speed; // average NIC speed
+    size_t avg_nic_upstream_speed; // average NIC upstream link speed
+
     // NIXL topology-aware grouping algorithm methods
     nixl_status_t
     buildTopologyAwareGrouping();
@@ -116,6 +145,8 @@ private:
 
     // hwloc helper methods
     std::string
+    getPcieAddressFromHwlocPcidev(const hwloc_obj_attr_u::hwloc_pcidev_attr_s &pcidev) const;
+    std::string
     getPcieAddressFromHwlocObj(hwloc_obj_t obj) const;
     bool
     isNvidiaAccel(hwloc_obj_t obj) const;
@@ -123,6 +154,37 @@ private:
     isNeuronAccel(hwloc_obj_t obj) const;
     bool
     isEfaDevice(hwloc_obj_t obj) const;
+
+    // retieves line speed of NIC from map
+    size_t
+    getPcieDevSpeed(const std::string &pcie_addr);
+
+    // finds out the NUMA node id of a PCIe device
+    // returns INVALID_NUMA_NODE_ID if not found or error occured
+    uint16_t
+    getPcieDevNumaNodeId(hwloc_obj_t obj, const std::string &pcie_addr);
+
+    // finds out the PCIe bus id of the topmost parent switch of this device
+    // returns UINT8_MAX if not found or error occured
+    uint8_t
+    getPcieDevParentSwitchBusId(hwloc_obj_t obj, const std::string &pcie_addr, size_t &link_speed);
+
+    // finds out the PCIe bandwidth limit of all NUMA nodes (determined by sum of connected PCIe
+    // switches/bridges)
+    void
+    buildNumaSpeedMap();
+
+    // calculates once the average bandwidth limit per NUMA node
+    void
+    calcAvgNumaNodeBandwidth();
+
+    // calculates once the average NIC line speed
+    void
+    calcAvgNicBandwidth();
+
+    // calculates once the average NIC upstream link speed
+    void
+    calcAvgNicUpstreamBandwidth();
 
 public:
     nixlLibfabricTopology(); // Automatically discovers topology
@@ -166,6 +228,46 @@ public:
     getMrAttrIface(int device_id) const {
         return (device_id < num_nvidia_accel) ? FI_HMEM_CUDA : FI_HMEM_NEURON;
     }
+
+    // retrieves the NUMA node id with which the given EFA device is associated
+    int
+    getDeviceNumaNode(const std::string &efa_device) const;
+
+    // retrieves topology info of an EFA device
+    bool
+    getPcieDevData(const std::string &efa_device,
+                   uint16_t &numa_node_id,
+                   size_t &device_link_speed,
+                   uint8_t &parent_switch_bus_id,
+                   size_t &parent_switch_link_speed);
+
+    // retrieves the average bandwidth limit per NUMA node
+    inline size_t
+    getAvgNumaNodeBandwidth() const {
+        return avg_numa_speed;
+    }
+
+    // retrieves the average NIC bandwidth
+    inline size_t
+    getAvgNicBandwidth() const {
+        return avg_nic_speed;
+    }
+
+    // retrievs the average NIC upstream link bandwidth
+    inline size_t
+    getAvgNicUpstreamBandwidth() const {
+        return avg_nic_upstream_speed;
+    }
+
+    // retrieves the total number of NICs
+    inline size_t
+    getTotalNicCount() const {
+        return nic_info_map.size();
+    }
+
+    // retrieves the average number of rails per NUMA node
+    size_t
+    getNumaRailCount() const;
 
     // Debug/info
     void

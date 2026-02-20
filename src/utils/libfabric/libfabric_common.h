@@ -281,4 +281,19 @@ std::string
 hexdump(const void *data, size_t size);
 } // namespace LibfabricUtils
 
+// Configuration helper functions
+namespace LibfabricUtils {
+// load string from custom plugin parameters
+// can override from env var with name NIXL_LIBFABRIC_<upper-case key>
+extern nixl_status_t
+getCustomStringParam(const nixl_b_params_t &custom_params,
+                     const std::string &key,
+                     std::string &value);
+
+// load integer from custom backend-plugin parameters
+// can override from env var with name NIXL_LIBFABRIC_<upper-case key>
+extern nixl_status_t
+getCustomIntParam(const nixl_b_params_t &custom_params, const std::string &key, uint64_t &value);
+} // namespace LibfabricUtils
+
 #endif // NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_COMMON_H
