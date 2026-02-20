@@ -70,13 +70,13 @@ findLocalIpAddresses() {
     return ips;
 }
 
-   [[nodiscard]] std::string
-   chooseIpAddress() {
-       static const std::string local = "127.0.0.1";
-       static const std::vector<std::string> ips = findLocalIpAddresses();
-       static const std::string &fallback = ips.empty() ? local : ips[0];
-       return nixl::config::getValueDefaulted("NIXL_MOONCAKE_IP_ADDR", fallback);
-   }
+[[nodiscard]] std::string
+chooseIpAddress() {
+    static const std::string local = "127.0.0.1";
+    static const std::vector<std::string> ips = findLocalIpAddresses();
+    static const std::string &fallback = ips.empty() ? local : ips[0];
+    return nixl::config::getValueDefaulted("NIXL_MOONCAKE_IP_ADDR", fallback);
+}
 
 } // namespace
 
