@@ -21,7 +21,7 @@ for f in $(git ls-files); do
     *.png|*.jpg|*.jpeg|*.gif|*.ico|*.zip|*.rst|*.pyc|*.lock|*.md|*.svg|*.wrap|*.in|*.json|*.template|*.patch|*.gitignore|*.python-version|*py.typed)
       continue
       ;;
-    CODEOWNERS|*LICENSE*|Doxyfile|.clang-format|.clang-tidy|.codespellrc)
+    CODEOWNERS|*LICENSE*|Doxyfile|.clang-format|.clang-tidy|.codespellrc|.coderabbit.yaml)
       continue
       ;;
   esac

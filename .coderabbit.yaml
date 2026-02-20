@@ -1,0 +1,18 @@
+# Repository-specific override
+reviews:
+  profile: assertive
+  in_progress_fortune: false
+  review_status: false
+  auto_review:
+    enabled: true
+    drafts: false
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT REVIEW"
+  path_filters:
+    - "!subprojects/**"
+  path_instructions:
+    - path: "src/**/*.cpp"
+      instructions: "Follow docs/CodeStyle.md. C++17."
+    - path: "src/**/*.h"
+      instructions: "Follow docs/CodeStyle.md. C++17."
