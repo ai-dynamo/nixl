@@ -393,8 +393,8 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
                                   " and port: " + port_str);
         const LogIgnoreGuard lig2("Listener thread could not connect to IP " + ip_str +
                                   " and port " + port_str);
-	const LogIgnoreGuard lig3("getsockopt gave error for ip_addr: " + ip_str + " and port: " +
-				  port_str + ": No route to host");
+        const LogIgnoreGuard lig3("getsockopt gave error for ip_addr: " + ip_str +
+                                  " and port: " + port_str + ": No route to host");
 
         ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
 
