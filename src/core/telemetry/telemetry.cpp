@@ -68,28 +68,28 @@ nixlTelemetry::~nixlTelemetry() {
 }
 
 namespace {
-    [[nodiscard]] std::optional<std::string>
-    getExporterName() {
-        if (const auto name = nixl::config::getValueOptional<std::string>(telemetryExporterVar)) {
-            return name;
-        }
-
-        NIXL_INFO << "No telemetry exporter was specified, using default: "
-                  << defaultTelemetryPlugin;
-
-        if (!nixl::config::checkExistence(telemetryDirVar)) {
-            NIXL_DEBUG << telemetryDirVar
-                       << " is not set, NIXL telemetry is enabled without any exporter";
-            return std::nullopt;
-        }
-        return defaultTelemetryPlugin;
+[[nodiscard]] std::optional<std::string>
+getExporterName() {
+    if (const auto name = nixl::config::getValueOptional<std::string>(telemetryExporterVar)) {
+        return name;
     }
+
+    NIXL_INFO << "No telemetry exporter was specified, using default: " << defaultTelemetryPlugin;
+
+    if (!nixl::config::checkExistence(telemetryDirVar)) {
+        NIXL_DEBUG << telemetryDirVar
+                   << " is not set, NIXL telemetry is enabled without any exporter";
+        return std::nullopt;
+    }
+    return defaultTelemetryPlugin;
+}
 
 } // namespace
 
 void
 nixlTelemetry::initializeTelemetry() {
-    const size_t buffer_size = nixl::config::getValueDefaulted<size_t>(TELEMETRY_BUFFER_SIZE_VAR, DEFAULT_TELEMETRY_BUFFER_SIZE);
+    const size_t buffer_size = nixl::config::getValueDefaulted<size_t>(
+        TELEMETRY_BUFFER_SIZE_VAR, DEFAULT_TELEMETRY_BUFFER_SIZE);
 
     if (buffer_size == 0) {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");
@@ -118,7 +118,8 @@ nixlTelemetry::initializeTelemetry() {
 
     NIXL_DEBUG << "NIXL telemetry is enabled with " << *exporter_name << "exporter";
 
-    const auto run_interval = nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
+    const auto run_interval =
+        nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
 
     // Update write task interval and start it
     writeTask_.callback_ = [this]() { return writeEventHelper(); };

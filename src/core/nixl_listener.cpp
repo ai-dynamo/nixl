@@ -203,11 +203,13 @@ private:
     }
 
 public:
-    explicit
-    nixlEtcdClient(const std::string &my_agent_name,
-                   const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000))
-        : namespace_prefix(nixl::config::getValueDefaulted<std::string>("NIXL_ETCD_NAMESPACE", NIXL_ETCD_NAMESPACE_DEFAULT)),
-	  watchTimeout_(timeout) {
+    explicit nixlEtcdClient(
+        const std::string &my_agent_name,
+        const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000))
+        : namespace_prefix(
+              nixl::config::getValueDefaulted<std::string>("NIXL_ETCD_NAMESPACE",
+                                                           NIXL_ETCD_NAMESPACE_DEFAULT)),
+          watchTimeout_(timeout) {
         const auto etcd_endpoints = nixl::config::getNonEmptyString("NIXL_ETCD_ENDPOINTS");
 
         try {
@@ -218,7 +220,7 @@ public:
             return;
         }
         NIXL_DEBUG << "Created etcd client to endpoints: " << etcd_endpoints;
-	NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
+        NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
 
         std::string agent_prefix = makeKey(my_agent_name, "");
         etcd::Response response = etcd->put(agent_prefix, "");

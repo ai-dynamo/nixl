@@ -81,7 +81,8 @@ createGpuXferReq(const nixlUcxEp &ep,
     params.element_size = sizeof(ucp_device_mem_list_elem_t);
     params.num_elements = ucp_elements.size();
 
-    const auto timeout = nixl::config::getValueDefaulted("NIXL_UCX_GPU_XFER_TIMEOUT_MS", std::chrono::milliseconds(5000));
+    const auto timeout = nixl::config::getValueDefaulted("NIXL_UCX_GPU_XFER_TIMEOUT_MS",
+                                                         std::chrono::milliseconds(5000));
 
     ucp_device_mem_list_handle_h ucx_handle;
     ucs_status_t ucs_status;

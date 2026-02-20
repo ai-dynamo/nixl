@@ -133,17 +133,14 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
         if (*tmp) {
             telemetryEnabled = true;
             telemetry_ = std::make_unique<nixlTelemetry>(name, backendEngines);
-        }
-	else if (cfg.captureTelemetry) {
+        } else if (cfg.captureTelemetry) {
             telemetryEnabled = true;
             NIXL_WARN << "NIXL telemetry is enabled through config, "
                          "ignoring the NIXL_TELEMETRY_ENABLE environment variable";
-	}
-	else {
+        } else {
             NIXL_DEBUG << "NIXL telemetry is disabled";
-	}
-    }
-    else if(cfg.captureTelemetry) {
+        }
+    } else if (cfg.captureTelemetry) {
         telemetryEnabled = true;
         NIXL_DEBUG << "Capturing NIXL telemetry based on config (without an output file)";
     }

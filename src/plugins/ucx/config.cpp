@@ -22,7 +22,7 @@
 #include "common/nixl_log.h"
 
 namespace {
-    const std::string prefix = "UCX_";
+const std::string prefix = "UCX_";
 
 } // namespace
 

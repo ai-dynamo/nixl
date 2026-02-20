@@ -150,8 +150,7 @@ template<typename integer>
 struct convertTraits<integer, std::enable_if_t<std::is_integral_v<integer>>>
     : integralTraits<integer> {};
 
-template<>
-struct convertTraits<std::chrono::milliseconds> {
+template<> struct convertTraits<std::chrono::milliseconds> {
     [[nodiscard]] static std::chrono::milliseconds
     convert(const std::string &value) {
         return std::chrono::milliseconds(convertTraits<uint64_t>::convert(value));
