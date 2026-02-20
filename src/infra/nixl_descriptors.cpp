@@ -26,7 +26,7 @@
 #include "common/nixl_log.h"
 #include "absl/strings/str_join.h"
 
-const std::string nixl_invalid_agent = "INVALID_AGENT";
+const std::string nixl_null_agent = "NULL_AGENT";
 
 /*** Class nixlBasicDesc implementation ***/
 
@@ -51,15 +51,6 @@ nixlBasicDesc::nixlBasicDesc(const nixl_blob_t &blob) {
     }
 }
 
-bool nixlBasicDesc::operator<(const nixlBasicDesc &desc) const {
-    if (devId != desc.devId)
-        return (devId < desc.devId);
-    else if (addr != desc.addr)
-        return (addr < desc.addr);
-    else
-        return (len < desc.len);
-}
-
 bool operator==(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs) {
     return ((lhs.addr  == rhs.addr ) &&
             (lhs.len   == rhs.len  ) &&
@@ -68,15 +59,6 @@ bool operator==(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs) {
 
 bool operator!=(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs) {
     return !(lhs==rhs);
-}
-
-bool nixlBasicDesc::covers (const nixlBasicDesc &query) const {
-    if (devId == query.devId) {
-        if ((addr <=  query.addr) &&
-            (addr + len >= query.addr + query.len))
-            return true;
-    }
-    return false;
 }
 
 bool nixlBasicDesc::overlaps (const nixlBasicDesc &query) const {
