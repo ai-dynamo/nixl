@@ -76,7 +76,8 @@ run_nixlbench_one_worker() {
 run_nixlbench_two_workers() {
     args="$@"
     benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
-    parallel --line-buffer --halt now,fail=1 '{1}' ::: "./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group $benchmark_group $args" ::: 1 2
+    command_line="./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group $benchmark_group $args"
+    parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 3 ; $command_line"
 }
 
 if $HAS_GPU ; then

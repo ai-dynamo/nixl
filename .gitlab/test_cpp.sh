@@ -120,7 +120,7 @@ gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port=
 
 # Run NIXL client-server test
 nixl_test_port=$(get_next_tcp_port)
-parallel --line-buffer --halt now,fail=1 '{}' ::: "./bin/nixl_test target" "sleep 3 ; ./bin/nixl_test initiator" ::: "127.0.0.1 $nixl_test_port"
+parallel --line-buffer --halt now,fail=1 ::: "./bin/nixl_test target" "sleep 3 ; ./bin/nixl_test initiator" ::: "127.0.0.1 $nixl_test_port"
 
 echo "${TEXT_YELLOW}==== Disabled tests==="
 echo "./bin/md_streamer disabled"
