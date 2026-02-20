@@ -74,13 +74,14 @@ getExporterName() {
         return name;
     }
 
-    NIXL_INFO << "No telemetry exporter was specified, using default: " << defaultTelemetryPlugin;
-
     if (!nixl::config::checkExistence(telemetryDirVar)) {
         NIXL_DEBUG << telemetryDirVar
                    << " is not set, NIXL telemetry is enabled without any exporter";
         return std::nullopt;
     }
+
+    NIXL_INFO << "No telemetry exporter was specified, using default: " << defaultTelemetryPlugin;
+
     return defaultTelemetryPlugin;
 }
 
@@ -88,8 +89,8 @@ getExporterName() {
 
 void
 nixlTelemetry::initializeTelemetry() {
-    const auto buffer_size = nixl::config::getValueDefaulted<size_t>(
-        TELEMETRY_BUFFER_SIZE_VAR, DEFAULT_TELEMETRY_BUFFER_SIZE);
+    const auto buffer_size = nixl::config::getValueDefaulted<size_t>(TELEMETRY_BUFFER_SIZE_VAR,
+                                                                     DEFAULT_TELEMETRY_BUFFER_SIZE);
 
     if (buffer_size == 0) {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");
