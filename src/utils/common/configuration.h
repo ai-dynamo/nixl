@@ -20,7 +20,9 @@
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -97,6 +99,13 @@ template<> struct convertTraits<std::string> {
     }
 };
 
+template<> struct convertTraits<std::filesystem::path> {
+    [[nodiscard]] static std::filesystem::path
+    convert(const std::string &value) {
+        return std::filesystem::path(value);
+    }
+};
+
 template<typename integer> struct integralTraits {
     [[nodiscard]] static integer
     convert(const std::string &value) {
@@ -141,6 +150,14 @@ template<typename integer>
 struct convertTraits<integer, std::enable_if_t<std::is_integral_v<integer>>>
     : integralTraits<integer> {};
 
+template<>
+struct convertTraits<std::chrono::milliseconds> {
+    [[nodiscard]] static std::chrono::milliseconds
+    convert(const std::string &value) {
+        return std::chrono::milliseconds(convertTraits<uint64_t>::convert(value));
+    }
+};
+
 template<typename type, template<typename...> class traits = convertTraits>
 [[nodiscard]] nixl_status_t
 getValueWithStatus(type &result, const std::string &env) {
@@ -180,6 +197,22 @@ template<typename type, template<typename...> class traits = convertTraits>
 [[nodiscard]] type
 getValueDefaulted(const std::string &env, const type &fallback) {
     return getValueOptional<type, traits>(env).value_or(fallback);
+}
+
+[[nodiscard]] inline std::string
+getNonEmptyString(const std::string &env) {
+    const std::string result = getValue<std::string>(env);
+
+    if (result.empty()) {
+        throw std::runtime_error("Environment variable '" + env + "' needs non-empty value");
+    }
+    return result;
+}
+
+[[nodiscard]] inline bool
+checkExistence(const std::string &env) {
+    // Will be less trivial with configuration files.
+    return std::getenv(env.c_str()) != nullptr;
 }
 
 } // namespace nixl::config

@@ -26,6 +26,7 @@
 #include "transfer_request.h"
 #include "agent_data.h"
 #include "plugin_manager.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/operators.h"
 #include "telemetry.h"
@@ -110,7 +111,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
       config(cfg),
       lock(cfg.syncMode) {
 #if HAVE_ETCD
-    if (getenv("NIXL_ETCD_ENDPOINTS")) {
+    if (nixl::config::checkExistence("NIXL_ETCD_ENDPOINTS")) {
         useEtcd = true;
         NIXL_DEBUG << "NIXL ETCD is enabled";
     } else {
@@ -125,26 +126,24 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
         throw std::invalid_argument("Agent needs a name");
 
     memorySection = new nixlLocalSection();
-    const char *telemetry_env_val = std::getenv(TELEMETRY_ENABLED_VAR);
 
-    if (telemetry_env_val != nullptr) {
-        if (!strcasecmp(telemetry_env_val, "y") || !strcasecmp(telemetry_env_val, "1") ||
-            !strcasecmp(telemetry_env_val, "yes") || !strcasecmp(telemetry_env_val, "on")) {
+    const auto tmp = nixl::config::getValueOptional<bool>(TELEMETRY_ENABLED_VAR);
+
+    if (tmp) {
+        if (*tmp) {
             telemetryEnabled = true;
             telemetry_ = std::make_unique<nixlTelemetry>(name, backendEngines);
-        } else if (cfg.captureTelemetry) {
+        }
+	else if (cfg.captureTelemetry) {
             telemetryEnabled = true;
             NIXL_WARN << "NIXL telemetry is enabled through config, "
                          "ignoring the NIXL_TELEMETRY_ENABLE environment variable";
-        } else if (!strcasecmp(telemetry_env_val, "n") || !strcasecmp(telemetry_env_val, "0") ||
-                   !strcasecmp(telemetry_env_val, "no") || !strcasecmp(telemetry_env_val, "off")) {
+	}
+	else {
             NIXL_DEBUG << "NIXL telemetry is disabled";
-        } else {
-            NIXL_WARN
-                << "NIXL telemetry is disabled for invalid NIXL_TELEMETRY_ENABLE environment "
-                   "variable -- valid are 'y', 'yes', '1', 'on', 'n', 'no', '0', 'off', any case";
-        }
-    } else if (cfg.captureTelemetry) {
+	}
+    }
+    else if(cfg.captureTelemetry) {
         telemetryEnabled = true;
         NIXL_DEBUG << "Capturing NIXL telemetry based on config (without an output file)";
     }

@@ -26,6 +26,7 @@
 #include <stdexcept>
 #include <cstdlib>
 #include <absl/strings/str_format.h>
+#include "common/configuration.h"
 #include "nixl_types.h"
 
 namespace {
@@ -38,11 +39,8 @@ getAccountUrl(nixl_b_params_t *custom_params) {
             return account_it->second;
         }
     }
-    const char *env_account = std::getenv("AZURE_STORAGE_ACCOUNT_URL");
-    if (env_account && env_account[0] != '\0') return std::string(env_account);
-    throw std::runtime_error(
-        "Account URL not found. Please provide 'account_url' in custom_params or "
-        "set AZURE_STORAGE_ACCOUNT_URL environment variable");
+
+    return nixl::config::getNonEmptyString("AZURE_STORAGE_ACCOUNT_URL");
 }
 
 std::string
@@ -54,11 +52,7 @@ getContainerName(nixl_b_params_t *custom_params) {
         }
     }
 
-    const char *env_container = std::getenv("AZURE_STORAGE_CONTAINER_NAME");
-    if (env_container && env_container[0] != '\0') return std::string(env_container);
-    throw std::runtime_error(
-        "Container name not found. Please provide 'container_name' in custom_params or "
-        "set AZURE_STORAGE_CONTAINER_NAME environment variable");
+    return nixl::config::getNonEmptyString("AZURE_STORAGE_CONTAINER_NAME");
 }
 
 std::string
@@ -69,9 +63,9 @@ getCaBundle(nixl_b_params_t *custom_params) {
             return ca_bundle_it->second;
         }
     }
-    const char *env_ca_bundle = std::getenv("AZURE_CA_BUNDLE");
-    if (env_ca_bundle && env_ca_bundle[0] != '\0') return std::string(env_ca_bundle);
-    return ""; // Return empty string if not provided, which means use default CA bundle
+
+    // Return empty string if not provided, which means use default CA bundle
+    return nixl::config::getValueDefaulted<std::string>("AZURE_CA_BUNDLE", "");
 }
 
 } // namespace

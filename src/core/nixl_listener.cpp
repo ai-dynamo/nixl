@@ -17,6 +17,7 @@
 
 #include <fcntl.h>
 #include "nixl.h"
+#include "common/configuration.h"
 #include "common/nixl_time.h"
 #include "agent_data.h"
 #include "common/nixl_log.h"
@@ -186,7 +187,7 @@ recvCommMessage(int fd, std::string &msg) {
 class nixlEtcdClient {
 private:
     std::unique_ptr<etcd::SyncClient> etcd;
-    std::string namespace_prefix;
+    const std::string namespace_prefix;
     std::vector<std::string> invalidated_agents;
     std::mutex invalidated_agents_mutex;
     std::unordered_map<std::string, std::unique_ptr<etcd::Watcher>,
@@ -202,13 +203,12 @@ private:
     }
 
 public:
+    explicit
     nixlEtcdClient(const std::string &my_agent_name,
                    const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000))
-        : watchTimeout_(timeout) {
-        const char* etcd_endpoints = std::getenv("NIXL_ETCD_ENDPOINTS");
-        if (!etcd_endpoints || strlen(etcd_endpoints) == 0) {
-            throw std::runtime_error("No etcd endpoints provided");
-        }
+        : namespace_prefix(nixl::config::getValueDefaulted<std::string>("NIXL_ETCD_NAMESPACE", NIXL_ETCD_NAMESPACE_DEFAULT)),
+	  watchTimeout_(timeout) {
+        const auto etcd_endpoints = nixl::config::getNonEmptyString("NIXL_ETCD_ENDPOINTS");
 
         try {
             etcd = std::make_unique<etcd::SyncClient>(etcd_endpoints);
@@ -218,11 +218,7 @@ public:
             return;
         }
         NIXL_DEBUG << "Created etcd client to endpoints: " << etcd_endpoints;
-
-        const char* etcd_namespace = std::getenv("NIXL_ETCD_NAMESPACE");
-        namespace_prefix = etcd_namespace ? etcd_namespace : NIXL_ETCD_NAMESPACE_DEFAULT;
-
-        NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
+	NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
 
         std::string agent_prefix = makeKey(my_agent_name, "");
         etcd::Response response = etcd->put(agent_prefix, "");

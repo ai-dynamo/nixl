@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,7 @@
  */
 #include "mooncake_backend.h"
 #include "serdes/serdes.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 
 #include <arpa/inet.h>
@@ -74,8 +75,7 @@ nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
     auto ips = findLocalIpAddresses();
     std::string segment_name = "127.0.0.1";
     if (!ips.empty()) segment_name = ips[0];
-    if (getenv("NIXL_MOONCAKE_IP_ADDR"))
-        segment_name = std::string(getenv("NIXL_MOONCAKE_IP_ADDR"));
+    (void)nixl::config::getValueWithStatus(segment_name, "NIXL_MOONCAKE_IP_ADDR");
     engine_ = createTransferEngine("P2PHANDSHAKE", segment_name.c_str(), "", 0, true);
 }
 

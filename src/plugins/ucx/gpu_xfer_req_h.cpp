@@ -16,6 +16,7 @@
  */
 
 #include "gpu_xfer_req_h.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "ucx_utils.h"
 #include "rkey.h"
@@ -35,30 +36,6 @@ extern "C" {
 namespace nixl::ucx {
 
 #ifdef HAVE_UCX_GPU_DEVICE_API
-
-namespace {
-
-    [[nodiscard]] std::chrono::milliseconds
-    get_gpu_xfer_timeout() noexcept {
-        constexpr int default_timeout_ms = 5000;
-        constexpr std::string_view timeout_env_name = "NIXL_UCX_GPU_XFER_TIMEOUT_MS";
-
-        const char *timeout_env = std::getenv(timeout_env_name.data());
-        if (!timeout_env) {
-            return std::chrono::milliseconds(default_timeout_ms);
-        }
-
-        const int timeout_ms = std::atoi(timeout_env);
-        if (timeout_ms <= 0) {
-            NIXL_WARN << "Invalid " << timeout_env_name << " value: " << timeout_env
-                      << ", using default " << default_timeout_ms << " ms";
-            return std::chrono::milliseconds(default_timeout_ms);
-        }
-
-        return std::chrono::milliseconds(timeout_ms);
-    }
-
-} // namespace
 
 nixlGpuXferReqH
 createGpuXferReq(const nixlUcxEp &ep,
@@ -104,7 +81,7 @@ createGpuXferReq(const nixlUcxEp &ep,
     params.element_size = sizeof(ucp_device_mem_list_elem_t);
     params.num_elements = ucp_elements.size();
 
-    const auto timeout = get_gpu_xfer_timeout();
+    const auto timeout = nixl::config::getValueDefaulted("NIXL_UCX_GPU_XFER_TIMEOUT_MS", std::chrono::milliseconds(5000));
 
     ucp_device_mem_list_handle_h ucx_handle;
     ucs_status_t ucs_status;

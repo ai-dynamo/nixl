@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "uccl_backend.h"
+#include "common/configuration.h"
 #include "serdes/serdes.h"
 #include <iostream>
 #include <cstdlib>
@@ -372,7 +373,6 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
     int result = 0;
     nixlUcclBackendMD *lmd;
     nixlUcclBackendMD *rmd;
-    bool rcmode = false;
     handle = nullptr;
 
     NIXL_DEBUG << "UCCL PrepXfer: " << operation << " remote_agent: " << remote_agent;
@@ -401,8 +401,7 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const char *uccl_rcmode = std::getenv("UCCL_RCMODE");
-    rcmode = (uccl_rcmode && std::strcmp(uccl_rcmode, "1") == 0);
+    const bool rcmode = nixl::config::getValueDefaulted("UCCL_RCMODE", false);
 
     if (operation == NIXL_READ) {
         if (!rcmode) {
@@ -513,7 +512,6 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     nixlUcclReqH *uccl_handle;
     nixlUcclBackendMD *lmd;
     nixlUcclBackendMD *rmd;
-    bool rcmode = false;
 
     NIXL_DEBUG << "UCCL PostXfer: " << operation << " remote_agent: " << remote_agent;
 
@@ -542,8 +540,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const char *uccl_rcmode = std::getenv("UCCL_RCMODE");
-    rcmode = (uccl_rcmode && std::strcmp(uccl_rcmode, "1") == 0);
+    const bool rcmode = nixl::config::getValueDefaulted("UCCL_RCMODE", false);
 
     if (operation == NIXL_READ) {
         if (!rcmode) {

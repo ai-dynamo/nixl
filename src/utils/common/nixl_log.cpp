@@ -55,6 +55,7 @@ void InitializeNixlLogging()
     bool invalid_env_var = false;
 
     // Check environment variable, it has priority over compile-time default.
+    // Not use facilities from nixl::config to prevent cyclic initialization dependency.
     const char* env_log_level = std::getenv("NIXL_LOG_LEVEL");
     std::string env_level_str_upper;
     if (env_log_level != nullptr) {
