@@ -88,7 +88,7 @@ getExporterName() {
 
 void
 nixlTelemetry::initializeTelemetry() {
-    const size_t buffer_size = nixl::config::getValueDefaulted<size_t>(
+    const auto buffer_size = nixl::config::getValueDefaulted<size_t>(
         TELEMETRY_BUFFER_SIZE_VAR, DEFAULT_TELEMETRY_BUFFER_SIZE);
 
     if (buffer_size == 0) {

@@ -127,10 +127,10 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
 
     memorySection = new nixlLocalSection();
 
-    const auto tmp = nixl::config::getValueOptional<bool>(TELEMETRY_ENABLED_VAR);
+    const auto telemetry_enabled = nixl::config::getValueOptional<bool>(TELEMETRY_ENABLED_VAR);
 
-    if (tmp) {
-        if (*tmp) {
+    if (telemetry_enabled) {
+        if (*telemetry_enabled) {
             telemetryEnabled = true;
             telemetry_ = std::make_unique<nixlTelemetry>(name, backendEngines);
         } else if (cfg.captureTelemetry) {
