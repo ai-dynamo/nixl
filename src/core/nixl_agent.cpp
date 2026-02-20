@@ -853,12 +853,18 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlXferReqH* &req_hndl,
                          const nixl_opt_args_t* extra_params) const {
-    nixl_status_t     ret1, ret2;
+    nixl_status_t ret1, ret2;
     nixl_opt_b_args_t opt_args;
-
-    std::unique_ptr<backend_set_t> backend_set = std::make_unique<backend_set_t>();
+    backend_set_t backend_set;
 
     req_hndl = nullptr;
+
+    // Check the correspondence between descriptor lists
+    if (local_descs.descCount() != remote_descs.descCount()) {
+        NIXL_ERROR_FUNC << "different descriptor list sizes (local=" << local_descs.descCount()
+                        << ", remote=" << remote_descs.descCount() << ")";
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     if (data->remoteSections.count(remote_agent) == 0)
@@ -869,14 +875,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     size_t total_bytes = 0;
-    // Check the correspondence between descriptor lists
-    if (local_descs.descCount() != remote_descs.descCount()) {
-        NIXL_ERROR_FUNC << "different descriptor list sizes (local=" << local_descs.descCount()
-                        << ", remote=" << remote_descs.descCount() << ")";
-        return NIXL_ERR_INVALID_PARAM;
-    }
     for (int i = 0; i < local_descs.descCount(); ++i) {
-        if (local_descs[i].len != remote_descs[i].len) {
+        if (__builtin_expect(local_descs[i].len != remote_descs[i].len, 0)) {
             NIXL_ERROR_FUNC << "length mismatch at index " << i;
             return NIXL_ERR_INVALID_PARAM;
         }
@@ -898,16 +898,17 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         }
 
         for (auto & elm : *local_set)
-            if (remote_set->count(elm) != 0)
-                backend_set->insert(elm);
+            if (remote_set->count(elm) != 0) {
+                backend_set.insert(elm);
+            }
 
-        if (backend_set->empty()) {
+        if (backend_set.empty()) {
             NIXL_ERROR_FUNC << "no potential backend found to be able to do the transfer";
             return NIXL_ERR_NOT_FOUND;
         }
     } else {
         for (auto & elm : extra_params->backends)
-            backend_set->insert(elm->engine);
+            backend_set.insert(elm->engine);
     }
 
     // TODO: when central KV is supported, add a call to fetchRemoteMD
@@ -921,7 +922,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
-    for (auto & backend : *backend_set) {
+    for (auto &backend : backend_set) {
         // If populate fails, it clears the resp before return
         ret1 = data->memorySection->populate(
                      local_descs, backend, *handle->initiatorDescs);

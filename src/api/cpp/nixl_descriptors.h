@@ -81,7 +81,12 @@ public:
      *        Comparison criteria is devID, then addr, then len
      */
     bool
-    operator<(const nixlBasicDesc &desc) const;
+    operator<(const nixlBasicDesc &desc) const noexcept {
+        if (devId != desc.devId) return (devId < desc.devId);
+        if (addr != desc.addr) return (addr < desc.addr);
+        return (len < desc.len);
+    }
+
     /**
      * @brief Operator overloading (==) to compare BasicDesc objects
      *
@@ -106,7 +111,11 @@ public:
      * @param query   nixlBasicDesc object
      */
     bool
-    covers(const nixlBasicDesc &query) const;
+    covers(const nixlBasicDesc &query) const noexcept {
+        return (devId == query.devId) && (addr <= query.addr) &&
+            ((addr + len) >= (query.addr + query.len));
+    }
+
     /**
      * @brief Check for overlap between BasicDesc objects
      *
