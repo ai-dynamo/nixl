@@ -16,6 +16,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,15 @@
 class UcxHardwareWarningTest : public ::testing::Test {
 protected:
     gtest::ScopedEnv envHelper_;
+
+    void
+    SetUp() override {
+        if (std::getenv("NIXL_CI_NON_GPU") != nullptr) {
+            // In the non-gpu CI, GPUs that are not available in the container may still be
+            // present under sysfs, causing the hardware warning tests to fail.
+            GTEST_SKIP() << "NIXL_CI_NON_GPU is set, skipping hardware warning tests";
+        }
+    }
 };
 
 /**
