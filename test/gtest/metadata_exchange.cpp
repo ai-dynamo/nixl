@@ -400,7 +400,8 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
 
         std::this_thread::sleep_for(std::chrono::seconds(3)); // Must exceed timeout to catch logs.
 
-        const size_t ignored = lig1.getIgnoredCount() + lig2.getIgnoredCount() + lig3.getIgnoredCount();
+        const size_t ignored =
+            lig1.getIgnoredCount() + lig2.getIgnoredCount() + lig3.getIgnoredCount();
         EXPECT_GE(ignored, 1);
     }
 
