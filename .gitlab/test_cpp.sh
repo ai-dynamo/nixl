@@ -25,6 +25,7 @@ TEXT_CLEAR="\033[0m"
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
+PREVDIR=$(dirname "$(readlink -f "$0")")
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir>"
@@ -80,6 +81,7 @@ export NIXL_ETCD_NAMESPACE="/nixl/cpp_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
+ETCD_PID=$!
 
 wait_for_etcd
 
@@ -92,7 +94,8 @@ if $TEST_LIBFABRIC ; then
     ./bin/nixl_example LIBFABRIC
 fi
 ./bin/nixl_etcd_example
-./bin/ucx_backend_test
+# Remove setting UCX_GDR_COPY_SHARED one all tests use a UCX version with UCX PR #11149
+UCX_GDR_COPY_SHARED_MD=n ./bin/ucx_backend_test
 mkdir -p /tmp/telemetry_test
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
 sleep 5
@@ -105,7 +108,8 @@ kill -s INT $telePID
 
 ./bin/nixl_posix_test -n 128 -s 1048576
 ./bin/nixl_gusli_test -n 4 -s 16
-./bin/ucx_backend_multi
+# Remove setting UCX_GDR_COPY_SHARED one all tests use a UCX version with UCX PR #11149
+UCX_GDR_COPY_SHARED_MD=n ./bin/ucx_backend_multi
 ./bin/serdes_test
 # TODO: Enable Mooncake test once data corruption issue is resolved
 # if $HAS_GPU ; then
@@ -117,11 +121,16 @@ gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port=
 ./bin/test_plugin
 
 # Run NIXL client-server test
-nixl_test_port=$(get_next_tcp_port)
+run_nixl_test() {
+    nixl_test_port=$(get_next_tcp_port)
+    ./bin/nixl_test target 127.0.0.1 "$nixl_test_port" &
+    NIXL_TEST_PID=$!
+    sleep 5
+    ./bin/nixl_test initiator 127.0.0.1 "$nixl_test_port"
+    wait $NIXL_TEST_PID
+}
 
-./bin/nixl_test target 127.0.0.1 "$nixl_test_port"&
-sleep 5
-./bin/nixl_test initiator 127.0.0.1 "$nixl_test_port"
+run_nixl_test
 
 echo "${TEXT_YELLOW}==== Disabled tests==="
 echo "./bin/md_streamer disabled"
@@ -129,4 +138,10 @@ echo "./bin/p2p_test disabled"
 echo "./bin/ucx_worker_test disabled"
 echo "${TEXT_CLEAR}"
 
-pkill etcd
+kill -9 $ETCD_PID 2>/dev/null || true
+
+sleep 5
+
+# Sample test for Azure Blob Plugin - should be changed to their gtest
+cd $PREVDIR
+./test_azure.sh

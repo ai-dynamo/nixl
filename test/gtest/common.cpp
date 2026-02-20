@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <random>
+#include "absl/log/log_sink_registry.h"
 
 namespace gtest {
 
@@ -131,6 +132,40 @@ PortAllocator::next_tcp_port() {
 
     throw std::runtime_error("No port available in range: " + std::to_string(instance._min_port) +
                              " - " + std::to_string(instance._max_port));
+}
+
+scopedTestLogSink::scopedTestLogSink() {
+    absl::AddLogSink(&sink_);
+}
+
+scopedTestLogSink::~scopedTestLogSink() {
+    absl::RemoveLogSink(&sink_);
+}
+
+void
+scopedTestLogSink::testLogSink::Send(const absl::LogEntry &entry) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (entry.log_severity() == absl::LogSeverity::kWarning) {
+        warnings_.emplace_back(entry.text_message());
+    }
+}
+
+size_t
+scopedTestLogSink::warningCount() const {
+    std::lock_guard<std::mutex> lock(sink_.mutex_);
+    return sink_.warnings_.size();
+}
+
+size_t
+scopedTestLogSink::countWarningsMatching(const std::string &substring) const {
+    std::lock_guard<std::mutex> lock(sink_.mutex_);
+    size_t count = 0;
+    for (const auto &w : sink_.warnings_) {
+        if (w.find(substring) != std::string::npos) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 } // namespace gtest

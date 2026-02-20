@@ -19,7 +19,7 @@
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
-#include "ucx/gpu_xfer_req_h.h"
+#include "gpu_xfer_req_h.h"
 
 #include <optional>
 #include <limits>
@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/str_split.h"
 #include <asio.hpp>
 namespace {
     void moveNotifList(notif_list_t &src, notif_list_t &tgt)
@@ -826,10 +827,11 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     nixl_b_params_t *custom_params = init_params.customParams;
 
     if (custom_params->count("device_list")!=0)
-        devs = str_split((*custom_params)["device_list"], ", ");
+        devs = absl::StrSplit((*custom_params)["device_list"], ", ");
 
     size_t num_workers = nixl_b_params_get(custom_params, "num_workers", 1);
     size_t num_threads = nixl_b_params_get(custom_params, "num_threads", 0);
+    size_t num_device_channels = nixl_b_params_get(custom_params, "ucx_num_device_channels", 4);
 
     if (num_workers <= num_threads) {
         /* There must be at least one shared worker */
@@ -849,8 +851,14 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     const auto engine_config =
         (engine_config_it != custom_params->end()) ? engine_config_it->second : "";
 
-    uc = std::make_unique<nixlUcxContext>(
-        devs, init_params.enableProgTh, num_workers, init_params.syncMode, engine_config);
+    uc = std::make_unique<nixlUcxContext>(devs,
+                                          init_params.enableProgTh,
+                                          num_workers,
+                                          init_params.syncMode,
+                                          num_device_channels,
+                                          engine_config);
+
+    uc->warnAboutHardwareSupportMismatch();
 
     for (size_t i = 0; i < num_workers; i++) {
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
@@ -1048,7 +1056,14 @@ nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
 *****************************************/
 
 size_t
-nixlUcxEngine::getWorkerId() const {
+nixlUcxEngine::getWorkerId(const nixl_opt_b_args_t *opt_args) const noexcept {
+    if (opt_args) {
+        const auto worker_id = getWorkerIdFromOptArgs(*opt_args);
+        if (worker_id) {
+            return *worker_id;
+        }
+    }
+
     auto it = tlsSharedWorkerMap().find(this);
     if (it == tlsSharedWorkerMap().end()) {
         size_t index = sharedWorkerIndex_.fetch_add(1) % getSharedWorkersSize();
@@ -1060,19 +1075,15 @@ nixlUcxEngine::getWorkerId() const {
 }
 
 std::optional<size_t>
-nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const noexcept {
-    if (!opt_args || opt_args->customParam.empty()) {
-        return std::nullopt;
-    }
-
+nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const noexcept {
     constexpr std::string_view worker_id_key = "worker_id=";
-    size_t pos = opt_args->customParam.find(worker_id_key);
+    size_t pos = opt_args.customParam.find(worker_id_key);
     if (pos == std::string::npos) {
         return std::nullopt;
     }
 
     try {
-        size_t worker_id = std::stoull(opt_args->customParam.substr(pos + worker_id_key.length()));
+        size_t worker_id = std::stoull(opt_args.customParam.substr(pos + worker_id_key.length()));
 
         if (worker_id >= getSharedWorkersSize()) {
             NIXL_WARN << "Invalid worker_id " << worker_id << " (must be < "
@@ -1100,9 +1111,8 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    const auto worker_id = getWorkerId(opt_args);
     /* TODO: try to get from a pool first */
-    const auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
-    size_t worker_id = opt_worker_id.value_or(getWorkerId());
     auto *ucx_handle = new nixlUcxBackendH(getWorker(worker_id).get(), worker_id);
 
     handle = ucx_handle;
@@ -1444,15 +1454,9 @@ nixlUcxEngine::prepGpuSignal(const nixlBackendMD &meta,
                              void *signal,
                              const nixl_opt_b_args_t *opt_args) const {
     try {
-        auto *ucx_meta = static_cast<const nixlUcxPrivateMetadata *>(&meta);
-
-        const auto opt_worker_id = getWorkerIdFromOptArgs(opt_args);
-        if (opt_worker_id) {
-            getWorker(*opt_worker_id)->prepGpuSignal(ucx_meta->mem, signal);
-        } else {
-            getWorker(getWorkerId())->prepGpuSignal(ucx_meta->mem, signal);
-        }
-
+        auto ucx_meta = static_cast<const nixlUcxPrivateMetadata *>(&meta);
+        const auto worker_id = getWorkerId(opt_args);
+        getWorker(worker_id)->prepGpuSignal(ucx_meta->mem, signal);
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
@@ -1565,4 +1569,39 @@ nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)
         ret = NIXL_SUCCESS;
     }
     return ret;
+}
+
+nixl_status_t
+nixlUcxEngine::prepMemView(const nixl_remote_meta_dlist_t &dlist,
+                           nixlMemViewH &mvh,
+                           const nixl_opt_b_args_t *opt_args) const {
+    const size_t worker_id = getWorkerId(opt_args);
+    try {
+        mvh = nixl::ucx::createMemList(dlist, worker_id, *getWorker(worker_id));
+        return NIXL_SUCCESS;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Failed to prepare remote memory view: " << e.what();
+        return NIXL_ERR_BACKEND;
+    }
+}
+
+nixl_status_t
+nixlUcxEngine::prepMemView(const nixl_meta_dlist_t &dlist,
+                           nixlMemViewH &mvh,
+                           const nixl_opt_b_args_t *opt_args) const {
+    const size_t worker_id = getWorkerId(opt_args);
+    try {
+        mvh = nixl::ucx::createMemList(dlist, *getWorker(worker_id));
+        return NIXL_SUCCESS;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Failed to prepare local memory view: " << e.what();
+        return NIXL_ERR_BACKEND;
+    }
+}
+
+void
+nixlUcxEngine::releaseMemView(nixlMemViewH mem_view) const {
+    nixl::ucx::releaseMemList(mem_view);
 }

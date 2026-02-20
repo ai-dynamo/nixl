@@ -26,7 +26,6 @@
 #include <variant>
 #include <vector>
 #include <optional>
-#include <cxxopts.hpp>
 #include <toml++/toml.hpp>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
@@ -78,6 +77,7 @@
 #define XFERBENCH_BACKEND_OBJ "OBJ"
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
+#define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -177,11 +177,16 @@ public:
     static std::string obj_endpoint_override;
     static std::string obj_req_checksum;
     static std::string obj_ca_bundle;
+    static size_t obj_crt_min_limit;
+    static bool obj_accelerated_enable;
+    static std::string obj_accelerated_type;
+    static std::string azure_blob_account_url;
+    static std::string azure_blob_container_name;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;
     static std::string gusli_config_file;
-    static uint64_t gusli_bdev_byte_offset;
+    static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
 
     static int
@@ -196,15 +201,12 @@ public:
     parseDeviceList();
     static bool
     isStorageBackend();
+    static bool
+    isObjStorageBackend();
 
 protected:
     static int
-    loadParams(cxxopts::ParseResult &results);
-    template<class T>
-    static T
-    getParamValue(const std::unique_ptr<toml::table> &tbl,
-                  const cxxopts::ParseResult &result,
-                  const std::string_view name);
+    loadParams(void);
 };
 
 // Shared GUSLI device config used by utils and nixl_worker
@@ -213,13 +215,15 @@ struct GusliDeviceConfig {
     char device_type; // 'F' for file, 'K' for kernel device, 'N' for networked server
     std::string device_path;
     std::string security_flags;
+    size_t dev_offset;
 };
 
-// Parser for GUSLI device list: "id:type:path,id:type:path,..."
+// Parser for GUSLI device list: "id:type:path,id:type:path,..." and byte-based device offset list
 // security_list: comma-separated security flags; num_devices: expected device count (validation)
 std::vector<GusliDeviceConfig>
 parseGusliDeviceList(const std::string &device_list,
                      const std::string &security_list,
+                     const std::string &dev_offset_list,
                      int num_devices);
 
 // Timer class for measuring durations at high resolution
@@ -316,6 +320,18 @@ class xferBenchUtils {
 private:
     static xferBenchRT *rt;
     static std::string dev_to_use;
+    static int
+    createFile(size_t buffer_size, const std::string &filename);
+    static void
+    cleanupFile(const int fd, const std::string &filename);
+    static bool
+    putObjAzure(size_t buffer_size, const std::string &name);
+    static bool
+    getObjAzure(const std::string &name);
+    static bool
+    rmObjAzure(const std::string &name);
+    static std::string
+    buildCommonAzCliBlobParams(const std::string &blob_name);
 
 public:
     static void
@@ -327,14 +343,24 @@ public:
     static std::string
     buildAwsCredentials();
     static bool
+    putObj(size_t buffer_size, const std::string &name);
+    static bool
+    getObj(const std::string &name);
+    static bool
+    rmObj(const std::string &name);
+    static bool
     putObjS3(size_t buffer_size, const std::string &name);
     static bool
     getObjS3(const std::string &name);
     static bool
     rmObjS3(const std::string &name);
 
-    static void
+    static bool
     checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
+    static bool
+    validateTransfer(bool is_initiator,
+                     std::vector<std::vector<xferBenchIOV>> &local_lists,
+                     std::vector<std::vector<xferBenchIOV>> &remote_lists);
     static void
     printStatsHeader();
     static void

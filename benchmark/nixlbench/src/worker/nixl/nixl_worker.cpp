@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include "utils/neuron.h"
 #include "utils/utils.h"
 #include <unistd.h>
 #include <utility>
@@ -85,6 +86,8 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
                << "W D " // Write mode, Direct I/O
                << dev.device_path << " " << dev.security_flags << "\n";
     }
+
+    std::cout << "GUSLI Device Config: " << config.str() << std::endl;
 
     return config.str();
 }
@@ -155,9 +158,14 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             exit(EXIT_FAILURE);
         }
 
+        // We need to make sure the Neuron runtime is initialized before initializing libfabric,
+        // otherwise the FI_HMEM_NEURON backend will not be created. This issue has been fixed
+        // upstream: https://github.com/ofiwg/libfabric/pull/11804
+        int nc_count = neuronCoreCount();
+
         std::cout << "Init nixl worker, dev " << (("all" == devices[0]) ? "all" : devices[rank])
                   << " rank " << rank << ", type " << name << ", hostname " << hostname
-                  << std::endl;
+                  << ", nc_count " << nc_count << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS)) {
         // Using default param values for GDS backend
         std::cout << "GDS backend" << std::endl;
@@ -220,7 +228,27 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             backend_params["endpoint_override"] = xferBenchConfig::obj_endpoint_override;
         }
 
-        std::cout << "OBJ backend" << std::endl;
+        if (xferBenchConfig::obj_crt_min_limit > 0) {
+            // Warn if both CRT and accelerated options are set - CRT takes precedence
+            if (xferBenchConfig::obj_accelerated_enable) {
+                std::cerr << "Warning: Both obj_crt_min_limit and obj_accelerated_enable are set. "
+                          << "CRT client will be used (takes precedence over accelerated)."
+                          << std::endl;
+            }
+            backend_params["crtMinLimit"] = std::to_string(xferBenchConfig::obj_crt_min_limit);
+            std::cout << "OBJ backend with S3 CRT client enabled for objects >= "
+                      << xferBenchConfig::obj_crt_min_limit << " bytes" << std::endl;
+        } else if (xferBenchConfig::obj_accelerated_enable) {
+            backend_params["accelerated"] = "true";
+            std::cout << "OBJ backend with S3 Accelerated client enabled";
+            if (!xferBenchConfig::obj_accelerated_type.empty()) {
+                backend_params["type"] = xferBenchConfig::obj_accelerated_type;
+                std::cout << " (type: " << xferBenchConfig::obj_accelerated_type << ")";
+            }
+            std::cout << std::endl;
+        } else {
+            std::cout << "OBJ backend with standard S3 enabled" << std::endl;
+        }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically
         if (!xferBenchConfig::storage_enable_direct) {
@@ -235,6 +263,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
             isInitiator() ? xferBenchConfig::num_initiator_dev : xferBenchConfig::num_target_dev;
         gusli_devices = parseGusliDeviceList(xferBenchConfig::device_list,
                                              xferBenchConfig::gusli_device_security,
+                                             xferBenchConfig::gusli_device_byte_offsets,
                                              expected_num_devices);
 
         // Set GUSLI backend parameters
@@ -257,11 +286,17 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         std::cout << "  Configured devices: " << gusli_devices.size() << std::endl;
         for (const auto &dev : gusli_devices) {
             std::cout << "    Device " << dev.device_id << " [" << dev.device_type
-                      << "]: " << dev.device_path << " (" << dev.security_flags << ")" << std::endl;
+                      << "]: " << dev.device_path << " (" << dev.security_flags << ")"
+                      << ", offset = " << dev.dev_offset << std::endl;
         }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
         std::cout << "UCCL backend" << std::endl;
         backend_params["in_python"] = "0";
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_AZURE_BLOB)) {
+        // Using default param values for AZURE_BLOB backend
+        backend_params["account_url"] = xferBenchConfig::azure_blob_account_url;
+        backend_params["container_name"] = xferBenchConfig::azure_blob_container_name;
+        std::cout << "AZURE_BLOB backend" << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -416,11 +451,27 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value) {
 }
 
 static std::optional<xferBenchIOV>
+getVramDescNeuron(int devid, size_t buffer_size, uint8_t memset_value) {
+    void *addr;
+    CHECK_NEURON_ERROR(neuronMalloc(&addr, buffer_size, devid), "Failed to allocate nrt tensor");
+    CHECK_NEURON_ERROR(neuronMemset(addr, memset_value, buffer_size),
+                       "Failed to set device memory");
+
+    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
+}
+
+static std::optional<xferBenchIOV>
 getVramDesc(int devid, size_t buffer_size, bool isInit) {
-    CHECK_CUDA_ERROR(cudaSetDevice(devid), "Failed to set device");
     uint8_t memset_value =
         isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT : XFERBENCH_TARGET_BUFFER_ELEMENT;
 
+    // Assume no CUDA cores exist if Neuron cores are found.
+    // There are no AWS instance types with both NVIDIA GPUs and Neuron accelerators.
+    if (neuronCoreCount() > 0) {
+        return getVramDescNeuron(devid, buffer_size, memset_value);
+    }
+
+    CHECK_CUDA_ERROR(cudaSetDevice(devid), "Failed to set device");
     if (xferBenchConfig::enable_vmm) {
         return getVramDescCudaVmm(devid, buffer_size, memset_value);
     } else {
@@ -558,8 +609,9 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
     memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
 
     size_t offset = start_offset;
+    char *write_ptr = static_cast<char *>(buf);
     while (buffer_size > 0) {
-        ssize_t rc = pwrite(fd, buf, buffer_size, offset);
+        ssize_t rc = pwrite(fd, write_ptr, buffer_size, offset);
         if (rc < 0) {
             std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
                       << std::endl;
@@ -568,6 +620,7 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
         buffer_size -= rc;
         offset += rc;
+        write_ptr += rc;
     }
 
     free(buf);
@@ -590,8 +643,14 @@ xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
 #if HAVE_CUDA
 void
 xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
-    CHECK_CUDA_ERROR(cudaSetDevice(iov.devId), "Failed to set device");
+    // Assume no CUDA cores exist if Neuron cores are found.
+    // There are no AWS instance types with both NVIDIA GPUs and Neuron accelerators.
+    if (neuronCoreCount() > 0) {
+        CHECK_NEURON_ERROR(neuronFree((void *)iov.addr), "Failed to free nrt tensor");
+        return;
+    }
 
+    CHECK_CUDA_ERROR(cudaSetDevice(iov.devId), "Failed to set device");
     if (xferBenchConfig::enable_vmm) {
         CHECK_CUDA_DRIVER_ERROR(cuMemUnmap(iov.addr, iov.len), "Failed to unmap memory");
         CHECK_CUDA_DRIVER_ERROR(cuMemRelease(iov.handle), "Failed to release memory");
@@ -620,35 +679,97 @@ xferBenchNixlWorker::cleanupBasicDescFile(xferBenchIOV &iov) {
 
 void
 xferBenchNixlWorker::cleanupBasicDescObj(xferBenchIOV &iov) {
-    if (!xferBenchUtils::rmObjS3(iov.metaInfo)) {
-        std::cerr << "Failed to remove S3 object: " << iov.metaInfo << std::endl;
+    if (!xferBenchUtils::rmObj(iov.metaInfo)) {
+        std::cerr << "Failed to remove object: " << iov.metaInfo << std::endl;
         exit(EXIT_FAILURE);
     }
 }
 
 std::optional<xferBenchIOV>
-xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id) {
-    // For block devices, we create a block device descriptor
-    // The address represents the LBA (Logical Block Address) offset in the block device
-    // Similar to how nixl_gusli_test.cpp handles block device addressing
-
-    static uint64_t lba_offset = xferBenchConfig::gusli_bdev_byte_offset;
+xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset) {
+    // The dev_offset represents the LBA (Logical Block Address) offset in the block device
 
     // Create IOV with LBA offset as address, buffer size, and device ID
     // The device ID corresponds to the block device UUID (e.g., 11 for local file, 14 for
     // /dev/zero)
-    auto ret = std::optional<xferBenchIOV>(std::in_place, lba_offset, buffer_size, mem_dev_id);
-
-    // Update offset for next allocation (similar to file handling)
-    lba_offset += buffer_size;
-
-    return ret;
+    return std::optional<xferBenchIOV>(std::in_place, dev_offset, buffer_size, mem_dev_id);
 }
 
 void
 xferBenchNixlWorker::cleanupBasicDescBlk(xferBenchIOV &iov) {
     // No cleanup needed for block device descriptors
     // The block device backend handles the device lifecycle
+}
+
+bool
+xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size) {
+    int flags = O_RDWR | O_CREAT | O_LARGEFILE;
+    if (xferBenchConfig::storage_enable_direct) flags |= O_DIRECT;
+
+    int fd = open(device.device_path.c_str(), flags, 0744);
+    if (fd < 0) {
+        std::cerr << "Failed to open GUSLI file: " << device.device_path << ": " << strerror(errno)
+                  << std::endl;
+        return false;
+    }
+
+    // Sample one page at the offset GUSLI will read from
+    void *check_buf;
+    bool needs_write = true;
+    if (allocateXferMemory(xferBenchConfig::page_size, &check_buf)) {
+        ssize_t rd = pread(fd, check_buf, xferBenchConfig::page_size, device.dev_offset);
+        if (rd == (ssize_t)xferBenchConfig::page_size) {
+            needs_write = false;
+            uint8_t *bytes = static_cast<uint8_t *>(check_buf);
+            for (ssize_t i = 0; i < rd; i++) {
+                if (bytes[i] != XFERBENCH_TARGET_BUFFER_ELEMENT) {
+                    needs_write = true;
+                    break;
+                }
+            }
+        }
+        free(check_buf);
+    }
+
+    if (needs_write) {
+        std::cout << "Warning: GUSLI file '" << device.device_path << "' at offset "
+                  << device.dev_offset << " does not contain expected pattern (0x" << std::hex
+                  << (int)XFERBENCH_TARGET_BUFFER_ELEMENT << std::dec << "). Overwriting."
+                  << std::endl;
+
+        void *buf;
+        if (!allocateXferMemory(size, &buf)) {
+            close(fd);
+            return false;
+        }
+        memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, size);
+
+        size_t remaining = size;
+        size_t offset = device.dev_offset;
+        char *write_ptr = static_cast<char *>(buf);
+        while (remaining > 0) {
+            ssize_t rc = pwrite(fd, write_ptr, remaining, offset);
+            if (rc < 0) {
+                std::cerr << "Failed to write to " << device.device_path << " at offset " << offset
+                          << ": " << strerror(errno) << std::endl;
+                free(buf);
+                close(fd);
+                return false;
+            }
+            remaining -= rc;
+            offset += rc;
+            write_ptr += rc;
+        }
+        free(buf);
+    } else {
+        std::cout << "GUSLI file '" << device.device_path << "' at offset " << device.dev_offset
+                  << " already contains expected pattern (0x" << std::hex
+                  << (int)XFERBENCH_TARGET_BUFFER_ELEMENT << std::dec
+                  << "). Skipping initialization." << std::endl;
+    }
+
+    close(fd);
+    return true;
 }
 
 std::vector<std::vector<xferBenchIOV>>
@@ -676,7 +797,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
     opt_args.backends.push_back(backend_engine);
 
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+    if (xferBenchConfig::isObjStorageBackend()) {
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -689,8 +810,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     std::to_string(i) + "_" + std::to_string(timestamp);
 
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-                    if (!xferBenchUtils::putObjS3(buffer_size, unique_name)) {
-                        std::cerr << "Failed to put S3 object: " << unique_name << std::endl;
+                    if (!xferBenchUtils::putObj(buffer_size, unique_name)) {
+                        std::cerr << "Failed to put object: " << unique_name << std::endl;
                         continue;
                     }
                 }
@@ -715,17 +836,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
         if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
             for (auto &device : gusli_devices) {
-                if (device.device_type == 'F') {
-                    std::vector<xferFileState> fstate =
-                        createFileFds(getName(), 1, {device.device_path});
-                    if (!initBasicDescFile(
-                            xferBenchConfig::total_buffer_size, fstate[0], device.device_id)) {
-                        std::cerr << "Failed to create file: " << device.device_path << std::endl;
-                        for (auto &f : fstate) {
-                            close(f.fd);
-                        }
-                        exit(EXIT_FAILURE);
-                    }
+                if (device.device_type == 'F' &&
+                    !ensureFileHasConsistencyData(device, buffer_size)) {
+                    exit(EXIT_FAILURE);
                 }
             }
         }
@@ -735,7 +848,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
                 // Use device IDs from parsed configuration (num_devices == gusli_devices.size())
-                basic_desc = initBasicDescBlk(buffer_size, gusli_devices[i].device_id);
+                basic_desc = initBasicDescBlk(
+                    buffer_size, gusli_devices[i].device_id, gusli_devices[i].dev_offset);
                 if (basic_desc) {
                     iov_list.push_back(basic_desc.value());
                 }
@@ -882,7 +996,7 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
         }
     }
 
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+    if (xferBenchConfig::isObjStorageBackend()) {
         for (auto &iov_list : remote_iovs) {
             for (auto &iov : iov_list) {
                 cleanupBasicDescObj(iov);
@@ -987,8 +1101,9 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
         uint64_t file_offset = 0;
         for (auto &iov_list : local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
+            int devidx = 0;
             for (auto &iov : iov_list) {
-                if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
+                if (xferBenchConfig::isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
                     basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
                     if (basic_desc) {
@@ -996,11 +1111,10 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     }
                 } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
                     xferBenchIOV iov_remote(iov);
-                    iov_remote.addr = xferBenchConfig::gusli_bdev_byte_offset + file_offset;
+                    iov_remote.addr = gusli_devices[devidx++].dev_offset + file_offset;
                     iov_remote.len = block_size;
                     iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);
-                    file_offset += block_size;
                 } else {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = file_offset;
@@ -1015,6 +1129,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 }
             }
             res.push_back(remote_iov_list);
+            file_offset += block_size;
         }
     } else {
         for (const auto &local_iov : local_iovs) {
@@ -1093,7 +1208,7 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
                            const std::vector<xferBenchIOV> &local_iov,
                            const std::vector<xferBenchIOV> &remote_iov) {
     // Set remote descriptor type based on backend
-    if (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend) {
+    if (xferBenchConfig::isObjStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);

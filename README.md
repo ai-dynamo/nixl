@@ -10,10 +10,32 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![GitHub Release](https://img.shields.io/github/v/release/ai-dynamo/nixl)](https://github.com/ai-dynamo/nixl/releases/latest)
 
+## Documentation and Resources
+
+* [NIXL overview](https://github.com/ai-dynamo/nixl/blob/main/docs/nixl.md) - Core concepts/architecture overview (`docs/nixl.md`)
+
+* [Python API](https://github.com/ai-dynamo/nixl/blob/main/docs/python_api.md) - Python API usage and examples (`docs/python_api.md`)
+
+* [Backend guide](https://github.com/ai-dynamo/nixl/blob/main/docs/BackendGuide.md) - Backend/plugin development guide (`docs/BackendGuide.md`)
+
+* [Telemetry](https://github.com/ai-dynamo/nixl/blob/main/docs/telemetry.md) - Observability and telemetry details (`docs/telemetry.md`)
+
+* [Doxygen guide](https://github.com/ai-dynamo/nixl/blob/main/docs/doxygen/nixl_doxygen.md) - API/class diagrams overview (`docs/doxygen/nixl_doxygen.md`)
+
+* [Doxygen images](https://github.com/ai-dynamo/nixl/tree/main/docs/doxygen) - Diagram assets (`docs/doxygen/`)
+
+* [NIXLBench docs](https://github.com/ai-dynamo/nixl/blob/main/benchmark/nixlbench/README.md) - Benchmark usage guide (`benchmark/nixlbench/README.md`)
+
+* [KVBench docs](https://github.com/ai-dynamo/nixl/tree/main/benchmark/kvbench/docs) - KVBench workflows and tutorials (`benchmark/kvbench/docs/`)
+
+## Supported Platforms
+NIXL is supported on a Linux environment only. It is tested on Ubuntu (22.04/24.04) and Fedora. macOS and Windows are not currently supported; use a Linux host or container/VM.
+
 ## Pre-build Distributions
 ### PyPI Wheel
 
 The nixl python API and libraries, including UCX, are available directly through PyPI.
+For example, if you have a GPU running on a Linux host, container, or VM, you can do the following install:
 
 It can be installed for CUDA 12 with:
 
@@ -31,7 +53,7 @@ For backwards compatibility, `pip install nixl` installs automatically `nixl[cu1
 
 If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environment, `nixl-cu13` takes precedence.
 
-## Prerequisites for source build
+## Prerequisites for source build (Linux)
 ### Ubuntu:
 
 `sudo apt install build-essential cmake pkg-config`
@@ -186,28 +208,96 @@ Or for CUDA 13 with:
 pip install nixl[cu13]
 ```
 
-To build and install the Python bindings from source, you have to build and install separately the platform-specific package and the `nixl` meta-package:
+#### Installation from source
 
-On CUDA 12:
+Prerequisites:
+
+- `uv`: https://docs.astral.sh/uv/getting-started/installation/
+- `tomlkit`: https://pypi.org/project/tomlkit/
+- `PyTorch`: https://pytorch.org/get-started/locally/
+
+`uv` is always required *even if* you have another kind of Python virtual environment manager or if you are using a system-wide Python installation without using a virtual environment.
+
+Example with `uv` Python virtual environment:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:${PATH}"
+
+uv venv .venv --python 3.12
+source .venv/bin/activate
+uv pip install tomlkit
+```
+
+Example with python-virtualenv:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:${PATH}"
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install tomlkit
+```
+
+Example with system-wide Python installation without using a virtual environment:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:${PATH}"
+
+pip install tomlkit
+```
+
+Then install PyTorch following the instructions on the PyTorch website: https://pytorch.org/get-started/locally/
+
+After installing the prerequisites, you can build and install the NIXL binaries and the Python bindings from source. You have to:
+
+1. Build NIXL binaries and install them
+2. Build and install the CUDA platform-specific package (`nixl-cu12` or `nixl-cu13`)
+3. Build and install the `nixl` meta-package
+
+**For CUDA 12:**
 
 ```
 pip install .
 meson setup build
-ninja -C build
+ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
 ```
 
-On CUDA 13:
+**For CUDA 13:**
 
 ```
 pip install .
 ./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
 meson setup build
-ninja -C build
+ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
 ```
 
-For Python examples, see [examples/python/](examples/python/).
+To check if the installation is successful, you can run the following command:
+
+```
+python3 -c "import nixl; agent = nixl.nixl_agent('agent1')"
+```
+
+which should print:
+
+```
+2026-01-08 13:36:27 NIXL INFO    _api.py:363 Backend UCX was instantiated
+2026-01-08 13:36:27 NIXL INFO    _api.py:253 Initialized NIXL agent: agent1
+```
+
+You can also run a complete Python example to test the installation:
+
+```
+python3 examples/python/expanded_two_peers.py --mode=target --use_cuda=true --ip=127.0.0.1 --port=4242 &
+sleep 5
+python3 examples/python/expanded_two_peers.py --mode=initiator --use_cuda=true --ip=127.0.0.1 --port=4242
+```
+
+For more Python examples, see [examples/python/](examples/python/).
 
 ### Rust Bindings
 #### Build
@@ -310,11 +400,15 @@ meson setup build && cd build && ninja
 ./nixlbench --etcd-endpoints http://localhost:2379 --backend UCX --initiator_seg_type VRAM
 ```
 
-## Examples
+## Code Examples
 
 * [C++ examples](https://github.com/ai-dynamo/nixl/tree/main/examples/cpp)
 
 * [Python examples](https://github.com/ai-dynamo/nixl/tree/main/examples/python)
+
+## Contributing
+
+For contribution guidelines, see [CONTRIBUTING.md](https://github.com/ai-dynamo/nixl/blob/main/CONTRIBUTING.md) (`CONTRIBUTING.md`).
 
 ## Third-Party Components
 

@@ -35,8 +35,9 @@
 
 // Local includes
 #include "common/nixl_time.h"
-#include "ucx/rkey.h"
-#include "ucx/ucx_utils.h"
+#include "mem_list.h"
+#include "rkey.h"
+#include "ucx_utils.h"
 
 enum ucx_cb_op_t { NOTIF_STR };
 
@@ -67,6 +68,11 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
 
         [[nodiscard]] const std::string& get() const noexcept {
             return rkeyStr;
+        }
+
+        [[nodiscard]] const nixlUcxMem &
+        getMem() const noexcept {
+            return mem;
         }
 
     friend class nixlUcxEngine;
@@ -210,10 +216,17 @@ public:
     nixl_status_t
     checkConn(const std::string &remote_agent);
 
-private:
-    // Helper to extract worker_id from opt_args->customParam or nullopt if not found
-    [[nodiscard]] std::optional<size_t>
-    getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const noexcept;
+    nixl_status_t
+    prepMemView(const nixl_remote_meta_dlist_t &,
+                nixlMemViewH &,
+                const nixl_opt_b_args_t * = nullptr) const override;
+
+    nixl_status_t
+    prepMemView(const nixl_meta_dlist_t &,
+                nixlMemViewH &,
+                const nixl_opt_b_args_t * = nullptr) const override;
+
+    void releaseMemView(nixlMemViewH) const override;
 
 protected:
     const std::vector<std::unique_ptr<nixlUcxWorker>> &
@@ -226,8 +239,8 @@ protected:
         return uws[worker_id];
     }
 
-    size_t
-    getWorkerId() const;
+    [[nodiscard]] size_t
+    getWorkerId(const nixl_opt_b_args_t *opt_args = nullptr) const noexcept;
 
     virtual size_t
     getSharedWorkersSize() const {
@@ -288,6 +301,13 @@ private:
                        size_t worker_id,
                        size_t start_idx,
                        size_t end_idx);
+
+    /**
+     * Get the worker ID from the optional arguments.
+     * Returns std::nullopt if the 'worker_id' option extraction fails.
+     */
+    [[nodiscard]] std::optional<size_t>
+    getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const noexcept;
 
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;

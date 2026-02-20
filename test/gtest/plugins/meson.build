@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,14 +17,23 @@ if enabled_plugins.get('UCCL')
     subdir('uccl')
 endif
 
+if enabled_plugins.get('AZURE_BLOB')
+    subdir('azure_blob')
+endif
+
 if not enabled_plugins.get('OBJ')
     message('OBJ plugin not enabled, skipping plugins_gtest build')
     subdir_done()
 endif
 
 aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
+aws_s3_crt = dependency('aws-cpp-sdk-s3-crt', static: false, required: false)
 if not aws_s3.found()
     message('aws-cpp-sdk-s3 not found, skipping plugins_gtest build')
+    subdir_done()
+endif
+if not aws_s3_crt.found()
+    message('aws-cpp-sdk-s3-crt not found, skipping plugins_gtest build')
     subdir_done()
 endif
 

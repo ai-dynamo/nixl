@@ -199,6 +199,7 @@ For development environments or when Docker is not available.
 - **LibFabric**: Fabric communication library
 - **DOCA**: NVIDIA DOCA SDK for GPUNetIO
 - **AWS SDK C++**: For S3 object storage backend
+- **Azure SDK for C++**: For Azure Blob Storage backend
 - **GDS**: NVIDIA GPUDirect Storage
 - **GUSLI**: G3+ User Space Access Library for direct block device access
 - **NVSHMEM**: Required for NVSHMEM worker type
@@ -223,7 +224,7 @@ sudo apt-get update && sudo apt-get install -y \
   libaio-dev liburing-dev protobuf-compiler-grpc \
   libcpprest-dev etcd-server etcd-client \
   pybind11-dev libclang-dev libcurl4-openssl-dev \
-  libssl-dev uuid-dev zlib1g-dev python3-dev python3-pip
+  libssl-dev uuid-dev libxml2-dev zlib1g-dev python3-dev python3-pip
 
 # Install RDMA/InfiniBand packages
 sudo apt-get reinstall -y --no-install-recommends \
@@ -295,6 +296,19 @@ cmake ../aws-sdk-cpp/ \
   -DENABLE_TESTING=OFF \
   -DCMAKE_INSTALL_PREFIX=/usr/local
 make -j$(nproc) && sudo make install
+```
+
+**Azure SDK for C++ (for Azure Blob Storage backend):**
+```bash
+git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0
+cd azure-sdk-for-cpp/
+mkdir build && cd build
+AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON
+cmake --build . --target azure-storage-blobs azure-identity
+cmake --install sdk/core
+cmake --install sdk/storage/azure-storage-common
+cmake --install sdk/storage/azure-storage-blobs
+cmake --install sdk/identity
 ```
 
 **DOCA (Optional):**
@@ -460,7 +474,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --etcd_endpoints URL       # ETCD server URL for coordination (optional for storage backends)
 ```
 
-#### Storage Backend Options (GDS, GDS_MT, POSIX, HF3FS, OBJ)
+#### Storage Backend Options (GDS, GDS_MT, POSIX, HF3FS, OBJ, AZURE_BLOB)
 ```
 --filepath PATH            # File path for storage operations
 --num_files NUM            # Number of files used by benchmark (default: 1)
@@ -503,6 +517,12 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --obj_req_checksum TYPE    # Required checksum for S3 backend [supported, required] (default: supported)
 ```
 
+**AZURE_BLOB Backend:**
+```
+--azure_blob_account_url ACCOUNT_URL        # Account URL for Azure Blob backend
+--azure_blob_container_name CONTAINER_NAME  # Container name for Azure Blob backend
+```
+
 **GUSLI Backend:**
 ```
 --device_list LIST                     # Device specs in format 'id:type:path' (e.g., '11:F:./store0.bin,27:K:/dev/nvme0n1')
@@ -510,7 +530,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --gusli_client_name NAME               # Client identifier (default: NIXLBench)
 --gusli_max_simultaneous_requests NUM  # Concurrent request limit (default: 32)
 --gusli_device_security LIST           # Comma-separated security flags per device (e.g., 'sec=0x3,sec=0x71')
---gusli_bdev_byte_offset BYTES         # Starting LBA offset in bytes (default: 1048576)
+--gusli_device_byte_offsets LIST       # Comma-separated LBA offset in bytes per device (default: 1048576)
 --gusli_config_file CONTENT            # Custom config file content (auto-generated if not provided)
 
 Note: storage_enable_direct is automatically enabled for GUSLI backend
@@ -684,7 +704,7 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 - `--gusli_client_name`: Client identifier (default: "NIXLBench")
 - `--gusli_max_simultaneous_requests`: Concurrent request limit (default: 32)
 - `--gusli_device_security`: Comma-separated security flags per device (default: "sec=0x3" for each device)
-- `--gusli_bdev_byte_offset`: Starting LBA offset in bytes (default: 1MB)
+- `--gusli_device_byte_offsets`: Comma-separated LBA offset in bytes per device (default: 1MB for each device)
 - `--gusli_config_file`: Custom config file content override
 
 **Notes**:
@@ -726,6 +746,30 @@ Transfer times are higher than local storage, so consider reducing iterations:
 ./nixlbench --backend OBJ \
   --obj_bucket_name test-bucket \
   --warmup_iter 32 --num_iter 32 --large_blk_iter_ftr 2
+```
+
+**Testing Options:**
+- Test read operations: `--op_type READ`
+- Validate data consistency: `--check_consistency`
+
+### Azure Blob Storage Backend
+For AZURE_BLOB plugin benchmarking, ETCD is optional for single instances.
+```bash
+# Login using Azure CLI to access default azure credentials which is used by nixlbench and the backend
+az login
+
+# Azure Blob benchmark using command line flags (no ETCD needed)
+./nixlbench --backend AZURE_BLOB \
+  --azure_blob_account_url <account_url> \
+  --azure_blob_container_name <container_name>
+```
+
+From the docker container, call the `az login` command prior to running `nixlbench`.
+```bash
+docker run -it \
+   --gpus all \
+   --network host nixlbench:latest \
+   bash -c "az login && nixlbench --backend AZURE_BLOB --azure_blob_account_url <account_url> --azure_blob_container_name <container_name>"
 ```
 
 **Testing Options:**

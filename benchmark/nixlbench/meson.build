@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '0.9.0',
+project('nixlbench', 'CPP', version: '0.10.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -109,8 +109,8 @@ openmp_dep = dependency('openmp', required: true)
 # Check for etcd-cpp-api - use multiple methods for discovery
 etcd_dep = dependency('etcd-cpp-api', required : false)
 
-# Check for cxxopts
-cxxopts_dep = dependency('cxxopts', required: true)
+# GFlags
+gflags_dep = dependency('gflags', required: true)
 
 # Check for tomlplusplus (header only)
 tomlplusplus_dep = dependency('tomlplusplus', required: true, default_options: ['build_lib=false', 'compile_library=false'])
@@ -169,7 +169,7 @@ configure_file(
     install_dir: get_option('includedir') / 'nixlbench'
 )
 
-deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, cxxopts_dep, tomlplusplus_dep]
+deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, gflags_dep, tomlplusplus_dep]
 args = []
 if etcd_available
     deps += [etcd_dep]
