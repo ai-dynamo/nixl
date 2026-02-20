@@ -87,8 +87,15 @@ int connectToIP(std::string ip_addr, int port) {
     // Check if connection was successful
     int error = 0;
     socklen_t len = sizeof(error);
-    if (getsockopt(ret_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
+    if (getsockopt(ret_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
         NIXL_PERROR << "getsockopt failed for ip_addr: " << ip_addr << " and port: " << port;
+        close(ret_fd);
+        return -1;
+    }
+
+    if (error != 0) {
+        errno = error; // For the 'PERROR'.
+        NIXL_PERROR << "getsockopt gave error for ip_addr: " << ip_addr << " and port: " << port;
         close(ret_fd);
         return -1;
     }
