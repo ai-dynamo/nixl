@@ -25,26 +25,25 @@ posix_sources = [
     'posix_backend.cpp',
     'posix_backend.h',
     'posix_plugin.cpp',
-    'queue_factory_impl.cpp'
+    'io_queue.h',
+    'io_queue.cpp'
 ]
 
-has_api = false
 compile_defs = []
 plugin_link_args = []
 
 if has_linux_aio
     compile_defs += ['-DHAVE_LINUXAIO']
-    posix_sources += ['linux_aio_queue.cpp']
+    posix_sources += ['linux_aio_io_queue.cpp']
     plugin_deps += [ linux_aio_dep ]
-    message('Linux AIO found')
-    has_api = true
+    message('Linux AIO found, adding Linux AIO support')
 else
     warning('Linux AIO not found')
 endif
 
 if has_io_uring
     compile_defs += ['-DHAVE_LIBURING']
-    posix_sources += ['uring_queue.cpp']
+    posix_sources += ['io_uring_io_queue.cpp']
     plugin_deps += [ io_uring_dep ]
     message('liburing found, adding io_uring support')
 else
@@ -53,7 +52,7 @@ endif
 
 if has_posix_aio
     compile_defs += ['-DHAVE_POSIXAIO']
-    posix_sources += ['aio_queue.cpp']
+    posix_sources += ['posix_aio_io_queue.cpp']
     plugin_deps += [ rt_dep ]
     message('POSIX AIO found, adding POSIX AIO support')
 else

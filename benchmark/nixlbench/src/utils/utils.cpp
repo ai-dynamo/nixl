@@ -79,6 +79,9 @@ NB_ARG_UINT64(max_block_size, 64 * (1 << 20), "Max size of block");
 NB_ARG_UINT64(start_batch_size, 1, "Starting size of batch");
 NB_ARG_UINT64(max_batch_size, 1, "Max size of batch");
 NB_ARG_INT32(num_iter, 1000, "Max iterations");
+NB_ARG_BOOL(recreate_xfer,
+            false,
+            "Recreate xfer each iteration (default: false for all backends, true for GUSLI)");
 NB_ARG_INT32(large_blk_iter_ftr,
              16,
              "factor to reduce test iteration when testing large block size(>1MB)");
@@ -122,6 +125,8 @@ NB_ARG_STRING(
     posix_api_type,
     XFERBENCH_POSIX_API_AIO,
     "API type for POSIX operations [AIO, URING, POSIXAIO] (only used with POSIX backend)");
+NB_ARG_INT32(posix_ios_pool_size, 65536, "IO pool size for POSIX operations (default: 65536)");
+NB_ARG_INT32(posix_kernel_queue_size, 256, "Kernel queue size for AIO and URING (default: 256)");
 
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
 NB_ARG_STRING(
@@ -203,6 +208,7 @@ std::string xferBenchConfig::mode = "";
 std::string xferBenchConfig::op_type = "";
 bool xferBenchConfig::check_consistency = false;
 size_t xferBenchConfig::total_buffer_size = 0;
+bool xferBenchConfig::recreate_xfer = false;
 int xferBenchConfig::num_initiator_dev = 0;
 int xferBenchConfig::num_target_dev = 0;
 size_t xferBenchConfig::start_block_size = 0;
@@ -227,6 +233,8 @@ std::string xferBenchConfig::gpunetio_oob_list = "";
 std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
+int xferBenchConfig::posix_ios_pool_size = 0;
+int xferBenchConfig::posix_kernel_queue_size = 0;
 std::string xferBenchConfig::filepath = "";
 std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
@@ -351,6 +359,8 @@ xferBenchConfig::loadParams(void) {
                           << ". Must be one of [AIO, URING, POSIXAIO]" << std::endl;
                 return -1;
             }
+            posix_ios_pool_size = NB_ARG(posix_ios_pool_size);
+            posix_kernel_queue_size = NB_ARG(posix_kernel_queue_size);
         }
 
         // Load DOCA-specific configurations if backend is DOCA
@@ -435,6 +445,12 @@ xferBenchConfig::loadParams(void) {
     num_files = NB_ARG(num_files);
     posix_api_type = NB_ARG(posix_api_type);
     storage_enable_direct = NB_ARG(storage_enable_direct);
+    recreate_xfer = NB_ARG(recreate_xfer);
+    if (!recreate_xfer && XFERBENCH_BACKEND_GUSLI == backend) {
+        std::cout << "GUSLI backend requires per-iteration request creation due to library bug."
+                  << " Setting recreate_xfer to true." << std::endl;
+        recreate_xfer = true;
+    }
 
     // Validate ETCD configuration
     if (!isStorageBackend() && etcd_endpoints.empty()) {
@@ -554,6 +570,8 @@ xferBenchConfig::printConfig() {
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption("Enable VMM (--enable_vmm=[0,1])", std::to_string(enable_vmm));
+        printOption("Recreate xfer each iteration (--recreate_xfer=[0,1])",
+                    std::to_string(recreate_xfer));
 
         // Print GDS options if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
@@ -570,6 +588,10 @@ xferBenchConfig::printConfig() {
         // Print POSIX options if backend is POSIX
         if (backend == XFERBENCH_BACKEND_POSIX) {
             printOption("POSIX API type (--posix_api_type=[AIO,URING,POSIXAIO])", posix_api_type);
+            printOption("POSIX IO pool size (--posix_ios_pool_size=N)",
+                        std::to_string(posix_ios_pool_size));
+            printOption("POSIX kernel queue size (--posix_kernel_queue_size=N)",
+                        std::to_string(posix_kernel_queue_size));
         }
 
         // Print OBJ options if backend is OBJ

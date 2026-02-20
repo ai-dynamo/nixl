@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -107,6 +107,11 @@ def nixl_bench_args(func):
     )(func)
     func = click.option(
         "--total_buffer_size", type=int, help="Total buffer size (default: 8GiB)"
+    )(func)
+    func = click.option(
+        "--recreate_xfer",
+        is_flag=True,
+        help="Recreate xfer for every iteration (default: false for all backends, true for GUSLI)",
     )(func)
     func = click.option(
         "--start_block_size", type=int, help="Starting block size (default: 4KiB)"
