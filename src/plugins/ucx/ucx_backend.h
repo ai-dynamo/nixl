@@ -217,16 +217,16 @@ public:
     checkConn(const std::string &remote_agent);
 
     nixl_status_t
-    prepMemoryView(const nixl_remote_meta_dlist_t &,
-                   nixlMemoryViewH &,
-                   const nixl_opt_b_args_t * = nullptr) const override;
+    prepMemView(const nixl_remote_meta_dlist_t &,
+                nixlMemViewH &,
+                const nixl_opt_b_args_t * = nullptr) const override;
 
     nixl_status_t
-    prepMemoryView(const nixl_meta_dlist_t &,
-                   nixlMemoryViewH &,
-                   const nixl_opt_b_args_t * = nullptr) const override;
+    prepMemView(const nixl_meta_dlist_t &,
+                nixlMemViewH &,
+                const nixl_opt_b_args_t * = nullptr) const override;
 
-    void releaseMemoryView(nixlMemoryViewH) const override;
+    void releaseMemView(nixlMemViewH) const override;
 
 protected:
     const std::vector<std::unique_ptr<nixlUcxWorker>> &
