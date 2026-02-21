@@ -17,7 +17,7 @@
 
 #include "mem_list.h"
 
-#ifdef HAVE_UCX_GPU_DEVICE_API_V2
+#ifdef HAVE_UCX_GPU_DEVICE_API
 #include "rkey.h"
 #include "ucx_backend.h"
 #include "ucx_utils.h"
@@ -29,7 +29,7 @@ extern "C" {
 
 #include <stdexcept>
 
-#ifdef HAVE_UCX_GPU_DEVICE_API_V2
+#ifdef HAVE_UCX_GPU_DEVICE_API
 namespace nixl::ucx {
 using device_mem_vector_t = std::vector<ucp_device_mem_list_elem_t>;
 
