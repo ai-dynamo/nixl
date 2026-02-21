@@ -283,7 +283,7 @@ getPluginDir() {
         NIXL_ERROR << "Failed to get plugin directory from dladdr";
         return "";
     }
-    return (std::filesystem::path(info.dli_fname).parent_path() / "plugins").string();
+    return (std::filesystem::path(info.dli_fname).parent_path().parent_path() / "plugins").string();
 }
 } // namespace
 
