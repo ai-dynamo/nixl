@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -960,14 +960,20 @@ class nixl_agent:
                     self.nixl_mems[mem_type], [(base_addr, region_len, gpu_id)]
                 )
             else:
-                logger.error("Please use a list of contiguous Tensors")
+                logger.error("Please use a contiguous Tensor")
                 new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
-            tensor_type = descs[0].device
+            tensor_device = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
             for i in range(len(descs)):
-                if descs[i].device != tensor_type:
+                if not isinstance(descs[i], torch.Tensor):
+                    logger.error(
+                        f"{type(descs[i])} type detected in descs, please use a list of Tensors"
+                    )
+                    return None
+                if descs[i].device != tensor_device:
+                    logger.error("Please use a list of Tensors in the same device")
                     return None
                 if not descs[i].is_contiguous():
                     logger.error("Please use a list of contiguous Tensors")
@@ -978,7 +984,7 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
-            mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
+            mem_type = "cuda" if str(tensor_device).startswith("cuda") else "cpu"
             new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], dlist)
         else:
             new_descs = None
@@ -1043,14 +1049,20 @@ class nixl_agent:
                     self.nixl_mems[mem_type], [(base_addr, region_len, gpu_id, "")]
                 )
             else:
-                logger.error("Please use a list of contiguous Tensors")
+                logger.error("Please use a contiguous Tensor")
                 new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
-            tensor_type = descs[0].device
+            tensor_device = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
             for i in range(len(descs)):
-                if descs[i].device != tensor_type:
+                if not isinstance(descs[i], torch.Tensor):
+                    logger.error(
+                        f"{type(descs[i])} type detected in descs, please use a list of Tensors"
+                    )
+                    return None
+                if descs[i].device != tensor_device:
+                    logger.error("Please use a list of Tensors in the same device")
                     return None
                 if not descs[i].is_contiguous():
                     logger.error("Please use a list of contiguous Tensors")
@@ -1061,7 +1073,7 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
-            mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
+            mem_type = "cuda" if str(tensor_device).startswith("cuda") else "cpu"
             new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], dlist)
         else:
             new_descs = None
