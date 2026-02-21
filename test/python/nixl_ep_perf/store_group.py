@@ -13,27 +13,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[build-system]
-requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "pytest", "build", "setuptools>=80.9.0"]
-build-backend = "mesonpy"
+from datetime import timedelta
 
-[project]
-name = "nixl-cu12"
-version = "0.10.0"
-description = "NIXL Python API"
-readme = "README.md"
-license = "MIT AND Apache-2.0"
-license-files = ["LICENSE"]
-requires-python = ">=3.10"
-authors = [
-  {name = "NIXL Developers", email = "nixl-developers@nvidia.com"}
-]
+import torch.distributed as dist
 
-dependencies = ["torch", "numpy"]
 
-[tool.isort]
-profile = "black"
-known_third_party = ["nixl_ep"]
+def create_master_store(
+    port: int = 9999,
+    timeout_sec: float = 300.0,
+) -> dist.TCPStore:
+    return dist.TCPStore(
+        host_name="0.0.0.0",
+        port=port,
+        is_master=True,
+        wait_for_workers=False,
+        timeout=timedelta(seconds=timeout_sec),
+    )
 
-[tool.meson-python.args]
-setup = ["-Dinstall_headers=false"]
+
+def create_client_store(
+    master_addr: str = "127.0.0.1",
+    port: int = 9999,
+    timeout_sec: float = 300.0,
+) -> dist.TCPStore:
+    return dist.TCPStore(
+        host_name=master_addr,
+        port=port,
+        is_master=False,
+        wait_for_workers=False,
+        timeout=timedelta(seconds=timeout_sec),
+    )
