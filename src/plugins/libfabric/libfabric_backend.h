@@ -179,6 +179,9 @@ private:
     // Store user's original progress thread preference
     bool progress_thread_enabled_;
 
+    // Track if control rails are progressed in progress thread
+    bool progress_thread_handles_control_rails_;
+
     // Progress thread delay in microseconds
     std::chrono::microseconds progress_thread_delay_;
 

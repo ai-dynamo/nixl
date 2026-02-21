@@ -290,6 +290,7 @@ nixlLibfabricBackendH::is_completed() const {
 nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       progress_thread_enabled_(init_params->enableProgTh),
+      progress_thread_handles_control_rails_(false),
       progress_thread_delay_(std::chrono::microseconds(init_params->pthrDelay)),
       rail_manager(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
       runtime_(FI_HMEM_SYSTEM) {
@@ -392,7 +393,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
                    << rail_manager.getNumDataRails() << " data rails and "
                    << rail_manager.getNumControlRails() << " control rails";
 
-        // Start Progress thread for data rail completion processing
+        // Start Progress thread for completion processing
         if (progress_thread_enabled_) {
             NIXL_DEBUG << "Starting Progress thread for data rails with delay: "
                        << progress_thread_delay_.count() << " microseconds";
@@ -1377,6 +1378,7 @@ nixlLibfabricEngine::genNotif(const std::string &remote_agent, const std::string
 
 nixl_status_t
 nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
+    // Progress data rails if progress thread is not enabled
     if (!progress_thread_enabled_) {
         nixl_status_t progress_status = rail_manager.progressActiveDataRails();
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
@@ -1385,10 +1387,14 @@ nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
         }
     }
 
-    nixl_status_t progress_status = rail_manager.progressAllControlRails();
-    if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
-        NIXL_ERROR << "Failed to progress control rails in getNotifs.";
-        return progress_status;
+    // Progress control rails only if progress thread is not handling them
+    // Similar to data rails - avoid competing with progress thread
+    if (!progress_thread_enabled_ || !progress_thread_handles_control_rails_) {
+        nixl_status_t progress_status = rail_manager.progressAllControlRails();
+        if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
+            NIXL_ERROR << "Failed to progress control rails in getNotifs.";
+            return progress_status;
+        }
     }
 
     // Then check for available notifications after processing completions
@@ -1417,22 +1423,54 @@ nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
  * Progress Thread Function (Data Rails Only)
  *****************************************/
 
-// Progress thread that continuously processes completions only on data rails
+// Progress thread that continuously processes completions on data rails
+// and optionally control rails based on provider type
 nixl_status_t
 nixlLibfabricEngine::progressThread() {
-    NIXL_DEBUG << "PT: Thread started successfully for data rails only";
-    // Main progress loop - continuously process completions only on data rails
+    // Check if we need to progress control rails based on provider type
+    // TCP provider needs manual progress despite reporting FI_PROGRESS_AUTO
+    bool progress_control_rails = false;
+    if (rail_manager.getNumDataRails() > 0) {
+        fi_info *info = rail_manager.getDataRail(0).getRailInfo();
+        if (info && info->fabric_attr && info->fabric_attr->prov_name) {
+            std::string provider_name(info->fabric_attr->prov_name);
+            NIXL_DEBUG << "PT: Provider name: " << provider_name;
+
+            // Progress control rails for TCP provider (xnet)
+            if (provider_name == "tcp") {
+                progress_control_rails = true;
+                NIXL_DEBUG << "PT: TCP provider detected, will progress control rails";
+            }
+        }
+    }
+
+    // Store this decision so getNotifs knows not to compete
+    progress_thread_handles_control_rails_ = progress_control_rails;
+
+    NIXL_DEBUG << "PT: Thread started successfully for data rails"
+               << (progress_control_rails ? " and control rails" : " only");
+
+    // Main progress loop - continuously process completions
     while (!progress_thread_stop_.load()) {
-        // Process completions only on data rails (non-blocking)
+        // Process completions on data rails (non-blocking)
         bool any_completions = false;
         nixl_status_t status = rail_manager.progressActiveDataRails();
         if (status == NIXL_SUCCESS) {
             any_completions = true;
-            NIXL_DEBUG << "PT: Processed completions on data rails";
         } else if (status != NIXL_IN_PROG && status != NIXL_SUCCESS) {
             NIXL_ERROR << "PT: Failed to process completions on data rails";
-            // Don't return error, continue for robustness
         }
+
+        // Progress control rails if needed (e.g., for TCP provider)
+        if (progress_control_rails) {
+            status = rail_manager.progressAllControlRails();
+            if (status == NIXL_SUCCESS) {
+                any_completions = true;
+            } else if (status != NIXL_IN_PROG && status != NIXL_SUCCESS) {
+                NIXL_ERROR << "PT: Failed to process completions on control rails";
+            }
+        }
+
         if (!any_completions) {
             std::this_thread::sleep_for(progress_thread_delay_);
         }
