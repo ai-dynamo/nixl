@@ -5241,7 +5241,7 @@ Random Hacker.
 That's all there is to it!
 ```
 
-## Mooncake - v0.3.2.post1
+## Mooncake - v0.3.9
 
 - **Repository URL**: https://github.com/kvcache-ai/Mooncake
 - **License URL**: https://github.com/kvcache-ai/Mooncake/blob/main/LICENSE
