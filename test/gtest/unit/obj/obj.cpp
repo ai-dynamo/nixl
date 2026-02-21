@@ -52,6 +52,15 @@ private:
     std::set<std::string> checkedKeys_;
 
 public:
+    mockS3Client() = default;
+
+    mockS3Client(nixl_b_params_t *custom_params,
+                 std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr) {
+        if (executor) {
+            executor_ = std::dynamic_pointer_cast<asioThreadPoolExecutor>(executor);
+        }
+    }
+
     void
     setSimulateSuccess(bool success) {
         simulateSuccess_ = success;
@@ -77,6 +86,35 @@ public:
                    size_t data_len,
                    size_t offset,
                    get_object_callback_t callback) override {
+        pendingCallbacks_.push_back([callback, data_ptr, data_len, offset, this]() {
+            if (simulateSuccess_ && data_ptr && data_len > 0) {
+                char *buffer = reinterpret_cast<char *>(data_ptr);
+                for (size_t i = 0; i < data_len; ++i) {
+                    buffer[i] = static_cast<char>('A' + ((i + offset) % 26));
+                }
+            }
+            callback(simulateSuccess_);
+        });
+    }
+
+    // Dell-specific RDMA methods
+    void
+    putObjectRdmaAsync(std::string_view key,
+                       uintptr_t data_ptr,
+                       size_t data_len,
+                       size_t offset,
+                       const std::string &rdma_desc,
+                       put_object_callback_t callback) {
+        pendingCallbacks_.push_back([callback, this]() { callback(simulateSuccess_); });
+    }
+
+    void
+    getObjectRdmaAsync(std::string_view key,
+                       uintptr_t data_ptr,
+                       size_t data_len,
+                       size_t offset,
+                       const std::string &rdma_desc,
+                       get_object_callback_t callback) {
         pendingCallbacks_.push_back([callback, data_ptr, data_len, offset, this]() {
             if (simulateSuccess_ && data_ptr && data_len > 0) {
                 char *buffer = reinterpret_cast<char *>(data_ptr);
@@ -354,6 +392,9 @@ static const ObjTestConfig crtConfig = {"CRT", {{"crtMinLimit", "1024"}}, "test-
 
 #if defined HAVE_CUOBJ_CLIENT
 static const ObjTestConfig accelConfig = {"Accel", {{"accelerated", "true"}}, "test-accel-agent"};
+static const ObjTestConfig dellConfig = {"Dell",
+                                         {{"accelerated", "true"}, {"type", "dell"}},
+                                         "test-dell-agent"};
 #endif
 
 // Parameterized tests - run for all client types
@@ -368,11 +409,25 @@ TEST_P(objParamTestFixture, EngineInitialization) {
 
 TEST_P(objParamTestFixture, GetSupportedMems) {
     auto supported_mems = objEngine_->getSupportedMems();
-    EXPECT_EQ(supported_mems.size(), 2);
+
+    // Check expected number of supported memory types based on configuration
+    const auto &config = GetParam();
+    if (config.name == "Dell") {
+        EXPECT_EQ(supported_mems.size(), 3); // OBJ_SEG, DRAM_SEG, VRAM_SEG
+    } else {
+        EXPECT_EQ(supported_mems.size(), 2); // OBJ_SEG, DRAM_SEG
+    }
+
     EXPECT_TRUE(std::find(supported_mems.begin(), supported_mems.end(), OBJ_SEG) !=
                 supported_mems.end());
     EXPECT_TRUE(std::find(supported_mems.begin(), supported_mems.end(), DRAM_SEG) !=
                 supported_mems.end());
+
+    // Dell configuration should also support VRAM_SEG
+    if (config.name == "Dell") {
+        EXPECT_TRUE(std::find(supported_mems.begin(), supported_mems.end(), VRAM_SEG) !=
+                    supported_mems.end());
+    }
 }
 
 TEST_P(objParamTestFixture, RegisterMemoryObjSeg) {
@@ -413,7 +468,11 @@ TEST_P(objParamTestFixture, RegisterMemoryDramSeg) {
     nixl_status_t status = objEngine_->registerMem(mem_desc, DRAM_SEG, metadata);
 
     EXPECT_EQ(status, NIXL_SUCCESS);
-    EXPECT_EQ(metadata, nullptr);
+    if (GetParam().name == "Dell") {
+        EXPECT_NE(metadata, nullptr);
+    } else {
+        EXPECT_EQ(metadata, nullptr);
+    }
 
     status = objEngine_->deregisterMem(metadata);
     EXPECT_EQ(status, NIXL_SUCCESS);
@@ -463,7 +522,7 @@ TEST_P(objParamTestFixture, CheckObjectExists) {
 #if defined HAVE_CUOBJ_CLIENT
 INSTANTIATE_TEST_SUITE_P(ObjClientTests,
                          objParamTestFixture,
-                         testing::Values(standardConfig, crtConfig, accelConfig),
+                         testing::Values(standardConfig, crtConfig, accelConfig, dellConfig),
                          [](const testing::TestParamInfo<ObjTestConfig> &info) {
                              return info.param.name;
                          });

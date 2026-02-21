@@ -54,6 +54,23 @@ public:
     bool
     checkObjectExists(std::string_view key) override;
 
+    // RDMA methods - not supported by S3 CRT client
+    void
+    putObjectRdmaAsync(std::string_view key,
+                       uintptr_t data_ptr,
+                       size_t data_len,
+                       size_t offset,
+                       const std::string &rdma_desc,
+                       put_object_callback_t callback) override;
+
+    void
+    getObjectRdmaAsync(std::string_view key,
+                       uintptr_t data_ptr,
+                       size_t data_len,
+                       size_t offset,
+                       const std::string &rdma_desc,
+                       get_object_callback_t callback) override;
+
 private:
     std::unique_ptr<Aws::S3Crt::S3CrtClient> s3CrtClient_;
 };
