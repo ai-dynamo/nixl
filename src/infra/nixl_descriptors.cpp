@@ -131,18 +131,70 @@ void nixlBlobDesc::print(const std::string &suffix) const {
 // The template is used to select from nixlBasicDesc/nixlMetaDesc/nixlBlobDesc
 // There are no virtual functions, so the object is all data, no pointers.
 
-template<class T> nixlDescList<T>::nixlDescList(const nixl_mem_t &type, const int &init_size) {
-    static_assert (std::is_base_of<nixlBasicDesc, T>::value);
-    this->type = type;
-    this->descs.resize(init_size);
+template<class T>
+nixlDescList<T>::nixlDescList(const nixl_mem_t &type, size_t init_size)
+    : type(type),
+      descs(init_size),
+      isShallowCopy_(false) {
+    static_assert(std::is_base_of<nixlBasicDesc, T>::value);
+    syncView();
 }
 
-template <class T>
-nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
+template<class T>
+nixlDescList<T>::nixlDescList(const nixl_mem_t &type, const T *view, size_t size)
+    : type(type),
+      isShallowCopy_(true),
+      view_(view),
+      size_(size) {}
+
+template<class T>
+nixlDescList<T>::nixlDescList(const nixlDescList<T> &d_list)
+    : type(d_list.type),
+      isShallowCopy_(d_list.isShallowCopy_) {
+    if (isShallowCopy_) {
+        view_ = d_list.view_;
+        size_ = d_list.size_;
+    } else {
+        descs = d_list.descs;
+        syncView();
+    }
+}
+
+template<class T>
+void
+nixlDescList<T>::swap(nixlDescList<T> &first, nixlDescList<T> &second) noexcept {
+    std::swap(first.type, second.type);
+    std::swap(first.descs, second.descs);
+    std::swap(first.isShallowCopy_, second.isShallowCopy_);
+    std::swap(first.view_, second.view_);
+    std::swap(first.size_, second.size_);
+}
+
+template<class T>
+nixlDescList<T>::nixlDescList(nixlDescList<T> &&d_list) noexcept
+    : type(d_list.type),
+      isShallowCopy_(true),
+      view_(nullptr),
+      size_(0) {
+    swap(*this, d_list);
+}
+
+template<class T>
+nixlDescList<T> &
+nixlDescList<T>::operator=(nixlDescList<T> d_list) noexcept {
+    swap(*this, d_list);
+    return *this;
+}
+
+template<class T>
+nixlDescList<T>::nixlDescList(nixlSerDes *deserializer)
+    : isShallowCopy_(false),
+      view_(nullptr),
+      size_(0) {
     size_t n_desc;
     std::string str;
 
-    descs.clear();
+    clear();
 
     str = deserializer->getStr("nixlDList"); // Object type
     if (str.size()==0)
@@ -186,40 +238,41 @@ nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
     } else {
         return; // Unknown type, error
     }
-}
 
-// Getter
-template <class T>
-inline const T& nixlDescList<T>::operator[](unsigned int index) const {
-    // To be added only in debug mode
-    // if (index >= descs.size())
-    //     throw std::out_of_range("Index is out of range");
-    return descs[index];
-}
-
-// Setter
-template <class T>
-inline T& nixlDescList<T>::operator[](unsigned int index) {
-    assert(index < descs.size());
-    return descs[index];
-}
-
-template <class T>
-void nixlDescList<T>::addDesc (const T &desc) {
-    descs.push_back(desc);
-}
-
-template <class T>
-void nixlDescList<T>::remDesc (const int &index){
-    if (((size_t) index >= descs.size()) || (index < 0))
-        throw std::out_of_range("Index is out of range");
-    descs.erase(descs.begin() + index);
+    syncView();
 }
 
 template<class T>
 void
-nixlDescList<T>::resize(const size_t &count) {
+nixlDescList<T>::addDesc(T desc) {
+    addDesc(std::move(desc), end());
+}
+
+template<class T>
+void
+nixlDescList<T>::addDesc(T desc, iterator_t it) {
+    checkModifiable();
+    descs.insert(it, std::move(desc));
+    syncView();
+}
+
+template<class T>
+void
+nixlDescList<T>::remDesc(size_t index) {
+    checkModifiable();
+    if ((index >= descs.size()) || (index < 0)) {
+        throw std::out_of_range("Index is out of range");
+    }
+    descs.erase(descs.begin() + index);
+    syncView();
+}
+
+template<class T>
+void
+nixlDescList<T>::resize(size_t count) {
+    checkModifiable();
     descs.resize(count);
+    syncView();
 }
 
 template <class T>
@@ -243,16 +296,16 @@ nixlDescList<nixlBasicDesc> nixlDescList<T>::trim() const {
 
 template <class T>
 int nixlDescList<T>::getIndex(const nixlBasicDesc &query) const {
-    auto itr = std::find(descs.begin(), descs.end(), query);
-    if (itr == descs.end()) return NIXL_ERR_NOT_FOUND; // not found
-    return itr - descs.begin();
+    auto itr = std::find(begin(), end(), query);
+    if (itr == end()) return NIXL_ERR_NOT_FOUND; // not found
+    return itr - begin();
 }
 
 template <class T>
 nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
 
     nixl_status_t ret;
-    size_t n_desc = descs.size();
+    size_t n_desc = size_;
 
     // nixlMetaDesc should be internal and not be serialized
     if (std::is_same<nixlMetaDesc, T>::value)
@@ -282,9 +335,9 @@ nixl_status_t nixlDescList<T>::serialize(nixlSerDes* serializer) const {
     // Optimization for nixlBasicDesc,
     // contiguous in memory, so no need for per elm serialization
     if (std::is_same<nixlBasicDesc, T>::value) {
-        ret = serializer->addStr("", std::string(
-                                 reinterpret_cast<const char*>(descs.data()),
-                                 n_desc * sizeof(nixlBasicDesc)));
+        ret = serializer->addStr(
+            "",
+            std::string(reinterpret_cast<const char *>(begin()), n_desc * sizeof(nixlBasicDesc)));
         if (ret) return ret;
     } else { // already checked it can be only nixlBlobDesc or nixlSectionDesc
         for (auto & elm : descs) {
@@ -316,14 +369,14 @@ nixlDescList<T>::to_string(bool compact) const {
 
     if (compact) {
         std::unordered_map<size_t, size_t> count_map;
-        for (auto &elm : descs) {
+        for (auto &elm : *this) {
             count_map[elm.len]++;
         }
 
-        ss << " count=" << descs.size() << " content={"
+        ss << " count=" << descCount() << " content={"
            << absl::StrJoin(count_map, ", ", absl::PairFormatter(":")) << "}";
     } else {
-        for (auto &elm : descs) {
+        for (auto &elm : *this) {
             elm.print("");
         }
     }
@@ -366,61 +419,62 @@ operator== <nixlRemoteMetaDesc>(const nixlDescList<nixlRemoteMetaDesc> &lhs,
 
 // nixlSecDescList keeps the elements sorted
 void
-nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
-    auto &vec = this->descs;
-    auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
-    if (itr == vec.end())
-        vec.push_back(desc);
-    else
-        vec.insert(itr, desc);
+nixlSecDescList::addDesc(nixlSectionDesc desc) {
+    auto itr = std::upper_bound(begin(), end(), desc);
+    nixlDescList::addDesc(std::move(desc), itr);
 }
 
 bool
 nixlSecDescList::verifySorted() const {
-    const auto &vec = this->descs;
-    int size = (int)vec.size();
-    if (size <= 1) return (size == 1);
-    for (int i = 0; i < size - 1; ++i) {
-        if (vec[i + 1] < vec[i]) return false;
+    size_t count = size();
+    if (count <= 1) {
+        return (count == 1);
+    }
+    for (size_t i = 0; i < count - 1; ++i) {
+        if ((*this)[i + 1] < (*this)[i]) {
+            return false;
+        }
     }
     return true;
 }
 
 nixlSectionDesc &
-nixlSecDescList::operator[](unsigned int index) {
-    nixlSectionDesc &ref = this->descs[index];
-    assert(verifySorted());
-    return ref;
+nixlSecDescList::operator[](size_t index) {
+    NIXL_ASSERT(verifySorted());
+    return nixlDescList::operator[](index);
 }
 
 int
 nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
-    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
-    if (itr == this->descs.end()) return NIXL_ERR_NOT_FOUND;
-    if (static_cast<const nixlBasicDesc &>(*itr) == query)
-        return static_cast<int>(itr - this->descs.begin());
+    auto itr = std::lower_bound(begin(), end(), query);
+    if (itr == end()) return NIXL_ERR_NOT_FOUND;
+    if (static_cast<const nixlBasicDesc &>(*itr) == query) return static_cast<int>(itr - begin());
     return NIXL_ERR_NOT_FOUND;
 }
 
 int
 nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query) const {
-    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
-    if (itr != this->descs.end() && itr->covers(query))
-        return static_cast<int>(itr - this->descs.begin());
+    auto itr = std::lower_bound(begin(), end(), query);
+    if (itr != end() && itr->covers(query)) {
+        return static_cast<int>(itr - begin());
+    }
     // If query and element don't have the same start address, try previous entry
-    if (itr != this->descs.begin()) {
+    if (itr != begin()) {
         auto prev_itr = std::prev(itr, 1);
-        if (prev_itr->covers(query)) return static_cast<int>(prev_itr - this->descs.begin());
+        if (prev_itr->covers(query)) {
+            return static_cast<int>(prev_itr - begin());
+        }
     }
     return -1;
 }
 
 void
-nixlSecDescList::resize(const size_t &count) {
-    if (count > this->descs.size())
+nixlSecDescList::resize(size_t count) {
+    if (count > size()) {
         throw std::logic_error(
             "nixlSecDescList: to keep list sorted, resize growth is not allowed.");
-    this->descs.resize(count);
+    }
+    nixlDescList::resize(count);
 }
 
 nixlRemoteDesc::nixlRemoteDesc(const uintptr_t addr,

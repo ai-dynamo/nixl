@@ -65,13 +65,13 @@ public:
     using nixlDescList<nixlSectionDesc>::operator[]; // bring in const overload
 
     void
-    addDesc(const nixlSectionDesc &desc) override;
+    addDesc(nixlSectionDesc desc) override;
 
     bool
     verifySorted() const;
 
     nixlSectionDesc &
-    operator[](unsigned int index) override;
+    operator[](size_t index);
 
     int
     getIndex(const nixlBasicDesc &query) const override;
@@ -80,7 +80,7 @@ public:
     getCoveringIndex(const nixlBasicDesc &query) const;
 
     void
-    resize(const size_t &count) override;
+    resize(size_t count) override;
 
     // Disable parent's convenience constructors that allow pre-sizing
     nixlSecDescList(const nixlSecDescList &) = default;

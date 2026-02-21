@@ -22,6 +22,8 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <stdexcept>
+#include <cassert>
 #include "nixl_types.h"
 
 /**
@@ -260,20 +262,63 @@ operator==(const nixlRemoteDesc &lhs, const nixlRemoteDesc &rhs);
  */
 template<class T>
 class nixlDescList {
-protected:
+private:
     /** @var NIXL memory type */
     nixl_mem_t type;
     /** @var Vector for storing nixlDescs */
     std::vector<T> descs;
+    /** @var Whether the descriptor list is a shallow copy */
+    bool isShallowCopy_;
+    /** @var Common view of the descriptor list, both for shallow copy and own data */
+    const T *view_;
+    /** @var Size of the descriptor list */
+    size_t size_;
+
+    /**
+     * @brief Synchronize the view of the descriptor list with the data in the vector.
+     *        Can be called only in owner mode (not shallow copy), after vector is modified
+     */
+    inline void
+    syncView() {
+        view_ = descs.data();
+        size_ = descs.size();
+    }
+
+    /**
+     * @brief Check that the descriptor list is not a shallow copy.
+     *        Throws std::logic_error if it is.
+     */
+    inline void
+    checkModifiable() const {
+        if (isShallowCopy_) {
+            throw std::logic_error("Descriptor list is a non-modifiable shallow copy");
+        }
+    }
+
+    /**
+     * @brief Swap two nixlDescList objects.
+     */
+    static void
+    swap(nixlDescList<T> &first, nixlDescList<T> &second) noexcept;
+
+    /**
+     * @brief Private constructor to create a shallow copy of a nixlDescList.
+     *        Used internally by the makeShallowCopy to return only a const reference
+     *        to the shallow copy.
+     */
+    nixlDescList(const nixl_mem_t &type, const T *view, size_t size);
 
 public:
+    using iterator_t = typename std::vector<T>::iterator;
+    using const_iterator_t = const T *;
+
     /**
      * @brief Parametrized Constructor for nixlDescList
      *
      * @param type         NIXL memory type of descriptor list
      * @param init_size    initial size for descriptor list (default = 0)
      */
-    nixlDescList(const nixl_mem_t &type, const int &init_size = 0);
+    nixlDescList(const nixl_mem_t &type, size_t init_size = 0);
 
     /**
      * @brief Deserializer constructor for nixlDescList from nixlSerDes object
@@ -289,7 +334,15 @@ public:
      *
      * @param d_list other nixlDescList object of the same type
      */
-    nixlDescList(const nixlDescList<T> &d_list) = default;
+    nixlDescList(const nixlDescList<T> &d_list);
+
+    /**
+     * @brief Move constructor for creating nixlDescList from another object
+     *        of the same type.
+     *
+     * @param d_list other nixlDescList object of the same type
+     */
+    nixlDescList(nixlDescList<T> &&d_list) noexcept;
 
     /**
      * @brief Operator = overloading constructor for nixlDescList
@@ -297,7 +350,20 @@ public:
      * @param d_list nixlDescList object
      */
     nixlDescList &
-    operator=(const nixlDescList<T> &d_list) = default;
+    operator=(nixlDescList<T> d_list) noexcept;
+
+    /**
+     * @brief Create a shallow copy of a nixlDescList.
+     *
+     * @param type         NIXL memory type of descriptor list
+     * @param view         View of the descriptor list
+     * @param size         Size of the descriptor list
+     * @return Shallow copy of the descriptor list
+     */
+    static const nixlDescList<T>
+    makeShallowCopy(const nixl_mem_t &type, const T *view, size_t size) {
+        return nixlDescList<T>(type, view, size);
+    }
 
     /**
      * @brief nixlDescList Destructor
@@ -317,7 +383,12 @@ public:
      */
     inline int
     descCount() const {
-        return descs.size();
+        return size_;
+    }
+
+    inline size_t
+    size() const {
+        return size_;
     }
 
     /**
@@ -325,38 +396,42 @@ public:
      */
     inline bool
     isEmpty() const {
-        return (descs.size() == 0);
+        return (size_ == 0);
     }
 
-    /**
-     * @brief Operator [] overloading, get/set descriptor at [index].
-     *        Can throw std::out_of_range exception.
-     */
-    const T &
-    operator[](unsigned int index) const;
-    virtual T &
-    operator[](unsigned int index);
+    inline const T &
+    operator[](size_t index) const {
+        return view_[index];
+    }
+
+    inline T &
+    operator[](size_t index) {
+        assert(!isShallowCopy_);
+        return descs[index];
+    }
 
     /**
      * @brief Vector like iterators for const and non-const elements
      */
-    inline typename std::vector<T>::const_iterator
+    inline const_iterator_t
     begin() const {
-        return descs.begin();
+        return view_;
     }
 
-    inline typename std::vector<T>::const_iterator
+    inline const_iterator_t
     end() const {
-        return descs.end();
+        return view_ + size_;
     }
 
-    inline typename std::vector<T>::iterator
+    inline iterator_t
     begin() {
+        assert(!isShallowCopy_);
         return descs.begin();
     }
 
-    inline typename std::vector<T>::iterator
+    inline iterator_t
     end() {
+        assert(!isShallowCopy_);
         return descs.end();
     }
 
@@ -377,28 +452,33 @@ public:
      * @param count Number of elements after resizing DescList object
      */
     virtual void
-    resize(const size_t &count);
+    resize(size_t count);
 
     /**
      * @brief Empty the descriptors list
      */
     inline void
     clear() {
+        checkModifiable();
         descs.clear();
+        syncView();
     }
 
     /**
      * @brief     Add Descriptors to descriptor list
      */
     virtual void
-    addDesc(const T &desc);
+    addDesc(T desc);
+
+    void
+    addDesc(T desc, iterator_t it);
 
     /**
      * @brief Remove descriptor from list at index
      *        Can throw std::out_of_range exception.
      */
     void
-    remDesc(const int &index);
+    remDesc(size_t index);
 
     /**
      * @brief Convert a nixlDescList with metadata by trimming it to a
