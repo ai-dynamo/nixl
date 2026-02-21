@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -913,6 +913,7 @@ class nixl_agent:
 
     @param descs List of any of the above types
     @param mem_type Optional memory type necessary for (a).
+    @param zero_copy Optional boolean flag to use zero copy for the transfer descriptor list.
     @return Transfer descriptor list, nixlXferDList.
     """
 
@@ -920,6 +921,7 @@ class nixl_agent:
         self,
         descs,
         mem_type: Optional[str] = None,
+        zero_copy: bool = False,
     ) -> nixlBind.nixlXferDList:
         # can add check for DLPack input
 
@@ -930,7 +932,9 @@ class nixl_agent:
             new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 3:
-                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
+                new_descs = nixlBind.nixlXferDList(
+                    self.nixl_mems[mem_type], descs, zero_copy
+                )
             elif mem_type is None:
                 logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
@@ -939,7 +943,9 @@ class nixl_agent:
                 new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
-                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
+                new_descs = nixlBind.nixlXferDList(
+                    self.nixl_mems[mem_type], descs, zero_copy
+                )
             elif mem_type is None:
                 logger.error("Please specify a mem type if not using Tensors")
                 new_descs = None
@@ -957,7 +963,9 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 new_descs = nixlBind.nixlXferDList(
-                    self.nixl_mems[mem_type], [(base_addr, region_len, gpu_id)]
+                    self.nixl_mems[mem_type],
+                    [(base_addr, region_len, gpu_id)],
+                    zero_copy,
                 )
             else:
                 logger.error("Please use a list of contiguous Tensors")
@@ -979,7 +987,9 @@ class nixl_agent:
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
             mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
-            new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], dlist)
+            new_descs = nixlBind.nixlXferDList(
+                self.nixl_mems[mem_type], dlist, zero_copy
+            )
         else:
             new_descs = None
 

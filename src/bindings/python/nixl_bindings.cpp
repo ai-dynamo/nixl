@@ -90,6 +90,15 @@ public:
     nixlNoTelemetryError(const char *what) : runtime_error(what) {}
 };
 
+class nixlXferDListWrapper : public nixl_xfer_dlist_t {
+    py::object ref_;
+
+public:
+    nixlXferDListWrapper(nixl_xfer_dlist_t &&base, py::object ref)
+        : nixl_xfer_dlist_t(std::move(base)),
+          ref_(ref) {}
+};
+
 void
 throw_nixl_exception(const nixl_status_t &status) {
     switch (status) {
@@ -216,8 +225,13 @@ PYBIND11_MODULE(_bindings, m) {
     py::register_exception<nixlNoTelemetryError>(m, "nixlNoTelemetryError");
 
     py::class_<nixl_xfer_dlist_t>(m, "nixlXferDList")
-        .def(py::init<nixl_mem_t, int>(), py::arg("type"), py::arg("init_size") = 0)
-        .def(py::init([](nixl_mem_t mem, py::array descs) {
+        .def(py::init([](nixl_mem_t mem, int init_size = 0) {
+                 nixl_xfer_dlist_t new_list(mem, init_size);
+                 return nixlXferDListWrapper(std::move(new_list), py::none());
+             }),
+             py::arg("type"),
+             py::arg("init_size") = 0)
+        .def(py::init([](nixl_mem_t mem, py::array descs, bool zero_copy = false) {
                  static_assert(sizeof(nixlBasicDesc) == 3 * sizeof(uint64_t),
                                "nixlBasicDesc size mismatch");
                  // Check array shape and dtype
@@ -231,16 +245,22 @@ PYBIND11_MODULE(_bindings, m) {
                      throw std::invalid_argument("descs must be a C-contiguous numpy array");
                  }
                  size_t n = descs.shape(0);
-                 nixl_xfer_dlist_t new_list(mem, n);
-                 // We assume that the Nx3 array matches the nixlBasicDesc layout so we can simply
-                 // memcpy
-                 std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
-
-                 return new_list;
+                 if (zero_copy) {
+                     auto new_list = nixl_xfer_dlist_t::makeShallowCopy(
+                         mem, reinterpret_cast<const nixlBasicDesc *>(descs.data()), n);
+                     return nixlXferDListWrapper(std::move(new_list), descs);
+                 } else {
+                     nixl_xfer_dlist_t new_list(mem, n);
+                     // We assume that the Nx3 array matches the nixlBasicDesc layout so we can
+                     // simply memcpy
+                     std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
+                     return nixlXferDListWrapper(std::move(new_list), py::none());
+                 }
              }),
              py::arg("type"),
-             py::arg("descs").noconvert())
-        .def(py::init([](nixl_mem_t mem, py::list descs) {
+             py::arg("descs").noconvert(),
+             py::arg("zero_copy") = false)
+        .def(py::init([](nixl_mem_t mem, py::list descs, bool zero_copy = false) {
                  nixl_xfer_dlist_t new_list(mem, descs.size());
                  for (size_t i = 0; i < descs.size(); i++) {
                      if (!py::isinstance<py::tuple>(descs[i])) {
@@ -257,10 +277,11 @@ PYBIND11_MODULE(_bindings, m) {
                                                  desc[2].cast<uint64_t>());
                  }
 
-                 return new_list;
+                 return nixlXferDListWrapper(std::move(new_list), py::none());
              }),
              py::arg("type"),
-             py::arg("descs").noconvert())
+             py::arg("descs").noconvert(),
+             py::arg("zero_copy") = false)
         .def("getType", &nixl_xfer_dlist_t::getType)
         .def("descCount", &nixl_xfer_dlist_t::descCount)
         .def("isEmpty", &nixl_xfer_dlist_t::isEmpty)
