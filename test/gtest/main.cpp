@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,9 @@
 #include "plugin_manager.h"
 #include "common.h"
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <iostream>
+#include <list>
 #include <sstream>
 #include <vector>
 #include <string>
@@ -65,11 +67,41 @@ void ParseArguments(int argc, char **argv) {
   }
 }
 
-int RunTests(int argc, char **argv) {
-  testing::InitGoogleTest(&argc, argv);
-  ParseArguments(argc, argv);
+namespace {
+    const std::regex aws_regex("UCX version is less than 1.19, CUDA support is limited, including"
+                               " the lack of support for multi-GPU within a single process.");
+    const std::regex non_gpu_regex("[0-9]+ NVIDIA GPU\\(s\\) were detected, but UCX CUDA support "
+                                   "was not found! GPU memory is not supported.");
 
-  return RUN_ALL_TESTS();
+} // namespace
+
+int
+RunAllTests() {
+    LogProblemCounter lpc;
+    std::list<LogIgnoreGuard> ligs;
+
+    if (std::getenv("AWS_BATCH_JOB_ID") != nullptr) {
+        ligs.emplace_back(aws_regex);
+    }
+
+    if (std::getenv("NIXL_CI_NON_GPU") != nullptr) {
+        ligs.emplace_back(non_gpu_regex);
+    }
+
+    return RUN_ALL_TESTS();
+}
+
+int RunTests(int argc, char **argv) {
+    testing::InitGoogleTest(&argc, argv);
+    ParseArguments(argc, argv);
+    const int result = RunAllTests();
+
+    if (const size_t problems = LogProblemCounter::getProblemCount(); problems > 0) {
+        std::cerr << "ATTENTION: Unexpected NIXL warning(s) and/or error(s) detected!" << std::endl;
+        std::cerr << "ATTENTION: Problem count is " << problems << std::endl;
+        return 42;
+    }
+    return result;
 }
 } // namespace gtest
 

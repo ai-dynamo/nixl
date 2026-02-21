@@ -18,6 +18,7 @@
 #include "utils.cuh"
 #include "common.h"
 
+#include <memory>
 #include <gtest/gtest.h>
 
 namespace gtest::nixl::gpu::single_write {
@@ -303,6 +304,9 @@ protected:
             FAIL() << "Failed to set CUDA device 0";
         }
 
+        lig_ = std::make_unique<LogIgnoreGuard>(
+            "IB device\\(s\\) were detected, but accelerated IB support was not found");
+
         for (size_t i = 0; i < 2; i++) {
             agents.emplace_back(std::make_unique<nixlAgent>(getAgentName(i), getConfig()));
             nixlBackendH *backend_handle = nullptr;
@@ -480,6 +484,7 @@ protected:
 private:
     static constexpr uint64_t DEV_ID = 0;
 
+    std::unique_ptr<LogIgnoreGuard> lig_;
     std::vector<std::unique_ptr<nixlAgent>> agents;
     std::vector<nixlBackendH *> backend_handles;
 

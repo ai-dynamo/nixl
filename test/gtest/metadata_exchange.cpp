@@ -42,10 +42,7 @@ namespace gtest {
 namespace metadata_exchange {
 class MemBuffer {
 public:
-    MemBuffer(size_t size) :
-        vec_(size)
-    {
-    }
+    explicit MemBuffer(size_t size) : vec_(size) {}
 
     operator uintptr_t() const
     {
@@ -134,8 +131,11 @@ protected:
 
     void TearDown() override
     {
-        for (auto &agent : agents_)
-            agent.agent->invalidateLocalMD(nullptr);
+        for (auto &agent : agents_) {
+            if (agent.agent) {
+                agent.agent->invalidateLocalMD(nullptr);
+            }
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         agents_.clear();
     }
@@ -194,14 +194,27 @@ TEST_F(MetadataExchangeTestFixture, LoadRemoteWithErrors) {
     ASSERT_EQ(src.agent->getLocalMD(md), NIXL_SUCCESS);
 
     // No backend on dst agent
-    ASSERT_NE(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+    {
+        const LogIgnoreGuard lig("loadRemoteMD: no common backend found");
 
-    ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+        ASSERT_NE(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+        ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+
+        EXPECT_EQ(lig.getIgnoredCount(), 1);
+    }
 
     dst.initDefault();
 
     // Invalid metadata
-    ASSERT_NE(dst.agent->loadRemoteMD("invalid", remote_name), NIXL_SUCCESS);
+    {
+        const LogIgnoreGuard lig1("Deserialization failed, missing nixlSerDes tag");
+        const LogIgnoreGuard lig2("loadRemoteMD: failed to deserialize remote metadata");
+
+        ASSERT_NE(dst.agent->loadRemoteMD("invalid", remote_name), NIXL_SUCCESS);
+
+        EXPECT_EQ(lig1.getIgnoredCount(), 1);
+        EXPECT_EQ(lig2.getIgnoredCount(), 1);
+    }
 
     // Remote does not exist so cannot invalidate
     ASSERT_NE(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
@@ -288,14 +301,25 @@ TEST_F(MetadataExchangeTestFixture, GetLocalPartialWithErrors) {
     nixl_reg_dlist_t unregistered_descs(DRAM_SEG);
     unregistered_descs.addDesc(unregistered_buffer.getBlobDesc());
 
-    ASSERT_NE(src.agent->getLocalPartialMD(unregistered_descs, md, nullptr), NIXL_SUCCESS);
+    {
+        const LogIgnoreGuard lig("getLocalPartialMD: serialization failed");
+
+        ASSERT_NE(src.agent->getLocalPartialMD(unregistered_descs, md, nullptr), NIXL_SUCCESS);
+
+        EXPECT_EQ(lig.getIgnoredCount(), 1);
+    }
 
     // Case 2: Attempt to load connection info on agent without backend
-
     ASSERT_EQ(src.agent->getLocalPartialMD({DRAM_SEG}, md, nullptr), NIXL_SUCCESS);
 
     // Agent 1 has no backend
-    ASSERT_NE(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+    {
+        const LogIgnoreGuard lig("loadRemoteMD: no common backend found");
+
+        ASSERT_NE(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+
+        EXPECT_EQ(lig.getIgnoredCount(), 1);
+    }
 
     // Case 3: Attempt to load metadata without connection info
 
@@ -309,7 +333,14 @@ TEST_F(MetadataExchangeTestFixture, GetLocalPartialWithErrors) {
     ASSERT_EQ(src.agent->getLocalPartialMD(valid_descs, md, nullptr), NIXL_SUCCESS);
 
     // Agent 1 has no connection info of agent 0
-    ASSERT_NE(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+    {
+        const LogIgnoreGuard lig("loadRemoteMD: error loading remote metadata for agent 'agent_0' "
+                                 "with status NIXL_ERR_NOT_FOUND");
+
+        ASSERT_NE(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+
+        EXPECT_EQ(lig.getIgnoredCount(), 1);
+    }
 
     // Case 4: Attempt to reload connection info with changed metadata
 
@@ -320,8 +351,15 @@ TEST_F(MetadataExchangeTestFixture, GetLocalPartialWithErrors) {
     ASSERT_EQ(remote_name, src.name);
 
     // Change the metadata before loading
-    md[100] += 1;
-    ASSERT_NE(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+    {
+        const LogIgnoreGuard lig("loadRemoteMD: error loading connection info for backend 'UCX' "
+                                 "with status NIXL_ERR_NOT_ALLOWED");
+
+        md[100] += 1;
+        ASSERT_NE(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+
+        EXPECT_EQ(lig.getIgnoredCount(), 1);
+    }
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
@@ -330,7 +368,6 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
-    auto sleep_time = std::chrono::seconds(1);
     nixl_blob_t md;
 
     nixl_opt_args_t send_args;
@@ -339,18 +376,34 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
 
     ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
 
-    std::this_thread::sleep_for(sleep_time);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
 
     ASSERT_EQ(src.agent->invalidateLocalMD(&send_args), NIXL_SUCCESS);
 
     // Send to invalid IP address, should not block the test
-    send_args.ipAddr = "10.10.10.10";
-    send_args.port = 1234;
-    ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
+    const std::string ip_str = "10.10.10.10";
+    const uint16_t port = 1234;
+    const std::string port_str = std::to_string(port);
+    send_args.ipAddr = ip_str;
+    send_args.port = port;
+    {
+        const LogIgnoreGuard lig1("poll timed out for ip_addr: " + ip_str +
+                                  " and port: " + port_str);
+        const LogIgnoreGuard lig2("Listener thread could not connect to IP " + ip_str +
+                                  " and port " + port_str);
+        const LogIgnoreGuard lig3("getsockopt gave error for ip_addr: " + ip_str +
+                                  " and port: " + port_str + ": No route to host");
 
-    std::this_thread::sleep_for(sleep_time);
+        ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
+
+        std::this_thread::sleep_for(std::chrono::seconds(3)); // Must exceed timeout to catch logs.
+
+        const size_t ignored =
+            lig1.getIgnoredCount() + lig2.getIgnoredCount() + lig3.getIgnoredCount();
+        EXPECT_GE(ignored, 1);
+    }
 
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
 }
@@ -443,7 +496,6 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
 
     src.initDefault();
 
-    auto sleep_time = std::chrono::seconds(1);
     nixl_blob_t md;
 
     nixl_opt_args_t send_args;
@@ -455,15 +507,33 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
     nixl_reg_dlist_t unregistered_descs(DRAM_SEG);
     unregistered_descs.addDesc(unregistered_buffer.getBlobDesc());
 
-    ASSERT_NE(src.agent->sendLocalPartialMD(unregistered_descs, &send_args), NIXL_SUCCESS);
+    {
+        const LogIgnoreGuard lig1("getLocalPartialMD: serialization failed");
+        const LogIgnoreGuard lig2("sendLocalPartialMD: error getting local partial metadata with "
+                                  "status NIXL_ERR_NOT_FOUND");
+
+        ASSERT_NE(src.agent->sendLocalPartialMD(unregistered_descs, &send_args), NIXL_SUCCESS);
+
+        EXPECT_EQ(lig1.getIgnoredCount(), 1);
+        EXPECT_EQ(lig2.getIgnoredCount(), 1);
+    }
 
     // Case 2: Attempt to load connection info on agent without backend
+    {
+        const LogIgnoreGuard lig1("loadRemoteMD: no common backend found");
+        const LogIgnoreGuard lig2(std::regex("loadRemoteMD in listener thread failed for md from "
+                                             "peer 127.0.0.1:[0-9]+ with error NIXL_ERR_BACKEND"));
 
-    ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
+        ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
 
-    std::this_thread::sleep_for(sleep_time);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+
+        EXPECT_EQ(lig1.getIgnoredCount(), 1);
+        EXPECT_EQ(lig2.getIgnoredCount(), 1);
+    }
 
     // Agent 1 has no backend
+
     ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
 }
 
@@ -475,6 +545,8 @@ TEST_F(MetadataExchangeTestFixture, LocalNonLocalMDExchange) {
     nixl_status_t status;
     std::string backend_name;
     for (const auto& name : std::set<std::string>{"GDS", "POSIX"}) {
+        const LogIgnoreGuard lig1("Error initializing GPU Direct Storage driver");
+        const LogIgnoreGuard lig2("createBackend: backend initialization error for 'GDS'");
         status = src.agent->createBackend(name, {}, backend);
         if (status == NIXL_SUCCESS) {
             backend_name = name;
@@ -506,8 +578,19 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
     auto sleep_time = std::chrono::seconds(10);
     nixl_blob_t md;
 
-    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name), NIXL_SUCCESS);
-    std::this_thread::sleep_for(sleep_time);
+    {
+        // Expected due to failure of checkRemoteMd() below?
+        const LogIgnoreGuard lig1(
+            std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/agent_0/metadata"));
+        const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
+
+        ASSERT_EQ(dst.agent->fetchRemoteMD(src.name), NIXL_SUCCESS);
+
+        std::this_thread::sleep_for(sleep_time);
+
+        EXPECT_EQ(lig1.getIgnoredCount(), 1);
+        EXPECT_EQ(lig2.getIgnoredCount(), 1);
+    }
     ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
 
     ASSERT_EQ(src.agent->sendLocalMD(), NIXL_SUCCESS);
@@ -527,9 +610,23 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
     ASSERT_NE(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
 
     // Fetch invalid agent name. This should not block the commWorker thread forever
-    ASSERT_EQ(dst.agent->fetchRemoteMD("invalid_agent_name"), NIXL_SUCCESS);
-    // Sleep to make sure commWorker started handling the fetch before exiting
-    std::this_thread::sleep_for(sleep_time);
+    {
+        const LogIgnoreGuard lig1(
+            std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/invalid_agent_name/metadata"));
+        const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
+
+        ASSERT_EQ(dst.agent->fetchRemoteMD("invalid_agent_name"), NIXL_SUCCESS);
+
+        // Sleep to make sure commWorker started handling the fetch before exiting
+        std::this_thread::sleep_for(sleep_time);
+
+        EXPECT_EQ(lig1.getIgnoredCount(), 1);
+        EXPECT_EQ(lig2.getIgnoredCount(), 1);
+    }
+
+    // Prevent invalidateLocalMD() from begin called again in TearDown()
+    // (which would generate more undesired warning/error log messages).
+    src.agent.reset();
 }
 
 TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemote) {
@@ -619,6 +716,10 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemote) {
     std::this_thread::sleep_for(sleep_time);
 
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, valid_descs.trim()), NIXL_ERR_NOT_FOUND);
+
+    // Prevent invalidateLocalMD() from begin called again in TearDown()
+    // (which would generate more undesired warning/error log messages).
+    src.agent.reset();
 }
 
 TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors) {
@@ -634,24 +735,53 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
     nixl_opt_args_t send_args;
 
     // Case 1: Send without label
-    ASSERT_NE(src.agent->sendLocalPartialMD({DRAM_SEG}, nullptr), NIXL_SUCCESS);
-    ASSERT_NE(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
+    {
+        const LogIgnoreGuard lig("sendLocalPartialMD: metadata label is required for etcd send of "
+                                 "local partial metadata");
+
+        ASSERT_NE(src.agent->sendLocalPartialMD({DRAM_SEG}, nullptr), NIXL_SUCCESS);
+
+        ASSERT_NE(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
+
+        EXPECT_EQ(lig.getIgnoredCount(), 2);
+    }
 
     // Case 2: Fetch without backend (currently only prints error)
     send_args.metadataLabel = "conn_info";
+
     ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
 
-    nixl_opt_args_t fetch_args;
-    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &fetch_args), NIXL_SUCCESS);
+    {
+        const LogIgnoreGuard lig1(
+            std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/agent_0/metadata"));
+        const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
-    std::this_thread::sleep_for(sleep_time);
+        nixl_opt_args_t fetch_args;
+        ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &fetch_args), NIXL_SUCCESS);
+
+        std::this_thread::sleep_for(sleep_time);
+
+        EXPECT_EQ(lig1.getIgnoredCount(), 1);
+        EXPECT_EQ(lig2.getIgnoredCount(), 1);
+    }
+
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
 
     // Case 3: Fetch with invalid label (should not block the test)
-    fetch_args.metadataLabel = "invalid_label";
-    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &fetch_args), NIXL_SUCCESS);
+    {
+        const LogIgnoreGuard lig1(
+            std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/agent_0/invalid_label"));
+        const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
-    std::this_thread::sleep_for(sleep_time);
+        nixl_opt_args_t fetch_args;
+        fetch_args.metadataLabel = "invalid_label";
+        ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &fetch_args), NIXL_SUCCESS);
+
+        std::this_thread::sleep_for(sleep_time);
+
+        EXPECT_EQ(lig1.getIgnoredCount(), 1);
+        EXPECT_EQ(lig2.getIgnoredCount(), 1);
+    }
 }
 
 } // namespace metadata_exchange
