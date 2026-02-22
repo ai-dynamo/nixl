@@ -115,11 +115,6 @@ limitations under the License.
 * Continuation lines should be indented by 4 spaces
 * Namespace content should be indented (inner namespace indentation)
 
-### Empty Lines
-
-* Maximum of **2 consecutive empty lines**
-* Files must end with a **newline character**
-
 ### Function Declarations
 
 * Return type should be on a separate line from the function name
