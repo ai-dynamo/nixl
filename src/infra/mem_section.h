@@ -23,6 +23,7 @@
 #include <array>
 #include <string>
 #include <set>
+#include <cassert>
 #include "nixl_descriptors.h"
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -71,7 +72,10 @@ public:
     verifySorted() const;
 
     nixlSectionDesc &
-    operator[](unsigned int index) override;
+    operator[](size_t index) {
+        assert(verifySorted());
+        return descs[index];
+    }
 
     int
     getIndex(const nixlBasicDesc &query) const override;
