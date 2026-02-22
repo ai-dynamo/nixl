@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/str_split.h"
 #include <asio.hpp>
 namespace {
     void moveNotifList(notif_list_t &src, notif_list_t &tgt)
@@ -826,7 +827,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     nixl_b_params_t *custom_params = init_params.customParams;
 
     if (custom_params->count("device_list")!=0)
-        devs = str_split((*custom_params)["device_list"], ", ");
+        devs = absl::StrSplit((*custom_params)["device_list"], ", ");
 
     size_t num_workers = nixl_b_params_get(custom_params, "num_workers", 1);
     size_t num_threads = nixl_b_params_get(custom_params, "num_threads", 0);
@@ -1571,32 +1572,12 @@ nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)
 }
 
 nixl_status_t
-nixlUcxEngine::prepMemoryView(const nixl_remote_meta_dlist_t &meta_dlist,
-                              nixlMemoryViewH &mvh,
-                              const nixl_opt_b_args_t *opt_args) const {
-    const auto desc_count = static_cast<size_t>(meta_dlist.descCount());
-    std::vector<std::unique_ptr<nixl::ucx::remoteMem>> remote_mems;
+nixlUcxEngine::prepMemView(const nixl_remote_meta_dlist_t &dlist,
+                           nixlMemViewH &mvh,
+                           const nixl_opt_b_args_t *opt_args) const {
     const size_t worker_id = getWorkerId(opt_args);
-    remote_mems.reserve(desc_count);
-    for (size_t i = 0; i < desc_count; ++i) {
-        if (meta_dlist[i].remoteAgent == nixl_invalid_agent) {
-            remote_mems.emplace_back();
-            continue;
-        }
-
-        auto remoteMd = static_cast<const nixlUcxPublicMetadata *>(meta_dlist[i].metadataP);
-        if (!remoteMd || !remoteMd->conn) {
-            NIXL_ERROR << "No connection found in remote metadata";
-            return NIXL_ERR_NOT_FOUND;
-        }
-
-        remote_mems.emplace_back(new nixl::ucx::remoteMem{*remoteMd->conn->getEp(worker_id),
-                                                          static_cast<uint64_t>(meta_dlist[i].addr),
-                                                          remoteMd->getRkey(worker_id)});
-    }
-
     try {
-        mvh = nixl::ucx::createMemList(remote_mems, *getWorker(worker_id));
+        mvh = nixl::ucx::createMemList(dlist, worker_id, *getWorker(worker_id));
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
@@ -1606,20 +1587,12 @@ nixlUcxEngine::prepMemoryView(const nixl_remote_meta_dlist_t &meta_dlist,
 }
 
 nixl_status_t
-nixlUcxEngine::prepMemoryView(const nixl_meta_dlist_t &meta_dlist,
-                              nixlMemoryViewH &mvh,
-                              const nixl_opt_b_args_t *opt_args) const {
-    std::vector<nixlUcxMem> local_mems;
-    const auto desc_count = static_cast<size_t>(meta_dlist.descCount());
-    local_mems.reserve(desc_count);
-    for (size_t i = 0; i < desc_count; ++i) {
-        auto localMd = static_cast<const nixlUcxPrivateMetadata *>(meta_dlist[i].metadataP);
-        local_mems.emplace_back(localMd->mem);
-    }
-
+nixlUcxEngine::prepMemView(const nixl_meta_dlist_t &dlist,
+                           nixlMemViewH &mvh,
+                           const nixl_opt_b_args_t *opt_args) const {
     const size_t worker_id = getWorkerId(opt_args);
     try {
-        mvh = nixl::ucx::createMemList(local_mems, *getWorker(worker_id));
+        mvh = nixl::ucx::createMemList(dlist, *getWorker(worker_id));
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
@@ -1629,6 +1602,6 @@ nixlUcxEngine::prepMemoryView(const nixl_meta_dlist_t &meta_dlist,
 }
 
 void
-nixlUcxEngine::releaseMemoryView(nixlMemoryViewH mvh) const {
-    nixl::ucx::releaseMemList(mvh);
+nixlUcxEngine::releaseMemView(nixlMemViewH mem_view) const {
+    nixl::ucx::releaseMemList(mem_view);
 }

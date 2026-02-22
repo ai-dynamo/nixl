@@ -16,6 +16,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,15 @@
 class UcxHardwareWarningTest : public ::testing::Test {
 protected:
     gtest::ScopedEnv envHelper_;
+
+    void
+    SetUp() override {
+        if (std::getenv("NIXL_CI_NON_GPU") != nullptr) {
+            // In the non-gpu CI, GPUs that are not available in the container may still be
+            // present under sysfs, causing the hardware warning tests to fail.
+            GTEST_SKIP() << "NIXL_CI_NON_GPU is set, skipping hardware warning tests";
+        }
+    }
 };
 
 /**
@@ -39,7 +49,7 @@ TEST_F(UcxHardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
     }
 
     // Disable CUDA transport in UCX
-    envHelper_.addVar("UCX_TLS", "^cuda");
+    envHelper_.addVar("UCX_TLS", "^cuda,rc_gda");
 
     std::vector<std::string> devs;
     nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
@@ -75,7 +85,7 @@ TEST_F(UcxHardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
     }
 
     // Disable IB transport in UCX
-    envHelper_.addVar("UCX_TLS", "^ib");
+    envHelper_.addVar("UCX_TLS", "^ib,rc_gda");
 
     std::vector<std::string> devs;
     nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);

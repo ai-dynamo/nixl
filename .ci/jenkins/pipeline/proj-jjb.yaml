@@ -40,7 +40,7 @@
               value: $
     description: Do NOT edit this job through the Web GUI !  # Manual edits will be overwritten
     concurrent: true    # Allow multiple builds to run simultaneously
-    sandbox: true      # Run in sandbox mode for security
+    sandbox: false
     parameters:
         - string:
             name: "VARIABLE_FROM_POST"
@@ -54,6 +54,51 @@
         // Authenticate with GitHub using stored credentials
         withCredentials([usernamePassword(credentialsId: 'svc-nixl-github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {{
           githubHelper = GithubHelper.getInstance("${{GIT_PASSWORD}}", VARIABLE_FROM_POST)
+        }}
+
+        // Abort previous dispatcher runs for the same PR and their leaf jobs
+        def currentPrNumber = githubHelper.getPRNumber()?.toString()
+        if (currentPrNumber) {{
+          def slurper = new groovy.json.JsonSlurper()
+          try {{
+            def staleBuilds = Jenkins.instance.getItemByFullName(env.JOB_NAME).builds.findAll {{
+              it.isBuilding() && it.number < currentBuild.number
+            }}.findAll {{ b ->
+              def gd = b.getAction(hudson.model.ParametersAction)?.getParameters()?.find {{ it.name == 'VARIABLE_FROM_POST' }}?.value
+              def otherPr = gd ? slurper.parseText(gd)?.issue?.number?.toString() : null
+              otherPr == currentPrNumber
+            }}
+
+            if (staleBuilds) {{
+              echo "PR #${{currentPrNumber}}: found ${{staleBuilds.size()}} stale dispatcher(s) to abort"
+            }}
+
+            // Collect leaf builds from each stale dispatcher's console log
+            def leafBuilds = []
+            staleBuilds.each {{ b ->
+              b.getLog(1000).each {{ line ->
+                def m = (line =~ /Starting building: (\S+) #(\d+)/)
+                if (m) {{
+                  def child = Jenkins.instance.getItemByFullName(m[0][1])?.getBuildByNumber(m[0][2] as int)
+                  if (child) leafBuilds.add(child)
+                }}
+              }}
+            }}
+
+            // Kill leaf jobs first (unblocks dispatcher), then dispatchers
+            def allTargets = leafBuilds + staleBuilds
+            for (int attempt = 1; attempt <= 3; attempt++) {{
+              def alive = allTargets.findAll {{ it.isBuilding() }}
+              if (!alive) break
+              alive.each {{ target ->
+                echo "${{attempt > 1 ? 'Retry ' + attempt + ': ' : ''}}Killing ${{target.fullDisplayName}}"
+                target.doKill()
+              }}
+              if (attempt < 3) sleep 5
+            }}
+          }} catch(Exception e) {{
+            echo "Could not abort previous builds: ${{e.message}}"
+          }}
         }}
 
         def blueOceanUrl = "${{JENKINS_URL}}blue/organizations/jenkins/${{env.JOB_BASE_NAME}}/detail/${{env.JOB_BASE_NAME}}/${{env.BUILD_NUMBER}}/pipeline/"
@@ -228,10 +273,7 @@
       • Builds and pushes x86_64 &amp; aarch64 images with any NIXL/UCX version combination<br/>
       • Choose between <b>nixlbench</b> or <b>nixl</b> build targets<br/>
       • Optional latest tag update via <code>UPDATE_LATEST</code> parameter<br/>
-      • Images pushed to both registries:<br/>
-      &nbsp;&nbsp;- https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/<br/>
-      &nbsp;&nbsp;- https://urm.nvidia.com/sw-nbu-swx-nixl-docker-local/<br/>
-      &nbsp;&nbsp;Use <code>verification/nixlbench/</code> or <code>verification/nixl/</code> based on target<br/>
+      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ <code>verification/nixlbench/</code> or <code>verification/nixl/</code> based on target<br/>
       • You must be part of access-artifactory-nbu-swx-nixl-users DL group in order to work with these images
       <br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>

@@ -50,6 +50,7 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 |-----------|-------------|---------|----------|
 | `account_url` | URL of Azure Storage account to use (e.g., `https://<account-name>.blob.core.windows.net`) | - | Yes* |
 | `container_name` | Name of Azure Storage container to use | - | Yes* |
+| `ca_bundle` | Path to a custom certificate bundle | - | No |
 
 
 \* If `account_url` or `container_name`  parameter is not provided, the `AZURE_STORAGE_ACCOUNT_URL` and `AZURE_STORAGE_CONTAINER_NAME` environment variables will be used as fallbacks
@@ -63,6 +64,7 @@ The following environment variables are supported for Azure Blob Storage configu
 |----------|-------------|---------|
 | `AZURE_STORAGE_ACCOUNT_URL` | URL of Azure Storage account to use | `https://<account-name>.blob.core.windows.net` |
 | `AZURE_STORAGE_CONTAINER_NAME` | Name of Azure Storage container to use | `my-container` |
+| `AZURE_CA_BUNDLE` | Path to a custom certificate bundle | `/path/to/cabundle.pem` |
 
 
 ### Configuration Priority

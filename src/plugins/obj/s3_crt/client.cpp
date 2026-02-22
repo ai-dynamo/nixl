@@ -28,6 +28,7 @@ awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
 
     auto credentials_opt = nixl_s3_utils::createAWSCredentials(custom_params);
     bool use_virtual_addressing = nixl_s3_utils::getUseVirtualAddressing(custom_params);
+    config.useVirtualAddressing = use_virtual_addressing;
 
     if (credentials_opt.has_value())
         s3CrtClient_ = std::make_unique<Aws::S3Crt::S3CrtClient>(

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,6 @@
 #include <fcntl.h>
 #include "nixl.h"
 #include "common/nixl_time.h"
-#include "common/str_tools.h"
 #include "agent_data.h"
 #include "common/nixl_log.h"
 #if HAVE_ETCD
@@ -27,6 +26,7 @@
 #include <future>
 #endif // HAVE_ETCD
 #include <absl/strings/str_format.h>
+#include <absl/strings/str_split.h>
 #include <poll.h>
 
 const std::string default_metadata_label = "metadata";
@@ -87,8 +87,15 @@ int connectToIP(std::string ip_addr, int port) {
     // Check if connection was successful
     int error = 0;
     socklen_t len = sizeof(error);
-    if (getsockopt(ret_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
+    if (getsockopt(ret_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
         NIXL_PERROR << "getsockopt failed for ip_addr: " << ip_addr << " and port: " << port;
+        close(ret_fd);
+        return -1;
+    }
+
+    if (error != 0) {
+        errno = error; // For the 'PERROR'.
+        NIXL_PERROR << "getsockopt gave error for ip_addr: " << ip_addr << " and port: " << port;
         close(ret_fd);
         return -1;
     }
@@ -658,7 +665,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                 continue;
             }
 
-            command_list = str_split_substr(commands, "NIXLCOMM:");
+            command_list = absl::StrSplit(commands, "NIXLCOMM:");
 
             for(const auto &command : command_list) {
 
