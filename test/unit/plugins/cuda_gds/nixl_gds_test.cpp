@@ -96,7 +96,7 @@ void printProgress(float progress) {
         else if (i == pos) std::cout << ">";
         else std::cout << " ";
     }
-    std::cout << std::fixed << std::setprecision(1) << (progress * 100.0) << "% ";
+    std::cout << "] " << std::fixed << std::setprecision(1) << (progress * 100.0) << "% ";
 
     // Add completion indicator
     if (progress >= 1.0) {
