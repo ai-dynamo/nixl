@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,9 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Check for ASIO dependency
+asio_dep = dependency('asio', required: true)
 nixl_object_app = executable('nixl_object_test', 'nixl_object_test.cpp',
                           dependencies: [nixl_dep, nixl_infra, nixl_common_dep,
                           aws_s3.partial_dependency(compile_args: false, includes: true, link_args: true, links: true),
-                                dependency('asio', required: true),],
+                                asio_dep],
                           include_directories: [nixl_inc_dirs, utils_inc_dirs],
                           install: true)

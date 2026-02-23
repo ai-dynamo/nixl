@@ -99,6 +99,15 @@ if enabled_plugins.get('GUSLI')
     endif
 endif
 
+# Check for AWS SDK dependencies for S3
+aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
+aws_s3_crt = dependency('aws-cpp-sdk-s3-crt', static: false, required: false)
+aws_core = dependency('aws-cpp-sdk-core', required: false, static: false)
+
 if enabled_plugins.get('OBJ')
-    subdir('object')
+    if (not aws_s3.found() or not aws_s3_crt.found() or not aws_core.found()) and is_explicit_enable
+        error('OBJ plugin tests requested but AWS SDK dependencies not found')
+    elif aws_s3.found() and aws_s3_crt.found() and aws_core.found()
+        subdir('object')
+    endif
 endif
