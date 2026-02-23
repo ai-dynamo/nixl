@@ -25,8 +25,11 @@
 extern "C" {
 #include <ucp/api/device/ucp_host.h>
 }
+#else
+#include <exception>
+#include <string>
+#include <string_view>
 #endif
-
 #include <stdexcept>
 
 #ifdef HAVE_UCX_GPU_DEVICE_API
@@ -178,18 +181,18 @@ releaseMemList(void *mvh) noexcept {
 } // namespace nixl::ucx
 #else
 namespace {
-const std::string error_message{"UCX GPU device API is not supported"};
+constexpr std::string_view error_message{"UCX GPU device API is not supported"};
 }
 
 namespace nixl::ucx {
 void *
 createMemList(const nixl_remote_meta_dlist_t &, size_t, nixlUcxWorker &) {
-    throw std::runtime_error(error_message);
+    throw std::runtime_error(std::string{error_message});
 }
 
 void *
 createMemList(const nixl_meta_dlist_t &, const nixlUcxWorker &) {
-    throw std::runtime_error(error_message);
+    throw std::runtime_error(std::string{error_message});
 }
 
 void
