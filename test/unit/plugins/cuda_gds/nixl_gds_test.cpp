@@ -83,7 +83,7 @@ void print_usage(const char* program_name) {
         << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
         << "  -h, --help              Show this help message\n"
         << "\nExample:\n"
-        << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M -t 5 -D /path/to/dir\n";
+        << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 128 -m 16M -t 5 -D /path/to/dir\n";
 }
 
 void printProgress(float progress) {
