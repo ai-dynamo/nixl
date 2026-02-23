@@ -178,7 +178,7 @@ releaseMemList(void *mvh) noexcept {
 } // namespace nixl::ucx
 #else
 namespace {
-const std::string error_message{"UCX GPU device API V2 is not supported"};
+const std::string error_message{"UCX GPU device API is not supported"};
 }
 
 namespace nixl::ucx {

@@ -272,7 +272,9 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
             int main() { return 0; }
         ''', dependencies : [ucx_dep, doca_gpunetio_dep], args: nvcc_flags)
 
-    have_host_side = cpp.has_function('ucp_device_remote_mem_list_create', dependencies: ucx_dep)
+    have_host_side = cpp.has_function('ucp_device_remote_mem_list_create',
+        prefix: '#include <ucp/api/device/ucp_host.h>',
+        dependencies: ucx_dep)
 
     if have_gpu_side and have_host_side
         ucx_gpu_device_api_available = true
