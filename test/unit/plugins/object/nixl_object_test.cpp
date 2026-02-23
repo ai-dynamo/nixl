@@ -46,6 +46,11 @@ static size_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
 #define PROGRESS_WIDTH 50
 
 // Helper function to parse size strings like "1K", "2M", "3G"
+/**
+ * @brief Parse size strings with suffixes like "1K", "2M", "3G"
+ * @param size_str The size string to parse (e.g., "16M", "1G", "1024K")
+ * @return The parsed size in bytes, or 0 if invalid format
+ */
 size_t
 parse_size(const char *size_str) {
     char *end;
@@ -72,6 +77,10 @@ parse_size(const char *size_str) {
     return size;
 }
 
+/**
+ * @brief Print usage information for the program
+ * @param program_name The name of the program executable
+ */
 void
 print_usage(const char *program_name) {
     std::cerr << "Usage: " << program_name << " [options] <directory_path>\n"
@@ -93,6 +102,10 @@ print_usage(const char *program_name) {
               << "  " << program_name << " -a default -d -n 100 -s 16M -t 5\n";
 }
 
+/**
+ * @brief Print a progress bar to the console
+ * @param progress Progress value between 0.0 and 1.0
+ */
 void
 printProgress(float progress) {
     int barWidth = PROGRESS_WIDTH;
@@ -119,6 +132,11 @@ printProgress(float progress) {
 }
 
 // Helper function to fill buffer with repeating pattern
+/**
+ * @brief Fill buffer with a repeating test pattern
+ * @param buffer Pointer to the buffer to fill
+ * @param size Size of the buffer in bytes
+ */
 void
 fill_test_pattern(void *buffer, size_t size) {
     char *buf = (char *)buffer;
@@ -133,12 +151,22 @@ fill_test_pattern(void *buffer, size_t size) {
     }
 }
 
+/**
+ * @brief Clear a buffer by setting all bytes to zero
+ * @param buffer Pointer to the buffer to clear
+ * @param size Size of the buffer in bytes
+ */
 void
 clear_buffer(void *buffer, size_t size) {
     memset(buffer, 0, size);
 }
 
 // Helper function to format duration
+/**
+ * @brief Format duration in microseconds to a human-readable string
+ * @param us Duration in microseconds
+ * @return Formatted duration string (e.g., "500 ms", "1.234 sec")
+ */
 std::string
 format_duration(nixlTime::us_t us) {
     nixlTime::ms_t ms = us / 1000.0;
@@ -151,6 +179,12 @@ format_duration(nixlTime::us_t us) {
     return ss.str();
 }
 
+/**
+ * @brief Main function for NIXL object storage performance testing
+ * @param argc Number of command line arguments
+ * @param argv Array of command line argument strings
+ * @return Exit code (0 for success, non-zero for failure)
+ */
 int
 main(int argc, char *argv[]) {
     nixl_status_t ret = NIXL_SUCCESS;
