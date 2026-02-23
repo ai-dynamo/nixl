@@ -83,7 +83,7 @@ parse_size(const char *size_str) {
  */
 void
 print_usage(const char *program_name) {
-    std::cerr << "Usage: " << program_name << " [options] <directory_path>\n"
+    std::cerr << "Usage: " << program_name << " [options]\n"
               << "Options:\n"
               << "  -n, --num-transfers N   Number of transfers to perform (default: "
               << DEFAULT_NUM_TRANSFERS << ")\n"
@@ -96,7 +96,9 @@ print_usage(const char *program_name) {
               << "  -u, --bucket BUCKET     S3 Bucket name\n"
               << "  -h, --help              Show this help message\n"
               << "\nExamples:\n"
-              << "  " << program_name << " -n 100 -s 16M -t 5\n";
+              << "  " << program_name << " -n 100 -s 16M -t 5\n"
+              << "  " << program_name
+              << " -n 100 -s 16M -t 5 -e http://s3.example.com:9000 -u my-bucket\n";
 }
 
 /**
