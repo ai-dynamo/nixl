@@ -135,11 +135,11 @@ printProgress(float progress) {
  * @return Timestamped prefix string
  */
 std::string
-generate_timestamped_object_prefix (const std::string &base_name) {
-    std::time_t t = std::time (nullptr);
+generate_timestamped_object_prefix(const std::string &base_name) {
+    std::time_t t = std::time(nullptr);
     char timestamp[100];
-    std::strftime (timestamp, sizeof (timestamp), "%Y%m%d%H%M%S", std::localtime (&t));
-    return base_name + std::string (timestamp);
+    std::strftime(timestamp, sizeof(timestamp), "%Y%m%d%H%M%S", std::localtime(&t));
+    return base_name + std::string(timestamp);
 }
 
 // Helper function to fill buffer with repeating pattern
