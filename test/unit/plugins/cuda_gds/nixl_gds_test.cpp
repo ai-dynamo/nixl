@@ -157,33 +157,17 @@ cudaError_t clear_gpu_buffer(void* gpu_buffer, size_t size) {
     return cudaMemset(gpu_buffer, 0, size);
 }
 
-// Helper function to validate GPU buffer
-bool validate_gpu_buffer(void* gpu_buffer, size_t size) {
-    char* host_buffer = (char*)malloc(size);
-    char* expected_buffer = (char*)malloc(size);
-    if (!host_buffer || !expected_buffer) {
-        free(host_buffer);
-        free(expected_buffer);
-        return false;
-    }
-
+// Helper function to validate GPU buffer with pre-allocated buffers
+bool
+validate_gpu_buffer(void *gpu_buffer, size_t size, char *host_buffer, const char *expected_buffer) {
     // Copy GPU data to host
     cudaError_t err = cudaMemcpy(host_buffer, gpu_buffer, size, cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
-        free(host_buffer);
-        free(expected_buffer);
         return false;
     }
 
-    // Create expected pattern
-    fill_test_pattern(expected_buffer, size);
-
     // Compare
-    bool match = (memcmp(host_buffer, expected_buffer, size) == 0);
-
-    free(host_buffer);
-    free(expected_buffer);
-    return match;
+    return (memcmp(host_buffer, expected_buffer, size) == 0);
 }
 
 // Helper function to format duration
@@ -614,29 +598,45 @@ int main(int argc, char *argv[])
         std::cout << "\n============================================================" << std::endl;
         std::cout << "PHASE 5: Validating read data" << std::endl;
         std::cout << "============================================================" << std::endl;
+
+        // Pre-allocate validation buffers once for all transfers
+        char *host_buffer = use_vram ? (char *)malloc(transfer_size) : NULL;
+        char *expected_buffer = (char *)malloc(transfer_size);
+        if ((use_vram && !host_buffer) || !expected_buffer) {
+            std::cerr << "Failed to allocate validation buffers\n";
+            free(host_buffer);
+            free(expected_buffer);
+            goto cleanup;
+        }
+
+        // Generate expected pattern once
+        fill_test_pattern(expected_buffer, transfer_size);
+
         for (i = 0; i < num_transfers; i++) {
             if (use_vram) {
-                if (!validate_gpu_buffer(vram_addr[i], transfer_size)) {
+                if (!validate_gpu_buffer(
+                        vram_addr[i], transfer_size, host_buffer, expected_buffer)) {
                     std::cerr << "VRAM buffer " << i << " validation failed\n";
+                    free(host_buffer);
+                    free(expected_buffer);
                     goto cleanup;
                 }
             }
             if (use_dram) {
-                char* expected_buffer = (char*)malloc(transfer_size);
-                if (!expected_buffer) {
-                    std::cerr << "Failed to allocate validation buffer\n";
-                    goto cleanup;
-                }
-                fill_test_pattern(expected_buffer, transfer_size);
                 if (memcmp(dram_addr[i], expected_buffer, transfer_size) != 0) {
                     std::cerr << "DRAM buffer " << i << " validation failed\n";
+                    free(host_buffer);
                     free(expected_buffer);
                     goto cleanup;
                 }
-                free(expected_buffer);
             }
             printProgress(float(i + 1) / num_transfers);
         }
+
+        // Free validation buffers
+        free(host_buffer);
+        free(expected_buffer);
+
         std::cout << "\nVerification completed successfully!" << std::endl;
     }
 
