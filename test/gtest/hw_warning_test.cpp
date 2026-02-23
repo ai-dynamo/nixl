@@ -154,10 +154,12 @@ TEST_F(HardwareWarningTest, WarnWhenEfaPresentAndNonLibfabricBackend) {
     }
 
     EXPECT_EQ(log_sink.countWarningsMatching("Amazon EFA(s) were detected, but the UCX backend was "
-                                             "instantiated. It is recommended to use the LIBFABRIC "
-                                             "backend for best performance"),
+                                             "set. It's recommended to use the LIBFABRIC backend "
+                                             "for best performance."),
               1);
     EXPECT_EQ(log_sink.warningCount(), expected_warnings);
+
+    envHelper_.popVar();
 }
 
 /**
@@ -183,4 +185,6 @@ TEST_F(HardwareWarningTest, NoWarningWhenEfaPresentAndLibfabricBackend) {
     EXPECT_EQ(agent.createBackend("LIBFABRIC", {}, backend), NIXL_SUCCESS);
 
     EXPECT_EQ(log_sink.warningCount(), 0);
+
+    envHelper_.popVar();
 }
