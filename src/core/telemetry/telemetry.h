@@ -25,7 +25,6 @@
 
 #include <string>
 #include <vector>
-#include <mutex>
 #include <memory>
 #include <chrono>
 #include <functional>
@@ -84,8 +83,11 @@ private:
     writeEventHelper();
     std::unique_ptr<nixlTelemetryExporter> exporter_;
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
-    std::vector<nixlTelemetryEvent> events_;
-    std::mutex mutex_;
+    // Lock-free double buffer: producers write to event_buffers_[write_buffer_index_]
+    std::vector<nixlTelemetryEvent> event_buffers_[2];
+    size_t max_events_buffered_{0};
+    std::atomic<size_t> write_idx_{0};
+    std::atomic<int> write_buffer_index_{0}; // 0 or 1
     asio::thread_pool pool_;
     periodicTask writeTask_;
     std::string agentName_;
