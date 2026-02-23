@@ -96,8 +96,7 @@ print_usage(const char *program_name) {
               << "  -u, --bucket BUCKET     S3 Bucket name\n"
               << "  -h, --help              Show this help message\n"
               << "\nExamples:\n"
-              << "  " << program_name << " -d -n 100 -s 16M -t 5\n"
-              << "  " << program_name << " -a default -d -n 100 -s 16M -t 5\n";
+              << "  " << program_name << " -n 100 -s 16M -t 5\n";
 }
 
 /**
@@ -214,6 +213,8 @@ main(int argc, char *argv[]) {
     int ret_code = 0;
     nixlXferReqH *write_req = nullptr;
     nixlXferReqH *read_req = nullptr;
+    bool obj_registered = false;
+    bool dram_registered = false;
 
     // Parse command line options
     static struct option long_options[] = {{"num-transfers", required_argument, 0, 'n'},
@@ -349,6 +350,7 @@ main(int argc, char *argv[]) {
         ret_code = 1;
         goto cleanup;
     }
+    obj_registered = true;
 
     ret = agent.registerMem(dram_for_obj);
     if (ret != NIXL_SUCCESS) {
@@ -356,6 +358,7 @@ main(int argc, char *argv[]) {
         ret_code = 1;
         goto cleanup;
     }
+    dram_registered = true;
 
     us_t reg_end = getUs();
 
@@ -555,8 +558,9 @@ main(int argc, char *argv[]) {
     std::cout << "\n============================================================" << std::endl;
     std::cout << "PHASE 6: Validating read data" << std::endl;
     std::cout << "============================================================" << std::endl;
+    char *expected_buffer = (char *)malloc(transfer_size);
+
     for (i = 0; i < num_transfers; i++) {
-        char *expected_buffer = (char *)malloc(transfer_size);
         if (!expected_buffer) {
             std::cerr << "Failed to allocate validation buffer\n";
             ret_code = 1;
@@ -569,10 +573,11 @@ main(int argc, char *argv[]) {
             ret_code = 1;
             goto cleanup;
         }
-        free(expected_buffer);
+
         printProgress(float(i + 1) / num_transfers);
     }
     std::cout << "\nVerification completed successfully!" << std::endl;
+
 
 cleanup:
     std::cout << "\n============================================================" << std::endl;
@@ -590,8 +595,16 @@ cleanup:
     }
 
     // Cleanup resources
-    agent.deregisterMem(obj_for_obj);
-    agent.deregisterMem(dram_for_obj);
+    free(expected_buffer);
+
+    if (obj_registered) {
+        agent.deregisterMem(obj_for_obj);
+        obj_registered = false;
+    }
+    if (dram_registered) {
+        agent.deregisterMem(dram_for_obj);
+        dram_registered = false;
+    }
     for (i = 0; i < num_transfers; i++) {
         if (dram_addr[i]) free(dram_addr[i]);
     }
