@@ -323,19 +323,20 @@ public:
     /**
      * @brief Check if nixlDescList is empty or not
      */
-    inline bool
-    isEmpty() const {
-        return (descs.size() == 0);
+    bool
+    isEmpty() const noexcept {
+        return descs.empty();
     }
 
-    /**
-     * @brief Operator [] overloading, get/set descriptor at [index].
-     *        Can throw std::out_of_range exception.
-     */
     const T &
-    operator[](unsigned int index) const;
-    virtual T &
-    operator[](unsigned int index);
+    operator[](size_t index) const {
+        return descs[index];
+    }
+
+    T &
+    operator[](size_t index) {
+        return descs[index];
+    }
 
     /**
      * @brief Vector like iterators for const and non-const elements
