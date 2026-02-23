@@ -36,7 +36,6 @@
 #define DEFAULT_TRANSFER_SIZE (16 * 1024 * 1024) // 16MB
 #define DEFAULT_ITERATIONS 1 // Default number of iterations
 #define DEFAULT_BACKEND "OBJ"
-#define DEFAULT_ACCEL_TYPE "NONE"
 #define TEST_PHRASE "NIXL Storage Test Pattern 2026"
 #define TEST_PHRASE_LEN (sizeof(TEST_PHRASE) - 1) // -1 to exclude null terminator
 
@@ -77,8 +76,6 @@ void
 print_usage(const char *program_name) {
     std::cerr << "Usage: " << program_name << " [options] <directory_path>\n"
               << "Options:\n"
-              << "  -a, --accelerated ACCEL_TYPE   Accelerated engine type (default: "
-              << DEFAULT_ACCEL_TYPE << ")\n"
               << "  -d, --dram              Use DRAM for memory operations (default)\n"
               << "  -n, --num-transfers N   Number of transfers to perform (default: "
               << DEFAULT_NUM_TRANSFERS << ")\n"
@@ -179,13 +176,11 @@ main(int argc, char *argv[]) {
     nixlTime::us_t reg_time(0);
     double total_data_gb = 0;
     unsigned int iterations = DEFAULT_ITERATIONS;
-    std::string accel_type = DEFAULT_ACCEL_TYPE;
     std::string endpoint;
     std::string bucket;
 
     // Parse command line options
-    static struct option long_options[] = {{"accelerated", required_argument, 0, 'a'},
-                                           {"dram", no_argument, 0, 'd'},
+    static struct option long_options[] = {{"dram", no_argument, 0, 'd'},
                                            {"num-transfers", required_argument, 0, 'n'},
                                            {"size", required_argument, 0, 's'},
                                            {"no-read", no_argument, 0, 'r'},
@@ -196,11 +191,8 @@ main(int argc, char *argv[]) {
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
-    while ((opt = getopt_long(argc, argv, "a:dn:s:rwt:he:u:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dn:s:rwt:he:u:", long_options, NULL)) != -1) {
         switch (opt) {
-        case 'a':
-            accel_type = optarg;
-            break;
         case 'e':
             endpoint = optarg;
             break;
@@ -296,14 +288,6 @@ main(int argc, char *argv[]) {
                               {"use_virtual_addressing", "false"},
                               {"req_checksum", "required"}};
 
-    // Check for an accelerated engine type.  If it is not "default", set it to true and set the
-    // vendor specific type.
-    if (!accel_type.empty() && accel_type != DEFAULT_ACCEL_TYPE) {
-        params["accelerated"] = "true";
-        if (accel_type != "default") {
-            params["type"] = accel_type;
-        }
-    }
 
     // Create backends
     ret = agent.createBackend(DEFAULT_BACKEND, params, obj);
