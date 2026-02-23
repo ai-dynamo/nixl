@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,8 @@
 #include <vector>
 #include <absl/strings/str_format.h>
 #include "backend/backend_engine.h"
-#include "posix_queue.h"
+#include "io_queue.h"
+#include "sync.h"
 
 class nixlPosixBackendReqH : public nixlBackendReqH {
 private:
@@ -31,20 +32,21 @@ private:
     const nixl_meta_dlist_t &local; // Local memory descriptor list
     const nixl_meta_dlist_t &remote; // Remote memory descriptor list
     const nixl_opt_b_args_t *opt_args; // Optional backend-specific arguments
-    const nixl_b_params_t *custom_params_; // Custom backend parameters
     const int queue_depth_; // Queue depth for async I/O
-    std::unique_ptr<nixlPosixQueue> queue; // Async I/O queue instance
-    const nixlPosixQueue::queue_t queue_type_; // Type of queue used
+    int num_confirmed_ios_; // Number of confirmed IOs
+    std::unique_ptr<nixlPosixIOQueue> &io_queue_; // Async I/O queue instance
 
-    nixl_status_t
-    initQueues(); // Initialize async I/O queue
+    void
+    ioDone(uint32_t data_size, int error);
+    static void
+    ioDoneClb(void *ctx, uint32_t data_size, int error);
 
 public:
     nixlPosixBackendReqH(const nixl_xfer_op_t &operation,
                          const nixl_meta_dlist_t &local,
                          const nixl_meta_dlist_t &remote,
                          const nixl_opt_b_args_t *opt_args,
-                         const nixl_b_params_t *custom_params);
+                         std::unique_ptr<nixlPosixIOQueue> &io_queue);
     ~nixlPosixBackendReqH() {};
 
     nixl_status_t
@@ -71,7 +73,9 @@ public:
 
 class nixlPosixEngine : public nixlBackendEngine {
 private:
-    const nixlPosixQueue::queue_t queue_type_;
+    std::string_view io_queue_type_;
+    mutable std::unique_ptr<nixlPosixIOQueue> io_queue_;
+    mutable nixlLock io_queue_lock_;
 
 public:
     nixlPosixEngine(const nixlBackendInitParams *init_params);
