@@ -129,6 +129,19 @@ printProgress(float progress) {
     }
 }
 
+/**
+ * @brief Generate a timestamped prefix for object keys
+ * @param base_name Base name for the object key
+ * @return Timestamped prefix string
+ */
+std::string
+generate_timestamped_object_prefix (const std::string &base_name) {
+    std::time_t t = std::time (nullptr);
+    char timestamp[100];
+    std::strftime (timestamp, sizeof (timestamp), "%Y%m%d%H%M%S", std::localtime (&t));
+    return base_name + std::string (timestamp);
+}
+
 // Helper function to fill buffer with repeating pattern
 /**
  * @brief Fill buffer with a repeating test pattern
@@ -300,6 +313,8 @@ main(int argc, char *argv[]) {
     std::cout << "\n============================================================" << std::endl;
     std::cout << "PHASE 1: Allocating and initializing buffers" << std::endl;
     std::cout << "============================================================" << std::endl;
+
+    std::string object_prefix = generate_timestamped_object_prefix("test-key-");
     for (i = 0; i < num_transfers; i++) {
         // Allocate and initialize DRAM buffer
         if (posix_memalign(&dram_addr[i], PAGE_SIZE, transfer_size) != 0) {
@@ -318,7 +333,7 @@ main(int argc, char *argv[]) {
         objects[i].addr = 0;
         objects[i].len = transfer_size;
         objects[i].devId = i;
-        objects[i].metaInfo = "test-write-key" + std::to_string(i);
+        objects[i].metaInfo = object_prefix + "-" + std::to_string(i);
         obj_for_obj.addDesc(objects[i]);
 
         printProgress(float(i + 1) / num_transfers);
