@@ -232,6 +232,7 @@ main (int argc, char *argv[]) {
     std::string dir_path;
     size_t transfer_size = DEFAULT_TRANSFER_SIZE;
     int num_transfers = DEFAULT_NUM_TRANSFERS;
+    int parsed = 0;
     size_t num_threads = 0;
     nixlTime::us_t total_time (0);
     double total_data_gb = 0;
@@ -275,11 +276,12 @@ main (int argc, char *argv[]) {
             }
             break;
         case 'N':
-            num_threads = atoi (optarg);
-            if (num_threads <= 0) {
-                std::cerr << "Error: Number of iterations must be positive\n";
+            parsed = atoi(optarg);
+            if (parsed <= 0) {
+                std::cerr << "Error: Number of threads must be positive\n";
                 return 1;
             }
+            num_threads = parsed;
             break;
         case 't':
             iterations = atoi (optarg);
