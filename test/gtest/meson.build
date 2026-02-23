@@ -70,7 +70,8 @@ gtest_sources = [
     'metadata_exchange.cpp',
     'common.cpp',
     'query_mem.cpp',
-    'telemetry_test.cpp'
+    'telemetry_test.cpp',
+    'configuration.cpp'
     ]
 
 if ucx_gpu_device_api_available

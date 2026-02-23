@@ -81,7 +81,12 @@ public:
      *        Comparison criteria is devID, then addr, then len
      */
     bool
-    operator<(const nixlBasicDesc &desc) const;
+    operator<(const nixlBasicDesc &desc) const noexcept {
+        if (devId != desc.devId) return (devId < desc.devId);
+        if (addr != desc.addr) return (addr < desc.addr);
+        return (len < desc.len);
+    }
+
     /**
      * @brief Operator overloading (==) to compare BasicDesc objects
      *
@@ -106,7 +111,11 @@ public:
      * @param query   nixlBasicDesc object
      */
     bool
-    covers(const nixlBasicDesc &query) const;
+    covers(const nixlBasicDesc &query) const noexcept {
+        return (devId == query.devId) && (addr <= query.addr) &&
+            ((addr + len) >= (query.addr + query.len));
+    }
+
     /**
      * @brief Check for overlap between BasicDesc objects
      *
@@ -314,19 +323,20 @@ public:
     /**
      * @brief Check if nixlDescList is empty or not
      */
-    inline bool
-    isEmpty() const {
-        return (descs.size() == 0);
+    bool
+    isEmpty() const noexcept {
+        return descs.empty();
     }
 
-    /**
-     * @brief Operator [] overloading, get/set descriptor at [index].
-     *        Can throw std::out_of_range exception.
-     */
     const T &
-    operator[](unsigned int index) const;
-    virtual T &
-    operator[](unsigned int index);
+    operator[](size_t index) const {
+        return descs[index];
+    }
+
+    T &
+    operator[](size_t index) {
+        return descs[index];
+    }
 
     /**
      * @brief Vector like iterators for const and non-const elements
