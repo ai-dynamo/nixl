@@ -90,8 +90,6 @@ print_usage(const char *program_name) {
               << "  -s, --size SIZE         Size of each transfer (default: "
               << DEFAULT_TRANSFER_SIZE << " bytes)\n"
               << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
-              << "  -r, --no-read           Skip read test\n"
-              << "  -w, --no-write          Skip write test\n"
               << "  -t, --iterations N      Number of iterations for each transfer (default: "
               << DEFAULT_ITERATIONS << ")\n"
               << "  -e, --endpoint ENDPOINT S3 Endpoint URL\n"
@@ -194,8 +192,6 @@ main(int argc, char *argv[]) {
     int opt;
     size_t transfer_size = DEFAULT_TRANSFER_SIZE;
     int num_transfers = DEFAULT_NUM_TRANSFERS;
-    bool skip_read = false;
-    bool skip_write = false;
     nixlTime::us_t total_time(0);
     nixlTime::us_t reg_time(0);
     double total_data_gb = 0;
@@ -209,15 +205,13 @@ main(int argc, char *argv[]) {
     // Parse command line options
     static struct option long_options[] = {{"num-transfers", required_argument, 0, 'n'},
                                            {"size", required_argument, 0, 's'},
-                                           {"no-read", no_argument, 0, 'r'},
-                                           {"no-write", no_argument, 0, 'w'},
                                            {"iterations", required_argument, 0, 't'},
                                            {"endpoint", required_argument, 0, 'e'},
                                            {"bucket", required_argument, 0, 'u'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
-    while ((opt = getopt_long(argc, argv, "n:s:rwt:he:u:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "n:s:t:he:u:", long_options, NULL)) != -1) {
         switch (opt) {
         case 'e':
             endpoint = optarg;
@@ -239,12 +233,6 @@ main(int argc, char *argv[]) {
                 return 1;
             }
             break;
-        case 'r':
-            skip_read = true;
-            break;
-        case 'w':
-            skip_write = true;
-            break;
         case 't': {
             int parsed = atoi(optarg);
             if (parsed <= 0) {
@@ -263,10 +251,6 @@ main(int argc, char *argv[]) {
         }
     }
 
-    if (skip_read && skip_write) {
-        std::cerr << "Error: Cannot skip both read and write tests\n";
-        return 1;
-    }
 
     // Allocate DRAM array
     dram_addr = new void *[num_transfers]();
@@ -291,15 +275,7 @@ main(int argc, char *argv[]) {
               << ((transfer_size * num_transfers) / (1024.0 * 1024.0 * 1024.0)) << " GB"
               << std::endl;
     std::cout << "- Number of iterations: " << iterations << std::endl;
-    std::cout << "- Operation: ";
-    if (!skip_read && !skip_write) {
-        std::cout << "Read and Write";
-    } else if (skip_read) {
-        std::cout << "Write Only";
-    } else { // skip_write
-        std::cout << "Read Only";
-    }
-    std::cout << std::endl;
+    std::cout << "- Operation: Read and Write" << std::endl;
     std::cout << "============================================================\n" << std::endl;
 
     nixlAgent agent("ObjTester", cfg);
@@ -374,91 +350,86 @@ main(int argc, char *argv[]) {
     std::cout << "- Time: " << format_duration(reg_time) << std::endl;
 
 
-    // Perform write test if not skipped
-    if (!skip_write) {
-        std::cout << "\n============================================================" << std::endl;
-        std::cout << "PHASE 2: Memory to Object Transfer (Write Test)" << std::endl;
-        std::cout << "============================================================" << std::endl;
+    // Perform write test
+    std::cout << "\n============================================================" << std::endl;
+    std::cout << "PHASE 2: Memory to Object Transfer (Write Test)" << std::endl;
+    std::cout << "============================================================" << std::endl;
 
-        us_t write_duration(0);
+    us_t write_duration(0);
 
-        // Create descriptor lists for all transfers
-        nixl_reg_dlist_t src_reg(DRAM_SEG);
-        nixl_reg_dlist_t obj_reg(OBJ_SEG);
+    // Create descriptor lists for all transfers
+    nixl_reg_dlist_t src_reg(DRAM_SEG);
+    nixl_reg_dlist_t obj_reg(OBJ_SEG);
 
-        // Add all descriptors
-        for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
-            src_reg.addDesc(dram_buf[transfer_idx]);
-            obj_reg.addDesc(objects[transfer_idx]);
-            printProgress(float(transfer_idx + 1) / num_transfers);
-        }
-        std::cout << "\nAll descriptors added." << std::endl;
+    // Add all descriptors
+    for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
+        src_reg.addDesc(dram_buf[transfer_idx]);
+        obj_reg.addDesc(objects[transfer_idx]);
+        printProgress(float(transfer_idx + 1) / num_transfers);
+    }
+    std::cout << "\nAll descriptors added." << std::endl;
 
-        // Create transfer lists
-        nixl_xfer_dlist_t src_list = src_reg.trim();
-        nixl_xfer_dlist_t obj_list = obj_reg.trim();
+    // Create transfer lists
+    nixl_xfer_dlist_t src_list = src_reg.trim();
+    nixl_xfer_dlist_t obj_list = obj_reg.trim();
 
-        // Create single transfer request for all transfers
-        ret = agent.createXferReq(NIXL_WRITE, src_list, obj_list, "ObjTester", write_req);
-        if (ret != NIXL_SUCCESS) {
-            std::cerr << "Failed to create write transfer request" << std::endl;
+    // Create single transfer request for all transfers
+    ret = agent.createXferReq(NIXL_WRITE, src_list, obj_list, "ObjTester", write_req);
+    if (ret != NIXL_SUCCESS) {
+        std::cerr << "Failed to create write transfer request" << std::endl;
+        ret_code = 1;
+        goto cleanup;
+    }
+    std::cout << "Write transfer request created." << std::endl;
+
+    // Now do the iterations
+    for (int iter = 0; iter < iterations; iter++) {
+        us_t iter_start = getUs();
+
+        status = agent.postXferReq(write_req);
+        if (status < 0) {
+            std::cerr << "Failed to post write transfer request" << std::endl;
             ret_code = 1;
             goto cleanup;
         }
-        std::cout << "Write transfer request created." << std::endl;
 
-        // Now do the iterations
-        for (int iter = 0; iter < iterations; iter++) {
-            us_t iter_start = getUs();
-
-            status = agent.postXferReq(write_req);
+        // Wait for completion
+        while (status == NIXL_IN_PROG) {
+            status = agent.getXferStatus(write_req);
             if (status < 0) {
-                std::cerr << "Failed to post write transfer request" << std::endl;
+                std::cerr << "Error during write transfer" << std::endl;
                 ret_code = 1;
                 goto cleanup;
             }
-
-            // Wait for completion
-            while (status == NIXL_IN_PROG) {
-                status = agent.getXferStatus(write_req);
-                if (status < 0) {
-                    std::cerr << "Error during write transfer" << std::endl;
-                    ret_code = 1;
-                    goto cleanup;
-                }
-            }
-
-            us_t iter_end = getUs();
-            write_duration += (iter_end - iter_start);
-
-            if (iterations > 1) {
-                printProgress(float(iter + 1) / iterations);
-            }
         }
 
-        total_time += write_duration;
+        us_t iter_end = getUs();
+        write_duration += (iter_end - iter_start);
 
-        double data_gb = (transfer_size * num_transfers * iterations) / (1024.0 * 1024.0 * 1024.0);
-        total_data_gb += data_gb;
-        double seconds = write_duration / 1000000.0;
-        double gbps = data_gb / seconds;
-
-        std::cout << "Write completed:" << std::endl;
-        std::cout << "- Time: " << format_duration(write_duration) << std::endl;
-        std::cout << "- Data: " << std::fixed << std::setprecision(2) << data_gb << " GB"
-                  << std::endl;
-        std::cout << "- Speed: " << gbps << " GB/s" << std::endl;
+        if (iterations > 1) {
+            printProgress(float(iter + 1) / iterations);
+        }
     }
 
-    // Clear buffers before read if doing both operations
-    if (!skip_read && !skip_write) {
-        std::cout << "\n============================================================" << std::endl;
-        std::cout << "PHASE 3: Clearing buffers for read test" << std::endl;
-        std::cout << "============================================================" << std::endl;
-        for (i = 0; i < num_transfers; i++) {
-            clear_buffer(dram_addr[i], transfer_size);
-            printProgress(float(i + 1) / num_transfers);
-        }
+    total_time += write_duration;
+
+    double data_gb = (transfer_size * num_transfers * iterations) / (1024.0 * 1024.0 * 1024.0);
+    total_data_gb += data_gb;
+    double seconds = write_duration / 1000000.0;
+    double gbps = data_gb / seconds;
+
+    std::cout << "Write completed:" << std::endl;
+    std::cout << "- Time: " << format_duration(write_duration) << std::endl;
+    std::cout << "- Data: " << std::fixed << std::setprecision(2) << data_gb << " GB" << std::endl;
+    std::cout << "- Speed: " << gbps << " GB/s" << std::endl;
+
+    // Clear buffers before read test
+    std::cout << "\n============================================================" << std::endl;
+    std::cout << "PHASE 3: Clearing buffers for read test" << std::endl;
+    std::cout << "============================================================" << std::endl;
+    for (i = 0; i < num_transfers; i++) {
+        clear_buffer(dram_addr[i], transfer_size);
+        printProgress(float(i + 1) / num_transfers);
     }
 
     // Create extra params with backend
@@ -492,104 +463,101 @@ main(int argc, char *argv[]) {
     std::cout << "All queried objects are valid." << std::endl;
 
 
-    // Perform read test if not skipped
-    if (!skip_read) {
-        std::cout << "\n============================================================" << std::endl;
-        std::cout << "PHASE 5: Object to Memory Transfer (Read Test)" << std::endl;
-        std::cout << "============================================================" << std::endl;
+    // Perform read test
+    std::cout << "\n============================================================" << std::endl;
+    std::cout << "PHASE 5: Object to Memory Transfer (Read Test)" << std::endl;
+    std::cout << "============================================================" << std::endl;
 
-        us_t read_duration(0);
+    us_t read_duration(0);
 
-        // Create descriptor lists for all transfers
-        nixl_reg_dlist_t src_reg(DRAM_SEG);
-        nixl_reg_dlist_t obj_reg(OBJ_SEG);
+    // Create descriptor lists for all transfers
+    nixl_reg_dlist_t read_src_reg(DRAM_SEG);
+    nixl_reg_dlist_t read_obj_reg(OBJ_SEG);
 
-        // Add all descriptors
-        for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
-            src_reg.addDesc(dram_buf[transfer_idx]);
-            obj_reg.addDesc(objects[transfer_idx]);
-            printProgress(float(transfer_idx + 1) / num_transfers);
-        }
-        std::cout << "\nAll descriptors added." << std::endl;
+    // Add all descriptors
+    for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
+        read_src_reg.addDesc(dram_buf[transfer_idx]);
+        read_obj_reg.addDesc(objects[transfer_idx]);
+        printProgress(float(transfer_idx + 1) / num_transfers);
+    }
+    std::cout << "\nAll descriptors added." << std::endl;
 
-        // Create transfer lists
-        nixl_xfer_dlist_t src_list = src_reg.trim();
-        nixl_xfer_dlist_t obj_list = obj_reg.trim();
+    // Create transfer lists
+    nixl_xfer_dlist_t read_src_list = read_src_reg.trim();
+    nixl_xfer_dlist_t read_obj_list = read_obj_reg.trim();
 
-        // Create single transfer request for all transfers
-        ret = agent.createXferReq(NIXL_READ, src_list, obj_list, "ObjTester", read_req);
-        if (ret != NIXL_SUCCESS) {
-            std::cerr << "Failed to create read transfer request" << std::endl;
+    // Create single transfer request for all transfers
+    ret = agent.createXferReq(NIXL_READ, read_src_list, read_obj_list, "ObjTester", read_req);
+    if (ret != NIXL_SUCCESS) {
+        std::cerr << "Failed to create read transfer request" << std::endl;
+        ret_code = 1;
+        goto cleanup;
+    }
+    std::cout << "Read transfer request created." << std::endl;
+
+    // Now do the iterations
+    for (int iter = 0; iter < iterations; iter++) {
+        us_t iter_start = getUs();
+
+        status = agent.postXferReq(read_req);
+        if (status < 0) {
+            std::cerr << "Failed to post read transfer request" << std::endl;
             ret_code = 1;
             goto cleanup;
         }
-        std::cout << "Read transfer request created." << std::endl;
 
-        // Now do the iterations
-        for (int iter = 0; iter < iterations; iter++) {
-            us_t iter_start = getUs();
-
-            status = agent.postXferReq(read_req);
+        // Wait for completion
+        while (status == NIXL_IN_PROG) {
+            status = agent.getXferStatus(read_req);
             if (status < 0) {
-                std::cerr << "Failed to post read transfer request" << std::endl;
+                std::cerr << "Error during read transfer" << std::endl;
                 ret_code = 1;
                 goto cleanup;
-            }
-
-            // Wait for completion
-            while (status == NIXL_IN_PROG) {
-                status = agent.getXferStatus(read_req);
-                if (status < 0) {
-                    std::cerr << "Error during read transfer" << std::endl;
-                    ret_code = 1;
-                    goto cleanup;
-                }
-            }
-
-            us_t iter_end = getUs();
-            read_duration += (iter_end - iter_start);
-
-            if (iterations > 1) {
-                printProgress(float(iter + 1) / iterations);
             }
         }
 
+        us_t iter_end = getUs();
+        read_duration += (iter_end - iter_start);
 
-        total_time += read_duration;
-
-        double data_gb = (transfer_size * num_transfers * iterations) / (1024.0 * 1024.0 * 1024.0);
-        total_data_gb += data_gb;
-        double seconds = read_duration / 1000000.0;
-        double gbps = data_gb / seconds;
-
-        std::cout << "Read completed:" << std::endl;
-        std::cout << "- Time: " << format_duration(read_duration) << std::endl;
-        std::cout << "- Data: " << std::fixed << std::setprecision(2) << data_gb << " GB"
-                  << std::endl;
-        std::cout << "- Speed: " << gbps << " GB/s" << std::endl;
-
-        std::cout << "\n============================================================" << std::endl;
-        std::cout << "PHASE 6: Validating read data" << std::endl;
-        std::cout << "============================================================" << std::endl;
-        for (i = 0; i < num_transfers; i++) {
-            char *expected_buffer = (char *)malloc(transfer_size);
-            if (!expected_buffer) {
-                std::cerr << "Failed to allocate validation buffer\n";
-                ret_code = 1;
-                goto cleanup;
-            }
-            fill_test_pattern(expected_buffer, transfer_size);
-            if (memcmp(dram_addr[i], expected_buffer, transfer_size) != 0) {
-                std::cerr << "DRAM buffer " << i << " validation failed\n";
-                free(expected_buffer);
-                ret_code = 1;
-                goto cleanup;
-            }
-            free(expected_buffer);
-            printProgress(float(i + 1) / num_transfers);
+        if (iterations > 1) {
+            printProgress(float(iter + 1) / iterations);
         }
-        std::cout << "\nVerification completed successfully!" << std::endl;
     }
+
+    total_time += read_duration;
+
+    double read_data_gb = (transfer_size * num_transfers * iterations) / (1024.0 * 1024.0 * 1024.0);
+    total_data_gb += read_data_gb;
+    double read_seconds = read_duration / 1000000.0;
+    double read_gbps = read_data_gb / read_seconds;
+
+    std::cout << "Read completed:" << std::endl;
+    std::cout << "- Time: " << format_duration(read_duration) << std::endl;
+    std::cout << "- Data: " << std::fixed << std::setprecision(2) << read_data_gb << " GB"
+              << std::endl;
+    std::cout << "- Speed: " << read_gbps << " GB/s" << std::endl;
+
+    std::cout << "\n============================================================" << std::endl;
+    std::cout << "PHASE 6: Validating read data" << std::endl;
+    std::cout << "============================================================" << std::endl;
+    for (i = 0; i < num_transfers; i++) {
+        char *expected_buffer = (char *)malloc(transfer_size);
+        if (!expected_buffer) {
+            std::cerr << "Failed to allocate validation buffer\n";
+            ret_code = 1;
+            goto cleanup;
+        }
+        fill_test_pattern(expected_buffer, transfer_size);
+        if (memcmp(dram_addr[i], expected_buffer, transfer_size) != 0) {
+            std::cerr << "DRAM buffer " << i << " validation failed\n";
+            free(expected_buffer);
+            ret_code = 1;
+            goto cleanup;
+        }
+        free(expected_buffer);
+        printProgress(float(i + 1) / num_transfers);
+    }
+    std::cout << "\nVerification completed successfully!" << std::endl;
 
 cleanup:
     std::cout << "\n============================================================" << std::endl;
