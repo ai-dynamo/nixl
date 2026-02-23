@@ -81,7 +81,7 @@ limitations under the License.
 
   ```cpp
   /*
-   * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+   * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
    * SPDX-License-Identifier: Apache-2.0
    */
   ```
@@ -90,7 +90,7 @@ limitations under the License.
 
 * Use traditional `#ifndef`/`#define` header guards (not `#pragma once`)
 * Header guard names should be upper snake case based on the file path
-* Path mapping: Replace directory separators with underscores, e.g., `src/utils/ucx/backend.h` → `NIXL_SRC_UTILS_UCX_BACKEND_H`
+* Path mapping: Add a `NIXL_` project prefix, convert the entire path to upper snake case (replacing `/` and `.` with `_`), e.g., `src/utils/ucx/backend.h` → `NIXL_SRC_UTILS_UCX_BACKEND_H`
 * Example:
 
   ```cpp
@@ -325,7 +325,7 @@ limitations under the License.
   }
 
   template<typename T>
-  inline T
+  T
   max(T a, T b) {
       return (a > b) ? a : b;
   }
@@ -339,7 +339,7 @@ limitations under the License.
 
 * In implementation files (.cpp), prefer anonymous namespaces over `static` for file-local classes and functions
 * Anonymous namespaces provide better type safety and clearer intent for internal linkage
-* Do not use anonymous namespaces in header files - use `static` or named namespaces instead
+* Do not use anonymous namespaces in header files - use `inline` functions or named namespaces instead
 * Example:
 
   ```cpp
