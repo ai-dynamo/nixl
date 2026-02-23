@@ -81,8 +81,8 @@ chooseIpAddress() {
 } // namespace
 
 nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {
-    local_agent_name_ = init_params->localAgent;
+    : nixlBackendEngine(init_params),
+      local_agent_name_(init_params->localAgent) {
     const std::string segment_name = chooseIpAddress();
     engine_ = createTransferEngine("P2PHANDSHAKE", segment_name.c_str(), "", 0, true);
 }

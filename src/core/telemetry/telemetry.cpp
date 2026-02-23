@@ -117,7 +117,7 @@ nixlTelemetry::initializeTelemetry() {
         return;
     }
 
-    NIXL_DEBUG << "NIXL telemetry is enabled with " << *exporter_name << "exporter";
+    NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << *exporter_name;
 
     const auto run_interval =
         nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
