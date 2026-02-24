@@ -39,6 +39,17 @@ if cargo.found() and get_option('rust')
       dependencies: [nixl_dep]
     )
 
+  # Shared library exposing the nixl C API (nixl_capi_* symbols).
+  # This allows LD_PRELOAD to override stub symbols at runtime when
+  # downstream binaries were compiled without nixl present.
+  shared_library('nixl_capi',
+      sources: wrapper_sources,
+      include_directories: [nixl_include_dir, include_directories('/usr/include')],
+      link_with: nixl_lib,
+      dependencies: [nixl_dep],
+      install: true
+    )
+
   rust_lib = custom_target(
       RUST_BINDINGS_NAME,
       command: cargo_build_cmd,
