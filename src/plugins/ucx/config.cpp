@@ -21,16 +21,10 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 
-namespace {
-const std::string prefix = "UCX_";
-
-} // namespace
-
 namespace nixl::ucx {
 void
 config::modify(std::string_view key, std::string_view value) const {
-    // Temporary std::string from key needed until C++26.
-    const auto env_val = nixl::config::getValueOptional<std::string>(prefix + std::string(key));
+    const auto env_val = nixl::config::getValueOptional<std::string>("UCX_" + std::string(key));
 
     if (env_val) {
         NIXL_DEBUG << "UCX env var has already been set: " << key << "=" << *env_val;
