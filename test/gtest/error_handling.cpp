@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -396,6 +396,11 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, size_t iter) {
     return req_handle;
 }
 
+namespace {
+    const std::string expected_log =
+        "postXferReq: remote agent 'target' was disconnected after transfer request creation";
+
+} // namespace
 
 TEST_P(TestErrorHandling, BasicXfer) {
     testXfer<TestType::BASIC_XFER, NIXL_WRITE>();
@@ -403,16 +408,19 @@ TEST_P(TestErrorHandling, BasicXfer) {
 }
 
 TEST_P(TestErrorHandling, LoadRemoteThenFail) {
+    const LogIgnoreGuard lig(expected_log);
     testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_WRITE>();
     testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_READ>();
 }
 
 TEST_P(TestErrorHandling, XferThenFail) {
+    const LogIgnoreGuard lig(expected_log);
     testXfer<TestType::XFER_THEN_FAIL, NIXL_WRITE>();
     testXfer<TestType::XFER_THEN_FAIL, NIXL_READ>();
 }
 
 TEST_P(TestErrorHandling, XferFailRestore) {
+    const LogIgnoreGuard lig(expected_log);
     testXfer<TestType::XFER_FAIL_RESTORE, NIXL_WRITE>();
     testXfer<TestType::XFER_FAIL_RESTORE, NIXL_READ>();
 }
