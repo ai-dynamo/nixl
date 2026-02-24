@@ -18,8 +18,8 @@
  * @file nixl.h (NVIDIA Inference Xfer Library)
  * @brief These are NIXL Core APIs for applications
  */
-#ifndef _NIXL_H
-#define _NIXL_H
+#ifndef NIXL_SRC_API_CPP_NIXL_H
+#define NIXL_SRC_API_CPP_NIXL_H
 
 #include "nixl_types.h"
 #include "nixl_params.h"

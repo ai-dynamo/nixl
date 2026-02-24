@@ -212,7 +212,7 @@ nixlAgent::~nixlAgent() {
             close(fd);
         }
 
-        data->listener.reset(); // TOOD: Needed?
+        data->listener.reset(); // TODO: Needed?
     }
 }
 
