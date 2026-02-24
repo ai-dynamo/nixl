@@ -36,8 +36,17 @@ enum class nixl_gpu_level_t : uint64_t {
 };
 
 namespace nixl_gpu_flags {
-constexpr uint64_t send_push = UCP_DEVICE_FLAG_NODELAY;
+constexpr uint64_t defer = 1;
+
+__device__ constexpr uint64_t
+to_ucp_flags(uint64_t flags) noexcept {
+    uint64_t ucp_flags = UCP_DEVICE_FLAG_NODELAY;
+    if (flags & defer) {
+        ucp_flags &= ~UCP_DEVICE_FLAG_NODELAY;
+    }
+    return ucp_flags;
 }
+} // namespace nixl_gpu_flags
 
 struct nixlMemViewElem {
     nixlMemViewH mvh;
@@ -108,21 +117,22 @@ nixlPut(const nixlMemViewElem &src,
         const nixlMemViewElem &dst,
         size_t size,
         unsigned channel_id = 0,
-        uint64_t flags = nixl_gpu_flags::send_push,
+        uint64_t flags = 0,
         nixlGpuXferStatusH *xfer_status = nullptr) {
     auto src_mem_list = static_cast<ucp_device_local_mem_list_h>(src.mvh);
     auto dst_mem_list = static_cast<ucp_device_remote_mem_list_h>(dst.mvh);
     ucp_device_request_t *ucp_request{xfer_status ? &xfer_status->device_request : nullptr};
-    const auto status = ucp_device_put<static_cast<ucs_device_level_t>(level)>(src_mem_list,
-                                                                               src.index,
-                                                                               src.offset,
-                                                                               dst_mem_list,
-                                                                               dst.index,
-                                                                               dst.offset,
-                                                                               size,
-                                                                               channel_id,
-                                                                               flags,
-                                                                               ucp_request);
+    const auto status =
+        ucp_device_put<static_cast<ucs_device_level_t>(level)>(src_mem_list,
+                                                               src.index,
+                                                               src.offset,
+                                                               dst_mem_list,
+                                                               dst.index,
+                                                               dst.offset,
+                                                               size,
+                                                               channel_id,
+                                                               nixl_gpu_flags::to_ucp_flags(flags),
+                                                               ucp_request);
     return nixlGpuConvertUcsStatus(status);
 }
 
@@ -146,12 +156,18 @@ __device__ nixl_status_t
 nixlAtomicAdd(uint64_t value,
               const nixlMemViewElem &counter,
               unsigned channel_id = 0,
-              uint64_t flags = nixl_gpu_flags::send_push,
+              uint64_t flags = 0,
               nixlGpuXferStatusH *xfer_status = nullptr) {
     auto mem_list = static_cast<ucp_device_remote_mem_list_h>(counter.mvh);
     ucp_device_request_t *ucp_request{xfer_status ? &xfer_status->device_request : nullptr};
     const auto status = ucp_device_counter_inc<static_cast<ucs_device_level_t>(level)>(
-        value, mem_list, counter.index, counter.offset, channel_id, flags, ucp_request);
+        value,
+        mem_list,
+        counter.index,
+        counter.offset,
+        channel_id,
+        nixl_gpu_flags::to_ucp_flags(flags),
+        ucp_request);
     return nixlGpuConvertUcsStatus(status);
 }
 

@@ -60,7 +60,7 @@ __forceinline__ __device__ bool is_rank_masked(int* mask_buffer_ptr, int rank) {
 }
 
 __device__ __forceinline__ uint64_t doorbell_flag(int idx) {
-    return (idx + 1) % 4 == 0 ? nixl_gpu_flags::send_push : 0;
+    return (idx + 1) % 4 == 0 ? 0 : nixl_gpu_flags::defer;
 }
 
 template <bool kUseFP8, bool kUseUE8M0, int kHidden>

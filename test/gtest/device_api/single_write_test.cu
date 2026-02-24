@@ -26,7 +26,7 @@ struct putParams {
     nixlMemViewElem dst;
     size_t size;
     unsigned channelId{0};
-    uint64_t flags{nixl_gpu_flags::send_push};
+    uint64_t flags{0};
 };
 
 template<nixl_gpu_level_t level>
