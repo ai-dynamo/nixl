@@ -127,14 +127,6 @@ generate_timestamped_filename (const std::string &base_name) {
     return base_name + std::string (timestamp);
 }
 
-void
-validateBuffer (void *expected, void *actual, size_t size, const char *operation) {
-    if (memcmp (expected, actual, size) != 0) {
-        std::cerr << "Data validation failed for " << operation << std::endl;
-        exit (-1);
-    }
-}
-
 // Helper function to fill buffer with repeating pattern
 void
 fill_test_pattern (void *buffer, size_t size) {
