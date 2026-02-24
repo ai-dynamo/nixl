@@ -189,14 +189,15 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
 }
 
 fn build_stubs(cc_builder: &mut cc::Build) {
-    println!("cargo:warning=Building with stub API - NIXL functions will abort if called");
+    println!("cargo:warning=Building with stub API - NIXL functions will be resolved at runtime via dlopen");
 
     cc_builder.file("stubs.cpp");
 
     cc_builder.compile("nixl_stubs");
 
-    // Link against C++ standard library only
+    // Link against C++ standard library and libdl (for dlopen/dlsym)
     println!("cargo:rustc-link-lib=dylib=stdc++");
+    println!("cargo:rustc-link-lib=dylib=dl");
 
     // Tell cargo to invalidate the built crate whenever the stubs change
     println!("cargo:rerun-if-changed=stubs.cpp");
