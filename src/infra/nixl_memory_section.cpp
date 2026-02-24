@@ -65,17 +65,17 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
 
     // Walk forward for non-decreasing elements; logN search on temporal disorder
     for (int i = 1; i < query.descCount(); ++i) {
-        if (query[i] < query[i - 1]) {
+        if (__builtin_expect(query[i] < query[i - 1], 0)) {
             // Disorder in the list, resolve this element using logN search
             s_index = base->getCoveringIndex(query[i]);
-            if (s_index < 0) {
+            if (__builtin_expect(s_index < 0, 0)) {
                 resp.clear();
                 return NIXL_ERR_UNKNOWN;
             }
         } else {
             while (s_index < size && !(*base)[s_index].covers(query[i]))
                 ++s_index;
-            if (s_index == size) {
+            if (__builtin_expect(s_index == size, 0)) {
                 resp.clear();
                 return NIXL_ERR_UNKNOWN;
             }

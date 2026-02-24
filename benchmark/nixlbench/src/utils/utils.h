@@ -140,6 +140,7 @@ public:
     static std::string op_type;
     static bool check_consistency;
     static size_t total_buffer_size;
+    static bool recreate_xfer;
     static int num_initiator_dev;
     static int num_target_dev;
     static size_t start_block_size;
@@ -160,6 +161,8 @@ public:
     static bool enable_vmm;
     static int num_files;
     static std::string posix_api_type;
+    static int posix_ios_pool_size;
+    static int posix_kernel_queue_size;
     static bool storage_enable_direct;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
