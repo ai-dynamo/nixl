@@ -780,13 +780,12 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
 nixl_status_t
 nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd) {
     if (remoteSections.count(remote_name) == 0) {
-        remoteSections[remote_name] = new nixlRemoteSection(remote_name);
+        remoteSections[remote_name] = std::make_unique<nixlRemoteSection>(remote_name);
     }
 
     const nixl_status_t ret = remoteSections[remote_name]->loadRemoteData(&sd, backendEngines);
     // TODO: can be more graceful, if just the new MD blob was improper
     if (ret != NIXL_SUCCESS) {
-        delete remoteSections[remote_name];
         remoteSections.erase(remote_name);
         remoteBackends.erase(remote_name);
         return ret;
@@ -805,7 +804,6 @@ nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
     nixl_status_t ret = NIXL_ERR_NOT_FOUND;
     auto it_section = remoteSections.find(remote_name);
     if (it_section != remoteSections.end()) {
-        delete it_section->second;
         remoteSections.erase(it_section);
         ret = NIXL_SUCCESS;
     }

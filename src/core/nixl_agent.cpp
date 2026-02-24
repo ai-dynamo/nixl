@@ -124,7 +124,6 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
     if (name.empty())
         throw std::invalid_argument("Agent needs a name");
 
-    memorySection = new nixlLocalSection();
     const char *telemetry_env_val = std::getenv(TELEMETRY_ENABLED_VAR);
 
     if (telemetry_env_val != nullptr) {
@@ -151,13 +150,10 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
 }
 
 nixlAgentData::~nixlAgentData() {
-    delete memorySection;
-
     // explicitly reset telemetry so i can publish backend events before destroying backends
     telemetry_.reset();
 
-    for (auto & elm: remoteSections)
-        delete elm.second;
+    remoteSections.clear();  // TODO: Needed?
 
     for (auto & elm: backendEngines) {
         auto& plugin_manager = nixlPluginManager::getInstance();
@@ -171,7 +167,6 @@ nixlAgentData::~nixlAgentData() {
 
     for (auto & elm: backendHandles)
         delete elm.second;
-
 }
 
 /*** nixlAgent implementation ***/
@@ -443,19 +438,19 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
         nixlBackendEngine* backend = (*backend_list)[i];
         // meta_descs use to be passed to loadLocalData
         nixl_sec_dlist_t sec_descs(descs.getType());
-        ret = data->memorySection->addDescList(descs, backend, sec_descs);
+        ret = data->memorySection.addDescList(descs, backend, sec_descs);
         if (ret == NIXL_SUCCESS) {
             if (backend->supportsLocal()) {
                 if (data->remoteSections.count(data->name) == 0)
                     data->remoteSections[data->name] =
-                          new nixlRemoteSection(data->name);
+                        std::make_unique<nixlRemoteSection>(data->name);
 
                 ret = data->remoteSections[data->name]->loadLocalData(
                                                         sec_descs, backend);
                 if (ret == NIXL_SUCCESS)
                     count++;
                 else
-                    data->memorySection->remDescList(descs, backend);
+                    data->memorySection.remDescList(descs, backend);
             } else {
                 count++;
             }
@@ -492,7 +487,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     NIXL_LOCK_GUARD(data->lock);
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_set_t* avail_backends;
-        avail_backends = data->memorySection->queryBackends(
+        avail_backends = data->memorySection.queryBackends(
                                               descs.getType());
         if (!avail_backends || avail_backends->empty()) {
             NIXL_ERROR_FUNC << "no available backends for mem type '" << descs.getType() << "'";
@@ -507,7 +502,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
 
     // Doing best effort, and returning err if any
     for (auto & backend : backend_set) {
-        ret = data->memorySection->remDescList(descs, backend);
+        ret = data->memorySection.remDescList(descs, backend);
         if (ret != NIXL_SUCCESS)
             bad_ret = ret;
     }
@@ -604,7 +599,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
             backend_set = data->remoteSections[agent_name]->
                                 queryBackends(descs.getType());
         else
-            backend_set = data->memorySection->
+            backend_set = data->memorySection.
                                 queryBackends(descs.getType());
 
         if (!backend_set || backend_set->empty()) {
@@ -632,7 +627,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     for (auto & backend : *backend_set) {
         handle->descs[backend] = new nixl_meta_dlist_t(descs.getType());
         if (init_side)
-            ret = data->memorySection->populate(
+            ret = data->memorySection.populate(
                        descs, backend, *(handle->descs[backend]));
         else
             ret = data->remoteSections[agent_name]->populate(
@@ -887,7 +882,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         // Finding backends that support the corresponding memories
         // locally and remotely, and find the common ones.
         backend_set_t* local_set =
-            data->memorySection->queryBackends(local_descs.getType());
+            data->memorySection.queryBackends(local_descs.getType());
         backend_set_t* remote_set =
             data->remoteSections[remote_agent]->queryBackends(
                                                 remote_descs.getType());
@@ -924,7 +919,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // preference list or more exhaustive search.
     for (auto &backend : backend_set) {
         // If populate fails, it clears the resp before return
-        ret1 = data->memorySection->populate(
+        ret1 = data->memorySection.populate(
                      local_descs, backend, *handle->initiatorDescs);
         ret2 = data->remoteSections[remote_agent]->populate(
                      remote_descs, backend, *handle->targetDescs);
@@ -1303,7 +1298,7 @@ nixlAgent::prepGpuSignal(const nixl_reg_dlist_t &signal_descs,
     nixl_xfer_dlist_t xfer_descs = signal_descs.trim();
 
     nixl_meta_dlist_t result(signal_descs.getType());
-    ret = data->memorySection->populate(xfer_descs, backend->engine, result);
+    ret = data->memorySection.populate(xfer_descs, backend->engine, result);
 
     if (ret != NIXL_SUCCESS) {
         NIXL_ERROR_FUNC << "failed to populate signal metadata with specified backend";
@@ -1501,7 +1496,7 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
     ret = sd.addStr("", "MemSection");
     if (ret) return NIXL_ERR_UNKNOWN;
 
-    ret = data->memorySection->serialize(&sd);
+    ret = data->memorySection.serialize(&sd);
     if (ret) {
         NIXL_ERROR_FUNC << "serialization failed";
         return ret;
@@ -1580,7 +1575,7 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     ret = sd.addStr("", "MemSection");
     if (ret) return NIXL_ERR_UNKNOWN;
 
-    ret = data->memorySection->serializePartial(&sd, selected_engines, descs);
+    ret = data->memorySection.serializePartial(&sd, selected_engines, descs);
     if (ret) {
         NIXL_ERROR_FUNC << "serialization failed";
         return ret;
@@ -1678,7 +1673,6 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
 
     nixl_status_t ret = NIXL_ERR_NOT_FOUND;
     if (data->remoteSections.count(remote_agent) != 0) {
-        delete data->remoteSections[remote_agent];
         data->remoteSections.erase(remote_agent);
         ret = NIXL_SUCCESS;
     }
@@ -1837,7 +1831,7 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
 
 backend_set_t
 nixlAgentData::getBackends(const nixl_opt_args_t *opt_args,
-                           nixlMemSection *section,
+                           nixlMemSection &section,
                            nixl_mem_t mem_type) {
     if (opt_args && !opt_args->backends.empty()) {
         backend_set_t backends;
@@ -1848,7 +1842,7 @@ nixlAgentData::getBackends(const nixl_opt_args_t *opt_args,
         return backends;
     }
 
-    const auto mem_type_backends = section->queryBackends(mem_type);
+    const auto mem_type_backends = section.queryBackends(mem_type);
     return mem_type_backends ? *mem_type_backends : backend_set_t{};
 }
 
@@ -1887,7 +1881,7 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
 
         // Engine has not been selected yet, try to find a backend that can add an element to the
         // remote metadata
-        const auto backends = data->getBackends(extra_params, it->second, mem_type);
+        const auto backends = data->getBackends(extra_params, *it->second, mem_type);
         for (const auto &backend : backends) {
             const auto status = it->second->addElement(desc, backend, remote_meta_dlist);
             if (status == NIXL_SUCCESS) {
@@ -1933,7 +1927,7 @@ nixlAgent::prepMemView(const nixl_xfer_dlist_t &dlist,
     NIXL_SHARED_LOCK_GUARD(data->lock);
     const auto backends = data->getBackends(extra_params, data->memorySection, mem_type);
     for (const auto &backend : backends) {
-        const auto status = data->memorySection->populate(dlist, backend, meta_dlist);
+        const auto status = data->memorySection.populate(dlist, backend, meta_dlist);
         if (status == NIXL_SUCCESS) {
             NIXL_DEBUG << "Selected backend: " << backend->getType();
             engine = backend;
