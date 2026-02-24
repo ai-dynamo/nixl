@@ -100,7 +100,7 @@ class nixlAgentData {
             remoteSections;
 
         // State/methods for listener thread
-        nixlMDStreamListener *listener;
+        std::unique_ptr<nixlMDStreamListener> listener;
         nixl_socket_map_t remoteSockets;
         std::thread commThread;
         std::vector<nixl_comm_req_t> commQueue;

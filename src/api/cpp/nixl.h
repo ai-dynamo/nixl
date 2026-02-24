@@ -34,7 +34,7 @@
 class nixlAgent {
     private:
         /** @var  data  The members in agent class wrapped into single nixlAgentData member. */
-        std::unique_ptr<nixlAgentData> data;
+        const std::unique_ptr<nixlAgentData> data;
 
     public:
         /*** Initialization and Registering Methods ***/

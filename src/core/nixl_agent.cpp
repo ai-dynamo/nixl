@@ -176,7 +176,7 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;
         if(my_port == 0) my_port = default_comm_port;
-        data->listener = new nixlMDStreamListener(my_port);
+        data->listener = std::make_unique<nixlMDStreamListener>(my_port);
         data->listener->setupListener();
     }
 
@@ -188,7 +188,7 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
 }
 
 nixlAgent::~nixlAgent() {
-    if (data && (data->useEtcd || data->config.useListenThread)) {
+    if (data->useEtcd || data->config.useListenThread) {
         data->agentShutdown = true;
         while (!data->commQueue.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -212,9 +212,7 @@ nixlAgent::~nixlAgent() {
             close(fd);
         }
 
-        if(data->config.useListenThread) {
-            if(data->listener) delete data->listener;
-        }
+        data->listener.reset(); // TOOD: Needed?
     }
 }
 
