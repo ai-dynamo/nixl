@@ -707,7 +707,12 @@ nixlLibfabricEngine::getSupportedMems() const {
     nixl_mem_list_t mems;
     mems.push_back(DRAM_SEG);
 #ifdef HAVE_CUDA
-    mems.push_back(VRAM_SEG);
+    if (runtime_ == FI_HMEM_CUDA) {
+        NIXL_DEBUG << "CUDA runtime detected, adding VRAM support";
+        mems.push_back(VRAM_SEG);
+    } else {
+        NIXL_DEBUG << "Non-CUDA runtime, skipping VRAM support";
+    }
 #endif
     return mems;
 }
@@ -716,6 +721,12 @@ nixl_status_t
 nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
                                  const nixl_mem_t &nixl_mem,
                                  nixlBackendMD *&out) {
+    const auto supported = getSupportedMems();
+    if (std::find(supported.begin(), supported.end(), nixl_mem) == supported.end()) {
+        NIXL_ERROR << "Memory type " << nixl_mem << " is not supported by libfabric backend.";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
     auto priv = std::make_unique<nixlLibfabricPrivateMetadata>();
 
     priv->buffer_ = (void *)mem.addr;
