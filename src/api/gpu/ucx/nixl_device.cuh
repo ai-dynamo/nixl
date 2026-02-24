@@ -20,6 +20,8 @@
 #include <nixl_types.h>
 #include <ucp/api/device/ucp_device_impl.h>
 
+#include <cassert>
+
 struct nixlGpuXferStatusH {
     ucp_device_request_t device_request;
 };
@@ -38,10 +40,13 @@ enum class nixl_gpu_level_t : uint64_t {
 namespace nixl_gpu_flags {
 constexpr uint64_t defer = 1;
 
-__device__ constexpr uint64_t
-to_ucp_flags(uint64_t flags) noexcept {
-    uint64_t ucp_flags = UCP_DEVICE_FLAG_NODELAY;
-    if (flags & defer) {
+__device__ inline uint64_t
+to_ucp_flags(uint64_t nixl_flags) noexcept {
+    constexpr uint64_t all_known_nixl_flags{defer};
+    assert((nixl_flags & ~all_known_nixl_flags) == 0);
+
+    uint64_t ucp_flags{UCP_DEVICE_FLAG_NODELAY};
+    if (nixl_flags & defer) {
         ucp_flags &= ~UCP_DEVICE_FLAG_NODELAY;
     }
     return ucp_flags;
