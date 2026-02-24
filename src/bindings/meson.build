@@ -22,8 +22,8 @@ nixl_capi_inc = include_directories('rust/../../api/cpp', 'rust/../../infra', 'r
 shared_library('nixl_capi',
     sources: ['rust/wrapper.cpp'],
     include_directories: [nixl_capi_inc, include_directories('/usr/include')],
-    link_with: nixl_lib,
-    dependencies: [declare_dependency(link_with: nixl_lib, include_directories: nixl_capi_inc)],
+    link_with: [nixl_lib, nixl_build_lib],
+    dependencies: [declare_dependency(link_with: [nixl_lib, nixl_build_lib], include_directories: nixl_capi_inc)],
     install: true
   )
 
