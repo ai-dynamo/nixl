@@ -23,10 +23,10 @@
 #include "stream/metadata_stream.h"
 #include "sync.h"
 
+#include <memory>
+
 #if HAVE_ETCD
 #include <etcd/SyncClient.hpp>
-
-#include <memory>
 
 namespace etcd {
 class SyncClient;
