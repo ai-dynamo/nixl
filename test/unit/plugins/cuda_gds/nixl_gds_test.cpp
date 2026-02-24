@@ -197,7 +197,7 @@ int main(int argc, char *argv[])
     double                      total_data_gb = 0;
     bool                        use_direct = false;
     unsigned int                iterations = DEFAULT_ITERATIONS;
-    int                         parsed = 0;
+    int parsed = 0;
 
     // Parse command line options
     static struct option long_options[] = {{"dram", no_argument, 0, 'd'},

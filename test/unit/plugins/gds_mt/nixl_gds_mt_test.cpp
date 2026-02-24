@@ -259,7 +259,7 @@ main (int argc, char *argv[]) {
             num_threads = parsed;
             break;
         case 't':
-            parsed = atoi (optarg);
+            parsed = atoi(optarg);
             if (parsed <= 0) {
                 std::cerr << "Error: Number of iterations must be positive\n";
                 return 1;
@@ -267,7 +267,7 @@ main (int argc, char *argv[]) {
             iterations = parsed;
             break;
         case 'G':
-            parsed = atoi (optarg);
+            parsed = atoi(optarg);
             if (parsed <= 0) {
                 std::cerr << "Error: Number of GPUs must be positive\n";
                 return 1;
