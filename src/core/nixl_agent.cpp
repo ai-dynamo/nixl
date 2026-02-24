@@ -153,7 +153,7 @@ nixlAgentData::~nixlAgentData() {
     // explicitly reset telemetry so i can publish backend events before destroying backends
     telemetry_.reset();
 
-    remoteSections.clear();  // TODO: Needed?
+    remoteSections.clear(); // TODO: Needed?
 
     for (auto & elm: backendEngines) {
         auto& plugin_manager = nixlPluginManager::getInstance();
@@ -487,8 +487,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     NIXL_LOCK_GUARD(data->lock);
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_set_t* avail_backends;
-        avail_backends = data->memorySection.queryBackends(
-                                              descs.getType());
+        avail_backends = data->memorySection.queryBackends(descs.getType());
         if (!avail_backends || avail_backends->empty()) {
             NIXL_ERROR_FUNC << "no available backends for mem type '" << descs.getType() << "'";
             return NIXL_ERR_NOT_FOUND;
@@ -599,8 +598,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
             backend_set = data->remoteSections[agent_name]->
                                 queryBackends(descs.getType());
         else
-            backend_set = data->memorySection.
-                                queryBackends(descs.getType());
+            backend_set = data->memorySection.queryBackends(descs.getType());
 
         if (!backend_set || backend_set->empty()) {
             NIXL_ERROR_FUNC << "no available backends for mem type '" << descs.getType() << "'";
@@ -627,8 +625,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     for (auto & backend : *backend_set) {
         handle->descs[backend] = new nixl_meta_dlist_t(descs.getType());
         if (init_side)
-            ret = data->memorySection.populate(
-                       descs, backend, *(handle->descs[backend]));
+            ret = data->memorySection.populate(descs, backend, *(handle->descs[backend]));
         else
             ret = data->remoteSections[agent_name]->populate(
                        descs, backend, *(handle->descs[backend]));
@@ -881,8 +878,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     if (!extra_params || extra_params->backends.size() == 0) {
         // Finding backends that support the corresponding memories
         // locally and remotely, and find the common ones.
-        backend_set_t* local_set =
-            data->memorySection.queryBackends(local_descs.getType());
+        backend_set_t *local_set = data->memorySection.queryBackends(local_descs.getType());
         backend_set_t* remote_set =
             data->remoteSections[remote_agent]->queryBackends(
                                                 remote_descs.getType());
@@ -919,8 +915,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // preference list or more exhaustive search.
     for (auto &backend : backend_set) {
         // If populate fails, it clears the resp before return
-        ret1 = data->memorySection.populate(
-                     local_descs, backend, *handle->initiatorDescs);
+        ret1 = data->memorySection.populate(local_descs, backend, *handle->initiatorDescs);
         ret2 = data->remoteSections[remote_agent]->populate(
                      remote_descs, backend, *handle->targetDescs);
 

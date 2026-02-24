@@ -93,8 +93,11 @@ class nixlAgentData {
         std::unordered_map<std::string,
                            std::unordered_map<nixl_backend_t, nixl_blob_t>,
                            std::hash<std::string>, strEqual>     remoteBackends;
-        std::unordered_map<std::string, std::unique_ptr<nixlRemoteSection>,
-                           std::hash<std::string>, strEqual> remoteSections;
+        std::unordered_map<std::string,
+                           std::unique_ptr<nixlRemoteSection>,
+                           std::hash<std::string>,
+                           strEqual>
+            remoteSections;
 
         // State/methods for listener thread
         nixlMDStreamListener *listener;
