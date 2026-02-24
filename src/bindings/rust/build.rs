@@ -106,6 +106,17 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     // Print the library path for debugging
     println!("cargo:warning=Using library path: {}", nixl_lib_path);
 
+    // Verify that nixl shared libraries actually exist before proceeding.
+    // Without this check, wrapper.cpp may compile (headers found in source tree)
+    // but linking will fail later when the .so files are missing.
+    let nixl_so = format!("{}/libnixl.so", nixl_lib_path);
+    if !std::path::Path::new(&nixl_so).exists() {
+        return Err(anyhow::anyhow!(
+            "libnixl.so not found at {}; nixl libraries are not installed",
+            nixl_so
+        ));
+    }
+
     // Add all possible library paths
     println!("cargo:rustc-link-search=native={}", nixl_lib_path);
     println!("cargo:rustc-link-search=native={}", nixl_root_path);
