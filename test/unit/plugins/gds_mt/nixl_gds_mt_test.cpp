@@ -259,18 +259,20 @@ main (int argc, char *argv[]) {
             num_threads = parsed;
             break;
         case 't':
-            iterations = atoi (optarg);
-            if (iterations <= 0) {
+            parsed = atoi (optarg);
+            if (parsed <= 0) {
                 std::cerr << "Error: Number of iterations must be positive\n";
                 return 1;
             }
+            iterations = parsed;
             break;
         case 'G':
-            num_gpus = atoi (optarg);
-            if (num_gpus <= 0) {
+            parsed = atoi (optarg);
+            if (parsed <= 0) {
                 std::cerr << "Error: Number of GPUs must be positive\n";
                 return 1;
             }
+            num_gpus = parsed;
             break;
         case 'D':
             use_direct = true;
