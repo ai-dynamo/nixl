@@ -14,6 +14,20 @@
 # limitations under the License.
 
 
+# Shared library exposing the nixl C API (nixl_capi_* symbols).
+# This allows LD_PRELOAD to override stub symbols at runtime when
+# downstream binaries were compiled without nixl present.
+nixl_capi_inc = include_directories('../../api/cpp', '../../infra', '../../core')
+nixl_capi_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_capi_inc)
+
+shared_library('nixl_capi',
+    sources: ['wrapper.cpp'],
+    include_directories: [nixl_capi_inc, include_directories('/usr/include')],
+    link_with: nixl_lib,
+    dependencies: [nixl_capi_dep],
+    install: true
+  )
+
 cargo = find_program('cargo', required: false)
 
 if cargo.found() and get_option('rust')
@@ -37,17 +51,6 @@ if cargo.found() and get_option('rust')
       include_directories: [nixl_include_dir, include_directories('/usr/include')],
       link_with: nixl_lib,
       dependencies: [nixl_dep]
-    )
-
-  # Shared library exposing the nixl C API (nixl_capi_* symbols).
-  # This allows LD_PRELOAD to override stub symbols at runtime when
-  # downstream binaries were compiled without nixl present.
-  shared_library('nixl_capi',
-      sources: wrapper_sources,
-      include_directories: [nixl_include_dir, include_directories('/usr/include')],
-      link_with: nixl_lib,
-      dependencies: [nixl_dep],
-      install: true
     )
 
   rust_lib = custom_target(
