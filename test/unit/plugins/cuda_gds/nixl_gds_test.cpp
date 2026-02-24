@@ -197,6 +197,7 @@ int main(int argc, char *argv[])
     double                      total_data_gb = 0;
     bool                        use_direct = false;
     unsigned int                iterations = DEFAULT_ITERATIONS;
+    int                         parsed = 0;
 
     // Parse command line options
     static struct option long_options[] = {{"dram", no_argument, 0, 'd'},
@@ -251,11 +252,12 @@ int main(int argc, char *argv[])
                 }
                 break;
             case 't':
-                iterations = atoi(optarg);
-                if (iterations <= 0) {
+                parsed = atoi(optarg);
+                if (parsed <= 0) {
                     std::cerr << "Error: Number of iterations must be positive\n";
                     return 1;
                 }
+                iterations = parsed;
                 break;
             case 'D':
                 use_direct = true;
