@@ -259,7 +259,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
         void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
             if (dst_p2p_ptr == 0) {
-                nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (unsigned) dst_rank, nixl_ctx.offset_get(dst_ptr)};
+                nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, static_cast<size_t>(dst_rank), nixl_ctx.offset_get(dst_ptr)};
                 EP_DEVICE_ASSERT(nixlAtomicAdd(num_tokens_sent + 1, dst_mdesc, dst_expert_local_idx) == NIXL_IN_PROG);
             } else {
                 st_release_sys_global(static_cast<uint64_t*>(dst_p2p_ptr), static_cast<uint64_t>(num_tokens_sent + 1));
