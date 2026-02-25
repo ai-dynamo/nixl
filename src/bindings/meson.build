@@ -18,10 +18,10 @@ subdir('python')
 # Shared library exposing the nixl C API (nixl_capi_* symbols).
 # Always built so LD_PRELOAD can override stub symbols at runtime when
 # downstream Rust binaries were compiled without nixl present.
-nixl_capi_inc = include_directories('rust/../../api/cpp', 'rust/../../infra', 'rust/../../core')
+nixl_capi_inc = include_directories('../api/cpp', '../infra', '../core')
 shared_library('nixl_capi',
     sources: ['rust/wrapper.cpp'],
-    include_directories: [nixl_capi_inc, include_directories('/usr/include')],
+    include_directories: [nixl_capi_inc],
     link_with: [nixl_lib, nixl_build_lib],
     dependencies: [declare_dependency(link_with: [nixl_lib, nixl_build_lib], include_directories: nixl_capi_inc)],
     install: true

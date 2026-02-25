@@ -31,25 +31,44 @@
 #include <dlfcn.h>
 #include <iostream>
 
+namespace {
+
+// Result of the one-shot dlopen attempt, capturing both the handle and any
+// error string so the diagnostic is not lost between get_nixl_handle() and
+// resolve().
+struct NixlHandle {
+    void *handle;
+    const char *error; // captured from dlerror() on failure
+};
+
 // Thread-safe lazy initialization of the nixl C API shared library handle.
 // C++11 guarantees thread-safe initialization of function-local static variables.
-static void *
+const NixlHandle &
 get_nixl_handle() {
-    static void *handle = dlopen("libnixl_capi.so", RTLD_NOW | RTLD_GLOBAL);
-    return handle;
+    static NixlHandle h = []() -> NixlHandle {
+        void *hdl = dlopen("libnixl_capi.so", RTLD_NOW | RTLD_LOCAL);
+        const char *err = hdl ? nullptr : dlerror();
+        return {hdl, err};
+    }();
+    return h;
 }
 
 // Resolve a symbol from the nixl C API shared library.
 // Aborts if the library is not loaded or the symbol is not found.
-static void *
+void *
 resolve(const char *name) {
-    void *handle = get_nixl_handle();
-    if (!handle) {
+    const auto &h = get_nixl_handle();
+    if (!h.handle) {
         std::cerr << "nixl error: libnixl_capi.so not found. "
-                  << "Install nixl or ensure the nixl library directory is in LD_LIBRARY_PATH.\n";
+                  << "Install nixl or ensure the nixl library directory "
+                  << "is in LD_LIBRARY_PATH.";
+        if (h.error) {
+            std::cerr << " dlopen error: " << h.error;
+        }
+        std::cerr << "\n";
         std::abort();
     }
-    void *sym = dlsym(handle, name);
+    void *sym = dlsym(h.handle, name);
     if (!sym) {
         std::cerr << "nixl error: symbol '" << name
                   << "' not found in libnixl_capi.so: " << dlerror() << "\n";
@@ -57,6 +76,8 @@ resolve(const char *name) {
     }
     return sym;
 }
+
+} // anonymous namespace
 
 extern "C" {
 
@@ -919,7 +940,7 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
 // Unlike other functions, this does NOT abort when the library is missing.
 bool
 nixl_capi_is_stub() {
-    return (get_nixl_handle() == nullptr);
+    return (get_nixl_handle().handle == nullptr);
 }
 
 } // extern "C"
