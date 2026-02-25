@@ -128,7 +128,6 @@ __forceinline__ __device__ void nixl_barrier(nixl_ep::gpu_nixl_ctx nixl_ctx, int
     uint64_t expected_counter = (epoch + num_channels) * (nixl_ctx.num_rdma_ranks - 1);
     while (ld_acquire_sys_global(nixl_ctx.local_barrier_counter_ptr) < expected_counter);
     st_release_sys_global(nixl_ctx.last_barrier_counter, epoch + num_channels);
-    }
 }
 
 template <bool kLowLatencyMode, int kNumRDMARanks>
