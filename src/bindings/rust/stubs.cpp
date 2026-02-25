@@ -68,10 +68,12 @@ resolve(const char *name) {
         std::cerr << "\n";
         std::abort();
     }
+    dlerror(); // clear any stale error
     void *sym = dlsym(h.handle, name);
-    if (!sym) {
+    const char *err = dlerror();
+    if (err) {
         std::cerr << "nixl error: symbol '" << name
-                  << "' not found in libnixl_capi.so: " << dlerror() << "\n";
+                  << "' not found in libnixl_capi.so: " << err << "\n";
         std::abort();
     }
     return sym;
