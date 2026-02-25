@@ -106,6 +106,14 @@ nixlUcclEngine::nixlUcclEngine(const nixlBackendInitParams *init_params)
 nixlUcclEngine::~nixlUcclEngine() {
     stop_listener_ = true;
 
+    if (engine_) {
+        uccl_engine_stop_accept(engine_);
+    }
+
+    if (listener_thread_.joinable()) {
+        listener_thread_.join();
+    }
+
     {
         std::lock_guard<std::mutex> lock(mem_mutex_);
         for (auto &[addr, priv] : mem_reg_info_) {
@@ -134,10 +142,6 @@ nixlUcclEngine::~nixlUcclEngine() {
     if (engine_) {
         uccl_engine_destroy(engine_);
         engine_ = nullptr;
-    }
-
-    if (listener_thread_.joinable()) {
-        listener_thread_.detach();
     }
 }
 
