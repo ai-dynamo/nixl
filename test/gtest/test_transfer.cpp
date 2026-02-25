@@ -482,10 +482,42 @@ class TestTransferTelemetry : public TestTransfer {
 protected:
     void
     SetUp() override {
-#ifdef HAVE_CUDA
-        m_cuda_device = (cudaSetDevice(0) == cudaSuccess);
-#endif
-        // Do not create agents here to allow tests to configure environment first
+        // Do not create agents here, the test will create them with custom parameters
+    }
+
+    void
+    runTelemetryTransferTest(size_t size,
+                             nixl_status_t expected_telem_status,
+                             bool capture_telemetry) {
+        constexpr size_t count = 1;
+        constexpr size_t repeat = 1;
+        constexpr size_t num_threads = 1;
+
+        addAgent(0, capture_telemetry);
+        addAgent(1, capture_telemetry);
+
+        std::vector<MemBuffer> src_buffers, dst_buffers;
+        createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
+        createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
+
+        exchangeMD(0, 1);
+        doTransfer(getAgent(0),
+                   getAgentName(0),
+                   getAgent(1),
+                   getAgentName(1),
+                   size,
+                   count,
+                   repeat,
+                   num_threads,
+                   DRAM_SEG,
+                   src_buffers,
+                   DRAM_SEG,
+                   dst_buffers,
+                   expected_telem_status);
+
+        invalidateMD(0, 1);
+        deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
+        deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
     }
 };
 
@@ -575,69 +607,13 @@ TEST_P(TestTransfer, ListenerCommSize) {
 TEST_P(TestTransferTelemetry, GetXferTelemetryFile) {
     env.addVar("NIXL_TELEMETRY_ENABLE", "y");
     env.addVar("NIXL_TELEMETRY_DIR", "/tmp/");
-
-    // Create fresh agents that read the current env var and add them to the fixture
-    addAgent(0);
-    addAgent(1);
-
-    constexpr size_t size = 1024;
-    constexpr size_t count = 1;
-    std::vector<MemBuffer> src_buffers, dst_buffers;
-    createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
-    createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
-
-    exchangeMD(0, 1);
-    doTransfer(getAgent(0),
-               getAgentName(0),
-               getAgent(1),
-               getAgentName(1),
-               size,
-               count,
-               1,
-               1,
-               DRAM_SEG,
-               src_buffers,
-               DRAM_SEG,
-               dst_buffers,
-               NIXL_SUCCESS);
-
-    invalidateMD(0, 1);
-    deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
-    deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+    runTelemetryTransferTest(1024, NIXL_SUCCESS, false);
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryAPI) {
     // Enable telemetry without file output
     env.addVar("NIXL_TELEMETRY_ENABLE", "y");
-
-    // Create fresh agents that read the current env var and add them to the fixture
-    addAgent(0);
-    addAgent(1);
-
-    constexpr size_t size = 1024;
-    constexpr size_t count = 1;
-    std::vector<MemBuffer> src_buffers, dst_buffers;
-    createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
-    createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
-
-    exchangeMD(0, 1);
-    doTransfer(getAgent(0),
-               getAgentName(0),
-               getAgent(1),
-               getAgentName(1),
-               size,
-               count,
-               1,
-               1,
-               DRAM_SEG,
-               src_buffers,
-               DRAM_SEG,
-               dst_buffers,
-               NIXL_SUCCESS);
-
-    invalidateMD(0, 1);
-    deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
-    deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+    runTelemetryTransferTest(1024, NIXL_SUCCESS, false);
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryAPICfg) {
@@ -646,72 +622,16 @@ TEST_P(TestTransferTelemetry, GetXferTelemetryAPICfg) {
 
     const LogIgnoreGuard lig("ignoring the NIXL_TELEMETRY_ENABLE environment variable");
 
-    // Create fresh agents that read the current env var and add them to the fixture
-    // with capture_telemetry set
-    addAgent(0, true);
-    addAgent(1, true);
-
-    EXPECT_EQ(lig.getIgnoredCount(), 2);
-
-    constexpr size_t size = 1024;
-    constexpr size_t count = 1;
-    std::vector<MemBuffer> src_buffers, dst_buffers;
-    createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
-    createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
-
-    exchangeMD(0, 1);
-    doTransfer(getAgent(0),
-               getAgentName(0),
-               getAgent(1),
-               getAgentName(1),
-               size,
-               count,
-               1,
-               1,
-               DRAM_SEG,
-               src_buffers,
-               DRAM_SEG,
-               dst_buffers,
-               NIXL_SUCCESS);
-    invalidateMD(0, 1);
-    deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
-    deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+    runTelemetryTransferTest(1024, NIXL_SUCCESS, true);
 
     EXPECT_EQ(lig.getIgnoredCount(), 2);
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryDisabled) {
     env.addVar("NIXL_TELEMETRY_ENABLE", "n");
-
-    // Create fresh agents that read the current env var and add them to the fixture
-    addAgent(0);
-    addAgent(1);
-
-    constexpr size_t size = 512;
-    constexpr size_t count = 1;
-    std::vector<MemBuffer> src_buffers, dst_buffers;
-    createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
-    createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
-
-    exchangeMD(0, 1);
     const LogIgnoreGuard lig("cannot return values when telemetry is not enabled");
-    doTransfer(getAgent(0),
-               getAgentName(0),
-               getAgent(1),
-               getAgentName(1),
-               size,
-               count,
-               1,
-               1,
-               DRAM_SEG,
-               src_buffers,
-               DRAM_SEG,
-               dst_buffers);
+    runTelemetryTransferTest(512, NIXL_ERR_NO_TELEMETRY, false);
     EXPECT_LE(lig.getIgnoredCount(), 1);
-
-    invalidateMD(0, 1);
-    deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
-    deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
 }
 
 TEST_P(TestTransfer, PrepGpuSignal) {
