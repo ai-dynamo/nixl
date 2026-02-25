@@ -51,18 +51,4 @@ void barrier(int** barrier_signal_ptrs, int rank, int num_nvl_ranks, cudaStream_
 
 }  // namespace intranode
 
-namespace internode {
-
-void* alloc(size_t size, size_t alignment) {
-    void *ptr;
-    CUDA_CHECK(cudaMalloc(&ptr, size));
-    return ptr;
-}
-
-void free(void* ptr) {
-    CUDA_CHECK(cudaFree(ptr));
-}
-
-} // namespace internode
-
 } // namespace nixl_ep

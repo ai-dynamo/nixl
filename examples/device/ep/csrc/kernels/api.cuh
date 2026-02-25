@@ -59,15 +59,6 @@ struct gpu_nixl_ctx {
 };
 
 
-// Internode runtime
-namespace internode {
-
-void *alloc(size_t size, size_t alignment);
-
-void free(void *ptr);
-
-} // namespace internode
-
 // Layout kernels
 namespace layout {
 
