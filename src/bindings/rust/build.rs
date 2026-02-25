@@ -106,35 +106,45 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     // Print the library path for debugging
     println!("cargo:warning=Using library path: {}", nixl_lib_path);
 
-    // Verify that nixl shared libraries actually exist before proceeding.
-    // Without this check, wrapper.cpp may compile (headers found in source tree)
-    // but linking will fail later when the .so files are missing.
-    let nixl_so = format!("{}/libnixl.so", nixl_lib_path);
-    if !std::path::Path::new(&nixl_so).exists() {
-        return Err(anyhow::anyhow!(
-            "libnixl.so not found at {}; nixl libraries are not installed",
-            nixl_so
-        ));
-    }
+    // Collect all candidate library directories: NIXL_PREFIX-derived paths
+    // first, then any paths reported by pkg-config.
+    let mut lib_search_paths = vec![
+        nixl_lib_path.clone(),
+        format!("{}/lib", nixl_root_path),
+        format!("{}/lib64", nixl_root_path),
+        format!("{}/lib/x86_64-linux-gnu", nixl_root_path),
+    ];
 
-    // Add all possible library paths
-    println!("cargo:rustc-link-search=native={}", nixl_lib_path);
-    println!("cargo:rustc-link-search=native={}", nixl_root_path);
-    println!("cargo:rustc-link-search=native={}/lib", nixl_root_path);
-    println!("cargo:rustc-link-search=native={}/lib64", nixl_root_path);
-    println!("cargo:rustc-link-search=native={}/lib/x86_64-linux-gnu", nixl_root_path);
-
-    // Try to use pkg-config if available
+    // Try to use pkg-config if available, and collect its library paths.
     if let Some(libs) = get_nixl_libs() {
         println!("cargo:warning=Using pkg-config paths");
-        for lib in libs {
-            for path in lib.link_paths {
-                println!("cargo:rustc-link-search=native={}", path.display());
+        for lib in &libs {
+            for path in &lib.link_paths {
+                lib_search_paths.push(path.display().to_string());
             }
         }
     } else {
         println!("cargo:warning=pkg-config not available, using manual library paths");
     }
+
+    // Verify that nixl shared libraries actually exist before proceeding.
+    // Without this check, wrapper.cpp may compile (headers found in source tree)
+    // but linking will fail later when the .so files are missing.
+    let nixl_so_found = lib_search_paths.iter().any(|dir| {
+        std::path::Path::new(&format!("{}/libnixl.so", dir)).exists()
+    });
+    if !nixl_so_found {
+        return Err(anyhow::anyhow!(
+            "libnixl.so not found in any search path {:?}; nixl libraries are not installed",
+            lib_search_paths
+        ));
+    }
+
+    // Register all candidate paths with the linker.
+    for path in &lib_search_paths {
+        println!("cargo:rustc-link-search=native={}", path);
+    }
+    println!("cargo:rustc-link-search=native={}", nixl_root_path);
 
     cc_builder
         .file("wrapper.cpp")
