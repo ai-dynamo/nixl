@@ -283,22 +283,23 @@ nixlAgent::getBackendParams (const nixlBackendH* backend,
     return NIXL_SUCCESS;
 }
 
-namespace {
-
 void
-warnAboutHardwareSupportMismatch(const nixl_backend_t &type) {
-    if (type != "LIBFABRIC") {
-        const auto &hw_info = nixl::hwInfo::instance();
+nixlAgentData::warnAboutEfaHardwareMismatch() {
+    if (efaWarningChecked) {
+        return;
+    }
+    efaWarningChecked = true;
 
+    if (backendEngines.count("UCX") != 0 && backendEngines.count("LIBFABRIC") == 0) {
+        const auto &hw_info = nixl::hwInfo::instance();
         if (hw_info.numEfaDevices > 0) {
-            NIXL_WARN << hw_info.numEfaDevices << " Amazon EFA(s) were detected, but the " << type
-                      << " backend was set. It's recommended to use the LIBFABRIC backend for "
-                         "best performance.";
+            NIXL_WARN
+                << hw_info.numEfaDevices
+                << " Amazon EFA(s) were detected, but the UCX backend was configured."
+                   " For best performance, it's recommended to use the LIBFABRIC backend instead.";
         }
     }
 }
-
-} // namespace
 
 nixl_status_t
 nixlAgent::createBackend(const nixl_backend_t &type,
@@ -414,8 +415,6 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
         NIXL_DEBUG << "Created backend: " << type;
 
-        warnAboutHardwareSupportMismatch(type);
-
         return NIXL_SUCCESS;
     }
 
@@ -445,6 +444,9 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     unsigned int    count = 0;
 
     NIXL_LOCK_GUARD(data->lock);
+
+    data->warnAboutEfaHardwareMismatch();
+
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_list = &data->memToBackend[descs.getType()];
         if (backend_list->empty()) {

@@ -121,10 +121,10 @@ TEST_F(HardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
 }
 
 /**
- * Test that a warning is logged when EFA devices are present but a
- * non-LIBFABRIC backend is created.
+ * Test that a warning is logged when EFA devices are present, the UCX
+ * backend is created, and the LIBFABRIC backend is not created.
  */
-TEST_F(HardwareWarningTest, WarnWhenEfaPresentAndNonLibfabricBackend) {
+TEST_F(HardwareWarningTest, EfaHardwareMismatchWarning) {
     const auto &hw_info = nixl::hwInfo::instance();
     if (hw_info.numEfaDevices == 0) {
         GTEST_SKIP() << "No EFA devices detected, skipping test";
@@ -133,33 +133,31 @@ TEST_F(HardwareWarningTest, WarnWhenEfaPresentAndNonLibfabricBackend) {
     envHelper_.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
     nixlAgent agent("EfaTestAgent", nixlAgentConfig(true));
 
-    gtest::scopedTestLogSink log_sink;
-
     nixlBackendH *backend;
     EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
 
-    unsigned expected_warnings = 1;
+    const gtest::LogIgnoreGuard lig(
+        "Amazon EFA\\(s\\) were detected, but the UCX backend was configured");
 
-    if (ucpVersion_ < UCP_VERSION(1, 19)) {
-        // Ignore possible warning about UCX version
-        EXPECT_EQ(log_sink.countWarningsMatching("UCX version is less than 1.19"), 1);
-        expected_warnings++;
-    }
+    /* Call registerMem to trigger the warning check */
+    const nixl_reg_dlist_t descs(DRAM_SEG);
+    agent.registerMem(descs);
 
-    EXPECT_EQ(log_sink.countWarningsMatching("Amazon EFA(s) were detected, but the UCX backend was "
-                                             "set. It's recommended to use the LIBFABRIC backend "
-                                             "for best performance."),
-              1);
-    EXPECT_EQ(log_sink.warningCount(), expected_warnings);
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
+
+    /* Call registerMem again to ensure the warning is only logged once */
+    agent.registerMem(descs);
+
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
 
     envHelper_.popVar();
 }
 
 /**
  * Test that no warning is logged when EFA devices are present and the
- * LIBFABRIC backend is created.
+ * LIBFABRIC backend is created (without UCX).
  */
-TEST_F(HardwareWarningTest, NoWarningWhenEfaPresentAndLibfabricBackend) {
+TEST_F(HardwareWarningTest, EfaHardwareMismatchNoWarning) {
 #ifndef HAVE_LIBFABRIC
     GTEST_SKIP() << "LIBFABRIC plugin not built";
 #endif
@@ -172,12 +170,12 @@ TEST_F(HardwareWarningTest, NoWarningWhenEfaPresentAndLibfabricBackend) {
     envHelper_.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/libfabric");
     nixlAgent agent("EfaTestAgent", nixlAgentConfig(true));
 
-    gtest::scopedTestLogSink log_sink;
-
     nixlBackendH *backend;
     EXPECT_EQ(agent.createBackend("LIBFABRIC", {}, backend), NIXL_SUCCESS);
 
-    EXPECT_EQ(log_sink.warningCount(), 0);
+    /* Call registerMem to trigger the warning check */
+    const nixl_reg_dlist_t descs(DRAM_SEG);
+    agent.registerMem(descs);
 
     envHelper_.popVar();
 }
