@@ -582,6 +582,8 @@ test_inter_agent_transfer(bool p_thread,
 
     void *addr1 = NULL, *addr2 = NULL;
     nixlBackendMD *lmd1, *lmd2;
+    // Always allocate the source memory last to ensure that we stay on the context
+    // of the source agent.
     allocateAndRegister(ucx2, dst_dev_id, dst_mem_type, addr2, len, lmd2);
     allocateAndRegister(ucx1, src_dev_id, src_mem_type, addr1, len, lmd1);
 
@@ -605,6 +607,8 @@ test_inter_agent_transfer(bool p_thread,
             testHndlIterator hiter(reuse_hndl);
             for(int k = 0; k < iter; k++ ) {
                 /* Init data */
+                // Always init the source memory last to ensure that we stay on the context
+                // of the source agent.
                 doMemset(dst_mem_type, dst_dev_id, addr2, 0xda, len);
                 doMemset(src_mem_type, src_dev_id, addr1, 0xbb, len);
 
