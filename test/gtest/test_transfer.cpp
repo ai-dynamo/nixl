@@ -480,7 +480,8 @@ private:
 
 class TestTransferTelemetry : public TestTransfer {
 protected:
-    void SetUp() override {
+    void
+    SetUp() override {
 #ifdef HAVE_CUDA
         m_cuda_device = (cudaSetDevice(0) == cudaSuccess);
 #endif
@@ -679,7 +680,6 @@ TEST_P(TestTransferTelemetry, GetXferTelemetryAPICfg) {
     EXPECT_EQ(lig.getIgnoredCount(), 2);
 }
 
-
 TEST_P(TestTransferTelemetry, GetXferTelemetryDisabled) {
     env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
@@ -750,6 +750,12 @@ NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, ""
 NIXL_INSTANTIATE_TEST(ucx_telemetry, TestTransferTelemetry, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_telemetry_no_pt, TestTransferTelemetry, "UCX", false, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_telemetry_threadpool, TestTransferTelemetry, "UCX", true, 6, 4, "");
-NIXL_INSTANTIATE_TEST(ucx_telemetry_threadpool_no_pt, TestTransferTelemetry, "UCX", false, 6, 4, "");
+NIXL_INSTANTIATE_TEST(ucx_telemetry_threadpool_no_pt,
+                      TestTransferTelemetry,
+                      "UCX",
+                      false,
+                      6,
+                      4,
+                      "");
 
 } // namespace gtest
