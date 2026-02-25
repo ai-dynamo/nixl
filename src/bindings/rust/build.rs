@@ -110,6 +110,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     // first, then any paths reported by pkg-config.
     let mut lib_search_paths = vec![
         nixl_lib_path.clone(),
+        nixl_root_path.clone(),
         format!("{}/lib", nixl_root_path),
         format!("{}/lib64", nixl_root_path),
         format!("{}/lib/{}-linux-gnu", nixl_root_path, arch),
@@ -141,7 +142,6 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     }
 
     // Register all candidate paths with the linker (deduplicated).
-    lib_search_paths.push(nixl_root_path.clone());
     lib_search_paths.sort();
     lib_search_paths.dedup();
     for path in &lib_search_paths {
