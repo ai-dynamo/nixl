@@ -68,7 +68,8 @@ void ParseArguments(int argc, char **argv) {
 }
 
 namespace {
-    const std::regex ib_regex("IB device\\(s\\) were detected, but accelerated IB support was not found");
+    const std::regex
+        ib_regex("IB device\\(s\\) were detected, but accelerated IB support was not found");
     const std::regex aws_regex("UCX version is less than 1.19, CUDA support is limited, including"
                                " the lack of support for multi-GPU within a single process.");
     const std::regex non_gpu_regex("[0-9]+ NVIDIA GPU\\(s\\) were detected, but UCX CUDA support "
