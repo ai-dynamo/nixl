@@ -363,9 +363,9 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
         if (NIXL_SUCCESS != ret) {
             delete backend;
-            NIXL_ERROR_FUNC
-                << "backend '" << type
-                << "' encountered error during intra-agent transfer setup with status " << ret;
+            NIXL_ERROR_FUNC << "backend '" << type
+                            << "' encountered error during intra-agent transfer setup with status "
+                            << ret;
             return ret;
         }
     }
@@ -380,15 +380,14 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     data->backendEngines[type] = backend;
     data->backendHandles[type] = bknd_hndl;
     mems = backend->getSupportedMems();
-    for (auto & elm : mems) {
+    for (auto &elm : mems) {
         backend_list = &data->memToBackend[elm];
         // First time creating this backend handle, so unique
         // The order of creation sets the preference order
         backend_list->push_back(backend);
     }
 
-    if (backend->supportsRemote())
-        data->notifEngines.push_back(backend);
+    if (backend->supportsRemote()) data->notifEngines.push_back(backend);
 
     // TODO: Check if backend supports ProgThread
     //       when threading is in agent

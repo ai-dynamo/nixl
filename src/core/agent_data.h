@@ -144,8 +144,7 @@ class nixlBackendH {
     private:
         nixlBackendEngine* engine;
 
-        explicit nixlBackendH(nixlBackendEngine *engine) noexcept
-            : engine(engine) {}
+        explicit nixlBackendH(nixlBackendEngine *engine) noexcept : engine(engine) {}
 
         ~nixlBackendH() = default;
 
