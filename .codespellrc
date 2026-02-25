@@ -1,2 +1,2 @@
 [codespell]
-ignore-words-list = crate, trait, dyn, async, statics
+ignore-words-list = crate, trait, dyn, async

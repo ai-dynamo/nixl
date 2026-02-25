@@ -929,8 +929,8 @@ nixl_capi_status_t
 nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
                              nixl_capi_xfer_req_t req_hndl,
                              nixl_capi_xfer_telemetry_t telemetry) {
-    using fn_t = nixl_capi_status_t (*)(
-        nixl_capi_agent_t, nixl_capi_xfer_req_t, nixl_capi_xfer_telemetry_t);
+    using fn_t =
+        nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t, nixl_capi_xfer_telemetry_t);
     static fn_t real = (fn_t)resolve("nixl_capi_get_xfer_telemetry");
     return real(agent, req_hndl, telemetry);
 }
