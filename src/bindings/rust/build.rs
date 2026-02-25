@@ -112,7 +112,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
         nixl_lib_path.clone(),
         format!("{}/lib", nixl_root_path),
         format!("{}/lib64", nixl_root_path),
-        format!("{}/lib/x86_64-linux-gnu", nixl_root_path),
+        format!("{}/lib/{}-linux-gnu", nixl_root_path, arch),
     ];
 
     // Try to use pkg-config if available, and collect its library paths.
