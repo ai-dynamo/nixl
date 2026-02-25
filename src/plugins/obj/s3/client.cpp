@@ -18,6 +18,7 @@
 #include "client.h"
 #include "object/s3/utils.h"
 #include "object/s3/aws_sdk_init.h"
+#include "common/nixl_log.h"
 #include <aws/s3/model/PutObjectRequest.h>
 #include <aws/s3/model/GetObjectRequest.h>
 #include <aws/s3/model/HeadObjectRequest.h>
@@ -64,6 +65,7 @@ awsS3Client::putObjectAsync(std::string_view key,
                             size_t offset,
                             put_object_callback_t callback) {
     if (offset != 0) {
+        NIXL_ERROR << "putObjectAsync: non-zero offset not supported (offset=" << offset << ")";
         callback(false);
         return;
     }
@@ -84,6 +86,8 @@ awsS3Client::putObjectAsync(std::string_view key,
             const Aws::S3::Model::PutObjectRequest &,
             const Aws::S3::Model::PutObjectOutcome &outcome,
             const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
+            if (!outcome.IsSuccess())
+                NIXL_ERROR << "putObjectAsync error: " << outcome.GetError().GetMessage();
             callback(outcome.IsSuccess());
         },
         nullptr);
@@ -114,6 +118,8 @@ awsS3Client::getObjectAsync(std::string_view key,
                                    const Aws::S3::Model::GetObjectRequest &,
                                    const Aws::S3::Model::GetObjectOutcome &outcome,
                                    const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
+            if (!outcome.IsSuccess())
+                NIXL_ERROR << "getObjectAsync error: " << outcome.GetError().GetMessage();
             callback(outcome.IsSuccess());
         },
         nullptr);
