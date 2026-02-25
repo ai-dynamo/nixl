@@ -114,22 +114,20 @@ __forceinline__ __device__ void nixl_barrier(nixl_ep::gpu_nixl_ctx nixl_ctx, int
     int rdma_rank = nixl_ctx.rank / NUM_MAX_NVL_PEERS;
     int nvl_rank = nixl_ctx.rank % NUM_MAX_NVL_PEERS;
 
-    // Send barrier signals to all other RDMA ranks 
     for (int j = 0; j < num_channels; j++) {
         for (int i = 0; i < nixl_ctx.num_rdma_ranks; i++) {
             if (i == rdma_rank) continue;
-            // Use nixlAtomicAdd to increment remote barrier counter by 1
             int global_dst_rank = i * NUM_MAX_NVL_PEERS + nvl_rank;
             nixlMemDesc barrier_mdesc{nixl_ctx.internode_barrier_mvh, (size_t)global_dst_rank, 0};
             EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
                 1, barrier_mdesc, j, UCP_DEVICE_FLAG_NODELAY) == NIXL_IN_PROG);
         }
+    }
 
-        // Wait for all other RDMA ranks to signal us
-        uint64_t epoch = ld_acquire_sys_global(nixl_ctx.last_barrier_counter);
-        uint64_t expected_counter = (epoch + 1) * (nixl_ctx.num_rdma_ranks - 1);
-        while (ld_acquire_sys_global(nixl_ctx.local_barrier_counter_ptr) < expected_counter);
-        st_release_sys_global(nixl_ctx.last_barrier_counter, epoch + 1);
+    uint64_t epoch = ld_acquire_sys_global(nixl_ctx.last_barrier_counter);
+    uint64_t expected_counter = (epoch + num_channels) * (nixl_ctx.num_rdma_ranks - 1);
+    while (ld_acquire_sys_global(nixl_ctx.local_barrier_counter_ptr) < expected_counter);
+    st_release_sys_global(nixl_ctx.last_barrier_counter, epoch + num_channels);
     }
 }
 
