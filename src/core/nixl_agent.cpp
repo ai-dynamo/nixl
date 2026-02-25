@@ -1925,7 +1925,7 @@ nixlAgent::prepMemView(const nixl_xfer_dlist_t &dlist,
     nixlBackendEngine *engine{nullptr};
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
-    const auto backends = data->getBackends(extra_params, *data->memorySection.get(), mem_type);
+    const auto backends = data->getBackends(extra_params, *data->memorySection, mem_type);
     for (const auto &backend : backends) {
         const auto status = data->memorySection->populate(dlist, backend, meta_dlist);
         if (status == NIXL_SUCCESS) {
