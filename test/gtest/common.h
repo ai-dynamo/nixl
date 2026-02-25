@@ -21,10 +21,13 @@
 #include <iomanip>
 #include <cassert>
 #include <cstdint>
+#include <list>
 #include <memory>
 #include <stack>
 #include <optional>
 #include <mutex>
+#include <regex>
+#include <utility>
 #include <vector>
 #include <string>
 #include "gtest/gtest.h"
@@ -123,45 +126,49 @@ private:
     uint16_t _max_port = MAX_PORT;
 };
 
-/**
- * @brief A scoped LogSink that captures log messages for testing assertions.
- *
- * This class registers itself with Abseil's logging system to intercept
- * log messages on construction and unregisters on destruction. It can be
- * used in tests to verify that expected warnings or errors are logged.
- *
- * Usage:
- *   scopedTestLogSink sink;
- *   // ... code that logs warnings ...
- *   EXPECT_EQ(sink.warningCount(), 1);
- *   EXPECT_EQ(sink.countWarnings("expected message"), 1);
- */
-class scopedTestLogSink {
+using log_ignore_entry_t = std::pair<std::regex, size_t>;
+
+class LogIgnoreGuard {
 public:
-    scopedTestLogSink();
-    ~scopedTestLogSink();
+    explicit LogIgnoreGuard(const std::regex &rx);
+    explicit LogIgnoreGuard(const std::string &rx);
 
-    scopedTestLogSink(const scopedTestLogSink &) = delete;
-    scopedTestLogSink &
-    operator=(const scopedTestLogSink &) = delete;
+    ~LogIgnoreGuard();
+
+    LogIgnoreGuard(LogIgnoreGuard &&) = delete;
+    LogIgnoreGuard(const LogIgnoreGuard &) = delete;
+
+    void
+    operator=(LogIgnoreGuard &&) = delete;
+    void
+    operator=(const LogIgnoreGuard &) = delete;
 
     [[nodiscard]] size_t
-    warningCount() const;
-
-    [[nodiscard]] size_t
-    countWarningsMatching(const std::string &substring) const;
+    getIgnoredCount() const noexcept;
 
 private:
-    class testLogSink : public absl::LogSink {
-    public:
-        void
-        Send(const absl::LogEntry &entry) override;
+    std::list<log_ignore_entry_t>::iterator iter_;
+};
 
-        mutable std::mutex mutex_;
-        std::vector<std::string> warnings_;
-    };
+class LogProblemCounter : private absl::LogSink {
+public:
+    LogProblemCounter();
+    ~LogProblemCounter();
 
-    testLogSink sink_;
+    LogProblemCounter(LogProblemCounter &&) = delete;
+    LogProblemCounter(const LogProblemCounter &) = delete;
+
+    void
+    operator=(LogProblemCounter &&) = delete;
+    void
+    operator=(const LogProblemCounter &) = delete;
+
+    [[nodiscard]] static size_t
+    getProblemCount() noexcept;
+
+private:
+    void
+    Send(const absl::LogEntry &entry) override;
 };
 
 struct nixlTestParam {
