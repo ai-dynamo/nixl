@@ -140,17 +140,17 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
         ));
     }
 
-    // Register all candidate paths with the linker.
+    // Register all candidate paths with the linker (deduplicated).
+    lib_search_paths.push(nixl_root_path.clone());
+    lib_search_paths.sort();
+    lib_search_paths.dedup();
     for path in &lib_search_paths {
         println!("cargo:rustc-link-search=native={}", path);
     }
-    println!("cargo:rustc-link-search=native={}", nixl_root_path);
 
     cc_builder
         .file("wrapper.cpp")
         .includes(nixl_include_paths);
-
-    println!("cargo:rustc-link-search={}", nixl_lib_path);
 
     let etcd_enabled = env::var("HAVE_ETCD").map(|v| v != "0").unwrap_or(false);
 
@@ -195,7 +195,6 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     }
 
     // Tell cargo to invalidate the built crate whenever the wrapper changes
-    println!("cargo:rustc-link-search=native={}", nixl_lib_path);
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=wrapper.cpp");
     println!("cargo:rerun-if-env-changed=HAVE_ETCD");
