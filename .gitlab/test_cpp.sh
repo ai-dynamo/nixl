@@ -117,7 +117,7 @@ UCX_GDR_COPY_SHARED_MD=n ./bin/ucx_backend_multi
 # fi
 
 # shellcheck disable=SC2154
-gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+gtest-parallel --workers=8 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
 # Run NIXL client-server test
