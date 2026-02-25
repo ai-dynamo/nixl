@@ -72,8 +72,8 @@ resolve(const char *name) {
     void *sym = dlsym(h.handle, name);
     const char *err = dlerror();
     if (err) {
-        std::cerr << "nixl error: symbol '" << name
-                  << "' not found in libnixl_capi.so: " << err << "\n";
+        std::cerr << "nixl error: symbol '" << name << "' not found in libnixl_capi.so: " << err
+                  << "\n";
         std::abort();
     }
     return sym;
