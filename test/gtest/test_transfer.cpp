@@ -423,13 +423,19 @@ protected:
                 }
 
                 nixl_xfer_telem_t telemetry;
-                status = from.getXferTelemetry(xfer_req, telemetry);
-                EXPECT_EQ(status, expected_telem_status);
-                if (expected_telem_status == NIXL_SUCCESS) {
-                    EXPECT_TRUE(telemetry.startTime > min_chrono_time);
-                    EXPECT_TRUE(telemetry.postDuration > chrono_period_us_t(0));
-                    EXPECT_TRUE(telemetry.xferDuration > chrono_period_us_t(0));
-                    EXPECT_TRUE(telemetry.xferDuration >= telemetry.postDuration);
+                if (expected_telem_status == NIXL_ERR_NO_TELEMETRY) {
+                    const LogIgnoreGuard lig("cannot return values when telemetry is not enabled");
+                    status = from.getXferTelemetry(xfer_req, telemetry);
+                    EXPECT_EQ(status, expected_telem_status);
+                } else {
+                    status = from.getXferTelemetry(xfer_req, telemetry);
+                    EXPECT_EQ(status, expected_telem_status);
+                    if (expected_telem_status == NIXL_SUCCESS) {
+                        EXPECT_TRUE(telemetry.startTime > min_chrono_time);
+                        EXPECT_TRUE(telemetry.postDuration > chrono_period_us_t(0));
+                        EXPECT_TRUE(telemetry.xferDuration > chrono_period_us_t(0));
+                        EXPECT_TRUE(telemetry.xferDuration >= telemetry.postDuration);
+                    }
                 }
 
                 status = from.releaseXferReq(xfer_req);
@@ -627,10 +633,14 @@ TEST_P(TestTransfer, GetXferTelemetryAPICfg) {
     // Disable telemetry from env var but through config, expecting a warning
     env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
+    const LogIgnoreGuard lig("ignoring the NIXL_TELEMETRY_ENABLE environment variable");
+
     // Create fresh agents that read the current env var and add them to the fixture
     // with capture_telemetry set
     addAgent(2, true);
     addAgent(3, true);
+
+    EXPECT_EQ(lig.getIgnoredCount(), 2);
 
     constexpr size_t size = 1024;
     constexpr size_t count = 1;
@@ -652,10 +662,11 @@ TEST_P(TestTransfer, GetXferTelemetryAPICfg) {
                DRAM_SEG,
                dst_buffers,
                NIXL_SUCCESS);
-
     invalidateMD(2, 3);
     deregisterMem(getAgent(2), src_buffers, DRAM_SEG);
     deregisterMem(getAgent(3), dst_buffers, DRAM_SEG);
+
+    EXPECT_EQ(lig.getIgnoredCount(), 2);
 }
 
 
@@ -673,6 +684,7 @@ TEST_P(TestTransfer, GetXferTelemetryDisabled) {
     createRegisteredMem(getAgent(3), size, count, DRAM_SEG, dst_buffers);
 
     exchangeMD(2, 3);
+    const LogIgnoreGuard lig("cannot return values when telemetry is not enabled");
     doTransfer(getAgent(2),
                getAgentName(2),
                getAgent(3),
@@ -684,8 +696,8 @@ TEST_P(TestTransfer, GetXferTelemetryDisabled) {
                DRAM_SEG,
                src_buffers,
                DRAM_SEG,
-               dst_buffers,
-               NIXL_ERR_NO_TELEMETRY);
+               dst_buffers);
+    EXPECT_LE(lig.getIgnoredCount(), 1);
 
     invalidateMD(2, 3);
     deregisterMem(getAgent(2), src_buffers, DRAM_SEG);
