@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +13,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
 
 set -e
 set -x
@@ -44,6 +48,20 @@ export PKG_CONFIG_PATH=${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}/lib:${UCX_I
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
 export NIXL_NO_STUBS_FALLBACK=1
+
+echo "==== Running ETCD server ===="
+etcd_port=$(get_next_tcp_port)
+etcd_peer_port=$(get_next_tcp_port)
+export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
+export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
+export NIXL_ETCD_NAMESPACE="/nixl/rust_ci/${etcd_port}"
+etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
+     --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
+     --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
+ETCD_PID=$!
+trap 'kill -9 $ETCD_PID 2>/dev/null || true' EXIT
+
+wait_for_etcd
 
 cargo test -- --test-threads=1
 
