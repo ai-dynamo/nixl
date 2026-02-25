@@ -110,6 +110,8 @@ awsS3CrtClient::getObjectAsync(std::string_view key,
                                    const Aws::S3Crt::Model::GetObjectRequest &,
                                    const Aws::S3Crt::Model::GetObjectOutcome &outcome,
                                    const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
+            if (!outcome.IsSuccess())
+                NIXL_ERROR << "getObjectAsync (CRT) error: " << outcome.GetError().GetMessage();
             callback(outcome.IsSuccess());
         },
         nullptr);
