@@ -136,19 +136,20 @@ TEST_F(HardwareWarningTest, EfaHardwareMismatchWarning) {
     nixlBackendH *backend;
     EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
 
-    const gtest::LogIgnoreGuard lig(
+    const gtest::LogIgnoreGuard lig_efa_warn(
         "Amazon EFA\\(s\\) were detected, but the UCX backend was configured");
+    const gtest::LogIgnoreGuard lig_reg_fail("registerMem: registration failed");
 
     /* Call registerMem to trigger the warning check */
     const nixl_reg_dlist_t descs(DRAM_SEG);
     agent.registerMem(descs);
 
-    EXPECT_EQ(lig.getIgnoredCount(), 1);
+    EXPECT_EQ(lig_efa_warn.getIgnoredCount(), 1);
 
     /* Call registerMem again to ensure the warning is only logged once */
     agent.registerMem(descs);
 
-    EXPECT_EQ(lig.getIgnoredCount(), 1);
+    EXPECT_EQ(lig_efa_warn.getIgnoredCount(), 1);
 
     envHelper_.popVar();
 }
@@ -172,6 +173,8 @@ TEST_F(HardwareWarningTest, EfaHardwareMismatchNoWarning) {
 
     nixlBackendH *backend;
     EXPECT_EQ(agent.createBackend("LIBFABRIC", {}, backend), NIXL_SUCCESS);
+
+    const gtest::LogIgnoreGuard lig_reg_fail("registerMem: registration failed");
 
     /* Call registerMem to trigger the warning check */
     const nixl_reg_dlist_t descs(DRAM_SEG);
