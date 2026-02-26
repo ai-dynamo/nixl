@@ -249,13 +249,12 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
 }
 
 namespace {
-nixl_status_t serializeSections(nixlSerDes* serializer,
-                                const section_map_t &sectionMap) {
-    size_t seg_count =
-        std::count_if(sectionMap.begin(), sectionMap.end(), [](const auto &pair) {
-            const section_key_t &sec_key = pair.first;
-            return sec_key.second->supportsRemote();
-        });
+nixl_status_t
+serializeSections(nixlSerDes *serializer, const section_map_t &sectionMap) {
+    size_t seg_count = std::count_if(sectionMap.begin(), sectionMap.end(), [](const auto &pair) {
+        const section_key_t &sec_key = pair.first;
+        return sec_key.second->supportsRemote();
+    });
 
     auto ret = serializer->addBuf("nixlSecElms", &seg_count, sizeof(seg_count));
     if (ret) {
@@ -341,7 +340,8 @@ nixlLocalSection::~nixlLocalSection() {
 
 /*** Class nixlRemoteSection implementation ***/
 
-nixlRemoteSection::nixlRemoteSection(std::string agent_name) noexcept : agentName(std::move(agent_name)) {}
+nixlRemoteSection::nixlRemoteSection(std::string agent_name) noexcept
+    : agentName(std::move(agent_name)) {}
 
 nixl_status_t nixlRemoteSection::addDescList (
                                  const nixl_reg_dlist_t& mem_elms,
