@@ -48,13 +48,16 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 
 | Parameter | Description | Default | Required |
 |-----------|-------------|---------|----------|
-| `account_url` | URL of Azure Storage account to use (e.g., `https://<account-name>.blob.core.windows.net`) | - | Yes* |
-| `container_name` | Name of Azure Storage container to use | - | Yes* |
+| `account_url` | URL of Azure Storage account (e.g., `https://<account-name>.blob.core.windows.net`) | - | No* ** |
+| `container_name` | Name of Azure Storage container | - | Yes* |
+| `connection_string` | Azure Storage connection string (i.e., for testing with Azurite) | - | No* ** |
 | `ca_bundle` | Path to a custom certificate bundle | - | No |
 
+\* Each parameter falls back to a corresponding environment variable if not provided (see [Environment Variables](#environment-variables)).
 
-\* If `account_url` or `container_name`  parameter is not provided, the `AZURE_STORAGE_ACCOUNT_URL` and `AZURE_STORAGE_CONTAINER_NAME` environment variables will be used as fallbacks
-respectively.
+\*\* Either `account_url` or `connection_string` must be provided for the backend to function. If `connection_string` is provided,
+`account_url` will be ignored and connection string will be used directly to connect and authenticate to Azure Storage.
+`connection_string` is primarily intended for local testing with [Azurite](https://learn.microsoft.com/azure/storage/common/storage-use-azurite). For production workloads, it is recommended to specify an `account_url`.
 
 ### Environment Variables
 
@@ -62,8 +65,9 @@ The following environment variables are supported for Azure Blob Storage configu
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `AZURE_STORAGE_ACCOUNT_URL` | URL of Azure Storage account to use | `https://<account-name>.blob.core.windows.net` |
-| `AZURE_STORAGE_CONTAINER_NAME` | Name of Azure Storage container to use | `my-container` |
+| `AZURE_STORAGE_ACCOUNT_URL` | URL of Azure Storage account | `https://<account-name>.blob.core.windows.net` |
+| `AZURE_STORAGE_CONTAINER_NAME` | Name of Azure Storage container | `my-container` |
+| `AZURE_STORAGE_CONNECTION_STRING` | Azure Storage connection string | `DefaultEndpointsProtocol=https;AccountName=...` |
 | `AZURE_CA_BUNDLE` | Path to a custom certificate bundle | `/path/to/cabundle.pem` |
 
 
@@ -76,12 +80,16 @@ Configuration values are resolved in the following priority order (highest to lo
 
 
 ### Credentials
-The Azure Blob Storage backend uses the Azure default credential chain to authenticate from your current environment using
+
+By default, the backend uses the Azure default credential chain to authenticate from your current environment using
 [Microsoft Entra ID](https://learn.microsoft.com/azure/storage/blobs/authorize-access-azure-active-directory).
 Refer to the [documentation](https://learn.microsoft.com/azure/developer/cpp/sdk/authentication/credential-chains#defaultazurecredential-overview)
 to learn more about the default credential chain and how to configure it for your environment.
 
-The backend does not currently support connection strings nor shared access signatures (SAS) for authentication.
+For local development and testing with [Azurite](https://learn.microsoft.com/azure/storage/common/storage-use-azurite), the
+backend also supports connecting and authenticating instead using a connection string (see [Connecting to Azurite](#connecting-to-azurite)).
+
+The backend does not currently support shared keys nor shared access signatures (SAS) for authentication.
 
 ### Configuration Examples
 
@@ -96,6 +104,43 @@ agent.createBackend("AZURE_BLOB", params);
 
 ```bash
 export AZURE_STORAGE_ACCOUNT_URL=https://myaccount.blob.core.windows.net
+export AZURE_STORAGE_CONTAINER_NAME=my-container
+```
+
+```cpp
+agent.createBackend("AZURE_BLOB", {});
+```
+
+#### Connecting to Azurite
+
+To connect to [Azurite](https://learn.microsoft.com/azure/storage/common/storage-use-azurite) for local testing, first start Azurite:
+```bash
+# Example showing how to run Azurite using Docker
+docker run --rm -p 10000:10000 mcr.microsoft.com/azure-storage/azurite azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+```
+
+And create an Azure Storage container (if not already created on the currently running Azurite instance):
+```bash
+# In a separate terminal, create an Azure Storage container in the running azurite instance
+az storage container create \
+  --name my-container \
+  --connection-string 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;'
+```
+
+You can then connect by providing its connection string as a backend parameter:
+
+```cpp
+nixl_b_params_t params = {
+    {"connection_string", "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"},
+    {"container_name", "my-container"}
+};
+agent.createBackend("AZURE_BLOB", params);
+```
+
+Or as an environment variable:
+
+```bash
+export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
 export AZURE_STORAGE_CONTAINER_NAME=my-container
 ```
 
