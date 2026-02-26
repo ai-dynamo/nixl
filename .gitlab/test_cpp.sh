@@ -87,6 +87,7 @@ wait_for_etcd
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
+gtest-parallel --workers=8 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/desc_example
 ./bin/agent_example
 ./bin/nixl_example
