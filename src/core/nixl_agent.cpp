@@ -181,8 +181,9 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;
         if(my_port == 0) my_port = default_comm_port;
-        data->listener = new nixlMDStreamListener(my_port);
-        data->listener->setupListener();
+        auto listener = std::make_unique<nixlMDStreamListener>(my_port);
+        listener->setupListener();
+        data->listener = listener.release();
     }
 
     if (data->useEtcd || cfg.useListenThread) {
