@@ -302,7 +302,7 @@ nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
             continue;
         }
 
-        const nixlSecDescList base = *it->second;
+        const nixlSecDescList &base = *it->second;
         auto resp = std::make_unique<nixlSecDescList>(nixl_mem);
         for (const auto &desc : mem_elms) {
             int index = base.getIndex(desc);
