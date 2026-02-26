@@ -295,7 +295,6 @@ TEST_F(telemetryTest, ConcurrentAccess) {
     envHelper_.popVar();
 }
 
-
 TEST_F(telemetryTest, TelemetryAgentEventsOne) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 
