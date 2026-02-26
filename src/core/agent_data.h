@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __AGENT_DATA_H_
-#define __AGENT_DATA_H_
+#ifndef NIXL_SRC_CORE_AGENT_DATA_H
+#define NIXL_SRC_CORE_AGENT_DATA_H
 
 #include "common/str_tools.h"
 #include "mem_section.h"
@@ -23,6 +23,7 @@
 #include "stream/metadata_stream.h"
 #include "sync.h"
 
+#include <memory>
 
 #if HAVE_ETCD
 #include <etcd/SyncClient.hpp>
@@ -87,7 +88,7 @@ class nixlAgentData {
         std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
 
         // Local section, and Remote sections and their available common backends
-        nixlLocalSection*                                        memorySection;
+        std::unique_ptr<nixlLocalSection> memorySection;
 
         std::unordered_map<std::string,
                            std::unordered_map<nixl_backend_t, nixl_blob_t>,
@@ -96,7 +97,7 @@ class nixlAgentData {
                            std::hash<std::string>, strEqual>     remoteSections;
 
         // State/methods for listener thread
-        nixlMDStreamListener *listener;
+        std::unique_ptr<nixlMDStreamListener> listener;
         nixl_socket_map_t remoteSockets;
         std::thread commThread;
         std::vector<nixl_comm_req_t> commQueue;
@@ -122,7 +123,7 @@ class nixlAgentData {
         nixl_status_t
         invalidateRemoteData(const std::string &remote_name);
         [[nodiscard]] static backend_set_t
-        getBackends(const nixl_opt_args_t *opt_args, nixlMemSection *section, nixl_mem_t mem_type);
+        getBackends(const nixl_opt_args_t *opt_args, nixlMemSection &section, nixl_mem_t mem_type);
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
@@ -137,13 +138,15 @@ class nixlAgentData {
 };
 
 class nixlBackendEngine;
+
 // This class hides away the nixlBackendEngine from user of the Agent API
 class nixlBackendH {
     private:
         nixlBackendEngine* engine;
 
-        nixlBackendH(nixlBackendEngine* &engine) { this->engine = engine; }
-        ~nixlBackendH () {}
+        explicit nixlBackendH(nixlBackendEngine *engine) noexcept : engine(engine) {}
+
+        ~nixlBackendH() = default;
 
     public:
         nixl_backend_t getType () const { return engine->getType(); }
