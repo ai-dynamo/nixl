@@ -161,7 +161,8 @@ main() {
 #ifdef USE_VRAM
     checkCudaError(cudaMemset(buffer[0], 0xbb, buf_size), "Failed to memset");
     checkCudaError(cudaMemset(buffer[1], 0xbb, buf_size / 3), "Failed to memset");
-    checkCudaError(cudaMemset(buffer[1] + buf_size / 3, 0xda, buf_size - buf_size / 3), "Failed to memset");
+    checkCudaError(cudaMemset(buffer[1] + buf_size / 3, 0xda, buf_size - buf_size / 3),
+                   "Failed to memset");
 #else
     memset(buffer[0], 0xbb, buf_size);
     memset(buffer[1], 0xbb, buf_size / 3);
