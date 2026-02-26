@@ -76,7 +76,7 @@ matrix:
     arch:
       - x86_64
     ucx_version:
-      - 6b256526ee72df07d5d1c84b9a071343645ebbaa
+      - 4824e50bf5fb648941be331d9d1d904323aa0d6a
       - v1.20.x
 
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
