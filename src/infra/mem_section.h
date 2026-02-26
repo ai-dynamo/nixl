@@ -20,7 +20,6 @@
 #include <vector>
 #include <unordered_map>
 #include <map>
-#include <memory>
 #include <array>
 #include <string>
 #include <set>
@@ -95,7 +94,7 @@ public:
 };
 
 using nixl_sec_dlist_t = nixlSecDescList;
-using section_map_t = std::map<section_key_t, std::unique_ptr<nixlSecDescList>>;
+using section_map_t = std::map<section_key_t, nixlSecDescList>;
 
 class nixlMemSection {
     protected:
@@ -105,7 +104,7 @@ class nixlMemSection {
         ~nixlMemSection() = default;
 
         [[nodiscard]] nixlSecDescList &
-        emplaceBoth(nixl_mem_t nixl_mem, nixlBackendEngine *backend);
+        emplace(nixl_mem_t nixl_mem, nixlBackendEngine *backend);
 
     public:
         nixlMemSection() = default;
@@ -155,7 +154,7 @@ class nixlRemoteSection : public nixlMemSection {
                            const nixl_reg_dlist_t &mem_elms,
                            nixlBackendEngine *backend);
     public:
-        nixlRemoteSection (const std::string &agent_name);
+        explicit nixlRemoteSection(std::string agent_name) noexcept;
 
         nixl_status_t loadRemoteData (nixlSerDes* deserializer,
                                       backend_map_t &backendToEngineMap);
