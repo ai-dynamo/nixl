@@ -147,7 +147,7 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
     nixlSectionDesc local_sec, self_sec;
     nixlBasicDesc *lp = &local_sec;
     nixlBasicDesc *rp = &self_sec;
-    nixl_status_t ret;
+    nixl_status_t ret = NIXL_SUCCESS;
 
     int i;
     for (i = 0; i < mem_elms.descCount(); ++i) {
