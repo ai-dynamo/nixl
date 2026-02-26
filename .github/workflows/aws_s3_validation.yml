@@ -62,7 +62,7 @@ jobs:
           echo test > testfile.txt
           aws s3 cp testfile.txt s3://${AWS_DEFAULT_BUCKET}/testfile.txt
       - name: Build NIXL
-        timeout-minutes: 30
+        timeout-minutes: 60
         run: |
           ./.gitlab/build.sh $NIXL_INSTALL_DIR $NIXL_INSTALL_DIR -Ddisable_gds_backend=true
       - name: Run AWS S3 tests
