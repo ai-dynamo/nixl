@@ -94,7 +94,8 @@ if $TEST_LIBFABRIC ; then
     ./bin/nixl_example LIBFABRIC
 fi
 ./bin/nixl_etcd_example
-./bin/ucx_backend_test
+# Remove setting UCX_GDR_COPY_SHARED one all tests use a UCX version with UCX PR #11149
+UCX_GDR_COPY_SHARED_MD=n ./bin/ucx_backend_test
 mkdir -p /tmp/telemetry_test
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
 sleep 5
@@ -107,7 +108,8 @@ kill -s INT $telePID
 
 ./bin/nixl_posix_test -n 128 -s 1048576
 ./bin/nixl_gusli_test -n 4 -s 16
-./bin/ucx_backend_multi
+# Remove setting UCX_GDR_COPY_SHARED one all tests use a UCX version with UCX PR #11149
+UCX_GDR_COPY_SHARED_MD=n ./bin/ucx_backend_multi
 ./bin/serdes_test
 # TODO: Enable Mooncake test once data corruption issue is resolved
 # if $HAS_GPU ; then
@@ -119,16 +121,8 @@ gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port=
 ./bin/test_plugin
 
 # Run NIXL client-server test
-run_nixl_test() {
-    nixl_test_port=$(get_next_tcp_port)
-    ./bin/nixl_test target 127.0.0.1 "$nixl_test_port" &
-    NIXL_TEST_PID=$!
-    sleep 5
-    ./bin/nixl_test initiator 127.0.0.1 "$nixl_test_port"
-    wait $NIXL_TEST_PID
-}
-
-run_nixl_test
+nixl_test_port=$(get_next_tcp_port)
+parallel --line-buffer --halt now,fail=1 ::: "./bin/nixl_test target" "sleep 3 ; ./bin/nixl_test initiator" ::: "127.0.0.1 $nixl_test_port"
 
 echo "${TEXT_YELLOW}==== Disabled tests==="
 echo "./bin/md_streamer disabled"

@@ -18,8 +18,8 @@
  * @file nixl.h (NVIDIA Inference Xfer Library)
  * @brief These are NIXL Core APIs for applications
  */
-#ifndef _NIXL_H
-#define _NIXL_H
+#ifndef NIXL_SRC_API_CPP_NIXL_H
+#define NIXL_SRC_API_CPP_NIXL_H
 
 #include "nixl_types.h"
 #include "nixl_params.h"
@@ -34,7 +34,7 @@
 class nixlAgent {
     private:
         /** @var  data  The members in agent class wrapped into single nixlAgentData member. */
-        std::unique_ptr<nixlAgentData> data;
+        const std::unique_ptr<nixlAgentData> data;
 
     public:
         /*** Initialization and Registering Methods ***/
@@ -383,7 +383,7 @@ class nixlAgent {
          * @brief  Prepare a memory view handle for remote buffers.
          *
          * Prepare a memory view handle @a mvh for the remote memory buffers described by the
-         * descriptor list @a dlist . The handle can be later used to perform a memory transfer
+         * descriptor list @a dlist. The handle can be later used to perform a memory transfer
          * using @ref nixlPut, @ref nixlAtomicAdd. The preparation should be done on the initiator
          * agent. NIXL automatically determines the backend that can perform the preparation. If a
          * list of backends hints is provided (via extra_params), the selection is limited to the
@@ -395,15 +395,15 @@ class nixlAgent {
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        prepMemoryView(const nixl_remote_dlist_t &dlist,
-                       nixlMemoryViewH &mvh,
-                       const nixl_opt_args_t *extra_params = nullptr) const;
+        prepMemView(const nixl_remote_dlist_t &dlist,
+                    nixlMemViewH &mvh,
+                    const nixl_opt_args_t *extra_params = nullptr) const;
 
         /**
          * @brief  Prepare a memory view handle for local buffers.
          *
          * Prepare a memory view handle @a mvh for the local memory buffers described by the
-         * descriptor list @a dlist . The handle can be later used to perform a memory transfer
+         * descriptor list @a dlist. The handle can be later used to perform a memory transfer
          * using @ref nixlPut. The preparation should be done on the initiator agent. NIXL
          * automatically determines the backend that can perform the preparation. If a list of
          * backends hints is provided (via extra_params), the selection is limited to the specified
@@ -415,9 +415,9 @@ class nixlAgent {
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        prepMemoryView(const nixl_xfer_dlist_t &dlist,
-                       nixlMemoryViewH &mvh,
-                       const nixl_opt_args_t *extra_params = nullptr) const;
+        prepMemView(const nixl_xfer_dlist_t &dlist,
+                    nixlMemViewH &mvh,
+                    const nixl_opt_args_t *extra_params = nullptr) const;
 
         /**
          * @brief  Release a memory view handle.
@@ -425,7 +425,7 @@ class nixlAgent {
          * @param  mvh           [in] Memory view handle to be released
          */
         void
-        releaseMemoryView(nixlMemoryViewH mvh) const;
+        releaseMemView(nixlMemViewH mvh) const;
 
         /**
          * @brief  Release the prepared descriptor list handle `dlist_hndl`

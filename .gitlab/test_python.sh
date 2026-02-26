@@ -23,53 +23,50 @@ set -x
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
 
-if [ -z "$INSTALL_DIR" ]; then
-    echo "Usage: $0 <install_dir>"
-    exit 1
-fi
-
-ARCH=$(uname -m)
-[ "$ARCH" = "arm64" ] && ARCH="aarch64"
-
-export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH
-export CPATH=${INSTALL_DIR}/include::$CPATH
-export PATH=${INSTALL_DIR}/bin:$PATH
-export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
-export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
-export NIXL_PREFIX=${INSTALL_DIR}
-# Raise exceptions for logging errors
-export NIXL_DEBUG_LOGGING=yes
-
 if [ -n "$VIRTUAL_ENV" ] && grep -q '^uv =' "$VIRTUAL_ENV/pyvenv.cfg" 2>/dev/null; then
     pip3="uv pip"
 else
     pip3="python3 -m pip"
 fi
 
-# Install build dependencies
-if [ -n "$VIRTUAL_ENV" ] ; then
-    # Install full build dependencies in venv
-    $pip3 install --break-system-packages meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
-else
-    # Install minimal build dependencies in system python
-    $pip3 install --break-system-packages tomlkit
+if [ -n "$INSTALL_DIR" ]
+then
+    ARCH=$(uname -m)
+    [ "$ARCH" = "arm64" ] && ARCH="aarch64"
+
+    export LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH
+    export CPATH=${INSTALL_DIR}/include::$CPATH
+    export PATH=${INSTALL_DIR}/bin:$PATH
+    export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
+    export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
+    export NIXL_PREFIX=${INSTALL_DIR}
+    # Raise exceptions for logging errors
+    export NIXL_DEBUG_LOGGING=yes
+
+    # Install build dependencies
+    if [ -n "$VIRTUAL_ENV" ] ; then
+        # Install full build dependencies in venv
+        $pip3 install --break-system-packages meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
+    else
+        # Install minimal build dependencies in system python
+        $pip3 install --break-system-packages tomlkit
+    fi
+    # Set the correct wheel name based on the CUDA version
+    cuda_major=$(nvcc --version | grep -oP 'release \K[0-9]+')
+    case "$cuda_major" in
+        12|13) echo "CUDA $cuda_major detected" ;;
+        *) echo "Error: Unsupported CUDA version $cuda_major"; exit 1 ;;
+    esac
+    ./contrib/tomlutil.py --wheel-name "nixl-cu${cuda_major}" pyproject.toml
+    # Control ninja parallelism during pip build to prevent OOM (NPROC from common.sh)
+    $pip3 install --break-system-packages --config-settings=compile-args="-j${NPROC}" .
+    $pip3 install --break-system-packages dist/nixl-*none-any.whl
 fi
-# Set the correct wheel name based on the CUDA version
-cuda_major=$(nvcc --version | grep -oP 'release \K[0-9]+')
-case "$cuda_major" in
-    12|13) echo "CUDA $cuda_major detected" ;;
-    *) echo "Error: Unsupported CUDA version $cuda_major"; exit 1 ;;
-esac
-./contrib/tomlutil.py --wheel-name "nixl-cu${cuda_major}" pyproject.toml
-# Control ninja parallelism during pip build to prevent OOM (NPROC from common.sh)
-$pip3 install --break-system-packages --config-settings=compile-args="-j${NPROC}" .
-$pip3 install --break-system-packages dist/nixl-*none-any.whl
+
+# Install test dependencies
 $pip3 install --break-system-packages pytest
 $pip3 install --break-system-packages pytest-timeout
 $pip3 install --break-system-packages zmq
-
-# Add user pip packages to PATH
-export PATH="$HOME/.local/bin:$PATH"
 
 echo "==== Running ETCD server ===="
 etcd_port=$(get_next_tcp_port)
@@ -127,3 +124,5 @@ sleep 15
 kill -s INT $telePID
 
 kill -9 $ETCD_PID 2>/dev/null || true
+
+echo "==== Python tests done ===="

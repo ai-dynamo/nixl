@@ -16,6 +16,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,15 @@
 class UcxHardwareWarningTest : public ::testing::Test {
 protected:
     gtest::ScopedEnv envHelper_;
+
+    void
+    SetUp() override {
+        if (std::getenv("NIXL_CI_NON_GPU") != nullptr) {
+            // In the non-gpu CI, GPUs that are not available in the container may still be
+            // present under sysfs, causing the hardware warning tests to fail.
+            GTEST_SKIP() << "NIXL_CI_NON_GPU is set, skipping hardware warning tests";
+        }
+    }
 };
 
 /**
@@ -44,13 +54,11 @@ TEST_F(UcxHardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
     std::vector<std::string> devs;
     nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
 
-    gtest::scopedTestLogSink log_sink;
+    const gtest::LogIgnoreGuard lig(
+        "NVIDIA GPU\\(s\\) were detected, but UCX CUDA support was not found");
     ctx.warnAboutHardwareSupportMismatch();
 
-    EXPECT_EQ(log_sink.warningCount(), 1);
-    EXPECT_EQ(log_sink.countWarningsMatching(
-                  "NVIDIA GPU(s) were detected, but UCX CUDA support was not found"),
-              1);
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
 
     envHelper_.popVar();
 }
@@ -80,13 +88,11 @@ TEST_F(UcxHardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
     std::vector<std::string> devs;
     nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
 
-    gtest::scopedTestLogSink log_sink;
+    const gtest::LogIgnoreGuard lig(
+        "IB device\\(s\\) were detected, but accelerated IB support was not found");
     ctx.warnAboutHardwareSupportMismatch();
 
-    EXPECT_EQ(log_sink.warningCount(), 1);
-    EXPECT_EQ(log_sink.countWarningsMatching(
-                  "IB device(s) were detected, but accelerated IB support was not found"),
-              1);
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
 
     envHelper_.popVar();
 }
@@ -106,10 +112,7 @@ TEST_F(UcxHardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
     std::vector<std::string> devs;
     nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
 
-    gtest::scopedTestLogSink log_sink;
     ctx.warnAboutHardwareSupportMismatch();
-
-    EXPECT_EQ(log_sink.warningCount(), 0);
 
     envHelper_.popVar();
 }

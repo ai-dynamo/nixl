@@ -38,6 +38,8 @@ export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
+# Remove setting UCX_GDR_COPY_SHARED one all tests use a UCX version with UCX PR #11149
+export UCX_GDR_COPY_SHARED_MD=n
 
 echo "==== Show system info ===="
 env
@@ -63,11 +65,6 @@ cd ${INSTALL_DIR}
 
 DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4"
 
-run_nixlbench() {
-    args="$@"
-    ./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS $args
-}
-
 run_nixlbench_noetcd() {
     args="$@"
     ./bin/nixlbench $DEFAULT_NB_PARAMS $args
@@ -79,13 +76,10 @@ run_nixlbench_one_worker() {
 }
 
 run_nixlbench_two_workers() {
-    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
     args="$@"
-    run_nixlbench --benchmark_group $benchmark_group $args &
-    pid=$!
-    sleep 5
-    run_nixlbench --benchmark_group $benchmark_group $args
-    wait $pid
+    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+    command_line="./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group $benchmark_group $args"
+    parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 3 ; $command_line"
 }
 
 if $HAS_GPU ; then
