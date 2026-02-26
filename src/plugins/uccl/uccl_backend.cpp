@@ -150,17 +150,13 @@ nixlUcclEngine::startListener() {
     // The listener waits for connections from remote agents
     NIXL_DEBUG << "UCCL accepting connections";
     while (!stop_listener_) {
-        if (!engine_) {
-            NIXL_DEBUG << "Engine destroyed, listener thread exiting";
-            break;
-        }
 
         char ip_buf[256];
         int remote_gpu_idx;
         uccl_conn_t *conn = uccl_engine_accept(engine_, ip_buf, sizeof(ip_buf), &remote_gpu_idx);
         if (!conn) {
-            // Check if we should stop (engine destroyed or shutdown requested)
-            if (stop_listener_ || !engine_) {
+            // Check if we should stop
+            if (stop_listener_) {
                 NIXL_DEBUG << "Listener thread stopping";
                 break;
             }
@@ -597,7 +593,7 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
         return NIXL_ERR_BACKEND;
     }
 
-    int is_done = uccl_engine_xfer_status(conn, uccl_handle->transfer_id);
+    bool is_done = uccl_engine_xfer_status(conn, uccl_handle->transfer_id);
     if (is_done) {
         nixlSerDes ser_des;
         ser_des.addStr("msg", uccl_handle->notif_msg);
