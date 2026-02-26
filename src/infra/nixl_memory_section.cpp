@@ -26,14 +26,16 @@
 
 /*** Class nixlMemSection implementation ***/
 
-backend_set_t *nixlMemSection::queryBackends(const nixl_mem_t mem) noexcept {
+backend_set_t *
+nixlMemSection::queryBackends(const nixl_mem_t mem) noexcept {
     if ((mem < DRAM_SEG) || (mem > FILE_SEG)) {
         return nullptr;
     }
     return &memToBackend[mem];
 }
 
-const backend_set_t *nixlMemSection::queryBackends(const nixl_mem_t mem) const noexcept {
+const backend_set_t *
+nixlMemSection::queryBackends(const nixl_mem_t mem) const noexcept {
     if ((mem < DRAM_SEG) || (mem > FILE_SEG)) {
         return nullptr;
     }
@@ -54,7 +56,7 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    nixl_sec_dlist_t* base = it->second.get();
+    nixl_sec_dlist_t *base = it->second.get();
     resp.resize(query.descCount());
 
     int size = base->descCount();
@@ -207,7 +209,7 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
     const nixl_mem_t nixl_mem = mem_elms.getType();
     const section_key_t sec_key(nixl_mem, backend);
     const auto it = sectionMap.find(sec_key);
-    if (it==sectionMap.end()) {
+    if (it == sectionMap.end()) {
         return NIXL_ERR_NOT_FOUND;
     }
     nixl_sec_dlist_t *target = it->second.get();
@@ -319,7 +321,7 @@ nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
 nixlLocalSection::~nixlLocalSection() {
     for (auto &[sec_key, dlist] : sectionMap) {
         nixlBackendEngine* eng = sec_key.second;
-        for (auto & elm : *dlist) {
+        for (auto &elm : *dlist) {
             eng->deregisterMem(elm.metadataP);
         }
     }
@@ -404,7 +406,7 @@ nixl_status_t nixlRemoteSection::loadLocalData (
                                  const nixl_sec_dlist_t& mem_elms,
                                  nixlBackendEngine* backend) {
 
-    if (mem_elms.descCount()==0) { // Shouldn't happen
+    if (mem_elms.descCount() == 0) { // Shouldn't happen
         return NIXL_ERR_UNKNOWN;
     }
 
@@ -417,7 +419,7 @@ nixl_status_t nixlRemoteSection::loadLocalData (
     }
     nixl_sec_dlist_t *target = it->second.get();
 
-    for (auto & elm: mem_elms) {
+    for (auto &elm : mem_elms) {
         target->addDesc(elm);
     }
     return NIXL_SUCCESS;
@@ -426,7 +428,7 @@ nixl_status_t nixlRemoteSection::loadLocalData (
 nixlRemoteSection::~nixlRemoteSection() {
     for (auto &[sec_key, dlist] : sectionMap) {
         nixlBackendEngine* eng = sec_key.second;
-        for (auto & elm : *dlist) {
+        for (auto &elm : *dlist) {
             eng->unloadMD(elm.metadataP);
         }
     }
