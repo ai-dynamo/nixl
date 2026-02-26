@@ -100,7 +100,7 @@ int nixlMDStreamListener::acceptClient() {
     if (socketFd < 0) {
         return -1;
     }
-    csock = accept(socketFd, NULL, NULL);
+    csock = accept(socketFd, nullptr, nullptr);
     if (csock < 0 && errno != EAGAIN) {
         NIXL_PERROR << "Cannot accept client connection";
     }
@@ -176,7 +176,10 @@ nixlMDStreamClient::~nixlMDStreamClient() {
 }
 
 bool nixlMDStreamClient::setupClient() {
-    setupStream();
+    if (!setupStream()) {
+        NIXL_PERROR << "Failed to create metadata client socket";
+        return false;
+    }
 
     struct sockaddr_in listenerAddr;
     listenerAddr.sin_family = AF_INET;
@@ -185,6 +188,7 @@ bool nixlMDStreamClient::setupClient() {
     if (inet_pton(AF_INET, listenerAddress.c_str(),
                   &listenerAddr.sin_addr) <= 0) {
         NIXL_PERROR << "Invalid address/ Address not supported";
+        closeStream();
         return false;
     }
 
