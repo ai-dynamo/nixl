@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <iostream>
+#include <memory>
 #include <string>
 #include <algorithm>
 #include <cassert>
@@ -595,42 +596,28 @@ int main(int argc, char *argv[])
         std::cout << "============================================================" << std::endl;
 
         // Pre-allocate validation buffers once for all transfers
-        char *host_buffer = use_vram ? (char *)malloc(transfer_size) : NULL;
-        char *expected_buffer = (char *)malloc(transfer_size);
-        if ((use_vram && !host_buffer) || !expected_buffer) {
-            std::cerr << "Failed to allocate validation buffers\n";
-            free(host_buffer);
-            free(expected_buffer);
-            goto cleanup;
-        }
+        auto host_buffer = use_vram ? std::make_unique<char[]>(transfer_size) : nullptr;
+        auto expected_buffer = std::make_unique<char[]>(transfer_size);
 
         // Generate expected pattern once
-        fill_test_pattern(expected_buffer, transfer_size);
+        fill_test_pattern(expected_buffer.get(), transfer_size);
 
         for (i = 0; i < num_transfers; i++) {
             if (use_vram) {
                 if (!validate_gpu_buffer(
-                        vram_addr[i], transfer_size, host_buffer, expected_buffer)) {
+                        vram_addr[i], transfer_size, host_buffer.get(), expected_buffer.get())) {
                     std::cerr << "VRAM buffer " << i << " validation failed\n";
-                    free(host_buffer);
-                    free(expected_buffer);
                     goto cleanup;
                 }
             }
             if (use_dram) {
-                if (memcmp(dram_addr[i], expected_buffer, transfer_size) != 0) {
+                if (memcmp(dram_addr[i], expected_buffer.get(), transfer_size) != 0) {
                     std::cerr << "DRAM buffer " << i << " validation failed\n";
-                    free(host_buffer);
-                    free(expected_buffer);
                     goto cleanup;
                 }
             }
             printProgress(float(i + 1) / num_transfers);
         }
-
-        // Free validation buffers
-        free(host_buffer);
-        free(expected_buffer);
 
         std::cout << "\nVerification completed successfully!" << std::endl;
     }
