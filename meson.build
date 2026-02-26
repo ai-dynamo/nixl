@@ -287,12 +287,11 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
         add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API', language: ['cpp', 'cuda'])
     endif
 
+    ucx_gpu_device_api_v2_available = false
     have_host_side_v2 = cpp.has_function('ucp_device_remote_mem_list_create', dependencies: ucx_dep)
     if have_gpu_side and have_host_side_v2
         ucx_gpu_device_api_v2_available = true
         add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API_V2', language: ['cpp', 'cuda'])
-    else
-        ucx_gpu_device_api_v2_available = false
     endif
 
     summary({
