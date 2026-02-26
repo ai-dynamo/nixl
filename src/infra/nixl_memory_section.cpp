@@ -130,9 +130,10 @@ nixlMemSection::addElement(const nixlRemoteDesc &query,
 /*** Class nixlLocalSection implementation ***/
 
 // Calls into backend engine to register the memories in the desc list
-nixl_status_t nixlLocalSection::addDescList (const nixl_reg_dlist_t &mem_elms,
-                                             nixlBackendEngine* backend,
-                                             nixlSecDescList &remote_self) {
+nixl_status_t
+nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
+                              nixlBackendEngine *backend,
+                              nixlSecDescList &remote_self) {
 
     if (!backend) {
         return NIXL_ERR_INVALID_PARAM;
@@ -235,7 +236,7 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
         target.remDesc(index);
     }
 
-    if (target.descCount()==0) {
+    if (target.descCount() == 0) {
         sectionMap.erase(sec_key); // Invalidates target.
         // Note that sectionMap contains one entry per memory type and backend pair,
         // wherefore each backend can only have been inserted once into a memory type
@@ -403,9 +404,8 @@ nixl_status_t nixlRemoteSection::loadRemoteData (nixlSerDes* deserializer,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlRemoteSection::loadLocalData (
-                                 const nixlSecDescList& mem_elms,
-                                 nixlBackendEngine* backend) {
+nixl_status_t
+nixlRemoteSection::loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEngine *backend) {
 
     if (mem_elms.descCount() == 0) { // Shouldn't happen
         return NIXL_ERR_UNKNOWN;

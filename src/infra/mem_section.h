@@ -128,9 +128,10 @@ class nixlMemSection {
 
 class nixlLocalSection : public nixlMemSection {
     public:
-        nixl_status_t addDescList (const nixl_reg_dlist_t &mem_elms,
-                                   nixlBackendEngine* backend,
-                                   nixlSecDescList &remote_self);
+        nixl_status_t
+        addDescList(const nixl_reg_dlist_t &mem_elms,
+                    nixlBackendEngine *backend,
+                    nixlSecDescList &remote_self);
 
         // Each nixlBasicDesc should be same as original registration region
         nixl_status_t remDescList (const nixl_reg_dlist_t &mem_elms,
@@ -160,8 +161,8 @@ class nixlRemoteSection : public nixlMemSection {
                                       backend_map_t &backendToEngineMap);
 
         // When adding self as a remote agent for local operations
-        nixl_status_t loadLocalData (const nixlSecDescList& mem_elms,
-                                     nixlBackendEngine* backend);
+        nixl_status_t
+        loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEngine *backend);
         ~nixlRemoteSection();
 };
 
