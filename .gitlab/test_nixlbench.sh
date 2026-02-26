@@ -63,7 +63,7 @@ wait_for_etcd
 echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}
 
-DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4"
+DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 16384 --max_block_size 16384 --start_batch_size 4 --max_batch_size 4"
 
 run_nixlbench_noetcd() {
     args="$@"
