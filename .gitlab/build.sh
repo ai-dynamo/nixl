@@ -99,6 +99,7 @@ else
                                  patchelf \
                                  meson \
                                  ninja-build \
+                                 parallel \
                                  pkg-config \
                                  protobuf-compiler-grpc \
                                  pybind11-dev \
