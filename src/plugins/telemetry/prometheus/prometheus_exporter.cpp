@@ -34,7 +34,6 @@ const char prometheusLocalVar[] = "NIXL_TELEMETRY_PROMETHEUS_LOCAL";
 const std::string prometheusExporterTransferCategory = "NIXL_TELEMETRY_TRANSFER";
 const std::string prometheusExporterPerformanceCategory = "NIXL_TELEMETRY_PERFORMANCE";
 const std::string prometheusExporterMemoryCategory = "NIXL_TELEMETRY_MEMORY";
-const std::string prometheusExporterBackendCategory = "NIXL_TELEMETRY_BACKEND";
 const std::string prometheusExporterLocalAddress = "127.0.0.1";
 const std::string prometheusExporterPublicAddress = "0.0.0.0";
 
@@ -121,19 +120,6 @@ nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
         &gauge.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
 }
 
-void
-nixlTelemetryPrometheusExporter::createOrUpdateBackendEvent(const std::string &event_name,
-                                                            uint64_t value) {
-    auto it = counters_.find(event_name);
-    if (it != counters_.end()) {
-        it->second->Increment(value);
-        return;
-    }
-
-    registerCounter(event_name, "Backend event", prometheusExporterBackendCategory);
-    counters_[event_name]->Increment(value);
-}
-
 nixl_status_t
 nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
     try {
@@ -160,9 +146,6 @@ nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
             }
             break;
         }
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND:
-            createOrUpdateBackendEvent(event_name, event.value_);
-            break;
         case nixl_telemetry_category_t::NIXL_TELEMETRY_CONNECTION:
         case nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR:
         case nixl_telemetry_category_t::NIXL_TELEMETRY_SYSTEM:
