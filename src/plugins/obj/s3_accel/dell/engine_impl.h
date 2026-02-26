@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef OBJ_PLUGIN_S3_DELL_ENGINE_IMPL_H
-#define OBJ_PLUGIN_S3_DELL_ENGINE_IMPL_H
+#ifndef NIXL_OBJ_PLUGIN_S3_DELL_ENGINE_IMPL_H
+#define NIXL_OBJ_PLUGIN_S3_DELL_ENGINE_IMPL_H
 
 #include "s3_accel/engine_impl.h"
 #include "s3_accel/dell/client.h"
@@ -151,4 +151,4 @@ private:
     std::shared_ptr<cuObjClient> cuClient_;
 };
 
-#endif // OBJ_PLUGIN_S3_DELL_ENGINE_IMPL_H
+#endif // NIXL_OBJ_PLUGIN_S3_DELL_ENGINE_IMPL_H
