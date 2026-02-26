@@ -168,6 +168,10 @@ NB_ARG_STRING(obj_accelerated_type,
 // AZURE BLOB options - only used when backend is AZURE_BLOB
 NB_ARG_STRING(azure_blob_account_url, "", "Account URL for Azure Blob backend");
 NB_ARG_STRING(azure_blob_container_name, "", "Container name for Azure Blob backend");
+NB_ARG_STRING(azure_blob_connection_string,
+              "",
+              "Connection string for Azure Blob backend (alternative to connect to Azurite for "
+              "local testing)");
 
 // HF3FS options - only used when backend is HF3FS
 NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool");
@@ -254,6 +258,7 @@ bool xferBenchConfig::obj_accelerated_enable = false;
 std::string xferBenchConfig::obj_accelerated_type = "";
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
+std::string xferBenchConfig::azure_blob_connection_string = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
@@ -419,6 +424,7 @@ xferBenchConfig::loadParams(void) {
         if (backend == XFERBENCH_BACKEND_AZURE_BLOB) {
             azure_blob_account_url = NB_ARG(azure_blob_account_url);
             azure_blob_container_name = NB_ARG(azure_blob_container_name);
+            azure_blob_connection_string = NB_ARG(azure_blob_connection_string);
         }
     }
 
@@ -625,6 +631,9 @@ xferBenchConfig::printConfig() {
                         azure_blob_account_url);
             printOption("Azure Blob Storage container name (--azure_blob_container_name=name)",
                         azure_blob_container_name);
+            printOption("Azure Blob Storage connection string "
+                        "(--azure_blob_connection_string=connection-string)",
+                        azure_blob_connection_string);
         }
 
         if (xferBenchConfig::isStorageBackend()) {
@@ -1415,10 +1424,7 @@ xferBenchUtils::rmObjAzure(const std::string &name) {
 std::string
 xferBenchUtils::buildCommonAzCliBlobParams(const std::string &blob_name) {
     std::string account_url = xferBenchConfig::azure_blob_account_url;
-    if (account_url.empty()) {
-        std::cerr << "Error: Invalid Azure Storage account url" << std::endl;
-        return "";
-    }
+    std::string connection_string = xferBenchConfig::azure_blob_connection_string;
 
     std::string container_name = xferBenchConfig::azure_blob_container_name;
     if (container_name.empty()) {
@@ -1426,8 +1432,17 @@ xferBenchUtils::buildCommonAzCliBlobParams(const std::string &blob_name) {
         return "";
     }
 
-    return "--blob-url " + account_url + "/" + container_name + "/" + blob_name +
-        " --auth-mode login  --output none";
+    if (!connection_string.empty()) {
+        return "--connection-string '" + connection_string + "' --container-name " +
+            container_name + " --name " + blob_name + " --output none";
+    } else if (!account_url.empty()) {
+        return "--blob-url " + account_url + "/" + container_name + "/" + blob_name +
+            " --auth-mode login  --output none";
+    } else {
+        std::cerr << "Error: Either Azure Storage account URL or connection string must be provided"
+                  << std::endl;
+        return "";
+    }
 }
 
 /*
