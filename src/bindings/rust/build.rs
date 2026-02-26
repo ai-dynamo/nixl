@@ -141,9 +141,6 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
         ));
     }
 
-    // Register all candidate paths with the linker (deduplicated).
-    lib_search_paths.sort();
-    lib_search_paths.dedup();
     for path in &lib_search_paths {
         println!("cargo:rustc-link-search=native={}", path);
     }
