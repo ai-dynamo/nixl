@@ -43,7 +43,7 @@ env:
   TEST_TIMEOUT: 30
   UCX_TLS: "^shm"
   STORAGE_DRIVER: 'overlay'
-  CI_IMAGE_TAG: "20260210-1"
+  CI_IMAGE_TAG: "20260219-1"
 
 
 runs_on_dockers:
