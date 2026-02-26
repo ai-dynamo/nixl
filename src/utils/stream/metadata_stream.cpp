@@ -62,7 +62,7 @@ nixlMDStreamListener::~nixlMDStreamListener() {
         listenerThread.join();
     }
     if (csock >= 0) {
-            close(csock);
+        close(csock);
     }
 }
 
@@ -97,13 +97,15 @@ void nixlMDStreamListener::setupListener() {
 }
 
 int nixlMDStreamListener::acceptClient() {
-        csock = accept(socketFd, NULL, NULL);
-        if (csock < 0 && errno != EAGAIN) {
-            NIXL_PERROR << "Cannot accept client connection";
-        }
-        return csock;
+    if (socketFd < 0) {
+        return -1;
+    }
+    csock = accept(socketFd, NULL, NULL);
+    if (csock < 0 && errno != EAGAIN) {
+        NIXL_PERROR << "Cannot accept client connection";
+    }
+    return csock;
 }
-
 
 void nixlMDStreamListener::acceptClientsAsync() {
     while(true) {

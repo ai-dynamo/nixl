@@ -50,7 +50,7 @@ class nixlMetadataStream {
 class nixlMDStreamListener: public nixlMetadataStream {
     private:
         std::thread listenerThread;
-        int         csock;
+        int         csock = -1;
 
         void            acceptClientsAsync();
         void            recvFromClients(int clientSocket);
