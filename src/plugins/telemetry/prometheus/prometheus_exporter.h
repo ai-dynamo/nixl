@@ -68,8 +68,6 @@ private:
     // Helper methods
     void
     initializeMetrics();
-    void
-    createOrUpdateBackendEvent(const std::string &event_name, uint64_t value);
 
     void
     registerCounter(const std::string &name, const std::string &help, const std::string &category);

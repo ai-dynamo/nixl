@@ -77,7 +77,6 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 | `agent_rx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
 | `agent_xfer_time` | `NIXL_TELEMETRY_PERFORMANCE` | Yes | No | No |
 | `agent_xfer_post_time` | `NIXL_TELEMETRY_PERFORMANCE` | Yes | No | No |
-| Backend-specific events | `NIXL_TELEMETRY_BACKEND` | - | Yes | Future | No |
 | Error status strings | `NIXL_TELEMETRY_ERROR` | No | No | No |
 
 **Counter, Gauge, Histogram** - as implemented by the Prometheus exporter
