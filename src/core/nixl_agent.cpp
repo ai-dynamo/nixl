@@ -1221,121 +1221,6 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 }
 
 nixl_status_t
-nixlAgent::createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH &gpu_req_hndl) const {
-    if (!req_hndl.engine) {
-        NIXL_ERROR_FUNC << "Invalid request handle[" << &req_hndl << "]: engine is null";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    if (!req_hndl.backendHandle) {
-        NIXL_ERROR_FUNC << "Invalid request handle[" << &req_hndl << "]: backendHandle is null";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    NIXL_SHARED_LOCK_GUARD(data->lock);
-    const auto status = req_hndl.engine->createGpuXferReq(
-        *req_hndl.backendHandle, *req_hndl.initiatorDescs, *req_hndl.targetDescs, gpu_req_hndl);
-    if (status == NIXL_SUCCESS) {
-        data->gpuReqToEngine.emplace(gpu_req_hndl, req_hndl.engine);
-    }
-
-    return status;
-}
-
-void
-nixlAgent::releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const {
-    NIXL_SHARED_LOCK_GUARD(data->lock);
-    auto it = data->gpuReqToEngine.find(gpu_req_hndl);
-    if (it == data->gpuReqToEngine.end()) {
-        NIXL_WARN << "Invalid gpu_req_hndl[" << gpu_req_hndl << "] ";
-        return;
-    }
-
-    it->second->releaseGpuXferReq(gpu_req_hndl);
-
-    data->gpuReqToEngine.erase(it);
-}
-
-nixl_status_t
-nixlAgent::getGpuSignalSize(size_t &signal_size, const nixl_opt_args_t *extra_params) const {
-    if (!extra_params || extra_params->backends.empty()) {
-        NIXL_ERROR_FUNC << "backend must be specified in extra_params";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    NIXL_SHARED_LOCK_GUARD(data->lock);
-    return extra_params->backends[0]->engine->getGpuSignalSize(signal_size);
-}
-
-nixl_status_t
-nixlAgent::prepGpuSignal(const nixl_reg_dlist_t &signal_descs,
-                         const nixl_opt_args_t *extra_params) const {
-    if (signal_descs.descCount() == 0) {
-        NIXL_ERROR_FUNC << "signal descriptor list is empty";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    if (!extra_params || extra_params->backends.empty()) {
-        NIXL_ERROR_FUNC << "backend must be specified in extra_params";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    NIXL_SHARED_LOCK_GUARD(data->lock);
-
-    nixlBackendH *backend = extra_params->backends[0];
-
-    // Get the size of individual GPU signals
-    size_t signal_size;
-    nixl_status_t ret = backend->engine->getGpuSignalSize(signal_size);
-    if (ret != NIXL_SUCCESS) {
-        NIXL_ERROR_FUNC << "failed to get GPU signal size with status: "
-                        << nixlEnumStrings::statusStr(ret);
-        return ret;
-    }
-
-    // Convert reg_dlist to xfer_dlist for populate call
-    nixl_xfer_dlist_t xfer_descs = signal_descs.trim();
-
-    nixl_meta_dlist_t result(signal_descs.getType());
-    ret = data->memorySection->populate(xfer_descs, backend->engine, result);
-
-    if (ret != NIXL_SUCCESS) {
-        NIXL_ERROR_FUNC << "failed to populate signal metadata with specified backend";
-        return ret;
-    }
-
-    for (size_t i = 0; i < static_cast<size_t>(result.descCount()); i++) {
-        size_t desc_len = result[i].len;
-        uintptr_t desc_addr = result[i].addr;
-
-        size_t num_signals = desc_len / signal_size;
-
-        if (num_signals == 0) {
-            NIXL_ERROR_FUNC << "descriptor " << i << " is too small (length=" << desc_len
-                            << ") to contain even one signal (signal_size=" << signal_size << ")";
-            return NIXL_ERR_INVALID_PARAM;
-        }
-
-        for (size_t j = 0; j < num_signals; j++) {
-            void *signal = reinterpret_cast<void *>(desc_addr + j * signal_size);
-            ret = backend->engine->prepGpuSignal(*result[i].metadataP, signal);
-
-            if (ret != NIXL_SUCCESS) {
-                NIXL_ERROR_FUNC << "failed to prepare GPU signal " << j << " in descriptor " << i
-                                << " with status: " << nixlEnumStrings::statusStr(ret);
-                return ret;
-            }
-
-            NIXL_DEBUG << "Successfully prepared GPU signal " << j << " in descriptor " << i
-                       << " at address " << signal;
-        }
-    }
-
-    NIXL_DEBUG << "Successfully prepared GPU signals for " << result.descCount() << " descriptors";
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t
 nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
     NIXL_LOCK_GUARD(data->lock);
     delete dlist_hndl;
@@ -1917,7 +1802,7 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
 }
 
 nixl_status_t
-nixlAgent::prepMemView(const nixl_xfer_dlist_t &dlist,
+nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
                        nixlMemViewH &mvh,
                        const nixl_opt_args_t *extra_params) const {
     const auto mem_type = dlist.getType();
