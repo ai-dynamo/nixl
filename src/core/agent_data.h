@@ -127,8 +127,8 @@ class nixlAgentData {
         invalidateRemoteData(const std::string &remote_name);
         [[nodiscard]] static backend_set_t
         getBackends(const nixl_opt_args_t *opt_args,
-		    const nixlMemSection &section,
-		    nixl_mem_t mem_type);
+                    const nixlMemSection &section,
+                    nixl_mem_t mem_type);
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
