@@ -206,13 +206,14 @@ struct nixlAgentOptionalArgs {
     bool hasNotif = false;
 
     /**
-     * @var makeXferReq boolean to skip merging consecutive descriptors, used in makeXferReq.
+     * @var makeXferReq legacy flag to skip merging consecutive descriptors.
+     *      Deprecated. Kept for backward compatibility.
      */
     bool skipDescMerge = false;
 
     /**
-     * @var includeConnInfo boolean to include connection information in the metadata,
-     *                      used in getLocalPartialMD.
+     * @var includeConnInfo legacy flag to include connection information in partial metadata.
+     *                      Deprecated, but still supported for backward compatibility.
      */
     bool includeConnInfo = false;
 
