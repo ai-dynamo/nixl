@@ -37,6 +37,14 @@ class nixlAgent {
         const std::unique_ptr<nixlAgentData> data;
 
     public:
+        /**
+         * @brief Get the public NIXL API version tag.
+         */
+        static constexpr nixl_api_version
+        getApiVersion() {
+            return nixlApiVersionV1;
+        }
+
         /*** Initialization and Registering Methods ***/
 
         /**

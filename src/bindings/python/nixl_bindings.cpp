@@ -147,6 +147,7 @@ PYBIND11_MODULE(_bindings, m) {
     m.attr("NIXL_INIT_AGENT") = NIXL_INIT_AGENT;
 
     m.attr("DEFAULT_COMM_PORT") = default_comm_port;
+    m.attr("NIXL_API_VERSION") = static_cast<unsigned int>(nixlApiVersionV1);
 
     // cast types
     py::enum_<nixl_thread_sync_t>(m, "nixl_thread_sync_t")
