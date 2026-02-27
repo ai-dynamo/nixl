@@ -531,7 +531,9 @@ PYBIND11_MODULE(_bindings, m) {
             py::call_guard<py::gil_scoped_release>())
         .def(
             "makeConnection",
-            [](nixlAgent &agent, const std::string &remote_agent, const std::vector<uintptr_t> &backends) {
+            [](nixlAgent &agent,
+                const std::string &remote_agent,
+                const std::vector<uintptr_t> &backends) {
                 nixl_opt_args_t extra_params;
 
                 for (uintptr_t backend : backends)
