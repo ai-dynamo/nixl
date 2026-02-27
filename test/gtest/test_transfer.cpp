@@ -487,6 +487,49 @@ private:
     std::vector<uint16_t> ports;
 };
 
+class TestTransferTelemetry : public TestTransfer {
+protected:
+    void
+    SetUp() override {
+        // Do not create agents here, the test will create them with custom parameters
+    }
+
+    void
+    runTelemetryTransferTest(size_t size,
+                             nixl_status_t expected_telem_status,
+                             bool capture_telemetry) {
+        constexpr size_t count = 1;
+        constexpr size_t repeat = 1;
+        constexpr size_t num_threads = 1;
+
+        addAgent(0, capture_telemetry);
+        addAgent(1, capture_telemetry);
+
+        std::vector<MemBuffer> src_buffers, dst_buffers;
+        createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
+        createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
+
+        exchangeMD(0, 1);
+        doTransfer(getAgent(0),
+                   getAgentName(0),
+                   getAgent(1),
+                   getAgentName(1),
+                   size,
+                   count,
+                   repeat,
+                   num_threads,
+                   DRAM_SEG,
+                   src_buffers,
+                   DRAM_SEG,
+                   dst_buffers,
+                   expected_telem_status);
+
+        invalidateMD(0, 1);
+        deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
+        deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+    }
+};
+
 const std::string TestTransfer::NOTIF_MSG = "notification";
 
 TEST_P(TestTransfer, RandomSizes)
@@ -570,180 +613,50 @@ TEST_P(TestTransfer, ListenerCommSize) {
     deregisterMem(getAgent(1), buffers, DRAM_SEG);
 }
 
-TEST_P(TestTransfer, GetXferTelemetryFile) {
+TEST_P(TestTransferTelemetry, GetXferTelemetryFile) {
     env.addVar("NIXL_TELEMETRY_ENABLE", "y");
     env.addVar("NIXL_TELEMETRY_DIR", "/tmp/");
-
-    // Create fresh agents that read the current env var and add them to the fixture
-    addAgent(2);
-    addAgent(3);
-
-    constexpr size_t size = 1024;
-    constexpr size_t count = 1;
-    std::vector<MemBuffer> src_buffers, dst_buffers;
-    createRegisteredMem(getAgent(2), size, count, DRAM_SEG, src_buffers);
-    createRegisteredMem(getAgent(3), size, count, DRAM_SEG, dst_buffers);
-
-    exchangeMD(2, 3);
-    doTransfer(getAgent(2),
-               getAgentName(2),
-               getAgent(3),
-               getAgentName(3),
-               size,
-               count,
-               1,
-               1,
-               DRAM_SEG,
-               src_buffers,
-               DRAM_SEG,
-               dst_buffers,
-               NIXL_SUCCESS);
-
-    invalidateMD(2, 3);
-    deregisterMem(getAgent(2), src_buffers, DRAM_SEG);
-    deregisterMem(getAgent(3), dst_buffers, DRAM_SEG);
+    runTelemetryTransferTest(1024, NIXL_SUCCESS, false);
 }
 
-TEST_P(TestTransfer, GetXferTelemetryAPI) {
+TEST_P(TestTransferTelemetry, GetXferTelemetryAPI) {
     // Enable telemetry without file output
     env.addVar("NIXL_TELEMETRY_ENABLE", "y");
-
-    // Create fresh agents that read the current env var and add them to the fixture
-    addAgent(2);
-    addAgent(3);
-
-    constexpr size_t size = 1024;
-    constexpr size_t count = 1;
-    std::vector<MemBuffer> src_buffers, dst_buffers;
-    createRegisteredMem(getAgent(2), size, count, DRAM_SEG, src_buffers);
-    createRegisteredMem(getAgent(3), size, count, DRAM_SEG, dst_buffers);
-
-    exchangeMD(2, 3);
-    doTransfer(getAgent(2),
-               getAgentName(2),
-               getAgent(3),
-               getAgentName(3),
-               size,
-               count,
-               1,
-               1,
-               DRAM_SEG,
-               src_buffers,
-               DRAM_SEG,
-               dst_buffers,
-               NIXL_SUCCESS);
-
-    invalidateMD(2, 3);
-    deregisterMem(getAgent(2), src_buffers, DRAM_SEG);
-    deregisterMem(getAgent(3), dst_buffers, DRAM_SEG);
+    runTelemetryTransferTest(1024, NIXL_SUCCESS, false);
 }
 
-TEST_P(TestTransfer, GetXferTelemetryAPICfg) {
+TEST_P(TestTransferTelemetry, GetXferTelemetryAPICfg) {
     // Disable telemetry from env var but through config, expecting a warning
     env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
     const LogIgnoreGuard lig("ignoring the NIXL_TELEMETRY_ENABLE environment variable");
 
-    // Create fresh agents that read the current env var and add them to the fixture
-    // with capture_telemetry set
-    addAgent(2, true);
-    addAgent(3, true);
-
-    EXPECT_EQ(lig.getIgnoredCount(), 2);
-
-    constexpr size_t size = 1024;
-    constexpr size_t count = 1;
-    std::vector<MemBuffer> src_buffers, dst_buffers;
-    createRegisteredMem(getAgent(2), size, count, DRAM_SEG, src_buffers);
-    createRegisteredMem(getAgent(3), size, count, DRAM_SEG, dst_buffers);
-
-    exchangeMD(2, 3);
-    doTransfer(getAgent(2),
-               getAgentName(2),
-               getAgent(3),
-               getAgentName(3),
-               size,
-               count,
-               1,
-               1,
-               DRAM_SEG,
-               src_buffers,
-               DRAM_SEG,
-               dst_buffers,
-               NIXL_SUCCESS);
-    invalidateMD(2, 3);
-    deregisterMem(getAgent(2), src_buffers, DRAM_SEG);
-    deregisterMem(getAgent(3), dst_buffers, DRAM_SEG);
+    runTelemetryTransferTest(1024, NIXL_SUCCESS, true);
 
     EXPECT_EQ(lig.getIgnoredCount(), 2);
 }
 
-
-TEST_P(TestTransfer, GetXferTelemetryDisabled) {
+TEST_P(TestTransferTelemetry, GetXferTelemetryDisabled) {
     env.addVar("NIXL_TELEMETRY_ENABLE", "n");
-
-    // Create fresh agents that read the current env var and add them to the fixture
-    addAgent(2);
-    addAgent(3);
-
-    constexpr size_t size = 512;
-    constexpr size_t count = 1;
-    std::vector<MemBuffer> src_buffers, dst_buffers;
-    createRegisteredMem(getAgent(2), size, count, DRAM_SEG, src_buffers);
-    createRegisteredMem(getAgent(3), size, count, DRAM_SEG, dst_buffers);
-
-    exchangeMD(2, 3);
     const LogIgnoreGuard lig("cannot return values when telemetry is not enabled");
-    doTransfer(getAgent(2),
-               getAgentName(2),
-               getAgent(3),
-               getAgentName(3),
-               size,
-               count,
-               1,
-               1,
-               DRAM_SEG,
-               src_buffers,
-               DRAM_SEG,
-               dst_buffers);
+    runTelemetryTransferTest(512, NIXL_ERR_NO_TELEMETRY, false);
     EXPECT_LE(lig.getIgnoredCount(), 1);
-
-    invalidateMD(2, 3);
-    deregisterMem(getAgent(2), src_buffers, DRAM_SEG);
-    deregisterMem(getAgent(3), dst_buffers, DRAM_SEG);
-}
-
-TEST_P(TestTransfer, PrepGpuSignal) {
-#ifndef HAVE_UCX_GPU_DEVICE_API
-    GTEST_SKIP() << "UCX GPU device API not available, skipping test";
-#else
-    if (!hasCudaGpu()) {
-        GTEST_SKIP() << "No CUDA-capable GPU is available, skipping test.";
-    }
-    size_t gpu_signal_size = 0;
-    nixl_opt_args_t extra_params = {.backends = {backend_handles[0]}};
-    nixl_status_t size_status = getAgent(0).getGpuSignalSize(gpu_signal_size, &extra_params);
-    ASSERT_EQ(size_status, NIXL_SUCCESS) << "getGpuSignalSize failed";
-    ASSERT_GT(gpu_signal_size, 0) << "GPU signal size is 0";
-
-    // Allocate a buffer on the GPU with the size of the signal
-    std::vector<MemBuffer> signal_buffer;
-    createRegisteredMem(getAgent(0), gpu_signal_size, 1, VRAM_SEG, signal_buffer);
-
-    auto signal_desc_list = makeDescList<nixlBlobDesc>(signal_buffer, VRAM_SEG);
-
-    nixl_status_t status = getAgent(0).prepGpuSignal(signal_desc_list, &extra_params);
-
-    EXPECT_EQ(status, NIXL_SUCCESS)
-        << "prepGpuSignal returned unexpected status: " << nixlEnumStrings::statusStr(status);
-
-    deregisterMem(getAgent(0), signal_buffer, VRAM_SEG);
-#endif
 }
 
 NIXL_INSTANTIATE_TEST(ucx, TestTransfer, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransfer, "UCX", false, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransfer, "UCX", true, 6, 4, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
+
+NIXL_INSTANTIATE_TEST(ucx_telemetry, TestTransferTelemetry, "UCX", true, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_telemetry_no_pt, TestTransferTelemetry, "UCX", false, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_telemetry_threadpool, TestTransferTelemetry, "UCX", true, 6, 4, "");
+NIXL_INSTANTIATE_TEST(ucx_telemetry_threadpool_no_pt,
+                      TestTransferTelemetry,
+                      "UCX",
+                      false,
+                      6,
+                      4,
+                      "");
 
 } // namespace gtest

@@ -452,5 +452,6 @@ using nixl_reg_dlist_t = nixlDescList<nixlBlobDesc>;
  *        used for preparing a memory view handle for remote buffers
  */
 using nixl_remote_dlist_t = nixlDescList<nixlRemoteDesc>;
+using nixl_local_dlist_t = nixlDescList<nixlBasicDesc>;
 
 #endif

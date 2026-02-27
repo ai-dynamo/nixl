@@ -231,11 +231,6 @@ struct nixlAgentOptionalArgs {
 using nixl_opt_args_t = nixlAgentOptionalArgs;
 
 /**
- * @brief A typedef for a nixlGpuXferReqH
- */
-using nixlGpuXferReqH = void *;
-
-/**
  * @brief An alias for a nixlMemViewH
  *        Represents a memory view handle
  */
