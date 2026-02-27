@@ -114,6 +114,67 @@ TEST_P(setupObjTestFixture, queryMemTest) {
     EXPECT_EQ(resp[2].has_value(), false);
 }
 
+TEST_P(setupObjTestFixture, writeWithOffsetsTest) {
+    transferMemConfig mem_cfg{.numEntries_ = 2};
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
+        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, mem_cfg);
+    transfer.setupMems();
+
+    nixl_xfer_op_t op = NIXL_WRITE;
+    ASSERT_EQ(transfer.prepareTransfer(op), NIXL_SUCCESS);
+    ASSERT_EQ(transfer.postTransfer(op), NIXL_SUCCESS);
+    ASSERT_EQ(transfer.waitForTransfer(), NIXL_ERR_BACKEND);
+}
+
+TEST_P(setupObjTestFixture, readWithOffsetsTest) {
+    uint8_t src_byte = getRandomInt(0, 255);
+
+    // First, write entire buffer to OBJ in a single chunk (no offsets)
+    transferMemConfig mem_cfg_write{.numEntries_ = 1, .entrySize_ = 128, .srcBufByte_ = src_byte};
+    transferHandler<DRAM_SEG, OBJ_SEG> transferWrite(localBackendEngine_,
+                                                     localBackendEngine_,
+                                                     local_agent_name,
+                                                     local_agent_name,
+                                                     mem_cfg_write);
+    transferWrite.setupMems();
+    transferWrite.setSrcMem();
+    transferWrite.testTransfer(NIXL_WRITE);
+
+    // Then, read buffer from OBJ in smaller offset-based chunks
+    transferMemConfig mem_cfg_read{.numEntries_ = 2, .entrySize_ = 64, .srcBufByte_ = src_byte};
+    transferHandler<DRAM_SEG, OBJ_SEG> transferRead(
+        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, mem_cfg_read);
+    transferRead.setupMems();
+    transferRead.resetSrcMem();
+    transferRead.testTransfer(NIXL_READ);
+    transferRead.checkSrcMem();
+}
+
+TEST_P(setupObjTestFixture, xferUnregisteredMemTest) {
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
+        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name);
+
+    nixlMetaDesc meta_desc;
+    meta_desc.devId = 1;
+    transfer.addSrcDesc(meta_desc);
+    transfer.addDstDesc(meta_desc);
+
+    nixl_xfer_op_t op = NIXL_WRITE;
+    ASSERT_EQ(transfer.prepareTransfer(op), NIXL_SUCCESS);
+    ASSERT_EQ(transfer.postTransfer(op), NIXL_ERR_BACKEND);
+}
+
+TEST_P(setupObjTestFixture, objAsSrcMemTest) {
+    transferHandler<OBJ_SEG, OBJ_SEG> transfer(
+        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name);
+    ASSERT_EQ(transfer.prepareTransfer(NIXL_WRITE), NIXL_ERR_INVALID_PARAM);
+}
+
+TEST_P(setupObjTestFixture, dramAsDstMemTest) {
+    transferHandler<DRAM_SEG, DRAM_SEG> transfer(
+        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name);
+    ASSERT_EQ(transfer.prepareTransfer(NIXL_WRITE), NIXL_ERR_INVALID_PARAM);
+}
 
 INSTANTIATE_TEST_SUITE_P(ObjTests, setupObjTestFixture, testing::Values(obj_test_params));
 
