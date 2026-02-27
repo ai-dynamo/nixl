@@ -71,7 +71,10 @@ namespace {
 [[nodiscard]] std::optional<std::string>
 getExporterName() {
     if (const auto name = nixl::config::getValueOptional<std::string>(telemetryExporterVar)) {
-        return name;
+        if (!name->empty()) {
+            return name;
+        }
+        NIXL_DEBUG << "Ignoring empty " << telemetryExporterVar << " environment variable";
     }
 
     if (!nixl::config::checkExistence(telemetryDirVar)) {
