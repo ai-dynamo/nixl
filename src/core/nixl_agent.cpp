@@ -132,7 +132,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
     if (telemetry_enabled) {
         if (*telemetry_enabled) {
             telemetryEnabled = true;
-            telemetry_ = std::make_unique<nixlTelemetry>(name, backendEngines);
+            telemetry_ = std::make_unique<nixlTelemetry>(name);
         } else if (cfg.captureTelemetry) {
             telemetryEnabled = true;
             NIXL_WARN << "NIXL telemetry is enabled through config, "
@@ -176,8 +176,8 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
     if(cfg.useListenThread) {
         int my_port = cfg.listenPort;
         if(my_port == 0) my_port = default_comm_port;
-        data->listener.reset(new nixlMDStreamListener(my_port));
-        data->listener->setupListener();
+        data->listener = std::make_unique<nixlMDStreamListener>(my_port);
+        data->listener->setupListener(); // throws on bind/listen failure
     }
 
     if (data->useEtcd || cfg.useListenThread) {
