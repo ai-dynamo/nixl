@@ -187,23 +187,6 @@ public:
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
-    nixl_status_t
-    createGpuXferReq(const nixlBackendReqH &req_hndl,
-                     const nixl_meta_dlist_t &local_descs,
-                     const nixl_meta_dlist_t &remote_descs,
-                     nixlGpuXferReqH &gpu_req_hndl) const override;
-
-    void
-    releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const override;
-
-    nixl_status_t
-    getGpuSignalSize(size_t &signal_size) const override;
-
-    nixl_status_t
-    prepGpuSignal(const nixlBackendMD &meta,
-                  void *signal,
-                  const nixl_opt_b_args_t *opt_args = nullptr) const override;
-
     int
     progress();
 
@@ -314,8 +297,6 @@ private:
     std::vector<std::unique_ptr<nixlUcxWorker>> uws;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
-
-    mutable std::optional<size_t> gpuSignalSize_;
 
     const bool progressThreadEnabled_;
 

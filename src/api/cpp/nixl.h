@@ -321,65 +321,6 @@ class nixlAgent {
         releaseXferReq (nixlXferReqH* req_hndl) const;
 
         /**
-         * @brief  Create a GPU transfer request from a transfer request.
-         *
-         * @param  req_hndl     [in]  Transfer request obtained from makeXferReq/createXferReq
-         * @param  gpu_req_hndl [out] GPU transfer request handle
-         * @return nixl_status_t Error code if call was not successful
-         *
-         * @note   This call may block until the associated connection is established.
-         * @note   Requires progress thread to be enabled (enableProgTh=true) when creating the
-         *         backend.
-         */
-        nixl_status_t
-        createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH &gpu_req_hndl) const;
-
-        /**
-         * @brief  Release transfer request from GPU memory
-         *
-         * @param  gpu_req_hndl  [in] GPU transfer request handle to be released
-         */
-        void
-        releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const;
-
-        /**
-         * @brief  Get the size required for a GPU signal.
-         *
-         * This function returns the size required for allocating memory for a GPU signal.
-         * The returned size should be used to allocate memory that will be registered
-         * and used with @ref prepGpuSignal.
-         *
-         * @param  signal_size   [out] Size required for the GPU signal
-         * @param  extra_params  [in] Extra parameters used in getting the size of the GPU signal.
-         *                            The backend must be specified in extra_params.
-         * @return nixl_status_t Error code if call was not successful
-         */
-        nixl_status_t
-        getGpuSignalSize(size_t &signal_size, const nixl_opt_args_t *extra_params) const;
-
-        /**
-         * @brief  Prepare signals for GPU transfer.
-         *
-         * The caller must allocate and register the signal memory before calling this function.
-         * Use @ref getGpuSignalSize to query the required signal size, allocate
-         * the signal accordingly, and register it using @ref registerMem.
-         *
-         * This function supports multiple signals per descriptor. Each descriptor in the
-         * signal_descs list can contain multiple signals. The function calculates
-         * how many signals fit in each descriptor based on the descriptor length
-         * and the signal size, then prepares each signal within every descriptor.
-         *
-         * @param  signal_descs  [in] Registered descriptor list for the signal memory.
-         *                            Each descriptor can contain multiple signals.
-         * @param  extra_params  [in] Extra parameters used in preparing the GPU signal.
-         *                            The backend must be specified in extra_params.
-         * @return nixl_status_t Error code if call was not successful
-         */
-        nixl_status_t
-        prepGpuSignal(const nixl_reg_dlist_t &signal_descs,
-                      const nixl_opt_args_t *extra_params) const;
-
-        /**
          * @brief  Prepare a memory view handle for remote buffers.
          *
          * Prepare a memory view handle @a mvh for the remote memory buffers described by the
@@ -415,7 +356,7 @@ class nixlAgent {
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        prepMemView(const nixl_xfer_dlist_t &dlist,
+        prepMemView(const nixl_local_dlist_t &dlist,
                     nixlMemViewH &mvh,
                     const nixl_opt_args_t *extra_params = nullptr) const;
 
