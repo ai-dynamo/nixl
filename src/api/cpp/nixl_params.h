@@ -22,12 +22,11 @@
 #include "nixl_types.h"
 
 /**
- * @class nixlAgentConfig
+ * @struct nixlAgentConfig
  * @brief Per Agent configuration information, such as if progress thread should be used.
  *        Other configs such as assigned IP/port or device access can be added.
  */
-class nixlAgentConfig {
-public:
+struct nixlAgentConfig {
     static constexpr bool kDefaultUseProgThread = false;
     static constexpr bool kDefaultUseListenThread = false;
     static constexpr int kDefaultListenPort = 0;
