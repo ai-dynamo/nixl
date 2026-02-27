@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 #include "metadata_stream.h"
 #include <unistd.h>
 #include <cstring>
+#include <stdexcept>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -48,6 +49,7 @@ bool nixlMetadataStream::setupStream() {
 void nixlMetadataStream::closeStream() {
    if (socketFd != -1) {
         close(socketFd);
+        socketFd = -1;
    }
 }
 
@@ -60,46 +62,50 @@ nixlMDStreamListener::~nixlMDStreamListener() {
         listenerThread.join();
     }
     if (csock >= 0) {
-            close(csock);
+        close(csock);
     }
 }
 
 void nixlMDStreamListener::setupListener() {
-    setupStream();
+    if (!setupStream()) {
+        throw std::runtime_error("Failed to create metadata listener socket");
+    }
 
     int opt = 1;
     if (setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR,
                    &opt, sizeof(opt)) < 0) {
         NIXL_PERROR << "setsockopt(REUSEADDR) failed while setting up listener for MD";
         closeStream();
-        return;
+        throw std::runtime_error("Failed to configure metadata listener socket");
     }
 
     if (bind(socketFd, (struct sockaddr*)&listenerAddr,
              sizeof(listenerAddr)) < 0) {
         NIXL_PERROR << "Socket Bind failed while setting up listener for MD";
         closeStream();
-        return;
+        throw std::runtime_error("Failed to bind metadata listener socket");
     }
 
     if (listen(socketFd, 128) < 0) {
         NIXL_PERROR << "Listening failed for stream Socket: "
                     << socketFd;
         closeStream();
-        return;
+        throw std::runtime_error("Failed to listen on metadata listener socket");
     }
     NIXL_DEBUG << "MD listener is listening on port "
                << port << "...";
 }
 
 int nixlMDStreamListener::acceptClient() {
-        csock = accept(socketFd, NULL, NULL);
-        if (csock < 0 && errno != EAGAIN) {
-            NIXL_PERROR << "Cannot accept client connection";
-        }
-        return csock;
+    if (socketFd < 0) {
+        return -1;
+    }
+    csock = accept(socketFd, nullptr, nullptr);
+    if (csock < 0 && errno != EAGAIN) {
+        NIXL_PERROR << "Cannot accept client connection";
+    }
+    return csock;
 }
-
 
 void nixlMDStreamListener::acceptClientsAsync() {
     while(true) {
@@ -170,7 +176,10 @@ nixlMDStreamClient::~nixlMDStreamClient() {
 }
 
 bool nixlMDStreamClient::setupClient() {
-    setupStream();
+    if (!setupStream()) {
+        NIXL_PERROR << "Failed to create metadata client socket";
+        return false;
+    }
 
     struct sockaddr_in listenerAddr;
     listenerAddr.sin_family = AF_INET;
@@ -179,6 +188,7 @@ bool nixlMDStreamClient::setupClient() {
     if (inet_pton(AF_INET, listenerAddress.c_str(),
                   &listenerAddr.sin_addr) <= 0) {
         NIXL_PERROR << "Invalid address/ Address not supported";
+        closeStream();
         return false;
     }
 
