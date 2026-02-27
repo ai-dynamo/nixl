@@ -37,11 +37,10 @@ constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 constexpr const char *defaultTelemetryPlugin = "BUFFER";
 
-nixlTelemetry::nixlTelemetry(const std::string &agent_name, backend_map_t &backend_map)
+nixlTelemetry::nixlTelemetry(const std::string &agent_name)
     : pool_(1),
       writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false),
-      agentName_(agent_name),
-      backendMap_(backend_map) {
+      agentName_(agent_name) {
     if (agent_name.empty()) {
         throw std::invalid_argument("Expected non-empty agent name in nixl telemetry create");
     }
@@ -126,29 +125,12 @@ nixlTelemetry::writeEventHelper() {
         std::lock_guard<std::mutex> lock(mutex_);
         events_.swap(next_queue);
     }
+
     for (auto &event : next_queue) {
         // if full, ignore
         exporter_->exportEvent(event);
     }
-    // collect all events and sort them by timestamp
-    std::vector<nixlTelemetryEvent> all_events;
-    for (auto &backend : backendMap_) {
-        auto backend_events = backend.second->getTelemetryEvents();
-        for (auto &event : backend_events) {
-            // don't trust enum value coming from backend,
-            // as it might be different from the one in agent
-            event.category_ = nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND;
-            all_events.push_back(event);
-        }
-    }
-    std::sort(all_events.begin(),
-              all_events.end(),
-              [](const nixlTelemetryEvent &a, const nixlTelemetryEvent &b) {
-                  return a.timestampUs_ < b.timestampUs_;
-              });
-    for (auto &event : all_events) {
-        exporter_->exportEvent(event);
-    }
+
     return true;
 }
 
