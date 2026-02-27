@@ -207,9 +207,9 @@ ControlRequestPool::createBufferChunk(size_t chunk_size, BufferChunk &chunk) {
         return NIXL_ERR_BACKEND;
     }
 
-    NIXL_INFO << "CreateBufferChunk on Rail " << rail_id_ << " successfully created buffer chunk:"
-              << " buffer=" << chunk.buffer << " size=" << chunk.size << " mr=" << chunk.mr
-              << " mr_key=" << fi_mr_key(chunk.mr);
+    NIXL_INFO << "CreateBufferChunk on Rail " << rail_id_
+              << " successfully created buffer chunk:" << " buffer=" << chunk.buffer
+              << " size=" << chunk.size << " mr=" << chunk.mr << " mr_key=" << fi_mr_key(chunk.mr);
 
     return NIXL_SUCCESS;
 }
@@ -279,8 +279,8 @@ ControlRequestPool::expandPool() {
         size_t buffer_offset = local_idx * NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE;
         if (buffer_offset + NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE > new_chunk.size) {
             NIXL_ERROR << " Rail " << rail_id_ << " buffer assignment out of bounds for request["
-                       << i << "]:"
-                       << " local_idx=" << local_idx << " buffer_offset=" << buffer_offset
+                       << i << "]:" << " local_idx=" << local_idx
+                       << " buffer_offset=" << buffer_offset
                        << " buffer_size=" << NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE
                        << " chunk_size=" << new_chunk.size;
             return NIXL_ERR_BACKEND;
@@ -1222,6 +1222,15 @@ nixlLibfabricRail::postRead(void *local_buffer,
 
 // Memory Registration Methods
 
+// Memory Registration Resource Cache (MRRC) implementation
+// Based on He et al. "An efficient design for fast memory registration in RDMA" (JNCA 2009)
+
+size_t
+nixlLibfabricRail::getMRCacheSize() const {
+    std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+    return mr_cache_.size();
+}
+
 nixl_status_t
 nixlLibfabricRail::registerMemory(void *buffer,
                                   size_t length,
@@ -1238,6 +1247,34 @@ nixlLibfabricRail::registerMemory(void *buffer,
         NIXL_ERROR << "Domain not initialized on rail " << rail_id;
         return NIXL_ERR_BACKEND;
     }
+
+    // MRRC: Check cache first for existing registration
+    uintptr_t buf_addr = reinterpret_cast<uintptr_t>(buffer);
+    {
+        std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+        auto it = mr_cache_.find(buf_addr);
+        if (it != mr_cache_.end()) {
+            MRCacheEntry &entry = it->second;
+            // Validate that cached entry matches requested parameters
+            if (entry.length == length && entry.mem_type == mem_type && entry.gpu_id == gpu_id) {
+                // Cache hit - increment reference count and return cached MR
+                entry.ref_count.fetch_add(1, std::memory_order_relaxed);
+                *mr_out = entry.mr;
+                *key_out = entry.key;
+                mr_cache_hits_.fetch_add(1, std::memory_order_relaxed);
+
+                NIXL_DEBUG << "MRRC cache hit: rail=" << rail_id << " buffer=" << buffer
+                           << " ref_count=" << entry.ref_count.load() << " key=" << entry.key;
+                return NIXL_SUCCESS;
+            }
+            // Parameters don't match - this is unusual, log and proceed with new registration
+            NIXL_WARN << "MRRC cache entry mismatch: rail=" << rail_id << " buffer=" << buffer
+                      << " cached_len=" << entry.length << " requested_len=" << length;
+        }
+    }
+
+    // Cache miss - perform actual registration
+    mr_cache_misses_.fetch_add(1, std::memory_order_relaxed);
 
     // Determine access flags based on provider capabilities
     uint64_t provider_access_flags;
@@ -1337,8 +1374,59 @@ nixlLibfabricRail::registerMemory(void *buffer,
         }
     }
 
+    uint64_t actual_key = fi_mr_key(mr);
+
+    // MRRC: Add to cache with ref_count=1
+    {
+        std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+
+        // Cache size limit and eviction logic
+        constexpr size_t NIXL_MR_CACHE_MAX_ENTRIES_DEFAULT = 1024;
+        static size_t max_cache_entries = []() {
+            const char *max_str = std::getenv("NIXL_MR_CACHE_MAX_ENTRIES");
+            return max_str ? std::stoul(max_str) : NIXL_MR_CACHE_MAX_ENTRIES_DEFAULT;
+        }();
+
+        // Check if cache is full and evict if needed
+        if (mr_cache_.size() >= max_cache_entries) {
+            NIXL_DEBUG << "MRRC: Cache at capacity (" << mr_cache_.size()
+                       << " entries), attempting eviction";
+
+            // Find and evict an entry with ref_count == 0
+            bool evicted = false;
+            for (auto it = mr_cache_.begin(); it != mr_cache_.end(); ++it) {
+                if (it->second.ref_count.load(std::memory_order_acquire) == 0) {
+                    // Close the MR
+                    int ret = fi_close(&it->second.mr->fid);
+                    if (ret != 0) {
+                        NIXL_ERROR << "MRRC: fi_close failed during eviction: "
+                                   << fi_strerror(-ret);
+                    }
+
+                    NIXL_DEBUG << "MRRC: Evicted entry with key " << it->first
+                               << " to make room for new registration";
+                    mr_cache_.erase(it);
+                    evicted = true;
+                    break;
+                }
+            }
+
+            // If couldn't evict (all entries in use), return error
+            if (!evicted) {
+                NIXL_ERROR << "MRRC: Cache full (" << mr_cache_.size()
+                           << " entries) and all entries have active references. "
+                           << "Consider increasing NIXL_MR_CACHE_MAX_ENTRIES.";
+                return NIXL_ERR_BACKEND;
+            }
+        }
+
+        mr_cache_.emplace(buf_addr, MRCacheEntry(mr, actual_key, length, mem_type, gpu_id));
+        NIXL_DEBUG << "MRRC cache insert: rail=" << rail_id << " buffer=" << buffer
+                   << " key=" << actual_key << " cache_size=" << mr_cache_.size();
+    }
+
     *mr_out = mr;
-    *key_out = fi_mr_key(mr);
+    *key_out = actual_key;
 
     NIXL_TRACE << "Memory Registration SUCCESS: rail=" << rail_id << " provider=" << provider_name
                << " buffer=" << buffer << " length=" << length << " mr=" << mr
@@ -1355,10 +1443,46 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    int ret = fi_close(&mr->fid);
-    if (ret) {
-        NIXL_ERROR << "fi_close failed on rail " << rail_id << ": " << fi_strerror(-ret);
-        return NIXL_ERR_BACKEND;
+    // MRRC: Find cache entry and decrement reference count
+    bool found_in_cache = false;
+    bool should_close = false;
+    {
+        std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+        for (auto it = mr_cache_.begin(); it != mr_cache_.end(); ++it) {
+            if (it->second.mr == mr) {
+                found_in_cache = true;
+                uint32_t prev_count = it->second.ref_count.fetch_sub(1, std::memory_order_acq_rel);
+                if (prev_count == 1) {
+                    // Last reference - actually deregister and remove from cache
+                    NIXL_DEBUG << "MRRC cache evict: rail=" << rail_id
+                               << " buffer=" << (void *)it->first << " key=" << it->second.key;
+                    mr_cache_.erase(it);
+                    should_close = true;
+                    break;
+                } else {
+                    // Still has references - don't deregister
+                    NIXL_DEBUG << "MRRC ref decrement: rail=" << rail_id
+                               << " buffer=" << (void *)it->first
+                               << " ref_count=" << (prev_count - 1);
+                    return NIXL_SUCCESS;
+                }
+            }
+        }
+    }
+
+    if (!found_in_cache) {
+        // MR not in cache - caller may be trying to deregister an MR from another rail
+        NIXL_ERROR << "MRRC: Attempted to deregister uncached MR on rail " << rail_id;
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    // Actually close the MR (last reference from cache)
+    if (should_close) {
+        int ret = fi_close(&mr->fid);
+        if (ret) {
+            NIXL_ERROR << "fi_close failed on rail " << rail_id << ": " << fi_strerror(-ret);
+            return NIXL_ERR_BACKEND;
+        }
     }
 
     return NIXL_SUCCESS;
