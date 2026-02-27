@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -230,28 +230,22 @@ nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
 
 void
 nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
-    std::string bytes_name;
-    std::string requests_name;
+    const char *bytes_name = is_write ? "agent_tx_bytes" : "agent_rx_bytes";
+    const char *requests_name = is_write ? "agent_tx_requests_num" : "agent_rx_requests_num";
 
-    if (is_write) {
-        bytes_name = "agent_tx_bytes";
-        requests_name = "agent_tx_requests_num";
-    } else {
-        bytes_name = "agent_rx_bytes";
-        requests_name = "agent_rx_requests_num";
-    }
-    auto time = std::chrono::duration_cast<std::chrono::microseconds>(
-                    std::chrono::system_clock::now().time_since_epoch())
-                    .count();
-    std::lock_guard<std::mutex> lock(mutex_);
+    const auto time = std::chrono::duration_cast<std::chrono::microseconds>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count();
+
+    const std::lock_guard lock(mutex_);
     events_.emplace_back(time,
                          nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
                          "agent_xfer_time",
                          xfer_time.count());
     events_.emplace_back(
-        time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_name.c_str(), bytes);
+        time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_name, bytes);
     events_.emplace_back(
-        time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, requests_name.c_str(), 1);
+        time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, requests_name, 1);
 }
 
 void
