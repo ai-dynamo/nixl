@@ -103,8 +103,11 @@ class nixlAgentData {
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMD;
         backend_map_t backendEngines;
-        std::unordered_map<std::string, std::unique_ptr<nixlRemoteSection>,
-                           std::hash<std::string>, strEqual> remoteSections;
+        std::unordered_map<std::string,
+                           std::unique_ptr<nixlRemoteSection>,
+                           std::hash<std::string>,
+                           strEqual>
+            remoteSections;
         std::unique_ptr<nixlTelemetry> telemetry_;
         nixlLocalSection localSection;
 
@@ -123,7 +126,9 @@ class nixlAgentData {
         nixl_status_t
         invalidateRemoteData(const std::string &remote_name);
         [[nodiscard]] static backend_set_t
-        getBackends(const nixl_opt_args_t *opt_args, nixlMemSection &section, nixl_mem_t mem_type);
+        getBackends(const nixl_opt_args_t *opt_args,
+		    const nixlMemSection &section,
+		    nixl_mem_t mem_type);
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
@@ -151,11 +156,25 @@ class nixlBackendH {
         ~nixlBackendH() = default;
 
         // TODO? engine->getType() returns a const nixl_backend_t&
-        nixl_backend_t getType() const noexcept { return engine->getType(); }
+        nixl_backend_t
+        getType() const noexcept {
+            return engine->getType();
+        }
 
-        bool supportsRemote() const { return engine->supportsRemote(); }
-        bool supportsLocal() const { return engine->supportsLocal (); }
-        bool supportsNotif() const { return engine->supportsNotif (); }
+        bool
+        supportsRemote() const {
+            return engine->supportsRemote();
+        }
+
+        bool
+        supportsLocal() const {
+            return engine->supportsLocal();
+        }
+
+        bool
+        supportsNotif() const {
+            return engine->supportsNotif();
+        }
 
     friend class nixlAgentData;
     friend class nixlAgent;

@@ -383,8 +383,8 @@ nixl_status_t nixlRemoteSection::addDescList (
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlRemoteSection::loadRemoteData(nixlSerDes *deserializer,
-                                                backend_map_t &backendToEngineMap) {
+nixl_status_t
+nixlRemoteSection::loadRemoteData(nixlSerDes *deserializer, backend_map_t &backendToEngineMap) {
     nixl_status_t ret;
     size_t seg_count;
     nixl_backend_t nixl_backend;

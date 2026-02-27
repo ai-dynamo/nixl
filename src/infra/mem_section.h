@@ -34,7 +34,7 @@ using backend_set_t = std::set<nixlBackendEngine*>;
 
 struct nixlEngineDeleter {
     void
-    operator()(nixlBackendEngine*) const noexcept;
+    operator()(nixlBackendEngine *) const noexcept;
 };
 
 using backend_ptr_t = std::unique_ptr<nixlBackendEngine, nixlEngineDeleter>;

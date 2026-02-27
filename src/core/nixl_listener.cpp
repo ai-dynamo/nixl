@@ -803,7 +803,7 @@ nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
     }
 
     nixl_status_t ret = NIXL_ERR_NOT_FOUND;
-    if(remoteSections.erase(remote_name) > 0) {
+    if (remoteSections.erase(remote_name) > 0) {
         ret = NIXL_SUCCESS;
     }
 
