@@ -81,9 +81,6 @@ class nixlAgentData {
         std::unordered_map<nixl_backend_t, nixlBackendH*> backendHandles;
         std::unordered_map<nixl_backend_t, nixl_blob_t>   connMD;
 
-        // Bookkeeping from GPU request handles to backend engines
-        std::unordered_map<nixlGpuXferReqH, nixlBackendEngine *> gpuReqToEngine;
-
         // Bookkeeping from memory view handles to backend engines
         std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
 
