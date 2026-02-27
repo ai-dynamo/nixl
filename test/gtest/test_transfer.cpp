@@ -380,8 +380,7 @@ protected:
         for (size_t thread = 0; thread < num_threads; ++thread) {
             threads.emplace_back([&, thread]() {
                 nixl_opt_args_t extra_params;
-                extra_params.hasNotif = true;
-                extra_params.notifMsg = NOTIF_MSG;
+                extra_params.notif = NOTIF_MSG;
 
                 nixlXferReqH *xfer_req = nullptr;
                 nixl_status_t status = from.createXferReq(

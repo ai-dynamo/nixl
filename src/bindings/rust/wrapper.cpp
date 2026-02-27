@@ -604,6 +604,9 @@ nixl_capi_opt_args_set_notif_msg(nixl_capi_opt_args_t args, const void* data, si
 
   try {
     args->args.notifMsg.assign((const char*)data, len);
+    if (args->args.hasNotif || args->args.notif.has_value()) {
+      args->args.notif = args->args.notifMsg;
+    }
     return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
@@ -619,7 +622,9 @@ nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void** data, size_t*
   }
 
   try {
-    size_t msg_size = args->args.notifMsg.size();
+    const nixl_blob_t &msg = args->args.notif.has_value() ? args->args.notif.value()
+                                                          : args->args.notifMsg;
+    size_t msg_size = msg.size();
     if (msg_size == 0) {
       *data = nullptr;
       *len = 0;
@@ -631,7 +636,7 @@ nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void** data, size_t*
       return NIXL_CAPI_ERROR_BACKEND;
     }
 
-    memcpy(msg_data, args->args.notifMsg.data(), msg_size);
+    memcpy(msg_data, msg.data(), msg_size);
     *data = msg_data;
     *len = msg_size;
     return NIXL_CAPI_SUCCESS;
@@ -650,6 +655,11 @@ nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif)
 
   try {
     args->args.hasNotif = has_notif;
+    if (has_notif) {
+      args->args.notif = args->args.notifMsg;
+    } else {
+      args->args.notif.reset();
+    }
     return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
@@ -665,7 +675,7 @@ nixl_capi_opt_args_get_has_notif(nixl_capi_opt_args_t args, bool* has_notif)
   }
 
   try {
-    *has_notif = args->args.hasNotif;
+    *has_notif = args->args.notif.has_value() || args->args.hasNotif;
     return NIXL_CAPI_SUCCESS;
   }
   catch (...) {

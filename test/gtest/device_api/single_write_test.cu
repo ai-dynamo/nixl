@@ -566,8 +566,7 @@ TEST_P(SingleWriteTest, BasicSingleWriteTest) {
     exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
 
     nixl_opt_args_t extra_params = {};
-    extra_params.hasNotif = true;
-    extra_params.notifMsg = NOTIF_MSG;
+    extra_params.notif = NOTIF_MSG;
 
     nixlXferReqH *xfer_req = nullptr;
     nixl_status_t status = getAgent(SENDER_AGENT)
@@ -668,8 +667,7 @@ TEST_P(SingleWriteTest, VariableSizeTest) {
         exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
 
         nixl_opt_args_t extra_params = {};
-        extra_params.hasNotif = true;
-        extra_params.notifMsg = NOTIF_MSG;
+        extra_params.notif = NOTIF_MSG;
 
         nixlXferReqH *xfer_req = nullptr;
         nixl_status_t status =
@@ -765,8 +763,7 @@ TEST_P(SingleWriteTest, MultipleWorkersTest) {
     exchangeMD(SENDER_AGENT, RECEIVER_AGENT);
 
     nixl_opt_args_t extra_params = {};
-    extra_params.hasNotif = true;
-    extra_params.notifMsg = NOTIF_MSG;
+    extra_params.notif = NOTIF_MSG;
 
     std::vector<nixlXferReqH *> xfer_reqs(numWorkers);
     std::vector<nixlGpuXferReqH> gpu_req_hndls(numWorkers);

@@ -302,8 +302,7 @@ namespace agent {
         remote_xfer_dlist.addDesc(remote_blob.getDesc());
 
         nixlXferReqH *xfer_req;
-        local_extra_params.notifMsg = msg;
-        local_extra_params.hasNotif = true;
+        local_extra_params.notif = msg;
         EXPECT_EQ(local_agent_->createXferReq(NIXL_WRITE,
                                               local_xfer_dlist,
                                               remote_xfer_dlist,
@@ -367,8 +366,7 @@ namespace agent {
             indices.push_back(i);
 
         nixlXferReqH *xfer_req;
-        local_extra_params.notifMsg = msg;
-        local_extra_params.hasNotif = true;
+        local_extra_params.notif = msg;
         EXPECT_EQ(local_agent_->makeXferReq(NIXL_WRITE,
                                             desc_hndl1,
                                             indices,

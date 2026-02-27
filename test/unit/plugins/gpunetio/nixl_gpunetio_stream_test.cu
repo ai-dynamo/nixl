@@ -461,8 +461,7 @@ main (int argc, char *argv[]) {
             extra_params.customParam.resize (sizeof (uintptr_t));
             *((uintptr_t *)extra_params.customParam.data()) = (uintptr_t)stream;
         }
-        extra_params.notifMsg = "sent";
-        extra_params.hasNotif = true;
+        extra_params.notif = "sent";
         ret = agent.createXferReq (
                 NIXL_WRITE, local_vram, remote_vram_list, target, treq, &extra_params);
         if (ret != NIXL_SUCCESS) {

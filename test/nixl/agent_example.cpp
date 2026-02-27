@@ -140,8 +140,7 @@ void test_side_perf(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend, nixlBac
         indices.push_back(i);
 
     //should print n_mems number of final descriptors
-    extra_params1.notifMsg = "test";
-    extra_params1.hasNotif = true;
+    extra_params1.notif = "test";
     status = A1->makeXferReq(NIXL_WRITE, src_side[0], indices, dst_side[0], indices, reqh1, &extra_params1);
     nixl_exit_on_failure(status, "Failed to make Xfer Req", agent1);
 
@@ -319,8 +318,7 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
     }
 
     nixlXferReqH *req;
-    extra_params1.notifMsg = "partialMdTest_notification";
-    extra_params1.hasNotif = true;
+    extra_params1.notif = "partialMdTest_notification";
 
     // Create and post the transfer request
     status = A1->makeXferReq(NIXL_WRITE, src_side, indices, dst_side, indices, req, &extra_params1);
@@ -688,8 +686,7 @@ main(int argc, char **argv) {
     std::cout << "Transfer request from " << addr1 << " to " << addr2 << "\n";
     nixlXferReqH *req_handle, *req_handle2;
 
-    extra_params1.notifMsg = "notification";
-    extra_params1.hasNotif = true;
+    extra_params1.notif = "notification";
     ret1 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_dst_descs, agent2, req_handle, &extra_params1);
     nixl_exit_on_failure(ret1, "Failed to create Xfer Req", agent1);
 
@@ -729,8 +726,7 @@ main(int argc, char **argv) {
     nixl_exit_on_failure(ret1, "Fail to run sideXferTest", agent1);
 
     std::cout << "Performing local test\n";
-    extra_params1.notifMsg = "local_notif";
-    extra_params1.hasNotif = true;
+    extra_params1.notif = "local_notif";
     ret2 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_ldst_descs, agent1, req_handle2, &extra_params1);
     nixl_exit_on_failure(ret1, "Failed to create Xfer Req", agent1);
 

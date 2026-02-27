@@ -570,8 +570,7 @@ PYBIND11_MODULE(_bindings, m) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
 
                 if (notif_msg.size() > 0) {
-                    extra_params.notifMsg = notif_msg;
-                    extra_params.hasNotif = true;
+                    extra_params.notif = notif_msg;
                 }
                 extra_params.skipDescMerge = skip_desc_merge;
                 std::vector<int> local_indices_vec;
@@ -637,8 +636,7 @@ PYBIND11_MODULE(_bindings, m) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
 
                 if (notif_msg.size() > 0) {
-                    extra_params.notifMsg = notif_msg;
-                    extra_params.hasNotif = true;
+                    extra_params.notif = notif_msg;
                 }
                 nixl_status_t ret = agent.createXferReq(
                     operation, local_descs, remote_descs, remote_agent, handle, &extra_params);
@@ -671,8 +669,7 @@ PYBIND11_MODULE(_bindings, m) {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
                 if (notif_msg.size() > 0) {
-                    extra_params.notifMsg = notif_msg;
-                    extra_params.hasNotif = true;
+                    extra_params.notif = notif_msg;
                     ret = agent.postXferReq((nixlXferReqH *)reqh, &extra_params);
                 } else {
                     ret = agent.postXferReq((nixlXferReqH *)reqh);

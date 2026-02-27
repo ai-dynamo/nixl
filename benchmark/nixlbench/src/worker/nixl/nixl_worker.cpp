@@ -1337,8 +1337,7 @@ execTransfer(nixlAgent *agent,
         nixl_opt_args_t params;
         std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
         if (!xferBenchConfig::isStorageBackend()) {
-            params.notifMsg = "0xBEEF";
-            params.hasNotif = true;
+            params.notif = "0xBEEF";
         }
 
         // Execute transfers

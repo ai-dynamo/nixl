@@ -174,14 +174,21 @@ struct nixlAgentOptionalArgs {
     std::vector<nixlBackendH*> backends;
 
     /**
-     * @var notifMsg A message to be used in createXferReq / makeXferReq / postXferReq,
-     *               if a notification message is desired
+     * @var notif Optional notification message used in createXferReq / makeXferReq / postXferReq.
+     *            If set, notification is enabled even for empty-string messages.
+     *            This is the preferred field for new API users.
+     */
+    std::optional<nixl_blob_t> notif;
+
+    /**
+     * @var notifMsg Legacy notification payload kept for backward compatibility.
+     *               Deprecated in favor of @ref notif.
      */
     nixl_blob_t notifMsg;
 
     /**
-     * @var hasNotif boolean value to indicate that a notification is provided, or to
-     *      remove notification during a repost. If set to false, notifMsg is not checked.
+     * @var hasNotif Legacy notification flag kept for backward compatibility.
+     *      Deprecated in favor of @ref notif.
      */
     bool hasNotif = false;
 
