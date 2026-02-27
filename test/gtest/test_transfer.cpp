@@ -305,6 +305,7 @@ protected:
     verifyNotifs(nixlAgent &agent,
                  const std::string &from_name,
                  size_t expected_count,
+                 const std::string &expected_notif,
                  nixl_notifs_t notif_map = {}) {
         for (int i = 0; i < retry_count; i++) {
             nixl_status_t status = agent.getNotifs(notif_map);
@@ -320,7 +321,7 @@ protected:
         EXPECT_EQ(notif_list.size(), expected_count);
 
         for (const auto& notif : notif_list) {
-            EXPECT_EQ(notif, NOTIF_MSG);
+            EXPECT_EQ(notif, expected_notif);
         }
     }
 
@@ -330,7 +331,8 @@ protected:
                        nixlAgent &to,
                        const std::string &to_name,
                        size_t repeat,
-                       size_t num_threads) {
+                       size_t num_threads,
+                       const std::string &notif_msg = NOTIF_MSG) {
         const size_t total_notifs = repeat * num_threads;
 
         exchangeMD(0, 1);
@@ -340,7 +342,7 @@ protected:
         for (size_t thread = 0; thread < num_threads; ++thread) {
             threads.emplace_back([&]() {
                 for (size_t i = 0; i < repeat; ++i) {
-                    nixl_status_t status = from.genNotif(to_name, NOTIF_MSG);
+                    nixl_status_t status = from.genNotif(to_name, notif_msg);
                     ASSERT_EQ(status, NIXL_SUCCESS);
 
                     if (!isProgressThreadEnabled()) {
@@ -355,7 +357,7 @@ protected:
             thread.join();
         }
 
-        verifyNotifs(to, from_name, total_notifs, std::move(notif_map));
+        verifyNotifs(to, from_name, total_notifs, notif_msg, std::move(notif_map));
         invalidateMD(0, 1);
     }
 
@@ -372,14 +374,15 @@ protected:
                std::vector<MemBuffer> src_buffers,
                nixl_mem_t dst_mem_type,
                std::vector<MemBuffer> dst_buffers,
-               nixl_status_t expected_telem_status = NIXL_ERR_NO_TELEMETRY) {
+               nixl_status_t expected_telem_status = NIXL_ERR_NO_TELEMETRY,
+               const std::string &notif_msg = NOTIF_MSG) {
         std::mutex logger_mutex;
         std::vector<std::thread> threads;
         nixl_notifs_t notif_map;
         for (size_t thread = 0; thread < num_threads; ++thread) {
             threads.emplace_back([&, thread]() {
                 nixl_opt_args_t extra_params;
-                extra_params.notif = NOTIF_MSG;
+                extra_params.notif = notif_msg;
 
                 nixlXferReqH *xfer_req = nullptr;
                 nixl_status_t status = from.createXferReq(
@@ -445,7 +448,7 @@ protected:
             thread.join();
         }
 
-        verifyNotifs(to, from_name, repeat * num_threads, std::move(notif_map));
+        verifyNotifs(to, from_name, repeat * num_threads, notif_msg, std::move(notif_map));
     }
 
     nixlAgent &getAgent(size_t idx)
@@ -590,6 +593,13 @@ TEST_P(TestTransfer, SelfNotification) {
     constexpr size_t num_threads = 4;
     doNotificationTest(
             getAgent(0), getAgentName(0), getAgent(0), getAgentName(0), repeat, num_threads);
+}
+
+TEST_P(TestTransfer, EmptyNotificationPayload) {
+    constexpr size_t repeat = 16;
+    constexpr size_t num_threads = 2;
+    doNotificationTest(
+            getAgent(0), getAgentName(0), getAgent(1), getAgentName(1), repeat, num_threads, "");
 }
 
 TEST_P(TestTransfer, ListenerCommSize) {
