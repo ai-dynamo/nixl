@@ -657,6 +657,13 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 }
 
 nixl_status_t
+nixlAgent::prepXferDlist(const nixl_xfer_dlist_t &descs,
+                         nixlDlistH* &dlist_hndl,
+                         const nixl_opt_args_t* extra_params) const {
+    return prepXferDlist(NIXL_INIT_AGENT, descs, dlist_hndl, extra_params);
+}
+
+nixl_status_t
 nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                         const nixlDlistH* local_side,
                         const std::vector<int> &local_indices,

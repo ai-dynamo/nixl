@@ -193,6 +193,19 @@ class nixlAgent {
                        nixlDlistH* &dlist_hndl,
                        const nixl_opt_args_t* extra_params = nullptr) const;
         /**
+         * @brief  Prepare a local descriptor list for transfer requests.
+         *         Equivalent to prepXferDlist(NIXL_INIT_AGENT, ...).
+         *
+         * @param  descs            The descriptor list to be prepared for transfer requests
+         * @param  dlist_hndl [out] The prepared descriptor list handle for this transfer request
+         * @param  extra_params     Optional additional parameters used in preparing dlist handle
+         * @return nixl_status_t    Error code if call was not successful
+         */
+        nixl_status_t
+        prepXferDlist (const nixl_xfer_dlist_t &descs,
+                       nixlDlistH* &dlist_hndl,
+                       const nixl_opt_args_t* extra_params = nullptr) const;
+        /**
          * @brief  Make a transfer request `req_handl` by selecting indices from already
          *         prepared descriptor list handles. NIXL automatically determines the backend
          *         that can perform the transfer. If a list of backends hints is provided

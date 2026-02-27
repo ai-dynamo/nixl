@@ -563,6 +563,24 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("backend") = std::vector<uintptr_t>({}),
             py::call_guard<py::gil_scoped_release>())
         .def(
+            "prepXferDlist",
+            [](nixlAgent &agent,
+               const nixl_xfer_dlist_t &descs,
+               std::vector<uintptr_t> backends) -> uintptr_t {
+                nixlDlistH *handle = nullptr;
+                nixl_opt_args_t extra_params;
+
+                for (uintptr_t backend : backends)
+                    extra_params.backends.push_back((nixlBackendH *)backend);
+
+                throw_nixl_exception(agent.prepXferDlist(descs, handle, &extra_params));
+
+                return (uintptr_t)handle;
+            },
+            py::arg("descs"),
+            py::arg("backend") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
+        .def(
             "makeXferReq",
             [](nixlAgent &agent,
                const nixl_xfer_op_t &operation,
