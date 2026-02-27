@@ -20,5 +20,6 @@
 #define CONCAT(a, b) CONCAT_0(a, b)
 #define CONCAT_0(a, b) a ## b
 #define UNIQUE_NAME(name) CONCAT(name, __COUNTER__)
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 #endif /* UTIL_H */

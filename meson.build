@@ -309,6 +309,44 @@ if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
 endif
 
+
+enable_dte = get_option('enable_dte')
+if enable_dte
+    host_triplet = host_machine.cpu_family() + '-' + host_machine.system().to_lower() + '-gnu'
+
+    doca_path = get_option('doca_path')
+    doca_inc_path = doca_path + '/include'
+    doca_lib_path = [ doca_path + '/lib/' + host_triplet, doca_path + '/lib64']
+
+    doca_common_lib = cpp.find_library('doca_common', dirs: doca_lib_path)
+    doca_telemetry_exporter_lib = cpp.find_library('doca_telemetry_exporter', dirs: doca_lib_path)
+
+    have_doca_telemetry_exporter_api = false
+    if doca_common_lib.found() and doca_telemetry_exporter_lib.found()
+
+        dte_dep = declare_dependency(
+            link_args : ['-L' + doca_path + '/lib/' + host_triplet, '-L' + doca_path + '/lib64'],
+            include_directories : include_directories(doca_inc_path),
+            dependencies: [doca_common_lib, doca_telemetry_exporter_lib])
+
+        compiler = meson.get_compiler('cpp', native : true)
+
+        have_doca_telemetry_exporter_api = compiler.compiles('''
+            #include <doca_telemetry_exporter.h>
+            int main(void) {
+                return doca_telemetry_exporter_schema_init("test", NULL);
+            }
+        ''',
+        name: 'DOCA Telemetry Exporter API availability',
+        dependencies: [dte_dep])
+    endif
+
+    if not have_doca_telemetry_exporter_api
+        warning('DOCA Telemetry Exporter API not found, will disable telemetry exporter plugin')
+        enable_dte = false
+    endif
+endif
+
 # Configure NDEBUG for release builds
 if get_option('buildtype') == 'release'
     # Used by Abseil to strip DCHECK assertions and DVLOG at compile time

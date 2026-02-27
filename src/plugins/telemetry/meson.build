@@ -14,3 +14,6 @@
 # limitations under the License.
 
 subdir('prometheus')
+if enable_dte
+    subdir('dte')
+endif
