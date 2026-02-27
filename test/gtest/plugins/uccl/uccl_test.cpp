@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -255,9 +255,6 @@ TestUcclBackend::TestUcclBackend() {
 template<TestUcclBackend::TestType test_type, enum nixl_xfer_op_t op>
 void
 TestUcclBackend::testXfer() {
-    if (op == NIXL_READ) {
-        m_env.addVar("UCCL_RCMODE", "1");
-    }
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
 
