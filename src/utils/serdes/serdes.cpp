@@ -72,7 +72,7 @@ std::string nixlSerDes::getStr(const std::string &tag){
     // Skip string plus trailing '|'.
     des_offset += len + 1;
 
-    if (ret.empty()) {
+    if (ret.empty() && tag != "msg") {
         NIXL_ERROR << "Deserialization of tag " << tag << " failed for empty data";
     }
     return ret;
