@@ -55,7 +55,7 @@ Default addres is public, but you configure to expose prometheus endpoint only o
 
 ```bash
 export NIXL_TELEMETRY_PROMETHEUS_LOCAL="y"
-# May also use "yes" or "1"
+# Can be set to `y`/`yes`/`on`/`true`/`enable`/`1` to enable local only, and `n`/`no`/`off`/`false`/`disable`/`0` (or not set) to disable. Matching is case insensitive.
 ```
 
 You can alter where to look for plug-in .so files

@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "uccl_backend.h"
+#include "common/configuration.h"
 #include "serdes/serdes.h"
 #include <iostream>
 #include <cstdlib>
@@ -89,9 +90,10 @@ getNixlParam(const nixl_b_params_t *custom_params, const std::string &key, int d
 }
 
 nixlUcclEngine::nixlUcclEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {
+    : nixlBackendEngine(init_params),
+      local_agent_name_(init_params->localAgent),
+      rcmode_(nixl::config::getValueDefaulted("UCCL_RCMODE", false)) {
 
-    local_agent_name_ = init_params->localAgent;
     nixl_b_params_t *custom_params = init_params->customParams;
 
     size_t num_cpus = getNixlParam(custom_params, "num_cpus", 4);
@@ -372,7 +374,6 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
     int result = 0;
     nixlUcclBackendMD *lmd;
     nixlUcclBackendMD *rmd;
-    bool rcmode = false;
     handle = nullptr;
 
     NIXL_DEBUG << "UCCL PrepXfer: " << operation << " remote_agent: " << remote_agent;
@@ -401,11 +402,8 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const char *uccl_rcmode = std::getenv("UCCL_RCMODE");
-    rcmode = (uccl_rcmode && std::strcmp(uccl_rcmode, "1") == 0);
-
     if (operation == NIXL_READ) {
-        if (!rcmode) {
+        if (!rcmode_) {
             NIXL_ERROR
                 << "UCCL_RCMODE environment variable must be set to 1 for NIXL_READ operations";
             return NIXL_ERR_INVALID_PARAM;
@@ -450,7 +448,7 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
 
         // RC mode is supported for both READ/WRITE operations
         // UC mode is supported only for WRITE operations
-        md.op = rcmode ? UCCL_RW_RC : UCCL_WRITE;
+        md.op = rcmode_ ? UCCL_RW_RC : UCCL_WRITE;
         md.data.tx_data = tx_data;
 
         // Add to vectors for batch processing
@@ -465,7 +463,7 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
-    if (rcmode) {
+    if (rcmode_) {
         if (!handle) {
             handle = new nixlUcclReqH(conn);
         }
@@ -513,7 +511,6 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     nixlUcclReqH *uccl_handle;
     nixlUcclBackendMD *lmd;
     nixlUcclBackendMD *rmd;
-    bool rcmode = false;
 
     NIXL_DEBUG << "UCCL PostXfer: " << operation << " remote_agent: " << remote_agent;
 
@@ -542,11 +539,8 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const char *uccl_rcmode = std::getenv("UCCL_RCMODE");
-    rcmode = (uccl_rcmode && std::strcmp(uccl_rcmode, "1") == 0);
-
     if (operation == NIXL_READ) {
-        if (!rcmode) {
+        if (!rcmode_) {
             NIXL_ERROR
                 << "UCCL_RCMODE environment variable must be set to 1 for NIXL_READ operations";
             return NIXL_ERR_INVALID_PARAM;
@@ -594,7 +588,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         uint64_t transfer_id = 0;
 
         char *fifo_item_data = nullptr;
-        if (rcmode && handle) {
+        if (rcmode_ && handle) {
             nixlUcclReqH *uccl_handle = static_cast<nixlUcclReqH *>(handle);
             if (i < uccl_handle->fifo_items.size()) {
                 fifo_item_data = uccl_handle->fifo_items[i].data();
@@ -612,7 +606,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
             break;
         }
         case NIXL_WRITE:
-            if (rcmode) {
+            if (rcmode_) {
                 result = uccl_engine_write_rc(
                     conn, local_mr, (void *)local_addr, lsize, fifo_item_data, &transfer_id);
             } else {

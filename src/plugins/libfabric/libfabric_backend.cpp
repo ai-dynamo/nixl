@@ -18,6 +18,7 @@
 
 #include "libfabric_backend.h"
 #include "serdes/serdes.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 
 #include <dlfcn.h>
@@ -309,7 +310,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         // Initialize CUDA context management
         vramInitCtx();
         // CUDA address workaround
-        if (getenv("NIXL_DISABLE_CUDA_ADDR_WA")) {
+        if (nixl::config::checkExistence("NIXL_DISABLE_CUDA_ADDR_WA")) {
             NIXL_DEBUG << "Disabling CUDA address workaround";
             cuda_addr_wa_ = false;
         } else {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "prometheus_exporter.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 
 #include <fstream>
@@ -37,36 +38,6 @@ const std::string prometheusExporterBackendCategory = "NIXL_TELEMETRY_BACKEND";
 const std::string prometheusExporterLocalAddress = "127.0.0.1";
 const std::string prometheusExporterPublicAddress = "0.0.0.0";
 
-uint16_t
-getPort() {
-    auto port_str = std::getenv(prometheusPortVar);
-    if (!port_str) {
-        return prometheusExporterDefaultPort;
-    }
-
-    try {
-        int port = std::stoi(port_str);
-        if (port < 1 || port > 65535) {
-            throw std::out_of_range("Port must be between 1-65535");
-        }
-        return port;
-    }
-    catch (const std::exception &e) {
-        NIXL_WARN << "Invalid port '" << port_str
-                  << "', expected numeric port between 1-65535. Using default: "
-                  << prometheusExporterDefaultPort;
-        return prometheusExporterDefaultPort;
-    }
-}
-
-bool
-getLocal() {
-    auto local_str = std::getenv(prometheusLocalVar);
-    return local_str &&
-        (!strcasecmp(local_str, "y") || !strcasecmp(local_str, "1") ||
-         !strcasecmp(local_str, "yes"));
-}
-
 std::string
 getHostname() {
     char hostname[HOST_NAME_MAX + 1];
@@ -81,8 +52,8 @@ getHostname() {
 nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
-      local_(getLocal()),
-      port_(getPort()),
+      local_(nixl::config::getValueDefaulted(prometheusLocalVar, false)),
+      port_(nixl::config::getValueDefaulted(prometheusPortVar, prometheusExporterDefaultPort)),
       agent_name_(init_params.agentName),
       hostname_(getHostname()),
       registry_(std::make_shared<prometheus::Registry>()) {

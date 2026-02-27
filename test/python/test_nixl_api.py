@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -276,7 +276,7 @@ def test_get_xfer_telemetry(backend_name):
 
 
 def test_get_xfer_telemetry_cfg(backend_name):
-    os.environ["NIXL_TELEMETRY_ENABLE"] = "m"  # invalid value not to enable
+    os.environ["NIXL_TELEMETRY_ENABLE"] = "no"
     os.environ["NIXL_TELEMETRY_DIR"] = "/tmp/dummy"  # to be ignored
 
     agent1 = nixl_agent(
