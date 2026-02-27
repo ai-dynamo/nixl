@@ -237,7 +237,11 @@ main (int argc, char *argv[]) {
     std::cout << "Starting Agent for " << role << " with stream mode " << stream_mode << "\n";
     /** Agent and backend creation parameters */
 
-    nixlAgentConfig cfg (true, true, peer_port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
+    cfg.useListenThread = true;
+    cfg.listenPort = peer_port;
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
     nixlAgent agent (role, cfg);
 
     if (stream_mode.compare ("pool") == 0) params["cuda_streams"] = "2";

@@ -108,7 +108,8 @@ nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent)
   }
 
   try {
-    nixlAgentConfig nixl_config(true);  // Use progress thread
+    nixlAgentConfig nixl_config{};
+    nixl_config.useProgThread = true;  // Use progress thread
     std::string agent_name = name;
     auto inner = new nixlAgent(agent_name, nixl_config);
 
@@ -131,14 +132,14 @@ nixl_capi_create_configured_agent(const char *name,
     }
 
     try {
-        nixlAgentConfig nixl_config(cfg->enable_prog_thread,
-                                    cfg->enable_listen_thread,
-                                    cfg->listen_port,
-                                    nixl_capi_thread_sync_to_nixl(cfg->thread_sync),
-                                    cfg->num_workers,
-                                    cfg->pthr_delay_us,
-                                    cfg->lthr_delay_us,
-                                    cfg->capture_telemetry);
+        nixlAgentConfig nixl_config{};
+        nixl_config.useProgThread = cfg->enable_prog_thread;
+        nixl_config.useListenThread = cfg->enable_listen_thread;
+        nixl_config.listenPort = cfg->listen_port;
+        nixl_config.syncMode = nixl_capi_thread_sync_to_nixl(cfg->thread_sync);
+        nixl_config.pthrDelay = cfg->pthr_delay_us;
+        nixl_config.lthrDelay = cfg->lthr_delay_us;
+        nixl_config.captureTelemetry = cfg->capture_telemetry;
 
         auto agent_handle = new nixl_capi_agent_s;
         agent_handle->inner = new nixlAgent(name, nixl_config);

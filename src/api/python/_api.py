@@ -472,14 +472,18 @@ class nixl_agent:
     ) -> nixl_prepped_dlist_handle:
         descs = self.get_xfer_descs(xfer_list, mem_type)
 
-        if agent_name == "NIXL_INIT_AGENT" or agent_name == "":
+        is_local = agent_name == "NIXL_INIT_AGENT" or agent_name == ""
+        if is_local:
             agent_name = nixlBind.NIXL_INIT_AGENT
 
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
 
-        handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
+        if is_local:
+            handle = self.agent.prepXferDlist(descs, handle_list)
+        else:
+            handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
         return nixl_prepped_dlist_handle(self.agent, handle)
 
     """

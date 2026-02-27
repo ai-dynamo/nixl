@@ -109,7 +109,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     rank = rt->getRank();
 
-    nixlAgentConfig dev_meta(enable_pt, false, 0, sync_mode);
+    nixlAgentConfig dev_meta{};
+    dev_meta.useProgThread = enable_pt;
+    dev_meta.syncMode = sync_mode;
 
     agent = new nixlAgent(name, dev_meta);
 

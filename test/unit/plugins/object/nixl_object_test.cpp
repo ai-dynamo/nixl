@@ -272,7 +272,8 @@ main(int argc, char *argv[]) {
     dram_addr = new void *[num_transfers]();
 
     // Initialize NIXL components
-    nixlAgentConfig cfg(true);
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
     nixlBlobDesc *dram_buf = new nixlBlobDesc[num_transfers];
     nixlBlobDesc *objects = new nixlBlobDesc[num_transfers];
     nixlBackendH *obj;

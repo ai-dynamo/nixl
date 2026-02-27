@@ -48,7 +48,8 @@ nixlAgent* createAgent(const std::string& name) {
         setenv("NIXL_ETCD_ENDPOINTS", ETCD_ENDPOINT.c_str(), 1);
     }
 
-    nixlAgentConfig cfg(true);
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
 
     // Create the agent with the configuration
     nixlAgent* agent = new nixlAgent(name, cfg);
@@ -114,7 +115,8 @@ int main() {
     nixl_status_t status;
 
     // Create two agents (normally these would be in separate processes or machines)
-    nixlAgentConfig cfg(true);
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
     nixl_b_params_t init1, init2;
     nixl_mem_list_t mems1, mems2;
     nixl_reg_dlist_t dlist1(DRAM_SEG), dlist2(DRAM_SEG), empty_dlist(DRAM_SEG);

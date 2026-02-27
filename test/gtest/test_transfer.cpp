@@ -105,8 +105,6 @@ protected:
         cfg.useListenThread = (listen_port > 0);
         cfg.listenPort = listen_port;
         cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
-        cfg.pthrDelay = 0;
-        cfg.lthrDelay = 100000;
         cfg.captureTelemetry = capture_telemetry;
         return cfg;
     }

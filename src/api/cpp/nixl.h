@@ -194,7 +194,6 @@ class nixlAgent {
                        const nixl_opt_args_t* extra_params = nullptr) const;
         /**
          * @brief  Prepare a local descriptor list for transfer requests.
-         *         Equivalent to prepXferDlist(NIXL_INIT_AGENT, ...).
          *
          * @param  descs            The descriptor list to be prepared for transfer requests
          * @param  dlist_hndl [out] The prepared descriptor list handle for this transfer request
