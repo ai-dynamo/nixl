@@ -160,7 +160,7 @@ TestErrorHandling::Agent::init(const std::string &name,
                                size_t num_threads) {
     nixlAgentConfig cfg{};
     cfg.useProgThread = true;
-    m_priv    = std::make_unique<nixlAgent>(name, cfg);
+    m_priv = std::make_unique<nixlAgent>(name, cfg);
     // At the moment, only UCX backend is tested for error handling support.
     m_backend = nixl::createUcxBackend(*m_priv, backend_name, num_workers, num_threads);
     m_mem.init(m_backend);
@@ -199,7 +199,7 @@ TestErrorHandling::Agent::createXferReq(const nixl_xfer_op_t& op,
                                      nixl_xfer_dlist_t& rReq_descs,
                                      nixlXferReqH*& req_handle) const {
     nixl_opt_args_t extra_params = { .backends = {m_backend} };
-    extra_params.notif           = "notification";
+    extra_params.notif = "notification";
     return m_priv->createXferReq(op, sReq_descs, rReq_descs, m_MetaRemote,
                                  req_handle, &extra_params);
 }

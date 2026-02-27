@@ -658,8 +658,8 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 
 nixl_status_t
 nixlAgent::prepXferDlist(const nixl_xfer_dlist_t &descs,
-                         nixlDlistH* &dlist_hndl,
-                         const nixl_opt_args_t* extra_params) const {
+                         nixlDlistH *&dlist_hndl,
+                         const nixl_opt_args_t *extra_params) const {
     return prepXferDlist(NIXL_INIT_AGENT, descs, dlist_hndl, extra_params);
 }
 
@@ -1092,17 +1092,17 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (extra_params) {
         if (extra_params->notif.has_value()) {
             req_hndl->notifMsg = extra_params->notif.value();
-            opt_args.notifMsg  = extra_params->notif.value();
+            opt_args.notifMsg = extra_params->notif.value();
             req_hndl->hasNotif = true;
-            opt_args.hasNotif  = true;
+            opt_args.hasNotif = true;
         } else if (extra_params->hasNotif) {
             req_hndl->notifMsg = extra_params->notifMsg;
-            opt_args.notifMsg  = extra_params->notifMsg;
+            opt_args.notifMsg = extra_params->notifMsg;
             req_hndl->hasNotif = true;
-            opt_args.hasNotif  = true;
+            opt_args.hasNotif = true;
         } else {
             req_hndl->hasNotif = false;
-            opt_args.hasNotif  = false;
+            opt_args.hasNotif = false;
         }
     }
 

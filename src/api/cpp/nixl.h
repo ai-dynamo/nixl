@@ -202,9 +202,9 @@ class nixlAgent {
          * @return nixl_status_t    Error code if call was not successful
          */
         nixl_status_t
-        prepXferDlist (const nixl_xfer_dlist_t &descs,
-                       nixlDlistH* &dlist_hndl,
-                       const nixl_opt_args_t* extra_params = nullptr) const;
+        prepXferDlist(const nixl_xfer_dlist_t &descs,
+                      nixlDlistH* &dlist_hndl,
+                      const nixl_opt_args_t* extra_params = nullptr) const;
         /**
          * @brief  Make a transfer request `req_handl` by selecting indices from already
          *         prepared descriptor list handles. NIXL automatically determines the backend

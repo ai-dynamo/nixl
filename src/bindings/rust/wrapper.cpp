@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -605,7 +605,7 @@ nixl_capi_opt_args_set_notif_msg(nixl_capi_opt_args_t args, const void* data, si
   try {
     args->args.notifMsg.assign((const char*)data, len);
     if (args->args.hasNotif || args->args.notif.has_value()) {
-      args->args.notif = args->args.notifMsg;
+        args->args.notif = args->args.notifMsg;
     }
     return NIXL_CAPI_SUCCESS;
   }
@@ -622,24 +622,24 @@ nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void** data, size_t*
   }
 
   try {
-    const nixl_blob_t &msg = args->args.notif.has_value() ? args->args.notif.value()
-                                                          : args->args.notifMsg;
-    size_t msg_size = msg.size();
-    if (msg_size == 0) {
-      *data = nullptr;
-      *len = 0;
+      const nixl_blob_t &msg =
+          args->args.notif.has_value() ? args->args.notif.value() : args->args.notifMsg;
+      size_t msg_size = msg.size();
+      if (msg_size == 0) {
+          *data = nullptr;
+          *len = 0;
+          return NIXL_CAPI_SUCCESS;
+      }
+
+      void* msg_data = malloc(msg_size);
+      if (!msg_data) {
+          return NIXL_CAPI_ERROR_BACKEND;
+      }
+
+      memcpy(msg_data, msg.data(), msg_size);
+      *data = msg_data;
+      *len = msg_size;
       return NIXL_CAPI_SUCCESS;
-    }
-
-    void* msg_data = malloc(msg_size);
-    if (!msg_data) {
-      return NIXL_CAPI_ERROR_BACKEND;
-    }
-
-    memcpy(msg_data, msg.data(), msg_size);
-    *data = msg_data;
-    *len = msg_size;
-    return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -656,9 +656,9 @@ nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif)
   try {
     args->args.hasNotif = has_notif;
     if (has_notif) {
-      args->args.notif = args->args.notifMsg;
+        args->args.notif = args->args.notifMsg;
     } else {
-      args->args.notif.reset();
+        args->args.notif.reset();
     }
     return NIXL_CAPI_SUCCESS;
   }
@@ -675,8 +675,8 @@ nixl_capi_opt_args_get_has_notif(nixl_capi_opt_args_t args, bool* has_notif)
   }
 
   try {
-    *has_notif = args->args.notif.has_value() || args->args.hasNotif;
-    return NIXL_CAPI_SUCCESS;
+      *has_notif = args->args.notif.has_value() || args->args.hasNotif;
+      return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
