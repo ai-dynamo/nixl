@@ -72,18 +72,7 @@ else
     echo "/sys/module/nv_peer_mem/version not found"
 fi
 
-echo "==== Running ETCD server ===="
-etcd_port=$(get_next_tcp_port)
-etcd_peer_port=$(get_next_tcp_port)
-export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
-export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
-export NIXL_ETCD_NAMESPACE="/nixl/cpp_ci/${etcd_port}"
-etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
-     --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
-     --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
-ETCD_PID=$!
-
-wait_for_etcd
+start_etcd_server "/nixl/cpp_ci"
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}

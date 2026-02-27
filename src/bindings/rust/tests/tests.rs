@@ -20,7 +20,7 @@
 //! `nixl` crate.
 
 use nixl_sys::*;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{env, thread};
 use std::collections::HashMap;
 // Helper function to create an agent with error handling
@@ -706,32 +706,53 @@ fn test_etcd_metadata_exchange() -> Result<(), NixlError> {
 
     // Backend on agent2 too
     let (_mems2, params2) = agent2.get_plugin_params(&plugin_name)?;
-    let _backend2 = agent2.create_backend(&plugin_name, &params2)?;
+    let backend2 = agent2.create_backend(&plugin_name, &params2)?;
 
 
     // Create OptArgs with backend
     let mut opt_args = OptArgs::new()?;
     opt_args.add_backend(&backend1)?;
+    let mut opt_args2 = OptArgs::new()?;
+    opt_args2.add_backend(&backend2)?;
 
     // Send agent1's metadata to etcd
     agent1.send_local_md(Some(&opt_args))?;
     println!("Successfully sent agent1 metadata to etcd");
 
     // Fetch agent1's metadata from etcd with agent2
-    agent2.fetch_remote_md("EtcdAgent1", Some(&opt_args))?;
+    agent2.fetch_remote_md("EtcdAgent1", Some(&opt_args2))?;
     println!("Successfully fetched agent1 metadata from etcd");
 
-    thread::sleep(Duration::from_secs(10));
+    let poll_timeout = Duration::from_secs(10);
+    let poll_interval = Duration::from_millis(100);
+    let metadata_visible_start = Instant::now();
+    loop {
+        if agent2.check_remote_metadata("EtcdAgent1", None) {
+            break;
+        }
+        if metadata_visible_start.elapsed() >= poll_timeout {
+            panic!("Timed out waiting for EtcdAgent1 metadata to become visible");
+        }
+        thread::sleep(poll_interval);
+    }
 
     // Invalidate agent1's metadata in etcd
     agent1.invalidate_local_md(Some(&opt_args))?;
     println!("Successfully invalidated agent1 metadata in etcd");
 
-    thread::sleep(Duration::from_secs(10));
+    let local_invalidate_start = Instant::now();
+    loop {
+        if !agent2.check_remote_metadata("EtcdAgent1", None) {
+            break;
+        }
+        if local_invalidate_start.elapsed() >= poll_timeout {
+            panic!("Timed out waiting for EtcdAgent1 metadata invalidation in etcd");
+        }
+        thread::sleep(poll_interval);
+    }
 
     agent2.invalidate_remote_md("EtcdAgent1")?;
-    println!("Successfully invalidated agent2 metadata in etcd");
-    thread::sleep(Duration::from_secs(10));
+    println!("Successfully invalidated agent2 cached remote metadata");
 
     Ok(())
 }

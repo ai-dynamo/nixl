@@ -1109,7 +1109,10 @@ impl AgentInner {
     fn invalidate_remote_md(&mut self, remote_agent: &str) -> Result<(), NixlError> {
         unsafe {
             if self.remotes.remove(remote_agent) {
-                nixl_capi_invalidate_remote_md(self.handle.as_ptr(), CString::new(remote_agent)?.as_ptr().cast());
+                nixl_capi_invalidate_remote_md(
+                    self.handle.as_ptr(),
+                    CString::new(remote_agent)?.as_ptr().cast(),
+                );
             } else {
                 return Err(NixlError::InvalidParam);
             }
@@ -1120,7 +1123,10 @@ impl AgentInner {
     fn invalidate_all_remotes(&mut self) -> Result<(), NixlError> {
         unsafe {
             for remote in self.remotes.drain() {
-                nixl_capi_invalidate_remote_md(self.handle.as_ptr(), CString::new(remote.as_str())?.as_ptr().cast());
+                nixl_capi_invalidate_remote_md(
+                    self.handle.as_ptr(),
+                    CString::new(remote.as_str())?.as_ptr().cast(),
+                );
             }
         }
         Ok(())

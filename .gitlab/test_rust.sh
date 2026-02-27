@@ -49,19 +49,8 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
 export NIXL_NO_STUBS_FALLBACK=1
 
-echo "==== Running ETCD server ===="
-etcd_port=$(get_next_tcp_port)
-etcd_peer_port=$(get_next_tcp_port)
-export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
-export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
-export NIXL_ETCD_NAMESPACE="/nixl/rust_ci/${etcd_port}"
-etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
-     --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
-     --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
-ETCD_PID=$!
+start_etcd_server "/nixl/rust_ci"
 trap 'kill -9 $ETCD_PID 2>/dev/null || true' EXIT
-
-wait_for_etcd
 
 cargo test -- --test-threads=1
 
