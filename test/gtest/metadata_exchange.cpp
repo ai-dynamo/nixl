@@ -395,13 +395,15 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
                                   " and port " + port_str);
         const LogIgnoreGuard lig3("getsockopt gave error for ip_addr: " + ip_str +
                                   " and port: " + port_str + ": No route to host");
+        const LogIgnoreGuard lig4("poll returned but socket not ready for write for ip_addr: " +
+                                  ip_str + " and port: " + port_str);
 
         ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
 
         std::this_thread::sleep_for(std::chrono::seconds(3)); // Must exceed timeout to catch logs.
 
-        const size_t ignored =
-            lig1.getIgnoredCount() + lig2.getIgnoredCount() + lig3.getIgnoredCount();
+        const size_t ignored = lig1.getIgnoredCount() + lig2.getIgnoredCount() +
+            lig3.getIgnoredCount() + lig4.getIgnoredCount();
         EXPECT_GE(ignored, 1);
     }
 
