@@ -224,9 +224,10 @@ impl<'a> RegDescList<'a> {
         let addr = unsafe { desc.as_ptr() } as usize;
         let len = desc.size();
         let dev_id = desc.device_id();
+        let metadata = desc.metadata();
 
-        // Add to list
-        self.add_desc(addr, len, dev_id);
+        // Add to list with metadata
+        self.add_desc_with_meta(addr, len, dev_id, &metadata);
         Ok(())
     }
 
