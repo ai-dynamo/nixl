@@ -28,8 +28,8 @@
 
 namespace gtest::plugins::azure_blob {
 /**
- * @note To run Azure plugin tests, the AZURE_STORAGE_ACCOUNT_URL environment variable must be set
- * in order to interact with the Azure Storage account used for testing.
+ * @note To run Azure plugin tests, either the AZURE_STORAGE_ACCOUNT_URL or
+ * AZURE_STORAGE_CONNECTION_STRING environment variable must be set.
  * The tests will automatically create unique Azure Blob containers for each test case and delete
  * them afterwards.
  */
@@ -49,11 +49,13 @@ protected:
     void
     SetUp() override {
         const char *account_url = std::getenv("AZURE_STORAGE_ACCOUNT_URL");
-        ASSERT_NE(account_url, nullptr) << "AZURE_STORAGE_ACCOUNT_URL environment variable must be "
-                                           "set to run Azure Blob plugin tests";
-        ASSERT_NE(account_url[0], '\0')
-            << "AZURE_STORAGE_ACCOUNT_URL environment variable is empty";
-        setupTestContainer(account_url);
+        const char *connection_string = std::getenv("AZURE_STORAGE_CONNECTION_STRING");
+        bool has_account_url = account_url && account_url[0] != '\0';
+        bool has_connection_string = connection_string && connection_string[0] != '\0';
+        ASSERT_TRUE(has_account_url || has_connection_string)
+            << "Either AZURE_STORAGE_ACCOUNT_URL or AZURE_STORAGE_CONNECTION_STRING "
+               "environment variable must be set to run Azure Blob plugin tests";
+        setupTestContainer(account_url, connection_string);
         localBackendEngine_ = std::make_shared<nixlAzureBlobEngine>(&GetParam());
         setupBackendTestFixture::SetUp();
     }
@@ -67,14 +69,21 @@ private:
     std::shared_ptr<Azure::Storage::Blobs::BlobContainerClient> container_client_;
 
     void
-    setupTestContainer(const char *account_url) {
+    setupTestContainer(const char *account_url, const char *connection_string) {
         auto now = std::chrono::system_clock::now();
         auto timestamp =
             std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
         auto test_container_name = "nixl-azure-blob-test-" + std::to_string(timestamp);
 
-        auto service_client = std::make_unique<Azure::Storage::Blobs::BlobServiceClient>(
-            account_url, std::make_shared<Azure::Identity::DefaultAzureCredential>());
+        std::shared_ptr<Azure::Storage::Blobs::BlobServiceClient> service_client;
+        if (connection_string && connection_string[0] != '\0') {
+            service_client = std::make_shared<Azure::Storage::Blobs::BlobServiceClient>(
+                Azure::Storage::Blobs::BlobServiceClient::CreateFromConnectionString(
+                    connection_string));
+        } else {
+            service_client = std::make_shared<Azure::Storage::Blobs::BlobServiceClient>(
+                account_url, std::make_shared<Azure::Identity::DefaultAzureCredential>());
+        }
 
         container_client_ = std::make_shared<Azure::Storage::Blobs::BlobContainerClient>(
             service_client->GetBlobContainerClient(test_container_name));

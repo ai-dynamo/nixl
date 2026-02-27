@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _TELEMETRY_H
-#define _TELEMETRY_H
+#ifndef NIXL_SRC_CORE_TELEMETRY_TELEMETRY_H
+#define NIXL_SRC_CORE_TELEMETRY_TELEMETRY_H
 
 #include "common/cyclic_buffer.h"
 #include "telemetry/telemetry_exporter.h"
@@ -50,7 +50,7 @@ struct periodicTask {
 
 class nixlTelemetry {
 public:
-    nixlTelemetry(const std::string &agent_name, backend_map_t &backend_map);
+    explicit nixlTelemetry(const std::string &agent_name);
 
     ~nixlTelemetry();
 
@@ -89,7 +89,6 @@ private:
     asio::thread_pool pool_;
     periodicTask writeTask_;
     std::string agentName_;
-    backend_map_t &backendMap_;
 };
 
-#endif // _TELEMETRY_H
+#endif

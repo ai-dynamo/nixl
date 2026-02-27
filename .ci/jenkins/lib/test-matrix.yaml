@@ -49,7 +49,7 @@ env:
   SLURM_JOB_TIMEOUT: '02:20:00'
   SLURM_IMMEDIATE_TIMEOUT: "3600"
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260210-1"
+  CI_IMAGE_TAG: "20260219-1"
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
