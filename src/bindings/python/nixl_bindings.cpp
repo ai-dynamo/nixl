@@ -532,9 +532,9 @@ PYBIND11_MODULE(_bindings, m) {
         .def(
             "makeConnection",
             [](nixlAgent &agent,
-                const std::string &remote_agent,
-                const std::vector<uintptr_t> &backends) {
-                nixl_opt_args_t extra_params;
+               const std::string &remote_agent,
+               const std::vector<uintptr_t> &backends) {
+               nixl_opt_args_t extra_params;
 
                 for (uintptr_t backend : backends)
                     extra_params.backends.push_back((nixlBackendH *)backend);
