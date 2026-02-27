@@ -482,7 +482,7 @@ PYBIND11_MODULE(_bindings, m) {
             "registerMem",
             [](nixlAgent &agent,
                nixl_reg_dlist_t descs,
-               std::vector<uintptr_t> backends) -> nixl_status_t {
+               const std::vector<uintptr_t> &backends) -> nixl_status_t {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
                 for (uintptr_t backend : backends)
@@ -499,7 +499,7 @@ PYBIND11_MODULE(_bindings, m) {
             "deregisterMem",
             [](nixlAgent &agent,
                nixl_reg_dlist_t descs,
-               std::vector<uintptr_t> backends) -> nixl_status_t {
+               const std::vector<uintptr_t> &backends) -> nixl_status_t {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
                 for (uintptr_t backend : backends)
@@ -531,7 +531,7 @@ PYBIND11_MODULE(_bindings, m) {
             py::call_guard<py::gil_scoped_release>())
         .def(
             "makeConnection",
-            [](nixlAgent &agent, const std::string &remote_agent, std::vector<uintptr_t> backends) {
+            [](nixlAgent &agent, const std::string &remote_agent, const std::vector<uintptr_t> &backends) {
                 nixl_opt_args_t extra_params;
 
                 for (uintptr_t backend : backends)
@@ -547,7 +547,7 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                std::string &agent_name,
                const nixl_xfer_dlist_t &descs,
-               std::vector<uintptr_t> backends) -> uintptr_t {
+               const std::vector<uintptr_t> &backends) -> uintptr_t {
                 nixlDlistH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
@@ -566,7 +566,7 @@ PYBIND11_MODULE(_bindings, m) {
             "prepXferDlist",
             [](nixlAgent &agent,
                const nixl_xfer_dlist_t &descs,
-               std::vector<uintptr_t> backends) -> uintptr_t {
+               const std::vector<uintptr_t> &backends) -> uintptr_t {
                 nixlDlistH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
@@ -589,7 +589,7 @@ PYBIND11_MODULE(_bindings, m) {
                uintptr_t remote_side,
                py::object remote_indices,
                const std::string &notif_msg,
-               std::vector<uintptr_t> backends,
+               const std::vector<uintptr_t> &backends,
                bool skip_desc_merge) -> uintptr_t {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
@@ -656,7 +656,7 @@ PYBIND11_MODULE(_bindings, m) {
                const nixl_xfer_dlist_t &remote_descs,
                const std::string &remote_agent,
                const std::string &notif_msg,
-               std::vector<uintptr_t> backends) -> uintptr_t {
+               const std::vector<uintptr_t> &backends) -> uintptr_t {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
@@ -747,7 +747,7 @@ PYBIND11_MODULE(_bindings, m) {
             "getNotifs",
             [](nixlAgent &agent,
                nixl_py_notifs_t &notif_map,
-               std::vector<uintptr_t> backends) -> nixl_py_notifs_t {
+               const std::vector<uintptr_t> &backends) -> nixl_py_notifs_t {
                 nixl_notifs_t new_notifs;
                 nixl_opt_args_t extra_params;
 
@@ -774,7 +774,7 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                const std::string &remote_agent,
                const std::string &msg,
-               std::vector<uintptr_t> backends) {
+               const std::vector<uintptr_t> &backends) {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
 
@@ -803,7 +803,7 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                nixl_reg_dlist_t descs,
                bool inc_conn_info,
-               std::vector<uintptr_t> backends) -> py::bytes {
+               const std::vector<uintptr_t> &backends) -> py::bytes {
                 std::string ret_str("");
 
                 nixl_opt_args_t extra_params;
@@ -847,7 +847,7 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                nixl_reg_dlist_t descs,
                bool inc_conn_info,
-               std::vector<uintptr_t> backends,
+               const std::vector<uintptr_t> &backends,
                std::string ip_addr,
                int port,
                std::string label) {

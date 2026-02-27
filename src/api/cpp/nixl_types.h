@@ -206,7 +206,7 @@ struct nixlAgentOptionalArgs {
     bool hasNotif = false;
 
     /**
-     * @var makeXferReq legacy flag to skip merging consecutive descriptors.
+     * @var skipDescMerge Legacy flag to skip merging consecutive descriptors.
      *      Deprecated. Kept for backward compatibility.
      */
     bool skipDescMerge = false;
