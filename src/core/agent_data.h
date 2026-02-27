@@ -64,8 +64,8 @@ using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
 
 class nixlAgentData {
     private:
-        std::string     name;
-        nixlAgentConfig config;
+        const std::string name;
+        const nixlAgentConfig config;
         nixlLock        lock;
         bool telemetryEnabled = false;
 
@@ -74,12 +74,7 @@ class nixlAgentData {
 
         // Bookkeeping from backend type and memory type to backend engine
         backend_list_t                         notifEngines;
-        backend_map_t                          backendEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
-
-        // Bookkeping for local connection metadata and user handles per backend
-        std::unordered_map<nixl_backend_t, nixlBackendH*> backendHandles;
-        std::unordered_map<nixl_backend_t, nixl_blob_t>   connMD;
 
         // Bookkeeping from GPU request handles to backend engines
         std::unordered_map<nixlGpuXferReqH, nixlBackendEngine *> gpuReqToEngine;
@@ -87,14 +82,10 @@ class nixlAgentData {
         // Bookkeeping from memory view handles to backend engines
         std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
 
-        // Local section, and Remote sections and their available common backends
-        std::unique_ptr<nixlLocalSection> memorySection;
-
+        // Remote sections and their available common backends
         std::unordered_map<std::string,
                            std::unordered_map<nixl_backend_t, nixl_blob_t>,
                            std::hash<std::string>, strEqual>     remoteBackends;
-        std::unordered_map<std::string, nixlRemoteSection*,
-                           std::hash<std::string>, strEqual>     remoteSections;
 
         // State/methods for listener thread
         std::unique_ptr<nixlMDStreamListener> listener;
@@ -105,8 +96,17 @@ class nixlAgentData {
         std::atomic<bool> commThreadStop;
         std::atomic<bool> agentShutdown;
         bool useEtcd;
-        std::unique_ptr<nixlTelemetry> telemetry_;
         std::exception_ptr commThreadException_;
+
+        // The order of the following data members is crucial for destruction.
+        // Bookkeping for local connection metadata and user handles per backend
+        std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles;
+        std::unordered_map<nixl_backend_t, nixl_blob_t> connMD;
+        backend_map_t backendEngines;
+        std::unordered_map<std::string, std::unique_ptr<nixlRemoteSection>,
+                           std::hash<std::string>, strEqual> remoteSections;
+        std::unique_ptr<nixlTelemetry> telemetry_;
+        nixlLocalSection localSection;
 
         void
         commWorker(nixlAgent &myAgent) noexcept;
@@ -127,11 +127,12 @@ class nixlAgentData {
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
-        ~nixlAgentData();
 
-        inline void
+        void
         addErrorTelemetry(nixl_status_t err_status) {
-            if (telemetry_) telemetry_->updateErrorCount(err_status);
+            if (telemetry_) {
+                telemetry_->updateErrorCount(err_status);
+            }
         }
 
     friend class nixlAgent;
@@ -146,14 +147,15 @@ class nixlBackendH {
 
         explicit nixlBackendH(nixlBackendEngine *engine) noexcept : engine(engine) {}
 
+    public:
         ~nixlBackendH() = default;
 
-    public:
-        nixl_backend_t getType () const { return engine->getType(); }
+        // TODO? engine->getType() returns a const nixl_backend_t&
+        nixl_backend_t getType() const noexcept { return engine->getType(); }
 
-        bool supportsRemote () const { return engine->supportsRemote(); }
-        bool supportsLocal  () const { return engine->supportsLocal (); }
-        bool supportsNotif  () const { return engine->supportsNotif (); }
+        bool supportsRemote() const { return engine->supportsRemote(); }
+        bool supportsLocal() const { return engine->supportsLocal (); }
+        bool supportsNotif() const { return engine->supportsNotif (); }
 
     friend class nixlAgentData;
     friend class nixlAgent;

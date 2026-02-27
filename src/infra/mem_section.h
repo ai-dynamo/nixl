@@ -31,7 +31,14 @@
 
 using section_key_t = std::pair<nixl_mem_t, nixlBackendEngine*>;
 using backend_set_t = std::set<nixlBackendEngine*>;
-using backend_map_t = std::unordered_map<nixl_backend_t, nixlBackendEngine*>;
+
+struct nixlEngineDeleter {
+    void
+    operator()(nixlBackendEngine*) const noexcept;
+};
+
+using backend_ptr_t = std::unique_ptr<nixlBackendEngine, nixlEngineDeleter>;
+using backend_map_t = std::unordered_map<nixl_backend_t, backend_ptr_t>;
 
 /**
  * @brief Section descriptor for nixl
