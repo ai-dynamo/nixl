@@ -108,15 +108,15 @@ nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent)
   }
 
   try {
-    nixlAgentConfig nixl_config{};
-    nixl_config.useProgThread = true;  // Use progress thread
-    std::string agent_name = name;
-    auto inner = new nixlAgent(agent_name, nixl_config);
+      nixlAgentConfig nixl_config{};
+      nixl_config.useProgThread = true;  // Use progress thread
+      std::string agent_name = name;
+      auto inner = new nixlAgent(agent_name, nixl_config);
 
-    auto agent_handle = new nixl_capi_agent_s;
-    agent_handle->inner = inner;
-    *agent = agent_handle;
-    return NIXL_CAPI_SUCCESS;
+      auto agent_handle = new nixl_capi_agent_s;
+      agent_handle->inner = inner;
+      *agent = agent_handle;
+      return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;

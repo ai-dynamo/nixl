@@ -599,7 +599,7 @@ TEST_P(TestTransfer, EmptyNotificationPayload) {
     constexpr size_t repeat = 16;
     constexpr size_t num_threads = 2;
     doNotificationTest(
-            getAgent(0), getAgentName(0), getAgent(1), getAgentName(1), repeat, num_threads, "");
+        getAgent(0), getAgentName(0), getAgent(1), getAgentName(1), repeat, num_threads, "");
 }
 
 TEST_P(TestTransfer, ListenerCommSize) {
