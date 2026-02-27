@@ -131,7 +131,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
         if (!strcasecmp(telemetry_env_val, "y") || !strcasecmp(telemetry_env_val, "1") ||
             !strcasecmp(telemetry_env_val, "yes") || !strcasecmp(telemetry_env_val, "on")) {
             telemetryEnabled = true;
-            telemetry_ = std::make_unique<nixlTelemetry>(name, backendEngines);
+            telemetry_ = std::make_unique<nixlTelemetry>(name);
         } else if (cfg.captureTelemetry) {
             telemetryEnabled = true;
             NIXL_WARN << "NIXL telemetry is enabled through config, "
