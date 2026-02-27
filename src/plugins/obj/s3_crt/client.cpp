@@ -6,6 +6,7 @@
 #include "client.h"
 #include "object/s3/utils.h"
 #include "object/s3/aws_sdk_init.h"
+#include "engine_utils.h"
 #include <aws/s3-crt/model/PutObjectRequest.h>
 #include <aws/s3-crt/model/GetObjectRequest.h>
 #include <aws/s3-crt/model/HeadObjectRequest.h>
@@ -25,6 +26,18 @@ awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
     Aws::S3Crt::ClientConfiguration config;
     nixl_s3_utils::configureClientCommon(config, custom_params);
     if (executor) config.executor = executor;
+
+    // Align the CRT multipart thresholds with crtMinLimit so that every object
+    // routed to this client (size >= crtMinLimit) is uploaded via multipart.
+    // If crtMinLimit < 5 MiB the CRT SDK clamps partSize to 5 MiB internally
+    // (with a warning log) while keeping multipartUploadThreshold at the user
+    // value, so MPU still activates at crtMinLimit — but the effective part
+    // size will be 5 MiB regardless.
+    size_t crt_min_limit = getCrtMinLimit(custom_params);
+    if (crt_min_limit > 0) {
+        config.partSize = crt_min_limit;
+        config.multipartUploadThreshold = crt_min_limit;
+    }
 
     auto credentials_opt = nixl_s3_utils::createAWSCredentials(custom_params);
     bool use_virtual_addressing = nixl_s3_utils::getUseVirtualAddressing(custom_params);
