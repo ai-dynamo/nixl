@@ -69,7 +69,11 @@ namespace agent {
 
     public:
         agentHelper(const std::string &name)
-            : agent_(std::make_unique<nixlAgent>(name, nixlAgentConfig(true))) {}
+            : agent_([&name]() {
+                  nixlAgentConfig cfg{};
+                  cfg.useProgThread = true;
+                  return std::make_unique<nixlAgent>(name, cfg);
+              }()) {}
 
         ~agentHelper() {
             /* We must release nixlAgent first (i.e. explicitly in the destructor), as it calls

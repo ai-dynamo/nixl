@@ -184,16 +184,14 @@ class nixl_agent:
         )
 
         # Set agent config and instantiate an agent
-        agent_config = nixlBind.nixlAgentConfig(
-            nixl_conf.enable_pthread,
-            nixl_conf.enable_listen,
-            nixl_conf.port,
-            thread_config,
-            1,
-            0,
-            100000,
-            nixl_conf.capture_telemetry,
-        )
+        agent_config = nixlBind.nixlAgentConfig()
+        agent_config.useProgThread = nixl_conf.enable_pthread
+        agent_config.useListenThread = nixl_conf.enable_listen
+        agent_config.listenPort = nixl_conf.port
+        agent_config.syncMode = thread_config
+        agent_config.pthrDelay = 0
+        agent_config.lthrDelay = 100000
+        agent_config.captureTelemetry = nixl_conf.capture_telemetry
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
         self.name = agent_name

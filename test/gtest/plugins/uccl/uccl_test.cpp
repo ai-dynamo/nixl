@@ -157,7 +157,9 @@ private:
 
 void
 TestUcclBackend::Agent::init(const std::string &name) {
-    m_priv = std::make_unique<nixlAgent>(name, nixlAgentConfig(true));
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
+    m_priv = std::make_unique<nixlAgent>(name, cfg);
     // Create UCCL backend for testing
     m_backend = nixl::createUcclBackend(*m_priv);
     m_mem.init(m_backend);

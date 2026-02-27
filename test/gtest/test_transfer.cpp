@@ -100,14 +100,15 @@ class TestTransfer : public nixl_test_t {
 protected:
     nixlAgentConfig
     getConfig(int listen_port, bool capture_telemetry) {
-        return nixlAgentConfig(isProgressThreadEnabled(),
-                               listen_port > 0,
-                               listen_port,
-                               nixl_thread_sync_t::NIXL_THREAD_SYNC_RW,
-                               1,
-                               0,
-                               100000,
-                               capture_telemetry);
+        nixlAgentConfig cfg{};
+        cfg.useProgThread = isProgressThreadEnabled();
+        cfg.useListenThread = (listen_port > 0);
+        cfg.listenPort = listen_port;
+        cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+        cfg.pthrDelay = 0;
+        cfg.lthrDelay = 100000;
+        cfg.captureTelemetry = capture_telemetry;
+        return cfg;
     }
 
     uint16_t

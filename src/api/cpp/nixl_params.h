@@ -27,39 +27,52 @@
  *        Other configs such as assigned IP/port or device access can be added.
  */
 class nixlAgentConfig {
-    private:
+    public:
+        static constexpr bool kDefaultUseProgThread = false;
+        static constexpr bool kDefaultUseListenThread = false;
+        static constexpr int kDefaultListenPort = 0;
+        static constexpr nixl_thread_sync_t kDefaultSyncMode =
+            nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT;
+        static constexpr bool kDefaultCaptureTelemetry = false;
+        static constexpr uint64_t kDefaultPthrDelayUs = 0;
+        static constexpr uint64_t kDefaultLthrDelayUs = 100000;
+        static constexpr std::chrono::microseconds kDefaultEtcdWatchTimeout =
+            std::chrono::microseconds(5000000);
 
         /** @var Enable progress thread */
-        bool     useProgThread;
+        bool     useProgThread = kDefaultUseProgThread;
         /** @var Enable listener thread */
-        bool     useListenThread;
+        bool     useListenThread = kDefaultUseListenThread;
         /** @var Port for listener thread to use */
-        int      listenPort;
+        int      listenPort = kDefaultListenPort;
         /** @var synchronization mode for multi-threaded environment execution */
-        nixl_thread_sync_t syncMode;
+        nixl_thread_sync_t syncMode = kDefaultSyncMode;
         /** @var Capture telemetry info regardless of environment variables*/
-        bool captureTelemetry;
-
-    public:
+        bool captureTelemetry = kDefaultCaptureTelemetry;
 
         /**
          * @var Progress thread event waiting timeout.
          *      Defines a delay between periodic main loop iterations that progress every worker
          *      unconditionally of any pending event signals.
          */
-        uint64_t pthrDelay;
+        uint64_t pthrDelay = kDefaultPthrDelayUs;
         /**
          * @var Listener thread frequency knob (in us)
          *      Listener thread sleeps in a similar way to progress thread, desrcibed previously.
          *      These will be combined into a unified NIXL Thread API in a future version.
          */
-        uint64_t lthrDelay;
+        uint64_t lthrDelay = kDefaultLthrDelayUs;
 
         /**
          * @var ETCD watch timeout in microseconds
          *      Timeout for waiting for metadata changes when watching etcd keys.
          */
-        std::chrono::microseconds etcdWatchTimeout;
+        std::chrono::microseconds etcdWatchTimeout = kDefaultEtcdWatchTimeout;
+
+        /**
+         * @brief  Default constructor.
+         */
+        nixlAgentConfig() = default;
 
         /**
          * @brief  Agent configuration constructor for enabling various features.
@@ -74,15 +87,15 @@ class nixlAgentConfig {
          * @param etcd_watch_timeout Optional timeout for etcd watch operations in microseconds
          */
         nixlAgentConfig(const bool use_prog_thread,
-                        const bool use_listen_thread = false,
-                        const int port = 0,
-                        nixl_thread_sync_t sync_mode = nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT,
+                        const bool use_listen_thread = kDefaultUseListenThread,
+                        const int port = kDefaultListenPort,
+                        nixl_thread_sync_t sync_mode = kDefaultSyncMode,
                         unsigned int num_workers = 1,
-                        const uint64_t pthr_delay_us = 0,
-                        const uint64_t lthr_delay_us = 100000,
-                        const bool capture_telemetry = false,
+                        const uint64_t pthr_delay_us = kDefaultPthrDelayUs,
+                        const uint64_t lthr_delay_us = kDefaultLthrDelayUs,
+                        const bool capture_telemetry = kDefaultCaptureTelemetry,
                         const std::chrono::microseconds &etcd_watch_timeout =
-                            std::chrono::microseconds(5000000))
+                            kDefaultEtcdWatchTimeout)
             : useProgThread(use_prog_thread),
               useListenThread(use_listen_thread),
               listenPort(port),
@@ -104,8 +117,6 @@ class nixlAgentConfig {
          */
         ~nixlAgentConfig () = default;
 
-    friend class nixlAgent;
-    friend class nixlAgentData;
 };
 
 #endif

@@ -415,7 +415,8 @@ PYBIND11_MODULE(_bindings, m) {
             }));
 
     py::class_<nixlAgentConfig>(m, "nixlAgentConfig")
-        // implicit constructor
+        .def(py::init<>())
+        // legacy constructors kept for compatibility
         .def(py::init<bool>())
         .def(py::init<bool, bool>())
         .def(py::init<bool, bool, int>())
@@ -423,7 +424,15 @@ PYBIND11_MODULE(_bindings, m) {
         .def(py::init<bool, bool, int, nixl_thread_sync_t, int>())
         .def(py::init<bool, bool, int, nixl_thread_sync_t, int, uint64_t>())
         .def(py::init<bool, bool, int, nixl_thread_sync_t, int, uint64_t, uint64_t>())
-        .def(py::init<bool, bool, int, nixl_thread_sync_t, int, uint64_t, uint64_t, bool>());
+        .def(py::init<bool, bool, int, nixl_thread_sync_t, int, uint64_t, uint64_t, bool>())
+        .def_readwrite("useProgThread", &nixlAgentConfig::useProgThread)
+        .def_readwrite("useListenThread", &nixlAgentConfig::useListenThread)
+        .def_readwrite("listenPort", &nixlAgentConfig::listenPort)
+        .def_readwrite("syncMode", &nixlAgentConfig::syncMode)
+        .def_readwrite("captureTelemetry", &nixlAgentConfig::captureTelemetry)
+        .def_readwrite("pthrDelay", &nixlAgentConfig::pthrDelay)
+        .def_readwrite("lthrDelay", &nixlAgentConfig::lthrDelay)
+        .def_readwrite("etcdWatchTimeout", &nixlAgentConfig::etcdWatchTimeout);
 
     // note: pybind will automatically convert notif_map to python types:
     // so, a Dictionary of string: List<string>

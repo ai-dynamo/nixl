@@ -64,7 +64,8 @@ def test_agent():
     name1 = "Agent1"
     name2 = "Agent2"
 
-    devices = nixl.nixlAgentConfig(False)
+    devices = nixl.nixlAgentConfig()
+    devices.useProgThread = False
 
     agent1 = nixl.nixlAgent(name1, devices)
     agent2 = nixl.nixlAgent(name2, devices)
@@ -189,7 +190,9 @@ def test_query_mem():
 
     try:
         # Create an agent
-        config = nixl.nixlAgentConfig(False, False)
+        config = nixl.nixlAgentConfig()
+        config.useProgThread = False
+        config.useListenThread = False
         agent = nixl.nixlAgent("test_agent", config)
 
         try:
