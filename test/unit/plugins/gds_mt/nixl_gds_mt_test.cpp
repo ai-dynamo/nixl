@@ -16,7 +16,9 @@
  */
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <algorithm>
 #include <cassert>
 #include <cuda_runtime.h>
@@ -45,33 +47,6 @@ static size_t PAGE_SIZE = sysconf (_SC_PAGESIZE);
 
 // Progress bar configuration
 #define PROGRESS_WIDTH 50
-
-// Helper function to parse size strings like "1K", "2M", "3G"
-size_t
-parse_size (const char *size_str) {
-    char *end;
-    size_t size = strtoull (size_str, &end, 10);
-    if (end == size_str) {
-        return 0; // Invalid number
-    }
-
-    if (*end) {
-        switch (toupper (*end)) {
-        case 'K':
-            size *= 1024;
-            break;
-        case 'M':
-            size *= 1024 * 1024;
-            break;
-        case 'G':
-            size *= 1024 * 1024 * 1024;
-            break;
-        default:
-            return 0; // Invalid suffix
-        }
-    }
-    return size;
-}
 
 void
 print_usage (const char *program_name) {
@@ -180,6 +155,42 @@ validate_gpu_buffer(void *gpu_buffer, size_t size, char *host_buffer, const char
     return (memcmp(host_buffer, expected_buffer, size) == 0);
 }
 
+// Helper function to validate numbers and suffix for K,M,G bytes
+size_t
+parsePositiveSize(const char *str, std::string_view name, bool usesSuffix) {
+    try {
+        char *end;
+        size_t value = std::strtoull(str, &end, 10);
+
+        if ((str[0] == '-') || (end == str) || (value == 0)) {
+            throw std::invalid_argument(std::string(name) + " must be a positive integer");
+        }
+
+        if (!usesSuffix) {
+            return value;
+        } else if (*end) {
+            switch (toupper(*end)) {
+            case 'K':
+                value *= 1024;
+                break;
+            case 'M':
+                value *= 1024 * 1024;
+                break;
+            case 'G':
+                value *= 1024 * 1024 * 1024;
+                break;
+            default:
+                throw std::invalid_argument("Invalid suffix for " + std::string(name));
+            }
+        }
+
+        return value;
+    }
+    catch (std::exception &e) {
+        throw std::invalid_argument(e.what());
+    }
+}
+
 // Helper function to format duration
 std::string
 format_duration (nixlTime::us_t us) {
@@ -200,15 +211,14 @@ main (int argc, char *argv[]) {
     void **dram_addr = NULL;
     std::string role;
     int status = 0;
-    int i;
+    unsigned int i;
     int *fd = NULL;
     bool use_dram = false;
     bool use_vram = false;
     int opt;
     std::string dir_path;
     size_t transfer_size = DEFAULT_TRANSFER_SIZE;
-    int num_transfers = DEFAULT_NUM_TRANSFERS;
-    int parsed = 0;
+    unsigned int num_transfers = DEFAULT_NUM_TRANSFERS;
     size_t num_threads = 0;
     nixlTime::us_t total_time (0);
     double total_data_gb = 0;
@@ -238,51 +248,35 @@ main (int argc, char *argv[]) {
             use_vram = true;
             break;
         case 'n':
-            num_transfers = atoi (optarg);
-            if (num_transfers <= 0) {
-                std::cerr << "Error: Number of transfers must be positive\n";
-                return 1;
-            }
+            num_transfers =
+                static_cast<unsigned int>(parsePositiveSize(optarg, "Number of Transfers", false));
             break;
         case 's':
-            transfer_size = parse_size (optarg);
+            transfer_size = parsePositiveSize(optarg, "Transfer Size", true);
             if (transfer_size == 0) {
                 std::cerr << "Error: Invalid transfer size format\n";
                 return 1;
             }
             break;
         case 'N':
-            parsed = atoi(optarg);
-            if (parsed <= 0) {
-                std::cerr << "Error: Number of threads must be positive\n";
-                return 1;
-            }
-            num_threads = parsed;
+            num_threads = parsePositiveSize(optarg, "threads", false);
             break;
         case 't':
-            parsed = atoi(optarg);
-            if (parsed <= 0) {
-                std::cerr << "Error: Number of iterations must be positive\n";
-                return 1;
-            }
-            iterations = parsed;
+            iterations =
+                static_cast<unsigned int>(parsePositiveSize(optarg, "Number of iterations", false));
             break;
         case 'G':
-            parsed = atoi(optarg);
-            if (parsed <= 0) {
-                std::cerr << "Error: Number of GPUs must be positive\n";
-                return 1;
-            }
-            num_gpus = parsed;
+            num_gpus =
+                static_cast<unsigned int>(parsePositiveSize(optarg, "Number of GPUs", false));
             break;
         case 'D':
             use_direct = true;
             break;
         case 'h':
-            print_usage (argv[0]);
+            print_usage(argv[0]);
             return 0;
         default:
-            print_usage (argv[0]);
+            print_usage(argv[0]);
             return 1;
         }
     }
@@ -464,7 +458,7 @@ main (int argc, char *argv[]) {
         nixl_reg_dlist_t src_reg (use_dram ? DRAM_SEG : VRAM_SEG);
         nixl_reg_dlist_t file_reg (FILE_SEG);
 
-        for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
+        for (unsigned int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
             if (use_dram) {
                 src_reg.addDesc (dram_buf[transfer_idx]);
             } else {
@@ -554,7 +548,7 @@ main (int argc, char *argv[]) {
         nixl_reg_dlist_t src_reg (use_dram ? DRAM_SEG : VRAM_SEG);
         nixl_reg_dlist_t file_reg (FILE_SEG);
 
-        for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
+        for (unsigned int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
             if (use_dram) {
                 src_reg.addDesc (dram_buf[transfer_idx]);
             } else {
