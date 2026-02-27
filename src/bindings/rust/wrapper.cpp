@@ -631,7 +631,7 @@ nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void** data, size_t*
           return NIXL_CAPI_SUCCESS;
       }
 
-      void* msg_data = malloc(msg_size);
+      void *msg_data = malloc(msg_size);
       if (!msg_data) {
           return NIXL_CAPI_ERROR_BACKEND;
       }
