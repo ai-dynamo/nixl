@@ -383,27 +383,36 @@ nixl_status_t nixlRemoteSection::addDescList (
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlRemoteSection::loadRemoteData (nixlSerDes* deserializer,
-                                                 backend_map_t &backendToEngineMap) {
+nixl_status_t
+nixlRemoteSection::loadRemoteData(nixlSerDes *deserializer, backend_map_t &backendToEngineMap) {
     nixl_status_t ret;
     size_t seg_count;
     nixl_backend_t nixl_backend;
 
     ret = deserializer->getBuf("nixlSecElms", &seg_count, sizeof(seg_count));
-    if (ret) return ret;
+    if (ret) {
+        return ret;
+    }
 
-    for (size_t i=0; i<seg_count; ++i) {
+    for (size_t i = 0; i < seg_count; ++i) {
         // In case of errors, no need to remove the previous entries
         // Agent will delete the full object.
         nixl_backend = deserializer->getStr("bknd");
-        if (nixl_backend.size()==0)
+        if (nixl_backend.empty()) {
             return NIXL_ERR_INVALID_PARAM;
+        }
+
         nixl_reg_dlist_t s_desc(deserializer);
-        if (s_desc.descCount()==0) // can be used for entry removal in future
+        if (s_desc.isEmpty()) { // can be used for entry removal in future
             return NIXL_ERR_NOT_FOUND;
-        if (backendToEngineMap.count(nixl_backend) != 0) {
-            ret = addDescList(s_desc, backendToEngineMap[nixl_backend]);
-            if (ret) return ret;
+        }
+
+        const auto it = backendToEngineMap.find(nixl_backend);
+        if (it != backendToEngineMap.end()) {
+            ret = addDescList(s_desc, it->second.get());
+            if (ret) {
+                return ret;
+            }
         }
     }
     return NIXL_SUCCESS;

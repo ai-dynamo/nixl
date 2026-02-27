@@ -733,12 +733,12 @@ void nixlAgentData::enqueueCommWork(nixl_comm_req_t request){
         NIXL_WARN << "Agent shutting down, unable to accept new requests";
         return;
     }
-    std::lock_guard<std::mutex> lock(commLock);
+    const std::lock_guard lock(commLock);
     commQueue.push_back(std::move(request));
 }
 
 void nixlAgentData::getCommWork(std::vector<nixl_comm_req_t> &req_list){
-    std::lock_guard<std::mutex> lock(commLock);
+    const std::lock_guard lock(commLock);
     req_list = std::move(commQueue);
     commQueue.clear();
 }
@@ -762,7 +762,7 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
         return NIXL_SUCCESS;
     }
 
-    nixlBackendEngine *eng = backendEngines[backend];
+    nixlBackendEngine *eng = backendEngines[backend].get();
     if (!eng->supportsRemote()) {
         NIXL_DEBUG << backend << " does not support remote operations";
         return NIXL_ERR_NOT_SUPPORTED;
@@ -779,15 +779,15 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
 
 nixl_status_t
 nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd) {
-    if (remoteSections.count(remote_name) == 0) {
-        remoteSections[remote_name] = new nixlRemoteSection(remote_name);
+    const auto [it, inserted] = remoteSections.try_emplace(remote_name);
+    if (inserted) {
+        it->second = std::make_unique<nixlRemoteSection>(remote_name);
     }
 
     const nixl_status_t ret = remoteSections[remote_name]->loadRemoteData(&sd, backendEngines);
     // TODO: can be more graceful, if just the new MD blob was improper
     if (ret != NIXL_SUCCESS) {
-        delete remoteSections[remote_name];
-        remoteSections.erase(remote_name);
+        remoteSections.erase(it);
         remoteBackends.erase(remote_name);
         return ret;
     }
@@ -803,10 +803,7 @@ nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
     }
 
     nixl_status_t ret = NIXL_ERR_NOT_FOUND;
-    auto it_section = remoteSections.find(remote_name);
-    if (it_section != remoteSections.end()) {
-        delete it_section->second;
-        remoteSections.erase(it_section);
+    if (remoteSections.erase(remote_name) > 0) {
         ret = NIXL_SUCCESS;
     }
 
