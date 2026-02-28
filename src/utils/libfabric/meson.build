@@ -34,10 +34,14 @@ libfabric_utils_headers = files(
 # Find hwloc dependency
 hwloc_dep = dependency('hwloc', required: true)
 
+# Find numa dependency
+numa_dep = dependency('numa', required: true)
+
 # Set up dependencies and compile args
 libfabric_utils_deps = [
     libfabric_dep,
     hwloc_dep,
+    numa_dep,
     abseil_proj.get_variable('absl_log_dep'),
 ]
 

@@ -253,6 +253,14 @@ public:
     }
 };
 
+// helper type for hashing integer pair
+template<typename T, typename U = T> struct pair_hash {
+    inline size_t
+    operator()(const std::pair<T, U> &int_pair) const {
+        return std::hash<T>()(int_pair.first) ^ std::hash<U>()(int_pair.second);
+    }
+};
+
 // Global XFER_ID management
 namespace LibfabricUtils {
 // Get next unique XFER_ID
@@ -274,6 +282,45 @@ getAvailableNetworkDevices();
 // String utilities
 std::string
 hexdump(const void *data, size_t size);
+
+/** @brief Converts rail id vector to string. */
+extern std::string
+railIdsToString(const std::vector<size_t> &rail_ids);
+
+/** @brief Retrieves the maximum NUMA node id. */
+extern bool
+getMaxNumaNode(int &node_id);
+
+/** @brief Retrieves the number of configured NUMA nodes. */
+extern bool
+getNumConfiguredNumaNodes(int &node_count);
+} // namespace LibfabricUtils
+
+// Configuration helper functions
+namespace LibfabricUtils {
+/**
+ * @brief Loads string from custom plugin parameters.
+ * @note Can override from env var with name NIXL_LIBFABRIC_<upper-case key>.
+ * @param custom_param The backend parameters.
+ * @param key The key name.
+ * @param[out] value The resulting value (valid only if call succeeds).
+ * @return Result status.
+ */
+extern nixl_status_t
+getCustomStringParam(const nixl_b_params_t &custom_params,
+                     const std::string &key,
+                     std::string &value);
+
+/**
+ * @brief Loads integer from custom plugin parameters.
+ * @note Can override from env var with name NIXL_LIBFABRIC_<upper-case key>.
+ * @param custom_param The backend parameters.
+ * @param key The key name.
+ * @param[out] value The resulting value (valid only if call succeeds).
+ * @return Result status.
+ */
+extern nixl_status_t
+getCustomIntParam(const nixl_b_params_t &custom_params, const std::string &key, uint64_t &value);
 } // namespace LibfabricUtils
 
 #endif // NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_COMMON_H
