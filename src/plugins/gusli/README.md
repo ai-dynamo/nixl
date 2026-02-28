@@ -23,7 +23,9 @@ GUSLI supports multiple connection modes:
 8. See example in nixl_gusli_test.cpp file. In short:
 
 ```cpp
-nixlAgent agent("your_client_name", nixlAgentConfig(true));
+nixlAgentConfig cfg{};
+cfg.useProgThread = true;
+nixlAgent agent("your_client_name", cfg);
 nixl_b_params_t params = gen_gusli_plugin_params(agent);	// Insert list of your block devices here, grep this function to see how it is used
 nixlBackendH* gusli_ptr = nullptr;		// Backend gusli plugin (typically dont need to access this pointer)
 nixl_status_t status = agent.createBackend("GUSLI", params, n_backend);

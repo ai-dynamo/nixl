@@ -133,6 +133,19 @@ using nixl_notifs_t = std::unordered_map<std::string, std::vector<nixl_blob_t>>;
 constexpr int default_comm_port = 8888;
 
 /**
+ * @enum nixl_api_version
+ * @brief Public NIXL API version tags.
+ */
+enum class nixl_api_version : unsigned int {
+    V1 = 1,
+};
+
+/**
+ * @brief Alias for the supported public API version.
+ */
+inline constexpr nixl_api_version nixlApiVersionV1 = nixl_api_version::V1;
+
+/**
  * @brief A constant to define the default metadata label for ETCD server key.
  *        Appended to the agent's key prefix to form the full key for metadata.
  */
@@ -174,25 +187,33 @@ struct nixlAgentOptionalArgs {
     std::vector<nixlBackendH*> backends;
 
     /**
-     * @var notifMsg A message to be used in createXferReq / makeXferReq / postXferReq,
-     *               if a notification message is desired
+     * @var notif Optional notification message used in createXferReq / makeXferReq / postXferReq.
+     *            If set, notification is enabled even for empty-string messages.
+     *            This is the preferred field for new API users.
+     */
+    std::optional<nixl_blob_t> notif;
+
+    /**
+     * @var notifMsg Legacy notification payload kept for backward compatibility.
+     *               Deprecated in favor of @ref notif.
      */
     nixl_blob_t notifMsg;
 
     /**
-     * @var hasNotif boolean value to indicate that a notification is provided, or to
-     *      remove notification during a repost. If set to false, notifMsg is not checked.
+     * @var hasNotif Legacy notification flag kept for backward compatibility.
+     *      Deprecated in favor of @ref notif.
      */
     bool hasNotif = false;
 
     /**
-     * @var makeXferReq boolean to skip merging consecutive descriptors, used in makeXferReq.
+     * @var skipDescMerge Legacy flag to skip merging consecutive descriptors.
+     *      Deprecated. Kept for backward compatibility.
      */
     bool skipDescMerge = false;
 
     /**
-     * @var includeConnInfo boolean to include connection information in the metadata,
-     *                      used in getLocalPartialMD.
+     * @var includeConnInfo legacy flag to include connection information in partial metadata.
+     *                      Deprecated, but still supported for backward compatibility.
      */
     bool includeConnInfo = false;
 

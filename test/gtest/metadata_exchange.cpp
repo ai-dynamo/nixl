@@ -121,7 +121,10 @@ protected:
         for (int i = 0; i < AGENT_COUNT_; i++) {
             const auto port = PortAllocator::next_tcp_port();
             std::string name = "agent_" + std::to_string(i);
-            nixlAgentConfig cfg(false, true, port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+            nixlAgentConfig cfg{};
+            cfg.useListenThread = true;
+            cfg.listenPort = port;
+            cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
 
             auto agent = std::make_unique<nixlAgent>(name, cfg);
 

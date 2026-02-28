@@ -265,7 +265,8 @@ int main(int argc, char *argv[])
     }
 
     // Initialize NIXL components
-    nixlAgentConfig   cfg(true);
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
     nixl_b_params_t   params;
     nixlBackendH      *hf3fs;
     nixl_reg_dlist_t  file_for_hf3fs(FILE_SEG);

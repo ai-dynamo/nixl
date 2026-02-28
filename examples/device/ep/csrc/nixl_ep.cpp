@@ -648,8 +648,10 @@ void Buffer::_nixl_ep_destroy(void) {
 
 void Buffer::_nixl_agent_init() {
     std::string agent_name = std::to_string(rank);
-    nixlAgentConfig cfg(true, false, 0,
-                        nixl_thread_sync_t::NIXL_THREAD_SYNC_RW, 1, 0, 100000, false, NIXL_ETCD_WATCH_TIMEOUT);
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+    cfg.etcdWatchTimeout = NIXL_ETCD_WATCH_TIMEOUT;
     auto agent = std::make_shared<nixlAgent>(agent_name, cfg);
 
     // Create UCX backend

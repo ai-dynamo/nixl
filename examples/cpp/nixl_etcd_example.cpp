@@ -48,7 +48,8 @@ nixlAgent* createAgent(const std::string& name) {
         setenv("NIXL_ETCD_ENDPOINTS", ETCD_ENDPOINT.c_str(), 1);
     }
 
-    nixlAgentConfig cfg(true);
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
 
     // Create the agent with the configuration
     nixlAgent* agent = new nixlAgent(name, cfg);
@@ -114,7 +115,8 @@ int main() {
     nixl_status_t status;
 
     // Create two agents (normally these would be in separate processes or machines)
-    nixlAgentConfig cfg(true);
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
     nixl_b_params_t init1, init2;
     nixl_mem_list_t mems1, mems2;
     nixl_reg_dlist_t dlist1(DRAM_SEG), dlist2(DRAM_SEG), empty_dlist(DRAM_SEG);
@@ -226,8 +228,7 @@ int main() {
 
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
-    extra_params1.notifMsg = "notification";
-    extra_params1.hasNotif = true;
+    extra_params1.notif = "notification";
     ret1 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_dst_descs, AGENT2_NAME, req_handle, &extra_params1);
     std::cout << "Xfer request created, status: " << nixlEnumStrings::statusStr(ret1) << std::endl;
     nixl_exit_on_failure(ret1, "Failed to create Xfer Req", AGENT1_NAME);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -237,7 +237,11 @@ main (int argc, char *argv[]) {
     std::cout << "Starting Agent for " << role << " with stream mode " << stream_mode << "\n";
     /** Agent and backend creation parameters */
 
-    nixlAgentConfig cfg (true, true, peer_port, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
+    cfg.useListenThread = true;
+    cfg.listenPort = peer_port;
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
     nixlAgent agent (role, cfg);
 
     if (stream_mode.compare ("pool") == 0) params["cuda_streams"] = "2";
@@ -461,8 +465,7 @@ main (int argc, char *argv[]) {
             extra_params.customParam.resize (sizeof (uintptr_t));
             *((uintptr_t *)extra_params.customParam.data()) = (uintptr_t)stream;
         }
-        extra_params.notifMsg = "sent";
-        extra_params.hasNotif = true;
+        extra_params.notif = "sent";
         ret = agent.createXferReq (
                 NIXL_WRITE, local_vram, remote_vram_list, target, treq, &extra_params);
         if (ret != NIXL_SUCCESS) {

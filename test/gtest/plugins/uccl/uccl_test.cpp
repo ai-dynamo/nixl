@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -157,7 +157,9 @@ private:
 
 void
 TestUcclBackend::Agent::init(const std::string &name) {
-    m_priv = std::make_unique<nixlAgent>(name, nixlAgentConfig(true));
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
+    m_priv = std::make_unique<nixlAgent>(name, cfg);
     // Create UCCL backend for testing
     m_backend = nixl::createUcclBackend(*m_priv);
     m_mem.init(m_backend);
@@ -198,8 +200,7 @@ TestUcclBackend::Agent::createXferReq(const nixl_xfer_op_t &op,
                                       nixl_xfer_dlist_t &rReq_descs,
                                       nixlXferReqH *&req_handle) const {
     nixl_opt_args_t extra_params = {.backends = {m_backend}};
-    extra_params.notifMsg = "notification";
-    extra_params.hasNotif = true;
+    extra_params.notif = "notification";
     return m_priv->createXferReq(
         op, sReq_descs, rReq_descs, m_MetaRemote, req_handle, &extra_params);
 }

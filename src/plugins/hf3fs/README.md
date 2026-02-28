@@ -12,7 +12,8 @@ This plugin utilizes `hf3fs_usrbio.so` as an I/O backend for NIXL.
 ```cpp
 nixl_status_t ret1;
 std::string ret_s1;
-nixlAgentConfig cfg(true);
+nixlAgentConfig cfg{};
+cfg.useProgThread = true;
 nixl_b_params_t init1;
 nixl_mem_list_t mems1;
 nixlBackendH      *hf3fs;

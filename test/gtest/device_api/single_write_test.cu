@@ -160,12 +160,11 @@ protected:
 
     static nixlAgentConfig
     getConfig() {
-        return nixlAgentConfig(true,
-                               false,
-                               0,
-                               nixl_thread_sync_t::NIXL_THREAD_SYNC_RW,
-                               0,
-                               100000);
+        nixlAgentConfig cfg{};
+        cfg.useProgThread = true;
+        cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+        cfg.pthrDelay = 100000;
+        return cfg;
     }
 
     nixl_b_params_t

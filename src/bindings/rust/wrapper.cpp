@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -108,14 +108,15 @@ nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent)
   }
 
   try {
-    nixlAgentConfig nixl_config(true);  // Use progress thread
-    std::string agent_name = name;
-    auto inner = new nixlAgent(agent_name, nixl_config);
+      nixlAgentConfig nixl_config{};
+      nixl_config.useProgThread = true;
+      std::string agent_name = name;
+      auto inner = new nixlAgent(agent_name, nixl_config);
 
-    auto agent_handle = new nixl_capi_agent_s;
-    agent_handle->inner = inner;
-    *agent = agent_handle;
-    return NIXL_CAPI_SUCCESS;
+      auto agent_handle = new nixl_capi_agent_s;
+      agent_handle->inner = inner;
+      *agent = agent_handle;
+      return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -131,14 +132,14 @@ nixl_capi_create_configured_agent(const char *name,
     }
 
     try {
-        nixlAgentConfig nixl_config(cfg->enable_prog_thread,
-                                    cfg->enable_listen_thread,
-                                    cfg->listen_port,
-                                    nixl_capi_thread_sync_to_nixl(cfg->thread_sync),
-                                    cfg->num_workers,
-                                    cfg->pthr_delay_us,
-                                    cfg->lthr_delay_us,
-                                    cfg->capture_telemetry);
+        nixlAgentConfig nixl_config{};
+        nixl_config.useProgThread = cfg->enable_prog_thread;
+        nixl_config.useListenThread = cfg->enable_listen_thread;
+        nixl_config.listenPort = cfg->listen_port;
+        nixl_config.syncMode = nixl_capi_thread_sync_to_nixl(cfg->thread_sync);
+        nixl_config.pthrDelay = cfg->pthr_delay_us;
+        nixl_config.lthrDelay = cfg->lthr_delay_us;
+        nixl_config.captureTelemetry = cfg->capture_telemetry;
 
         auto agent_handle = new nixl_capi_agent_s;
         agent_handle->inner = new nixlAgent(name, nixl_config);
@@ -604,6 +605,9 @@ nixl_capi_opt_args_set_notif_msg(nixl_capi_opt_args_t args, const void* data, si
 
   try {
     args->args.notifMsg.assign((const char*)data, len);
+    if (args->args.hasNotif || args->args.notif.has_value()) {
+        args->args.notif = args->args.notifMsg;
+    }
     return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
@@ -619,22 +623,24 @@ nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void** data, size_t*
   }
 
   try {
-    size_t msg_size = args->args.notifMsg.size();
-    if (msg_size == 0) {
-      *data = nullptr;
-      *len = 0;
+      const nixl_blob_t &msg =
+          args->args.notif.has_value() ? args->args.notif.value() : args->args.notifMsg;
+      size_t msg_size = msg.size();
+      if (msg_size == 0) {
+          *data = nullptr;
+          *len = 0;
+          return NIXL_CAPI_SUCCESS;
+      }
+
+      void *msg_data = malloc(msg_size);
+      if (!msg_data) {
+          return NIXL_CAPI_ERROR_BACKEND;
+      }
+
+      memcpy(msg_data, msg.data(), msg_size);
+      *data = msg_data;
+      *len = msg_size;
       return NIXL_CAPI_SUCCESS;
-    }
-
-    void* msg_data = malloc(msg_size);
-    if (!msg_data) {
-      return NIXL_CAPI_ERROR_BACKEND;
-    }
-
-    memcpy(msg_data, args->args.notifMsg.data(), msg_size);
-    *data = msg_data;
-    *len = msg_size;
-    return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -650,6 +656,11 @@ nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif)
 
   try {
     args->args.hasNotif = has_notif;
+    if (has_notif) {
+        args->args.notif = args->args.notifMsg;
+    } else {
+        args->args.notif.reset();
+    }
     return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
@@ -665,8 +676,8 @@ nixl_capi_opt_args_get_has_notif(nixl_capi_opt_args_t args, bool* has_notif)
   }
 
   try {
-    *has_notif = args->args.hasNotif;
-    return NIXL_CAPI_SUCCESS;
+      *has_notif = args->args.notif.has_value() || args->args.hasNotif;
+      return NIXL_CAPI_SUCCESS;
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;

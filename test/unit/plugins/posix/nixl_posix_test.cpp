@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -206,7 +206,9 @@ read_write_test (int num_transfers,
         }
     }
     // Initialize NIXL components first
-    nixlAgent agent ("POSIXReadWriteTester", nixlAgentConfig (true));
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
+    nixlAgent agent("POSIXReadWriteTester", cfg);
 
     // Set up backend parameters
     nixl_b_params_t params;
@@ -505,7 +507,9 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
 
     // Create POSIX backend first - before allocating any resources
     nixlBackendH *posix = nullptr;
-    nixlAgent agent ("POSIXRepostTester", nixlAgentConfig (true));
+    nixlAgentConfig cfg{};
+    cfg.useProgThread = true;
+    nixlAgent agent("POSIXRepostTester", cfg);
     if (agent.createBackend ("POSIX", params, posix) != NIXL_SUCCESS) {
         std::cerr << "Failed to create POSIX backend" << std::endl;
         return 1;
