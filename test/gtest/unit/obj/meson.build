@@ -18,7 +18,7 @@ obj_unit_test_dep = declare_dependency(
         'obj.cpp',
     ],
     include_directories: [
-        nixl_inc_dirs,
+        nixl_inc_dirs, utils_inc_dirs,
         '../../../../src/plugins/obj',
     ],
     dependencies: [
