@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -697,7 +697,7 @@ impl Agent {
         tracing::trace!(remote_agent = %remote_name, "Fetching remote metadata from etcd");
 
         let c_remote_name = CString::new(remote_name)?;
-        let inner_guard = self.inner.write().unwrap();
+        let mut inner_guard = self.inner.write().unwrap();
 
         let status = unsafe {
             bindings::nixl_capi_fetch_remote_md(
@@ -709,9 +709,7 @@ impl Agent {
 
         match status {
             NIXL_CAPI_SUCCESS => {
-                self.inner
-                    .write()
-                    .unwrap()
+                    inner_guard
                     .remotes
                     .insert(remote_name.to_string());
                 tracing::trace!(remote_agent = %remote_name, "Successfully fetched remote metadata from etcd");
@@ -1111,7 +1109,10 @@ impl AgentInner {
     fn invalidate_remote_md(&mut self, remote_agent: &str) -> Result<(), NixlError> {
         unsafe {
             if self.remotes.remove(remote_agent) {
-                nixl_capi_invalidate_remote_md(self.handle.as_ptr(), remote_agent.as_ptr().cast());
+                nixl_capi_invalidate_remote_md(
+                    self.handle.as_ptr(),
+                    CString::new(remote_agent)?.as_ptr().cast(),
+                );
             } else {
                 return Err(NixlError::InvalidParam);
             }
@@ -1122,7 +1123,10 @@ impl AgentInner {
     fn invalidate_all_remotes(&mut self) -> Result<(), NixlError> {
         unsafe {
             for remote in self.remotes.drain() {
-                nixl_capi_invalidate_remote_md(self.handle.as_ptr(), remote.as_ptr().cast());
+                nixl_capi_invalidate_remote_md(
+                    self.handle.as_ptr(),
+                    CString::new(remote.as_str())?.as_ptr().cast(),
+                );
             }
         }
         Ok(())
@@ -1136,7 +1140,17 @@ impl Drop for AgentInner {
             // invalidate all remotes
             for remote in self.remotes.iter() {
                 tracing::trace!(remote.agent = %remote, "Invalidating remote agent");
-                nixl_capi_invalidate_remote_md(self.handle.as_ptr(), remote.as_ptr().cast());
+
+                let c_remote = match CString::new(remote.as_str()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(remote.agent = %remote, error = ?e,
+                            "Skipping remote invalidation: remote name contains interior NULL");
+                        continue;
+                    }
+                };
+
+                nixl_capi_invalidate_remote_md(self.handle.as_ptr(), c_remote.as_ptr().cast());
             }
 
             // destroy all backends
