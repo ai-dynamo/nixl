@@ -59,7 +59,7 @@ private:
 
     // Helper methods
     nixl_status_t
-    discoverEfaDevices();
+    discoverProviderWithDevices();
     nixl_status_t
     discoverTopology();
 

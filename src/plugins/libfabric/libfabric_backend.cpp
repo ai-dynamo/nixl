@@ -707,7 +707,12 @@ nixlLibfabricEngine::getSupportedMems() const {
     nixl_mem_list_t mems;
     mems.push_back(DRAM_SEG);
 #ifdef HAVE_CUDA
-    mems.push_back(VRAM_SEG);
+    if (runtime_ == FI_HMEM_CUDA) {
+        NIXL_DEBUG << "CUDA runtime detected, adding VRAM support";
+        mems.push_back(VRAM_SEG);
+    } else {
+        NIXL_DEBUG << "Non-CUDA runtime, skipping VRAM support";
+    }
 #endif
     return mems;
 }
@@ -716,6 +721,12 @@ nixl_status_t
 nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
                                  const nixl_mem_t &nixl_mem,
                                  nixlBackendMD *&out) {
+    const auto supported = getSupportedMems();
+    if (std::find(supported.begin(), supported.end(), nixl_mem) == supported.end()) {
+        NIXL_ERROR << "Memory type " << nixl_mem << " is not supported by libfabric backend.";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
     auto priv = std::make_unique<nixlLibfabricPrivateMetadata>();
 
     priv->buffer_ = (void *)mem.addr;
@@ -1063,12 +1074,15 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         // Use descriptor's specific target address
         uint64_t remote_target_addr = remote[desc_idx].addr;
 
+        uint64_t remote_registered_base = remote_md->remote_buf_addr_;
+
         size_t submitted_count = 0;
         nixl_status_t status = rail_manager.prepareAndSubmitTransfer(
             op_type,
             transfer_addr,
             transfer_size,
             remote_target_addr,
+            remote_registered_base,
             local_md->selected_rails_,
             local_md->rail_mr_list_,
             remote_md->rail_remote_key_list_,

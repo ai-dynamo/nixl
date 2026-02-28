@@ -100,6 +100,8 @@ getAvailableNetworkDevices() {
         return {"cxi", provider_device_map["cxi"]};
     } else if (provider_device_map.find("efa") != provider_device_map.end()) {
         return {"efa", provider_device_map["efa"]};
+    } else if (provider_device_map.find("tcp") != provider_device_map.end()) {
+        return {"tcp", {provider_device_map["tcp"][0]}};
     } else if (provider_device_map.find("sockets") != provider_device_map.end()) {
         return {"sockets", {provider_device_map["sockets"][0]}};
     }
