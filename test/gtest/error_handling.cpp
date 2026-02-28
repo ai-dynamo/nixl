@@ -164,6 +164,10 @@ TestErrorHandling::Agent::init(const std::string &name,
     m_mem.init(m_backend);
     m_mem.fillData();
 
+    // Ignore EFA hardware mismatch warning
+    const gtest::LogIgnoreGuard lig_efa_warn(
+        "Amazon EFA\\(s\\) were detected, but the UCX backend was configured");
+
     EXPECT_EQ(NIXL_SUCCESS, m_priv->registerMem(m_mem.m_dlist, &m_mem.m_params));
 }
 

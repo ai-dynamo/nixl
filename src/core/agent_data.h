@@ -68,6 +68,7 @@ class nixlAgentData {
         nixlAgentConfig config;
         nixlLock        lock;
         bool telemetryEnabled = false;
+        bool efaWarningChecked = false;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
@@ -121,6 +122,8 @@ class nixlAgentData {
         invalidateRemoteData(const std::string &remote_name);
         [[nodiscard]] static backend_set_t
         getBackends(const nixl_opt_args_t *opt_args, nixlMemSection &section, nixl_mem_t mem_type);
+        void
+        warnAboutEfaHardwareMismatch();
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);

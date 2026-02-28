@@ -28,6 +28,7 @@
 #include "plugin_manager.h"
 #include "common/nixl_log.h"
 #include "common/operators.h"
+#include "common/hw_info.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 
@@ -279,6 +280,24 @@ nixlAgent::getBackendParams (const nixlBackendH* backend,
     return NIXL_SUCCESS;
 }
 
+void
+nixlAgentData::warnAboutEfaHardwareMismatch() {
+    if (efaWarningChecked) {
+        return;
+    }
+    efaWarningChecked = true;
+
+    if (backendEngines.count("UCX") != 0 && backendEngines.count("LIBFABRIC") == 0) {
+        const auto &hw_info = nixl::hwInfo::instance();
+        if (hw_info.numEfaDevices > 0) {
+            NIXL_WARN
+                << hw_info.numEfaDevices
+                << " Amazon EFA(s) were detected, but the UCX backend was configured."
+                   " For best performance, it's recommended to use the LIBFABRIC backend instead.";
+        }
+    }
+}
+
 nixl_status_t
 nixlAgent::createBackend(const nixl_backend_t &type,
                          const nixl_b_params_t &params,
@@ -419,6 +438,9 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     unsigned int    count = 0;
 
     NIXL_LOCK_GUARD(data->lock);
+
+    data->warnAboutEfaHardwareMismatch();
+
     if (!extra_params || extra_params->backends.size() == 0) {
         backend_list = &data->memToBackend[descs.getType()];
         if (backend_list->empty()) {

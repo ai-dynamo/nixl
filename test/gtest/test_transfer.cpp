@@ -25,6 +25,7 @@
 #include <absl/time/clock.h>
 #include <gtest/gtest.h>
 #include <memory>
+#include <optional>
 #include <string>
 #include <chrono>
 #include <thread>
@@ -218,6 +219,14 @@ protected:
     void registerMem(nixlAgent &agent, const std::vector<MemBuffer> &buffers,
                      nixl_mem_t mem_type)
     {
+        std::optional<gtest::LogIgnoreGuard> lig_efa_warn;
+
+        if (getBackendName() == "UCX") {
+            // Ignore EFA hardware mismatch warning
+            lig_efa_warn.emplace(
+                "Amazon EFA\\(s\\) were detected, but the UCX backend was configured");
+        }
+
         auto reg_list = makeDescList<nixlBlobDesc>(buffers, mem_type);
         agent.registerMem(reg_list);
     }
