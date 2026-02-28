@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,10 @@
  * limitations under the License.
  */
 #include <iostream>
+#include <memory>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <algorithm>
 #include <cassert>
 #include <cuda_runtime.h>
@@ -45,33 +48,6 @@ static size_t PAGE_SIZE = sysconf (_SC_PAGESIZE);
 // Progress bar configuration
 #define PROGRESS_WIDTH 50
 
-// Helper function to parse size strings like "1K", "2M", "3G"
-size_t
-parse_size (const char *size_str) {
-    char *end;
-    size_t size = strtoull (size_str, &end, 10);
-    if (end == size_str) {
-        return 0; // Invalid number
-    }
-
-    if (*end) {
-        switch (toupper (*end)) {
-        case 'K':
-            size *= 1024;
-            break;
-        case 'M':
-            size *= 1024 * 1024;
-            break;
-        case 'G':
-            size *= 1024 * 1024 * 1024;
-            break;
-        default:
-            return 0; // Invalid suffix
-        }
-    }
-    return size;
-}
-
 void
 print_usage (const char *program_name) {
     std::cerr
@@ -84,8 +60,6 @@ print_usage (const char *program_name) {
         << "  -s, --size SIZE         Size of each transfer (default: " << DEFAULT_TRANSFER_SIZE
         << " bytes)\n"
         << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
-        << "  -r, --no-read           Skip read test\n"
-        << "  -w, --no-write          Skip write test\n"
         << "  -t, --iterations N      Number of iterations for each transfer (default: "
         << DEFAULT_ITERATIONS << ")\n"
         << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
@@ -93,7 +67,7 @@ print_usage (const char *program_name) {
         << "  -N, --num-threads N     Number of CPU Threads to use (default: all CPUs detected)\n"
         << "  -h, --help              Show this help message\n"
         << "\nExample:\n"
-        << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M -t 5 -D /path/to/dir\n";
+        << "  " << program_name << " -d -n 100 -s 2M -t 5 -D /path/to/dir\n";
 }
 
 void
@@ -127,14 +101,6 @@ generate_timestamped_filename (const std::string &base_name) {
     char timestamp[100];
     std::strftime (timestamp, sizeof (timestamp), "%Y%m%d%H%M%S", std::localtime (&t));
     return base_name + std::string (timestamp);
-}
-
-void
-validateBuffer (void *expected, void *actual, size_t size, const char *operation) {
-    if (memcmp (expected, actual, size) != 0) {
-        std::cerr << "Data validation failed for " << operation << std::endl;
-        exit (-1);
-    }
 }
 
 // Helper function to fill buffer with repeating pattern
@@ -176,34 +142,53 @@ clear_gpu_buffer (void *gpu_buffer, size_t size) {
     return cudaMemset (gpu_buffer, 0, size);
 }
 
-// Helper function to validate GPU buffer
+// Helper function to validate GPU buffer with pre-allocated buffers
 bool
-validate_gpu_buffer (void *gpu_buffer, size_t size) {
-    char *host_buffer = (char *)malloc (size);
-    char *expected_buffer = (char *)malloc (size);
-    if (!host_buffer || !expected_buffer) {
-        free (host_buffer);
-        free (expected_buffer);
-        return false;
-    }
-
+validate_gpu_buffer(void *gpu_buffer, size_t size, char *host_buffer, const char *expected_buffer) {
     // Copy GPU data to host
     cudaError_t err = cudaMemcpy (host_buffer, gpu_buffer, size, cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
-        free (host_buffer);
-        free (expected_buffer);
         return false;
     }
 
-    // Create expected pattern
-    fill_test_pattern (expected_buffer, size);
-
     // Compare
-    bool match = (memcmp (host_buffer, expected_buffer, size) == 0);
+    return (memcmp(host_buffer, expected_buffer, size) == 0);
+}
 
-    free (host_buffer);
-    free (expected_buffer);
-    return match;
+// Helper function to validate numbers and suffix for K,M,G bytes
+size_t
+parsePositiveSize(const char *str, std::string_view name, bool usesSuffix) {
+    try {
+        char *end;
+        size_t value = std::strtoull(str, &end, 10);
+
+        if ((str[0] == '-') || (end == str) || (value == 0)) {
+            throw std::invalid_argument(std::string(name) + " must be a positive integer");
+        }
+
+        if (!usesSuffix) {
+            return value;
+        } else if (*end) {
+            switch (toupper(*end)) {
+            case 'K':
+                value *= 1024;
+                break;
+            case 'M':
+                value *= 1024 * 1024;
+                break;
+            case 'G':
+                value *= 1024 * 1024 * 1024;
+                break;
+            default:
+                throw std::invalid_argument("Invalid suffix for " + std::string(name));
+            }
+        }
+
+        return value;
+    }
+    catch (std::exception &e) {
+        throw std::invalid_argument(e.what());
+    }
 }
 
 // Helper function to format duration
@@ -226,16 +211,14 @@ main (int argc, char *argv[]) {
     void **dram_addr = NULL;
     std::string role;
     int status = 0;
-    int i;
+    unsigned int i;
     int *fd = NULL;
     bool use_dram = false;
     bool use_vram = false;
     int opt;
     std::string dir_path;
     size_t transfer_size = DEFAULT_TRANSFER_SIZE;
-    int num_transfers = DEFAULT_NUM_TRANSFERS;
-    bool skip_read = false;
-    bool skip_write = false;
+    unsigned int num_transfers = DEFAULT_NUM_TRANSFERS;
     size_t num_threads = 0;
     nixlTime::us_t total_time (0);
     double total_data_gb = 0;
@@ -248,8 +231,6 @@ main (int argc, char *argv[]) {
                                            {"vram", no_argument, 0, 'v'},
                                            {"num-transfers", required_argument, 0, 'n'},
                                            {"size", required_argument, 0, 's'},
-                                           {"no-read", no_argument, 0, 'r'},
-                                           {"no-write", no_argument, 0, 'w'},
                                            {"num-gpus", required_argument, 0, 'G'},
                                            {"max-req-size", required_argument, 0, 'm'},
                                            {"num-threads", required_argument, 0, 'N'},
@@ -258,7 +239,7 @@ main (int argc, char *argv[]) {
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
-    while ((opt = getopt_long (argc, argv, "dvn:s:rwp:b:t:G:DhN:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dvn:s:t:G:DhN:", long_options, NULL)) != -1) {
         switch (opt) {
         case 'd':
             use_dram = true;
@@ -267,61 +248,37 @@ main (int argc, char *argv[]) {
             use_vram = true;
             break;
         case 'n':
-            num_transfers = atoi (optarg);
-            if (num_transfers <= 0) {
-                std::cerr << "Error: Number of transfers must be positive\n";
-                return 1;
-            }
+            num_transfers =
+                static_cast<unsigned int>(parsePositiveSize(optarg, "Number of Transfers", false));
             break;
         case 's':
-            transfer_size = parse_size (optarg);
+            transfer_size = parsePositiveSize(optarg, "Transfer Size", true);
             if (transfer_size == 0) {
                 std::cerr << "Error: Invalid transfer size format\n";
                 return 1;
             }
             break;
-        case 'r':
-            skip_read = true;
-            break;
-        case 'w':
-            skip_write = true;
-            break;
         case 'N':
-            num_threads = atoi (optarg);
-            if (num_threads <= 0) {
-                std::cerr << "Error: Number of iterations must be positive\n";
-                return 1;
-            }
+            num_threads = parsePositiveSize(optarg, "threads", false);
             break;
         case 't':
-            iterations = atoi (optarg);
-            if (iterations <= 0) {
-                std::cerr << "Error: Number of iterations must be positive\n";
-                return 1;
-            }
+            iterations =
+                static_cast<unsigned int>(parsePositiveSize(optarg, "Number of iterations", false));
             break;
         case 'G':
-            num_gpus = atoi (optarg);
-            if (num_gpus <= 0) {
-                std::cerr << "Error: Number of GPUs must be positive\n";
-                return 1;
-            }
+            num_gpus =
+                static_cast<unsigned int>(parsePositiveSize(optarg, "Number of GPUs", false));
             break;
         case 'D':
             use_direct = true;
             break;
         case 'h':
-            print_usage (argv[0]);
+            print_usage(argv[0]);
             return 0;
         default:
-            print_usage (argv[0]);
+            print_usage(argv[0]);
             return 1;
         }
-    }
-
-    if (skip_read && skip_write) {
-        std::cerr << "Error: Cannot skip both read and write tests\n";
-        return 1;
     }
 
     // Check if directory path is provided
@@ -380,15 +337,6 @@ main (int argc, char *argv[]) {
     std::cout << "- Num GPUs to use: " << num_gpus << std::endl;
     std::cout << "- Number of iterations: " << iterations << std::endl;
     std::cout << "- Use O_DIRECT: " << (use_direct ? "Yes" : "No") << std::endl;
-    std::cout << "- Operation: ";
-    if (!skip_read && !skip_write) {
-        std::cout << "Read and Write";
-    } else if (skip_read) {
-        std::cout << "Write Only";
-    } else { // skip_write
-        std::cout << "Read Only";
-    }
-    std::cout << std::endl;
     std::cout << "============================================================\n" << std::endl;
 
     nixlAgent agent ("GDSMTTester", cfg);
@@ -496,14 +444,9 @@ main (int argc, char *argv[]) {
         }
     }
 
-    // Prepare transfer lists
-    nixl_xfer_dlist_t file_for_gds_mt_list = file_for_gds_mt.trim();
-    nixl_xfer_dlist_t src_list = use_dram ? dram_for_gds_mt.trim() : vram_for_gds_mt.trim();
-
     using namespace nixlTime;
 
-    // Perform write test if not skipped
-    if (!skip_write) {
+    {
         std::cout << "\n============================================================" << std::endl;
         std::cout << "PHASE 2: Memory to File Transfer (Write Test)" << std::endl;
         std::cout << "============================================================" << std::endl;
@@ -511,12 +454,10 @@ main (int argc, char *argv[]) {
         us_t write_duration (0);
         nixlXferReqH *write_req = nullptr;
 
-        // Create descriptor lists for all transfers
         nixl_reg_dlist_t src_reg (use_dram ? DRAM_SEG : VRAM_SEG);
         nixl_reg_dlist_t file_reg (FILE_SEG);
 
-        // Add all descriptors
-        for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
+        for (unsigned int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
             if (use_dram) {
                 src_reg.addDesc (dram_buf[transfer_idx]);
             } else {
@@ -527,11 +468,9 @@ main (int argc, char *argv[]) {
         }
         std::cout << "\nAll descriptors added." << std::endl;
 
-        // Create transfer lists
         nixl_xfer_dlist_t src_list = src_reg.trim();
         nixl_xfer_dlist_t file_list = file_reg.trim();
 
-        // Create single transfer request for all transfers
         ret = agent.createXferReq (NIXL_WRITE, src_list, file_list, "GDSMTTester", write_req);
         if (ret != NIXL_SUCCESS) {
             std::cerr << "Failed to create write transfer request" << std::endl;
@@ -539,7 +478,6 @@ main (int argc, char *argv[]) {
         }
         std::cout << "Write transfer request created." << std::endl;
 
-        // Now do the iterations
         for (unsigned int iter = 0; iter < iterations; iter++) {
             us_t iter_start = getUs();
 
@@ -549,7 +487,6 @@ main (int argc, char *argv[]) {
                 goto cleanup;
             }
 
-            // Wait for completion
             while (status == NIXL_IN_PROG) {
                 status = agent.getXferStatus (write_req);
                 if (status < 0) {
@@ -581,29 +518,25 @@ main (int argc, char *argv[]) {
         std::cout << "- Speed: " << gbps << " GB/s" << std::endl;
     }
 
-    // Clear buffers before read if doing both operations
-    if (!skip_read && !skip_write) {
-        std::cout << "\n============================================================" << std::endl;
-        std::cout << "PHASE 3: Clearing buffers for read test" << std::endl;
-        std::cout << "============================================================" << std::endl;
-        for (i = 0; i < num_transfers; i++) {
-            if (use_vram && vram_addr[i]) {
-                int devId = i % num_gpus;
-                cudaSetDevice (devId);
-                if (clear_gpu_buffer (vram_addr[i], transfer_size) != cudaSuccess) {
-                    std::cerr << "Failed to clear VRAM buffer " << i << std::endl;
-                    goto cleanup;
-                }
+    std::cout << "\n============================================================" << std::endl;
+    std::cout << "PHASE 3: Clearing buffers for read test" << std::endl;
+    std::cout << "============================================================" << std::endl;
+    for (i = 0; i < num_transfers; i++) {
+        if (use_vram && vram_addr[i]) {
+            int devId = i % num_gpus;
+            cudaSetDevice(devId);
+            if (clear_gpu_buffer(vram_addr[i], transfer_size) != cudaSuccess) {
+                std::cerr << "Failed to clear VRAM buffer " << i << std::endl;
+                goto cleanup;
             }
-            if (use_dram && dram_addr[i]) {
-                clear_buffer (dram_addr[i], transfer_size);
-            }
-            printProgress (float (i + 1) / num_transfers);
         }
+        if (use_dram && dram_addr[i]) {
+            clear_buffer(dram_addr[i], transfer_size);
+        }
+        printProgress(float(i + 1) / num_transfers);
     }
 
-    // Perform read test if not skipped
-    if (!skip_read) {
+    {
         std::cout << "\n============================================================" << std::endl;
         std::cout << "PHASE 4: File to Memory Transfer (Read Test)" << std::endl;
         std::cout << "============================================================" << std::endl;
@@ -611,12 +544,10 @@ main (int argc, char *argv[]) {
         us_t read_duration (0);
         nixlXferReqH *read_req = nullptr;
 
-        // Create descriptor lists for all transfers
         nixl_reg_dlist_t src_reg (use_dram ? DRAM_SEG : VRAM_SEG);
         nixl_reg_dlist_t file_reg (FILE_SEG);
 
-        // Add all descriptors
-        for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
+        for (unsigned int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
             if (use_dram) {
                 src_reg.addDesc (dram_buf[transfer_idx]);
             } else {
@@ -627,11 +558,9 @@ main (int argc, char *argv[]) {
         }
         std::cout << "\nAll descriptors added." << std::endl;
 
-        // Create transfer lists
         nixl_xfer_dlist_t src_list = src_reg.trim();
         nixl_xfer_dlist_t file_list = file_reg.trim();
 
-        // Create single transfer request for all transfers
         ret = agent.createXferReq (NIXL_READ, src_list, file_list, "GDSMTTester", read_req);
         if (ret != NIXL_SUCCESS) {
             std::cerr << "Failed to create read transfer request" << std::endl;
@@ -639,7 +568,6 @@ main (int argc, char *argv[]) {
         }
         std::cout << "Read transfer request created." << std::endl;
 
-        // Now do the iterations
         for (unsigned int iter = 0; iter < iterations; iter++) {
             us_t iter_start = getUs();
 
@@ -649,7 +577,6 @@ main (int argc, char *argv[]) {
                 goto cleanup;
             }
 
-            // Wait for completion
             while (status == NIXL_IN_PROG) {
                 status = agent.getXferStatus (read_req);
                 if (status < 0) {
@@ -683,31 +610,33 @@ main (int argc, char *argv[]) {
         std::cout << "\n============================================================" << std::endl;
         std::cout << "PHASE 5: Validating read data" << std::endl;
         std::cout << "============================================================" << std::endl;
+
+        // Pre-allocate validation buffers once for all transfers
+        auto host_buffer = use_vram ? std::make_unique<char[]>(transfer_size) : nullptr;
+        auto expected_buffer = std::make_unique<char[]>(transfer_size);
+
+        // Generate expected pattern once
+        fill_test_pattern(expected_buffer.get(), transfer_size);
+
         for (i = 0; i < num_transfers; i++) {
             if (use_vram) {
                 int devId = i % num_gpus;
                 cudaSetDevice (devId);
-                if (!validate_gpu_buffer (vram_addr[i], transfer_size)) {
+                if (!validate_gpu_buffer(
+                        vram_addr[i], transfer_size, host_buffer.get(), expected_buffer.get())) {
                     std::cerr << "VRAM buffer " << i << " validation failed\n";
                     goto cleanup;
                 }
             }
             if (use_dram) {
-                char *expected_buffer = (char *)malloc (transfer_size);
-                if (!expected_buffer) {
-                    std::cerr << "Failed to allocate validation buffer\n";
-                    goto cleanup;
-                }
-                fill_test_pattern (expected_buffer, transfer_size);
-                if (memcmp (dram_addr[i], expected_buffer, transfer_size) != 0) {
+                if (memcmp(dram_addr[i], expected_buffer.get(), transfer_size) != 0) {
                     std::cerr << "DRAM buffer " << i << " validation failed\n";
-                    free (expected_buffer);
                     goto cleanup;
                 }
-                free (expected_buffer);
             }
             printProgress (float (i + 1) / num_transfers);
         }
+
         std::cout << "\nVerification completed successfully!" << std::endl;
     }
 
@@ -720,7 +649,6 @@ cleanup:
     std::cout << "Deleting test files..." << std::endl;
     for (i = 0; i < num_transfers; i++) {
         if (fd[i] > 0) {
-            // Get the filename from the file descriptor
             char proc_path[64];
             char filename[PATH_MAX];
             snprintf (proc_path, sizeof (proc_path), "/proc/self/fd/%d", fd[i]);
