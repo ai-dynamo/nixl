@@ -56,15 +56,15 @@ If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environ
 ## Prerequisites for source build (Linux)
 ### Ubuntu:
 
-`$ sudo apt install build-essential cmake pkg-config`
+`sudo apt install build-essential cmake pkg-config`
 
 ### Fedora:
 
-`$ sudo dnf install gcc-c++ cmake pkg-config`
+`sudo dnf install gcc-c++ cmake pkg-config`
 
 ### Python
 
-`$ pip3 install meson ninja pybind11 tomlkit`
+`pip3 install meson ninja pybind11 tomlkit`
 
 ### UCX
 
@@ -73,11 +73,11 @@ NIXL was tested with UCX version 1.20.x.
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
-$ git clone https://github.com/openucx/ucx.git
-$ cd ucx
-$ git checkout v1.20.x
-$ ./autogen.sh
-$ ./contrib/configure-release-mt       \
+git clone https://github.com/openucx/ucx.git
+cd ucx
+git checkout v1.20.x
+./autogen.sh
+./contrib/configure-release-mt       \
     --enable-shared                    \
     --disable-static                   \
     --disable-doxygen-doc              \
@@ -88,32 +88,36 @@ $ ./contrib/configure-release-mt       \
     --with-verbs                       \
     --with-dm                          \
     --with-gdrcopy=<gdrcopy install>
-$ make -j
-$ make -j install-strip
-$ ldconfig
+make -j
+make -j install-strip
+ldconfig
 ```
 
 ### ETCD (Optional)
 NIXL can use ETCD for metadata distribution and coordination between nodes in distributed environments. To use ETCD with NIXL:
 #### ETCD Server and Client
  ```
-$ sudo apt install etcd etcd-server etcd-client
+sudo apt install etcd etcd-server etcd-client
 
 # Or use Docker
-$ docker run -d -p 2379:2379 quay.io/coreos/etcd:v3.5.1
+docker run -d -p 2379:2379 -p 2380:2380 \
+--name etcd-server \
+-e ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379 \
+-e ETCD_ADVERTISE_CLIENT_URLS=http://0.0.0.0:2379 \
+quay.io/coreos/etcd:v3.5.1
 ```
 
 #### ETCD CPP API
 Installed from https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3
 
 ```
-$ sudo apt install libgrpc-dev libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc
-$ sudo apt install libcpprest-dev
-$ git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git
-$ cd etcd-cpp-apiv3
-$ mkdir build && cd build
-$ cmake ..
-$ make -j$(nproc) && make install
+sudo apt install libgrpc-dev libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc
+sudo apt install libcpprest-dev
+git clone https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git
+cd etcd-cpp-apiv3
+mkdir build && cd build
+cmake ..
+make -j$(nproc) && make install
 ```
 
 ### Additional plugins
@@ -128,10 +132,10 @@ Some plugins may have additional build requirements, see them here:
 ### Build & install
 
 ```
-$ meson setup <name_of_build_dir>
-$ cd <name_of_build_dir>
-$ ninja
-$ ninja install
+meson setup <name_of_build_dir>
+cd <name_of_build_dir>
+ninja
+ninja install
 ```
 
 ### Build Options
@@ -139,24 +143,24 @@ $ ninja install
 #### Release build (default)
 
 ```bash
-$ meson setup <name_of_build_dir>
+meson setup <name_of_build_dir>
 ```
 
 #### Debug build
 
 ```bash
-$ meson setup <name_of_build_dir> --buildtype=debug
+meson setup <name_of_build_dir> --buildtype=debug
 ```
 
 #### NIXL-specific build options
 
 ```bash
 # Example with custom options
-$ meson setup <name_of_build_dir> \
-    -Dbuild_docs=true \           # Build Doxygen documentation
-    -Ducx_path=/path/to/ucx \     # Custom UCX installation path
-    -Dinstall_headers=true \      # Install development headers
-    -Ddisable_gds_backend=false   # Enable GDS backend
+meson setup <name_of_build_dir> \
+  -Dbuild_docs=true \           # Build Doxygen documentation
+  -Ducx_path=/path/to/ucx \     # Custom UCX installation path
+  -Dinstall_headers=true \      # Install development headers
+  -Ddisable_gds_backend=false   # Enable GDS backend
 ```
 
 Common build options:
@@ -180,9 +184,9 @@ If you have Doxygen installed, you can build the documentation:
 
 ```bash
 # Configure with documentation enabled
-$ meson setup <name_of_build_dir> -Dbuild_docs=true
-$ cd <name_of_build_dir>
-$ ninja
+meson setup <name_of_build_dir> -Dbuild_docs=true
+cd <name_of_build_dir>
+ninja
 
 # Documentation will be generated in <name_of_build_dir>/html
 # After installation (ninja install), documentation will be available in <prefix>/share/doc/nixl/
@@ -301,19 +305,19 @@ For more Python examples, see [examples/python/](examples/python/).
 - Use `--buildtype=debug` for a debug build (default is release).
 - Or build manually:
     ```bash
-    $ cargo build --release
+    cargo build --release
     ```
 #### Install
 The bindings will be installed under `nixl-sys` in the configured installation prefix.
 Can be done using ninja, from project build directory:
 ```bash
-$ ninja install
+ninja install
 ```
 
 #### Test
 ```
 # Rust bindings tests
-$ cargo test
+cargo test
 ```
 
 Use in your project by adding to `Cargo.toml`:
@@ -330,17 +334,17 @@ To build the docker container, first clone the current repository. Also make sur
 
 Run the following from the root folder of the cloned NIXL repository:
 ```
-$ ./contrib/build-container.sh
+./contrib/build-container.sh
 ```
 
 By default, the container is built with Ubuntu 24.04. To build a container for Ubuntu 22.04 use the --os option as follows:
 ```
-$ ./contrib/build-container.sh --os ubuntu22
+./contrib/build-container.sh --os ubuntu22
 ```
 
 To see all the options supported by the container use:
 ```
-$ ./contrib/build-container.sh -h
+./contrib/build-container.sh -h
 ```
 
 The container also includes a prebuilt python wheel in /workspace/dist if required for installing/distributing. Also, the wheel can be built with a separate script (see below).
@@ -348,7 +352,7 @@ The container also includes a prebuilt python wheel in /workspace/dist if requir
 ### Building the python wheel
 The contrib folder also includes a script to build the python wheel with the UCX dependencies. Note, that UCX and other NIXL dependencies are required to be installed.
 ```
-$ ./contrib/build-wheel.sh
+./contrib/build-wheel.sh
 ```
 
 ## Running with ETCD
@@ -371,7 +375,11 @@ NIXL includes an example demonstrating metadata exchange and data transfer using
 ```bash
 # Start an ETCD server if not already running
 # For example:
-# docker run -d -p 2379:2379 quay.io/coreos/etcd:v3.5.1
+# docker run -d -p 2379:2379 -p 2380:2380 \
+# --name etcd-server \
+# -e ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379 \
+# -e ETCD_ADVERTISE_CLIENT_URLS=http://0.0.0.0:2379 \
+# quay.io/coreos/etcd:v3.5.1
 
 # Set the ETCD env variables as above
 
