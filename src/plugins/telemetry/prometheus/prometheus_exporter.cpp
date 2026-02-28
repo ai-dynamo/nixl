@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -114,13 +114,19 @@ nixlTelemetryPrometheusExporter::initializeMetrics() {
     registerCounter("agent_rx_requests_num",
                     "Number of requests received by the agent",
                     prometheusExporterTransferCategory);
+    registerCounter("agent_memory_registered",
+                    "Cumulative memory registered",
+                    prometheusExporterMemoryCategory);
+    registerCounter("agent_memory_deregistered",
+                    "Cumulative memory deregistered",
+                    prometheusExporterMemoryCategory);
+    registerCounter("agent_xfer_time",
+                    "Start to Complete (per request)",
+                    prometheusExporterPerformanceCategory);
+    registerCounter("agent_xfer_post_time",
+                    "Start to posting to Back-End (per request)",
+                    prometheusExporterPerformanceCategory);
 
-    registerGauge("agent_xfer_time",
-                  "Start to Complete (per request)",
-                  prometheusExporterPerformanceCategory);
-    registerGauge("agent_xfer_post_time",
-                  "Start to posting to Back-End (per request)",
-                  prometheusExporterPerformanceCategory);
     registerGauge("agent_memory_registered", "Memory registered", prometheusExporterMemoryCategory);
     registerGauge(
         "agent_memory_deregistered", "Memory deregistered", prometheusExporterMemoryCategory);
@@ -130,7 +136,7 @@ void
 nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
                                                  const std::string &help,
                                                  const std::string &category) {
-    auto &counter = prometheus::BuildCounter().Name(name).Help(help).Register(*registry_);
+    auto &counter = prometheus::BuildCounter().Name(name + "_cnt").Help(help).Register(*registry_);
     counters_[name] = &counter.Add(
         {{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
 }
@@ -139,7 +145,7 @@ void
 nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
                                                const std::string &help,
                                                const std::string &category) {
-    auto &gauge = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
+    auto &gauge = prometheus::BuildGauge().Name(name + "_gauge").Help(help).Register(*registry_);
     gauges_[name] =
         &gauge.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
 }
@@ -163,18 +169,23 @@ nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
         const std::string event_name(event.eventName_);
 
         switch (event.category_) {
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER: {
+        case nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER:
+        case nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE: {
             const auto it = counters_.find(event_name);
             if (it != counters_.end()) {
                 it->second->Increment(event.value_);
             }
             break;
         }
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE:
         case nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY: {
-            auto it = gauges_.find(event_name);
-            if (it != gauges_.end()) {
-                it->second->Set(static_cast<double>(event.value_));
+            auto it_cnt = counters_.find(event_name);
+            if (it_cnt != counters_.end()) {
+                it_cnt->second->Increment(event.value_);
+            }
+
+            auto it_gauge = gauges_.find(event_name);
+            if (it_gauge != gauges_.end()) {
+                it_gauge->second->Set(static_cast<double>(event.value_));
             }
             break;
         }
