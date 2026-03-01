@@ -287,6 +287,14 @@
             H 3 * * * %BUILD_TARGET=nixlbench;UPDATE_LATEST=true
             # Build nixl nightly around 4 AM - Ubuntu 24.04
             H 4 * * * %BUILD_TARGET=nixl;UPDATE_LATEST=true
+            # Build nixlbench nightly around 3 AM - Ubuntu 24.04
+            H 3 * * * %BUILD_TARGET=nixlbench;BASE_IMAGE=nvcr.io/nvidia/pytorch;BASE_IMAGE_TAG=26.01-py3;UPDATE_LATEST=true
+            # Build nixl nightly around 4 AM - Ubuntu 24.04
+            H 4 * * * %BUILD_TARGET=nixl;BASE_IMAGE=nvcr.io/nvidia/pytorch;BASE_IMAGE_TAG=26.01-py3;UPDATE_LATEST=true
+            # Build nixlbench nightly around 3 AM - Ubuntu 24.04
+            H 3 * * * %BUILD_TARGET=nixlbench;BASE_IMAGE=nvcr.io/nvidia/pytorch;BASE_IMAGE_TAG=26.03-py3;UPDATE_LATEST=true
+            # Build nixl nightly around 4 AM - Ubuntu 24.04
+            H 4 * * * %BUILD_TARGET=nixl;BASE_IMAGE=nvcr.io/nvidia/pytorch;BASE_IMAGE_TAG=26.03-py3;UPDATE_LATEST=true
     # Manual build parameters
     parameters:
       - choice:
