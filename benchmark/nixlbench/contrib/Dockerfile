@@ -50,14 +50,18 @@ RUN apt-get update -y && \
     libhwloc-dev \
     build-essential
 
-# Add DOCA repository and install packages
+# Add DOCA repository and install packages (skip if base image already has DOCA to avoid version conflict)
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
     wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+    if dpkg -s doca-sdk-gpunetio >/dev/null 2>&1; then \
+        echo "DOCA SDK already installed in base image, skipping to avoid version conflict"; \
+    else \
+        apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev; \
+    fi
 
 # Force reinstall of RDMA packages from DOCA repository
 # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
@@ -222,11 +226,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# By default, uv downloads python packages to $HOME/.cache/uv and hard links them
-# from the virtual environment. This means that the files reside in /root/.cache/uv,
-# which is not what we want since some systems mount user home dir into /root,
-# in which case the venv is broken when the container is started.
-# Set a custom cache directory inside /workspace to avoid this.
+# Keep uv's download cache under /workspace so it is not tied to /root (some hosts mount $HOME over /root).
 ENV UV_CACHE_DIR=/workspace/.cache/uv
 RUN mkdir -p $UV_CACHE_DIR
 # Disable build isolation, i.e. uv should not create a new virtual environment for
@@ -234,19 +234,20 @@ RUN mkdir -p $UV_CACHE_DIR
 ENV UV_NO_BUILD_ISOLATION=1
 # Disable syncing, i.e. uv will not download packages outside uv pip commands.
 ENV UV_NO_SYNC=1
-# Create a new virtual environment
-ENV VIRTUAL_ENV=/workspace/.venv
-RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
-# Activate the virtual environment
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-# Install python dependencies
-RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
-# Install PyTorch
-RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
-    FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION" && \
-    uv pip install $FLAGS torch torchvision torchaudio
-# Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
-RUN uv pip install --upgrade 'setuptools>=80.9.0'
+# Ubuntu marks system Python as EXTERNALLY-MANAGED (PEP 668); allow installs in this image.
+ENV UV_BREAK_SYSTEM_PACKAGES=1
+# Install Python tools into the system interpreter (no project venv).
+RUN uv pip install --system --python python${DEFAULT_PYTHON_VERSION} --upgrade \
+    meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
+# PyTorch: use system torch if present, else install for system Python.
+RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch" 2>/dev/null; then \
+        echo "Using PyTorch from system site-packages"; \
+    else \
+        export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+        uv pip install --system --python python${DEFAULT_PYTHON_VERSION} torch torchvision torchaudio; \
+    fi
+# Upgrade setuptools for PEP 639 (license format) compatibility
+RUN uv pip install --system --python python${DEFAULT_PYTHON_VERSION} --upgrade 'setuptools>=80.9.0'
 
 COPY --from=nixl . /workspace/nixl
 COPY --from=nixlbench . /workspace/nixlbench
@@ -266,8 +267,9 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 
 RUN CUDA_MAJOR=$(echo $CUDA_VERSION | cut -d. -f1) && \
     ./contrib/tomlutil.py --wheel-name "nixl-cu${CUDA_MAJOR}" pyproject.toml && \
-    uv pip install . && \
-    uv pip install build/src/bindings/python/nixl-meta/nixl-*.whl
+    uv pip install --system --python python${DEFAULT_PYTHON_VERSION} . && \
+    uv pip install --system --python python${DEFAULT_PYTHON_VERSION} \
+        build/src/bindings/python/nixl-meta/nixl-*.whl
 
 WORKDIR /workspace/nixlbench
 
@@ -287,7 +289,7 @@ WORKDIR /workspace/nixl
 RUN ls -ll benchmark/kvbench
 
 # Install dependencies for benchmarks
-RUN uv pip install -e benchmark/kvbench
+RUN uv pip install --system --python python${DEFAULT_PYTHON_VERSION} -e benchmark/kvbench
 
 ENV PATH=/usr/local/nixlbench/bin:/usr/local/nixl/bin:$PATH
 ENV LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
