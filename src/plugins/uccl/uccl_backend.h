@@ -34,8 +34,6 @@
 
 #include "uccl_engine.h"
 
-#define FIFO_ITEM_SIZE 64
-
 class nixlUcclBackendMD;
 class nixlUcclReqH;
 
@@ -134,19 +132,23 @@ private:
     std::unordered_map<uint64_t, nixlUcclBackendMD *> mem_reg_info_;
     std::unordered_map<std::string, uint64_t> connected_agents_; // agent name -> conn_id
     std::thread listener_thread_;
+    std::atomic<bool> stop_listener_;
 };
 
 // UCCL Backend Memory Descriptor
 class nixlUcclBackendMD : public nixlBackendMD {
 public:
-    nixlUcclBackendMD(bool isPrivate) : nixlBackendMD(isPrivate) {}
+    nixlUcclBackendMD(bool isPrivate) : nixlBackendMD(isPrivate) {
+        memset(fifo_item, 0, FIFO_SIZE);
+    }
 
     virtual ~nixlUcclBackendMD() {}
 
     void *addr;
     size_t length;
     int ref_cnt;
-    uint64_t mr_id; // UCCL memory region id
+    uccl_mr_t mr_id; // UCCL memory region id
+    char fifo_item[FIFO_SIZE];
 };
 
 // UCCL Backend Request Handle
@@ -157,9 +159,9 @@ public:
     virtual ~nixlUcclReqH() {}
 
     uccl_conn_t *conn;
-    std::unordered_set<uint64_t> pending_transfer_ids;
+    uint64_t transfer_id;
     nixl_blob_t notif_msg;
-    std::vector<std::array<char, FIFO_ITEM_SIZE>> fifo_items;
+    std::vector<FifoItem> fifo_items;
 };
 
 #endif
