@@ -311,6 +311,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
+    delete rt;
+    rt = nullptr;
+
     if (agent) {
         delete agent;
         agent = nullptr;
