@@ -163,7 +163,8 @@ public:
      * @param op_type Operation type (WRITE or READ)
      * @param local_addr Local memory address
      * @param transfer_size Total transfer size
-     * @param remote_base_addr Remote memory base address
+     * @param remote_target_addr Remote memory target address (where to read/write)
+     * @param remote_registered_base Remote registered buffer base address (for offset calculation)
      * @param selected_rails Rails to use for the transfer
      * @param local_mrs Local memory registrations
      * @param remote_keys Remote access keys
@@ -179,7 +180,8 @@ public:
     prepareAndSubmitTransfer(nixlLibfabricReq::OpType op_type,
                              void *local_addr,
                              size_t transfer_size,
-                             uint64_t remote_base_addr,
+                             uint64_t remote_target_addr,
+                             uint64_t remote_registered_base,
                              const std::vector<size_t> &selected_rails,
                              const std::vector<struct fid_mr *> &local_mrs,
                              const std::vector<uint64_t> &remote_keys,
