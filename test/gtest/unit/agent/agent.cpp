@@ -70,7 +70,7 @@ namespace agent {
     public:
         agentHelper(const std::string &name)
             : agent_([&name]() {
-                  nixlAgentConfig cfg{};
+                  nixlAgentConfig cfg;
                   cfg.useProgThread = true;
                   return std::make_unique<nixlAgent>(name, cfg);
               }()) {}

@@ -108,7 +108,7 @@ nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent)
   }
 
   try {
-      nixlAgentConfig nixl_config{};
+      nixlAgentConfig nixl_config;
       nixl_config.useProgThread = true;
       std::string agent_name = name;
       auto inner = new nixlAgent(agent_name, nixl_config);
@@ -132,7 +132,7 @@ nixl_capi_create_configured_agent(const char *name,
     }
 
     try {
-        nixlAgentConfig nixl_config{};
+        nixlAgentConfig nixl_config;
         nixl_config.useProgThread = cfg->enable_prog_thread;
         nixl_config.useListenThread = cfg->enable_listen_thread;
         nixl_config.listenPort = cfg->listen_port;

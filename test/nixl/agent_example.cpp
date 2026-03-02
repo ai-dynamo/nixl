@@ -561,7 +561,7 @@ main(int argc, char **argv) {
     // Example: assuming two agents running on the same machine,
     // with separate memory regions in DRAM
 
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.useProgThread = true;
     nixl_b_params_t init1, init2;
     nixl_mem_list_t mems1, mems2;

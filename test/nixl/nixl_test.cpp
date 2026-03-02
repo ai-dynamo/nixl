@@ -210,7 +210,7 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 }
 
 static void runTarget(const std::string &ip, int port, nixl_thread_sync_t sync_mode) {
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.useProgThread = true;
     cfg.useListenThread = true;
     cfg.listenPort = port;
@@ -237,7 +237,7 @@ static void runTarget(const std::string &ip, int port, nixl_thread_sync_t sync_m
 }
 
 static void runInitiator(const std::string &target_ip, int target_port, nixl_thread_sync_t sync_mode) {
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.useProgThread = true;
     cfg.useListenThread = true;
     cfg.syncMode = sync_mode;

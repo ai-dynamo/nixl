@@ -66,7 +66,7 @@ protected:
 
 TEST_F(QueryMemTest, QueryMemWithExistingFiles) {
     // Create agent
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     nixlAgent agent("test_agent", cfg);
 
@@ -100,7 +100,7 @@ TEST_F(QueryMemTest, QueryMemWithExistingFiles) {
 
 TEST_F(QueryMemTest, QueryMemWithMixedFiles) {
     // Create agent
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     nixlAgent agent("test_agent", cfg);
 
@@ -132,7 +132,7 @@ TEST_F(QueryMemTest, QueryMemWithMixedFiles) {
 
 TEST_F(QueryMemTest, QueryMemWithEmptyDescriptors) {
     // Create agent
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     nixlAgent agent("test_agent", cfg);
 
@@ -158,7 +158,7 @@ TEST_F(QueryMemTest, QueryMemWithEmptyDescriptors) {
 
 TEST_F(QueryMemTest, QueryMemWithEmptyFilenames) {
     // Create agent
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     nixlAgent agent("test_agent", cfg);
 

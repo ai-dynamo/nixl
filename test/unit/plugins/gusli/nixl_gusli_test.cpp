@@ -397,7 +397,7 @@ public:
 
     int
     run_write_read_verify(void) {
-        nixlAgentConfig cfg{};
+        nixlAgentConfig cfg;
         cfg.useProgThread = true;
         nixlAgent agent(agent_name, cfg);
         print_segment_title("NIXL STORAGE TEST STARTING (GUSLI PLUGIN)");
@@ -422,7 +422,7 @@ public:
         if (1) {
             print_segment_title(phase_title("Failed Second plugin initialization"));
             nixlBackendH *_2nd_plugin = nullptr;
-            nixlAgentConfig cfg2{};
+            nixlAgentConfig cfg2;
             cfg2.useProgThread = true;
             nixlAgent agent2("2nd_agent", cfg2);
             bool init_exception_caught = false;

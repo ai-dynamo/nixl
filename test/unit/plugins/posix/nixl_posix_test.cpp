@@ -206,7 +206,7 @@ read_write_test (int num_transfers,
         }
     }
     // Initialize NIXL components first
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.useProgThread = true;
     nixlAgent agent("POSIXReadWriteTester", cfg);
 
@@ -507,7 +507,7 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
 
     // Create POSIX backend first - before allocating any resources
     nixlBackendH *posix = nullptr;
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.useProgThread = true;
     nixlAgent agent("POSIXRepostTester", cfg);
     if (agent.createBackend ("POSIX", params, posix) != NIXL_SUCCESS) {

@@ -23,7 +23,7 @@ GUSLI supports multiple connection modes:
 8. See example in nixl_gusli_test.cpp file. In short:
 
 ```cpp
-nixlAgentConfig cfg{};
+nixlAgentConfig cfg;
 cfg.useProgThread = true;
 nixlAgent agent("your_client_name", cfg);
 nixl_b_params_t params = gen_gusli_plugin_params(agent);	// Insert list of your block devices here, grep this function to see how it is used

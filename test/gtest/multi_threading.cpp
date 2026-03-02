@@ -35,7 +35,7 @@ protected:
     std::string remote_agent_name = "remote_agent";
 
     nixlAgent createAgent(const std::string &name) {
-        nixlAgentConfig cfg{};
+        nixlAgentConfig cfg;
         cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
         return nixlAgent(name, cfg);
     }

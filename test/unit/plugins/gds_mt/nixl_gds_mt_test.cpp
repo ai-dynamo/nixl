@@ -354,7 +354,7 @@ main (int argc, char *argv[]) {
     fd = new int[num_transfers];
 
     // Initialize NIXL components
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.useProgThread = true;
     nixl_b_params_t params;
     nixlBlobDesc *vram_buf = use_vram ? new nixlBlobDesc[num_transfers] : NULL;

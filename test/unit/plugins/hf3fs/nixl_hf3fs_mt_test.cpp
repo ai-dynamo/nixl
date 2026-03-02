@@ -377,7 +377,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Initialize NIXL
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.useProgThread = true;
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
     nixlAgent agent("HF3FSMultiThreadTester", cfg);

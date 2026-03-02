@@ -237,7 +237,7 @@ main (int argc, char *argv[]) {
     std::cout << "Starting Agent for " << role << " with stream mode " << stream_mode << "\n";
     /** Agent and backend creation parameters */
 
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.useProgThread = true;
     cfg.useListenThread = true;
     cfg.listenPort = peer_port;

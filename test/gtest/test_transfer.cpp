@@ -100,7 +100,7 @@ class TestTransfer : public nixl_test_t {
 protected:
     nixlAgentConfig
     getConfig(int listen_port, bool capture_telemetry) {
-        nixlAgentConfig cfg{};
+        nixlAgentConfig cfg;
         cfg.useProgThread = isProgressThreadEnabled();
         cfg.useListenThread = (listen_port > 0);
         cfg.listenPort = listen_port;

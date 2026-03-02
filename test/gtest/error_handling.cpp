@@ -158,7 +158,7 @@ TestErrorHandling::Agent::init(const std::string &name,
                                const std::string &backend_name,
                                size_t num_workers,
                                size_t num_threads) {
-    nixlAgentConfig cfg{};
+    nixlAgentConfig cfg;
     cfg.useProgThread = true;
     m_priv = std::make_unique<nixlAgent>(name, cfg);
     // At the moment, only UCX backend is tested for error handling support.
