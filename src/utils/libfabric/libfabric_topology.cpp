@@ -66,8 +66,8 @@ nixlLibfabricTopology::discoverTopology() {
         NIXL_ERROR << "Failed to initialize hwloc topology";
         return status;
     }
-    // Discover EFA devices using libfabric
-    status = discoverEfaDevices();
+
+    status = discoverProviderWithDevices();
     if (status != NIXL_SUCCESS) {
         return status;
     }
@@ -100,6 +100,7 @@ nixlLibfabricTopology::discoverTopology() {
                   << " devices (no topology mapping needed)";
 
         // Set basic values without hwloc discovery
+        num_nvidia_accel = 0; // TCP doesn't need accelerator topology
         num_aws_accel = 0; // TCP doesn't need accelerator topology
         num_numa_nodes = 1; // Simple fallback
 
@@ -112,7 +113,7 @@ nixlLibfabricTopology::discoverTopology() {
 }
 
 nixl_status_t
-nixlLibfabricTopology::discoverEfaDevices() {
+nixlLibfabricTopology::discoverProviderWithDevices() {
     // Use the utility function from libfabric_common
     auto network_device = LibfabricUtils::getAvailableNetworkDevices();
     provider_name = network_device.first;
@@ -123,8 +124,9 @@ nixlLibfabricTopology::discoverEfaDevices() {
     // Set device type based on discovered provider
     if (provider_name == "efa") {
         NIXL_INFO << "Discovered " << num_devices << " EFA devices";
-    } else if (provider_name == "sockets") {
-        NIXL_INFO << "Discovered " << num_devices << " socket devices (TCP fallback)";
+    } else if (provider_name == "tcp" || provider_name == "sockets") {
+        NIXL_INFO << "Discovered " << num_devices << " " << provider_name
+                  << " devices (TCP fallback)";
     } else if (provider_name == "none" || all_devices.empty()) {
         NIXL_WARN << "No network devices found";
         return NIXL_ERR_BACKEND;
