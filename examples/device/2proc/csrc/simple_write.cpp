@@ -22,6 +22,7 @@
 constexpr uint8_t INITIATOR_FILL_VALUE = 42; // Initiator writes this pattern
 constexpr int INITIATOR_DEVICE = 0; // Initiator always uses GPU 0
 constexpr int TARGET_DEVICE = 1; // Target always uses GPU 1
+constexpr int MAX_WIREUP_RETRIES = 3000; // 30s timeout at 10ms per retry
 
 #define CUDA_CHECK(cmd)                                                                       \
     do {                                                                                      \
@@ -90,7 +91,13 @@ void
 run_target(const Config &cfg) {
     std::cout << "[target] Starting..." << std::endl;
 
-    // Target always uses GPU 1 (for demo simplicity)
+    int device_count = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&device_count));
+    if (device_count <= TARGET_DEVICE) {
+        throw std::runtime_error("Target requires GPU " + std::to_string(TARGET_DEVICE) +
+                                 " but only " + std::to_string(device_count) + " GPU(s) found");
+    }
+
     CUDA_CHECK(cudaSetDevice(TARGET_DEVICE));
 
     // Create NIXL agent (pattern from nixl_example.cpp)
@@ -176,7 +183,11 @@ run_target(const Config &cfg) {
 
     // Wait for remote agent to be ready
     nixl_xfer_dlist_t empty_descs(VRAM_SEG);
-    while (agent->checkRemoteMD(remote_name, empty_descs) != NIXL_SUCCESS) {
+    for (int retries = 0; agent->checkRemoteMD(remote_name, empty_descs) != NIXL_SUCCESS;
+         ++retries) {
+        if (retries >= MAX_WIREUP_RETRIES) {
+            throw std::runtime_error("Timeout waiting for initiator agent wireup");
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
@@ -222,6 +233,13 @@ run_target(const Config &cfg) {
 void
 run_initiator(const Config &cfg) {
     std::cout << "[initiator] Starting..." << std::endl;
+
+    int device_count = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&device_count));
+    if (device_count <= INITIATOR_DEVICE) {
+        throw std::runtime_error("Initiator requires GPU " + std::to_string(INITIATOR_DEVICE) +
+                                 " but only " + std::to_string(device_count) + " GPU(s) found");
+    }
 
     // Create TCPStore (initiator is master, starts the server)
     tcp_store::TCPStore store("127.0.0.1", 9998, true);
@@ -294,7 +312,11 @@ run_initiator(const Config &cfg) {
 
     // Wait for remote agent to be ready
     nixl_xfer_dlist_t empty_descs(VRAM_SEG);
-    while (agent->checkRemoteMD(target_name, empty_descs) != NIXL_SUCCESS) {
+    for (int retries = 0; agent->checkRemoteMD(target_name, empty_descs) != NIXL_SUCCESS;
+         ++retries) {
+        if (retries >= MAX_WIREUP_RETRIES) {
+            throw std::runtime_error("Timeout waiting for target agent wireup");
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 

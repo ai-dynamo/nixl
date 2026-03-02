@@ -4,7 +4,7 @@ This is a simplified, pure C++ version of the 2proc device API example. Unlike t
 
 ## Architecture
 
-```
+```text
 simple_write.cpp        # Main program
 ├── nixlAgent           # Direct NIXL C++ API usage
 ├── CUDA                # Direct cudaMalloc/cudaMemcpy
@@ -68,7 +68,7 @@ Key setting for container compatibility:
 
 ## Command Line Options
 
-```
+```text
 --mode <initiator|target>  Run as initiator or target (default: initiator)
 --size <bytes>             Buffer size in bytes (default: 1048576)
 --help                     Show help

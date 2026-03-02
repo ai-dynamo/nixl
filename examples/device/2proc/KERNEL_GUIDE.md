@@ -333,5 +333,5 @@ These are the building blocks for GPU-to-GPU communication without CPU involveme
 
 - **NIXL documentation**: [NIXL repository](https://github.com/ai-dynamo/nixl)
 - **EP README**: `../ep/README.md` - See device API in production MoE context
-- **Device host API**: `csrc/device_host.cpp` - Host-side setup details
+- **Device host API**: `csrc/simple_write.cpp` - Host-side setup details
 - **Kernel source**: `csrc/kernels.cu` - Full implementation (~115 lines)
