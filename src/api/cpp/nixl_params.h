@@ -85,16 +85,16 @@ struct nixlAgentConfig {
      * @param capture_telemetry  Optional flag to enable telemetry capture
      * @param etcd_watch_timeout Optional timeout for etcd watch operations in microseconds
      */
-    explicit nixlAgentConfig(const bool use_prog_thread,
-                             const bool use_listen_thread = kDefaultUseListenThread,
-                             const int port = kDefaultListenPort,
-                             nixl_thread_sync_t sync_mode = kDefaultSyncMode,
-                             unsigned int num_workers = 1,
-                             const uint64_t pthr_delay_us = kDefaultPthrDelayUs,
-                             const uint64_t lthr_delay_us = kDefaultLthrDelayUs,
-                             const bool capture_telemetry = kDefaultCaptureTelemetry,
-                             const std::chrono::microseconds &etcd_watch_timeout =
-                                 kDefaultEtcdWatchTimeout) noexcept
+    explicit nixlAgentConfig(
+        const bool use_prog_thread,
+        const bool use_listen_thread = kDefaultUseListenThread,
+        int port = kDefaultListenPort,
+        nixl_thread_sync_t sync_mode = kDefaultSyncMode,
+        unsigned int num_workers = 1,
+        uint64_t pthr_delay_us = kDefaultPthrDelayUs,
+        uint64_t lthr_delay_us = kDefaultLthrDelayUs,
+        bool capture_telemetry = kDefaultCaptureTelemetry,
+        std::chrono::microseconds etcd_watch_timeout = kDefaultEtcdWatchTimeout) noexcept
         : useProgThread(use_prog_thread),
           useListenThread(use_listen_thread),
           listenPort(port),
@@ -103,7 +103,6 @@ struct nixlAgentConfig {
           pthrDelay(pthr_delay_us),
           lthrDelay(lthr_delay_us),
           etcdWatchTimeout(etcd_watch_timeout) {}
-
 };
 
 #endif
