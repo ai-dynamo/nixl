@@ -76,12 +76,6 @@ class nixlAgentData {
         backend_list_t                         notifEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
 
-        // Bookkeeping from GPU request handles to backend engines
-        std::unordered_map<nixlGpuXferReqH, nixlBackendEngine *> gpuReqToEngine;
-        // Bookkeping for local connection metadata and user handles per backend
-        std::unordered_map<nixl_backend_t, nixlBackendH*> backendHandles;
-        std::unordered_map<nixl_backend_t, nixl_blob_t>   connMD;
-
         // Bookkeeping from memory view handles to backend engines
         std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
 
@@ -107,7 +101,7 @@ class nixlAgentData {
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMD;
         backend_map_t backendEngines;
         std::unordered_map<std::string,
-                           std::unique_ptr<nixlRemoteSection>,
+                           nixlRemoteSection,
                            std::hash<std::string>,
                            strEqual>
             remoteSections;

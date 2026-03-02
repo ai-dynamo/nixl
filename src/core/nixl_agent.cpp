@@ -420,12 +420,9 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
         nixl_status_t ret = data->localSection.addDescList(descs, backend, sec_descs);
         if (ret == NIXL_SUCCESS) {
             if (backend->supportsLocal()) {
-                const auto [it, inserted] = data->remoteSections.try_emplace(data->name);
-                if (inserted) {
-                    it->second = std::make_unique<nixlRemoteSection>(data->name);
-                }
+                const auto [it, inserted] = data->remoteSections.try_emplace(data->name, data->name);
 
-                ret = it->second->loadLocalData(sec_descs, backend);
+                ret = it->second.loadLocalData(sec_descs, backend);
                 if (ret == NIXL_SUCCESS) {
                     count++;
                 } else {
@@ -567,18 +564,19 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     NIXL_LOCK_GUARD(data->lock);
     // When central KV is supported, still it should return error,
     // just we can add a call to fetchRemoteMD for next time
-    if (!init_side && (data->remoteSections.count(agent_name) == 0)) {
+    const auto rem_sec_it = data->remoteSections.find(agent_name);
+    if (!init_side && (data->remoteSections.end() == rem_sec_it)) {
         NIXL_ERROR_FUNC << "metadata for remote agent '" << agent_name << "' not found";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
 
     if (!extra_params || extra_params->backends.size() == 0) {
-        if (!init_side)
-            backend_set = data->remoteSections[agent_name]->
-                                queryBackends(descs.getType());
-        else
+        if (init_side) {
             backend_set = data->localSection.queryBackends(descs.getType());
+        } else {
+            backend_set = rem_sec_it->second.queryBackends(descs.getType());
+        }
 
         if (!backend_set || backend_set->empty()) {
             NIXL_ERROR_FUNC << "no available backends for mem type '" << descs.getType() << "'";
@@ -604,11 +602,12 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 
     for (auto & backend : *backend_set) {
         handle->descs[backend] = new nixl_meta_dlist_t(descs.getType());
-        if (init_side)
+        if (init_side) {
             ret = data->localSection.populate(descs, backend, *(handle->descs[backend]));
-        else
-            ret = data->remoteSections[agent_name]->populate(
-                       descs, backend, *(handle->descs[backend]));
+        } else {
+            ret = rem_sec_it->second.populate(descs, backend, *(handle->descs[backend]));
+        }
+
         if (ret == NIXL_SUCCESS) {
             count++;
         } else {
@@ -617,8 +616,9 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         }
     }
 
-    if (extra_params && extra_params->backends.size() > 0)
+    if (extra_params && extra_params->backends.size() > 0) {
         delete backend_set;
+    }
 
     if (count == 0) {
         delete handle;
@@ -839,7 +839,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
-    if (data->remoteSections.count(remote_agent) == 0)
+    const auto rem_sec_it = data->remoteSections.find(remote_agent);
+    if (data->remoteSections.end() == rem_sec_it)
     {
         NIXL_ERROR_FUNC << "metadata for remote agent '" << remote_agent << "' not found";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
@@ -859,9 +860,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         // Finding backends that support the corresponding memories
         // locally and remotely, and find the common ones.
         backend_set_t *local_set = data->localSection.queryBackends(local_descs.getType());
-        backend_set_t* remote_set =
-            data->remoteSections[remote_agent]->queryBackends(
-                                                remote_descs.getType());
+        backend_set_t* remote_set = rem_sec_it->second.queryBackends(remote_descs.getType());
         if (!local_set || !remote_set) {
             NIXL_ERROR_FUNC << "no backends found for local or remote for their "
                                "corresponding memory type";
@@ -896,8 +895,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     for (auto &backend : backend_set) {
         // If populate fails, it clears the resp before return
         ret1 = data->localSection.populate(local_descs, backend, *handle->initiatorDescs);
-        ret2 = data->remoteSections[remote_agent]->populate(
-                     remote_descs, backend, *handle->targetDescs);
+        ret2 = rem_sec_it->second.populate(remote_descs, backend, *handle->targetDescs);
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
             NIXL_INFO << "Selected backend: " << backend->getType();
@@ -1672,20 +1670,24 @@ nixl_status_t
 nixlAgent::checkRemoteMD (const std::string remote_name,
                           const nixl_xfer_dlist_t &descs) const {
     NIXL_LOCK_GUARD(data->lock);
-    if (data->remoteSections.count(remote_name) != 0) {
-        if (descs.descCount() == 0) {
-            return NIXL_SUCCESS;
-        } else {
-            nixl_meta_dlist_t dummy(descs.getType());
-            // We only add to data->remoteBackends if data->backendEngines[backend] exists
-            for (const auto& [backend, conn_info] : data->remoteBackends[remote_name])
-                if (data->remoteSections[remote_name]->populate(
-                        descs, data->backendEngines[backend].get(), dummy) == NIXL_SUCCESS)
-                    return NIXL_SUCCESS;
-            dummy.clear();
-        }
+    const auto rem_sec_it = data->remoteSections.find(remote_name);
+    if (data->remoteSections.end() == rem_sec_it ) {
+        // This is a checker method, returning not found is not an error to be logged
+        return NIXL_ERR_NOT_FOUND;
     }
 
+    if (descs.isEmpty()) {
+        return NIXL_SUCCESS;
+    }
+
+    nixl_meta_dlist_t dummy(descs.getType());
+    // We only add to data->remoteBackends if data->backendEngines[backend] exists
+    for (const auto& [backend, conn_info] : data->remoteBackends[remote_name]) {
+        if (rem_sec_it->second.populate(descs, data->backendEngines[backend].get(), dummy) == NIXL_SUCCESS) {
+            return NIXL_SUCCESS;
+        }
+    }
+    dummy.clear();
     // This is a checker method, returning not found is not an error to be logged
     return NIXL_ERR_NOT_FOUND;
 }
@@ -1732,7 +1734,7 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
 
         if (engine) {
             // Engine has already been selected, add element to the remote metadata
-            const auto status = it->second->addElement(desc, engine, remote_meta_dlist);
+            const auto status = it->second.addElement(desc, engine, remote_meta_dlist);
             if (status != NIXL_SUCCESS) {
                 return status;
             }
@@ -1742,9 +1744,9 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
 
         // Engine has not been selected yet, try to find a backend that can add an element to the
         // remote metadata
-        const auto backends = data->getBackends(extra_params, *it->second, mem_type);
+        const auto backends = data->getBackends(extra_params, it->second, mem_type);
         for (const auto &backend : backends) {
-            const auto status = it->second->addElement(desc, backend, remote_meta_dlist);
+            const auto status = it->second.addElement(desc, backend, remote_meta_dlist);
             if (status == NIXL_SUCCESS) {
                 NIXL_DEBUG << "Selected backend: " << backend->getType();
                 engine = backend;
