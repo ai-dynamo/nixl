@@ -33,7 +33,7 @@ awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
     // (with a warning log) while keeping multipartUploadThreshold at the user
     // value, so MPU still activates at crtMinLimit — but the effective part
     // size will be 5 MiB regardless.
-    size_t crt_min_limit = getCrtMinLimit(custom_params);
+    const size_t crt_min_limit = getCrtMinLimit(custom_params);
     if (crt_min_limit > 0) {
         config.partSize = crt_min_limit;
         config.multipartUploadThreshold = crt_min_limit;
