@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -164,12 +164,12 @@ nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
             break;
         }
         case nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY: {
-            auto it_cnt = counters_.find(event_name);
+            const auto it_cnt = counters_.find(event_name);
             if (it_cnt != counters_.end()) {
                 it_cnt->second->Increment(event.value_);
             }
 
-            auto it_gauge = gauges_.find(event_name);
+            const auto it_gauge = gauges_.find(event_name);
             if (it_gauge != gauges_.end()) {
                 it_gauge->second->Set(static_cast<double>(event.value_));
             }
