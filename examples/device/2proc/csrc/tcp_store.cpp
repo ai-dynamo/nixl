@@ -6,17 +6,19 @@
 #include "tcp_store.h"
 
 #include <torch/csrc/distributed/c10d/TCPStore.hpp>
-#include <chrono>
 
 namespace tcp_store {
 
-TCPStore::TCPStore(const std::string &host, int port, bool is_master, int timeout_ms) {
+TCPStore::TCPStore(const std::string &host,
+                   int port,
+                   bool is_master,
+                   std::chrono::milliseconds timeout) {
     c10d::TCPStoreOptions opts;
     opts.port = port;
     opts.isServer = is_master;
     opts.numWorkers = 2; // For 2proc example
     opts.waitWorkers = true;
-    opts.timeout = std::chrono::milliseconds(timeout_ms);
+    opts.timeout = timeout;
     opts.multiTenant = false;
 
     store_ = std::make_shared<c10d::TCPStore>(host, opts);
@@ -36,10 +38,10 @@ TCPStore::get(const std::string &key) {
 }
 
 bool
-TCPStore::wait(const std::string &key, int timeout_ms) {
+TCPStore::wait(const std::string &key, std::chrono::milliseconds timeout) {
     try {
         std::vector<std::string> keys = {key};
-        store_->wait(keys, std::chrono::milliseconds(timeout_ms));
+        store_->wait(keys, timeout);
         return true;
     }
     catch (const std::exception &) {

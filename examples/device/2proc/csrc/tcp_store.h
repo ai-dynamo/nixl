@@ -5,8 +5,9 @@
 
 #pragma once
 
-#include <string>
+#include <chrono>
 #include <memory>
+#include <string>
 
 namespace c10d {
 class TCPStore;
@@ -25,9 +26,12 @@ public:
      * @param host Host address (e.g., "127.0.0.1")
      * @param port Port number (e.g., 9998)
      * @param is_master Whether this process should start the server
-     * @param timeout_ms Timeout in milliseconds (default: 30000)
+     * @param timeout Timeout duration (default: 30000ms)
      */
-    TCPStore(const std::string &host, int port, bool is_master, int timeout_ms = 30000);
+    TCPStore(const std::string &host,
+             int port,
+             bool is_master,
+             std::chrono::milliseconds timeout = std::chrono::milliseconds(30000));
     ~TCPStore();
 
     // Prevent copying
@@ -57,11 +61,12 @@ public:
      * Wait for a key to be available in the store.
      *
      * @param key Key to wait for
-     * @param timeout_ms Timeout in milliseconds
+     * @param timeout Timeout duration (default: 30000ms)
      * @return true if key is available, false on timeout
      */
     bool
-    wait(const std::string &key, int timeout_ms = 30000);
+    wait(const std::string &key,
+         std::chrono::milliseconds timeout = std::chrono::milliseconds(30000));
 
     /**
      * Delete a key from the store.

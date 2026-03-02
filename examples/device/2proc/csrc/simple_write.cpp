@@ -166,7 +166,7 @@ run_target(const Config &cfg) {
     std::cout << "[target] Published metadata and descriptors" << std::endl;
 
     // Wait for initiator metadata and establish connection
-    if (!store.wait("NIXL_2PROC/initiator_meta", 30000)) {
+    if (!store.wait("NIXL_2PROC/initiator_meta", std::chrono::milliseconds(30000))) {
         throw std::runtime_error("Timeout waiting for initiator metadata");
     }
     std::string remote_meta = store.get("NIXL_2PROC/initiator_meta");
@@ -284,7 +284,7 @@ run_initiator(const Config &cfg) {
     std::cout << "[initiator] Published metadata, waiting for target..." << std::endl;
 
     // Wait for target metadata and establish connection
-    if (!store.wait("NIXL_2PROC/target_meta", 30000)) {
+    if (!store.wait("NIXL_2PROC/target_meta", std::chrono::milliseconds(30000))) {
         throw std::runtime_error("Timeout waiting for target metadata");
     }
     std::string remote_meta = store.get("NIXL_2PROC/target_meta");
@@ -301,8 +301,8 @@ run_initiator(const Config &cfg) {
     std::cout << "[initiator] Connected to target" << std::endl;
 
     // Wait for target descriptors
-    if (!store.wait("NIXL_2PROC/target_data_descs", 30000) ||
-        !store.wait("NIXL_2PROC/target_signal_descs", 30000)) {
+    if (!store.wait("NIXL_2PROC/target_data_descs", std::chrono::milliseconds(30000)) ||
+        !store.wait("NIXL_2PROC/target_signal_descs", std::chrono::milliseconds(30000))) {
         throw std::runtime_error("Timeout waiting for target descriptors");
     }
     std::string target_data_descs = store.get("NIXL_2PROC/target_data_descs");
