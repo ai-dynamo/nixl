@@ -758,8 +758,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     }
 
     if (extra_params) {
-        if (extra_params->notif.has_value()) {
-            opt_args.notifMsg = extra_params->notif.value();
+        if (extra_params->notif) {
+            opt_args.notifMsg = *extra_params->notif;
             opt_args.hasNotif = true;
         } else if (extra_params->hasNotif) {
             opt_args.notifMsg = extra_params->notifMsg;
@@ -950,8 +950,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     if (extra_params) {
-        if (extra_params->notif.has_value()) {
-            opt_args.notifMsg = extra_params->notif.value();
+        if (extra_params->notif) {
+            opt_args.notifMsg = *extra_params->notif;
             opt_args.hasNotif = true;
         } else if (extra_params->hasNotif) {
             opt_args.notifMsg = extra_params->notifMsg;
@@ -1090,9 +1090,9 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     // Updating the notification based on opt_args
     if (extra_params) {
-        if (extra_params->notif.has_value()) {
-            req_hndl->notifMsg = extra_params->notif.value();
-            opt_args.notifMsg = extra_params->notif.value();
+        if (extra_params->notif) {
+            req_hndl->notifMsg = *extra_params->notif;
+            opt_args.notifMsg = *extra_params->notif;
             req_hndl->hasNotif = true;
             opt_args.hasNotif = true;
         } else if (extra_params->hasNotif) {
