@@ -100,10 +100,7 @@ class nixlAgentData {
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMD;
         backend_map_t backendEngines;
-        std::unordered_map<std::string,
-                           nixlRemoteSection,
-                           std::hash<std::string>,
-                           strEqual>
+        std::unordered_map<std::string, nixlRemoteSection, std::hash<std::string>, strEqual>
             remoteSections;
         std::unique_ptr<nixlTelemetry> telemetry_;
         nixlLocalSection localSection;
