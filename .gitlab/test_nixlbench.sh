@@ -52,7 +52,7 @@ start_etcd_server "/nixl/nixlbench_ci"
 echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}
 
-DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4"
+DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 16384 --max_block_size 16384 --start_batch_size 4 --max_batch_size 4"
 
 run_nixlbench_noetcd() {
     args="$@"
@@ -94,7 +94,7 @@ if $HAS_GPU ; then
     for op_type in READ WRITE; do
         for initiator in $seg_types; do
             for target in $seg_types; do
-                UCCL_RCMODE=1 run_nixlbench_two_workers --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+                run_nixlbench_two_workers --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
             done
         done
     done

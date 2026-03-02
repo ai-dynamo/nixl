@@ -299,6 +299,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         // Using default param values for AZURE_BLOB backend
         backend_params["account_url"] = xferBenchConfig::azure_blob_account_url;
         backend_params["container_name"] = xferBenchConfig::azure_blob_container_name;
+        backend_params["connection_string"] = xferBenchConfig::azure_blob_connection_string;
         std::cout << "AZURE_BLOB backend" << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
@@ -310,6 +311,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
+    delete rt;
+    rt = nullptr;
+
     if (agent) {
         delete agent;
         agent = nullptr;
