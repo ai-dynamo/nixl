@@ -32,11 +32,14 @@ public:
     unsigned numEfaDevices = 0;
 
     /** Return a cached singleton instance of hwInfo */
-    static const hwInfo &
+    [[nodiscard]] static const hwInfo &
     instance();
 
 private:
     hwInfo();
+    hwInfo(const hwInfo &) = delete;
+    hwInfo &
+    operator=(const hwInfo &) = delete;
 };
 
 } // namespace nixl
