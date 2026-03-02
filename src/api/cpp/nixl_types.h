@@ -141,11 +141,6 @@ enum class nixl_api_version : unsigned int {
 };
 
 /**
- * @brief Alias for the supported public API version.
- */
-inline constexpr nixl_api_version nixlApiVersionV1 = nixl_api_version::V1;
-
-/**
  * @brief A constant to define the default metadata label for ETCD server key.
  *        Appended to the agent's key prefix to form the full key for metadata.
  */

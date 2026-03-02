@@ -42,7 +42,7 @@ class nixlAgent {
          */
         static constexpr nixl_api_version
         getApiVersion() {
-            return nixlApiVersionV1;
+            return nixl_api_version::V1;
         }
 
         /*** Initialization and Registering Methods ***/
