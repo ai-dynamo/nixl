@@ -227,10 +227,6 @@ public:
     void
     memDereg(nixlUcxMem &mem);
 
-    /* GPU signal management */
-    [[nodiscard]] size_t
-    getGpuSignalSize() const;
-
     void
     warnAboutHardwareSupportMismatch() const;
 

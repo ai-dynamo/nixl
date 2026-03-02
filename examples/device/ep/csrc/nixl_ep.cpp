@@ -693,10 +693,6 @@ void Buffer::_nixl_agent_init() {
     barrier_cnt_dlist.addDesc(nixlBlobDesc((uintptr_t)(sync_count_ptr), max_num_ranks * sizeof(int), get_local_device_id(), ""));
     EP_HOST_ASSERT(agent->registerMem(barrier_cnt_dlist) == NIXL_SUCCESS);
 
-    size_t signal_size = 0;
-    EP_HOST_ASSERT(nixl_agent_info->agent->getGpuSignalSize(signal_size, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
-    EP_HOST_ASSERT(signal_size == sizeof(uint64_t));
-
     if (getenv("NIXL_ETCD_ENDPOINTS")) {
         status = nixl_agent_info->agent->sendLocalMD();
         if (status != NIXL_SUCCESS) {
