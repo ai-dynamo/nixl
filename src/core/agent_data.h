@@ -99,7 +99,7 @@ class nixlAgentData {
         std::exception_ptr commThreadException_;
 
         // The order of the following data members is crucial for destruction.
-        // Bookkeping for local connection metadata and user handles per backend
+        // Bookkeeping for local connection metadata and user handles per backend
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMD;
         backend_map_t backendEngines;
