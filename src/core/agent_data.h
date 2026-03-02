@@ -103,7 +103,7 @@ class nixlAgentData {
         std::unordered_map<std::string, nixlRemoteSection, std::hash<std::string>, strEqual>
             remoteSections;
         std::unique_ptr<nixlTelemetry> telemetry_;
-        nixlLocalSection localSection;
+        nixlLocalSection localSection_;
 
         void
         commWorker(nixlAgent &myAgent) noexcept;
