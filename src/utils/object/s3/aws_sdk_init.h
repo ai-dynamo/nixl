@@ -19,6 +19,7 @@
 #define OBJ_PLUGIN_AWS_SDK_INIT_H
 
 #include <aws/core/Aws.h>
+#include "aws_sdk_log.h"
 #include <mutex>
 #include <cstdlib>
 
@@ -39,6 +40,13 @@ initAWSSDK() {
 
     std::call_once(aws_init_flag, []() {
         aws_options = new Aws::SDKOptions();
+        const auto log_level = getNixlAwsLogLevel();
+        aws_options->loggingOptions.logger_create_fn = [log_level]() {
+            return std::make_shared<NixlAwsLogger>(log_level);
+        };
+        aws_options->loggingOptions.crt_logger_create_fn = [log_level]() {
+            return std::make_shared<NixlCrtLogSystem>(log_level);
+        };
         Aws::InitAPI(*aws_options);
 
         // Register cleanup at program exit
