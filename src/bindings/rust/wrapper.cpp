@@ -721,8 +721,7 @@ nixl_capi_opt_args_get_skip_desc_merge(nixl_capi_opt_args_t args, bool* skip_mer
 }
 
 nixl_capi_status_t
-nixl_capi_opt_args_set_track_flags(nixl_capi_opt_args_t args, uint32_t track_flags)
-{
+nixl_capi_opt_args_set_track_flags(nixl_capi_opt_args_t args, uint32_t track_flags) {
     if (!args) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
@@ -736,8 +735,7 @@ nixl_capi_opt_args_set_track_flags(nixl_capi_opt_args_t args, uint32_t track_fla
 }
 
 nixl_capi_status_t
-nixl_capi_opt_args_get_track_flags(nixl_capi_opt_args_t args, uint32_t* track_flags)
-{
+nixl_capi_opt_args_get_track_flags(nixl_capi_opt_args_t args, uint32_t *track_flags) {
     if (!args || !track_flags) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
@@ -1588,7 +1586,10 @@ nixl_capi_get_xfer_status(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl
 
   try {
     nixl_status_t ret = agent->inner->getXferStatus(req_hndl->req);
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : ret == NIXL_IN_PROG || ret == NIXL_ERR_IN_PROG ? NIXL_CAPI_IN_PROG : NIXL_CAPI_ERROR_BACKEND;
+    if (ret == NIXL_SUCCESS) return NIXL_CAPI_SUCCESS;
+    if (ret == NIXL_IN_PROG || ret == NIXL_IN_PROG_WITH_ERR) return NIXL_CAPI_IN_PROG;
+    if (ret == NIXL_ERR_INVALID_PARAM) return NIXL_CAPI_ERROR_INVALID_PARAM;
+    return NIXL_CAPI_ERROR_BACKEND;
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -1596,8 +1597,7 @@ nixl_capi_get_xfer_status(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl
 }
 
 nixl_capi_status_t
-nixl_capi_xfer_entry_events_create(nixl_capi_xfer_entry_events_t* events)
-{
+nixl_capi_xfer_entry_events_create(nixl_capi_xfer_entry_events_t *events) {
     if (!events) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
@@ -1611,8 +1611,7 @@ nixl_capi_xfer_entry_events_create(nixl_capi_xfer_entry_events_t* events)
 }
 
 nixl_capi_status_t
-nixl_capi_xfer_entry_events_destroy(nixl_capi_xfer_entry_events_t events)
-{
+nixl_capi_xfer_entry_events_destroy(nixl_capi_xfer_entry_events_t events) {
     if (!events) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
@@ -1626,8 +1625,7 @@ nixl_capi_xfer_entry_events_destroy(nixl_capi_xfer_entry_events_t events)
 }
 
 nixl_capi_status_t
-nixl_capi_xfer_entry_events_size(nixl_capi_xfer_entry_events_t events, size_t* size)
-{
+nixl_capi_xfer_entry_events_size(nixl_capi_xfer_entry_events_t events, size_t *size) {
     if (!events || !size) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
@@ -1641,8 +1639,10 @@ nixl_capi_xfer_entry_events_size(nixl_capi_xfer_entry_events_t events, size_t* s
 }
 
 nixl_capi_status_t
-nixl_capi_xfer_entry_events_get(nixl_capi_xfer_entry_events_t events, size_t index, size_t* idx_out, int* status_out)
-{
+nixl_capi_xfer_entry_events_get(nixl_capi_xfer_entry_events_t events,
+                                size_t index,
+                                size_t *idx_out,
+                                int *status_out) {
     if (!events || !idx_out || !status_out) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
@@ -1650,7 +1650,7 @@ nixl_capi_xfer_entry_events_get(nixl_capi_xfer_entry_events_t events, size_t ind
         if (index >= events->events.size()) {
             return NIXL_CAPI_ERROR_INVALID_PARAM;
         }
-        const auto& e = events->events[index];
+        const auto &e = events->events[index];
         *idx_out = e.index;
         *status_out = static_cast<int>(e.status);
         return NIXL_CAPI_SUCCESS;
@@ -1661,14 +1661,18 @@ nixl_capi_xfer_entry_events_get(nixl_capi_xfer_entry_events_t events, size_t ind
 }
 
 nixl_capi_status_t
-nixl_capi_get_xfer_status_with_events(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl, nixl_capi_xfer_entry_events_t events)
-{
+nixl_capi_get_xfer_status_with_events(nixl_capi_agent_t agent,
+                                      nixl_capi_xfer_req_t req_hndl,
+                                      nixl_capi_xfer_entry_events_t events) {
     if (!agent || !req_hndl || !events) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
     try {
         nixl_status_t ret = agent->inner->getXferStatus(req_hndl->req, events->events);
-        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : ret == NIXL_IN_PROG || ret == NIXL_ERR_IN_PROG ? NIXL_CAPI_IN_PROG : NIXL_CAPI_ERROR_BACKEND;
+        if (ret == NIXL_SUCCESS) return NIXL_CAPI_SUCCESS;
+        if (ret == NIXL_IN_PROG || ret == NIXL_IN_PROG_WITH_ERR) return NIXL_CAPI_IN_PROG;
+        if (ret == NIXL_ERR_INVALID_PARAM) return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_ERROR_BACKEND;
     }
     catch (...) {
         return NIXL_CAPI_ERROR_BACKEND;

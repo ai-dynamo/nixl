@@ -33,6 +33,10 @@ struct nixlBackendOptionalArgs {
     nixl_blob_t notifMsg;
     bool        hasNotif = false;
     nixl_blob_t customParam;
+    /** Per-entry tracking mode for this transfer. Default 0 = no per-entry events.
+     *  Set NIXL_XFER_TRACK_ERRORS to append error events, NIXL_XFER_TRACK_SUCCESSES
+     *  to also append success events. Propagated from nixlAgentOptionalArgs::trackFlags
+     *  by the agent during prepXfer/postXfer. */
     nixl_xfer_track_flags_t trackFlags = 0;
 };
 

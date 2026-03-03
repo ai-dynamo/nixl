@@ -67,8 +67,9 @@ enum nixl_status_t {
     NIXL_ERR_REMOTE_DISCONNECT = -10,
     NIXL_ERR_CANCELED = -11,
     NIXL_ERR_NO_TELEMETRY = -12,
-    /** In progress: use slow path / per-entry status. Kept negative so (status < 0) implies need to check. */
-    NIXL_ERR_IN_PROG = -13
+    /** In progress on the per-entry events path. Kept negative so (status < 0) implies need to
+       check. */
+    NIXL_IN_PROG_WITH_ERR = -13
 };
 
 /**
@@ -79,6 +80,7 @@ enum nixl_xfer_track_flag_t : uint32_t {
     NIXL_XFER_TRACK_ERRORS = 1u << 0,
     NIXL_XFER_TRACK_SUCCESSES = 1u << 1,
 };
+
 using nixl_xfer_track_flags_t = uint32_t;
 
 /**
@@ -87,9 +89,11 @@ using nixl_xfer_track_flags_t = uint32_t;
  *        user compares event list length to previous call to see new completions.
  */
 struct nixl_xfer_entry_event_t {
-    size_t index;        /**< Descriptor index in the transfer. */
-    nixl_status_t status; /**< NIXL_SUCCESS, error code, or NIXL_IN_PROG for that entry. */
+    size_t index; /**< Descriptor index in the transfer. */
+    nixl_status_t status; /**< NIXL_SUCCESS or an error code; never NIXL_IN_PROG (entries are only
+                             appended once complete). */
 };
+
 using nixl_xfer_entry_events_t = std::deque<nixl_xfer_entry_event_t>;
 
 /**

@@ -787,15 +787,21 @@ nixl_capi_xfer_entry_events_size(nixl_capi_xfer_entry_events_t events, size_t *s
 }
 
 nixl_capi_status_t
-nixl_capi_xfer_entry_events_get(nixl_capi_xfer_entry_events_t events, size_t index, size_t *idx_out, int *status_out) {
+nixl_capi_xfer_entry_events_get(nixl_capi_xfer_entry_events_t events,
+                                size_t index,
+                                size_t *idx_out,
+                                int *status_out) {
     using fn_t = nixl_capi_status_t (*)(nixl_capi_xfer_entry_events_t, size_t, size_t *, int *);
     static fn_t real = (fn_t)resolve("nixl_capi_xfer_entry_events_get");
     return real(events, index, idx_out, status_out);
 }
 
 nixl_capi_status_t
-nixl_capi_get_xfer_status_with_events(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl, nixl_capi_xfer_entry_events_t events) {
-    using fn_t = nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t, nixl_capi_xfer_entry_events_t);
+nixl_capi_get_xfer_status_with_events(nixl_capi_agent_t agent,
+                                      nixl_capi_xfer_req_t req_hndl,
+                                      nixl_capi_xfer_entry_events_t events) {
+    using fn_t = nixl_capi_status_t (*)(
+        nixl_capi_agent_t, nixl_capi_xfer_req_t, nixl_capi_xfer_entry_events_t);
     static fn_t real = (fn_t)resolve("nixl_capi_get_xfer_status_with_events");
     return real(agent, req_hndl, events);
 }

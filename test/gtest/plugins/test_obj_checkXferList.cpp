@@ -41,28 +41,29 @@ namespace gtest::plugins::obj::checkxferlist {
  */
 
 // Get endpoint override from environment variable for LocalStack testing
-static std::string getEndpointOverride() {
-    const char* endpoint = std::getenv("AWS_ENDPOINT_OVERRIDE");
+static std::string
+getEndpointOverride() {
+    const char *endpoint = std::getenv("AWS_ENDPOINT_OVERRIDE");
     return endpoint ? endpoint : "";
 }
 
-static nixl_b_params_t obj_params = {
-    {"crtMinLimit", "0"},
-    {"use_virtual_addressing", "false"},
-    {"scheme", "http"},
-    {"endpoint_override", getEndpointOverride()}
-};
+static nixl_b_params_t obj_params = {{"crtMinLimit", "0"},
+                                     {"use_virtual_addressing", "false"},
+                                     {"scheme", "http"},
+                                     {"endpoint_override", getEndpointOverride()}};
 static const std::string local_agent_name = "Agent1";
 static const nixlBackendInitParams obj_test_params = {.localAgent = local_agent_name,
-                                               .type = "OBJ",
-                                               .customParams = &obj_params,
-                                               .enableProgTh = false,
-                                               .pthrDelay = 0,
-                                               .syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW};
+                                                      .type = "OBJ",
+                                                      .customParams = &obj_params,
+                                                      .enableProgTh = false,
+                                                      .pthrDelay = 0,
+                                                      .syncMode =
+                                                          nixl_thread_sync_t::NIXL_THREAD_SYNC_RW};
 
 // Helper to check if status indicates transfer is still in progress
-static bool isInProgress(nixl_status_t status) {
-    return status == NIXL_IN_PROG || status == NIXL_ERR_IN_PROG;
+static bool
+isInProgress(nixl_status_t status) {
+    return status == NIXL_IN_PROG || status == NIXL_IN_PROG_WITH_ERR;
 }
 
 class ObjCheckXferListTest : public setupBackendTestFixture {
@@ -75,8 +76,12 @@ protected:
 // Test batch transfer with all entries succeeding
 TEST_P(ObjCheckXferListTest, BatchTransferAllSuccess) {
     const int num_buffers = 3;
-    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
-        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, false, num_buffers);
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
+                                                localBackendEngine_,
+                                                local_agent_name,
+                                                local_agent_name,
+                                                false,
+                                                num_buffers);
 
     transfer.setLocalMem();
 
@@ -85,23 +90,21 @@ TEST_P(ObjCheckXferListTest, BatchTransferAllSuccess) {
 
     // Prepare and perform write transfer
     nixlBackendReqH *handle = nullptr;
-    auto prep_status = localBackendEngine_->prepXfer(
-        NIXL_WRITE,
-        transfer.getLocalMeta(),
-        transfer.getRemoteMeta(),
-        local_agent_name,
-        handle,
-        &opt_args);
+    auto prep_status = localBackendEngine_->prepXfer(NIXL_WRITE,
+                                                     transfer.getLocalMeta(),
+                                                     transfer.getRemoteMeta(),
+                                                     local_agent_name,
+                                                     handle,
+                                                     &opt_args);
     ASSERT_EQ(prep_status, NIXL_SUCCESS);
     ASSERT_NE(handle, nullptr);
 
-    auto status = localBackendEngine_->postXfer(
-        NIXL_WRITE,
-        transfer.getLocalMeta(),
-        transfer.getRemoteMeta(),
-        local_agent_name,
-        handle,
-        &opt_args);
+    auto status = localBackendEngine_->postXfer(NIXL_WRITE,
+                                                transfer.getLocalMeta(),
+                                                transfer.getRemoteMeta(),
+                                                local_agent_name,
+                                                handle,
+                                                &opt_args);
 
     ASSERT_EQ(status, NIXL_IN_PROG);
 
@@ -133,8 +136,12 @@ TEST_P(ObjCheckXferListTest, BatchTransferAllSuccess) {
 // Test that shared_future pattern allows multiple calls
 TEST_P(ObjCheckXferListTest, SharedFutureMultipleCalls) {
     const int num_buffers = 2;
-    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
-        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, false, num_buffers);
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
+                                                localBackendEngine_,
+                                                local_agent_name,
+                                                local_agent_name,
+                                                false,
+                                                num_buffers);
 
     transfer.setLocalMem();
 
@@ -142,23 +149,21 @@ TEST_P(ObjCheckXferListTest, SharedFutureMultipleCalls) {
     opt_args.trackFlags = NIXL_XFER_TRACK_ERRORS | NIXL_XFER_TRACK_SUCCESSES;
 
     nixlBackendReqH *handle = nullptr;
-    auto prep_status = localBackendEngine_->prepXfer(
-        NIXL_WRITE,
-        transfer.getLocalMeta(),
-        transfer.getRemoteMeta(),
-        local_agent_name,
-        handle,
-        &opt_args);
+    auto prep_status = localBackendEngine_->prepXfer(NIXL_WRITE,
+                                                     transfer.getLocalMeta(),
+                                                     transfer.getRemoteMeta(),
+                                                     local_agent_name,
+                                                     handle,
+                                                     &opt_args);
     ASSERT_EQ(prep_status, NIXL_SUCCESS);
     ASSERT_NE(handle, nullptr);
 
-    auto status = localBackendEngine_->postXfer(
-        NIXL_WRITE,
-        transfer.getLocalMeta(),
-        transfer.getRemoteMeta(),
-        local_agent_name,
-        handle,
-        &opt_args);
+    auto status = localBackendEngine_->postXfer(NIXL_WRITE,
+                                                transfer.getLocalMeta(),
+                                                transfer.getRemoteMeta(),
+                                                local_agent_name,
+                                                handle,
+                                                &opt_args);
 
     ASSERT_EQ(status, NIXL_IN_PROG);
     ASSERT_NE(handle, nullptr);
@@ -194,8 +199,12 @@ TEST_P(ObjCheckXferListTest, SharedFutureMultipleCalls) {
 // Test result caching works correctly
 TEST_P(ObjCheckXferListTest, ResultCaching) {
     const int num_buffers = 3;
-    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
-        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, false, num_buffers);
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
+                                                localBackendEngine_,
+                                                local_agent_name,
+                                                local_agent_name,
+                                                false,
+                                                num_buffers);
 
     transfer.setLocalMem();
 
@@ -203,23 +212,21 @@ TEST_P(ObjCheckXferListTest, ResultCaching) {
     opt_args.trackFlags = NIXL_XFER_TRACK_ERRORS | NIXL_XFER_TRACK_SUCCESSES;
 
     nixlBackendReqH *handle = nullptr;
-    auto prep_status = localBackendEngine_->prepXfer(
-        NIXL_WRITE,
-        transfer.getLocalMeta(),
-        transfer.getRemoteMeta(),
-        local_agent_name,
-        handle,
-        &opt_args);
+    auto prep_status = localBackendEngine_->prepXfer(NIXL_WRITE,
+                                                     transfer.getLocalMeta(),
+                                                     transfer.getRemoteMeta(),
+                                                     local_agent_name,
+                                                     handle,
+                                                     &opt_args);
     ASSERT_EQ(prep_status, NIXL_SUCCESS);
     ASSERT_NE(handle, nullptr);
 
-    auto status = localBackendEngine_->postXfer(
-        NIXL_WRITE,
-        transfer.getLocalMeta(),
-        transfer.getRemoteMeta(),
-        local_agent_name,
-        handle,
-        &opt_args);
+    auto status = localBackendEngine_->postXfer(NIXL_WRITE,
+                                                transfer.getLocalMeta(),
+                                                transfer.getRemoteMeta(),
+                                                local_agent_name,
+                                                handle,
+                                                &opt_args);
 
     ASSERT_EQ(status, NIXL_IN_PROG);
 
@@ -254,8 +261,12 @@ TEST_P(ObjCheckXferListTest, ResultCaching) {
 // Test per-entry status collection via append-only events
 TEST_P(ObjCheckXferListTest, PerEntryStatus) {
     const int num_buffers = 4;
-    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
-        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, false, num_buffers);
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
+                                                localBackendEngine_,
+                                                local_agent_name,
+                                                local_agent_name,
+                                                false,
+                                                num_buffers);
 
     transfer.setLocalMem();
 
@@ -263,23 +274,21 @@ TEST_P(ObjCheckXferListTest, PerEntryStatus) {
     opt_args.trackFlags = NIXL_XFER_TRACK_ERRORS | NIXL_XFER_TRACK_SUCCESSES;
 
     nixlBackendReqH *handle = nullptr;
-    auto prep_status = localBackendEngine_->prepXfer(
-        NIXL_WRITE,
-        transfer.getLocalMeta(),
-        transfer.getRemoteMeta(),
-        local_agent_name,
-        handle,
-        &opt_args);
+    auto prep_status = localBackendEngine_->prepXfer(NIXL_WRITE,
+                                                     transfer.getLocalMeta(),
+                                                     transfer.getRemoteMeta(),
+                                                     local_agent_name,
+                                                     handle,
+                                                     &opt_args);
     ASSERT_EQ(prep_status, NIXL_SUCCESS);
     ASSERT_NE(handle, nullptr);
 
-    auto status = localBackendEngine_->postXfer(
-        NIXL_WRITE,
-        transfer.getLocalMeta(),
-        transfer.getRemoteMeta(),
-        local_agent_name,
-        handle,
-        &opt_args);
+    auto status = localBackendEngine_->postXfer(NIXL_WRITE,
+                                                transfer.getLocalMeta(),
+                                                transfer.getRemoteMeta(),
+                                                local_agent_name,
+                                                handle,
+                                                &opt_args);
 
     ASSERT_EQ(status, NIXL_IN_PROG);
 
@@ -309,8 +318,12 @@ TEST_P(ObjCheckXferListTest, PerEntryStatus) {
 // Test compatibility with existing checkXfer API
 TEST_P(ObjCheckXferListTest, CheckXferCompatibility) {
     const int num_buffers = 2;
-    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
-        localBackendEngine_, localBackendEngine_, local_agent_name, local_agent_name, false, num_buffers);
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
+                                                localBackendEngine_,
+                                                local_agent_name,
+                                                local_agent_name,
+                                                false,
+                                                num_buffers);
 
     transfer.setLocalMem();
 
@@ -318,23 +331,21 @@ TEST_P(ObjCheckXferListTest, CheckXferCompatibility) {
     opt_args.trackFlags = NIXL_XFER_TRACK_ERRORS | NIXL_XFER_TRACK_SUCCESSES;
 
     nixlBackendReqH *handle = nullptr;
-    auto prep_status = localBackendEngine_->prepXfer(
-        NIXL_WRITE,
-        transfer.getLocalMeta(),
-        transfer.getRemoteMeta(),
-        local_agent_name,
-        handle,
-        &opt_args);
+    auto prep_status = localBackendEngine_->prepXfer(NIXL_WRITE,
+                                                     transfer.getLocalMeta(),
+                                                     transfer.getRemoteMeta(),
+                                                     local_agent_name,
+                                                     handle,
+                                                     &opt_args);
     ASSERT_EQ(prep_status, NIXL_SUCCESS);
     ASSERT_NE(handle, nullptr);
 
-    auto status = localBackendEngine_->postXfer(
-        NIXL_WRITE,
-        transfer.getLocalMeta(),
-        transfer.getRemoteMeta(),
-        local_agent_name,
-        handle,
-        &opt_args);
+    auto status = localBackendEngine_->postXfer(NIXL_WRITE,
+                                                transfer.getLocalMeta(),
+                                                transfer.getRemoteMeta(),
+                                                local_agent_name,
+                                                handle,
+                                                &opt_args);
 
     ASSERT_EQ(status, NIXL_IN_PROG);
 
@@ -376,15 +387,15 @@ TEST_P(ObjCheckXferListTest, PartialFailureOnRead) {
     }
 
     // Register object keys - use unique keys for this test
-    std::vector<nixlBackendMD*> obj_metadata(num_buffers);
+    std::vector<nixlBackendMD *> obj_metadata(num_buffers);
     std::vector<std::string> obj_keys(num_buffers);
 
     for (int i = 0; i < num_buffers; ++i) {
         obj_keys[i] = "partial_failure_test_obj_" + std::to_string(i) + "_" +
-                      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
 
         nixlBlobDesc desc;
-        desc.addr = 0;  // offset
+        desc.addr = 0; // offset
         desc.len = buffer_size;
         desc.devId = i;
 
@@ -407,7 +418,7 @@ TEST_P(ObjCheckXferListTest, PartialFailureOnRead) {
     nixl_meta_dlist_t dst_descs(OBJ_SEG);
     for (int i = 0; i < num_buffers; ++i) {
         nixlMetaDesc desc;
-        desc.addr = 0;  // offset in object
+        desc.addr = 0; // offset in object
         desc.len = buffer_size;
         desc.devId = i;
         desc.metadataP = obj_metadata[i];
@@ -419,7 +430,7 @@ TEST_P(ObjCheckXferListTest, PartialFailureOnRead) {
     nixl_meta_dlist_t partial_src_descs(DRAM_SEG);
     nixl_meta_dlist_t partial_dst_descs(OBJ_SEG);
 
-    for (int i = 0; i < 2; ++i) {  // Only first 2
+    for (int i = 0; i < 2; ++i) { // Only first 2
         nixlMetaDesc src_desc;
         src_desc.addr = reinterpret_cast<uintptr_t>(local_buffers[i].data());
         src_desc.len = buffer_size;
@@ -500,8 +511,7 @@ TEST_P(ObjCheckXferListTest, PartialFailureOnRead) {
     // Build index->status map from events (order may vary)
     std::vector<nixl_status_t> entry_status(num_buffers, NIXL_IN_PROG);
     for (const auto &e : events) {
-        if (e.index < num_buffers)
-            entry_status[e.index] = e.status;
+        if (e.index < num_buffers) entry_status[e.index] = e.status;
     }
 
     EXPECT_EQ(entry_status[0], NIXL_SUCCESS) << "Entry 0 should have succeeded";

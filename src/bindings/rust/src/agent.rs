@@ -996,7 +996,7 @@ impl Agent {
             nixl_capi_get_xfer_status_with_events(
                 self.inner.write().unwrap().handle.as_ptr(),
                 req.handle(),
-                events.inner.as_ptr(),
+                events.as_ptr(),
             )
         };
 

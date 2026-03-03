@@ -97,12 +97,12 @@ public:
             EXPECT_TRUE(srcMem_[i]->checkIncreasing(LOCAL_BUF_BYTE + i));
     }
 
-    const nixl_meta_dlist_t&
+    const nixl_meta_dlist_t &
     getLocalMeta() const {
         return *srcDescs_;
     }
 
-    const nixl_meta_dlist_t&
+    const nixl_meta_dlist_t &
     getRemoteMeta() const {
         return *dstDescs_;
     }

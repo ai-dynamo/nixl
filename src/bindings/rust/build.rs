@@ -223,7 +223,6 @@ fn build_stubs(cc_builder: &mut cc::Build) {
     // Get the output path for bindings
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // Generate bindings with minimal configuration
     bindgen::Builder::default()
         .header("wrapper.h")
         .clang_arg("-std=c++17")

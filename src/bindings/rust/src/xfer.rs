@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,15 +36,17 @@ impl XferEntryEvents {
         }
     }
 
-    /// Returns the number of events.
-    pub fn len(&self) -> Result<usize, NixlError> {
+    /// Returns the number of events accumulated so far.
+    pub fn len(&self) -> usize {
         let mut size = 0;
         let status = unsafe { nixl_capi_xfer_entry_events_size(self.inner.as_ptr(), &mut size) };
-        match status {
-            NIXL_CAPI_SUCCESS => Ok(size),
-            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            _ => Err(NixlError::BackendError),
-        }
+        assert_eq!(status, NIXL_CAPI_SUCCESS, "nixl_capi_xfer_entry_events_size failed");
+        size
+    }
+
+    /// Returns `true` if no events have been accumulated yet.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Returns the event at the given index as (descriptor_index, status).
@@ -71,8 +73,12 @@ impl XferEntryEvents {
         XferEntryEventsIterator {
             events: self,
             index: 0,
-            length: self.len().unwrap_or(0),
+            length: self.len(),
         }
+    }
+
+    pub(crate) fn as_ptr(&self) -> *mut bindings::nixl_capi_xfer_entry_events_s {
+        self.inner.as_ptr()
     }
 }
 
@@ -116,8 +122,10 @@ impl Iterator for XferEntryEventsIterator<'_> {
     }
 }
 
+// SAFETY: XferEntryEvents owns its heap allocation and can be moved between threads.
+// It is NOT Sync: the underlying deque is mutated by get_xfer_status_with_events
+// and has no internal synchronization. Use Mutex<XferEntryEvents> for multi-thread sharing.
 unsafe impl Send for XferEntryEvents {}
-unsafe impl Sync for XferEntryEvents {}
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq)]

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -103,7 +103,7 @@ typedef struct nixl_capi_agent_config_s {
 } nixl_capi_agent_config_t;
 
 // Per-entry tracking flags (match nixl_xfer_track_flag_t)
-#define NIXL_CAPI_XFER_TRACK_ERRORS   (1u << 0)
+#define NIXL_CAPI_XFER_TRACK_ERRORS (1u << 0)
 #define NIXL_CAPI_XFER_TRACK_SUCCESSES (1u << 1)
 
 // Transfer request functions
@@ -114,7 +114,7 @@ typedef enum {
 
 // Opaque handle for reusable per-entry events (avoids allocation in polling loops)
 struct nixl_capi_xfer_entry_events_s;
-typedef struct nixl_capi_xfer_entry_events_s* nixl_capi_xfer_entry_events_t;
+typedef struct nixl_capi_xfer_entry_events_s *nixl_capi_xfer_entry_events_t;
 
 // Core API functions
 
@@ -198,8 +198,10 @@ nixl_capi_status_t nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, b
 nixl_capi_status_t nixl_capi_opt_args_get_has_notif(nixl_capi_opt_args_t args, bool* has_notif);
 nixl_capi_status_t nixl_capi_opt_args_set_skip_desc_merge(nixl_capi_opt_args_t args, bool skip_merge);
 nixl_capi_status_t nixl_capi_opt_args_get_skip_desc_merge(nixl_capi_opt_args_t args, bool* skip_merge);
-nixl_capi_status_t nixl_capi_opt_args_set_track_flags(nixl_capi_opt_args_t args, uint32_t track_flags);
-nixl_capi_status_t nixl_capi_opt_args_get_track_flags(nixl_capi_opt_args_t args, uint32_t* track_flags);
+nixl_capi_status_t
+nixl_capi_opt_args_set_track_flags(nixl_capi_opt_args_t args, uint32_t track_flags);
+nixl_capi_status_t
+nixl_capi_opt_args_get_track_flags(nixl_capi_opt_args_t args, uint32_t *track_flags);
 nixl_capi_status_t
 nixl_capi_opt_args_set_ip_addr(nixl_capi_opt_args_t args, const char *ip_addr);
 nixl_capi_status_t
@@ -286,11 +288,21 @@ nixl_capi_status_t nixl_capi_post_xfer_req(
 
 nixl_capi_status_t nixl_capi_get_xfer_status(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl);
 
-nixl_capi_status_t nixl_capi_xfer_entry_events_create(nixl_capi_xfer_entry_events_t* events);
-nixl_capi_status_t nixl_capi_xfer_entry_events_destroy(nixl_capi_xfer_entry_events_t events);
-nixl_capi_status_t nixl_capi_xfer_entry_events_size(nixl_capi_xfer_entry_events_t events, size_t* size);
-nixl_capi_status_t nixl_capi_xfer_entry_events_get(nixl_capi_xfer_entry_events_t events, size_t index, size_t* idx_out, int* status_out);
-nixl_capi_status_t nixl_capi_get_xfer_status_with_events(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl, nixl_capi_xfer_entry_events_t events);
+nixl_capi_status_t
+nixl_capi_xfer_entry_events_create(nixl_capi_xfer_entry_events_t *events);
+nixl_capi_status_t
+nixl_capi_xfer_entry_events_destroy(nixl_capi_xfer_entry_events_t events);
+nixl_capi_status_t
+nixl_capi_xfer_entry_events_size(nixl_capi_xfer_entry_events_t events, size_t *size);
+nixl_capi_status_t
+nixl_capi_xfer_entry_events_get(nixl_capi_xfer_entry_events_t events,
+                                size_t index,
+                                size_t *idx_out,
+                                int *status_out);
+nixl_capi_status_t
+nixl_capi_get_xfer_status_with_events(nixl_capi_agent_t agent,
+                                      nixl_capi_xfer_req_t req_hndl,
+                                      nixl_capi_xfer_entry_events_t events);
 
 nixl_capi_status_t
 nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
