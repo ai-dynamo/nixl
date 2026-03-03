@@ -20,7 +20,7 @@
  * This client presents Put and GetObject interfaces to enable RDMA for S3-compatible storage using
  * the cuObject API
  */
-class awsS3DellObsClient : public awsS3AccelClient, public iS3RdmaClient {
+class awsS3DellObsClient : public awsS3AccelClient, public iDellS3RdmaClient {
 public:
     /**
      * Constructor that creates an AWS S3 client for use with Dell ObjectScale from custom

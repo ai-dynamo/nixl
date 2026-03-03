@@ -15,9 +15,9 @@
  * Interface for S3 clients that support RDMA operations.
  * Only Dell-specific clients implement this interface.
  */
-class iS3RdmaClient {
+class iDellS3RdmaClient {
 public:
-    virtual ~iS3RdmaClient() = default;
+    virtual ~iDellS3RdmaClient() = default;
 
     /**
      * Asynchronously put an object to S3 using RDMA.

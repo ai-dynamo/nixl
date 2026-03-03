@@ -30,7 +30,6 @@ This engine requires the CUDA Toolkit version 13.1.1 or later to be installed.
 [CUDA GDS Install and Setup](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html)
 
 The CUDA toolkit provides the CUObject Client library, which is required for this engine to function.  The library is included in the CUDA Toolkit installation.
-```
 
 This engine requires the CUDA Toolkit version 13.1.1 or later to be installed.
 

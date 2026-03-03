@@ -473,7 +473,8 @@ S3DellObsObjEngineImpl::prepXfer(const nixl_xfer_op_t &operation,
             ssize_t cuda_status =
                 cuClient_->cuObjGet(&req.ctx, (void *)req.addr, req.size, req.offset);
             if (cuda_status < 0) {
-                NIXL_ERROR << "cuObjGet failed with status: " << cuda_status;
+                NIXL_ERROR << "cuObjGet failed with status: " << cuda_status << ", errno: " << errno
+                           << " (" << strerror(errno) << ")";
                 return NIXL_ERR_BACKEND;
             }
         }
@@ -523,9 +524,9 @@ S3DellObsObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
         // S3 client interface signals completion via a callback, but NIXL API polls request handle
         // for the status code. Use future/promise pair to bridge the gap.
         // Cast to RDMA-capable client to access RDMA methods
-        auto rdmaClient = dynamic_cast<iS3RdmaClient *>(s3Client_.get());
+        auto rdmaClient = dynamic_cast<iDellS3RdmaClient *>(s3Client_.get());
         if (!rdmaClient) {
-            NIXL_ERROR << "Dell RDMA operations require iS3RdmaClient";
+            NIXL_ERROR << "Dell RDMA operations require iDellS3RdmaClient";
             status_promise->set_value(NIXL_ERR_BACKEND);
             return NIXL_IN_PROG;
         }

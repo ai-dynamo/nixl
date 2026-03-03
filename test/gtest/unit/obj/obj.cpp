@@ -145,7 +145,7 @@ protected:
 };
 
 // Dell-specific mock S3 client with RDMA support
-class mockDellS3Client : public mockS3Client, public iS3RdmaClient {
+class mockDellS3Client : public mockS3Client, public iDellS3RdmaClient {
 public:
     mockDellS3Client() = default;
 
