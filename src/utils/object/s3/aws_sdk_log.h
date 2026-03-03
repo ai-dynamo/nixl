@@ -15,16 +15,18 @@
  * limitations under the License.
  */
 
-#ifndef OBJ_PLUGIN_AWS_SDK_LOG_H
-#define OBJ_PLUGIN_AWS_SDK_LOG_H
+#ifndef NIXL_SRC_UTILS_OBJECT_S3_AWS_SDK_LOG_H
+#define NIXL_SRC_UTILS_OBJECT_S3_AWS_SDK_LOG_H
 
 #include <aws/core/utils/logging/LogSystemInterface.h>
 #include <aws/core/utils/logging/LogLevel.h>
+#include <aws/core/utils/logging/CRTLogSystem.h>
 #include <atomic>
 #include <cctype>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include "common/nixl_log.h"
 
@@ -144,6 +146,88 @@ private:
     }
 };
 
+/**
+ * CRT logger that routes aws-c-* runtime messages through NIXL's logging macros.
+ *
+ * The AWS SDK C++ CRT layer (aws-c-s3, aws-c-http, aws-c-common) uses a separate
+ * logging interface (CRTLogSystemInterface) from the SDK C++ layer (LogSystemInterface).
+ * This class bridges that interface to NIXL macros so that CRT-internal events such as
+ * multipart upload progress, connection pool events, and TLS handshakes are visible
+ * alongside regular SDK logs.
+ *
+ * Messages are prefixed with "[CRT:<subject>]" where <subject> is the aws-c-* component
+ * name (e.g. "aws-c-s3", "aws-c-http", "aws-c-common") to distinguish them from SDK logs.
+ *
+ * Registered via SDKOptions::crt_logger_create_fn in initAWSSDK().
+ *
+ * Log level mapping:
+ *   CRT Fatal  ->  NIXL_ERROR  (not NIXL_FATAL: CRT-internal fatals must not abort the process)
+ *   CRT Error  ->  NIXL_ERROR
+ *   CRT Warn   ->  NIXL_WARN
+ *   CRT Info   ->  NIXL_INFO
+ *   CRT Debug  ->  NIXL_DEBUG  (VLOG(1))
+ *   CRT Trace  ->  NIXL_DEBUG  (VLOG(1); CRT Trace is the normal operational level for S3)
+ */
+class NixlCrtLogSystem : public Aws::Utils::Logging::CRTLogSystemInterface {
+public:
+    explicit NixlCrtLogSystem(Aws::Utils::Logging::LogLevel level) : level_(level) {}
+
+    Aws::Utils::Logging::LogLevel
+    GetLogLevel() const override {
+        return level_.load();
+    }
+
+    void
+    SetLogLevel(Aws::Utils::Logging::LogLevel level) override {
+        level_.store(level);
+    }
+
+    void
+    Log(Aws::Utils::Logging::LogLevel logLevel,
+        const char *subjectName,
+        const char *formatStr,
+        va_list args) override {
+        char buf[4096];
+        vsnprintf(buf, sizeof(buf), formatStr, args);
+
+        // Strip trailing newline that aws-c-* appends to most messages
+        size_t len = std::strlen(buf);
+        while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
+            buf[--len] = '\0';
+
+        dispatch(logLevel, subjectName ? subjectName : "?", buf);
+    }
+
+private:
+    std::atomic<Aws::Utils::Logging::LogLevel> level_;
+
+    void
+    dispatch(Aws::Utils::Logging::LogLevel logLevel, const char *tag, const char *msg) {
+        using Aws::Utils::Logging::LogLevel;
+        switch (logLevel) {
+        // Fatal -> ERROR: CRT-internal fatals must not abort the NIXL process
+        case LogLevel::Fatal:
+            NIXL_ERROR << "[CRT:" << tag << "] " << msg;
+            break;
+        case LogLevel::Error:
+            NIXL_ERROR << "[CRT:" << tag << "] " << msg;
+            break;
+        case LogLevel::Warn:
+            NIXL_WARN << "[CRT:" << tag << "] " << msg;
+            break;
+        case LogLevel::Info:
+            NIXL_INFO << "[CRT:" << tag << "] " << msg;
+            break;
+        case LogLevel::Debug:
+        case LogLevel::Trace:
+            NIXL_DEBUG << "[CRT:" << tag << "] " << msg;
+            break;
+        default:
+            break;
+        }
+    }
+};
+
 } // namespace nixl_s3_utils
 
-#endif // OBJ_PLUGIN_AWS_SDK_LOG_H
+#endif // NIXL_SRC_UTILS_OBJECT_S3_AWS_SDK_LOG_H

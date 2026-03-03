@@ -40,8 +40,12 @@ initAWSSDK() {
 
     std::call_once(aws_init_flag, []() {
         aws_options = new Aws::SDKOptions();
-        aws_options->loggingOptions.logger_create_fn = []() {
-            return std::make_shared<NixlAwsLogger>(getNixlAwsLogLevel());
+        const auto log_level = getNixlAwsLogLevel();
+        aws_options->loggingOptions.logger_create_fn = [log_level]() {
+            return std::make_shared<NixlAwsLogger>(log_level);
+        };
+        aws_options->loggingOptions.crt_logger_create_fn = [log_level]() {
+            return std::make_shared<NixlCrtLogSystem>(log_level);
         };
         Aws::InitAPI(*aws_options);
 
