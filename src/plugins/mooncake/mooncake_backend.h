@@ -26,7 +26,6 @@
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
-#include "common/str_tools.h"
 #include "common/nixl_time.h"
 
 #include "transfer_engine_c.h"
