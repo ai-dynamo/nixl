@@ -78,7 +78,7 @@ nixlEnumStrings::statusStr(const nixl_status_t &status) {
 }
 
 inline void
-nixlXferReqH::updateRequestStats(std::unique_ptr<nixlTelemetry> &telemetry_pub,
+nixlXferReqH::updateRequestStats(const std::unique_ptr<nixlTelemetry> &telemetry_pub,
                                  nixl_telemetry_stat_status_t stat_status) {
 
     static const std::array<std::string, 3> nixl_post_status_str = {
@@ -620,7 +620,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     }
 
     for (auto & backend : *backend_set) {
-        handle->descs[backend] = new nixl_meta_dlist_t(descs.getType());
+        handle->descs[backend] = std::make_unique<nixl_meta_dlist_t>(descs.getType());
         if (init_side)
             ret = data->memorySection->populate(
                        descs, backend, *(handle->descs[backend]));
@@ -630,7 +630,6 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         if (ret == NIXL_SUCCESS) {
             count++;
         } else {
-            delete handle->descs[backend];
             handle->descs.erase(backend);
         }
     }
@@ -716,8 +715,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixl_meta_dlist_t* local_descs  = local_side->descs.at(backend);
-    nixl_meta_dlist_t* remote_descs = remote_side->descs.at(backend);
+    nixl_meta_dlist_t &local_descs = *local_side->descs.at(backend);
+    nixl_meta_dlist_t &remote_descs = *remote_side->descs.at(backend);
     size_t total_bytes = 0;
 
     if ((desc_count == 0) || (remote_indices.size() == 0) ||
@@ -728,22 +727,22 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     }
 
     for (int i=0; i<desc_count; ++i) {
-        if ((local_indices[i] >= local_descs->descCount()) || (local_indices[i] < 0)) {
+        if ((local_indices[i] >= local_descs.descCount()) || (local_indices[i] < 0)) {
             NIXL_ERROR_FUNC << "local index out of range at index " << i << " with value "
                             << local_indices[i];
             return NIXL_ERR_INVALID_PARAM;
         }
-        if ((remote_indices[i] >= remote_descs->descCount()) || (remote_indices[i] < 0)) {
+        if ((remote_indices[i] >= remote_descs.descCount()) || (remote_indices[i] < 0)) {
             NIXL_ERROR_FUNC << "remote index out of range at index " << i << " with value "
                             << remote_indices[i];
             return NIXL_ERR_INVALID_PARAM;
         }
-        if ((*local_descs)[local_indices[i]].len != (*remote_descs)[remote_indices[i]].len) {
+        if (local_descs[local_indices[i]].len != remote_descs[remote_indices[i]].len) {
             NIXL_ERROR_FUNC << "length mismatch at index pair " << i << " with local index "
                             << local_indices[i] << " and remote index " << remote_indices[i];
             return NIXL_ERR_INVALID_PARAM;
         }
-        total_bytes += (*local_descs)[local_indices[i]].len;
+        total_bytes += local_descs[local_indices[i]].len;
     }
 
     if (extra_params && extra_params->hasNotif) {
@@ -758,26 +757,24 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     }
 
     std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>();
-    handle->initiatorDescs = new nixl_meta_dlist_t(local_descs->getType(), desc_count);
+    handle->initiatorDescs = std::make_unique<nixl_meta_dlist_t>(local_descs.getType(), desc_count);
 
-    handle->targetDescs = new nixl_meta_dlist_t(remote_descs->getType(), desc_count);
+    handle->targetDescs = std::make_unique<nixl_meta_dlist_t>(remote_descs.getType(), desc_count);
 
     if (extra_params && extra_params->skipDescMerge) {
         for (int i=0; i<desc_count; ++i) {
-            (*handle->initiatorDescs)[i] =
-                                     (*local_descs)[local_indices[i]];
-            (*handle->targetDescs)[i] =
-                                     (*remote_descs)[remote_indices[i]];
+            (*handle->initiatorDescs)[i] = local_descs[local_indices[i]];
+            (*handle->targetDescs)[i] = remote_descs[remote_indices[i]];
         }
     } else {
         int i = 0, j = 0; //final list size
         while (i<(desc_count)) {
-            nixlMetaDesc local_desc1  = (*local_descs) [local_indices[i]];
-            nixlMetaDesc remote_desc1 = (*remote_descs)[remote_indices[i]];
+            nixlMetaDesc local_desc1  = local_descs[local_indices[i]];
+            nixlMetaDesc remote_desc1 = remote_descs[remote_indices[i]];
 
             if(i != (desc_count-1) ) {
-                nixlMetaDesc* local_desc2  = &((*local_descs) [local_indices[i+1]]);
-                nixlMetaDesc* remote_desc2 = &((*remote_descs)[remote_indices[i+1]]);
+                nixlMetaDesc* local_desc2  = &(local_descs[local_indices[i+1]]);
+                nixlMetaDesc* remote_desc2 = &(remote_descs[remote_indices[i+1]]);
 
               while (((local_desc1.addr + local_desc1.len) == local_desc2->addr)
                   && ((remote_desc1.addr + remote_desc1.len) == remote_desc2->addr)
@@ -792,8 +789,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                     i++;
                     if(i == (desc_count-1)) break;
 
-                    local_desc2  = &((*local_descs) [local_indices[i+1]]);
-                    remote_desc2 = &((*remote_descs)[remote_indices[i+1]]);
+                    local_desc2  = &(local_descs[local_indices[i+1]]);
+                    remote_desc2 = &(remote_descs[remote_indices[i+1]]);
                 }
             }
 
@@ -906,9 +903,9 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
     std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>();
-    handle->initiatorDescs = new nixl_meta_dlist_t(local_descs.getType());
+    handle->initiatorDescs = std::make_unique<nixl_meta_dlist_t>(local_descs.getType());
 
-    handle->targetDescs = new nixl_meta_dlist_t(remote_descs.getType());
+    handle->targetDescs = std::make_unique<nixl_meta_dlist_t>(remote_descs.getType());
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
