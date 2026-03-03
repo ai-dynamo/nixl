@@ -17,12 +17,12 @@
 
 #include "plugin_manager.h"
 #include "nixl.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 #include <dlfcn.h>
 #include <filesystem>
 #include <dirent.h>
 #include <unistd.h>  // For access() and F_OK
-#include <cstdlib>  // For getenv
 #include <fstream>
 #include <string>
 #include <map>
@@ -269,13 +269,13 @@ nixlPluginManager::loadPluginsFromList(const std::string &filename) {
 }
 
 namespace {
-static std::string
+std::string
 getPluginDir() {
     // Environment variable takes precedence
-    const char *plugin_dir = getenv("NIXL_PLUGIN_DIR");
-    if (plugin_dir) {
-        return plugin_dir;
+    if (const auto plugin_dir = nixl::config::getValueOptional<std::string>("NIXL_PLUGIN_DIR")) {
+        return *plugin_dir;
     }
+
     // By default, use the plugin directory relative to the binary
     Dl_info info;
     int ok = dladdr(reinterpret_cast<void *>(&getPluginDir), &info);

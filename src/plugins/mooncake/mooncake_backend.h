@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -119,7 +119,7 @@ private:
 
     mutable std::mutex mutex_;
     transfer_engine_t engine_;
-    std::string local_agent_name_;
+    const std::string local_agent_name_;
     std::unordered_map<uint64_t, nixlMooncakeBackendMD *> mem_reg_info_;
     std::unordered_map<std::string, AgentInfo> connected_agents_;
 };

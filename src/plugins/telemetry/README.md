@@ -46,8 +46,8 @@ Here's a minimal example of a CSV file exporter plugin:
 ### 1. Create Your Exporter Class (`csv_exporter.h`)
 
 ```cpp
-#ifndef _TELEMETRY_CSV_EXPORTER_H
-#define _TELEMETRY_CSV_EXPORTER_H
+#ifndef NIXL_TELEMETRY_CSV_EXPORTER_H
+#define NIXL_TELEMETRY_CSV_EXPORTER_H
 
 #include "telemetry/telemetry_exporter.h"
 #include <fstream>
@@ -71,12 +71,13 @@ private:
 ```cpp
 #include "csv_exporter.h"
 #include "common/nixl_log.h"
+#include "common/configuration.h"
 
 nixlTelemetryCsvExporter::nixlTelemetryCsvExporter(
     const nixlTelemetryExporterInitParams *init_params)
     : nixlTelemetryExporter(init_params) {
 
-    auto file_path = std::get_end("NIXL_TELEMETRY_CSV_FILE");
+    auto file_path = nixl::config::getValue<std::string>("NIXL_TELEMETRY_CSV_FILE");
     file_.open(file_path, std::ios::out | std::ios::app);
     if (!file_.is_open()) {
         throw std::runtime_error("Failed to open CSV file: " + file_path);
