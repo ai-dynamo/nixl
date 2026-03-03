@@ -86,9 +86,9 @@ class nixlAgentData {
         // Local section, and Remote sections and their available common backends
         std::unique_ptr<nixlLocalSection> memorySection;
 
-        std::unordered_map<std::string,
-                           std::unordered_map<nixl_backend_t, nixl_blob_t>> remoteBackends;
-        std::unordered_map<std::string, nixlRemoteSection*> remoteSections;
+        std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
+            remoteBackends;
+        std::unordered_map<std::string, nixlRemoteSection *> remoteSections;
 
         // State/methods for listener thread
         std::unique_ptr<nixlMDStreamListener> listener;
