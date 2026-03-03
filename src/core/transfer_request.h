@@ -45,8 +45,8 @@ private:
     nixl_blob_t notifMsg;
     bool hasNotif = false;
 
-    nixl_xfer_op_t     backendOp;
-    nixl_status_t      status;
+    nixl_xfer_op_t backendOp;
+    nixl_status_t status;
 
     nixl_xfer_telem_t telemetry;
 
@@ -56,8 +56,10 @@ public:
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;
 
-    void operator=(nixlXferReqH &&) = delete;
-    void operator=(const nixlXferReqH &) = delete;
+    void
+    operator=(nixlXferReqH &&) = delete;
+    void
+    operator=(const nixlXferReqH &) = delete;
 
     ~nixlXferReqH() {
         if (backendHandle != nullptr) {
@@ -74,7 +76,7 @@ public:
 
 class nixlDlistH {
 private:
-    std::unordered_map<nixlBackendEngine*, std::unique_ptr<nixl_meta_dlist_t>> descs;
+    std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_dlist_t>> descs;
 
     std::string remoteAgent;
     bool isLocal;
@@ -85,8 +87,10 @@ public:
     nixlDlistH(nixlDlistH &&) = delete;
     nixlDlistH(const nixlDlistH &) = delete;
 
-    void operator=(nixlDlistH &&) = delete;
-    void operator=(const nixlDlistH &) = delete;
+    void
+    operator=(nixlDlistH &&) = delete;
+    void
+    operator=(const nixlDlistH &) = delete;
 
     friend class nixlAgent;
 };
