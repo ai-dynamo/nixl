@@ -116,7 +116,7 @@ RUN wget https://curl.se/download/curl-8.5.0.tar.gz && \
     ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl3 --enable-shared && \
     make -j$(nproc) && make install
 
-RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581
+RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760
 RUN mkdir aws_sdk_build && cd aws_sdk_build && \
     export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
     export CFLAGS="-I/usr/local/openssl3/include" && \
