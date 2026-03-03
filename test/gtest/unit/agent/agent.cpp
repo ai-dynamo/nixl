@@ -360,7 +360,7 @@ namespace agent {
         remote_xfer_dlist.addDesc(remote_blob.getDesc());
 
         nixlDlistH *desc_hndl1, *desc_hndl2;
-        EXPECT_EQ(local_agent_->prepXferDlist(NIXL_INIT_AGENT, local_xfer_dlist, desc_hndl1),
+        EXPECT_EQ(local_agent_->prepXferDlist(local_xfer_dlist, desc_hndl1),
                   NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->prepXferDlist(remote_agent_name_out, remote_xfer_dlist, desc_hndl2),
                   NIXL_SUCCESS);

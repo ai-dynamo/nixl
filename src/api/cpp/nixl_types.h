@@ -133,14 +133,6 @@ using nixl_notifs_t = std::unordered_map<std::string, std::vector<nixl_blob_t>>;
 constexpr int default_comm_port = 8888;
 
 /**
- * @enum nixl_api_version
- * @brief Public NIXL API version tags.
- */
-enum class nixl_api_version : unsigned int {
-    V1 = 1,
-};
-
-/**
  * @brief A constant to define the default metadata label for ETCD server key.
  *        Appended to the agent's key prefix to form the full key for metadata.
  */
