@@ -296,11 +296,11 @@ class nixlAgent {
          * @param  req_hndl      Transfer request handle after postXferReq
          * @param  events_out [out] Append-only event list (index, status).
          * @return nixl_status_t NIXL_ERR_INVALID_PARAM if xfer was created with trackFlags==0,
-         *         NIXL_ERR_IN_PROG (negative) when still in progress, NIXL_SUCCESS or error otherwise.
+         *         NIXL_IN_PROG_WITH_ERR (negative) when still in progress, NIXL_SUCCESS or error
+         * otherwise.
          */
         nixl_status_t
-        getXferStatus (nixlXferReqH* req_hndl,
-                       nixl_xfer_entry_events_t &events_out) const;
+        getXferStatus(nixlXferReqH *req_hndl, nixl_xfer_entry_events_t &events_out) const;
 
         /**
          * @brief  Get the telemetry data associated with `req_hndl`.

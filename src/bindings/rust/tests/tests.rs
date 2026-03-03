@@ -2235,3 +2235,21 @@ fn test_desc_list_serialize_with_real_storage() {
     test_serialization!(XferDescList, storage_list.iter());
     test_serialization!(RegDescList, storage_list.iter());
 }
+
+#[test]
+fn test_xfer_entry_events_and_track_flags() {
+    // Verify XferEntryEvents container and OptArgs::set_track_flags API
+    let events = XferEntryEvents::new().expect("XferEntryEvents::new");
+    assert!(events.is_empty());
+    assert_eq!(events.len(), 0);
+    assert!(events.iter().next().is_none());
+
+    let mut opt_args = OptArgs::new().expect("OptArgs::new");
+    opt_args
+        .set_track_flags(XFER_TRACK_ERRORS | XFER_TRACK_SUCCESSES)
+        .expect("set_track_flags");
+    assert_eq!(
+        opt_args.track_flags().unwrap(),
+        XFER_TRACK_ERRORS | XFER_TRACK_SUCCESSES
+    );
+}

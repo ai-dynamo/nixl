@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -998,7 +998,7 @@ impl Agent {
             nixl_capi_get_xfer_status_with_events(
                 self.inner.write().unwrap().handle.as_ptr(),
                 req.handle(),
-                events.inner.as_ptr(),
+                events.as_ptr(),
             )
         };
 

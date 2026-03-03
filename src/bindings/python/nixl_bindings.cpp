@@ -36,12 +36,24 @@ typedef std::map<std::string, std::vector<py::bytes>> nixl_py_notifs_t;
  */
 class nixlXferEntryEvents {
 public:
-    nixl_xfer_entry_events_t &events() { return data_; }
-    const nixl_xfer_entry_events_t &events() const { return data_; }
-    size_t size() const { return data_.size(); }
-    const nixl_xfer_entry_event_t &get(size_t i) const {
-        if (i >= data_.size())
-            throw std::out_of_range("index out of range");
+    nixl_xfer_entry_events_t &
+    events() {
+        return data_;
+    }
+
+    const nixl_xfer_entry_events_t &
+    events() const {
+        return data_;
+    }
+
+    size_t
+    size() const {
+        return data_.size();
+    }
+
+    const nixl_xfer_entry_event_t &
+    get(size_t i) const {
+        if (i >= data_.size()) throw std::out_of_range("index out of range");
         return data_[i];
     }
 
@@ -113,7 +125,7 @@ void
 throw_nixl_exception(const nixl_status_t &status) {
     switch (status) {
     case NIXL_IN_PROG:
-    case NIXL_ERR_IN_PROG:
+    case NIXL_IN_PROG_WITH_ERR:
         return; // not an error (in progress)
     case NIXL_SUCCESS:
         return; // not an error
@@ -207,11 +219,10 @@ PYBIND11_MODULE(_bindings, m) {
         .value("NIXL_ERR_REMOTE_DISCONNECT", NIXL_ERR_REMOTE_DISCONNECT)
         .value("NIXL_ERR_CANCELED", NIXL_ERR_CANCELED)
         .value("NIXL_ERR_NO_TELEMETRY", NIXL_ERR_NO_TELEMETRY)
-        .value("NIXL_ERR_IN_PROG", NIXL_ERR_IN_PROG)
+        .value("NIXL_IN_PROG_WITH_ERR", NIXL_IN_PROG_WITH_ERR)
         .export_values();
 
-    m.attr("NIXL_XFER_TRACK_ERRORS") =
-        py::int_(static_cast<uint32_t>(NIXL_XFER_TRACK_ERRORS));
+    m.attr("NIXL_XFER_TRACK_ERRORS") = py::int_(static_cast<uint32_t>(NIXL_XFER_TRACK_ERRORS));
     m.attr("NIXL_XFER_TRACK_SUCCESSES") =
         py::int_(static_cast<uint32_t>(NIXL_XFER_TRACK_SUCCESSES));
 
@@ -230,34 +241,34 @@ PYBIND11_MODULE(_bindings, m) {
         .def_readonly("totalBytes", &nixl_xfer_telem_t::totalBytes)
         .def_readonly("descCount", &nixl_xfer_telem_t::descCount);
 
-    py::class_<nixlXferEntryEvents>(m, "nixlXferEntryEvents",
-                                    "Reusable container for per-entry transfer events. "
-                                    "Create once, pass to getXferStatus each poll to avoid allocation.")
+    py::class_<nixlXferEntryEvents>(
+        m,
+        "nixlXferEntryEvents",
+        "Reusable container for per-entry transfer events. "
+        "Create once, pass to getXferStatus each poll to avoid allocation.")
         .def(py::init<>())
         .def("__len__", &nixlXferEntryEvents::size)
         .def("__getitem__",
              [](const nixlXferEntryEvents &v, size_t i) {
-                 if (i >= v.size())
-                     throw py::index_error("index out of range");
+                 if (i >= v.size()) throw py::index_error("index out of range");
                  const auto &e = v.get(i);
                  return py::make_tuple(e.index, static_cast<int>(e.status));
              })
-        .def("__iter__",
-             [](const nixlXferEntryEvents &v) {
-                 py::list result;
-                 for (const auto &e : v.events())
-                     result.append(py::make_tuple(e.index, static_cast<int>(e.status)));
-                 return py::iter(result);
-             },
-             py::keep_alive<0, 1>())
-        .def("to_list",
-             [](const nixlXferEntryEvents &v) {
-                 py::list result;
-                 for (const auto &e : v.events())
-                     result.append(py::make_tuple(e.index, static_cast<int>(e.status)));
-                 return result;
-             },
-             "Convert to a Python list of (index, status) tuples");
+        .def(
+            "__iter__",
+            [](const nixlXferEntryEvents &v) {
+                return py::make_iterator(v.events().begin(), v.events().end());
+            },
+            py::keep_alive<0, 1>())
+        .def(
+            "to_list",
+            [](const nixlXferEntryEvents &v) {
+                py::list result;
+                for (const auto &e : v.events())
+                    result.append(py::make_tuple(e.index, static_cast<int>(e.status)));
+                return result;
+            },
+            "Convert to a Python list of (index, status) tuples");
 
     py::register_exception<nixlNotPostedError>(m, "nixlNotPostedError");
     py::register_exception<nixlInvalidParamError>(m, "nixlInvalidParamError");
@@ -679,7 +690,7 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("remote_indices"),
             py::arg("notif_msg") = std::string(""),
             py::arg("backend") = std::vector<uintptr_t>({}),
-            py::arg("skip_desc_merg") = false,
+            py::arg("skip_desc_merge") = false,
             py::arg("track_flags") = 0)
         .def(
             "createXferReq",
@@ -748,34 +759,36 @@ PYBIND11_MODULE(_bindings, m) {
             py::call_guard<py::gil_scoped_release>())
         .def(
             "getXferStatus",
-            [](nixlAgent &agent, uintptr_t reqh, py::object events_obj) -> nixl_status_t {
-                if (events_obj.is_none()) {
-                    nixl_status_t ret = agent.getXferStatus((nixlXferReqH *)reqh);
-                    throw_nixl_exception(ret);
-                    return ret;
+            [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
+                nixl_status_t ret;
+                {
+                    py::gil_scoped_release release;
+                    ret = agent.getXferStatus((nixlXferReqH *)reqh);
                 }
-                try {
-                    nixlXferEntryEvents &events =
-                        events_obj.cast<nixlXferEntryEvents &>();
-                    nixl_status_t ret =
-                        agent.getXferStatus((nixlXferReqH *)reqh, events.events());
-                    if (ret != NIXL_SUCCESS && ret != NIXL_ERR_IN_PROG)
-                        throw_nixl_exception(ret);
-                    return ret;
-                } catch (const py::cast_error &) {
-                    throw py::type_error(
-                        "events must be None or nixl.nixlXferEntryEvents");
-                }
+                throw_nixl_exception(ret);
+                return ret;
             },
             py::arg("reqh"),
-            py::arg("events") = py::none(),
-            py::call_guard<py::gil_scoped_release>(),
             R"pbdoc(
-                Get transfer status. If events is None, returns overall status only.
-                If events is nixlXferEntryEvents, appends (index, status) events and returns status.
-                Create nixlXferEntryEvents once, pass to each poll to avoid allocation.
-                Requires trackFlags != 0 when events is provided.
-                Returns NIXL_ERR_IN_PROG when in progress, NIXL_SUCCESS when done.
+                Get aggregate transfer status. Raises an exception on error.
+                Returns NIXL_SUCCESS when complete or NIXL_IN_PROG while running.
+            )pbdoc")
+        .def(
+            "getXferStatus",
+            [](nixlAgent &agent, uintptr_t reqh, nixlXferEntryEvents &events) -> nixl_status_t {
+                py::gil_scoped_release release;
+                return agent.getXferStatus((nixlXferReqH *)reqh, events.events());
+            },
+            py::arg("reqh"),
+            py::arg("events"),
+            R"pbdoc(
+                Get transfer status with per-entry events. Never throws — always returns
+                a nixl_status_t so the caller can inspect per-entry (index, status) pairs
+                even when the overall status indicates partial failure.
+                NIXL_SUCCESS: complete, no errors.
+                NIXL_IN_PROG / NIXL_IN_PROG_WITH_ERR: still running; poll again.
+                Other negative value: transfer finished with errors; inspect events.
+                Requires trackFlags != 0.
             )pbdoc")
         .def(
             "getXferTelemetry",
