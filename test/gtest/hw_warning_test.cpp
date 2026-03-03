@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "absl/strings/str_join.h"
 #include "common.h"
 #include "nixl.h"
 #include "ucx_utils.h"
@@ -156,7 +157,7 @@ TEST_F(HardwareWarningTest, EfaHardwareMismatchWarning) {
 
 /**
  * Test that no warning is logged when EFA devices are present and the
- * LIBFABRIC backend is created (without UCX).
+ * LIBFABRIC backend is among the created backends.
  */
 TEST_F(HardwareWarningTest, EfaHardwareMismatchNoWarning) {
 #ifndef HAVE_LIBFABRIC
@@ -168,17 +169,28 @@ TEST_F(HardwareWarningTest, EfaHardwareMismatchNoWarning) {
         GTEST_SKIP() << "No EFA devices detected, skipping test";
     }
 
-    envHelper_.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/libfabric");
-    nixlAgent agent("EfaTestAgent", nixlAgentConfig(true));
+    const std::vector<std::vector<std::string>> test_cases = {
+        {"LIBFABRIC"},
+        {"UCX", "LIBFABRIC"},
+        {"LIBFABRIC", "UCX"},
+    };
 
-    nixlBackendH *backend;
-    EXPECT_EQ(agent.createBackend("LIBFABRIC", {}, backend), NIXL_SUCCESS);
+    for (size_t i = 0; i < test_cases.size(); ++i) {
+        const auto &backends = test_cases[i];
+        const auto backends_str = absl::StrJoin(backends, ", ");
 
-    const gtest::LogIgnoreGuard lig_reg_fail("registerMem: registration failed");
+        std::cout << "\n > Case " << i << ": backends=[" << backends_str << "]\n" << std::endl;
 
-    /* Call registerMem to trigger the warning check */
-    const nixl_reg_dlist_t descs(DRAM_SEG);
-    agent.registerMem(descs);
+        nixlAgent agent("EfaTestAgent", nixlAgentConfig(true));
 
-    envHelper_.popVar();
+        for (const auto &name : backends) {
+            nixlBackendH *backend;
+            EXPECT_EQ(agent.createBackend(name, {}, backend), NIXL_SUCCESS);
+        }
+
+        const gtest::LogIgnoreGuard lig_reg_fail("registerMem: registration failed");
+
+        const nixl_reg_dlist_t descs(DRAM_SEG);
+        agent.registerMem(descs);
+    }
 }
