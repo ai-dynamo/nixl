@@ -65,25 +65,16 @@ TEST_F(UcxHardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
 
 /**
  * Test that a warning is logged when IB devices are present but UCX
- * RDMA support is not available.
- *
- * Note: This warning only triggers for UCX >= 1.21.
+ * IB support is not available.
  */
-TEST_F(UcxHardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
-    unsigned major, minor, release;
-    ucp_get_version(&major, &minor, &release);
-    if (UCP_VERSION(major, minor) < UCP_VERSION(1, 21)) {
-        GTEST_SKIP() << "UCX version " << major << "." << minor
-                     << " is less than 1.21, skipping test";
-    }
-
+TEST_F(UcxHardwareWarningTest, WarnWhenIbDevicePresentButIbNotSupported) {
     const nixl::hwInfo hw_info;
     if (hw_info.numIbDevices == 0) {
         GTEST_SKIP() << "No IB devices detected, skipping test";
     }
 
-    // Disable IB transport in UCX
-    envHelper_.addVar("UCX_TLS", "^ib,rc_gda");
+    // Deselect all ib devices to trigger the warning
+    envHelper_.addVar("UCX_NET_DEVICES", "lo");
 
     std::vector<std::string> devs;
     nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
