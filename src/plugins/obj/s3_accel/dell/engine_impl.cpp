@@ -473,8 +473,7 @@ S3DellObsObjEngineImpl::prepXfer(const nixl_xfer_op_t &operation,
             ssize_t cuda_status =
                 cuClient_->cuObjGet(&req.ctx, (void *)req.addr, req.size, req.offset);
             if (cuda_status < 0) {
-                NIXL_ERROR << "cuObjGet failed with status: " << cuda_status << ", errno: " << errno
-                           << " (" << strerror(errno) << ")";
+                NIXL_ERROR << "cuObjGet failed with status: " << cuda_status;
                 return NIXL_ERR_BACKEND;
             }
         }
