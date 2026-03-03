@@ -48,60 +48,31 @@ public:
     ~nixlLibfabricRailManager();
 
     // Rail management
-    /** Create data rails for high-bandwidth transfers (one per EFA device)
+    /** Create rails for high-bandwidth transfers (one per EFA device)
      * @param efa_devices List of EFA device names to create rails on
      * @param provider_name Provider name ("efa" or "efa-direct")
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
-    createDataRails(const std::vector<std::string> &efa_devices, const std::string &provider_name);
-
-    /** Create control rails for connection management and notifications
-     * @param efa_devices List of EFA device names
-     * @param provider_name Provider name ("efa" or "efa-direct")
-     * @param num_control_rails Number of control rails to create
-     * @return NIXL_SUCCESS on success, error code on failure
-     */
-    nixl_status_t
-    createControlRails(const std::vector<std::string> &efa_devices,
-                       const std::string &provider_name,
-                       size_t num_control_rails);
+    createRails(const std::vector<std::string> &efa_devices, const std::string &provider_name);
 
     // Access rails
-    /** Get reference to data rail by ID */
+    /** Get reference to rail by ID */
     nixlLibfabricRail &
-    getDataRail(size_t rail_id) {
-        return *data_rails_[rail_id];
+    getRail(size_t rail_id) {
+        return *rails_[rail_id];
     }
 
-    /** Get const reference to data rail by ID */
+    /** Get const reference to rail by ID */
     const nixlLibfabricRail &
-    getDataRail(size_t rail_id) const {
-        return *data_rails_[rail_id];
+    getRail(size_t rail_id) const {
+        return *rails_[rail_id];
     }
 
-    /** Get reference to control rail by ID */
-    nixlLibfabricRail &
-    getControlRail(size_t rail_id) {
-        return *control_rails_[rail_id];
-    }
-
-    /** Get const reference to control rail by ID */
-    const nixlLibfabricRail &
-    getControlRail(size_t rail_id) const {
-        return *control_rails_[rail_id];
-    }
-
-    /** Get total number of data rails */
+    /** Get total number of rails */
     size_t
-    getNumDataRails() const {
-        return data_rails_.size();
-    }
-
-    /** Get total number of control rails */
-    size_t
-    getNumControlRails() const {
-        return control_rails_.size();
+    getNumRails() const {
+        return rails_.size();
     }
 
     // Memory registration management
@@ -136,10 +107,7 @@ public:
                      const std::vector<struct fid_mr *> &mr_list);
 
     // Connection Management APIs
-    /** Rail type enumeration for connection operations */
-    enum class RailType { DATA, CONTROL };
-    /** Insert addresses into address vectors for all rails of specified type
-     * @param rail_type Type of rails to operate on (DATA or CONTROL)
+    /** Insert addresses into address vectors for all rails
      * @param endpoints Remote endpoint addresses to insert
      * @param fi_addrs_out Libfabric address handles for inserted endpoints,
      *                     indexed by local rail id.
@@ -147,17 +115,15 @@ public:
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
-    insertAllAddresses(RailType rail_type,
-                       const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints,
+    insertAllAddresses(const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints,
                        std::unordered_map<size_t, std::vector<fi_addr_t>> &fi_addrs_out,
                        std::vector<char *> &ep_names_out);
-    /** Clean up connection resources for specified rail type
-     * @param rail_type Type of rails to clean up (DATA or CONTROL)
+    /** Clean up connection resources for rails
      * @param fi_addrs_to_remove Libfabric addresses to remove
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
-    cleanupConnection(RailType rail_type, const std::vector<fi_addr_t> &fi_addrs_to_remove);
+    cleanupConnection(const std::vector<fi_addr_t> &fi_addrs_to_remove);
 
     /** Single-pass transfer preparation and submission with automatic striping/round-robin
      * @param op_type Operation type (WRITE or READ)
@@ -218,16 +184,11 @@ public:
                        uint16_t agent_idx = 0,
                        std::function<void()> completion_callback = nullptr);
     // Progress APIs
-    /** Process completions on active data rails only (optimized for CPU overhead)
+    /** Process completions on active rails only (optimized for CPU overhead)
      * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
      */
     nixl_status_t
-    progressActiveDataRails();
-    /** Process completions on all control rails for connection management and notifications
-     * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
-     */
-    nixl_status_t
-    progressAllControlRails();
+    progressActiveRails();
     /** Validate that all rails are properly initialized
      * @return NIXL_SUCCESS if all rails initialized, error code otherwise
      */
@@ -288,16 +249,14 @@ public:
     /** Deserialize connection information for all rails
      * @param user_prefix Prefix used during serialization
      * @param serialized_data Serialized connection information
-     * @param data_endpoints_out Data rail endpoint addresses
-     * @param control_endpoints_out Control rail endpoint addresses
+     * @param data_endpoints_out Rail endpoint addresses
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
     deserializeConnectionInfo(
         const std::string &user_prefix,
         const std::string &serialized_data,
-        std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &data_endpoints_out,
-        std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &control_endpoints_out) const;
+        std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &data_endpoints_out) const;
 
     const nixlLibfabricTopology *
     getTopology() const {
@@ -317,11 +276,9 @@ private:
     fi_hmem_iface runtime_;
 
     // Rail allocation
-    std::vector<std::unique_ptr<nixlLibfabricRail>> data_rails_;
-    std::vector<std::unique_ptr<nixlLibfabricRail>> control_rails_;
+    std::vector<std::unique_ptr<nixlLibfabricRail>> rails_;
 
-    size_t num_data_rails_;
-    size_t num_control_rails_;
+    size_t num_rails_;
 
     std::unique_ptr<nixlLibfabricTopology> topology;
 
@@ -341,9 +298,7 @@ private:
 
     // Helper functions for connection SerDes
     void
-    serializeRailEndpoints(nixlSerDes &ser_des,
-                           const std::string &key_prefix,
-                           RailType rail_type) const;
+    serializeRailEndpoints(nixlSerDes &ser_des, const std::string &key_prefix) const;
     nixl_status_t
     deserializeRailEndpoints(
         nixlSerDes &ser_des,

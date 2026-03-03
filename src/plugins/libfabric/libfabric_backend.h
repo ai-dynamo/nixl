@@ -113,11 +113,8 @@ private:
     size_t agent_index_; // Unique agent identifier in agent_names vector
     std::string remoteAgent_; // Remote agent name
     std::unordered_map<size_t, std::vector<fi_addr_t>>
-        rail_remote_addr_list_; // Data rail libfabric addresses. key=data rail id.
-    std::unordered_map<size_t, std::vector<fi_addr_t>>
-        control_rail_remote_addr_list_; // Control rail libfabric addresses. key=control rail id.
-    std::vector<char *> src_ep_names_; // Data rail endpoint names
-    std::vector<char *> control_ep_names_; // Control rail endpoint names
+        rail_remote_addr_list_; // Rail libfabric addresses. key=rail id.
+    std::vector<char *> src_ep_names_; // Rail endpoint names
     ConnectionState overall_state_; // Current connection state
     std::mutex conn_state_mutex_; // Protects connection state
     std::condition_variable cv_; // For blocking connection establishment
@@ -201,7 +198,7 @@ private:
     std::thread cm_thread_;
     std::condition_variable cm_cv_;
 
-    // Progress thread for data rail CQs only
+    // Progress thread for rail CQs
     std::thread progress_thread_;
     std::atomic<bool> progress_thread_stop_;
 
@@ -256,8 +253,7 @@ private:
     // Common connection creation helper
     nixl_status_t
     createAgentConnection(const std::string &agent_name,
-                          const std::vector<std::array<char, 56>> &data_rail_endpoints,
-                          const std::vector<std::array<char, 56>> &control_rail_endpoints);
+                          const std::vector<std::array<char, 56>> &data_rail_endpoints);
 
     // Private notification implementation with unified binary notification system
     nixl_status_t
@@ -282,7 +278,7 @@ private:
 
     void
     postShutdownCompletion();
-    // Progress thread for data rail CQs only
+    // Progress thread for rail CQs
     nixl_status_t
     progressThread();
 
