@@ -73,18 +73,21 @@ awsS3CrtClient::putObjectAsync(std::string_view key,
         return;
     }
 
-    Aws::S3Crt::Model::PutObjectRequest request;
-    request.WithBucket(bucketName_).WithKey(Aws::String(key));
+    // Heap-allocate the request so it outlives this function: the CRT SDK stores
+    // a raw pointer to it (userData->originalRequest) and dereferences it in
+    // S3CrtRequestHeadersCallback after putObjectAsync() has returned.
+    auto request = Aws::MakeShared<Aws::S3Crt::Model::PutObjectRequest>("PutObjectRequest");
+    request->WithBucket(bucketName_).WithKey(Aws::String(key));
 
     auto preallocated_stream_buf = Aws::MakeShared<Aws::Utils::Stream::PreallocatedStreamBuf>(
         "PutObjectStreamBuf", reinterpret_cast<unsigned char *>(data_ptr), data_len);
     auto data_stream =
         Aws::MakeShared<Aws::IOStream>("PutObjectInputStream", preallocated_stream_buf.get());
-    request.SetBody(data_stream);
+    request->SetBody(data_stream);
 
     s3CrtClient_->PutObjectAsync(
-        request,
-        [callback, preallocated_stream_buf, data_stream](
+        *request,
+        [callback, preallocated_stream_buf, data_stream, request](
             const Aws::S3Crt::S3CrtClient *,
             const Aws::S3Crt::Model::PutObjectRequest &,
             const Aws::S3Crt::Model::PutObjectOutcome &outcome,
@@ -111,18 +114,24 @@ awsS3CrtClient::getObjectAsync(std::string_view key,
             return new Aws::IOStream(preallocated_stream_buf.get());
         });
 
-    Aws::S3Crt::Model::GetObjectRequest request;
-    request.WithBucket(bucketName_)
+    // Heap-allocate the request for the same reason as putObjectAsync: the SDK
+    // stores a raw pointer to it (userData->originalRequest) used in callbacks
+    // that fire after getObjectAsync() has returned.
+    auto request = Aws::MakeShared<Aws::S3Crt::Model::GetObjectRequest>("GetObjectRequest");
+    request->WithBucket(bucketName_)
         .WithKey(Aws::String(key))
         .WithRange(absl::StrFormat("bytes=%d-%d", offset, offset + data_len - 1));
-    request.SetResponseStreamFactory(*stream_factory.get());
+    request->SetResponseStreamFactory(*stream_factory.get());
 
     s3CrtClient_->GetObjectAsync(
-        request,
-        [callback, stream_factory](const Aws::S3Crt::S3CrtClient *,
-                                   const Aws::S3Crt::Model::GetObjectRequest &,
-                                   const Aws::S3Crt::Model::GetObjectOutcome &outcome,
-                                   const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
+        *request,
+        [callback, stream_factory, request](
+            const Aws::S3Crt::S3CrtClient *,
+            const Aws::S3Crt::Model::GetObjectRequest &,
+            const Aws::S3Crt::Model::GetObjectOutcome &outcome,
+            const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
+            if (!outcome.IsSuccess())
+                NIXL_ERROR << "getObjectAsync (CRT) error: " << outcome.GetError().GetMessage();
             callback(outcome.IsSuccess());
         },
         nullptr);
