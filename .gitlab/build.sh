@@ -35,7 +35,7 @@ LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
-UCCL_COMMIT_SHA="a962f611021afc2e3c9358f6da4ae96539cbca0f"
+UCCL_COMMIT_SHA="2de728f1a27ea3f3b66059baf838f940e243ebc6"
 AZURITE_VER="3.35.0"
 TMPDIR=$(mktemp -d)
 
@@ -197,7 +197,7 @@ else
 
     ( \
       cd ${TMPDIR} && \
-      git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
+      git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
       mkdir aws_sdk_build && \
       cd aws_sdk_build && \
       cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \

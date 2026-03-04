@@ -26,12 +26,6 @@
 
 #include <nixl_types.h>
 
-extern "C" {
-#ifdef HAVE_UCX_GPU_DEVICE_API
-#include <ucp/api/device/ucp_host.h>
-#endif
-}
-
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
@@ -595,8 +589,11 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
         }
 
         if (attr.mem_type == UCS_MEMORY_TYPE_HOST) {
-            NIXL_WARN << "memory is detected as host, check that UCX is configured"
-                         " with CUDA support";
+            NIXL_ERROR << "VRAM memory is detected as host by UCX. "
+                          "UCX is likely not configured with CUDA support. "
+                          "VRAM registration cannot proceed.";
+            ucp_mem_unmap(ctx, mem.memh);
+            return -1;
         }
     }
 
@@ -621,32 +618,6 @@ nixlUcxContext::packRkey(nixlUcxMem &mem) {
 void
 nixlUcxContext::memDereg(nixlUcxMem &mem) {
     ucp_mem_unmap(ctx, mem.memh);
-}
-
-#ifndef HAVE_UCX_GPU_DEVICE_API
-namespace {
-constexpr std::string_view ucxGpuDeviceApiUnsupported{
-    "UCX was not compiled with GPU device API support"};
-}
-#endif
-
-size_t
-nixlUcxContext::getGpuSignalSize() const {
-#ifdef HAVE_UCX_GPU_DEVICE_API
-    ucp_context_attr_t attr;
-    attr.field_mask = UCP_ATTR_FIELD_DEVICE_COUNTER_SIZE;
-    ucs_status_t query_status = ucp_context_query(ctx, &attr);
-
-    if (query_status != UCS_OK) {
-        throw std::runtime_error(
-            std::string("Failed to query UCX context for device counter size: ") +
-            ucs_status_string(query_status));
-    }
-
-    return attr.device_counter_size;
-#else
-    throw std::runtime_error(std::string(ucxGpuDeviceApiUnsupported));
-#endif
 }
 
 void
@@ -751,27 +722,4 @@ nixlUcxWorker::getEfd() const {
         throw std::runtime_error(err_str);
     }
     return fd;
-}
-
-void
-nixlUcxWorker::prepGpuSignal([[maybe_unused]] const nixlUcxMem &mem,
-                             [[maybe_unused]] void *signal) const {
-#ifdef HAVE_UCX_GPU_DEVICE_API
-    if (!signal) {
-        throw std::invalid_argument("Signal pointer cannot be null");
-    }
-
-    ucp_device_counter_params_t params;
-    params.field_mask = UCP_DEVICE_COUNTER_PARAMS_FIELD_MEMH;
-    params.memh = mem.memh;
-
-    ucs_status_t status = ucp_device_counter_init(worker.get(), &params, signal);
-
-    if (status != UCS_OK) {
-        throw std::runtime_error(std::string("Failed to initialize GPU signal: ") +
-                                 ucs_status_string(status));
-    }
-#else
-    throw std::runtime_error(std::string(ucxGpuDeviceApiUnsupported));
-#endif
 }
