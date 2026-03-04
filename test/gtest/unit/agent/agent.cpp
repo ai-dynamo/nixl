@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,7 +69,11 @@ namespace agent {
 
     public:
         agentHelper(const std::string &name)
-            : agent_(std::make_unique<nixlAgent>(name, nixlAgentConfig(true))) {}
+            : agent_([&name]() {
+                  nixlAgentConfig cfg;
+                  cfg.useProgThread = true;
+                  return std::make_unique<nixlAgent>(name, cfg);
+              }()) {}
 
         ~agentHelper() {
             /* We must release nixlAgent first (i.e. explicitly in the destructor), as it calls
@@ -302,8 +306,7 @@ namespace agent {
         remote_xfer_dlist.addDesc(remote_blob.getDesc());
 
         nixlXferReqH *xfer_req;
-        local_extra_params.notifMsg = msg;
-        local_extra_params.hasNotif = true;
+        local_extra_params.notif = msg;
         EXPECT_EQ(local_agent_->createXferReq(NIXL_WRITE,
                                               local_xfer_dlist,
                                               remote_xfer_dlist,
@@ -357,8 +360,7 @@ namespace agent {
         remote_xfer_dlist.addDesc(remote_blob.getDesc());
 
         nixlDlistH *desc_hndl1, *desc_hndl2;
-        EXPECT_EQ(local_agent_->prepXferDlist(NIXL_INIT_AGENT, local_xfer_dlist, desc_hndl1),
-                  NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->prepXferDlist(local_xfer_dlist, desc_hndl1), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->prepXferDlist(remote_agent_name_out, remote_xfer_dlist, desc_hndl2),
                   NIXL_SUCCESS);
 
@@ -367,8 +369,7 @@ namespace agent {
             indices.push_back(i);
 
         nixlXferReqH *xfer_req;
-        local_extra_params.notifMsg = msg;
-        local_extra_params.hasNotif = true;
+        local_extra_params.notif = msg;
         EXPECT_EQ(local_agent_->makeXferReq(NIXL_WRITE,
                                             desc_hndl1,
                                             indices,
