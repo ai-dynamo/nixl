@@ -28,11 +28,10 @@ repos:
         args: ["--profile", "black", "--filter-files"]
 
   - repo: https://github.com/psf/black
-    rev: 23.1.0
+    rev: 24.10.0
     hooks:
       - id: black
         types_or: [python, cython]
-        exclude: ^examples/device/ep/
 
   - repo: https://github.com/PyCQA/flake8
     rev: 7.1.2

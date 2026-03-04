@@ -37,9 +37,9 @@ NIXL's Transfer Agent abstracts away three key entities:
 
 1. [Memory Section](#memory-sections): Unifies various types of memory and storage, allowing the agent to accept a buffer list primitive for transactions regardless of the memory type.
 2. [Transfer Backend Interface](#transfer-backend-interface): Abstracts different transfer backends from the agent, facilitating efficient transfers by selecting the most optimal backend.
-3. [Metadata Handler](#metadata-handler): Encapsulates the information required to perform data transfers between NIXl agents running on different workers (e.g., a single GPU or a DGX server). It also caches required remote agent information for the local agent.
+3. [Metadata Handler](#metadata-handler): Encapsulates the information required to perform data transfers between NIXL agents running on different workers (e.g., a single GPU or a DGX server). It also caches required remote agent information for the local agent.
 
-Using these components, the NIXL Transfer Agent provides the desired interface by receiving a buffer list primitive from the distributed inference conductor and returning an asynchronous handle to check the status. The agent supports multiple backends, allowing seamless data movement via [RoCE](https://docs.nvidia.com/networking/display/ofedv502180/rdma+over+converged+ethernet+(roce)), [Infiniband](https://www.nvidia.com/en-us/networking/products/infiniband/), [GPUDirect RDMA](https://developer.nvidia.com/gpudirect), NVMe-oF, TCP, NVLink(https://www.nvidia.com/en-us/data-center/nvlink/), and potentially file system emulation. NIXL determines the optimal transfer backend based on the memory types used in a transfer, as well as common backends available in both agents. For example, if the source is DRAM and the target is VRAM, UCX might be used. If the transfer involves VRAM as the source and PFS as the backend, GPUDirect Storage APIs could be employed. In cases where multiple backends that can perform a transfer request, NIXL internally decides which one to use.
+Using these components, the NIXL Transfer Agent provides the desired interface by receiving a buffer list primitive from the distributed inference conductor and returning an asynchronous handle to check the status. The agent supports multiple backends, allowing seamless data movement via [RoCE](https://docs.nvidia.com/networking/display/ofedv502180/rdma+over+converged+ethernet+(roce)), [InfiniBand](https://www.nvidia.com/en-us/networking/products/infiniband/), [GPUDirect RDMA](https://developer.nvidia.com/gpudirect), NVMe-oF, TCP, [NVLink](https://www.nvidia.com/en-us/data-center/nvlink/), and potentially file system emulation. NIXL determines the optimal transfer backend based on the memory types used in a transfer, as well as common backends available in both agents. For example, if the source is DRAM and the target is VRAM, UCX might be used. If the transfer involves VRAM as the source and PFS as the backend, GPUDirect Storage APIs could be employed. In cases where multiple backends that can perform a transfer request, NIXL internally decides which one to use.
 
 A NIXL agent is instantiated within each inference conductor process that may be managing one or more GPU devices. For instance, on a DGX server, a single agent in the main conductor process can access several GPUs and other memory or storage nodes. Each agent is identified by a unique and global ID/name assigned by the inference platform.
 
@@ -60,7 +60,7 @@ In the optimal mode of operation, the metadata exchange occurs on the control pa
 
 To support the dynamic nature of inference workloads, metadata caching is leveraged. This approach allows to:
 
-* Avoid fetching the same metadata on each
+* Avoid fetching the same metadata on each transfer
 * Dynamically add new agents by providing its metadata to the caching subsystem of the agents that communicate with it.
 * Dynamically exclude an agent by invalidating the caches of the agent that previously interacted with it
 
@@ -116,7 +116,7 @@ for each target_agent:
 ```
 
 ## Transfer
-To initiate a transfer, the initiator must provide a list of local buffer descriptions and a list of remote buffer descriptors. The remote buffers can be be communicated out of band. Both the local and remote buffers should be within the registered memories of their corresponding NIXL agent. The initiator agent checks the remote addresses based on the information available in the exchanged metadata. Using these descriptor lists, along with the target agent's name and the transfer operation (read or write), a transfer handle can be created. Optionally, a notification message can be specified for the operation at this time.
+To initiate a transfer, the initiator must provide a list of local buffer descriptions and a list of remote buffer descriptors. The remote buffers can be communicated out of band. Both the local and remote buffers should be within the registered memories of their corresponding NIXL agent. The initiator agent checks the remote addresses based on the information available in the exchanged metadata. Using these descriptor lists, along with the target agent's name and the transfer operation (read or write), a transfer handle can be created. Optionally, a notification message can be specified for the operation at this time.
 
 The create_xfer_req function performs the necessary checks for the transfer and determines which backend will be used, unless a backend is specifically requested. If successful, the runtime can subsequently post a transfer request described by the received handle one or more times (per transfer handle, there can be only 1 active transfer at any given point in time to avoid data corruption). The notification message can be given during post instead of handle creation too, or changed per repost. The status of the transfer can be checked using the get_xfer_status function. In the example provided, the process blocks on the transfer checks since it is the only transfer in the system and there is no computation to overlap it with.
 
@@ -177,5 +177,5 @@ delete agent
 # In the agent that is going to be removed
 Invalidate local agent metadata()
 deregister memory regions # optional
-detete agent
+delete agent
 ```

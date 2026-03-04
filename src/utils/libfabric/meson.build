@@ -1,5 +1,5 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,14 +34,32 @@ libfabric_utils_headers = files(
 # Find hwloc dependency
 hwloc_dep = dependency('hwloc', required: true)
 
+# Find numa dependency
+numa_dep = dependency('numa', required: true)
+
 # Set up dependencies and compile args
 libfabric_utils_deps = [
     libfabric_dep,
     hwloc_dep,
+    numa_dep,
     abseil_proj.get_variable('absl_log_dep'),
 ]
 
 libfabric_utils_cpp_args = []
+
+# Detect optional libfabric features at compile time to enable/disable
+# functionality based on the installed libfabric version
+if libfabric_dep.found()
+    # Check for FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV (libfabric >= 2.3)
+    if cpp.has_header_symbol('rdma/fi_ext.h',
+                             'FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV',
+                             dependencies: libfabric_dep)
+        libfabric_utils_cpp_args += ['-DHAVE_FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV']
+        message('libfabric supports FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV')
+    else
+        message('libfabric does not support FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV')
+    endif
+endif
 
 # Add CUDA support if available
 if cuda_dep.found()

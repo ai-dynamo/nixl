@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -231,9 +231,10 @@ struct nixlAgentOptionalArgs {
 using nixl_opt_args_t = nixlAgentOptionalArgs;
 
 /**
- * @brief A typedef for a nixlGpuXferReqH
+ * @brief An alias for a nixlMemViewH
+ *        Represents a memory view handle
  */
-using nixlGpuXferReqH = void *;
+using nixlMemViewH = void *;
 
 /**
  * @brief A typedefs for a point in time
@@ -289,5 +290,10 @@ using nixl_xfer_telem_t = nixlXferTelemetry;
  *        prepared for the local agent as an initiator in prepXferDlist method.
  */
 #define NIXL_INIT_AGENT ""
+
+/**
+ * @brief A constant for an invalid agent name.
+ */
+extern const std::string nixl_null_agent;
 
 #endif

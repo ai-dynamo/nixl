@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,14 +18,20 @@ unit_test_deps = [
     gtest_dep,
 ]
 
-aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
-if aws_s3.found()
+if is_variable('obj_backend_interface')
     subdir('obj')
     unit_test_deps += [obj_unit_test_dep]
 endif
 
 subdir('agent')
 unit_test_deps += [agent_unit_test_dep]
+
+cpp = meson.get_compiler('cpp')
+azure_storage_blobs = cpp.find_library('azure-storage-blobs', required: false)
+if enabled_plugins.get('AZURE_BLOB') and azure_storage_blobs.found()
+    subdir('azure_blob')
+    unit_test_deps += [azure_blob_unit_test_dep]
+endif
 
 unit_test_exe = executable('unit',
     sources : [

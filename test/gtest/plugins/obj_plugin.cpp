@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,16 +31,42 @@ namespace gtest::plugins::obj {
  *
  * These variables are required for authenticating and interacting with the S3 bucket
  * used during the tests.
+ *
+ * Test suites:
+ * - ObjTests: Standard S3 client tests (crtMinLimit = 0)
+ * - ObjCrtTests: S3 CRT client tests (crtMinLimit = 1024)
+ * - ObjAccelTests: S3 Accelerated client tests (accelerated = true)
+ *                  Note: Only compiled if HAVE_CUOBJ_CLIENT is defined
  */
 
-nixl_b_params_t obj_params;
+nixl_b_params_t obj_params = {{"crtMinLimit", "0"}};
+nixl_b_params_t obj_crt_params = {{"crtMinLimit", "1024"}};
+nixl_b_params_t obj_accel_params = {{"accelerated", "true"}};
 const std::string local_agent_name = "Agent1";
+const std::string crt_agent_name = "Agent2-CRT";
+const std::string accel_agent_name = "Agent3-Accel";
 const nixlBackendInitParams obj_test_params = {.localAgent = local_agent_name,
                                                .type = "OBJ",
                                                .customParams = &obj_params,
                                                .enableProgTh = false,
                                                .pthrDelay = 0,
                                                .syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW};
+
+const nixlBackendInitParams obj_crt_test_params = {.localAgent = crt_agent_name,
+                                                   .type = "OBJ",
+                                                   .customParams = &obj_crt_params,
+                                                   .enableProgTh = false,
+                                                   .pthrDelay = 0,
+                                                   .syncMode =
+                                                       nixl_thread_sync_t::NIXL_THREAD_SYNC_RW};
+
+const nixlBackendInitParams obj_accel_test_params = {.localAgent = accel_agent_name,
+                                                     .type = "OBJ",
+                                                     .customParams = &obj_accel_params,
+                                                     .enableProgTh = false,
+                                                     .pthrDelay = 0,
+                                                     .syncMode =
+                                                         nixl_thread_sync_t::NIXL_THREAD_SYNC_RW};
 
 class setupObjTestFixture : public setupBackendTestFixture {
 protected:
@@ -90,5 +116,111 @@ TEST_P(setupObjTestFixture, queryMemTest) {
 
 
 INSTANTIATE_TEST_SUITE_P(ObjTests, setupObjTestFixture, testing::Values(obj_test_params));
+
+// Separate test suite for S3 CRT client with crtMinLimit enabled
+class setupObjCrtTestFixture : public setupBackendTestFixture {
+protected:
+    setupObjCrtTestFixture() {
+        localBackendEngine_ = std::make_shared<nixlObjEngine>(&GetParam());
+    }
+};
+
+TEST_P(setupObjCrtTestFixture, CrtXferTest) {
+    // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
+        localBackendEngine_, localBackendEngine_, crt_agent_name, crt_agent_name, false, 1, 2048);
+    transfer.setLocalMem();
+    transfer.testTransfer(NIXL_WRITE);
+    transfer.resetLocalMem();
+    transfer.testTransfer(NIXL_READ);
+    transfer.checkLocalMem();
+}
+
+TEST_P(setupObjCrtTestFixture, CrtXferMultiBufsTest) {
+    // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
+        localBackendEngine_, localBackendEngine_, crt_agent_name, crt_agent_name, false, 3, 2048);
+    transfer.setLocalMem();
+    transfer.testTransfer(NIXL_WRITE);
+    transfer.resetLocalMem();
+    transfer.testTransfer(NIXL_READ);
+    transfer.checkLocalMem();
+}
+
+TEST_P(setupObjCrtTestFixture, CrtQueryMemTest) {
+    // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
+        localBackendEngine_, localBackendEngine_, crt_agent_name, crt_agent_name, false, 3, 2048);
+    transfer.setLocalMem();
+    transfer.testTransfer(NIXL_WRITE);
+
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-obj-key-0"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-obj-key-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-obj-key-nonexistent"));
+    std::vector<nixl_query_resp_t> resp;
+    localBackendEngine_->queryMem(descs, resp);
+
+    EXPECT_EQ(resp.size(), 3);
+    EXPECT_EQ(resp[0].has_value(), true);
+    EXPECT_EQ(resp[1].has_value(), true);
+    EXPECT_EQ(resp[2].has_value(), false);
+}
+
+INSTANTIATE_TEST_SUITE_P(ObjCrtTests, setupObjCrtTestFixture, testing::Values(obj_crt_test_params));
+
+#if defined HAVE_CUOBJ_CLIENT
+// Separate test suite for S3 Accelerated client with accelerated=true
+// Note: These tests require the cuobjclient library to be available at compile time
+class setupObjAccelTestFixture : public setupBackendTestFixture {
+protected:
+    setupObjAccelTestFixture() {
+        localBackendEngine_ = std::make_shared<nixlObjEngine>(&GetParam());
+    }
+};
+
+TEST_P(setupObjAccelTestFixture, AccelXferTest) {
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
+        localBackendEngine_, localBackendEngine_, accel_agent_name, accel_agent_name, false, 1);
+    transfer.setLocalMem();
+    transfer.testTransfer(NIXL_WRITE);
+    transfer.resetLocalMem();
+    transfer.testTransfer(NIXL_READ);
+    transfer.checkLocalMem();
+}
+
+TEST_P(setupObjAccelTestFixture, AccelXferMultiBufsTest) {
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
+        localBackendEngine_, localBackendEngine_, accel_agent_name, accel_agent_name, false, 3);
+    transfer.setLocalMem();
+    transfer.testTransfer(NIXL_WRITE);
+    transfer.resetLocalMem();
+    transfer.testTransfer(NIXL_READ);
+    transfer.checkLocalMem();
+}
+
+TEST_P(setupObjAccelTestFixture, AccelQueryMemTest) {
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
+        localBackendEngine_, localBackendEngine_, accel_agent_name, accel_agent_name, false, 3);
+    transfer.setLocalMem();
+    transfer.testTransfer(NIXL_WRITE);
+
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-obj-key-0"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-obj-key-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-obj-key-nonexistent"));
+    std::vector<nixl_query_resp_t> resp;
+    localBackendEngine_->queryMem(descs, resp);
+
+    EXPECT_EQ(resp.size(), 3);
+    EXPECT_EQ(resp[0].has_value(), true);
+    EXPECT_EQ(resp[1].has_value(), true);
+    EXPECT_EQ(resp[2].has_value(), false);
+}
+
+INSTANTIATE_TEST_SUITE_P(ObjAccelTests,
+                         setupObjAccelTestFixture,
+                         testing::Values(obj_accel_test_params));
+#endif // HAVE_CUOBJ_CLIENT
 
 } // namespace gtest::plugins::obj

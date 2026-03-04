@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,6 +55,7 @@ void InitializeNixlLogging()
     bool invalid_env_var = false;
 
     // Check environment variable, it has priority over compile-time default.
+    // Not use facilities from nixl::config to prevent cyclic initialization dependency.
     const char* env_log_level = std::getenv("NIXL_LOG_LEVEL");
     std::string env_level_str_upper;
     if (env_log_level != nullptr) {
@@ -74,6 +75,14 @@ void InitializeNixlLogging()
     absl::SetVLogLevel("*", settings.vlog_level);
     absl::SetStderrThreshold(settings.min_severity);
     absl::InitializeLog();
+
+#ifdef NIXL_VERSION
+    NIXL_INFO << "NIXL version: " << NIXL_VERSION
+#ifdef NIXL_GIT_HASH
+              << " (git: " << NIXL_GIT_HASH << ")"
+#endif
+        ;
+#endif
 
     if (invalid_env_var) {
         NIXL_WARN << "Invalid NIXL_LOG_LEVEL environment variable, using default log level: " << kDefaultLogLevel;

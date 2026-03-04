@@ -16,6 +16,8 @@ jobs:
         packages: read
       steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
         # Allowlist both variants of the mounted source directory.
       - run: git config --global --add safe.directory /__w/dynamo/dynamo
       - run: git config --global --add safe.directory /workspace

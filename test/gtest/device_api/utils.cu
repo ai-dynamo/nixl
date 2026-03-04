@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -108,7 +108,7 @@ void DeviceApiTestBase::completeWireup(size_t from_agent, size_t to_agent) {
     do {
         nixl_status_t ret = getAgent(to_agent).getNotifs(notifs);
         ASSERT_EQ(ret, NIXL_SUCCESS) << "Failed to get notifications during wireup";
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     } while (notifs.size() == 0);
 }
 

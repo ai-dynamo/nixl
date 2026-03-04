@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +38,8 @@ export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
+# Remove setting UCX_GDR_COPY_SHARED one all tests use a UCX version with UCX PR #11149
+export UCX_GDR_COPY_SHARED_MD=n
 
 echo "==== Show system info ===="
 env
@@ -54,30 +56,30 @@ export NIXL_ETCD_NAMESPACE="/nixl/nixlbench_ci/${etcd_port}"
 etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
      --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
      --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
-sleep 5
+ETCD_PID=$!
+
+wait_for_etcd
 
 echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}
 
-run_nixlbench() {
+DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 16384 --max_block_size 16384 --start_batch_size 4 --max_batch_size 4"
+
+run_nixlbench_noetcd() {
     args="$@"
-    ./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} --filepath /tmp --total_buffer_size 80000000 --start_block_size 4096 --max_block_size 16384 --start_batch_size 1 --max_batch_size 4 $args
+    ./bin/nixlbench $DEFAULT_NB_PARAMS $args
 }
 
 run_nixlbench_one_worker() {
-    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
     args="$@"
-    run_nixlbench --benchmark_group $benchmark_group $args
+    run_nixlbench_noetcd $args
 }
 
 run_nixlbench_two_workers() {
-    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
     args="$@"
-    run_nixlbench --benchmark_group $benchmark_group $args &
-    pid=$!
-    sleep 1
-    run_nixlbench --benchmark_group $benchmark_group $args
-    wait $pid
+    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+    command_line="./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group $benchmark_group $args"
+    parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 3 ; $command_line"
 }
 
 if $HAS_GPU ; then
@@ -90,15 +92,23 @@ fi
 for op_type in READ WRITE; do
     for initiator in $seg_types; do
         for target in $seg_types; do
-            run_nixlbench_two_workers --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target
+            run_nixlbench_two_workers --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
         done
     done
 done
 
 for op_type in READ WRITE; do
-    for target in $seg_types; do
-        run_nixlbench_one_worker --backend POSIX --op_type $op_type --target_seg_type $target
-    done
+    run_nixlbench_one_worker --backend POSIX --op_type $op_type --check_consistency
 done
 
-pkill etcd
+if $HAS_GPU ; then
+    for op_type in READ WRITE; do
+        for initiator in $seg_types; do
+            for target in $seg_types; do
+                run_nixlbench_two_workers --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+            done
+        done
+    done
+fi
+
+kill -9 $ETCD_PID 2>/dev/null || true

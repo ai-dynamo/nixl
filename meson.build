@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,13 +13,63 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.8.0',
+project('nixl', 'CPP', version: '0.10.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
                 'prefix=/opt/nvidia/nvda_nixl'],
     meson_version: '>= 0.64.0'
 )
+
+enable_plugins_opt = get_option('enable_plugins')
+disable_plugins_opt = get_option('disable_plugins')
+is_explicit_enable = enable_plugins_opt != ''
+
+if enable_plugins_opt != '' and disable_plugins_opt != ''
+    error('Cannot specify both enable_plugins and disable_plugins options')
+endif
+
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB']
+
+enabled_plugins = {}
+
+if enable_plugins_opt != ''
+    enabled_plugins_list = []
+    foreach p : enable_plugins_opt.split(',')
+        p_stripped = p.strip()
+        if p_stripped not in all_plugins
+            error('Requested plugin "' + p_stripped + '" is not available. Available plugins are: ' + ', '.join(all_plugins))
+        endif
+        enabled_plugins_list += [p_stripped]
+    endforeach
+
+    foreach plugin : all_plugins
+        enabled_plugins += {plugin: plugin in enabled_plugins_list}
+    endforeach
+
+    message('Building only selected plugins: ' + enable_plugins_opt)
+elif disable_plugins_opt != ''
+    disabled_plugins_list = []
+    foreach p : disable_plugins_opt.split(',')
+        p_stripped = p.strip()
+        if p_stripped not in all_plugins
+            error('Cannot exclude unknown plugin "' + p_stripped + '". Available plugins are: ' + ', '.join(all_plugins))
+        endif
+        disabled_plugins_list += [p_stripped]
+    endforeach
+
+    foreach plugin : all_plugins
+        enabled_plugins += {plugin: plugin not in disabled_plugins_list}
+    endforeach
+
+    message('Building all plugins except: ' + disable_plugins_opt)
+else
+    foreach plugin : all_plugins
+        enabled_plugins += {plugin: true}
+    endforeach
+
+    message('Building all available plugins')
+endif
 
 # set up some global vars for compiler, platform, configuration, etc.
 cpp = meson.get_compiler('cpp')
@@ -29,14 +79,30 @@ dl_dep = cpp.find_library('dl', required: true)
 rt_dep = cpp.find_library('rt', required: true)
 thread_dep = dependency('threads')
 
-# Check for POSIX AIO support for the POSIX plugin and test (it is part of GLIBC)
-posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>')
-
 # Check for libaio (for LINUX AIO plugin and test)
-aio_dep = cpp.find_library('aio', required: false)
-linux_aio = false
-if aio_dep.found()
-    linux_aio = cpp.has_function('io_setup', prefix: '#include <libaio.h>',  dependencies: [aio_dep])
+has_linux_aio = false
+linux_aio_dep = cpp.find_library('aio', required: false)
+if linux_aio_dep.found()
+    has_linux_aio = cpp.has_function('io_setup', prefix: '#include <libaio.h>',  dependencies: [linux_aio_dep])
+endif
+
+# Check for liburing
+has_io_uring = false
+io_uring_dep = dependency('liburing', required: false)
+if io_uring_dep.found()
+    has_io_uring = cpp.has_function('io_uring_queue_init_params', prefix: '#include <liburing.h>',  dependencies: [io_uring_dep])
+endif
+
+# Check for POSIX aio
+has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', dependencies: [rt_dep])
+
+# Check whether the POSIX plugin is enabled
+has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
+
+# Check for CUObject Client library
+cuobj_dep = dependency('cuobjclient-13.1', required: false)
+if cuobj_dep.found()
+    add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
 endif
 
 # Forced to ignore this error due to:
@@ -110,7 +176,7 @@ if cuda_dep.found()
     nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
     message('nvcc version: ' + nvcc.version())
-    if nvcc.version().version_compare('>=12.8') and nvcc.version().version_compare('<13.0')
+    if nvcc.version().version_compare('>=12.8')
         doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
         warning('GPUNETIO plugin not supported in CUDA version: ' + nvcc.version())
@@ -206,15 +272,9 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
             int main() { return 0; }
         ''', dependencies : [ucx_dep, doca_gpunetio_dep], args: nvcc_flags)
 
-    have_host_side = cpp.compiles('''
-            #include <ucp/api/ucp_version.h>
-            #include <ucp/api/device/ucp_host.h>
-            #include <ucs/sys/compiler_def.h>
-            int main() {
-                UCS_STATIC_ASSERT(UCP_VERSION(UCP_API_MAJOR, UCP_API_MINOR) >= UCP_VERSION(1, 21));
-                return 0;
-            }
-        ''', dependencies: ucx_dep, name: 'UCX Device API (host-side, version >= 1.21)')
+    have_host_side = cpp.has_function('ucp_device_remote_mem_list_create',
+        prefix: '#include <ucp/api/device/ucp_host.h>',
+        dependencies: ucx_dep)
 
     if have_gpu_side and have_host_side
         ucx_gpu_device_api_available = true
@@ -222,11 +282,11 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     endif
 
     summary({
-    'UCX GPU Device API' : ucx_gpu_device_api_available,
-    'GPU-side compile'   : have_gpu_side,
-    'Host-side compile'  : have_host_side,
-    'nvcc available'     : nvcc_prog.found(),
-    'DOCA GPUNETIO found': doca_gpunetio_dep.found(),
+    'UCX GPU Device API'    : ucx_gpu_device_api_available,
+    'GPU-side compile'      : have_gpu_side,
+    'Host-side compile'     : have_host_side,
+    'nvcc available'        : nvcc_prog.found(),
+    'DOCA GPUNETIO found'   : doca_gpunetio_dep.found(),
   }, section: 'UCX GPU Device API', bool_yn: true)
 endif
 
@@ -262,7 +322,7 @@ if get_option('buildtype') == 'debug'
     run_command('truncate', '-s 0', plugfile, check: true)
 endif
 
-nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core')
+nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core', 'src/core/telemetry')
 nixl_gpu_inc_dirs = include_directories('src/api/gpu/ucx')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
@@ -282,11 +342,15 @@ if get_option('install_headers')
   install_headers('src/api/cpp/nixl_descriptors.h', install_dir: prefix_inc)
   install_headers('src/utils/serdes/serdes.h', install_dir: prefix_inc + '/utils/serdes')
   install_headers('src/utils/common/nixl_time.h', install_dir: prefix_inc + '/utils/common')
+  install_headers('src/utils/common/nixl_log.h', install_dir: prefix_inc + '/utils/common')
   install_headers('src/api/cpp/backend/backend_engine.h', install_dir: prefix_inc + '/backend')
   install_headers('src/api/cpp/backend/backend_aux.h', install_dir: prefix_inc + '/backend')
+  install_headers('src/api/cpp/backend/backend_plugin.h', install_dir: prefix_inc + '/backend')
   install_headers('src/core/transfer_request.h', install_dir: prefix_inc)
   install_headers('src/core/agent_data.h', install_dir: prefix_inc)
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
+  install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
+
   if ucx_gpu_device_api_available
     install_headers('src/api/gpu/ucx/nixl_device.cuh', install_dir: prefix_inc + '/gpu/ucx')
   endif

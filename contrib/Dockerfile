@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,8 +24,11 @@ ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REF="v1.20.x"
+ARG BUILD_NIXL_EP="false"
+ARG RDMA_CORE_PREFIX="/usr"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
+ARG DOCA_PREFIX="/opt/mellanox/doca"
 ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
@@ -63,7 +66,10 @@ RUN apt-get update -y && \
     clang \
     hwloc \
     libhwloc-dev \
-    libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev # aws-sdk-cpp dependencies
+    # aws-sdk-cpp dependencies
+    libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev \
+    # azure-sdk-for-cpp dependencies
+    libxml2-dev
 
 # Add DOCA repository and install packages
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
@@ -89,15 +95,25 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=17 && \
     make -j${NPROC:-$(nproc)} && make install
 
-RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
+RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
-    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install
 
 RUN git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
      make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
      cd ..
+
+RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
+    cd azure-sdk-for-cpp/ && \
+    mkdir build && cd build && \
+    AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
+    cmake --build . --target azure-storage-blobs azure-identity && \
+    cmake --install sdk/core && \
+    cmake --install sdk/storage/azure-storage-common && \
+    cmake --install sdk/storage/azure-storage-blobs && \
+    cmake --install sdk/identity
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -122,8 +138,17 @@ RUN rm -rf /opt/hpcx/ucx
 
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
-     cd ucx && 			     \
-     git checkout $UCX_REF &&        \
+     cd ucx &&                       \
+     if [ "$BUILD_NIXL_EP" = "true" ]; then \
+         echo "=== BUILD_NIXL_EP=true: Using latest UCX master branch (ignoring UCX_REF=$UCX_REF) ===" && \
+         UCX_COMMIT=$(git rev-parse --short HEAD) && \
+         echo "Using UCX commit: $UCX_COMMIT" && \
+         EXPERIMENTAL_API_PARAM="--enable-experimental-api"; \
+     else                            \
+         echo "=== Using UCX_REF=$UCX_REF ===" && \
+         git checkout $UCX_REF &&    \
+         EXPERIMENTAL_API_PARAM="";   \
+     fi &&                           \
      ./autogen.sh && \
      ./contrib/configure-release-mt  \
          --prefix=$UCX_PREFIX        \
@@ -133,6 +158,7 @@ RUN cd /usr/local/src && \
          --enable-optimizations      \
          --enable-cma                \
          --enable-devel-headers      \
+         $EXPERIMENTAL_API_PARAM      \
          --with-cuda=/usr/local/cuda \
          --with-verbs                \
          --with-dm                   \
@@ -191,19 +217,30 @@ RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click t
 # Install PyTorch
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     uv pip install torch torchvision torchaudio
+# Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
+RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$RDMA_CORE_PREFIX/lib:$LD_LIBRARY_PATH
 
 # Install pybind11 via apt
 RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 
+# Set PKG_CONFIG_PATH for NIXL EP dependencies (rdma-core, UCX, DOCA)
+ENV PKG_CONFIG_PATH=$RDMA_CORE_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$UCX_PREFIX/lib/pkgconfig:$DOCA_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
+
 ENV NIXL_PREFIX=$NIXL_PREFIX
 RUN rm -rf build && \
     mkdir build && \
-    meson setup -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
+    if [ "$BUILD_NIXL_EP" = "true" ]; then \
+        echo "=== BUILD_NIXL_EP=true: Building NIXL with NIXL EP support ===" && \
+        NIXL_EP_FLAG="-Dbuild_nixl_ep=true"; \
+    else \
+        NIXL_EP_FLAG=""; \
+    fi && \
+    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja && \
     ninja install
@@ -211,6 +248,10 @@ RUN rm -rf build && \
 RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "$NIXL_PLUGIN_DIR" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
+
+# Set environment variables for NIXL EP
+ENV NIXL_PLUGIN_DIR=$NIXL_PLUGIN_DIR
+ENV PYTHONPATH=/workspace/nixl/build/examples/device/ep
 
 RUN cd src/bindings/rust && cargo build --release --locked
 
