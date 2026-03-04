@@ -589,8 +589,11 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
         }
 
         if (attr.mem_type == UCS_MEMORY_TYPE_HOST) {
-            NIXL_WARN << "memory is detected as host, check that UCX is configured"
-                         " with CUDA support";
+            NIXL_ERROR << "VRAM memory is detected as host by UCX. "
+                          "UCX is likely not configured with CUDA support. "
+                          "VRAM registration cannot proceed.";
+            ucp_mem_unmap(ctx, mem.memh);
+            return -1;
         }
     }
 
