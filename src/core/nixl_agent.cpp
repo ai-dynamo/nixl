@@ -77,7 +77,7 @@ nixlEnumStrings::statusStr(const nixl_status_t &status) {
     }
 }
 
-nixlXferReqH::nixlXferReqH(const std::string remote_agent,
+nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_xfer_op_t backend_op,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
