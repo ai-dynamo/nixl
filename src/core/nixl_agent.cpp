@@ -78,7 +78,7 @@ nixlEnumStrings::statusStr(const nixl_status_t &status) {
 }
 
 inline void
-nixlXferReqH::updateRequestStats(const std::unique_ptr<nixlTelemetry> &telemetry_pub,
+nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
                                  nixl_telemetry_stat_status_t stat_status) {
 
     static const std::array<std::string, 3> nixl_post_status_str = {
@@ -576,8 +576,6 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 
     // Using a set as order is not important to revert the operation
     backend_set_t* backend_set;
-    nixl_status_t  ret;
-    int            count = 0;
     bool           init_side = (agent_name == NIXL_INIT_AGENT);
 
     NIXL_LOCK_GUARD(data->lock);
@@ -610,45 +608,32 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    nixlDlistH *handle = new nixlDlistH;
-    if (init_side) {
-        handle->isLocal     = true;
-        handle->remoteAgent = "";
-    } else {
-        handle->isLocal     = false;
-        handle->remoteAgent = agent_name;
-    }
+    std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_dlist_t>> dlists;
 
-    for (auto & backend : *backend_set) {
-        handle->descs[backend] = std::make_unique<nixl_meta_dlist_t>(descs.getType());
-        if (init_side)
-            ret = data->memorySection->populate(
-                       descs, backend, *(handle->descs[backend]));
-        else
-            ret = data->remoteSections[agent_name]->populate(
-                       descs, backend, *(handle->descs[backend]));
-        if (ret == NIXL_SUCCESS) {
-            count++;
-        } else {
-            handle->descs.erase(backend);
+    auto &mem_sec = init_side ? static_cast<nixlMemSection&>(*data->memorySection) : static_cast<nixlMemSection&>(*data->remoteSections[agent_name]);
+
+    for (const auto &backend : *backend_set) {
+        nixl_meta_dlist_t dlist(descs.getType());
+        if (mem_sec.populate(descs, backend, dlist) == NIXL_SUCCESS) {
+            dlists.try_emplace(backend, std::make_unique<nixl_meta_dlist_t>(std::move(dlist)));
         }
     }
 
-    if (extra_params && extra_params->backends.size() > 0)
+    if (extra_params && !extra_params->backends.empty()) {
         delete backend_set;
+    }
 
-    if (count == 0) {
-        delete handle;
+    if (dlists.empty()) {
         dlist_hndl = nullptr;
         NIXL_ERROR_FUNC << "failed to prepare the descriptors for any of "
                            "the specified or potential backends for agent '"
                         << agent_name << "'";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
-    } else {
-        dlist_hndl = handle;
-        return NIXL_SUCCESS;
     }
+
+    dlist_hndl = new nixlDlistH(init_side, init_side ? std::string() : agent_name, std::move(dlists));
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -756,10 +741,9 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
-    std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>();
-    handle->initiatorDescs = std::make_unique<nixl_meta_dlist_t>(local_descs.getType(), desc_count);
-
-    handle->targetDescs = std::make_unique<nixl_meta_dlist_t>(remote_descs.getType(), desc_count);
+    std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>(local_descs.getType(),
+                                                                          remote_descs.getType(),
+                                                                          desc_count);
 
     if (extra_params && extra_params->skipDescMerge) {
         for (int i=0; i<desc_count; ++i) {
@@ -902,10 +886,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO: merge descriptors back to back in memory (like makeXferReq).
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>();
-    handle->initiatorDescs = std::make_unique<nixl_meta_dlist_t>(local_descs.getType());
-
-    handle->targetDescs = std::make_unique<nixl_meta_dlist_t>(remote_descs.getType());
+    std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>(local_descs.getType(), remote_descs.getType());
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -1113,9 +1094,9 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         if (req_hndl->status < 0) {
             data->addErrorTelemetry(req_hndl->status);
         } else if (req_hndl->status == NIXL_IN_PROG) {
-            req_hndl->updateRequestStats(data->telemetry_, NIXL_TELEMETRY_POST);
+            req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_POST);
         } else {
-            req_hndl->updateRequestStats(data->telemetry_, NIXL_TELEMETRY_POST_AND_FINISH);
+            req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_POST_AND_FINISH);
         }
     }
 
@@ -1148,7 +1129,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         }
         if (data->telemetryEnabled) {
             if (req_hndl->status == NIXL_SUCCESS) {
-                req_hndl->updateRequestStats(data->telemetry_, NIXL_TELEMETRY_FINISH);
+                req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_FINISH);
             } else if (req_hndl->status < 0) {
                 data->addErrorTelemetry(req_hndl->status);
             }

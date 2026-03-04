@@ -17,9 +17,10 @@
 #ifndef NIXL_SRC_CORE_TRANSFER_REQUEST_H
 #define NIXL_SRC_CORE_TRANSFER_REQUEST_H
 
+#include <memory>
 #include <string>
 #include <unordered_map>
-#include <memory>
+#include <utility>
 
 #include "nixl_types.h"
 #include "backend_engine.h"
@@ -38,8 +39,8 @@ private:
     nixlBackendEngine *engine = nullptr;
     nixlBackendReqH *backendHandle = nullptr;
 
-    std::unique_ptr<nixl_meta_dlist_t> initiatorDescs;
-    std::unique_ptr<nixl_meta_dlist_t> targetDescs;
+    const std::unique_ptr<nixl_meta_dlist_t> initiatorDescs;
+    const std::unique_ptr<nixl_meta_dlist_t> targetDescs;
 
     std::string remoteAgent;
     nixl_blob_t notifMsg;
@@ -51,7 +52,12 @@ private:
     nixl_xfer_telem_t telemetry;
 
 public:
-    nixlXferReqH() = default;
+    nixlXferReqH(const nixl_mem_t local_type,
+                 const nixl_mem_t remote_type,
+                 const size_t desc_count = 0)
+        : initiatorDescs(std::make_unique<nixl_meta_dlist_t>(local_type, desc_count)),
+          targetDescs(std::make_unique<nixl_meta_dlist_t>(remote_type, desc_count))
+    {}
 
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;
@@ -68,21 +74,24 @@ public:
     }
 
     void
-    updateRequestStats(const std::unique_ptr<nixlTelemetry> &telemetry,
+    updateRequestStats(nixlTelemetry *telemetry,
                        nixl_telemetry_stat_status_t stat_status);
 
     friend class nixlAgent;
 };
 
-class nixlDlistH {
-private:
-    std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_dlist_t>> descs;
+struct nixlDlistH {
+    using descs_t = std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_dlist_t>>;
+    const descs_t descs;
 
-    std::string remoteAgent;
-    bool isLocal;
+    const std::string remoteAgent;
+    const bool isLocal;
 
-public:
-    nixlDlistH() = default;
+    nixlDlistH(const bool is_local, const std::string &remote_agent, descs_t &&descs)
+        : descs(std::move(descs)),
+          remoteAgent(remote_agent),
+          isLocal(is_local)
+    {}
 
     nixlDlistH(nixlDlistH &&) = delete;
     nixlDlistH(const nixlDlistH &) = delete;
@@ -91,8 +100,6 @@ public:
     operator=(nixlDlistH &&) = delete;
     void
     operator=(const nixlDlistH &) = delete;
-
-    friend class nixlAgent;
 };
 
 #endif
