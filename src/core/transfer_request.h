@@ -56,8 +56,7 @@ public:
                  const nixl_mem_t remote_type,
                  const size_t desc_count = 0)
         : initiatorDescs(std::make_unique<nixl_meta_dlist_t>(local_type, desc_count)),
-          targetDescs(std::make_unique<nixl_meta_dlist_t>(remote_type, desc_count))
-    {}
+          targetDescs(std::make_unique<nixl_meta_dlist_t>(remote_type, desc_count)) {}
 
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;
@@ -74,8 +73,7 @@ public:
     }
 
     void
-    updateRequestStats(nixlTelemetry *telemetry,
-                       nixl_telemetry_stat_status_t stat_status);
+    updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
 
     friend class nixlAgent;
 };
@@ -90,8 +88,7 @@ struct nixlDlistH {
     nixlDlistH(const bool is_local, const std::string &remote_agent, descs_t &&descs)
         : descs(std::move(descs)),
           remoteAgent(remote_agent),
-          isLocal(is_local)
-    {}
+          isLocal(is_local) {}
 
     nixlDlistH(nixlDlistH &&) = delete;
     nixlDlistH(const nixlDlistH &) = delete;

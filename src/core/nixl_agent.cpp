@@ -610,7 +610,8 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 
     std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_dlist_t>> dlists;
 
-    auto &mem_sec = init_side ? static_cast<nixlMemSection&>(*data->memorySection) : static_cast<nixlMemSection&>(*data->remoteSections[agent_name]);
+    auto &mem_sec = init_side ? static_cast<nixlMemSection &>(*data->memorySection) :
+                                static_cast<nixlMemSection &>(*data->remoteSections[agent_name]);
 
     for (const auto &backend : *backend_set) {
         nixl_meta_dlist_t dlist(descs.getType());
@@ -632,7 +633,8 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    dlist_hndl = new nixlDlistH(init_side, init_side ? std::string() : agent_name, std::move(dlists));
+    dlist_hndl =
+        new nixlDlistH(init_side, init_side ? std::string() : agent_name, std::move(dlists));
     return NIXL_SUCCESS;
 }
 
@@ -741,9 +743,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
-    std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>(local_descs.getType(),
-                                                                          remote_descs.getType(),
-                                                                          desc_count);
+    std::unique_ptr<nixlXferReqH> handle =
+        std::make_unique<nixlXferReqH>(local_descs.getType(), remote_descs.getType(), desc_count);
 
     if (extra_params && extra_params->skipDescMerge) {
         for (int i=0; i<desc_count; ++i) {
@@ -886,7 +887,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO: merge descriptors back to back in memory (like makeXferReq).
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>(local_descs.getType(), remote_descs.getType());
+    std::unique_ptr<nixlXferReqH> handle =
+        std::make_unique<nixlXferReqH>(local_descs.getType(), remote_descs.getType());
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
