@@ -37,6 +37,17 @@ static const std::vector<std::vector<std::string>> illegal_plugin_combinations =
     {"GDS", "GDS_MT"},
 };
 
+inline void
+setNotification(const nixl_opt_args_t &extra_params, nixl_opt_b_args_t &opt_args) {
+    if (extra_params.notif) {
+        opt_args.notifMsg = *extra_params.notif;
+        opt_args.hasNotif = true;
+    } else if (extra_params.hasNotif) {
+        opt_args.notifMsg = extra_params.notifMsg;
+        opt_args.hasNotif = true;
+    }
+}
+
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
     static std::array<std::string, FILE_SEG+1> nixl_mem_str = {
@@ -754,13 +765,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     }
 
     if (extra_params) {
-        if (extra_params->notif.has_value()) {
-            opt_args.notifMsg = extra_params->notif.value();
-            opt_args.hasNotif = true;
-        } else if (extra_params->hasNotif) {
-            opt_args.notifMsg = extra_params->notifMsg;
-            opt_args.hasNotif = true;
-        }
+        setNotification(*extra_params, opt_args);
     }
 
     if ((opt_args.hasNotif) && (!backend->supportsNotif())) {
@@ -946,14 +951,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     if (extra_params) {
-        if (extra_params->notif.has_value()) {
-            opt_args.notifMsg = extra_params->notif.value();
-            opt_args.hasNotif = true;
-        } else if (extra_params->hasNotif) {
-            opt_args.notifMsg = extra_params->notifMsg;
-            opt_args.hasNotif = true;
-        }
-
+        setNotification(*extra_params, opt_args);
         if (extra_params->customParam.length() > 0)
             opt_args.customParam = extra_params->customParam;
     }
@@ -1086,19 +1084,11 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     // Updating the notification based on opt_args
     if (extra_params) {
-        if (extra_params->notif.has_value()) {
-            req_hndl->notifMsg = extra_params->notif.value();
-            opt_args.notifMsg = extra_params->notif.value();
-            req_hndl->hasNotif = true;
-            opt_args.hasNotif = true;
-        } else if (extra_params->hasNotif) {
-            req_hndl->notifMsg = extra_params->notifMsg;
-            opt_args.notifMsg = extra_params->notifMsg;
-            req_hndl->hasNotif = true;
-            opt_args.hasNotif = true;
-        } else {
-            req_hndl->hasNotif = false;
-            opt_args.hasNotif = false;
+        opt_args.hasNotif = false;
+        setNotification(*extra_params, opt_args);
+        req_hndl->hasNotif = opt_args.hasNotif;
+        if (opt_args.hasNotif) {
+            req_hndl->notifMsg = opt_args.notifMsg;
         }
     }
 
