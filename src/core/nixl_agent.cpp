@@ -115,10 +115,10 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
                << duration.count() << "us.";
 }
 
-nixlDlistH::nixlDlistH(const bool is_local, const std::string &remote_agent, descs_t &&descs)
-    : descs(std::move(descs)),
-      remoteAgent(remote_agent),
-      isLocal(is_local) {}
+nixlDlistH::nixlDlistH(const std::string &remote_agent, const bool is_local, descs_t &&descs)
+    : remoteAgent(remote_agent),
+      isLocal(is_local),
+      descs(std::move(descs)) {}
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg)
@@ -649,7 +649,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     }
 
     dlist_hndl =
-        new nixlDlistH(init_side, init_side ? std::string() : agent_name, std::move(dlists));
+        new nixlDlistH(init_side ? std::string() : agent_name, init_side, std::move(dlists));
     return NIXL_SUCCESS;
 }
 
@@ -717,8 +717,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixl_meta_dlist_t &local_descs = *local_side->descs.at(backend);
-    nixl_meta_dlist_t &remote_descs = *remote_side->descs.at(backend);
+    const nixl_meta_dlist_t &local_descs = *local_side->descs.at(backend);
+    const nixl_meta_dlist_t &remote_descs = *remote_side->descs.at(backend);
     size_t total_bytes = 0;
 
     if ((desc_count == 0) || (remote_indices.size() == 0) ||
@@ -758,11 +758,11 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
-    std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>(remote_side->remoteAgent,
-                                                                          operation,
-                                                                          local_descs.getType(),
-                                                                          remote_descs.getType(),
-                                                                          desc_count);
+    auto handle = std::make_unique<nixlXferReqH>(remote_side->remoteAgent,
+                                                 operation,
+                                                 local_descs.getType(),
+                                                 remote_descs.getType(),
+                                                 desc_count);
 
     if (extra_params && extra_params->skipDescMerge) {
         for (int i=0; i<desc_count; ++i) {
@@ -776,8 +776,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
             nixlMetaDesc remote_desc1 = remote_descs[remote_indices[i]];
 
             if(i != (desc_count-1) ) {
-                nixlMetaDesc *local_desc2 = &(local_descs[local_indices[i + 1]]);
-                nixlMetaDesc *remote_desc2 = &(remote_descs[remote_indices[i + 1]]);
+                const nixlMetaDesc *local_desc2 = &(local_descs[local_indices[i + 1]]);
+                const nixlMetaDesc *remote_desc2 = &(remote_descs[remote_indices[i + 1]]);
 
                 while (((local_desc1.addr + local_desc1.len) == local_desc2->addr) &&
                        ((remote_desc1.addr + remote_desc1.len) == remote_desc2->addr) &&

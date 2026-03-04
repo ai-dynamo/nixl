@@ -35,6 +35,24 @@ enum nixl_telemetry_stat_status_t {
 // Contains pointers to corresponding backend engine and its handler, and populated
 // and verified DescLists, and other state and metadata needed for a NIXL transfer
 class nixlXferReqH {
+public:
+    nixlXferReqH(const std::string &remote_agent,
+                 const nixl_xfer_op_t backend_op,
+                 const nixl_mem_t local_type,
+                 const nixl_mem_t remote_type,
+                 const size_t desc_count = 0);
+
+    ~nixlXferReqH() {
+        if ((backendHandle != nullptr) && (engine != nullptr)) {
+            engine->releaseReqH(backendHandle);
+        }
+    }
+
+    void
+    updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
+
+    friend class nixlAgent;
+
 private:
     nixlBackendEngine *engine = nullptr;
     nixlBackendReqH *backendHandle = nullptr;
@@ -50,50 +68,16 @@ private:
     nixl_status_t status = NIXL_ERR_NOT_POSTED;
 
     nixl_xfer_telem_t telemetry;
-
-public:
-    nixlXferReqH(const std::string &remote_agent,
-                 const nixl_xfer_op_t backend_op,
-                 const nixl_mem_t local_type,
-                 const nixl_mem_t remote_type,
-                 const size_t desc_count = 0);
-
-    nixlXferReqH(nixlXferReqH &&) = delete;
-    nixlXferReqH(const nixlXferReqH &) = delete;
-
-    void
-    operator=(nixlXferReqH &&) = delete;
-    void
-    operator=(const nixlXferReqH &) = delete;
-
-    ~nixlXferReqH() {
-        if (backendHandle != nullptr) {
-            engine->releaseReqH(backendHandle);
-        }
-    }
-
-    void
-    updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
-
-    friend class nixlAgent;
 };
 
 struct nixlDlistH {
     using descs_t = std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_dlist_t>>;
-    const descs_t descs;
+
+    nixlDlistH(const std::string &remote_agent, const bool is_local, descs_t &&descs);
 
     const std::string remoteAgent;
     const bool isLocal;
-
-    nixlDlistH(const bool is_local, const std::string &remote_agent, descs_t &&descs);
-
-    nixlDlistH(nixlDlistH &&) = delete;
-    nixlDlistH(const nixlDlistH &) = delete;
-
-    void
-    operator=(nixlDlistH &&) = delete;
-    void
-    operator=(const nixlDlistH &) = delete;
+    const descs_t descs;
 };
 
 #endif
