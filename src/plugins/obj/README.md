@@ -78,6 +78,8 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 
 \**** If `crtMinLimit` is not provided, the S3 CRT client is disabled and all transfers use the standard S3 client. When set, objects with size >= `crtMinLimit` will use the high-performance CRT client, while smaller objects continue to use the standard client. Recommended value: 10485760 (10 MB) or higher for optimal performance on large objects.
 
+Setting `crtMinLimit` also configures the CRT client's `partSize` and `multipartUploadThreshold` to the same value, ensuring multipart upload (MPU) is always used for transfers routed to the CRT client. Note that AWS S3 enforces a **5 MiB minimum part size** for all parts except the last: if `crtMinLimit` is set below 5 MiB (5,242,880 bytes), the CRT SDK will silently clamp the part size to 5 MiB and log a warning, but MPU still activates at `crtMinLimit`. Objects smaller than 5 MiB uploaded via MPU will be sent as a single-part multipart upload, which S3 allows. To avoid the silent clamp and warning, use `crtMinLimit >= 5242880`.
+
 ### Environment Variables
 
 The following environment variables are supported for Object Storage configuration:
@@ -202,11 +204,13 @@ nixl_b_params_t params = {
 agent.createBackend("obj", params);
 ```
 
-This configuration automatically uses the high-performance S3 CRT client for objects 10 MB and larger, while smaller objects continue to use the standard S3 client. The CRT client provides:
+This configuration automatically uses the high-performance S3 CRT client for objects 10 MB and larger, while smaller objects continue to use the standard S3 client. Setting `crtMinLimit` also sets the CRT client's `partSize` and `multipartUploadThreshold` to the same value, so all CRT-routed objects use multipart upload. The CRT client provides:
 
 - **Higher Throughput**: Optimized multipart transfers with automatic chunking and parallelization
 - **Lower CPU Usage**: Efficient connection pooling and memory management
 - **Better for Large Objects**: Particularly beneficial for model weights, checkpoints, and large datasets
+
+> **Part size and the 5 MiB floor**: AWS S3 requires a minimum part size of 5 MiB for all parts except the last. If `crtMinLimit` is set below 5 MiB, the CRT SDK silently clamps the part size to 5 MiB (logging a warning) while still triggering multipart at `crtMinLimit`. Objects smaller than 5 MiB are uploaded as a single-part multipart request, which S3 permits. The 5 MiB minimum is an AWS service constraint and cannot be bypassed. To avoid the silent clamp, use `crtMinLimit >= 5242880` (5 MiB).
 
 ## Transfer Operations
 

@@ -34,13 +34,15 @@ namespace gtest::plugins::obj {
  *
  * Test suites:
  * - ObjTests: Standard S3 client tests (crtMinLimit = 0)
- * - ObjCrtTests: S3 CRT client tests (crtMinLimit = 1024)
+ * - ObjCrtTests: S3 CRT client tests (crtMinLimit = 5 MiB, buffer = 10 MiB)
+ *                crtMinLimit is set to the S3 minimum part size (5 MiB) so that
+ *                partSize is not clamped and MPU is exercised with multiple parts.
  * - ObjAccelTests: S3 Accelerated client tests (accelerated = true)
  *                  Note: Only compiled if HAVE_CUOBJ_CLIENT is defined
  */
 
 nixl_b_params_t obj_params = {{"crtMinLimit", "0"}};
-nixl_b_params_t obj_crt_params = {{"crtMinLimit", "1024"}};
+nixl_b_params_t obj_crt_params = {{"crtMinLimit", "5242880"}}; // 5 MiB: S3 minimum part size
 nixl_b_params_t obj_accel_params = {{"accelerated", "true"}};
 const std::string local_agent_name = "Agent1";
 const std::string crt_agent_name = "Agent2-CRT";
@@ -126,9 +128,14 @@ protected:
 };
 
 TEST_P(setupObjCrtTestFixture, CrtXferTest) {
-    // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
-    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
-        localBackendEngine_, localBackendEngine_, crt_agent_name, crt_agent_name, false, 1, 2048);
+    // 10 MiB buffer: above the 5 MiB CRT threshold, exercises MPU (two 5 MiB parts)
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
+                                                localBackendEngine_,
+                                                crt_agent_name,
+                                                crt_agent_name,
+                                                false,
+                                                1,
+                                                10485760);
     transfer.setLocalMem();
     transfer.testTransfer(NIXL_WRITE);
     transfer.resetLocalMem();
@@ -137,9 +144,14 @@ TEST_P(setupObjCrtTestFixture, CrtXferTest) {
 }
 
 TEST_P(setupObjCrtTestFixture, CrtXferMultiBufsTest) {
-    // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
-    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
-        localBackendEngine_, localBackendEngine_, crt_agent_name, crt_agent_name, false, 3, 2048);
+    // 10 MiB buffer: above the 5 MiB CRT threshold, exercises MPU (two 5 MiB parts)
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
+                                                localBackendEngine_,
+                                                crt_agent_name,
+                                                crt_agent_name,
+                                                false,
+                                                3,
+                                                10485760);
     transfer.setLocalMem();
     transfer.testTransfer(NIXL_WRITE);
     transfer.resetLocalMem();
@@ -148,9 +160,14 @@ TEST_P(setupObjCrtTestFixture, CrtXferMultiBufsTest) {
 }
 
 TEST_P(setupObjCrtTestFixture, CrtQueryMemTest) {
-    // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
-    transferHandler<DRAM_SEG, OBJ_SEG> transfer(
-        localBackendEngine_, localBackendEngine_, crt_agent_name, crt_agent_name, false, 3, 2048);
+    // 10 MiB buffer: above the 5 MiB CRT threshold, exercises MPU (two 5 MiB parts)
+    transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
+                                                localBackendEngine_,
+                                                crt_agent_name,
+                                                crt_agent_name,
+                                                false,
+                                                3,
+                                                10485760);
     transfer.setLocalMem();
     transfer.testTransfer(NIXL_WRITE);
 
