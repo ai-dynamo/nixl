@@ -34,6 +34,37 @@
 
 // Forward declarations
 class nixlLibfabricTopology;
+class nixlLibfabricRailManager;
+
+/** @brief Rail selection policy parent interface type. */
+class nixlLibfabricRailSelectionPolicy {
+public:
+    virtual ~nixlLibfabricRailSelectionPolicy() {}
+
+    nixlLibfabricRailSelectionPolicy(const nixlLibfabricRailSelectionPolicy &) = delete;
+    nixlLibfabricRailSelectionPolicy &
+    operator=(const nixlLibfabricRailSelectionPolicy &) = delete;
+
+    /**
+     * @brief Loads the policy from custom engine configuration.
+     * @param rail_manager The rail manager.
+     * @return True if succeeded.
+     */
+    virtual bool
+    load(nixlLibfabricRailManager &rail_manager) = 0;
+
+    /**
+     * @brief Selects a set of rails for memory registration.
+     * @param buffer The memory buffer for which data rails are to be selected.
+     * @param[out] selected_rails The resulting selected rail (index list).
+     * @return True if succeeded.
+     */
+    virtual bool
+    selectRails(void *buffer, std::vector<size_t> &selected_rails) = 0;
+
+protected:
+    nixlLibfabricRailSelectionPolicy() {}
+};
 
 /** Central manager for multi-rail RDMA operations with topology awareness */
 class nixlLibfabricRailManager {
@@ -47,61 +78,57 @@ public:
     /** Destroy rail manager and cleanup all resources */
     ~nixlLibfabricRailManager();
 
+    /**
+     * @brief Initialize rail manager with provided configuration.
+     * @param custom_params Custom configuration parameters from engine.
+     * @return NIXL_SUCCESS on success, error code on failure
+     *
+     * @note Currently the following parameters can be passed in the parameter map to control the
+     * behavior of the rail manager:
+     *
+     * - max_bw_per_dram_seg (matching environment variable NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG):
+     * Controls the bandwidth limit on DRAM_SEG memory type buffers per NUMA node. Specified in
+     * multiples of 1000^3 (e.g. 100, 200, etc.). If passed as key-value pair to the custom
+     * parameter map, the value should be passed as a string that can be parsed as integer (e.g.
+     * {"max_bw_per_dram_seg", "100"}). If not specified, then computed as the maximum possible
+     * bandwidth that would not saturate the topmost PCIe bridge/switch devices of the NUMA node of
+     * the origin buffer. This value (whether computed or provided by user) is converted to rail
+     * count limit and used in NUMA-aware rail selection policy for DRAM_SEG, in order to limit the
+     * number of rails used for this memory type. Rail selection is also limited to NUMA node of the
+     * origin buffer. If user override exceeds the total topmost PCIe switch capacity of the NUMA
+     * node, then rail selection spills over to additional rails on the PCI switches of the NUMA
+     * node, and subsequently to adjacent NUMA nodes if required. If user override exceeds total
+     * machine network capacity, then all rails will be used for DRAM_SEG memory type.
+     */
+    nixl_status_t
+    init(const nixl_b_params_t &custom_params);
+
     // Rail management
-    /** Create data rails for high-bandwidth transfers (one per EFA device)
+    /** Create rails for high-bandwidth transfers (one per EFA device)
      * @param efa_devices List of EFA device names to create rails on
      * @param provider_name Provider name ("efa" or "efa-direct")
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
-    createDataRails(const std::vector<std::string> &efa_devices, const std::string &provider_name);
-
-    /** Create control rails for connection management and notifications
-     * @param efa_devices List of EFA device names
-     * @param provider_name Provider name ("efa" or "efa-direct")
-     * @param num_control_rails Number of control rails to create
-     * @return NIXL_SUCCESS on success, error code on failure
-     */
-    nixl_status_t
-    createControlRails(const std::vector<std::string> &efa_devices,
-                       const std::string &provider_name,
-                       size_t num_control_rails);
+    createRails(const std::vector<std::string> &efa_devices, const std::string &provider_name);
 
     // Access rails
-    /** Get reference to data rail by ID */
+    /** Get reference to rail by ID */
     nixlLibfabricRail &
-    getDataRail(size_t rail_id) {
-        return *data_rails_[rail_id];
+    getRail(size_t rail_id) {
+        return *rails_[rail_id];
     }
 
-    /** Get const reference to data rail by ID */
+    /** Get const reference to rail by ID */
     const nixlLibfabricRail &
-    getDataRail(size_t rail_id) const {
-        return *data_rails_[rail_id];
+    getRail(size_t rail_id) const {
+        return *rails_[rail_id];
     }
 
-    /** Get reference to control rail by ID */
-    nixlLibfabricRail &
-    getControlRail(size_t rail_id) {
-        return *control_rails_[rail_id];
-    }
-
-    /** Get const reference to control rail by ID */
-    const nixlLibfabricRail &
-    getControlRail(size_t rail_id) const {
-        return *control_rails_[rail_id];
-    }
-
-    /** Get total number of data rails */
+    /** Get total number of rails */
     size_t
-    getNumDataRails() const {
-        return data_rails_.size();
-    }
-
-    /** Get total number of control rails */
-    size_t
-    getNumControlRails() const {
-        return control_rails_.size();
+    getNumRails() const {
+        return rails_.size();
     }
 
     // Memory registration management
@@ -136,10 +163,7 @@ public:
                      const std::vector<struct fid_mr *> &mr_list);
 
     // Connection Management APIs
-    /** Rail type enumeration for connection operations */
-    enum class RailType { DATA, CONTROL };
-    /** Insert addresses into address vectors for all rails of specified type
-     * @param rail_type Type of rails to operate on (DATA or CONTROL)
+    /** Insert addresses into address vectors for all rails
      * @param endpoints Remote endpoint addresses to insert
      * @param fi_addrs_out Libfabric address handles for inserted endpoints,
      *                     indexed by local rail id.
@@ -147,17 +171,15 @@ public:
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
-    insertAllAddresses(RailType rail_type,
-                       const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints,
+    insertAllAddresses(const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints,
                        std::unordered_map<size_t, std::vector<fi_addr_t>> &fi_addrs_out,
                        std::vector<char *> &ep_names_out);
-    /** Clean up connection resources for specified rail type
-     * @param rail_type Type of rails to clean up (DATA or CONTROL)
+    /** Clean up connection resources for rails
      * @param fi_addrs_to_remove Libfabric addresses to remove
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
-    cleanupConnection(RailType rail_type, const std::vector<fi_addr_t> &fi_addrs_to_remove);
+    cleanupConnection(const std::vector<fi_addr_t> &fi_addrs_to_remove);
 
     /** Single-pass transfer preparation and submission with automatic striping/round-robin
      * @param op_type Operation type (WRITE or READ)
@@ -218,16 +240,11 @@ public:
                        uint16_t agent_idx = 0,
                        std::function<void()> completion_callback = nullptr);
     // Progress APIs
-    /** Process completions on active data rails only (optimized for CPU overhead)
+    /** Process completions on active rails only (optimized for CPU overhead)
      * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
      */
     nixl_status_t
-    progressActiveDataRails();
-    /** Process completions on all control rails for connection management and notifications
-     * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
-     */
-    nixl_status_t
-    progressAllControlRails();
+    progressActiveRails();
     /** Validate that all rails are properly initialized
      * @return NIXL_SUCCESS if all rails initialized, error code otherwise
      */
@@ -288,20 +305,27 @@ public:
     /** Deserialize connection information for all rails
      * @param user_prefix Prefix used during serialization
      * @param serialized_data Serialized connection information
-     * @param data_endpoints_out Data rail endpoint addresses
-     * @param control_endpoints_out Control rail endpoint addresses
+     * @param data_endpoints_out Rail endpoint addresses
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
     deserializeConnectionInfo(
         const std::string &user_prefix,
         const std::string &serialized_data,
-        std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &data_endpoints_out,
-        std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &control_endpoints_out) const;
+        std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &data_endpoints_out) const;
 
     const nixlLibfabricTopology *
     getTopology() const {
         return topology.get();
+    }
+
+    /**
+     * @brief Retrieves the rail selection policy in use for DRAM_SEG memory type.
+     * @return The rail selection policy.
+     */
+    const std::unique_ptr<nixlLibfabricRailSelectionPolicy> &
+    getDramRailSelectionPolicy() const {
+        return dram_rail_selection_policy_;
     }
 
     /** Get the system's runtime type.
@@ -317,11 +341,9 @@ private:
     fi_hmem_iface runtime_;
 
     // Rail allocation
-    std::vector<std::unique_ptr<nixlLibfabricRail>> data_rails_;
-    std::vector<std::unique_ptr<nixlLibfabricRail>> control_rails_;
+    std::vector<std::unique_ptr<nixlLibfabricRail>> rails_;
 
-    size_t num_data_rails_;
-    size_t num_control_rails_;
+    size_t num_rails_;
 
     std::unique_ptr<nixlLibfabricTopology> topology;
 
@@ -332,6 +354,13 @@ private:
     std::unordered_set<size_t> active_rails_;
     mutable std::mutex active_rails_mutex_;
 
+    // rail selection policy for DRAM memory type
+    std::unique_ptr<nixlLibfabricRailSelectionPolicy> dram_rail_selection_policy_;
+
+    // get rail count limit for DRAM memory type, either computed or from user
+    bool
+    getDramRailLimit(const nixl_b_params_t &custom_params, size_t &max_bw, size_t &max_rails);
+
     // Internal rail selection method
     std::vector<size_t>
     selectRailsForMemory(void *mem_addr,
@@ -341,9 +370,7 @@ private:
 
     // Helper functions for connection SerDes
     void
-    serializeRailEndpoints(nixlSerDes &ser_des,
-                           const std::string &key_prefix,
-                           RailType rail_type) const;
+    serializeRailEndpoints(nixlSerDes &ser_des, const std::string &key_prefix) const;
     nixl_status_t
     deserializeRailEndpoints(
         nixlSerDes &ser_des,
