@@ -115,9 +115,8 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
                << duration.count() << "us.";
 }
 
-nixlDlistH::nixlDlistH(const std::string &remote_agent, const bool is_local, descs_t &&descs)
+nixlDlistH::nixlDlistH(const std::string &remote_agent, descs_t &&descs)
     : remoteAgent(remote_agent),
-      isLocal(is_local),
       descs(std::move(descs)) {}
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
@@ -648,8 +647,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    dlist_hndl =
-        new nixlDlistH(init_side ? std::string() : agent_name, init_side, std::move(dlists));
+    dlist_hndl = new nixlDlistH(agent_name, std::move(dlists));
     return NIXL_SUCCESS;
 }
 
@@ -675,7 +673,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    if ((!local_side->isLocal) || (remote_side->isLocal)) {
+    if ((!local_side->remoteAgent.empty()) || remote_side->remoteAgent.empty()) {
         NIXL_ERROR_FUNC << "invalid sides (local must be local, remote must be remote)";
         data->addErrorTelemetry(NIXL_ERR_INVALID_PARAM);
         return NIXL_ERR_INVALID_PARAM;

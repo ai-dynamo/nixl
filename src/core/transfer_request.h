@@ -73,10 +73,9 @@ private:
 struct nixlDlistH {
     using descs_t = std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_dlist_t>>;
 
-    nixlDlistH(const std::string &remote_agent, const bool is_local, descs_t &&descs);
+    nixlDlistH(const std::string &remote_agent, descs_t &&descs);
 
-    const std::string remoteAgent;
-    const bool isLocal;
+    const std::string remoteAgent; // Empty means "local".
     const descs_t descs;
 };
 
