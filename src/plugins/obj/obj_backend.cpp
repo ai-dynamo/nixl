@@ -125,6 +125,11 @@ nixlObjEngine::checkXfer(nixlBackendReqH *handle) const {
 }
 
 nixl_status_t
+nixlObjEngine::checkXferEvents(nixlBackendReqH *handle, nixl_xfer_entry_events_t &events) const {
+    return impl_->checkXferEvents(handle, events);
+}
+
+nixl_status_t
 nixlObjEngine::releaseReqH(nixlBackendReqH *handle) const {
     return impl_->releaseReqH(handle);
 }

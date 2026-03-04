@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -976,6 +976,35 @@ impl Agent {
         match status {
             NIXL_CAPI_SUCCESS => Ok(XferStatus::Success), // Transfer completed
             NIXL_CAPI_IN_PROG => Ok(XferStatus::InProgress),  // Transfer in progress
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Checks the status of a transfer request with per-entry events.
+    ///
+    /// The transfer must have been created with `track_flags != 0` (via OptArgs::set_track_flags).
+    /// Create `XferEntryEvents` once, pass to each poll to avoid allocation.
+    ///
+    /// # Arguments
+    /// * `req` - Transfer request handle after `post_xfer_req`
+    /// * `events` - Reusable events container (events are appended on each call)
+    pub fn get_xfer_status_with_events(
+        &self,
+        req: &XferRequest,
+        events: &XferEntryEvents,
+    ) -> Result<XferStatus, NixlError> {
+        let status = unsafe {
+            nixl_capi_get_xfer_status_with_events(
+                self.inner.write().unwrap().handle.as_ptr(),
+                req.handle(),
+                events.as_ptr(),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(XferStatus::Success),
+            NIXL_CAPI_IN_PROG => Ok(XferStatus::InProgress),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }

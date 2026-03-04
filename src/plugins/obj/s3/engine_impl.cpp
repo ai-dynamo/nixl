@@ -13,6 +13,7 @@
 #include <future>
 #include <optional>
 #include <vector>
+#include <cstdint>
 
 namespace {
 
@@ -53,27 +54,22 @@ public:
     nixlObjBackendReqH() = default;
     ~nixlObjBackendReqH() = default;
 
-    std::vector<std::future<nixl_status_t>> statusFutures_;
+    std::vector<std::shared_future<nixl_status_t>> statusFutures_;
+    nixl_xfer_track_flags_t trackFlags = 0;
+    std::vector<bool> appended_; /* which indices already appended to events */
+    nixl_status_t firstError_ =
+        NIXL_SUCCESS; /* first error seen across all checkXferEvents calls */
 
     nixl_status_t
     getOverallStatus() {
-        // Iterate front-to-back to detect failures in earlier futures even if
-        // later futures are not yet ready. This ensures we return errors as
-        // soon as they occur rather than waiting for all futures to complete.
-        auto it = statusFutures_.begin();
-        while (it != statusFutures_.end()) {
-            if (it->wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                auto current_status = it->get();
-                if (current_status != NIXL_SUCCESS) {
-                    statusFutures_.clear();
-                    return current_status;
-                }
-                it = statusFutures_.erase(it);
-            } else {
+        nixl_status_t first_error = NIXL_SUCCESS;
+        for (size_t i = 0; i < statusFutures_.size(); ++i) {
+            if (statusFutures_[i].wait_for(std::chrono::seconds(0)) != std::future_status::ready)
                 return NIXL_IN_PROG;
-            }
+            auto s = statusFutures_[i].get();
+            if (s != NIXL_SUCCESS && first_error == NIXL_SUCCESS) first_error = s;
         }
-        return NIXL_SUCCESS;
+        return first_error;
     }
 };
 
@@ -205,6 +201,9 @@ DefaultObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
                                const nixl_opt_b_args_t *opt_args) const {
     nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
 
+    if (opt_args) req_h->trackFlags = opt_args->trackFlags;
+    req_h->appended_.resize(local.descCount(), false);
+
     for (int i = 0; i < local.descCount(); ++i) {
         const auto &local_desc = local[i];
         const auto &remote_desc = remote[i];
@@ -217,7 +216,7 @@ DefaultObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
         }
 
         auto status_promise = std::make_shared<std::promise<nixl_status_t>>();
-        req_h->statusFutures_.push_back(status_promise->get_future());
+        req_h->statusFutures_.push_back(status_promise->get_future().share());
 
         uintptr_t data_ptr = local_desc.addr;
         size_t data_len = local_desc.len;
@@ -250,6 +249,31 @@ nixl_status_t
 DefaultObjEngineImpl::checkXfer(nixlBackendReqH *handle) const {
     nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
     return req_h->getOverallStatus();
+}
+
+nixl_status_t
+DefaultObjEngineImpl::checkXferEvents(nixlBackendReqH *handle,
+                                      nixl_xfer_entry_events_t &events) const {
+    nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
+    nixl_xfer_track_flags_t flags = req_h->trackFlags;
+    if (flags == 0) return NIXL_ERR_NOT_SUPPORTED;
+
+    bool any_pending = false;
+    for (size_t i = 0; i < req_h->statusFutures_.size(); ++i) {
+        if (req_h->appended_[i]) continue;
+        if (req_h->statusFutures_[i].wait_for(std::chrono::seconds(0)) !=
+            std::future_status::ready) {
+            any_pending = true;
+            continue;
+        }
+        nixl_status_t s = req_h->statusFutures_[i].get();
+        if (s != NIXL_SUCCESS && req_h->firstError_ == NIXL_SUCCESS) req_h->firstError_ = s;
+        bool include = (s != NIXL_SUCCESS && (flags & NIXL_XFER_TRACK_ERRORS)) ||
+            (s == NIXL_SUCCESS && (flags & NIXL_XFER_TRACK_SUCCESSES));
+        if (include) events.push_back({i, s});
+        req_h->appended_[i] = true;
+    }
+    return any_pending ? NIXL_IN_PROG : req_h->firstError_;
 }
 
 nixl_status_t

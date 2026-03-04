@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,13 +48,17 @@ use bindings::{
     nixl_capi_destroy_params, nixl_capi_destroy_reg_dlist, nixl_capi_destroy_string_list,
     nixl_capi_destroy_xfer_dlist, nixl_capi_get_available_plugins, nixl_capi_get_backend_params,
     nixl_capi_get_local_md, nixl_capi_get_notifs, nixl_capi_get_plugin_params,
-    nixl_capi_get_xfer_status, nixl_capi_invalidate_remote_md, nixl_capi_load_remote_md,
+    nixl_capi_get_xfer_status, nixl_capi_get_xfer_status_with_events,
+    nixl_capi_xfer_entry_events_create, nixl_capi_xfer_entry_events_destroy,
+    nixl_capi_xfer_entry_events_size, nixl_capi_xfer_entry_events_get,
+    nixl_capi_invalidate_remote_md, nixl_capi_load_remote_md,
     nixl_capi_mem_list_get, nixl_capi_mem_list_is_empty, nixl_capi_mem_list_size,
     nixl_capi_mem_type_t, nixl_capi_mem_type_to_string, nixl_capi_notif_map_clear,
     nixl_capi_notif_map_get_agent_at, nixl_capi_notif_map_get_notif,
     nixl_capi_notif_map_get_notifs_size, nixl_capi_notif_map_size, nixl_capi_opt_args_add_backend,
     nixl_capi_opt_args_get_has_notif, nixl_capi_opt_args_get_notif_msg,
-    nixl_capi_opt_args_get_skip_desc_merge, nixl_capi_opt_args_set_has_notif,
+    nixl_capi_opt_args_get_skip_desc_merge, nixl_capi_opt_args_set_track_flags,
+    nixl_capi_opt_args_get_track_flags, nixl_capi_opt_args_set_has_notif,
     nixl_capi_opt_args_set_notif_msg, nixl_capi_opt_args_set_skip_desc_merge,
     nixl_capi_params_create_iterator, nixl_capi_params_destroy_iterator, nixl_capi_params_is_empty,
     nixl_capi_params_iterator_next, nixl_capi_post_xfer_req, nixl_capi_reg_dlist_add_desc,
@@ -70,6 +74,10 @@ use bindings::{
     nixl_capi_opt_args_set_port, nixl_capi_get_xfer_telemetry,
     nixl_capi_create_params, nixl_capi_params_add, nixl_capi_is_stub
 };
+
+// Per-entry tracking flags (match NIXL_CAPI_XFER_TRACK_* in wrapper.h)
+pub const XFER_TRACK_ERRORS: u32 = 1 << 0;
+pub const XFER_TRACK_SUCCESSES: u32 = 1 << 1;
 
 // Re-export status codes
 pub use bindings::{
@@ -374,6 +382,30 @@ impl OptArgs {
         let status = unsafe { nixl_capi_opt_args_set_ip_addr(self.inner.as_ptr(), c_str.as_ptr()) };
         match status {
             NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Set per-entry tracking flags for create_xfer_req/make_xfer_req.
+    /// Use NIXL_CAPI_XFER_TRACK_ERRORS and/or NIXL_CAPI_XFER_TRACK_SUCCESSES.
+    pub fn set_track_flags(&mut self, track_flags: u32) -> Result<(), NixlError> {
+        let status =
+            unsafe { nixl_capi_opt_args_set_track_flags(self.inner.as_ptr(), track_flags) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Get per-entry tracking flags.
+    pub fn track_flags(&self) -> Result<u32, NixlError> {
+        let mut track_flags = 0u32;
+        let status =
+            unsafe { nixl_capi_opt_args_get_track_flags(self.inner.as_ptr(), &mut track_flags) };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(track_flags),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }

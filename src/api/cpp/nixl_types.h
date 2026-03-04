@@ -17,10 +17,12 @@
 #ifndef _NIXL_TYPES_H
 #define _NIXL_TYPES_H
 #include <vector>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <optional>
 #include <chrono>
+#include <cstdint>
 
 
 /*** Forward declarations ***/
@@ -64,8 +66,35 @@ enum nixl_status_t {
     NIXL_ERR_NOT_SUPPORTED = -9,
     NIXL_ERR_REMOTE_DISCONNECT = -10,
     NIXL_ERR_CANCELED = -11,
-    NIXL_ERR_NO_TELEMETRY = -12
+    NIXL_ERR_NO_TELEMETRY = -12,
+    /** In progress on the per-entry events path. Kept negative so (status < 0) implies need to
+       check. */
+    NIXL_IN_PROG_WITH_ERR = -13
 };
+
+/**
+ * @brief Per-entry tracking flags (set of properties). Empty (0) = track only summarized status.
+ *        Chosen at createXferReq/makeXferReq. Extensible for future modes.
+ */
+enum nixl_xfer_track_flag_t : uint32_t {
+    NIXL_XFER_TRACK_ERRORS = 1u << 0,
+    NIXL_XFER_TRACK_SUCCESSES = 1u << 1,
+};
+
+using nixl_xfer_track_flags_t = uint32_t;
+
+/**
+ * @struct nixl_xfer_entry_event_t
+ * @brief One (index, status) event from checkXferEvents. Events are appended over time;
+ *        user compares event list length to previous call to see new completions.
+ */
+struct nixl_xfer_entry_event_t {
+    size_t index; /**< Descriptor index in the transfer. */
+    nixl_status_t status; /**< NIXL_SUCCESS or an error code; never NIXL_IN_PROG (entries are only
+                             appended once complete). */
+};
+
+using nixl_xfer_entry_events_t = std::deque<nixl_xfer_entry_event_t>;
 
 /**
  * @enum nixl_thread_sync_t
@@ -189,6 +218,13 @@ struct nixlAgentOptionalArgs {
      * @var makeXferReq boolean to skip merging consecutive descriptors, used in makeXferReq.
      */
     bool skipDescMerge = false;
+
+    /**
+     * @var trackFlags Per-entry tracking for this transfer (createXferReq/makeXferReq).
+     *      Empty (0): getXferStatus(req, events) returns NIXL_ERR_INVALID_PARAM.
+     *      NIXL_XFER_TRACK_ERRORS and/or NIXL_XFER_TRACK_SUCCESSES: append-only event list.
+     */
+    nixl_xfer_track_flags_t trackFlags = 0;
 
     /**
      * @var includeConnInfo boolean to include connection information in the metadata,
