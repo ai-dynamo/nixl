@@ -77,7 +77,17 @@ nixlEnumStrings::statusStr(const nixl_status_t &status) {
     }
 }
 
-inline void
+nixlXferReqH::nixlXferReqH(const std::string remote_agent,
+                           const nixl_xfer_op_t backend_op,
+                           const nixl_mem_t local_type,
+                           const nixl_mem_t remote_type,
+                           const size_t desc_count)
+    : initiatorDescs(std::make_unique<nixl_meta_dlist_t>(local_type, desc_count)),
+      targetDescs(std::make_unique<nixl_meta_dlist_t>(remote_type, desc_count)),
+      remoteAgent(remote_agent),
+      backendOp(backend_op) {}
+
+void
 nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
                                  nixl_telemetry_stat_status_t stat_status) {
 
@@ -104,6 +114,11 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
                << " descriptors of total size " << telemetry.totalBytes << "B in "
                << duration.count() << "us.";
 }
+
+nixlDlistH::nixlDlistH(const bool is_local, const std::string &remote_agent, descs_t &&descs)
+    : descs(std::move(descs)),
+      remoteAgent(remote_agent),
+      isLocal(is_local) {}
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg)
@@ -744,7 +759,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     }
 
     std::unique_ptr<nixlXferReqH> handle =
-        std::make_unique<nixlXferReqH>(local_descs.getType(), remote_descs.getType(), desc_count);
+        std::make_unique<nixlXferReqH>(remote_side->remoteAgent, operation, local_descs.getType(), remote_descs.getType(), desc_count);
 
     if (extra_params && extra_params->skipDescMerge) {
         for (int i=0; i<desc_count; ++i) {
@@ -790,11 +805,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     }
 
     handle->engine = backend;
-    handle->remoteAgent = remote_side->remoteAgent;
     handle->notifMsg = opt_args.notifMsg;
     handle->hasNotif = opt_args.hasNotif;
-    handle->backendOp = operation;
-    handle->status = NIXL_ERR_NOT_POSTED;
 
     if (data->telemetryEnabled) {
         handle->telemetry.totalBytes = total_bytes;
@@ -888,7 +900,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
     std::unique_ptr<nixlXferReqH> handle =
-        std::make_unique<nixlXferReqH>(local_descs.getType(), remote_descs.getType());
+        std::make_unique<nixlXferReqH>(remote_agent, operation, local_descs.getType(), remote_descs.getType());
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -930,9 +942,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
-    handle->remoteAgent = remote_agent;
-    handle->backendOp = operation;
-    handle->status = NIXL_ERR_NOT_POSTED;
     handle->notifMsg = opt_args.notifMsg;
     handle->hasNotif = opt_args.hasNotif;
 
