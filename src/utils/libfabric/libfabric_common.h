@@ -92,6 +92,9 @@
 
 #define NIXL_LIBFABRIC_CQ_BATCH_SIZE 16
 
+// Giga (decimal) constant
+constexpr inline uint64_t NIXL_LIBFABRIC_GIGA = 1000ull * 1000ull * 1000ull;
+
 /**
  * @brief Notification header for all fragments (10 bytes)
  *

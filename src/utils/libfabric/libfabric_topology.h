@@ -90,17 +90,8 @@ private:
     struct NicInfo {
         std::string libfabric_name;
         hwloc_obj_t hwloc_node;
-        // NOTE: NIC line speed is in Gbps (as multiples of 1000^3). Since fi_getinfo() reports this
-        // value in bits per second (e.g. 100,000,000,000), this is converted to Gigabits per second
-        // (e.g. 100, 200), and compared against user config/env override, which is also specified
-        // as 100, 200, etc., in Gbps (Gigabit per second) so we can deduce number of rails from
-        // user override
-        size_t line_speed;
-        // NOTE: upstream link speed is in Gbps (as multiples of 1024^3), as reported by hwloc,
-        // originally float GB/s (e.g. 31.5077), converted to size_t Gbps (e.g. 252) - this is
-        // compared against PCIe switch link speed (also in Gbps 1024^3) to deduce number of rails
-        // from topology
-        size_t upstream_link_speed;
+        size_t line_speed; // Gbps (decimal, as multiple of 10^9, not 2^30)
+        size_t upstream_link_speed; // Gbps (decimal, as multiple of 10^9, not 2^30)
         uint16_t numa_node_id;
         uint16_t domain_id;
         uint8_t bus_id;
@@ -108,9 +99,7 @@ private:
         uint8_t function_id;
         uint16_t parent_switch_domain;
         uint8_t parent_switch_bus_id;
-        // NOTE: switch link speed is in Gbps (multiples of 1024^3), see  upstream_link_speed above
-        // for more details
-        size_t parent_switch_link_speed;
+        size_t parent_switch_link_speed; // Gbps (decimal, as multiple of 10^9, not 2^30)
     };
 
     struct AccelInfo {
@@ -277,8 +266,8 @@ public:
     }
 
     /**
-     * @brief Retrieves the average NIC bandwidth (Gbps). This is the speed as reported by
-     * fi_getinfo(), as multiples of 1000^3 (and not 1024^3).
+     * @brief Retrieves the average NIC bandwidth in Gbps (decimal, as multiple of 10^9, not 2^30).
+     * This is the speed as reported by fi_getinfo().
      */
     inline size_t
     getAvgNicBandwidth() const {
@@ -286,8 +275,8 @@ public:
     }
 
     /**
-     * @brief Retrieves the average NIC upstream link bandwidth (Gbps). This is the link speed of
-     * the PCIe device as reported by hwloc, as multiples of 1024^3.
+     * @brief Retrieves the average NIC upstream link bandwidth in Gbps (decimal, as multiple of
+     * 10^9, not 2^30). This is the link speed of the PCIe device as reported by hwloc.
      */
     inline size_t
     getAvgNicUpstreamBandwidth() const {

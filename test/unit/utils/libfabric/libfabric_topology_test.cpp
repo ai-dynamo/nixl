@@ -203,9 +203,6 @@ struct NicData {
 
 typedef std::unordered_map<std::string, NicData> NicMap;
 
-// NIC speed conversion constant
-static const uint64_t GIGA = 1000ull * 1000ull * 1000ull;
-
 // testing flag env var name
 static const char *NIXL_LIBFABRIC_TESTING_ENV_VAR = "NIXL_LIBFABRIC_TESTING";
 
@@ -620,7 +617,7 @@ __wrap_fi_getinfo(uint32_t version,
             itr->nic->bus_attr->attr.pci.function_id = entry.second.func;
 
             itr->nic->link_attr = malloc_zero<fi_link_attr>();
-            itr->nic->link_attr->speed = curr_topology->nic_line_speed * GIGA;
+            itr->nic->link_attr->speed = curr_topology->nic_line_speed * NIXL_LIBFABRIC_GIGA;
 
             prev = itr;
             itr = nullptr;

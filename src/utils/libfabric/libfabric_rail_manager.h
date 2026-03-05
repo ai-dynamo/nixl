@@ -88,17 +88,18 @@ public:
      *
      * - max_bw_per_dram_seg (matching environment variable NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG):
      * Controls the bandwidth limit on DRAM_SEG memory type buffers per NUMA node. Specified in
-     * multiples of 1000^3 (e.g. 100, 200, etc.). If passed as key-value pair to the custom
-     * parameter map, the value should be passed as a string that can be parsed as integer (e.g.
-     * {"max_bw_per_dram_seg", "100"}). If not specified, then computed as the maximum possible
-     * bandwidth that would not saturate the topmost PCIe bridge/switch devices of the NUMA node of
-     * the origin buffer. This value (whether computed or provided by user) is converted to rail
-     * count limit and used in NUMA-aware rail selection policy for DRAM_SEG, in order to limit the
-     * number of rails used for this memory type. Rail selection is also limited to NUMA node of the
-     * origin buffer. If user override exceeds the total topmost PCIe switch capacity of the NUMA
-     * node, then rail selection spills over to additional rails on the PCI switches of the NUMA
-     * node, and subsequently to adjacent NUMA nodes if required. If user override exceeds total
-     * machine network capacity, then all rails will be used for DRAM_SEG memory type.
+     * decimal Gbps, as multiples of 10^9 (e.g. 100, 200, etc.). If passed as key-value pair to the
+     * custom parameter map, the value should be passed as a string that can be parsed as integer
+     * (e.g. {"max_bw_per_dram_seg", "100"}). If not specified, then computed as the maximum
+     * possible bandwidth that would not saturate the topmost PCIe bridge/switch devices of the NUMA
+     * node of the origin buffer. This value (whether computed or provided by user) is converted to
+     * rail count limit and used in NUMA-aware rail selection policy for DRAM_SEG, in order to limit
+     * the number of rails used for this memory type. Rail selection is also limited to NUMA node of
+     * the origin buffer. If user override exceeds the total topmost PCIe switch capacity of the
+     * NUMA node, then rail selection spills over to additional rails on the PCI switches of the
+     * NUMA node, and subsequently, if still not reaching user-specified limit, spills over to
+     * adjacent NUMA nodes if required. If user override exceeds total machine network capacity,
+     * then all rails will be used for DRAM_SEG memory type.
      */
     nixl_status_t
     init(const nixl_b_params_t &custom_params);

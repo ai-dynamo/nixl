@@ -577,7 +577,8 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
             nic.libfabric_name = libfabric_name;
             nic.hwloc_node = hwloc_node;
             nic.line_speed = getPcieDevSpeed(pcie_addr);
-            // NOTE: upstream link speed is given in GB/s as float, we convert it to size_t Gbps
+            // NOTE: upstream link speed is given in decimal GB/s (i.e. multiple of 10^9) as float,
+            // so we convert it to size_t decimal Gbps
             nic.upstream_link_speed = (size_t)(hwloc_node->attr->pcidev.linkspeed * 8.0f);
             nic.numa_node_id = getPcieDevNumaNodeId(hwloc_node, pcie_addr);
             nic.domain_id = domain_id;
@@ -764,10 +765,8 @@ nixlLibfabricTopology::getPcieDevSpeed(const std::string &pcie_addr) {
     size_t speed = 0;
     std::unordered_map<std::string, size_t>::const_iterator itr = nic_speed_map.find(pcie_addr);
     if (itr != nic_speed_map.end()) {
-        // convert from bits to Giga BITS per second
-        // NOTE: device reports in multiples of 1000 and not 1024
-        const uint64_t GIGA = 1000ull * 1000ull * 1000ull;
-        speed = itr->second / GIGA;
+        // convert from bits per second to Gbps (decimal, as multiple of 10^9)
+        speed = itr->second / NIXL_LIBFABRIC_GIGA;
         NIXL_DEBUG << "Found speed for NIC at PCIe address " << pcie_addr << ": " << speed
                    << " (Gbps)";
     } else {

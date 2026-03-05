@@ -531,7 +531,7 @@ nixlLibfabricRailManager::getDramRailLimit(const nixl_b_params_t &custom_params,
         return false;
     }
 
-    // verify a few more computed values before continuing (avoid division by zero  )
+    // verify a few more computed values before continuing (avoid division by zero)
     size_t nic_speed = topology->getAvgNicBandwidth();
     if (nic_speed == 0) {
         NIXL_WARN << "Could not deduce average EFA device line bandwidth, NUMA-aware rail "
@@ -552,7 +552,7 @@ nixlLibfabricRailManager::getDramRailLimit(const nixl_b_params_t &custom_params,
     // get bandwidth limit from configuration or environment variable, and then deduce rail count
     // limit (which is used to implement NUMA-aware rail selection policy for DRAM_SEG memory type)
     // NOTE: corresponding env var is NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG, and is specified in
-    // Gigabits per second (e.g 100, 200, etc.)
+    // decimal Gigabits per second, as multiple of 10^9 (e.g 100, 200, etc.)
     nixl_status_t res =
         LibfabricUtils::getCustomIntParam(custom_params, "max_bw_per_dram_seg", max_bw);
     if (res != NIXL_SUCCESS) {

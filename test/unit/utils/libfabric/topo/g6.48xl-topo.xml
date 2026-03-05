@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
@@ -14,7 +15,6 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
-<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE topology SYSTEM "hwloc2.dtd">
 <topology version="2.0">
   <object type="Machine" os_index="0" cpuset="0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff" complete_cpuset="0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff" allowed_cpuset="0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff" nodeset="0x00000003" complete_nodeset="0x00000003" allowed_nodeset="0x00000003" gp_index="1">
