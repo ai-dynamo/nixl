@@ -63,8 +63,8 @@ using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
 
 class nixlAgentData {
     private:
-        const std::string name;
-        const nixlAgentConfig config;
+        const std::string name_;
+        const nixlAgentConfig config_;
         nixlLock        lock;
         bool telemetryEnabled = false;
 
@@ -79,7 +79,7 @@ class nixlAgentData {
         std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
 
         std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
-            remoteBackends;
+            remoteBackends_;
 
         // State/methods for listener thread
         std::unique_ptr<nixlMDStreamListener> listener;
@@ -94,10 +94,10 @@ class nixlAgentData {
 
         // The order of the following data members is crucial for destruction.
         // Bookkeeping for local connection metadata and user handles per backend
-        std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles;
-        std::unordered_map<nixl_backend_t, nixl_blob_t> connMD;
-        backend_map_t backendEngines;
-        std::unordered_map<std::string, nixlRemoteSection> remoteSections;
+        std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
+        std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
+        backend_map_t backendEngines_;
+        std::unordered_map<std::string, nixlRemoteSection> remoteSections_;
         std::unique_ptr<nixlTelemetry> telemetry_;
         nixlLocalSection localSection_;
 
@@ -121,7 +121,7 @@ class nixlAgentData {
                     nixl_mem_t mem_type);
 
     public:
-        nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
+        nixlAgentData(const std::string &name, const nixlAgentConfig &config);
 
         void
         addErrorTelemetry(nixl_status_t err_status) {

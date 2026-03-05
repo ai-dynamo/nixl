@@ -461,7 +461,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
     std::unique_ptr<nixlEtcdClient> etcdClient = nullptr;
     // useEtcd is set in nixlAgent constructor and is true if NIXL_ETCD_ENDPOINTS is set
     if(useEtcd) {
-        etcdClient = std::make_unique<nixlEtcdClient>(name, config.etcdWatchTimeout);
+        etcdClient = std::make_unique<nixlEtcdClient>(name_, config_.etcdWatchTimeout);
     }
 #endif // HAVE_ETCD
 
@@ -471,7 +471,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
         // first, accept new connections
         int new_fd = 0;
 
-        while(new_fd != -1 && config.useListenThread) {
+        while(new_fd != -1 && config_.useListenThread) {
             new_fd = listener->acceptClient();
             nixl_socket_peer_t accepted_client;
 
@@ -554,7 +554,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
             }
             case SOCK_INVAL: {
                 try {
-                    sendCommMessage(client->second, "NIXLCOMM:INVL" + name);
+                    sendCommMessage(client->second, "NIXLCOMM:INVL" + name_);
                 }
                 catch (const std::runtime_error &e) {
                     NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
@@ -574,7 +574,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                     const std::string &metadata_label = req_ip;
 
                     // Use local storeMetadataInEtcd function
-                    nixl_status_t ret = etcdClient->storeMetadataInEtcd(name, metadata_label, my_MD);
+                    nixl_status_t ret = etcdClient->storeMetadataInEtcd(name_, metadata_label, my_MD);
                     if (ret != NIXL_SUCCESS) {
                         NIXL_ERROR << "Failed to store metadata in etcd: " << ret;
                     }
@@ -619,7 +619,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                         throw std::runtime_error("ETCD is not enabled");
                     }
 
-                    nixl_status_t ret = etcdClient->removeMetadataFromEtcd(name);
+                    nixl_status_t ret = etcdClient->removeMetadataFromEtcd(name_);
                     if (ret != NIXL_SUCCESS) {
                         NIXL_ERROR << "Failed to invalidate metadata in etcd: " << ret;
                     }
@@ -719,7 +719,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
 #endif // HAVE_ETCD
 
         nixlTime::us_t start = nixlTime::getUs();
-        while( (start + config.lthrDelay) > nixlTime::getUs()) {
+        while( (start + config_.lthrDelay) > nixlTime::getUs()) {
             std::this_thread::yield();
         }
     }
@@ -744,22 +744,22 @@ nixl_status_t
 nixlAgentData::loadConnInfo(const std::string &remote_name,
                             const nixl_backend_t &backend,
                             const nixl_blob_t &conn_info) {
-    if (backendEngines.count(backend) == 0) {
-        NIXL_DEBUG << "Agent " << name << " does not support a remote backend: " << backend;
+    if (backendEngines_.count(backend) == 0) {
+        NIXL_DEBUG << "Agent " << name_ << " does not support a remote backend: " << backend;
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
     // No need to reload same conn info, error if it changed
-    if ((remoteBackends.count(remote_name) != 0) &&
-        (remoteBackends[remote_name].count(backend) != 0)) {
-        if (remoteBackends[remote_name][backend] != conn_info) {
+    if ((remoteBackends_.count(remote_name) != 0) &&
+        (remoteBackends_[remote_name].count(backend) != 0)) {
+        if (remoteBackends_[remote_name][backend] != conn_info) {
             return NIXL_ERR_NOT_ALLOWED;
         }
 
         return NIXL_SUCCESS;
     }
 
-    nixlBackendEngine *eng = backendEngines[backend].get();
+    nixlBackendEngine *eng = backendEngines_[backend].get();
     if (!eng->supportsRemote()) {
         NIXL_DEBUG << backend << " does not support remote operations";
         return NIXL_ERR_NOT_SUPPORTED;
@@ -770,18 +770,18 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
         return ret;
     }
 
-    remoteBackends[remote_name].emplace(backend, conn_info);
+    remoteBackends_[remote_name].emplace(backend, conn_info);
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd) {
-    const auto [it, inserted] = remoteSections.try_emplace(remote_name, remote_name);
-    const nixl_status_t ret = it->second.loadRemoteData(&sd, backendEngines);
+    const auto [it, inserted] = remoteSections_.try_emplace(remote_name, remote_name);
+    const nixl_status_t ret = it->second.loadRemoteData(&sd, backendEngines_);
     // TODO: can be more graceful, if just the new MD blob was improper
     if (ret != NIXL_SUCCESS) {
-        remoteSections.erase(it);
-        remoteBackends.erase(remote_name);
+        remoteSections_.erase(it);
+        remoteBackends_.erase(remote_name);
         return ret;
     }
 
@@ -790,23 +790,23 @@ nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd
 
 nixl_status_t
 nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
-    if (remote_name == name) {
-        NIXL_ERROR << "Agent " << name << " cannot invalidate itself";
+    if (remote_name == name_) {
+        NIXL_ERROR << "Agent " << name_ << " cannot invalidate itself";
         return NIXL_ERR_INVALID_PARAM;
     }
 
     nixl_status_t ret = NIXL_ERR_NOT_FOUND;
-    if (remoteSections.erase(remote_name) > 0) {
+    if (remoteSections_.erase(remote_name) > 0) {
         ret = NIXL_SUCCESS;
     }
 
-    auto it_backends = remoteBackends.find(remote_name);
-    if (it_backends != remoteBackends.end()) {
+    auto it_backends = remoteBackends_.find(remote_name);
+    if (it_backends != remoteBackends_.end()) {
         for (auto &it : it_backends->second) {
-            backendEngines[it.first]->disconnect(remote_name);
+            backendEngines_[it.first]->disconnect(remote_name);
         }
 
-        remoteBackends.erase(it_backends);
+        remoteBackends_.erase(it_backends);
         ret = NIXL_SUCCESS;
     }
 
