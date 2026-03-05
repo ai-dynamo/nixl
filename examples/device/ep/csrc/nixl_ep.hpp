@@ -35,7 +35,9 @@
 #include <vector>
 #include <string>
 
+#include <cuda.h>
 #include <memory>
+#include <stdexcept>
 #include "config.hpp"
 #include "event.hpp"
 #include "kernels/configs.cuh"
@@ -46,6 +48,104 @@
 #ifndef TORCH_EXTENSION_NAME
 #define TORCH_EXTENSION_NAME nixl_ep_cpp
 #endif
+
+/* CUDA memory allocator using VMM. Uses fabric handle type if the device
+ * supports it (CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED), otherwise
+ * falls back to CU_MEM_HANDLE_TYPE_NONE. */
+class cuda_allocator {
+public:
+    cuda_allocator(size_t size) : m_size(0), m_ptr(0), m_alloc_handle(0)
+    {
+        if (size == 0) {
+            throw std::invalid_argument("cuda_allocator: size must be non-zero");
+        }
+
+        CUdevice device;
+        if (cuCtxGetDevice(&device) != CUDA_SUCCESS) {
+            throw std::runtime_error("Failed to get CUDA device handle");
+        }
+
+        int fabric_supported = 0;
+        cuDeviceGetAttribute(&fabric_supported,
+                             CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
+                             device);
+
+        CUmemAllocationProp prop = {};
+        prop.type                 = CU_MEM_ALLOCATION_TYPE_PINNED;
+        prop.location.type        = CU_MEM_LOCATION_TYPE_DEVICE;
+        prop.location.id          = device;
+        prop.requestedHandleTypes = fabric_supported ? CU_MEM_HANDLE_TYPE_FABRIC
+                                                     : CU_MEM_HANDLE_TYPE_NONE;
+
+        size_t granularity = 0;
+        if (cuMemGetAllocationGranularity(&granularity, &prop,
+                                          CU_MEM_ALLOC_GRANULARITY_MINIMUM) !=
+            CUDA_SUCCESS) {
+            throw std::runtime_error("Failed to get CUDA allocation granularity");
+        }
+
+        init_vmm(size, device, prop, granularity);
+    }
+
+    ~cuda_allocator()
+    {
+        if (m_ptr) {
+            cuMemUnmap(m_ptr, m_size);
+            cuMemAddressFree(m_ptr, m_size);
+        }
+        if (m_alloc_handle) {
+            cuMemRelease(m_alloc_handle);
+        }
+    }
+
+    void*  ptr()  const { return reinterpret_cast<void*>(m_ptr); }
+    size_t size() const { return m_size; }
+
+    cuda_allocator(const cuda_allocator&)            = delete;
+    cuda_allocator& operator=(const cuda_allocator&) = delete;
+
+private:
+    void init_vmm(size_t size, CUdevice device, const CUmemAllocationProp &prop,
+                  size_t granularity)
+    {
+        m_size = (size + granularity - 1) / granularity * granularity;
+
+        if (cuMemCreate(&m_alloc_handle, m_size, &prop, 0) != CUDA_SUCCESS) {
+            throw std::runtime_error("Failed to create CUDA VMM allocation");
+        }
+
+        if (cuMemAddressReserve(&m_ptr, m_size, 0, 0, 0) != CUDA_SUCCESS) {
+            cuMemRelease(m_alloc_handle);
+            m_alloc_handle = 0;
+            throw std::runtime_error("Failed to reserve CUDA virtual address");
+        }
+
+        if (cuMemMap(m_ptr, m_size, 0, m_alloc_handle, 0) != CUDA_SUCCESS) {
+            cuMemAddressFree(m_ptr, m_size);
+            m_ptr = 0;
+            cuMemRelease(m_alloc_handle);
+            m_alloc_handle = 0;
+            throw std::runtime_error("Failed to map CUDA VMM memory");
+        }
+
+        CUmemAccessDesc access_desc = {};
+        access_desc.location.type   = CU_MEM_LOCATION_TYPE_DEVICE;
+        access_desc.location.id     = device;
+        access_desc.flags           = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+        if (cuMemSetAccess(m_ptr, m_size, &access_desc, 1) != CUDA_SUCCESS) {
+            cuMemUnmap(m_ptr, m_size);
+            cuMemAddressFree(m_ptr, m_size);
+            m_ptr = 0;
+            cuMemRelease(m_alloc_handle);
+            m_alloc_handle = 0;
+            throw std::runtime_error("Failed to set CUDA memory access");
+        }
+    }
+
+    size_t                        m_size;
+    CUdeviceptr                   m_ptr;
+    CUmemGenericAllocationHandle  m_alloc_handle;
+};
 
 namespace nixl_ep {
 
@@ -82,6 +182,13 @@ private:
     int *mask_buffer_ptr = nullptr;
     int *sync_buffer_ptr = nullptr;
     int *sync_count_ptr = nullptr;
+
+    // Owning allocators (keep raw ptrs above as aliases for use throughout)
+    std::unique_ptr<cuda_allocator> m_rdma_alloc;
+    std::unique_ptr<cuda_allocator> m_mask_alloc;
+    std::unique_ptr<cuda_allocator> m_sync_alloc;
+    std::unique_ptr<cuda_allocator> m_sync_count_alloc;
+    std::unique_ptr<cuda_allocator> m_workspace_alloc;
 
     // Device info and communication
     int device_id;
