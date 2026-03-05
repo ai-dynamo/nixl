@@ -17,7 +17,6 @@
 #ifndef NIXL_SRC_CORE_AGENT_DATA_H
 #define NIXL_SRC_CORE_AGENT_DATA_H
 
-#include "common/str_tools.h"
 #include "mem_section.h"
 #include "telemetry.h"
 #include "stream/metadata_stream.h"
@@ -87,11 +86,9 @@ class nixlAgentData {
         // Local section, and Remote sections and their available common backends
         std::unique_ptr<nixlLocalSection> memorySection;
 
-        std::unordered_map<std::string,
-                           std::unordered_map<nixl_backend_t, nixl_blob_t>,
-                           std::hash<std::string>, strEqual>     remoteBackends;
-        std::unordered_map<std::string, nixlRemoteSection*,
-                           std::hash<std::string>, strEqual>     remoteSections;
+        std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
+            remoteBackends;
+        std::unordered_map<std::string, nixlRemoteSection *> remoteSections;
 
         // State/methods for listener thread
         std::unique_ptr<nixlMDStreamListener> listener;

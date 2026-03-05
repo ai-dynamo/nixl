@@ -31,7 +31,6 @@
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
-#include "common/str_tools.h"
 
 // Local includes
 #include "common/nixl_time.h"
@@ -304,8 +303,7 @@ private:
     notif_list_t notifMainList;
 
     // Map of agent name to saved nixlUcxConnection info
-    std::unordered_map<std::string, ucx_connection_ptr_t, std::hash<std::string>, strEqual>
-        remoteConnMap;
+    std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
 };
 
 class nixlUcxThread;

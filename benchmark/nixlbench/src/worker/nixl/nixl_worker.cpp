@@ -109,7 +109,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     rank = rt->getRank();
 
-    nixlAgentConfig dev_meta(enable_pt, false, 0, sync_mode);
+    nixlAgentConfig dev_meta;
+    dev_meta.useProgThread = enable_pt;
+    dev_meta.syncMode = sync_mode;
 
     agent = new nixlAgent(name, dev_meta);
 
@@ -1340,8 +1342,7 @@ execTransfer(nixlAgent *agent,
         nixl_opt_args_t params;
         std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
         if (!xferBenchConfig::isStorageBackend()) {
-            params.notifMsg = "0xBEEF";
-            params.hasNotif = true;
+            params.notif = "0xBEEF";
         }
 
         // Execute transfers

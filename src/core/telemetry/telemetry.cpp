@@ -23,6 +23,7 @@
 #include <cstring>
 #include <algorithm>
 
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
@@ -65,49 +66,63 @@ nixlTelemetry::~nixlTelemetry() {
     }
 }
 
+namespace {
+[[nodiscard]] std::optional<std::string>
+getExporterName() {
+    if (const auto name = nixl::config::getValueOptional<std::string>(telemetryExporterVar)) {
+        if (!name->empty()) {
+            return name;
+        }
+        NIXL_DEBUG << "Ignoring empty " << telemetryExporterVar << " environment variable";
+    }
+
+    if (!nixl::config::checkExistence(telemetryDirVar)) {
+        NIXL_DEBUG << telemetryDirVar
+                   << " is not set, NIXL telemetry is enabled without any exporter";
+        return std::nullopt;
+    }
+
+    NIXL_INFO << "No telemetry exporter was specified, using default: " << defaultTelemetryPlugin;
+
+    return defaultTelemetryPlugin;
+}
+
+} // namespace
+
 void
 nixlTelemetry::initializeTelemetry() {
-    auto buffer_size = std::getenv(TELEMETRY_BUFFER_SIZE_VAR) ?
-        std::stoul(std::getenv(TELEMETRY_BUFFER_SIZE_VAR)) :
-        DEFAULT_TELEMETRY_BUFFER_SIZE;
+    const auto buffer_size = nixl::config::getValueDefaulted<size_t>(TELEMETRY_BUFFER_SIZE_VAR,
+                                                                     DEFAULT_TELEMETRY_BUFFER_SIZE);
 
     if (buffer_size == 0) {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");
     }
 
-    const char *exporter_name = std::getenv(telemetryExporterVar);
+    const std::optional<std::string> exporter_name = getExporterName();
 
     if (!exporter_name) {
-        NIXL_INFO << "No telemetry exporter was specified, using default: "
-                  << defaultTelemetryPlugin;
-        exporter_name = defaultTelemetryPlugin;
-        if (!std::getenv(telemetryDirVar)) {
-            NIXL_DEBUG << telemetryDirVar
-                       << " is not set, NIXL telemetry is enabled without any exporter";
-            return;
-        }
+        return;
     }
 
     auto &plugin_manager = nixlPluginManager::getInstance();
     std::shared_ptr<const nixlTelemetryPluginHandle> plugin_handle =
-        plugin_manager.loadTelemetryPlugin(exporter_name);
+        plugin_manager.loadTelemetryPlugin(*exporter_name);
 
     if (plugin_handle == nullptr) {
-        throw std::runtime_error("Failed to load telemetry plugin: " + std::string(exporter_name));
+        throw std::runtime_error("Failed to load telemetry plugin: " + *exporter_name);
     }
 
     const nixlTelemetryExporterInitParams init_params{agentName_, buffer_size};
     exporter_ = plugin_handle->createExporter(init_params);
     if (!exporter_) {
-        NIXL_ERROR << "Failed to create telemetry exporter: " << exporter_name;
+        NIXL_ERROR << "Failed to create telemetry exporter: " << *exporter_name;
         return;
     }
 
-    NIXL_DEBUG << "NIXL telemetry is enabled with " << exporter_name << "exporter";
+    NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << *exporter_name;
 
-    auto run_interval = std::getenv(TELEMETRY_RUN_INTERVAL_VAR) ?
-        std::chrono::milliseconds(std::stoul(std::getenv(TELEMETRY_RUN_INTERVAL_VAR))) :
-        DEFAULT_TELEMETRY_RUN_INTERVAL;
+    const auto run_interval =
+        nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
 
     // Update write task interval and start it
     writeTask_.callback_ = [this]() { return writeEventHelper(); };

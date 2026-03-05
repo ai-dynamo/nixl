@@ -582,29 +582,33 @@ TEST_F(objTestFixture, ReadFromOffset) {
     objEngine_->deregisterMem(remote_metadata);
 }
 
-// CRT-specific tests for threshold behavior
+// CRT-specific tests for threshold behavior.
+// crtMinLimit is set to 5 MiB (the S3 minimum part size) so that partSize is
+// not clamped by the CRT SDK and MPU is properly exercised for objects above
+// the threshold.
 class objCrtTestFixture : public objTestBase, public testing::Test {
 protected:
+    static constexpr size_t kCrtMinLimit = 5242880; // 5 MiB
+
     void
     SetUp() override {
-        setupEngine("test-crt-agent", {{"crtMinLimit", "1024"}});
+        setupEngine("test-crt-agent", {{"crtMinLimit", std::to_string(kCrtMinLimit)}});
     }
 };
 
 TEST_F(objCrtTestFixture, TransferAboveThreshold) {
-    // Use 2048 bytes, which is above the 1024 byte CRT threshold
-    testTransferWithSize(NIXL_WRITE, 2048, "-crt-above");
+    // 6 MiB: above the 5 MiB CRT threshold, triggers MPU (two parts: 5 MiB + 1 MiB)
+    testTransferWithSize(NIXL_WRITE, 6291456, "-crt-above");
 }
 
 TEST_F(objCrtTestFixture, TransferBelowThreshold) {
-    // Use 512 bytes, which is below the 1024 byte CRT threshold
-    // Should use standard S3 client
-    testTransferWithSize(NIXL_READ, 512, "-crt-below");
+    // 1 MiB: below the 5 MiB CRT threshold, uses standard S3 client
+    testTransferWithSize(NIXL_READ, 1048576, "-crt-below");
 }
 
 TEST_F(objCrtTestFixture, MixedSizeThreshold) {
-    // Test with mixed buffer sizes (one above, one below threshold)
-    testMultiDescriptorWithSizes(NIXL_WRITE, 512, 2048, "-crt-mixed");
+    // Mixed: 1 MiB (standard client) + 6 MiB (CRT client via MPU)
+    testMultiDescriptorWithSizes(NIXL_WRITE, 1048576, 6291456, "-crt-mixed");
 }
 
 } // namespace gtest::obj

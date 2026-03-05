@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include "common/configuration.h"
 #include "utils.h"
 
 namespace nixl_s3_utils {
@@ -69,11 +70,7 @@ getBucketName(nixl_b_params_t *custom_params) {
         }
     }
 
-    const char *env_bucket = std::getenv("AWS_DEFAULT_BUCKET");
-    if (env_bucket && env_bucket[0] != '\0') return std::string(env_bucket);
-
-    throw std::runtime_error("Bucket name not found. Please provide 'bucket' in custom_params or "
-                             "set AWS_DEFAULT_BUCKET environment variable");
+    return nixl::config::getNonEmptyString("AWS_DEFAULT_BUCKET");
 }
 
 } // namespace nixl_s3_utils

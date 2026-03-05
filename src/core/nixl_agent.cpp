@@ -26,6 +26,7 @@
 #include "transfer_request.h"
 #include "agent_data.h"
 #include "plugin_manager.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/operators.h"
 #include "telemetry.h"
@@ -110,7 +111,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
       config(cfg),
       lock(cfg.syncMode) {
 #if HAVE_ETCD
-    if (getenv("NIXL_ETCD_ENDPOINTS")) {
+    if (nixl::config::checkExistence("NIXL_ETCD_ENDPOINTS")) {
         useEtcd = true;
         NIXL_DEBUG << "NIXL ETCD is enabled";
     } else {
@@ -125,24 +126,19 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &cfg
         throw std::invalid_argument("Agent needs a name");
 
     memorySection.reset(new nixlLocalSection);
-    const char *telemetry_env_val = std::getenv(TELEMETRY_ENABLED_VAR);
 
-    if (telemetry_env_val != nullptr) {
-        if (!strcasecmp(telemetry_env_val, "y") || !strcasecmp(telemetry_env_val, "1") ||
-            !strcasecmp(telemetry_env_val, "yes") || !strcasecmp(telemetry_env_val, "on")) {
+    const auto telemetry_enabled = nixl::config::getValueOptional<bool>(TELEMETRY_ENABLED_VAR);
+
+    if (telemetry_enabled) {
+        if (*telemetry_enabled) {
             telemetryEnabled = true;
             telemetry_ = std::make_unique<nixlTelemetry>(name);
         } else if (cfg.captureTelemetry) {
             telemetryEnabled = true;
             NIXL_WARN << "NIXL telemetry is enabled through config, "
                          "ignoring the NIXL_TELEMETRY_ENABLE environment variable";
-        } else if (!strcasecmp(telemetry_env_val, "n") || !strcasecmp(telemetry_env_val, "0") ||
-                   !strcasecmp(telemetry_env_val, "no") || !strcasecmp(telemetry_env_val, "off")) {
-            NIXL_DEBUG << "NIXL telemetry is disabled";
         } else {
-            NIXL_WARN
-                << "NIXL telemetry is disabled for invalid NIXL_TELEMETRY_ENABLE environment "
-                   "variable -- valid are 'y', 'yes', '1', 'on', 'n', 'no', '0', 'off', any case";
+            NIXL_DEBUG << "NIXL telemetry is disabled";
         }
     } else if (cfg.captureTelemetry) {
         telemetryEnabled = true;
@@ -657,6 +653,13 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 }
 
 nixl_status_t
+nixlAgent::prepXferDlist(const nixl_xfer_dlist_t &descs,
+                         nixlDlistH *&dlist_hndl,
+                         const nixl_opt_args_t *extra_params) const {
+    return prepXferDlist(NIXL_INIT_AGENT, descs, dlist_hndl, extra_params);
+}
+
+nixl_status_t
 nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                         const nixlDlistH* local_side,
                         const std::vector<int> &local_indices,
@@ -750,9 +753,14 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         total_bytes += (*local_descs)[local_indices[i]].len;
     }
 
-    if (extra_params && extra_params->hasNotif) {
-        opt_args.notifMsg = extra_params->notifMsg;
-        opt_args.hasNotif = true;
+    if (extra_params) {
+        if (extra_params->notif) {
+            opt_args.notifMsg = *extra_params->notif;
+            opt_args.hasNotif = true;
+        } else if (extra_params->hasNotif) {
+            opt_args.notifMsg = extra_params->notifMsg;
+            opt_args.hasNotif = true;
+        }
     }
 
     if ((opt_args.hasNotif) && (!backend->supportsNotif())) {
@@ -938,7 +946,10 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     if (extra_params) {
-        if (extra_params->hasNotif) {
+        if (extra_params->notif) {
+            opt_args.notifMsg = *extra_params->notif;
+            opt_args.hasNotif = true;
+        } else if (extra_params->hasNotif) {
             opt_args.notifMsg = extra_params->notifMsg;
             opt_args.hasNotif = true;
         }
@@ -1075,14 +1086,19 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     // Updating the notification based on opt_args
     if (extra_params) {
-        if (extra_params->hasNotif) {
-            req_hndl->notifMsg = extra_params->notifMsg;
-            opt_args.notifMsg  = extra_params->notifMsg;
+        if (extra_params->notif) {
+            req_hndl->notifMsg = *extra_params->notif;
+            opt_args.notifMsg = *extra_params->notif;
             req_hndl->hasNotif = true;
-            opt_args.hasNotif  = true;
+            opt_args.hasNotif = true;
+        } else if (extra_params->hasNotif) {
+            req_hndl->notifMsg = extra_params->notifMsg;
+            opt_args.notifMsg = extra_params->notifMsg;
+            req_hndl->hasNotif = true;
+            opt_args.hasNotif = true;
         } else {
             req_hndl->hasNotif = false;
-            opt_args.hasNotif  = false;
+            opt_args.hasNotif = false;
         }
     }
 

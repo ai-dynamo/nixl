@@ -22,6 +22,7 @@ ARG DEFAULT_PYTHON_VERSION="3.14"
 ARG ARCH="x86_64"
 ARG UCX_REF="v1.20.x"
 ARG LIBFABRIC_VERSION="v1.21.0"
+ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
 ARG URING_TAG="liburing-2.13"
 
@@ -56,10 +57,21 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     libibumad-devel \
     numactl-devel \
     librdmacm-devel \
-    hwloc \
-    hwloc-devel \
+    pciutils-devel \
     wget \
     zlib
+
+# Build latest hwloc from source to avoid older RHEL8 API limitations.
+RUN cd /tmp && \
+    HWLOC_SERIES="$(echo ${HWLOC_VERSION} | cut -d. -f1,2)" && \
+    wget -q "https://download.open-mpi.org/release/hwloc/v${HWLOC_SERIES}/hwloc-${HWLOC_VERSION}.tar.gz" && \
+    tar -xzf "hwloc-${HWLOC_VERSION}.tar.gz" && \
+    cd "hwloc-${HWLOC_VERSION}" && \
+    ./configure --prefix=/usr/local && \
+    make -j"$(nproc)" && \
+    make install && \
+    ldconfig && \
+    rm -rf "/tmp/hwloc-${HWLOC_VERSION}" "/tmp/hwloc-${HWLOC_VERSION}.tar.gz"
 
 # Build OpenSSL 3.x
 RUN yum install -y perl-IPC-Cmd perl-Test-Simple perl-Data-Dumper
@@ -116,7 +128,7 @@ RUN wget https://curl.se/download/curl-8.5.0.tar.gz && \
     ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl3 --enable-shared && \
     make -j$(nproc) && make install
 
-RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581
+RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760
 RUN mkdir aws_sdk_build && cd aws_sdk_build && \
     export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
     export CFLAGS="-I/usr/local/openssl3/include" && \
