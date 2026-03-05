@@ -197,8 +197,7 @@ private:
     const std::string namespace_prefix;
     std::vector<std::string> invalidated_agents;
     std::mutex invalidated_agents_mutex;
-    std::unordered_map<std::string, std::unique_ptr<etcd::Watcher>,
-                        std::hash<std::string>, strEqual> agentWatchers;
+    std::unordered_map<std::string, std::unique_ptr<etcd::Watcher>> agentWatchers;
     std::chrono::microseconds watchTimeout_;
 
     // Helper function to create etcd key
