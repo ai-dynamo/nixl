@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -184,16 +184,14 @@ class nixl_agent:
         )
 
         # Set agent config and instantiate an agent
-        agent_config = nixlBind.nixlAgentConfig(
-            nixl_conf.enable_pthread,
-            nixl_conf.enable_listen,
-            nixl_conf.port,
-            thread_config,
-            1,
-            0,
-            100000,
-            nixl_conf.capture_telemetry,
-        )
+        agent_config = nixlBind.nixlAgentConfig()
+        agent_config.useProgThread = nixl_conf.enable_pthread
+        agent_config.useListenThread = nixl_conf.enable_listen
+        agent_config.listenPort = nixl_conf.port
+        agent_config.syncMode = thread_config
+        agent_config.pthrDelay = 0
+        agent_config.lthrDelay = 100000
+        agent_config.captureTelemetry = nixl_conf.capture_telemetry
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
         self.name = agent_name
@@ -474,14 +472,18 @@ class nixl_agent:
     ) -> nixl_prepped_dlist_handle:
         descs = self.get_xfer_descs(xfer_list, mem_type)
 
-        if agent_name == "NIXL_INIT_AGENT" or agent_name == "":
+        is_local = agent_name == "NIXL_INIT_AGENT" or agent_name == ""
+        if is_local:
             agent_name = nixlBind.NIXL_INIT_AGENT
 
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
 
-        handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
+        if is_local:
+            handle = self.agent.prepXferDlist(descs, handle_list)
+        else:
+            handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
         return nixl_prepped_dlist_handle(self.agent, handle)
 
     """
@@ -513,7 +515,7 @@ class nixl_agent:
     @param notif_msg Optional notification message to send after transfer is done.
            notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
     @param backends Optional list of backend names to limit which backends NIXL can use.
-    @param skip_desc_merge Whether to skip descriptor merging optimization.
+    @param skip_desc_merge Deprecated: Whether to skip descriptor merging optimization.
     @return Opaque handle for posting/checking transfer.
             The handle can be released by calling release_xfer_handle from agent, or release() method on itself.
     """
