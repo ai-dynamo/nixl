@@ -471,7 +471,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
         // first, accept new connections
         int new_fd = 0;
 
-        while(new_fd != -1 && config_.useListenThread) {
+        while (new_fd != -1 && config_.useListenThread) {
             new_fd = listener->acceptClient();
             nixl_socket_peer_t accepted_client;
 
@@ -574,7 +574,8 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                     const std::string &metadata_label = req_ip;
 
                     // Use local storeMetadataInEtcd function
-                    nixl_status_t ret = etcdClient->storeMetadataInEtcd(name_, metadata_label, my_MD);
+                    nixl_status_t ret =
+                        etcdClient->storeMetadataInEtcd(name_, metadata_label, my_MD);
                     if (ret != NIXL_SUCCESS) {
                         NIXL_ERROR << "Failed to store metadata in etcd: " << ret;
                     }
@@ -719,7 +720,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
 #endif // HAVE_ETCD
 
         nixlTime::us_t start = nixlTime::getUs();
-        while( (start + config_.lthrDelay) > nixlTime::getUs()) {
+        while ((start + config_.lthrDelay) > nixlTime::getUs()) {
             std::this_thread::yield();
         }
     }

@@ -510,7 +510,7 @@ nixlAgent::makeConnection(const std::string &remote_agent,
                             << remote_agent << "'";
             return NIXL_ERR_NOT_FOUND;
         }
-        for (auto & [r_bknd, conn_info] : data->remoteBackends_[remote_agent])
+        for (auto &[r_bknd, conn_info] : data->remoteBackends_[remote_agent])
             backend_set.insert(r_bknd);
     } else {
         for (auto & elm : extra_params->backends)
@@ -1417,8 +1417,7 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     std::vector<typename decltype(data->connMd_)::iterator> found_iters;
     for (const auto &backend : *backend_list) {
         auto it = data->connMd_.find(backend->getType());
-        if (it == data->connMd_.end())
-            continue;
+        if (it == data->connMd_.end()) continue;
         found_iters.push_back(it);
         selected_engines.insert(backend);
     }
