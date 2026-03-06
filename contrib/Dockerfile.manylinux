@@ -67,7 +67,7 @@ RUN cd /tmp && \
     wget -q "https://download.open-mpi.org/release/hwloc/v${HWLOC_SERIES}/hwloc-${HWLOC_VERSION}.tar.gz" && \
     tar -xzf "hwloc-${HWLOC_VERSION}.tar.gz" && \
     cd "hwloc-${HWLOC_VERSION}" && \
-    ./configure --prefix=/usr/local && \
+    ./configure --prefix=/usr/local --disable-nvml && \
     make -j"$(nproc)" && \
     make install && \
     ldconfig && \
