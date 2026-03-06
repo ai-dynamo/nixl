@@ -315,7 +315,7 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
 
         for (size_t i = 0; i < num_rails_; ++i) {
             rails_.emplace_back(std::make_unique<nixlLibfabricRail>(
-                efa_devices[i], provider_name, static_cast<uint16_t>(i)));
+                efa_devices[i], provider_name, static_cast<uint16_t>(i), this));
 
             // Initialize EFA device mapping
             efa_device_to_rail_map[efa_devices[i]] = i;

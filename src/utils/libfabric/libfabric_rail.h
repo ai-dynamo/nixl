@@ -32,6 +32,7 @@
 
 // Forward declarations
 class nixlLibfabricConnection;
+class nixlLibfabricRailManager;
 
 /**
  * @brief Request structure for libfabric operations
@@ -242,7 +243,10 @@ public:
     struct fid_ep *endpoint; ///< Libfabric endpoint handle
 
     /** Initialize libfabric rail with all resources */
-    nixlLibfabricRail(const std::string &device, const std::string &provider, uint16_t id);
+    nixlLibfabricRail(const std::string &device,
+                      const std::string &provider,
+                      uint16_t id,
+                      nixlLibfabricRailManager *rail_manager = nullptr);
 
     /** Destroy rail and cleanup all libfabric resources */
     ~nixlLibfabricRail();
@@ -359,6 +363,16 @@ public:
     fi_info *
     getRailInfo() const;
 
+    /** Set control message handler (Producer side) */
+    void setControlMessageHandler(
+        std::function<void(const NixlControlMessage&, fi_addr_t)> handler);
+
+    /** Send control message (Consumer side) */
+    nixl_status_t sendControlMessage(const NixlControlMessage &msg, fi_addr_t dest_addr);
+
+    /** Check if this is the control rail */
+    bool isControlRail() const { return is_control_rail_; }
+
 private:
     // Core libfabric resources
     struct fi_info *info; // from rail_infos[rail_id]
@@ -382,6 +396,21 @@ private:
     // Provider capability flags
     bool provider_supports_hmem_;
 
+    // Rail manager reference
+    nixlLibfabricRailManager *rail_manager_;
+
+    // Control message handling (Rail 0 only)
+    bool is_control_rail_;
+    NixlControlMessage *ctrl_recv_buffer_;
+    struct fid_mr *ctrl_recv_mr_;
+    NixlControlMessage *ctrl_send_buffer_;
+    struct fid_mr *ctrl_send_mr_;
+    std::mutex ctrl_send_mutex_;
+    std::function<void(const NixlControlMessage&, fi_addr_t)> ctrl_msg_handler_;
+
+    nixl_status_t initControlMessageBuffers();
+    void cleanupControlMessageBuffers();
+    void handleControlMessageCompletion(fi_addr_t src_addr);
 
     nixl_status_t
     processCompletionQueueEntry(struct fi_cq_data_entry *comp) const;

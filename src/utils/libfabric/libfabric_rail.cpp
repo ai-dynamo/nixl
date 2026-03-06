@@ -384,10 +384,17 @@ DataRequestPool::allocate(nixlLibfabricReq::OpType op_type, uint32_t req_id) {
 
 nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                                      const std::string &provider,
-                                     uint16_t id)
+                                     uint16_t id,
+                                     nixlLibfabricRailManager *rail_manager)
     : rail_id(id),
       device_name(device),
       provider_name(provider),
+      rail_manager_(rail_manager),
+      is_control_rail_(id == 0),
+      ctrl_recv_buffer_(nullptr),
+      ctrl_recv_mr_(nullptr),
+      ctrl_send_buffer_(nullptr),
+      ctrl_send_mr_(nullptr),
       control_request_pool_(NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL, id),
       data_request_pool_(NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL, id),
       provider_supports_hmem_(false) {
@@ -612,6 +619,14 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         NIXL_INFO << "Successfully pre-posted " << NIXL_LIBFABRIC_RECV_POOL_SIZE
                   << " recv requests for rail " << rail_id;
         NIXL_TRACE << "Successfully initialized rail " << rail_id;
+
+        // Initialize control message buffers for Rail 0
+        if (is_control_rail_) {
+            if (initControlMessageBuffers() != NIXL_SUCCESS) {
+                throw std::runtime_error("Failed to initialize control buffers for rail " +
+                                         std::to_string(rail_id));
+            }
+        }
     }
     catch (...) {
         fi_freeinfo(hints);
@@ -631,6 +646,11 @@ nixlLibfabricRail::isProperlyInitialized() const {
 
 void
 nixlLibfabricRail::cleanup() {
+    // Cleanup control message buffers
+    if (is_control_rail_) {
+        cleanupControlMessageBuffers();
+    }
+
     NIXL_TRACE << "Starting cleanup for rail " << rail_id;
 
     // STEP 1: Close endpoint first to stop any new operations
@@ -1162,62 +1182,75 @@ nixlLibfabricRail::postRead(void *local_buffer,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    NIXL_TRACE << "Posting RDMA read on endpoint=" << std::hex << endpoint
+    // Step 1: Post receive buffer on data rail
+    NIXL_TRACE << "Posting READ recv on endpoint=" << std::hex << endpoint
                << " local_buffer=" << local_buffer << " length=" << length
-               << " dest_addr=" << dest_addr << " remote_addr=" << (void *)remote_addr
-               << " remote_key=" << remote_key << " context=" << &req->ctx;
+               << " dest_addr=" << dest_addr << " context=" << &req->ctx;
 
-    // Retry indefinitely until readdata succeeds or fails for all providers
+    req->operation_type = nixlLibfabricReq::READ;
+
     int ret = -FI_EAGAIN;
     int attempt = 0;
 
     while (true) {
-        // Libfabric fi_read call
-        ret = fi_read(endpoint,
-                      local_buffer,
-                      length,
-                      local_desc,
-                      dest_addr,
-                      remote_addr,
-                      remote_key,
-                      &req->ctx);
+        ret = fi_recv(endpoint,
+                     local_buffer,
+                     length,
+                     local_desc,
+                     dest_addr,
+                     &req->ctx);
 
         if (ret == 0) {
-            // Success
-            NIXL_TRACE << "RDMA read posted successfully"
+            NIXL_TRACE << "fi_recv posted successfully for READ"
                        << (attempt > 0 ? " after " + std::to_string(attempt + 1) + " attempts" :
                                          "");
-            return NIXL_SUCCESS;
+            break;
         }
 
         if (ret == -FI_EAGAIN) {
-            // Resource temporarily unavailable - retry indefinitely for all providers
             attempt++;
-
-            // Log every N attempts to avoid log spam
             if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
-                NIXL_INFO << "fi_read still retrying EAGAIN on rail " << rail_id << " after "
-                          << attempt << " attempts";
-            } else {
-                NIXL_TRACE << "fi_read returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << attempt << ")";
+                NIXL_INFO << "fi_recv retrying on rail " << rail_id << " after " << attempt << " attempts";
             }
-
-            // Progress completion queue to drain pending completions before retry
-            nixl_status_t progress_status = progressCompletionQueue();
-            if (progress_status == NIXL_SUCCESS) {
-                NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
-            }
-
+            progressCompletionQueue();
             continue;
         } else {
-            // Other error - don't retry, fail immediately
-            break;
+            NIXL_ERROR << "fi_recv failed on rail " << rail_id << ": " << fi_strerror(-ret);
+            return NIXL_ERR_BACKEND;
         }
     }
 
-    NIXL_ERROR << "fi_read failed on rail " << rail_id << ": " << fi_strerror(-ret);
-    return NIXL_ERR_BACKEND;
+    // Step 2: Send control message to Producer via Rail 0
+    if (!rail_manager_) {
+        NIXL_ERROR << "Rail manager not set";
+        return NIXL_ERR_BACKEND;
+    }
+
+    nixlLibfabricRail *ctrl_rail = rail_manager_->getRailPtr(0);
+    if (!ctrl_rail || !ctrl_rail->isControlRail()) {
+        NIXL_ERROR << "Control rail (Rail 0) not available";
+        return NIXL_ERR_BACKEND;
+    }
+
+    NixlControlMessage ctrl_msg;
+    ctrl_msg.operation = NixlControlMessage::READ_REQUEST;
+    ctrl_msg.request_id = req->xfer_id;
+    ctrl_msg.rail_id = this->rail_id;
+    ctrl_msg.length = length;
+    ctrl_msg.offset = 0;
+
+    nixl_status_t status = ctrl_rail->sendControlMessage(ctrl_msg, dest_addr);
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to send control message";
+        return status;
+    }
+
+    NIXL_DEBUG << "Posted READ: rail=" << rail_id
+               << " request_id=" << req->xfer_id
+               << " length=" << length
+               << " sent control message via Rail 0";
+
+    return NIXL_SUCCESS;
 }
 
 // Memory Registration Methods
@@ -1484,4 +1517,93 @@ nixlLibfabricRail::findRequestFromContext(void *context) const {
 fi_info *
 nixlLibfabricRail::getRailInfo() const {
     return info;
+}
+
+// Control message implementation
+nixl_status_t nixlLibfabricRail::initControlMessageBuffers() {
+    if (!is_control_rail_) return NIXL_ERR_INVALID_PARAM;
+
+    ctrl_recv_buffer_ = (NixlControlMessage *)aligned_alloc(64, sizeof(NixlControlMessage));
+    if (!ctrl_recv_buffer_) return NIXL_ERR_BACKEND;
+    memset(ctrl_recv_buffer_, 0, sizeof(NixlControlMessage));
+
+    int ret = fi_mr_reg(domain, ctrl_recv_buffer_, sizeof(NixlControlMessage),
+                       FI_RECV, 0, 0, 0, &ctrl_recv_mr_, nullptr);
+    if (ret) {
+        free(ctrl_recv_buffer_);
+        return NIXL_ERR_BACKEND;
+    }
+
+    ctrl_send_buffer_ = (NixlControlMessage *)aligned_alloc(64, sizeof(NixlControlMessage));
+    if (!ctrl_send_buffer_) {
+        fi_close(&ctrl_recv_mr_->fid);
+        free(ctrl_recv_buffer_);
+        return NIXL_ERR_BACKEND;
+    }
+    memset(ctrl_send_buffer_, 0, sizeof(NixlControlMessage));
+
+    ret = fi_mr_reg(domain, ctrl_send_buffer_, sizeof(NixlControlMessage),
+                   FI_SEND, 0, 0, 0, &ctrl_send_mr_, nullptr);
+    if (ret) {
+        free(ctrl_send_buffer_);
+        fi_close(&ctrl_recv_mr_->fid);
+        free(ctrl_recv_buffer_);
+        return NIXL_ERR_BACKEND;
+    }
+
+    ret = fi_recv(endpoint, ctrl_recv_buffer_, sizeof(NixlControlMessage),
+                 fi_mr_desc(ctrl_recv_mr_), FI_ADDR_UNSPEC, ctrl_recv_buffer_);
+    if (ret && ret != -FI_EAGAIN) {
+        return NIXL_ERR_BACKEND;
+    }
+
+    NIXL_INFO << "Control message buffers initialized for Rail 0";
+    return NIXL_SUCCESS;
+}
+
+void nixlLibfabricRail::cleanupControlMessageBuffers() {
+    if (ctrl_send_mr_) fi_close(&ctrl_send_mr_->fid);
+    if (ctrl_send_buffer_) free(ctrl_send_buffer_);
+    if (ctrl_recv_mr_) fi_close(&ctrl_recv_mr_->fid);
+    if (ctrl_recv_buffer_) free(ctrl_recv_buffer_);
+}
+
+void nixlLibfabricRail::setControlMessageHandler(
+    std::function<void(const NixlControlMessage&, fi_addr_t)> handler) {
+    if (!is_control_rail_) return;
+    ctrl_msg_handler_ = handler;
+    NIXL_INFO << "Control message handler set for Rail 0";
+}
+
+nixl_status_t nixlLibfabricRail::sendControlMessage(
+    const NixlControlMessage &msg, fi_addr_t dest_addr) {
+    if (!is_control_rail_) return NIXL_ERR_INVALID_PARAM;
+
+    std::lock_guard<std::mutex> lock(ctrl_send_mutex_);
+    *ctrl_send_buffer_ = msg;
+
+    int ret = fi_send(endpoint, ctrl_send_buffer_, sizeof(NixlControlMessage),
+                     fi_mr_desc(ctrl_send_mr_), dest_addr, ctrl_send_buffer_);
+
+    if (ret && ret != -FI_EAGAIN) {
+        NIXL_ERROR << "fi_send failed: " << fi_strerror(-ret);
+        return NIXL_ERR_BACKEND;
+    }
+
+    return NIXL_SUCCESS;
+}
+
+void nixlLibfabricRail::handleControlMessageCompletion(fi_addr_t src_addr) {
+    if (!is_control_rail_) return;
+
+    if (ctrl_msg_handler_) {
+        NixlControlMessage msg = *ctrl_recv_buffer_;
+        ctrl_msg_handler_(msg, src_addr);
+    }
+
+    int ret = fi_recv(endpoint, ctrl_recv_buffer_, sizeof(NixlControlMessage),
+                     fi_mr_desc(ctrl_recv_mr_), FI_ADDR_UNSPEC, ctrl_recv_buffer_);
+    if (ret && ret != -FI_EAGAIN) {
+        NIXL_ERROR << "Failed to re-post control recv: " << fi_strerror(-ret);
+    }
 }

@@ -113,6 +113,12 @@ public:
     createRails(const std::vector<std::string> &efa_devices, const std::string &provider_name);
 
     // Access rails
+    /** Get pointer to rail by ID (nullable) */
+    nixlLibfabricRail *
+    getRailPtr(size_t rail_id) {
+        return (rail_id < rails_.size()) ? rails_[rail_id].get() : nullptr;
+    }
+
     /** Get reference to rail by ID */
     nixlLibfabricRail &
     getRail(size_t rail_id) {

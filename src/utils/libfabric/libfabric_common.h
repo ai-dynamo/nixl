@@ -321,4 +321,29 @@ extern nixl_status_t
 getCustomIntParam(const nixl_b_params_t &custom_params, const std::string &key, size_t &value);
 } // namespace LibfabricUtils
 
+/**
+ * @brief Control message structure for Request/Response protocol
+ *
+ * Used for Rail 0 (control plane) to coordinate READ operations
+ * in two-sided messaging environments where Consumer needs to notify
+ * Producer to send data.
+ */
+struct NixlControlMessage {
+    enum Operation : uint32_t {
+        READ_REQUEST = 1,  // Consumer -> Producer: request data send
+        WRITE_NOTIFY = 2   // Reserved for future use
+    };
+
+    uint32_t operation;     // Operation type (Operation enum)
+    uint32_t request_id;    // Request ID (globally unique xfer_id)
+    uint32_t rail_id;       // Rail ID for data transfer (1, 2, ...)
+    uint32_t reserved;      // Alignment padding
+    uint64_t length;        // Transfer size in bytes
+    uint64_t offset;        // Offset for future use
+
+    NixlControlMessage() : operation(0), request_id(0), rail_id(0), reserved(0), length(0), offset(0) {}
+};
+
+static_assert(sizeof(NixlControlMessage) == 32, "Control message must be 32 bytes for cache efficiency");
+
 #endif // NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_COMMON_H

@@ -172,6 +172,22 @@ public:
 class nixlLibfabricEngine : public nixlBackendEngine {
     friend class nixlLibfabricRail; // Allow nixlLibfabricRail to access private members
 
+    // Producer transfer context for READ requests
+    struct ProducerTransferContext {
+        void *buffer;                      // Local buffer address
+        size_t length;                     // Buffer length
+        std::vector<struct fid_mr *> rail_mr_list;  // MR list per rail
+        std::vector<size_t> selected_rails;         // Selected rails
+        fi_addr_t remote_addr;             // Remote address (for this rail)
+        std::string remote_agent;          // Remote agent name
+        size_t agent_index;                // Agent index in connection
+
+        ProducerTransferContext() : buffer(nullptr), length(0), remote_addr(FI_ADDR_UNSPEC), agent_index(0) {}
+    };
+
+    mutable std::unordered_map<uint32_t, ProducerTransferContext> producer_transfers_;
+    mutable std::mutex producer_transfers_mutex_;
+
 private:
     // Store user's original progress thread preference
     bool progress_thread_enabled_;
@@ -249,6 +265,9 @@ private:
     // Connection management helpers
     nixl_status_t
     establishConnection(const std::string &remote_agent) const;
+
+    // Control message handler (Producer side)
+    void handleControlMessage(const NixlControlMessage &msg, fi_addr_t src_addr);
 
     // Common connection creation helper
     nixl_status_t
