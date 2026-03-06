@@ -410,7 +410,7 @@ nixlRemoteSection::loadRemoteData(nixlSerDes *deserializer, backend_map_t &backe
         const auto it = backendToEngineMap.find(nixl_backend);
         if (it != backendToEngineMap.end()) {
             ret = addDescList(s_desc, it->second.get());
-            if (ret) {
+            if (ret != NIXL_SUCCESS) {
                 return ret;
             }
         }
