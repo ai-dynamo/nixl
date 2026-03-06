@@ -1138,7 +1138,9 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 }
             }
             res.push_back(remote_iov_list);
-            file_offset += block_size;
+            if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+                file_offset += block_size;
+            }
         }
     } else {
         for (const auto &local_iov : local_iovs) {
