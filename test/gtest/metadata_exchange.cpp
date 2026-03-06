@@ -585,8 +585,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
 
     {
         // Expected due to failure of checkRemoteMd() below?
-        const LogIgnoreGuard lig1(
-            std::regex("Watch timed out for key: .*/agent_0/metadata"));
+        const LogIgnoreGuard lig1(std::regex("Watch timed out for key: .*/agent_0/metadata"));
         const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
         ASSERT_EQ(dst.agent->fetchRemoteMD(src.name), NIXL_SUCCESS);
@@ -757,8 +756,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
     ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
 
     {
-        const LogIgnoreGuard lig1(
-            std::regex("Watch timed out for key: .*/agent_0/metadata"));
+        const LogIgnoreGuard lig1(std::regex("Watch timed out for key: .*/agent_0/metadata"));
         const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
         nixl_opt_args_t fetch_args;
@@ -774,8 +772,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
 
     // Case 3: Fetch with invalid label (should not block the test)
     {
-        const LogIgnoreGuard lig1(
-            std::regex("Watch timed out for key: .*/agent_0/invalid_label"));
+        const LogIgnoreGuard lig1(std::regex("Watch timed out for key: .*/agent_0/invalid_label"));
         const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
         nixl_opt_args_t fetch_args;
