@@ -390,7 +390,7 @@ nixlRemoteSection::loadRemoteData(nixlSerDes *deserializer, backend_map_t &backe
     nixl_backend_t nixl_backend;
 
     ret = deserializer->getBuf("nixlSecElms", &seg_count, sizeof(seg_count));
-    if (ret) {
+    if (ret != NIXL_SUCCESS) {
         return ret;
     }
 
