@@ -94,9 +94,6 @@ def test_agent():
     meta1 = agent1.getLocalMD()
     meta2 = agent2.getLocalMD()
 
-    logger.info("Agent1 MD: \n%s", meta1)
-    logger.info("Agent2 MD: \n%s", meta2)
-
     ret_name = agent1.loadRemoteMD(meta2)
     assert ret_name.decode(encoding="UTF-8") == name2
     ret_name = agent2.loadRemoteMD(meta1)
