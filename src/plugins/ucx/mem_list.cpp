@@ -18,6 +18,7 @@
 #include "mem_list.h"
 
 #ifdef HAVE_UCX_GPU_DEVICE_API
+#include "common/configuration.h"
 #include "rkey.h"
 #include "ucx_backend.h"
 #include "ucx_utils.h"
@@ -25,14 +26,21 @@
 extern "C" {
 #include <ucp/api/device/ucp_host.h>
 }
+
+#include <chrono>
+#include <thread>
 #else
 #include <exception>
+#endif
 #include <string>
 #include <string_view>
-#endif
 #include <stdexcept>
 
 #ifdef HAVE_UCX_GPU_DEVICE_API
+namespace {
+constexpr std::string_view error_message{"Failed to create device memory list"};
+}
+
 namespace nixl::ucx {
 using device_mem_vector_t = std::vector<ucp_device_mem_list_elem_t>;
 
@@ -141,19 +149,33 @@ createElements(const T &dlist, size_t worker_id = 0) {
 
 void *
 createMemList(const nixl_remote_meta_dlist_t &dlist, size_t worker_id, nixlUcxWorker &worker) {
+    using namespace std::chrono_literals;
+
     const device_mem_vector_t elements = createElements(dlist, worker_id);
     const memListParams params{elements};
 
     ucp_device_remote_mem_list_h handle{nullptr};
     ucs_status_t status;
+    bool check_timeout{true};
+    const auto timeout = nixl::config::getValueDefaulted("NIXL_UCX_TIMEOUT_WARNING", 5'000ms);
+
+    const auto start = std::chrono::steady_clock::now();
     while ((status = ucp_device_remote_mem_list_create(params.get(), &handle)) ==
            UCS_ERR_NOT_CONNECTED) {
-        worker.progress();
+        if (check_timeout && ((std::chrono::steady_clock::now() - start) > timeout)) {
+            NIXL_WARN << "Still waiting to create device memory list after " << timeout.count()
+                      << " ms; retrying";
+            check_timeout = false;
+        }
+
+        if (worker.progress() == 0) {
+            std::this_thread::sleep_for(1ms);
+        }
     }
 
     if (status != UCS_OK) {
-        throw std::runtime_error(std::string("Failed to create device remote memory list: ") +
-                                 ucs_status_string(status));
+        throw std::runtime_error(std::string{error_message} +
+                                 "(remote): " + ucs_status_string(status));
     }
 
     return handle;
@@ -167,8 +189,8 @@ createMemList(const nixl_meta_dlist_t &dlist, const nixlUcxWorker &worker) {
     ucp_device_local_mem_list_h handle{nullptr};
     const auto status = ucp_device_local_mem_list_create(params.get(), &handle);
     if (status != UCS_OK) {
-        throw std::runtime_error(std::string("Failed to create device local memory list: ") +
-                                 ucs_status_string(status));
+        throw std::runtime_error(std::string{error_message} +
+                                 "(local): " + ucs_status_string(status));
     }
 
     return handle;
