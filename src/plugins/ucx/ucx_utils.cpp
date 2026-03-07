@@ -619,37 +619,49 @@ void
 nixlUcxContext::memDereg(nixlUcxMem &mem) {
     ucp_mem_unmap(ctx, mem.memh);
 }
-
+ 
 void
 nixlUcxContext::warnAboutHardwareSupportMismatch() const {
-    ucp_context_attr_t attr = {
-        .field_mask = UCP_ATTR_FIELD_MEMORY_TYPES,
-    };
-    const auto status = ucp_context_query(ctx, &attr);
-    if (status != UCS_OK) {
-        NIXL_WARN << "Failed to query UCX context: " << ucs_status_string(status) << ", "
-                  << "hardware support mismatch check will be skipped";
-        return;
-    }
-
     const nixl::hwInfo hw_info;
 
     NIXL_DEBUG << "hwInfo { "
                << "numNvidiaGpus=" << hw_info.numNvidiaGpus << ", "
                << "numIbDevices=" << hw_info.numIbDevices << " }";
 
-    if (hw_info.numNvidiaGpus > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_CUDA)) {
-        NIXL_WARN << hw_info.numNvidiaGpus
-                  << " NVIDIA GPU(s) were detected, but UCX CUDA support was not found! "
-                  << "GPU memory is not supported.";
+    if (hw_info.numNvidiaGpus > 0) {
+        ucp_context_attr_t attr = {
+            .field_mask = UCP_ATTR_FIELD_MEMORY_TYPES,
+        };
+        const auto status = ucp_context_query(ctx, &attr);
+        if (status != UCS_OK) {
+            NIXL_WARN << "Failed to query UCX context: " << ucs_status_string(status) << ", "
+                      << "hardware support mismatch check will be skipped";
+            return;
+        }
+
+        if (!UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_CUDA)) {
+            NIXL_WARN << hw_info.numNvidiaGpus
+                      << " NVIDIA GPU(s) were detected, but UCX CUDA support was not found! "
+                      << "GPU memory is not supported.";
+        }
     }
 
-    if (ucpVersion_ >= UCP_VERSION(1, 21)) {
-        // `UCS_MEMORY_TYPE_RDMA` is included in `memory_types` only from UCX 1.21
-        if (hw_info.numIbDevices > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_RDMA)) {
-            NIXL_WARN << hw_info.numIbDevices
-                      << " IB device(s) were detected, but accelerated IB support was not found! "
-                         "Performance may be degraded.";
+    if (hw_info.numIbDevices > 0) {
+        ucp_params_t params = {};
+
+        nixl::ucx::config config;
+        config.modifyAlways("TLS", "ib");
+        config.modifyAlways("LOG_LEVEL", "fatal");
+        
+        // Try to initialize a IB-only context to check if IB is available
+        ucp_context_h ib_ctx = nullptr;
+        const auto status = ucp_init(&params, config.getUcpConfig(), &ib_ctx); 
+        if (status != UCS_OK) { 
+            NIXL_WARN << hw_info.numIbDevices 
+                      << " IB device(s) were detected, but accelerated IB support was not found! " 
+                         "Performance may be degraded."; 
+        } else {
+            ucp_cleanup(ib_ctx);
         }
     }
 }
