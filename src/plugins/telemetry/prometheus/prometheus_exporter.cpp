@@ -34,7 +34,6 @@ const char prometheusLocalVar[] = "NIXL_TELEMETRY_PROMETHEUS_LOCAL";
 const std::string prometheusExporterTransferCategory = "NIXL_TELEMETRY_TRANSFER";
 const std::string prometheusExporterPerformanceCategory = "NIXL_TELEMETRY_PERFORMANCE";
 const std::string prometheusExporterMemoryCategory = "NIXL_TELEMETRY_MEMORY";
-const std::string prometheusExporterBackendCategory = "NIXL_TELEMETRY_BACKEND";
 const std::string prometheusExporterLocalAddress = "127.0.0.1";
 const std::string prometheusExporterPublicAddress = "0.0.0.0";
 
@@ -85,13 +84,19 @@ nixlTelemetryPrometheusExporter::initializeMetrics() {
     registerCounter("agent_rx_requests_num",
                     "Number of requests received by the agent",
                     prometheusExporterTransferCategory);
+    registerCounter("agent_memory_registered",
+                    "Cumulative memory registered",
+                    prometheusExporterMemoryCategory);
+    registerCounter("agent_memory_deregistered",
+                    "Cumulative memory deregistered",
+                    prometheusExporterMemoryCategory);
+    registerCounter("agent_xfer_time",
+                    "Start to Complete (per request)",
+                    prometheusExporterPerformanceCategory);
+    registerCounter("agent_xfer_post_time",
+                    "Start to posting to Back-End (per request)",
+                    prometheusExporterPerformanceCategory);
 
-    registerGauge("agent_xfer_time",
-                  "Start to Complete (per request)",
-                  prometheusExporterPerformanceCategory);
-    registerGauge("agent_xfer_post_time",
-                  "Start to posting to Back-End (per request)",
-                  prometheusExporterPerformanceCategory);
     registerGauge("agent_memory_registered", "Memory registered", prometheusExporterMemoryCategory);
     registerGauge(
         "agent_memory_deregistered", "Memory deregistered", prometheusExporterMemoryCategory);
@@ -101,7 +106,7 @@ void
 nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
                                                  const std::string &help,
                                                  const std::string &category) {
-    auto &counter = prometheus::BuildCounter().Name(name).Help(help).Register(*registry_);
+    auto &counter = prometheus::BuildCounter().Name(name + "_cnt").Help(help).Register(*registry_);
     counters_[name] = &counter.Add(
         {{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
 }
@@ -110,22 +115,9 @@ void
 nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
                                                const std::string &help,
                                                const std::string &category) {
-    auto &gauge = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
+    auto &gauge = prometheus::BuildGauge().Name(name + "_gauge").Help(help).Register(*registry_);
     gauges_[name] =
         &gauge.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
-}
-
-void
-nixlTelemetryPrometheusExporter::createOrUpdateBackendEvent(const std::string &event_name,
-                                                            uint64_t value) {
-    auto it = counters_.find(event_name);
-    if (it != counters_.end()) {
-        it->second->Increment(value);
-        return;
-    }
-
-    registerCounter(event_name, "Backend event", prometheusExporterBackendCategory);
-    counters_[event_name]->Increment(value);
 }
 
 nixl_status_t
@@ -134,24 +126,26 @@ nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
         const std::string event_name(event.eventName_);
 
         switch (event.category_) {
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER: {
+        case nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER:
+        case nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE: {
             const auto it = counters_.find(event_name);
             if (it != counters_.end()) {
                 it->second->Increment(event.value_);
             }
             break;
         }
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE:
         case nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY: {
-            auto it = gauges_.find(event_name);
-            if (it != gauges_.end()) {
-                it->second->Set(static_cast<double>(event.value_));
+            const auto it_cnt = counters_.find(event_name);
+            if (it_cnt != counters_.end()) {
+                it_cnt->second->Increment(event.value_);
+            }
+
+            const auto it_gauge = gauges_.find(event_name);
+            if (it_gauge != gauges_.end()) {
+                it_gauge->second->Set(static_cast<double>(event.value_));
             }
             break;
         }
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND:
-            createOrUpdateBackendEvent(event_name, event.value_);
-            break;
         case nixl_telemetry_category_t::NIXL_TELEMETRY_CONNECTION:
         case nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR:
         case nixl_telemetry_category_t::NIXL_TELEMETRY_SYSTEM:
