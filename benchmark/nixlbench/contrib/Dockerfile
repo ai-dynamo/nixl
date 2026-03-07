@@ -52,14 +52,18 @@ RUN apt-get update -y && \
     libhwloc-dev \
     build-essential
 
-# Add DOCA repository and install packages
-RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
-    MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
-    dpkg -i doca-host.deb && \
-    apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+# Add DOCA repository and install packages (skip if base image already has DOCA to avoid version conflict)
+RUN if dpkg -s doca-sdk-gpunetio >/dev/null 2>&1; then \
+        echo "DOCA SDK already installed in base image, skipping to avoid version conflict"; \
+    else \
+        ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
+        MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
+        wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+        dpkg -i doca-host.deb && \
+        apt-get update && \
+        apt-get upgrade -y && \
+        apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev; \
+    fi
 
 # Force reinstall of RDMA packages from DOCA repository
 # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
@@ -200,10 +204,17 @@ RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install python dependencies
 RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
-# Install PyTorch
-RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
-    FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION" && \
-    uv pip install $FLAGS torch torchvision torchaudio
+# Install PyTorch: use system torch if present, else install into venv.
+# When system has torch, add its site-packages via a .pth file so the venv sees it with no workarounds.
+RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch" 2>/dev/null; then \
+        SITE=$(/usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import site; print(site.getsitepackages()[0])") && \
+        echo "$SITE" > $VIRTUAL_ENV/lib/python${DEFAULT_PYTHON_VERSION}/site-packages/system-torch.pth && \
+        echo "Using PyTorch from system site-packages"; \
+    else \
+        CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
+        FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION" && \
+        uv pip install $FLAGS torch torchvision torchaudio; \
+    fi
 # Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
