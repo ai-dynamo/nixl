@@ -7,8 +7,10 @@ import argparse
 
 import torch
 
-from nixl._api import nixl_agent, nixl_agent_config
-from nixl.logging import get_logger
+from nixl import _api, logging
+nixl_agent = _api.nixl_agent
+nixl_agent_config = _api.nixl_agent_config
+get_logger = logging.get_logger
 
 logger = get_logger(__name__)
 
