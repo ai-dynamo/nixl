@@ -36,6 +36,7 @@
 #include <string>
 
 #include <cuda.h>
+#include <cuda_runtime.h>
 #include <memory>
 #include <stdexcept>
 #include "config.hpp"
@@ -49,12 +50,15 @@
 #define TORCH_EXTENSION_NAME nixl_ep_cpp
 #endif
 
-/* CUDA memory allocator using VMM. Uses fabric handle type if the device
- * supports it (CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED), otherwise
- * falls back to CU_MEM_HANDLE_TYPE_NONE. */
+/* CUDA memory allocator. Uses fabric VMM (cuMemCreate) if the device supports
+ * CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, otherwise falls back to
+ * cudaMalloc. The cudaMalloc fallback is intentional: VMM memory without a
+ * fabric handle provides no benefit and is incompatible with GDRCopy, which
+ * requires traditionally allocated memory for kernel-level pinning. */
 class cuda_allocator {
 public:
-    cuda_allocator(size_t size) : m_size(0), m_ptr(0), m_alloc_handle(0)
+    cuda_allocator(size_t size) : m_size(size), m_ptr(0), m_alloc_handle(0),
+                                  m_cuda_ptr(nullptr)
     {
         if (size == 0) {
             throw std::invalid_argument("cuda_allocator: size must be non-zero");
@@ -70,12 +74,39 @@ public:
                              CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
                              device);
 
+        if (fabric_supported) {
+            init_vmm(size, device);
+        } else {
+            init_regular(size);
+        }
+    }
+
+    ~cuda_allocator()
+    {
+        if (m_ptr) {
+            cuMemUnmap(m_ptr, m_size);
+            cuMemAddressFree(m_ptr, m_size);
+            cuMemRelease(m_alloc_handle);
+        } else if (m_cuda_ptr) {
+            cudaFree(m_cuda_ptr);
+        }
+    }
+
+    void*  ptr()  const { return m_ptr ? reinterpret_cast<void*>(m_ptr)
+                                       : m_cuda_ptr; }
+    size_t size() const { return m_size; }
+
+    cuda_allocator(const cuda_allocator&)            = delete;
+    cuda_allocator& operator=(const cuda_allocator&) = delete;
+
+private:
+    void init_vmm(size_t size, CUdevice device)
+    {
         CUmemAllocationProp prop = {};
         prop.type                 = CU_MEM_ALLOCATION_TYPE_PINNED;
         prop.location.type        = CU_MEM_LOCATION_TYPE_DEVICE;
         prop.location.id          = device;
-        prop.requestedHandleTypes = fabric_supported ? CU_MEM_HANDLE_TYPE_FABRIC
-                                                     : CU_MEM_HANDLE_TYPE_NONE;
+        prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
 
         size_t granularity = 0;
         if (cuMemGetAllocationGranularity(&granularity, &prop,
@@ -84,34 +115,10 @@ public:
             throw std::runtime_error("Failed to get CUDA allocation granularity");
         }
 
-        init_vmm(size, device, prop, granularity);
-    }
-
-    ~cuda_allocator()
-    {
-        if (m_ptr) {
-            cuMemUnmap(m_ptr, m_size);
-            cuMemAddressFree(m_ptr, m_size);
-        }
-        if (m_alloc_handle) {
-            cuMemRelease(m_alloc_handle);
-        }
-    }
-
-    void*  ptr()  const { return reinterpret_cast<void*>(m_ptr); }
-    size_t size() const { return m_size; }
-
-    cuda_allocator(const cuda_allocator&)            = delete;
-    cuda_allocator& operator=(const cuda_allocator&) = delete;
-
-private:
-    void init_vmm(size_t size, CUdevice device, const CUmemAllocationProp &prop,
-                  size_t granularity)
-    {
         m_size = (size + granularity - 1) / granularity * granularity;
 
         if (cuMemCreate(&m_alloc_handle, m_size, &prop, 0) != CUDA_SUCCESS) {
-            throw std::runtime_error("Failed to create CUDA VMM allocation");
+            throw std::runtime_error("Failed to create CUDA fabric VMM allocation");
         }
 
         if (cuMemAddressReserve(&m_ptr, m_size, 0, 0, 0) != CUDA_SUCCESS) {
@@ -125,7 +132,7 @@ private:
             m_ptr = 0;
             cuMemRelease(m_alloc_handle);
             m_alloc_handle = 0;
-            throw std::runtime_error("Failed to map CUDA VMM memory");
+            throw std::runtime_error("Failed to map CUDA fabric VMM memory");
         }
 
         CUmemAccessDesc access_desc = {};
@@ -142,9 +149,17 @@ private:
         }
     }
 
+    void init_regular(size_t size)
+    {
+        if (cudaMalloc(&m_cuda_ptr, size) != cudaSuccess) {
+            throw std::runtime_error("Failed to allocate CUDA memory");
+        }
+    }
+
     size_t                        m_size;
     CUdeviceptr                   m_ptr;
     CUmemGenericAllocationHandle  m_alloc_handle;
+    void                         *m_cuda_ptr;
 };
 
 namespace nixl_ep {
