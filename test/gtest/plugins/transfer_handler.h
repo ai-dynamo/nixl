@@ -103,6 +103,7 @@ private:
     static constexpr size_t NUM_ENTRIES = 4;
     static constexpr size_t ENTRY_SIZE = 16;
     static constexpr size_t BUF_SIZE = NUM_ENTRIES * ENTRY_SIZE;
+    static constexpr size_t COMP_TIMEOUT = 30;
 
     std::vector<std::unique_ptr<memoryHandler<srcMemType>>> srcMem_;
     std::vector<std::unique_ptr<memoryHandler<dstMemType>>> dstMem_;
@@ -192,12 +193,15 @@ private:
 
         NIXL_INFO << "\t\tWaiting for transfer to complete...";
 
-        auto end_time = absl::Now() + absl::Seconds(3);
+        auto end_time = absl::Now() + absl::Seconds(COMP_TIMEOUT);
 
         while (ret == NIXL_IN_PROG && absl::Now() < end_time) {
+            absl::SleepFor(absl::Milliseconds(50));
             ret = srcBackendEngine_->checkXfer(handle);
             ASSERT_TRUE(ret == NIXL_SUCCESS || ret == NIXL_IN_PROG);
         }
+
+        ASSERT_EQ(ret, NIXL_SUCCESS) << "Transfer timed out after " << COMP_TIMEOUT << " seconds";
 
         NIXL_INFO << "\nTransfer complete";
 
@@ -221,11 +225,14 @@ private:
 
         NIXL_INFO << "\t\tChecking notification flow: ";
 
-        auto end_time = absl::Now() + absl::Seconds(3);
+        auto end_time = absl::Now() + absl::Seconds(COMP_TIMEOUT);
         while (num_notifs == 0 && absl::Now() < end_time) {
+            absl::SleepFor(absl::Milliseconds(50));
             ASSERT_EQ(dstBackendEngine_->getNotifs(target_notifs), NIXL_SUCCESS);
             num_notifs = target_notifs.size();
         }
+
+        ASSERT_GT(num_notifs, 0) << "Notification timed out after " << COMP_TIMEOUT << " seconds";
 
         NIXL_INFO << "\nNotification transfer complete";
 
