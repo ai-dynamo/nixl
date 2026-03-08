@@ -67,9 +67,9 @@ public:
         if (cuDeviceGetAttribute(&rdma_vmm_supported,
                                  CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
                                  device) != CUDA_SUCCESS) {
-            throw std::runtime_error(
-                "Failed to query GPUDirect RDMA with VMM support attribute");
+            throw std::runtime_error("Failed to query GPUDirect RDMA with VMM support attribute");
         }
+
         if (!rdma_vmm_supported) {
             throw std::runtime_error(
                 "GPUDirect RDMA with CUDA VMM is not supported on this device");
@@ -79,8 +79,7 @@ public:
         if (cuDeviceGetAttribute(&fabric_supported,
                                  CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
                                  device) != CUDA_SUCCESS) {
-            throw std::runtime_error(
-                "Failed to query fabric handle type support attribute");
+            throw std::runtime_error("Failed to query fabric handle type support attribute");
         }
 
         CUmemAllocationProp prop = {};
