@@ -50,10 +50,7 @@
 #define TORCH_EXTENSION_NAME nixl_ep_cpp
 #endif
 
-/* CUDA memory allocator using VMM with gpuDirectRDMACapable. Requires
- * CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED. Uses a fabric
- * handle type if CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED is also set,
- * otherwise uses CU_MEM_HANDLE_TYPE_NONE. */
+/* CUDA memory allocator using VMM. */
 class cuda_allocator {
 public:
     cuda_allocator(size_t size) : m_size(0), m_ptr(0), m_alloc_handle(0)
@@ -105,6 +102,7 @@ public:
             cuMemUnmap(m_ptr, m_size);
             cuMemAddressFree(m_ptr, m_size);
         }
+
         if (m_alloc_handle) {
             cuMemRelease(m_alloc_handle);
         }
@@ -120,38 +118,44 @@ private:
     void init_vmm(size_t size, CUdevice device, const CUmemAllocationProp &prop,
                   size_t granularity)
     {
-        m_size = (size + granularity - 1) / granularity * granularity;
+        CUmemAccessDesc access_desc = {};
+        const char *err_msg;
+
+        m_size = nixl_ep::align_up<size_t>(size, granularity);
 
         if (cuMemCreate(&m_alloc_handle, m_size, &prop, 0) != CUDA_SUCCESS) {
             throw std::runtime_error("Failed to create CUDA VMM allocation");
         }
 
         if (cuMemAddressReserve(&m_ptr, m_size, 0, 0, 0) != CUDA_SUCCESS) {
-            cuMemRelease(m_alloc_handle);
-            m_alloc_handle = 0;
-            throw std::runtime_error("Failed to reserve CUDA virtual address");
+            err_msg = "Failed to reserve CUDA virtual address";
+            goto err_release;
         }
 
         if (cuMemMap(m_ptr, m_size, 0, m_alloc_handle, 0) != CUDA_SUCCESS) {
-            cuMemAddressFree(m_ptr, m_size);
-            m_ptr = 0;
-            cuMemRelease(m_alloc_handle);
-            m_alloc_handle = 0;
-            throw std::runtime_error("Failed to map CUDA VMM memory");
+            err_msg = "Failed to map CUDA VMM memory";
+            goto err_free;
         }
 
-        CUmemAccessDesc access_desc = {};
-        access_desc.location.type   = CU_MEM_LOCATION_TYPE_DEVICE;
-        access_desc.location.id     = device;
-        access_desc.flags           = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+        access_desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        access_desc.location.id   = device;
+        access_desc.flags         = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
         if (cuMemSetAccess(m_ptr, m_size, &access_desc, 1) != CUDA_SUCCESS) {
-            cuMemUnmap(m_ptr, m_size);
-            cuMemAddressFree(m_ptr, m_size);
-            m_ptr = 0;
-            cuMemRelease(m_alloc_handle);
-            m_alloc_handle = 0;
-            throw std::runtime_error("Failed to set CUDA memory access");
+            err_msg = "Failed to set CUDA memory access";
+            goto err_unmap;
         }
+
+        return;
+
+err_unmap:
+        cuMemUnmap(m_ptr, m_size);
+err_free:
+        cuMemAddressFree(m_ptr, m_size);
+        m_ptr = 0;
+err_release:
+        cuMemRelease(m_alloc_handle);
+        m_alloc_handle = 0;
+        throw std::runtime_error(err_msg);
     }
 
     size_t                        m_size;
