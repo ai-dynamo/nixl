@@ -53,8 +53,7 @@
 /* CUDA memory allocator using VMM. */
 class cuda_allocator {
 public:
-    cuda_allocator(size_t size) : m_size(0), m_ptr(0), m_alloc_handle(0)
-    {
+    cuda_allocator(size_t size) : m_size(0), m_ptr(0), m_alloc_handle(0) {
         if (size == 0) {
             throw std::invalid_argument("cuda_allocator: size must be non-zero");
         }
@@ -69,26 +68,24 @@ public:
                              CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
                              device);
         if (!rdma_vmm_supported) {
-            throw std::runtime_error("GPUDirect RDMA with CUDA VMM is not supported on this device");
+            throw std::runtime_error(
+                "GPUDirect RDMA with CUDA VMM is not supported on this device");
         }
 
         int fabric_supported = 0;
-        cuDeviceGetAttribute(&fabric_supported,
-                             CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
-                             device);
+        cuDeviceGetAttribute(
+            &fabric_supported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, device);
 
         CUmemAllocationProp prop = {};
-        prop.type                          = CU_MEM_ALLOCATION_TYPE_PINNED;
-        prop.location.type                 = CU_MEM_LOCATION_TYPE_DEVICE;
-        prop.location.id                   = device;
+        prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+        prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        prop.location.id = device;
         prop.allocFlags.gpuDirectRDMACapable = 1;
-        prop.requestedHandleTypes          = fabric_supported ?
-                                             CU_MEM_HANDLE_TYPE_FABRIC :
-                                             CU_MEM_HANDLE_TYPE_NONE;
+        prop.requestedHandleTypes =
+            fabric_supported ? CU_MEM_HANDLE_TYPE_FABRIC : CU_MEM_HANDLE_TYPE_NONE;
 
         size_t granularity = 0;
-        if (cuMemGetAllocationGranularity(&granularity, &prop,
-                                          CU_MEM_ALLOC_GRANULARITY_MINIMUM) !=
+        if (cuMemGetAllocationGranularity(&granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM) !=
             CUDA_SUCCESS) {
             throw std::runtime_error("Failed to get CUDA allocation granularity");
         }
@@ -96,8 +93,7 @@ public:
         init_vmm(size, device, prop, granularity);
     }
 
-    ~cuda_allocator()
-    {
+    ~cuda_allocator() {
         if (m_ptr) {
             cuMemUnmap(m_ptr, m_size);
             cuMemAddressFree(m_ptr, m_size);
@@ -108,16 +104,23 @@ public:
         }
     }
 
-    void*  ptr()  const { return reinterpret_cast<void*>(m_ptr); }
-    size_t size() const { return m_size; }
+    void *
+    ptr() const {
+        return reinterpret_cast<void *>(m_ptr);
+    }
 
-    cuda_allocator(const cuda_allocator&)            = delete;
-    cuda_allocator& operator=(const cuda_allocator&) = delete;
+    size_t
+    size() const {
+        return m_size;
+    }
+
+    cuda_allocator(const cuda_allocator &) = delete;
+    cuda_allocator &
+    operator=(const cuda_allocator &) = delete;
 
 private:
-    void init_vmm(size_t size, CUdevice device, const CUmemAllocationProp &prop,
-                  size_t granularity)
-    {
+    void
+    init_vmm(size_t size, CUdevice device, const CUmemAllocationProp &prop, size_t granularity) {
         CUmemAccessDesc access_desc = {};
         const char *err_msg;
 
@@ -138,8 +141,8 @@ private:
         }
 
         access_desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-        access_desc.location.id   = device;
-        access_desc.flags         = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+        access_desc.location.id = device;
+        access_desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
         if (cuMemSetAccess(m_ptr, m_size, &access_desc, 1) != CUDA_SUCCESS) {
             err_msg = "Failed to set CUDA memory access";
             goto err_unmap;
@@ -147,20 +150,20 @@ private:
 
         return;
 
-err_unmap:
+    err_unmap:
         cuMemUnmap(m_ptr, m_size);
-err_free:
+    err_free:
         cuMemAddressFree(m_ptr, m_size);
         m_ptr = 0;
-err_release:
+    err_release:
         cuMemRelease(m_alloc_handle);
         m_alloc_handle = 0;
         throw std::runtime_error(err_msg);
     }
 
-    size_t                        m_size;
-    CUdeviceptr                   m_ptr;
-    CUmemGenericAllocationHandle  m_alloc_handle;
+    size_t m_size;
+    CUdeviceptr m_ptr;
+    CUmemGenericAllocationHandle m_alloc_handle;
 };
 
 namespace nixl_ep {
