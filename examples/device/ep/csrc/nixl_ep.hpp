@@ -36,6 +36,7 @@
 #include <string>
 
 #include <cuda.h>
+#include <cuda_runtime.h>
 #include <memory>
 #include <stdexcept>
 #include "config.hpp"
@@ -49,9 +50,10 @@
 #define TORCH_EXTENSION_NAME nixl_ep_cpp
 #endif
 
-/* CUDA memory allocator using VMM. Uses fabric handle type if the device
- * supports it (CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED), otherwise
- * falls back to CU_MEM_HANDLE_TYPE_NONE. */
+/* CUDA memory allocator using VMM with gpuDirectRDMACapable. Requires
+ * CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED. Uses a fabric
+ * handle type if CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED is also set,
+ * otherwise uses CU_MEM_HANDLE_TYPE_NONE. */
 class cuda_allocator {
 public:
     cuda_allocator(size_t size) : m_size(0), m_ptr(0), m_alloc_handle(0)
@@ -65,17 +67,27 @@ public:
             throw std::runtime_error("Failed to get CUDA device handle");
         }
 
+        int rdma_vmm_supported = 0;
+        cuDeviceGetAttribute(&rdma_vmm_supported,
+                             CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
+                             device);
+        if (!rdma_vmm_supported) {
+            throw std::runtime_error("GPUDirect RDMA with CUDA VMM is not supported on this device");
+        }
+
         int fabric_supported = 0;
         cuDeviceGetAttribute(&fabric_supported,
                              CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
                              device);
 
         CUmemAllocationProp prop = {};
-        prop.type                 = CU_MEM_ALLOCATION_TYPE_PINNED;
-        prop.location.type        = CU_MEM_LOCATION_TYPE_DEVICE;
-        prop.location.id          = device;
-        prop.requestedHandleTypes = fabric_supported ? CU_MEM_HANDLE_TYPE_FABRIC
-                                                     : CU_MEM_HANDLE_TYPE_NONE;
+        prop.type                          = CU_MEM_ALLOCATION_TYPE_PINNED;
+        prop.location.type                 = CU_MEM_LOCATION_TYPE_DEVICE;
+        prop.location.id                   = device;
+        prop.allocFlags.gpuDirectRDMACapable = 1;
+        prop.requestedHandleTypes          = fabric_supported ?
+                                             CU_MEM_HANDLE_TYPE_FABRIC :
+                                             CU_MEM_HANDLE_TYPE_NONE;
 
         size_t granularity = 0;
         if (cuMemGetAllocationGranularity(&granularity, &prop,
