@@ -270,9 +270,10 @@ else
     else
         echo "No NVIDIA GPU(s) detected. Skipping UCCL installation."
     fi
-    curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz -C ${TMPDIR}
+    git clone https://github.com/openucx/ucx.git ${TMPDIR}/ucx
     ( \
-    cd ${TMPDIR}/openucx-ucx* && \
+    cd ${TMPDIR}/ucx && \
+    git checkout "${UCX_VERSION}" && \
     ./autogen.sh && \
     ./contrib/configure-release-mt \
             --prefix="${UCX_INSTALL_DIR}" \
