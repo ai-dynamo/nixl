@@ -64,17 +64,24 @@ public:
         }
 
         int rdma_vmm_supported = 0;
-        cuDeviceGetAttribute(&rdma_vmm_supported,
-                             CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
-                             device);
+        if (cuDeviceGetAttribute(&rdma_vmm_supported,
+                                 CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
+                                 device) != CUDA_SUCCESS) {
+            throw std::runtime_error(
+                "Failed to query GPUDirect RDMA with VMM support attribute");
+        }
         if (!rdma_vmm_supported) {
             throw std::runtime_error(
                 "GPUDirect RDMA with CUDA VMM is not supported on this device");
         }
 
         int fabric_supported = 0;
-        cuDeviceGetAttribute(
-            &fabric_supported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, device);
+        if (cuDeviceGetAttribute(&fabric_supported,
+                                 CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
+                                 device) != CUDA_SUCCESS) {
+            throw std::runtime_error(
+                "Failed to query fabric handle type support attribute");
+        }
 
         CUmemAllocationProp prop = {};
         prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
