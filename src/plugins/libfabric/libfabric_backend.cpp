@@ -379,6 +379,16 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
             NIXL_DEBUG << "Set XFER_ID callback for rail " << rail_id;
         }
 
+        // Serialize connection information for getConnInfo()
+        // This must be done after rail endpoints are initialized
+        nixl_status_t serialize_status = rail_manager.serializeConnectionInfo("dest", conn_info_);
+        if (serialize_status != NIXL_SUCCESS) {
+            throw std::runtime_error(
+                "Failed to serialize connection info with status: " +
+                std::to_string(serialize_status));
+        }
+        NIXL_DEBUG << "Serialized connection info (" << conn_info_.size() << " bytes)";
+
         // Create self-connection
         std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> data_endpoints(
             rail_manager.getNumRails());
@@ -447,27 +457,9 @@ nixlLibfabricEngine::~nixlLibfabricEngine() {
 
 nixl_status_t
 nixlLibfabricEngine::getConnInfo(std::string &str) const {
-    // Verify all rail endpoints are initialized
-    for (size_t rail_id = 0; rail_id < rail_manager.getNumRails(); ++rail_id) {
-        if (!rail_manager.getRail(rail_id).endpoint) {
-            NIXL_ERROR << "Rail " << rail_id << " endpoint not initialized";
-            return NIXL_ERR_BACKEND;
-        }
-    }
-
-    NIXL_DEBUG << "Retrieving local endpoint addresses for all " << rail_manager.getNumRails()
-               << " rails";
-
-    // Use Rail Manager's connection SerDes method with "dest" prefix for remote consumption
-    nixl_status_t status = rail_manager.serializeConnectionInfo("dest", str);
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Rail Manager serializeConnectionInfo failed";
-        return status;
-    }
-
-    NIXL_DEBUG << "Rail Manager serialized connection info for " << rail_manager.getNumRails()
-               << " rails, total size=" << str.length();
-
+    // Return cached connection information (prepared in constructor)
+    // This follows the same pattern as UCX backend for fast and reliable retrieval
+    str = conn_info_;
     return NIXL_SUCCESS;
 }
 
@@ -1710,19 +1702,46 @@ void nixlLibfabricEngine::handleControlMessage(const NixlControlMessage &msg, fi
         return;
     }
 
+    // Get connection for remote agent
+    auto conn_it = connections_.find(ctx.remote_agent);
+    if (conn_it == connections_.end() || !conn_it->second) {
+        NIXL_ERROR << "No connection found for agent: " << ctx.remote_agent;
+        return;
+    }
+
+    // Get remote address for this rail from connection
+    auto &rail_addrs = conn_it->second->rail_remote_addr_list_;
+    if (rail_addrs.find(msg.rail_id) == rail_addrs.end()) {
+        NIXL_ERROR << "No remote address found for rail " << msg.rail_id;
+        return;
+    }
+
+    // Get all remote endpoints for this rail
+    const auto &remote_eps = rail_addrs.at(msg.rail_id);
+    if (remote_eps.empty()) {
+        NIXL_ERROR << "No remote endpoints for rail " << msg.rail_id;
+        return;
+    }
+
+    // Use the first endpoint (round-robin would select based on counter, but for simplicity use first)
+    fi_addr_t dest_addr = remote_eps[0];
+
+    // Create proper immediate data with TRANSFER message type
+    uint64_t imm_data = NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, ctx.agent_index, msg.request_id, 0);
+
     NIXL_DEBUG << "Sending data: buffer=" << ctx.buffer
                << " length=" << msg.length
                << " rail=" << msg.rail_id
-               << " dest_addr=" << src_addr
-               << " immediate_data=" << msg.request_id;
+               << " dest_addr=" << dest_addr
+               << " immediate_data=" << std::hex << imm_data << std::dec;
 
-    // Send data with fi_senddata (immediate data = request_id for matching)
+    // Send data with fi_senddata (immediate data for completion matching)
     int ret = fi_senddata(data_rail->endpoint,
                          ctx.buffer,
                          msg.length,
                          mr_desc,
-                         msg.request_id,  // immediate data
-                         src_addr,
+                         imm_data,
+                         dest_addr,
                          nullptr);  // No context for now (fire-and-forget)
 
     if (ret == -FI_EAGAIN) {
