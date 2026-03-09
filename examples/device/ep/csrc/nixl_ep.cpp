@@ -69,24 +69,21 @@ vmm_init(size_t size, CUdevice device) {
 
     struct cuda_alloc_ctx {
         CUmemAllocationProp prop;
-        size_t              granularity;
+        size_t granularity;
 
-        cuda_alloc_ctx(CUdevice dev) : prop({}), granularity(0)
-        {
+        cuda_alloc_ctx(CUdevice dev) : prop({}), granularity(0) {
             int version;
             if (cuDriverGetVersion(&version) != CUDA_SUCCESS) {
                 throw std::runtime_error("Failed to get CUDA driver version");
             }
             if (version < 11000) {
-                throw std::runtime_error(
-                    "VMM with RDMA is not supported in this CUDA version");
+                throw std::runtime_error("VMM with RDMA is not supported in this CUDA version");
             }
 
             int rdma_vmm_supported = 0;
-            if (cuDeviceGetAttribute(
-                        &rdma_vmm_supported,
-                        CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
-                        dev) != CUDA_SUCCESS) {
+            if (cuDeviceGetAttribute(&rdma_vmm_supported,
+                                     CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
+                                     dev) != CUDA_SUCCESS) {
                 throw std::runtime_error(
                     "Failed to query GPUDirect RDMA with VMM support attribute");
             }
@@ -99,21 +96,18 @@ vmm_init(size_t size, CUdevice device) {
             if (cuDeviceGetAttribute(&fabric_supported,
                                      CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
                                      dev) != CUDA_SUCCESS) {
-                throw std::runtime_error(
-                    "Failed to query fabric handle type support attribute");
+                throw std::runtime_error("Failed to query fabric handle type support attribute");
             }
 
-            prop.type                            = CU_MEM_ALLOCATION_TYPE_PINNED;
-            prop.location.type                   = CU_MEM_LOCATION_TYPE_DEVICE;
-            prop.location.id                     = dev;
+            prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+            prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+            prop.location.id = dev;
             prop.allocFlags.gpuDirectRDMACapable = 1;
-            prop.requestedHandleTypes            = fabric_supported ?
-                                                   CU_MEM_HANDLE_TYPE_FABRIC :
-                                                   CU_MEM_HANDLE_TYPE_NONE;
+            prop.requestedHandleTypes =
+                fabric_supported ? CU_MEM_HANDLE_TYPE_FABRIC : CU_MEM_HANDLE_TYPE_NONE;
 
-            if (cuMemGetAllocationGranularity(&granularity, &prop,
-                                              CU_MEM_ALLOC_GRANULARITY_MINIMUM) !=
-                CUDA_SUCCESS) {
+            if (cuMemGetAllocationGranularity(
+                    &granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM) != CUDA_SUCCESS) {
                 throw std::runtime_error("Failed to get CUDA allocation granularity");
             }
         }
@@ -142,8 +136,8 @@ vmm_init(size_t size, CUdevice device) {
     }
 
     access_desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-    access_desc.location.id   = device;
-    access_desc.flags         = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+    access_desc.location.id = device;
+    access_desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
     if (cuMemSetAccess(region.ptr, region.size, &access_desc, 1) != CUDA_SUCCESS) {
         err_msg = "Failed to set CUDA memory access";
         goto err_unmap;
