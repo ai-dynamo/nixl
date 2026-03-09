@@ -221,6 +221,11 @@ public:
         return provider_name;
     }
 
+    std::string
+    getProviderDeviceLabel(const std::string &provider_name) {
+        return provider_name.empty() ? "libfabric" : provider_name;
+    }
+
     // Validation
     bool
     isTopologyDiscovered() const {
