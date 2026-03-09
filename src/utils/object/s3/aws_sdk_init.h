@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef OBJ_PLUGIN_AWS_SDK_INIT_H
-#define OBJ_PLUGIN_AWS_SDK_INIT_H
+#ifndef NIXL_SRC_UTILS_OBJECT_S3_AWS_SDK_INIT_H
+#define NIXL_SRC_UTILS_OBJECT_S3_AWS_SDK_INIT_H
 
 #include <aws/core/Aws.h>
 #include "aws_sdk_log.h"
@@ -59,4 +59,4 @@ initAWSSDK() {
 
 } // namespace nixl_s3_utils
 
-#endif // OBJ_PLUGIN_AWS_SDK_INIT_H
+#endif // NIXL_SRC_UTILS_OBJECT_S3_AWS_SDK_INIT_H

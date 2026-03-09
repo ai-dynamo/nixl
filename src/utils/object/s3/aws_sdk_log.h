@@ -120,25 +120,26 @@ private:
     void
     dispatch(Aws::Utils::Logging::LogLevel logLevel, const char *tag, const char *msg) {
         using Aws::Utils::Logging::LogLevel;
+        const char *normalizedTag = tag ? tag : "?";
         switch (logLevel) {
         // Fatal -> ERROR: AWS-internal fatals must not abort the NIXL process
         case LogLevel::Fatal:
-            NIXL_ERROR << "[AWS:" << tag << "] " << msg;
+            NIXL_ERROR << "[AWS:" << normalizedTag << "] " << msg;
             break;
         case LogLevel::Error:
-            NIXL_ERROR << "[AWS:" << tag << "] " << msg;
+            NIXL_ERROR << "[AWS:" << normalizedTag << "] " << msg;
             break;
         case LogLevel::Warn:
-            NIXL_WARN << "[AWS:" << tag << "] " << msg;
+            NIXL_WARN << "[AWS:" << normalizedTag << "] " << msg;
             break;
         case LogLevel::Info:
-            NIXL_INFO << "[AWS:" << tag << "] " << msg;
+            NIXL_INFO << "[AWS:" << normalizedTag << "] " << msg;
             break;
         case LogLevel::Debug:
-            NIXL_DEBUG << "[AWS:" << tag << "] " << msg;
+            NIXL_DEBUG << "[AWS:" << normalizedTag << "] " << msg;
             break;
         case LogLevel::Trace:
-            NIXL_TRACE << "[AWS:" << tag << "] " << msg;
+            NIXL_TRACE << "[AWS:" << normalizedTag << "] " << msg;
             break;
         default:
             break;
