@@ -51,8 +51,8 @@
 #endif
 
 struct vmm_region {
-    CUdeviceptr                  ptr;
-    size_t                       size;
+    CUdeviceptr ptr;
+    size_t size;
     CUmemGenericAllocationHandle handle;
 };
 
