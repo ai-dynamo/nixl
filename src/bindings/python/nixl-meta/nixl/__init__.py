@@ -48,6 +48,6 @@ for sub_name in submodules:
 
 if TYPE_CHECKING:
     try:
-        from nixl_cu13 import _api, _bindings, _utils, logging
+        from nixl_cu13 import _api, _bindings, _utils, logging  # noqa: F401
     except ImportError:
-        from nixl_cu12 import _api, _bindings, _utils, logging
+        from nixl_cu12 import _api, _bindings, _utils, logging  # noqa: F401
