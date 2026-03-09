@@ -50,126 +50,10 @@
 #define TORCH_EXTENSION_NAME nixl_ep_cpp
 #endif
 
-/* CUDA memory allocator using VMM. */
-class cuda_allocator {
-public:
-    cuda_allocator(size_t size) : m_size(0), m_ptr(0), m_alloc_handle(0) {
-        if (size == 0) {
-            throw std::invalid_argument("cuda_allocator: size must be non-zero");
-        }
-
-        CUdevice device;
-        if (cuCtxGetDevice(&device) != CUDA_SUCCESS) {
-            throw std::runtime_error("Failed to get CUDA device handle");
-        }
-
-        int rdma_vmm_supported = 0;
-        if (cuDeviceGetAttribute(&rdma_vmm_supported,
-                                 CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
-                                 device) != CUDA_SUCCESS) {
-            throw std::runtime_error("Failed to query GPUDirect RDMA with VMM support attribute");
-        }
-
-        if (!rdma_vmm_supported) {
-            throw std::runtime_error(
-                "GPUDirect RDMA with CUDA VMM is not supported on this device");
-        }
-
-        int fabric_supported = 0;
-        if (cuDeviceGetAttribute(&fabric_supported,
-                                 CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
-                                 device) != CUDA_SUCCESS) {
-            throw std::runtime_error("Failed to query fabric handle type support attribute");
-        }
-
-        CUmemAllocationProp prop = {};
-        prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-        prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-        prop.location.id = device;
-        prop.allocFlags.gpuDirectRDMACapable = 1;
-        prop.requestedHandleTypes =
-            fabric_supported ? CU_MEM_HANDLE_TYPE_FABRIC : CU_MEM_HANDLE_TYPE_NONE;
-
-        size_t granularity = 0;
-        if (cuMemGetAllocationGranularity(&granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM) !=
-            CUDA_SUCCESS) {
-            throw std::runtime_error("Failed to get CUDA allocation granularity");
-        }
-
-        init_vmm(size, device, prop, granularity);
-    }
-
-    ~cuda_allocator() {
-        if (m_ptr) {
-            cuMemUnmap(m_ptr, m_size);
-            cuMemAddressFree(m_ptr, m_size);
-        }
-
-        if (m_alloc_handle) {
-            cuMemRelease(m_alloc_handle);
-        }
-    }
-
-    void *
-    ptr() const {
-        return reinterpret_cast<void *>(m_ptr);
-    }
-
-    size_t
-    size() const {
-        return m_size;
-    }
-
-    cuda_allocator(const cuda_allocator &) = delete;
-    cuda_allocator &
-    operator=(const cuda_allocator &) = delete;
-
-private:
-    void
-    init_vmm(size_t size, CUdevice device, const CUmemAllocationProp &prop, size_t granularity) {
-        CUmemAccessDesc access_desc = {};
-        const char *err_msg;
-
-        m_size = nixl_ep::align_up<size_t>(size, granularity);
-
-        if (cuMemCreate(&m_alloc_handle, m_size, &prop, 0) != CUDA_SUCCESS) {
-            throw std::runtime_error("Failed to create CUDA VMM allocation");
-        }
-
-        if (cuMemAddressReserve(&m_ptr, m_size, 0, 0, 0) != CUDA_SUCCESS) {
-            err_msg = "Failed to reserve CUDA virtual address";
-            goto err_release;
-        }
-
-        if (cuMemMap(m_ptr, m_size, 0, m_alloc_handle, 0) != CUDA_SUCCESS) {
-            err_msg = "Failed to map CUDA VMM memory";
-            goto err_free;
-        }
-
-        access_desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-        access_desc.location.id = device;
-        access_desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-        if (cuMemSetAccess(m_ptr, m_size, &access_desc, 1) != CUDA_SUCCESS) {
-            err_msg = "Failed to set CUDA memory access";
-            goto err_unmap;
-        }
-
-        return;
-
-    err_unmap:
-        cuMemUnmap(m_ptr, m_size);
-    err_free:
-        cuMemAddressFree(m_ptr, m_size);
-        m_ptr = 0;
-    err_release:
-        cuMemRelease(m_alloc_handle);
-        m_alloc_handle = 0;
-        throw std::runtime_error(err_msg);
-    }
-
-    size_t m_size;
-    CUdeviceptr m_ptr;
-    CUmemGenericAllocationHandle m_alloc_handle;
+struct vmm_region {
+    CUdeviceptr                  ptr;
+    size_t                       size;
+    CUmemGenericAllocationHandle handle;
 };
 
 namespace nixl_ep {
@@ -208,12 +92,12 @@ private:
     int *sync_buffer_ptr = nullptr;
     int *sync_count_ptr = nullptr;
 
-    // Owning allocators (keep raw ptrs above as aliases for use throughout)
-    std::unique_ptr<cuda_allocator> m_rdma_alloc;
-    std::unique_ptr<cuda_allocator> m_mask_alloc;
-    std::unique_ptr<cuda_allocator> m_sync_alloc;
-    std::unique_ptr<cuda_allocator> m_sync_count_alloc;
-    std::unique_ptr<cuda_allocator> m_workspace_alloc;
+    /* Owning VMM allocations (keep raw ptrs above as aliases) */
+    vmm_region m_rdma_alloc;
+    vmm_region m_mask_alloc;
+    vmm_region m_sync_alloc;
+    vmm_region m_sync_count_alloc;
+    vmm_region m_workspace_alloc;
 
     // Device info and communication
     int device_id;
