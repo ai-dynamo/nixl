@@ -192,8 +192,8 @@ template <class T>
 void nixlDescList<T>::addDesc (const T &desc) {
     if (desc.len == 0) {
         NIXL_WARN << "addDesc: zero-length descriptor detected"
-                  << " (addr=0x" << std::hex << desc.addr << std::dec
-                  << ", devId=" << desc.devId << ")";
+                  << " (addr=0x" << std::hex << desc.addr << std::dec << ", devId=" << desc.devId
+                  << ")";
     }
     descs.push_back(desc);
 }
