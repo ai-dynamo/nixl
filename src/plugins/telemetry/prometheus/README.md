@@ -80,7 +80,7 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 | Error status strings | `NIXL_TELEMETRY_ERROR` | No | No | No |
 
 **Counter, Gauge, Histogram** - as implemented by the Prometheus exporter
-- **Counter**: Instance lifetime count of the related value. Summed over the separate events' values.
+- **Counter**: Instance lifetime count of the related value. Summed over the separate events' values. Counter metrics have suffix '_total'
 - **Gauge**: Shows the value per the last event (transaction). E.g agent_memory_registered represents the memory amount registered by the last operation (and not the total memory registered during instance lifetime). The value is updated per each event (request) and can grow or decrease.
 - **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details.
 

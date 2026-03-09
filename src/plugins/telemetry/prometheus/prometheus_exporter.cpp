@@ -106,7 +106,7 @@ void
 nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
                                                  const std::string &help,
                                                  const std::string &category) {
-    auto &counter = prometheus::BuildCounter().Name(name + "_cnt").Help(help).Register(*registry_);
+    auto &counter = prometheus::BuildCounter().Name(name + "_total").Help(help).Register(*registry_);
     counters_[name] = &counter.Add(
         {{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
 }
@@ -115,7 +115,7 @@ void
 nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
                                                const std::string &help,
                                                const std::string &category) {
-    auto &gauge = prometheus::BuildGauge().Name(name + "_gauge").Help(help).Register(*registry_);
+    auto &gauge = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
     gauges_[name] =
         &gauge.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
 }
