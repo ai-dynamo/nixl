@@ -18,15 +18,14 @@
 #include "plugin_manager.h"
 #include "nixl.h"
 #include "common/nixl_log.h"
+#include <cstdlib>
 #include <dlfcn.h>
-#include <filesystem>
 #include <dirent.h>
-#include <unistd.h>  // For access() and F_OK
-#include <cstdlib>  // For getenv
+#include <filesystem>
 #include <fstream>
-#include <string>
 #include <map>
-#include <dlfcn.h>
+#include <string>
+#include <unistd.h>
 
 using lock_guard = const std::lock_guard<std::mutex>;
 
@@ -200,6 +199,7 @@ telemetryLoader(void *handle, const std::string_view &plugin_path) {
 }
 } // namespace
 
+namespace {
 std::map<nixl_backend_t, std::string>
 loadPluginList(const std::string &filename) {
     std::map<nixl_backend_t, std::string> plugins;
@@ -237,6 +237,7 @@ loadPluginList(const std::string &filename) {
 
     return plugins;
 }
+} // namespace
 
 std::shared_ptr<const nixlPluginHandle>
 nixlPluginManager::loadPluginFromPath(const std::string &plugin_path, nixlPluginLoaderFunc loader) {
@@ -270,7 +271,7 @@ nixlPluginManager::loadPluginsFromList(const std::string &filename) {
 }
 
 namespace {
-static std::string
+std::string
 getPluginDir() {
     // Environment variable takes precedence
     const char *plugin_dir = getenv("NIXL_PLUGIN_DIR");
@@ -436,17 +437,17 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
 }
 
 namespace {
-static bool
+bool
 startsWith(const std::string &str, const std::string &prefix) {
     return str.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), str.begin());
 }
 
-static bool
+bool
 endsWith(const std::string &str, const std::string &suffix) {
     return str.size() >= suffix.size() && std::equal(suffix.rbegin(), suffix.rend(), str.rbegin());
 }
 
-static std::string
+std::string
 extractPluginName(const std::string &filename, const std::string &prefix) {
     return filename.substr(prefix.size(), filename.size() - prefix.size() - kPluginSuffix.size());
 }
@@ -481,7 +482,7 @@ nixlPluginManager::discoverPluginsFromDir(const std::string_view &dirpath) {
     std::error_code ec;
     std::filesystem::directory_iterator dir_iter(dir_path, ec);
     if (ec) {
-        NIXL_ERROR << "Error accessing directory(" << dir_path << "): "
+        NIXL_DEBUG << "Skipping plugin directory (" << dir_path << "): "
                    << ec.message();
         return;
     }
