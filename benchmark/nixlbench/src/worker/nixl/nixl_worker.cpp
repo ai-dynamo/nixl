@@ -18,6 +18,7 @@
 #include "worker/nixl/nixl_worker.h"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #if HAVE_CUDA
 #include <cuda.h>
@@ -1243,7 +1244,8 @@ execTransferIterations(nixlAgent *agent,
                        const int num_iter,
                        xferBenchTimer &timer,
                        xferBenchStats &thread_stats,
-                       const bool recreate_per_iteration) {
+                       const bool recreate_per_iteration,
+                       const int* terminate_ptr = nullptr) {
     nixlXferReqH *req = nullptr;
     nixlTime::us_t total_prepare_duration = 0;
 
@@ -1293,6 +1295,11 @@ execTransferIterations(nixlAgent *agent,
     } else {
         // Standard path: Single request for all iterations
         for (int i = 0; i < num_iter; ++i) {
+            // Check for signal (SIGTERM/SIGINT) to allow fast exit on peer death
+            if (__builtin_expect(terminate_ptr && *terminate_ptr, 0)) {
+                agent->releaseXferReq(req);
+                return -1;
+            }
             nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
@@ -1321,7 +1328,8 @@ execTransfer(nixlAgent *agent,
              const nixl_xfer_op_t op,
              const int num_iter,
              const int num_threads,
-             xferBenchStats &stats) {
+             xferBenchStats &stats,
+             const int* terminate_ptr = nullptr) {
     int ret = 0;
     stats.clear();
 
@@ -1357,7 +1365,8 @@ execTransfer(nixlAgent *agent,
                                                   num_iter,
                                                   timer,
                                                   thread_stats,
-                                                  xferBenchConfig::recreate_xfer);
+                                                  xferBenchConfig::recreate_xfer,
+                                                  terminate_ptr);
 
         if (__builtin_expect(result != 0, 0)) {
             ret = result;
@@ -1391,7 +1400,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
 
     if (skip > 0) {
         ret = execTransfer(
-            agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, stats);
+            agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, stats,
+            &terminate);
         if (ret < 0) {
             return std::variant<xferBenchStats, int>(ret);
         }
@@ -1403,7 +1413,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
     stats.clear();
 
     ret = execTransfer(
-        agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats);
+        agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats,
+        &terminate);
     if (ret < 0) {
         return std::variant<xferBenchStats, int>(ret);
     }
@@ -1427,16 +1438,35 @@ xferBenchNixlWorker::poll(size_t block_size) {
     }
     total_iter = skip + num_iter;
 
+    // Periodically check if all peers are still alive via etcd lease keys.
+    // Fires at most once every LIVENESS_CHECK_INTERVAL_S seconds to avoid
+    // saturating etcd with get() calls during tight polling loops.
+    auto last_liveness_check = std::chrono::steady_clock::now();
+    constexpr int LIVENESS_CHECK_INTERVAL_S = 5;
+    auto checkLiveness = [&]() {
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(
+                now - last_liveness_check).count() >= LIVENESS_CHECK_INTERVAL_S) {
+            last_liveness_check = now;
+            if (rt && !rt->arePeersAlive()) {
+                std::cerr << "nixlbench: peer liveness check failed — aborting poll" << std::endl;
+                terminate = 1;
+            }
+        }
+    };
+
     /* Ensure warmup is done*/
     do {
         status = agent->getNotifs(notifs);
-    } while (status == NIXL_SUCCESS && skip != int(notifs["initiator"].size()));
+        checkLiveness();
+    } while (!signaled() && status == NIXL_SUCCESS && skip != int(notifs["initiator"].size()));
     synchronize();
 
     /* Polling for actual iterations*/
     do {
         status = agent->getNotifs(notifs);
-    } while (status == NIXL_SUCCESS && total_iter != int(notifs["initiator"].size()));
+        checkLiveness();
+    } while (!signaled() && status == NIXL_SUCCESS && total_iter != int(notifs["initiator"].size()));
     synchronize();
 }
 
