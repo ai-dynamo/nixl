@@ -255,6 +255,10 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
+# Ensure pkg-config and linker can discover source-installed libs under /usr/local.
+ENV PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig:/usr/lib64/pkgconfig:/usr/lib/pkgconfig
+RUN printf "/usr/local/lib64\n/usr/local/lib\n" > /etc/ld.so.conf.d/usr-local.conf && ldconfig
+
 # By default, uv downloads python packages to $HOME/.cache/uv and hard links them
 # from the virtual environment. This means that the files reside in /root/.cache/uv,
 # which is not what we want since some systems mount user home dir into /root,
