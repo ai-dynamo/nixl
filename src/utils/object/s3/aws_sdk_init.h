@@ -42,6 +42,8 @@ initAWSSDK() {
     std::call_once(aws_init_flag, []() {
         aws_options = new Aws::SDKOptions();
         const auto log_level = getNixlAwsLogLevel();
+        // Required: InitAPI only calls logger_create_fn when logLevel != Off.
+        aws_options->loggingOptions.logLevel = log_level;
         aws_options->loggingOptions.logger_create_fn = [log_level]() {
             return std::make_shared<NixlAwsLogger>(log_level);
         };
