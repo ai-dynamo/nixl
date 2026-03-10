@@ -188,6 +188,7 @@ int main(int argc, char *argv[]) {
     }
 
     std::signal(SIGINT, worker_ptr->signalHandler);
+    std::signal(SIGTERM, worker_ptr->signalHandler);
 
     // Ensure all processes are ready before exchanging metadata
     ret = worker_ptr->synchronizeStart();
