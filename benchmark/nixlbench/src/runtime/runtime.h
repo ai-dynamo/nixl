@@ -41,6 +41,9 @@ class xferBenchRT {
 
         // Add a barrier function to synchronize all processes
         virtual int barrier(const std::string& barrier_id) = 0;
+
+        // Check if all peer processes are still alive; returns true by default
+        virtual bool arePeersAlive() { return true; }
 };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_RUNTIME_H
