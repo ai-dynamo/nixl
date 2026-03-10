@@ -143,8 +143,12 @@ RUN git clone https://github.com/nvidia/gusli.git && \
 # Required for Azure SDK
 RUN git clone --depth 1 https://gitlab.gnome.org/GNOME/libxml2.git --branch 2.15 && \
     cd libxml2 && \
-    ACLOCAL_PATH=/usr/share/aclocal ./autogen.sh && make -j && \
-    make install
+    cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DLIBXML2_WITH_PYTHON=OFF && \
+    cmake --build build -j"$(nproc)" && \
+    cmake --install build
 
 RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
