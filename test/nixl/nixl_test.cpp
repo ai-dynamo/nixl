@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -89,7 +89,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
     std::cout << "Thread " << thread_id << " Wait for initiator and then send xfer descs\n";
     std::string message = serdes.exportStr();
     while (agent.genNotif(initiator, message, extra_params) != NIXL_SUCCESS) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
     std::cout << "Thread " << thread_id << " End Control Path metadata exchanges\n";
 
@@ -105,8 +105,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
                 return x == MEM_VAL;
             });
         });
-        if (!rc)
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (!rc) std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     if (!rc)
         std::cerr << "Thread " << thread_id << " UCX Transfer failed, buffers are different\n";
@@ -211,7 +210,11 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 }
 
 static void runTarget(const std::string &ip, int port, nixl_thread_sync_t sync_mode) {
-    nixlAgentConfig cfg(true, true, port, sync_mode, 1, 0, 100000, false);
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
+    cfg.useListenThread = true;
+    cfg.listenPort = port;
+    cfg.syncMode = sync_mode;
 
     std::cout << "Starting Agent for target\n";
     nixlAgent agent(target, cfg);
@@ -234,7 +237,10 @@ static void runTarget(const std::string &ip, int port, nixl_thread_sync_t sync_m
 }
 
 static void runInitiator(const std::string &target_ip, int target_port, nixl_thread_sync_t sync_mode) {
-    nixlAgentConfig cfg(true, true, 0, sync_mode, 1, 0, 100000, false);
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
+    cfg.useListenThread = true;
+    cfg.syncMode = sync_mode;
 
     std::cout << "Starting Agent for initiator\n";
     nixlAgent agent(initiator, cfg);
@@ -274,10 +280,10 @@ int main(int argc, char *argv[]) {
 
     std::transform(role.begin(), role.end(), role.begin(), ::tolower);
 
-    if (!role.compare(initiator) && !role.compare(target)) {
-            std::cerr << "Invalid role. Use 'initiator' or 'target'."
-                      << "Currently "<< role <<std::endl;
-            return 1;
+    if (role != initiator && role != target) {
+        std::cerr << "Invalid role. Use 'initiator' or 'target'."
+                  << "Currently " << role << std::endl;
+        return 1;
     }
 
     auto sync_mode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;

@@ -23,4 +23,5 @@ jobs:
 
         echo "### clang format errors:"
         [ -z "$FILES" ] && echo "(no matching files)" || \
-          git diff -U0 HEAD^1 HEAD -- $FILES | clang-format-diff-19 -p1 -style=file -v
+          git diff -U0 HEAD^1 HEAD -- $FILES | \
+          clang-format-diff-19 -p1 -style=file -v -iregex ".*${FILE_PATTERN}"

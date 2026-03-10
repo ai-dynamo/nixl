@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +28,7 @@ cmake_opts.add_cmake_defines({
     'USE_THIRDPARTY_LIBRARIES': 'ON',
     'BUILD_SHARED_LIBS': 'ON',
     'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
+    'CMAKE_LINK_DEPENDS_USE_LINKER': 'OFF',
     'CMAKE_C_FLAGS': '-Wno-unused-but-set-variable',
     'CMAKE_CXX_FLAGS': '-Wno-unused-but-set-variable'
 })

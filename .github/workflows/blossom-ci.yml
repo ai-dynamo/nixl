@@ -1,13 +1,17 @@
 # A workflow to trigger ci on hybrid infra (github + self hosted runner)
 name: Blossom-CI
+run-name: >
+  ${{ github.event_name == 'workflow_dispatch' &&
+      format(
+        'Blossom CI • Jenkins Job: {0}{1} • PR #{2}',
+        fromJson(github.event.inputs.args).job,
+        fromJson(github.event.inputs.args).build && format(' #{0}', fromJson(github.event.inputs.args).build) || '',
+        fromJson(github.event.inputs.args).pr
+      )
+      || '' }}
 on:
   issue_comment:
     types: [created]
-  pull_request:
-    types: [opened, reopened, synchronize]
-    branches:
-      - 'release/*'
-      - main
   workflow_dispatch:
       inputs:
           platform:

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,7 +81,12 @@ public:
      *        Comparison criteria is devID, then addr, then len
      */
     bool
-    operator<(const nixlBasicDesc &desc) const;
+    operator<(const nixlBasicDesc &desc) const noexcept {
+        if (devId != desc.devId) return (devId < desc.devId);
+        if (addr != desc.addr) return (addr < desc.addr);
+        return (len < desc.len);
+    }
+
     /**
      * @brief Operator overloading (==) to compare BasicDesc objects
      *
@@ -106,7 +111,11 @@ public:
      * @param query   nixlBasicDesc object
      */
     bool
-    covers(const nixlBasicDesc &query) const;
+    covers(const nixlBasicDesc &query) const noexcept {
+        return (devId == query.devId) && (addr <= query.addr) &&
+            ((addr + len) >= (query.addr + query.len));
+    }
+
     /**
      * @brief Check for overlap between BasicDesc objects
      *
@@ -189,6 +198,62 @@ public:
 };
 
 /**
+ * @struct nixlRemoteDesc
+ * @brief A descriptor structure for remote buffers, with remote agent name bundled with a
+ * nixlBasicDesc.
+ */
+struct nixlRemoteDesc : public nixlBasicDesc {
+    /** Remote agent name */
+    std::string remoteAgent;
+
+    /** Reuse parent constructor without the remote agent name */
+    using nixlBasicDesc::nixlBasicDesc;
+
+    /**
+     * @brief Parametrized constructor for nixlRemoteDesc
+     *
+     * @param addr          Start of buffer/block/offset-in-file
+     * @param len           Length of buffer
+     * @param dev_id        deviceID/BlockID/bufferID (remote ID)
+     * @param remote_agent  Remote agent name
+     */
+    nixlRemoteDesc(const uintptr_t addr,
+                   const size_t len,
+                   const uint64_t dev_id,
+                   const std::string &remote_agent);
+
+    /**
+     * @brief Constructor for nixlRemoteDesc from nixlBasicDesc and remote agent name
+     *
+     * @param desc          nixlBasicDesc object
+     * @param remote_agent  Remote agent name
+     */
+    nixlRemoteDesc(const nixlBasicDesc &desc, const std::string &remote_agent);
+
+    /**
+     * @brief Deserializer constructor for nixlRemoteDesc with serialized blob
+     *
+     * @param str   Serialized blob from another nixlRemoteDesc
+     */
+    explicit nixlRemoteDesc(const nixl_blob_t &str);
+
+    /**
+     * @brief Serialize nixlRemoteDesc to a blob
+     */
+    nixl_blob_t
+    serialize() const;
+};
+
+/**
+ * @brief Operator overloading (==) to compare nixlRemoteDesc objects
+ *
+ * @param lhs   nixlRemoteDesc object
+ * @param rhs   nixlRemoteDesc object
+ */
+bool
+operator==(const nixlRemoteDesc &lhs, const nixlRemoteDesc &rhs);
+
+/**
  * @class nixlDescList
  * @brief A class for describing a list of descriptors, as a template based on
  *        the nixlDesc type that is used.
@@ -258,19 +323,20 @@ public:
     /**
      * @brief Check if nixlDescList is empty or not
      */
-    inline bool
-    isEmpty() const {
-        return (descs.size() == 0);
+    bool
+    isEmpty() const noexcept {
+        return descs.empty();
     }
 
-    /**
-     * @brief Operator [] overloading, get/set descriptor at [index].
-     *        Can throw std::out_of_range exception.
-     */
     const T &
-    operator[](unsigned int index) const;
-    virtual T &
-    operator[](unsigned int index);
+    operator[](size_t index) const {
+        return descs[index];
+    }
+
+    T &
+    operator[](size_t index) {
+        return descs[index];
+    }
 
     /**
      * @brief Vector like iterators for const and non-const elements
@@ -364,6 +430,12 @@ public:
      */
     void
     print() const;
+
+    /**
+     * @brief Dump the descriptor list into a string for debugging
+     */
+    std::string
+    to_string(bool compact = false) const;
 };
 /**
  * @brief A typedef for a nixlDescList<nixlBasicDesc>
@@ -375,5 +447,11 @@ using nixl_xfer_dlist_t = nixlDescList<nixlBasicDesc>;
  *        used for creating registratoin descriptor lists
  */
 using nixl_reg_dlist_t = nixlDescList<nixlBlobDesc>;
+/**
+ * @brief An alias for a nixlDescList<nixlRemoteDesc>
+ *        used for preparing a memory view handle for remote buffers
+ */
+using nixl_remote_dlist_t = nixlDescList<nixlRemoteDesc>;
+using nixl_local_dlist_t = nixlDescList<nixlBasicDesc>;
 
 #endif

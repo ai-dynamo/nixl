@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -166,7 +166,7 @@ namespace {
             // Wait for completion
             status = agent.getXferStatus(req);
             while (status == NIXL_IN_PROG) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 status = agent.getXferStatus(req);
             }
 
@@ -377,7 +377,9 @@ int main(int argc, char *argv[]) {
     }
 
     // Initialize NIXL
-    nixlAgentConfig cfg(true, false, 0, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT);
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
     nixlAgent agent("HF3FSMultiThreadTester", cfg);
 
     // Create HF3FS backend
