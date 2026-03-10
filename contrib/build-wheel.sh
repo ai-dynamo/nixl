@@ -91,7 +91,9 @@ if [ "$ARCH" = "x86_64" ]; then
     export CXXFLAGS="-march=x86-64 -mtune=generic ${CXXFLAGS:-}"
 fi
 
-uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
+uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION \
+    -Csetup-args=-Dbuild_examples=false \
+    -Csetup-args=-Dbuild_tests=false
 
 # Bundle libraries
 mkdir $TMP_DIR/dist
