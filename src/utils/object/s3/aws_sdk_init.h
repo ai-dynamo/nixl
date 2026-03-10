@@ -20,6 +20,7 @@
 
 #include <aws/core/Aws.h>
 #include "aws_sdk_log.h"
+#include <memory>
 #include <mutex>
 #include <cstdlib>
 
