@@ -47,7 +47,7 @@ DEFINE_string(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 DEFINE_string(
     backend,
     XFERBENCH_BACKEND_UCX,
-    "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] \
+    "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI, LIBBLKIO] \
               (only used with nixl worker)");
 DEFINE_string(initiator_seg_type, XFERBENCH_SEG_TYPE_DRAM, "Type of memory segment for initiator \
               [DRAM, VRAM]. Note: Storage backends always use DRAM locally.");
@@ -106,6 +106,12 @@ DEFINE_string(
     posix_api_type,
     XFERBENCH_POSIX_API_AIO,
     "API type for POSIX operations [AIO, URING, POSIXAIO] (only used with POSIX backend)");
+
+// LIBBLKIO options - only used when backend is LIBBLKIO
+DEFINE_string(
+    libblkio_api_type,
+    XFERBENCH_LIBBLKIO_API_IO_URING,
+    "API type for LIBBLKIO operations [IO_URING, VHOST_USER, VHOST_VDPA] (only used with LIBBLKIO backend)");
 
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
 DEFINE_string(gpunetio_device_list, "0", "Comma-separated GPU CUDA device id to use for \
@@ -184,6 +190,7 @@ std::string xferBenchConfig::gpunetio_oob_list = "";
 std::vector<std::string> devices = { };
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
+std::string xferBenchConfig::libblkio_api_type = "";
 std::string xferBenchConfig::filepath = "";
 bool xferBenchConfig::storage_enable_direct = false;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
@@ -244,6 +251,20 @@ xferBenchConfig::loadFromFlags() {
                 posix_api_type != XFERBENCH_POSIX_API_POSIXAIO) {
                 std::cerr << "Invalid POSIX API type: " << posix_api_type
                           << ". Must be one of [AIO, URING, POSIXAIO]" << std::endl;
+                return -1;
+            }
+        }
+
+        // Load LIBBLKIO-specific configurations if backend is LIBBLKIO
+        if (backend == XFERBENCH_BACKEND_LIBBLKIO) {
+            libblkio_api_type = FLAGS_libblkio_api_type;
+
+            // Validate LIBBLKIO API type
+            if (libblkio_api_type != XFERBENCH_LIBBLKIO_API_IO_URING &&
+                libblkio_api_type != XFERBENCH_LIBBLKIO_API_VHOST_USER &&
+                libblkio_api_type != XFERBENCH_LIBBLKIO_API_VHOST_VDPA) {
+                std::cerr << "Invalid LIBBLKIO API type: " << libblkio_api_type
+                          << ". Must be one of [IO_URING, VHOST_USER, VHOST_VDPA]" << std::endl;
                 return -1;
             }
         }
@@ -542,7 +563,8 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_LIBBLKIO == xferBenchConfig::backend);
 }
 /**********
  * xferBench Utils

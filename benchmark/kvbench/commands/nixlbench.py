@@ -52,6 +52,7 @@ class NIXLBench:
         num_threads=1,
         op_type="WRITE",
         posix_api_type="AIO",
+        libblkio_api_type="IO_URING",
         runtime_type="ETCD",
         scheme="pairwise",
         start_batch_size=None,
@@ -106,6 +107,7 @@ class NIXLBench:
             num_threads (int, optional): Number of threads. Defaults to 1.
             op_type (str, optional): Operation type. Defaults to "WRITE".
             posix_api_type (str, optional): POSIX API type. Defaults to "AIO".
+            libblkio_api_type (str, optional): LIBBLKIO API type. Defaults to "IO_URING".
             runtime_type (str, optional): Runtime type. Defaults to "ETCD".
             scheme (str, optional): Communication scheme. Defaults to "pairwise".
             start_batch_size (int, optional): Starting batch size. Defaults to 1.
@@ -154,6 +156,7 @@ class NIXLBench:
         self.num_threads = num_threads
         self.op_type = op_type
         self.posix_api_type = posix_api_type
+        self.libblkio_api_type = libblkio_api_type
         self.runtime_type = runtime_type
         self.scheme = scheme
         self.start_batch_size = start_batch_size
@@ -313,6 +316,7 @@ class NIXLBench:
             "num_threads": self.num_threads,
             "op_type": self.op_type,
             "posix_api_type": self.posix_api_type,
+            "libblkio_api_type": self.libblkio_api_type,
             "runtime_type": self.runtime_type,
             "scheme": self.scheme,
             "start_batch_size": self.start_batch_size,
@@ -372,6 +376,7 @@ class NIXLBench:
             "num_threads": 1,
             "op_type": "WRITE",
             "posix_api_type": "AIO",
+            "libblkio_api_type": "IO_URING",
             "runtime_type": "ETCD",
             "scheme": "pairwise",
             "start_batch_size": 1,

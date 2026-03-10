@@ -76,11 +76,17 @@
 #define XFERBENCH_BACKEND_OBJ "OBJ"
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
+#define XFERBENCH_BACKEND_LIBBLKIO "LIBBLKIO"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
 #define XFERBENCH_POSIX_API_URING "URING"
 #define XFERBENCH_POSIX_API_POSIXAIO "POSIXAIO"
+
+// LIBBLKIO API types
+#define XFERBENCH_LIBBLKIO_API_IO_URING "IO_URING"
+#define XFERBENCH_LIBBLKIO_API_VHOST_USER "VHOST_USER"
+#define XFERBENCH_LIBBLKIO_API_VHOST_VDPA "VHOST_VDPA"
 
 // OBJ S3 scheme types
 #define XFERBENCH_OBJ_SCHEME_HTTP "http"
@@ -154,6 +160,7 @@ class xferBenchConfig {
         static bool enable_vmm;
         static int num_files;
         static std::string posix_api_type;
+        static std::string libblkio_api_type;
         static bool storage_enable_direct;
         static int gds_batch_pool_size;
         static int gds_batch_limit;
@@ -198,6 +205,13 @@ struct GusliDeviceConfig {
     char device_type; // 'F' for file, 'K' for kernel device, 'N' for networked server
     std::string device_path;
     std::string security_flags;
+};
+
+// LIBBLKIO device config similar to GUSLI
+struct LibblkioDeviceConfig {
+    int device_id;
+    char device_type; // 'B' for block device
+    std::string device_path;
 };
 
 // Parser for GUSLI device list: "id:type:path,id:type:path,..."

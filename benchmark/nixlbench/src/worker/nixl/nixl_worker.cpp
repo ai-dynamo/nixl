@@ -117,6 +117,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBBLKIO) ||
         xferBenchConfig::isStorageBackend()) {
         backend_name = xferBenchConfig::backend;
     } else {
@@ -262,6 +263,14 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
         std::cout << "UCCL backend" << std::endl;
         backend_params["in_python"] = "0";
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBBLKIO)) {
+        // Set API type parameter for LIBBLKIO backend
+        backend_params["api_type"] = xferBenchConfig::libblkio_api_type;
+        backend_params["device_list"] = xferBenchConfig::device_list;
+        backend_params["direct_io"] = xferBenchConfig::storage_enable_direct ? "1" : "0";
+
+        std::cout << "LIBBLKIO backend with API type: " << xferBenchConfig::libblkio_api_type
+                  << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -782,7 +791,11 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                 file_idx += 1;
                 if (file_idx >= num_files) file_idx = 0;
             }
+
             nixl_reg_dlist_t desc_list(FILE_SEG);
+            if (xferBenchConfig::backend == XFERBENCH_BACKEND_LIBBLKIO)
+                desc_list = nixl_reg_dlist_t(BLK_SEG);
+
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_iovs.push_back(iov_list);
@@ -897,7 +910,11 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             for (auto &iov : iov_list) {
                 cleanupBasicDescFile(iov);
             }
+
             nixl_reg_dlist_t desc_list(FILE_SEG);
+            if (xferBenchConfig::backend == XFERBENCH_BACKEND_LIBBLKIO)
+                desc_list = nixl_reg_dlist_t(BLK_SEG);
+
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
@@ -1089,6 +1106,8 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
+    } else if (XFERBENCH_BACKEND_LIBBLKIO == xferBenchConfig::backend) {
+        remote_desc = nixl_xfer_dlist_t(BLK_SEG);
     } else if (xferBenchConfig::isStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(FILE_SEG);
     }
@@ -1235,7 +1254,6 @@ execTransfer(nixlAgent *agent,
 #pragma omp critical
         { stats.add(thread_stats); }
     }
-
     const nixlTime::us_t total_duration = total_timer.lap();
     stats.total_duration.add(total_duration);
     return ret;
