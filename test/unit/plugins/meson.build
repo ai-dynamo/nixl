@@ -13,6 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Get compiler for library detection
+cc = meson.get_compiler('cpp')
+
 if enabled_plugins.get('UCX')
     if not ucx_dep.found() and is_explicit_enable
         error('UCX plugin tests requested but UCX dependency not found')
@@ -96,5 +99,13 @@ if enabled_plugins.get('GUSLI')
         error('GUSLI plugin tests requested but gusli_clnt library not found')
     elif gusli_lib_found.found()
         subdir('gusli')
+    endif
+endif
+
+if enabled_plugins.get('LIBBLKIO')
+    if not has_libblkio_plugin and is_explicit_enable
+        error('LIBBLKIO plugin tests requested but libblkio library not found')
+    elif has_libblkio_plugin
+        subdir('libblkio')
     endif
 endif
