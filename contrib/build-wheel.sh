@@ -84,6 +84,13 @@ if [ "$CUDA_MAJOR" -ne 12 ] && [ "$CUDA_MAJOR" -ne 13 ]; then
 fi
 PKG_NAME="nixl-cu${CUDA_MAJOR}"
 ./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
+
+# Required for publishing manylinux_x86_64 wheels: avoid x86_64_v2+ codegen.
+if [ "$ARCH" = "x86_64" ]; then
+    export CFLAGS="-march=x86-64 -mtune=generic ${CFLAGS:-}"
+    export CXXFLAGS="-march=x86-64 -mtune=generic ${CXXFLAGS:-}"
+fi
+
 uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
 
 # Bundle libraries
