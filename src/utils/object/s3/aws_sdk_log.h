@@ -163,7 +163,7 @@ private:
  *
  * Log level mapping:
  *   CRT Fatal  ->  NIXL_ERROR  (not NIXL_FATAL: CRT-internal fatals must not abort the process)
- *   CRT Error  ->  NIXL_ERROR
+ *   CRT Error  ->  NIXL_WARN   (CRT uses Error for recoverable conditions, e.g. credential probes)
  *   CRT Warn   ->  NIXL_WARN
  *   CRT Info   ->  NIXL_INFO
  *   CRT Debug  ->  NIXL_DEBUG  (VLOG(1))
@@ -210,8 +210,9 @@ private:
         case LogLevel::Fatal:
             NIXL_ERROR << "[CRT:" << tag << "] " << msg;
             break;
+        // Error -> WARN: CRT uses Error for recoverable conditions (e.g. credential file probes)
         case LogLevel::Error:
-            NIXL_ERROR << "[CRT:" << tag << "] " << msg;
+            NIXL_WARN << "[CRT:" << tag << "] " << msg;
             break;
         case LogLevel::Warn:
             NIXL_WARN << "[CRT:" << tag << "] " << msg;
