@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,8 +17,8 @@
 
 #include <fcntl.h>
 #include "nixl.h"
+#include "common/configuration.h"
 #include "common/nixl_time.h"
-#include "common/str_tools.h"
 #include "agent_data.h"
 #include "common/nixl_log.h"
 #if HAVE_ETCD
@@ -27,6 +27,7 @@
 #include <future>
 #endif // HAVE_ETCD
 #include <absl/strings/str_format.h>
+#include <absl/strings/str_split.h>
 #include <poll.h>
 
 const std::string default_metadata_label = "metadata";
@@ -87,8 +88,15 @@ int connectToIP(std::string ip_addr, int port) {
     // Check if connection was successful
     int error = 0;
     socklen_t len = sizeof(error);
-    if (getsockopt(ret_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
+    if (getsockopt(ret_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
         NIXL_PERROR << "getsockopt failed for ip_addr: " << ip_addr << " and port: " << port;
+        close(ret_fd);
+        return -1;
+    }
+
+    if (error != 0) {
+        errno = error; // For the 'PERROR'.
+        NIXL_PERROR << "getsockopt gave error for ip_addr: " << ip_addr << " and port: " << port;
         close(ret_fd);
         return -1;
     }
@@ -186,11 +194,10 @@ recvCommMessage(int fd, std::string &msg) {
 class nixlEtcdClient {
 private:
     std::unique_ptr<etcd::SyncClient> etcd;
-    std::string namespace_prefix;
+    const std::string namespace_prefix;
     std::vector<std::string> invalidated_agents;
     std::mutex invalidated_agents_mutex;
-    std::unordered_map<std::string, std::unique_ptr<etcd::Watcher>,
-                        std::hash<std::string>, strEqual> agentWatchers;
+    std::unordered_map<std::string, std::unique_ptr<etcd::Watcher>> agentWatchers;
     std::chrono::microseconds watchTimeout_;
 
     // Helper function to create etcd key
@@ -202,13 +209,14 @@ private:
     }
 
 public:
-    nixlEtcdClient(const std::string &my_agent_name,
-                   const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000))
-        : watchTimeout_(timeout) {
-        const char* etcd_endpoints = std::getenv("NIXL_ETCD_ENDPOINTS");
-        if (!etcd_endpoints || strlen(etcd_endpoints) == 0) {
-            throw std::runtime_error("No etcd endpoints provided");
-        }
+    explicit nixlEtcdClient(
+        const std::string &my_agent_name,
+        const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000))
+        : namespace_prefix(
+              nixl::config::getValueDefaulted<std::string>("NIXL_ETCD_NAMESPACE",
+                                                           NIXL_ETCD_NAMESPACE_DEFAULT)),
+          watchTimeout_(timeout) {
+        const auto etcd_endpoints = nixl::config::getNonEmptyString("NIXL_ETCD_ENDPOINTS");
 
         try {
             etcd = std::make_unique<etcd::SyncClient>(etcd_endpoints);
@@ -218,10 +226,6 @@ public:
             return;
         }
         NIXL_DEBUG << "Created etcd client to endpoints: " << etcd_endpoints;
-
-        const char* etcd_namespace = std::getenv("NIXL_ETCD_NAMESPACE");
-        namespace_prefix = etcd_namespace ? etcd_namespace : NIXL_ETCD_NAMESPACE_DEFAULT;
-
         NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
 
         std::string agent_prefix = makeKey(my_agent_name, "");
@@ -658,7 +662,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                 continue;
             }
 
-            command_list = str_split_substr(commands, "NIXLCOMM:");
+            command_list = absl::StrSplit(commands, "NIXLCOMM:");
 
             for(const auto &command : command_list) {
 

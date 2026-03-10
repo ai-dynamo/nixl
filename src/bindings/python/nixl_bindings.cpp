@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -414,7 +414,8 @@ PYBIND11_MODULE(_bindings, m) {
             }));
 
     py::class_<nixlAgentConfig>(m, "nixlAgentConfig")
-        // implicit constructor
+        .def(py::init<>())
+        // legacy constructors kept for compatibility
         .def(py::init<bool>())
         .def(py::init<bool, bool>())
         .def(py::init<bool, bool, int>())
@@ -422,7 +423,15 @@ PYBIND11_MODULE(_bindings, m) {
         .def(py::init<bool, bool, int, nixl_thread_sync_t, int>())
         .def(py::init<bool, bool, int, nixl_thread_sync_t, int, uint64_t>())
         .def(py::init<bool, bool, int, nixl_thread_sync_t, int, uint64_t, uint64_t>())
-        .def(py::init<bool, bool, int, nixl_thread_sync_t, int, uint64_t, uint64_t, bool>());
+        .def(py::init<bool, bool, int, nixl_thread_sync_t, int, uint64_t, uint64_t, bool>())
+        .def_readwrite("useProgThread", &nixlAgentConfig::useProgThread)
+        .def_readwrite("useListenThread", &nixlAgentConfig::useListenThread)
+        .def_readwrite("listenPort", &nixlAgentConfig::listenPort)
+        .def_readwrite("syncMode", &nixlAgentConfig::syncMode)
+        .def_readwrite("captureTelemetry", &nixlAgentConfig::captureTelemetry)
+        .def_readwrite("pthrDelay", &nixlAgentConfig::pthrDelay)
+        .def_readwrite("lthrDelay", &nixlAgentConfig::lthrDelay)
+        .def_readwrite("etcdWatchTimeout", &nixlAgentConfig::etcdWatchTimeout);
 
     // note: pybind will automatically convert notif_map to python types:
     // so, a Dictionary of string: List<string>
@@ -458,19 +467,21 @@ PYBIND11_MODULE(_bindings, m) {
                      mems_vec.push_back(nixlEnumStrings::memTypeStr(elm));
                  return std::make_pair(params, mems_vec);
              })
-        .def("createBackend",
-             [](nixlAgent &agent,
-                const nixl_backend_t &type,
-                const nixl_b_params_t &initParams) -> uintptr_t {
-                 nixlBackendH *backend = nullptr;
-                 throw_nixl_exception(agent.createBackend(type, initParams, backend));
-                 return (uintptr_t)backend;
-             })
+        .def(
+            "createBackend",
+            [](nixlAgent &agent,
+               const nixl_backend_t &type,
+               const nixl_b_params_t &initParams) -> uintptr_t {
+                nixlBackendH *backend = nullptr;
+                throw_nixl_exception(agent.createBackend(type, initParams, backend));
+                return (uintptr_t)backend;
+            },
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "registerMem",
             [](nixlAgent &agent,
                nixl_reg_dlist_t descs,
-               std::vector<uintptr_t> backends) -> nixl_status_t {
+               const std::vector<uintptr_t> &backends) -> nixl_status_t {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
                 for (uintptr_t backend : backends)
@@ -481,12 +492,13 @@ PYBIND11_MODULE(_bindings, m) {
                 return ret;
             },
             py::arg("descs"),
-            py::arg("backends") = std::vector<uintptr_t>({}))
+            py::arg("backends") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "deregisterMem",
             [](nixlAgent &agent,
                nixl_reg_dlist_t descs,
-               std::vector<uintptr_t> backends) -> nixl_status_t {
+               const std::vector<uintptr_t> &backends) -> nixl_status_t {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
                 for (uintptr_t backend : backends)
@@ -497,7 +509,8 @@ PYBIND11_MODULE(_bindings, m) {
                 return ret;
             },
             py::arg("descs"),
-            py::arg("backends") = std::vector<uintptr_t>({}))
+            py::arg("backends") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "queryMem",
             [](nixlAgent &agent,
@@ -513,10 +526,13 @@ PYBIND11_MODULE(_bindings, m) {
                 return resp;
             },
             py::arg("descs"),
-            py::arg("backend"))
+            py::arg("backend"),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "makeConnection",
-            [](nixlAgent &agent, const std::string &remote_agent, std::vector<uintptr_t> backends) {
+            [](nixlAgent &agent,
+               const std::string &remote_agent,
+               const std::vector<uintptr_t> &backends) {
                 nixl_opt_args_t extra_params;
 
                 for (uintptr_t backend : backends)
@@ -525,13 +541,14 @@ PYBIND11_MODULE(_bindings, m) {
                 nixl_status_t ret = agent.makeConnection(remote_agent, &extra_params);
                 throw_nixl_exception(ret);
                 return ret;
-            })
+            },
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "prepXferDlist",
             [](nixlAgent &agent,
                std::string &agent_name,
                const nixl_xfer_dlist_t &descs,
-               std::vector<uintptr_t> backends) -> uintptr_t {
+               const std::vector<uintptr_t> &backends) -> uintptr_t {
                 nixlDlistH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
@@ -544,7 +561,26 @@ PYBIND11_MODULE(_bindings, m) {
             },
             py::arg("agent_name"),
             py::arg("descs"),
-            py::arg("backend") = std::vector<uintptr_t>({}))
+            py::arg("backend") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "prepXferDlist",
+            [](nixlAgent &agent,
+               const nixl_xfer_dlist_t &descs,
+               const std::vector<uintptr_t> &backends) -> uintptr_t {
+                nixlDlistH *handle = nullptr;
+                nixl_opt_args_t extra_params;
+
+                for (uintptr_t backend : backends)
+                    extra_params.backends.push_back((nixlBackendH *)backend);
+
+                throw_nixl_exception(agent.prepXferDlist(descs, handle, &extra_params));
+
+                return (uintptr_t)handle;
+            },
+            py::arg("descs"),
+            py::arg("backend") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "makeXferReq",
             [](nixlAgent &agent,
@@ -554,7 +590,7 @@ PYBIND11_MODULE(_bindings, m) {
                uintptr_t remote_side,
                py::object remote_indices,
                const std::string &notif_msg,
-               std::vector<uintptr_t> backends,
+               const std::vector<uintptr_t> &backends,
                bool skip_desc_merge) -> uintptr_t {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
@@ -563,8 +599,7 @@ PYBIND11_MODULE(_bindings, m) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
 
                 if (notif_msg.size() > 0) {
-                    extra_params.notifMsg = notif_msg;
-                    extra_params.hasNotif = true;
+                    extra_params.notif = notif_msg;
                 }
                 extra_params.skipDescMerge = skip_desc_merge;
                 std::vector<int> local_indices_vec;
@@ -622,7 +657,7 @@ PYBIND11_MODULE(_bindings, m) {
                const nixl_xfer_dlist_t &remote_descs,
                const std::string &remote_agent,
                const std::string &notif_msg,
-               std::vector<uintptr_t> backends) -> uintptr_t {
+               const std::vector<uintptr_t> &backends) -> uintptr_t {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
@@ -630,8 +665,7 @@ PYBIND11_MODULE(_bindings, m) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
 
                 if (notif_msg.size() > 0) {
-                    extra_params.notifMsg = notif_msg;
-                    extra_params.hasNotif = true;
+                    extra_params.notif = notif_msg;
                 }
                 nixl_status_t ret = agent.createXferReq(
                     operation, local_descs, remote_descs, remote_agent, handle, &extra_params);
@@ -644,7 +678,8 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("remote_descs"),
             py::arg("remote_agent"),
             py::arg("notif_msg") = std::string(""),
-            py::arg("backend") = std::vector<uintptr_t>({}))
+            py::arg("backend") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "estimateXferCost",
             [](nixlAgent &agent, uintptr_t reqh) -> std::tuple<int64_t, int64_t, int> {
@@ -663,8 +698,7 @@ PYBIND11_MODULE(_bindings, m) {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
                 if (notif_msg.size() > 0) {
-                    extra_params.notifMsg = notif_msg;
-                    extra_params.hasNotif = true;
+                    extra_params.notif = notif_msg;
                     ret = agent.postXferReq((nixlXferReqH *)reqh, &extra_params);
                 } else {
                     ret = agent.postXferReq((nixlXferReqH *)reqh);
@@ -673,13 +707,16 @@ PYBIND11_MODULE(_bindings, m) {
                 return ret;
             },
             py::arg("reqh"),
-            py::arg("notif_msg") = std::string(""))
-        .def("getXferStatus",
-             [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
-                 nixl_status_t ret = agent.getXferStatus((nixlXferReqH *)reqh);
-                 throw_nixl_exception(ret);
-                 return ret;
-             })
+            py::arg("notif_msg") = std::string(""),
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "getXferStatus",
+            [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
+                nixl_status_t ret = agent.getXferStatus((nixlXferReqH *)reqh);
+                throw_nixl_exception(ret);
+                return ret;
+            },
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "getXferTelemetry",
             [](nixlAgent &agent, uintptr_t reqh) -> nixl_xfer_telem_t {
@@ -711,16 +748,19 @@ PYBIND11_MODULE(_bindings, m) {
             "getNotifs",
             [](nixlAgent &agent,
                nixl_py_notifs_t &notif_map,
-               std::vector<uintptr_t> backends) -> nixl_py_notifs_t {
+               const std::vector<uintptr_t> &backends) -> nixl_py_notifs_t {
                 nixl_notifs_t new_notifs;
                 nixl_opt_args_t extra_params;
 
-                for (uintptr_t backend : backends)
-                    extra_params.backends.push_back((nixlBackendH *)backend);
+                {
+                    py::gil_scoped_release release;
+                    for (uintptr_t backend : backends)
+                        extra_params.backends.push_back((nixlBackendH *)backend);
 
-                nixl_status_t ret = agent.getNotifs(new_notifs, &extra_params);
+                    nixl_status_t ret = agent.getNotifs(new_notifs, &extra_params);
 
-                throw_nixl_exception(ret);
+                    throw_nixl_exception(ret);
+                }
 
                 for (const auto &pair : new_notifs) {
                     for (const auto &str : pair.second)
@@ -735,7 +775,7 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                const std::string &remote_agent,
                const std::string &msg,
-               std::vector<uintptr_t> backends) {
+               const std::vector<uintptr_t> &backends) {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
 
@@ -750,7 +790,8 @@ PYBIND11_MODULE(_bindings, m) {
             },
             py::arg("remote_agent"),
             py::arg("msg"),
-            py::arg("backends") = std::vector<uintptr_t>({}))
+            py::arg("backends") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
         .def("getLocalMD",
              [](nixlAgent &agent) -> py::bytes {
                  // python can only interpret text strings
@@ -763,7 +804,7 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                nixl_reg_dlist_t descs,
                bool inc_conn_info,
-               std::vector<uintptr_t> backends) -> py::bytes {
+               const std::vector<uintptr_t> &backends) -> py::bytes {
                 std::string ret_str("");
 
                 nixl_opt_args_t extra_params;
@@ -782,7 +823,10 @@ PYBIND11_MODULE(_bindings, m) {
              [](nixlAgent &agent, const std::string &remote_metadata) -> py::bytes {
                  // python can only interpret text strings
                  std::string remote_name("");
-                 throw_nixl_exception(agent.loadRemoteMD(remote_metadata, remote_name));
+                 {
+                     py::gil_scoped_release release;
+                     throw_nixl_exception(agent.loadRemoteMD(remote_metadata, remote_name));
+                 }
                  return py::bytes(remote_name);
              })
         .def("invalidateRemoteMD", &nixlAgent::invalidateRemoteMD)
@@ -797,14 +841,14 @@ PYBIND11_MODULE(_bindings, m) {
                 throw_nixl_exception(agent.sendLocalMD(&extra_params));
             },
             py::arg("ip_addr") = std::string(""),
-            py::arg("port") = 0)
-
+            py::arg("port") = 0,
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "sendLocalPartialMD",
             [](nixlAgent &agent,
                nixl_reg_dlist_t descs,
                bool inc_conn_info,
-               std::vector<uintptr_t> backends,
+               const std::vector<uintptr_t> &backends,
                std::string ip_addr,
                int port,
                std::string label) {
@@ -826,7 +870,8 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("backends") = std::vector<uintptr_t>({}),
             py::arg("ip_addr") = std::string(""),
             py::arg("port") = 0,
-            py::arg("label") = std::string(""))
+            py::arg("label") = std::string(""),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "fetchRemoteMD",
             [](nixlAgent &agent,
@@ -845,7 +890,8 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("remote_agent"),
             py::arg("ip_addr") = std::string(""),
             py::arg("port") = 0,
-            py::arg("label") = std::string(""))
+            py::arg("label") = std::string(""),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "invalidateLocalMD",
             [](nixlAgent &agent, std::string ip_addr, int port) {
@@ -857,6 +903,7 @@ PYBIND11_MODULE(_bindings, m) {
                 throw_nixl_exception(agent.invalidateLocalMD(&extra_params));
             },
             py::arg("ip_addr") = std::string(""),
-            py::arg("port") = 0)
+            py::arg("port") = 0,
+            py::call_guard<py::gil_scoped_release>())
         .def("checkRemoteMD", &nixlAgent::checkRemoteMD);
 }

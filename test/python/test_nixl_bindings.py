@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,7 +64,8 @@ def test_agent():
     name1 = "Agent1"
     name2 = "Agent2"
 
-    devices = nixl.nixlAgentConfig(False)
+    devices = nixl.nixlAgentConfig()
+    devices.useProgThread = False
 
     agent1 = nixl.nixlAgent(name1, devices)
     agent2 = nixl.nixlAgent(name2, devices)
@@ -92,9 +93,6 @@ def test_agent():
 
     meta1 = agent1.getLocalMD()
     meta2 = agent2.getLocalMD()
-
-    logger.info("Agent1 MD: \n%s", meta1)
-    logger.info("Agent2 MD: \n%s", meta2)
 
     ret_name = agent1.loadRemoteMD(meta2)
     assert ret_name.decode(encoding="UTF-8") == name2
@@ -189,7 +187,9 @@ def test_query_mem():
 
     try:
         # Create an agent
-        config = nixl.nixlAgentConfig(False, False)
+        config = nixl.nixlAgentConfig()
+        config.useProgThread = False
+        config.useListenThread = False
         agent = nixl.nixlAgent("test_agent", config)
 
         try:

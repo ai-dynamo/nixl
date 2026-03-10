@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,7 +48,8 @@ nixlAgent* createAgent(const std::string& name) {
         setenv("NIXL_ETCD_ENDPOINTS", ETCD_ENDPOINT.c_str(), 1);
     }
 
-    nixlAgentConfig cfg(true);
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
 
     // Create the agent with the configuration
     nixlAgent* agent = new nixlAgent(name, cfg);
@@ -114,7 +115,8 @@ int main() {
     nixl_status_t status;
 
     // Create two agents (normally these would be in separate processes or machines)
-    nixlAgentConfig cfg(true);
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
     nixl_b_params_t init1, init2;
     nixl_mem_list_t mems1, mems2;
     nixl_reg_dlist_t dlist1(DRAM_SEG), dlist2(DRAM_SEG), empty_dlist(DRAM_SEG);
@@ -186,7 +188,7 @@ int main() {
     nixl_exit_on_failure(status, "Failed to send local MD", AGENT2_NAME);
 
     // Give etcd time to process
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // 2. Fetch Remote Metadata from etcd
     std::cout << "\n2. Fetching remote metadata from etcd...\n";
@@ -224,10 +226,9 @@ int main() {
               << " to " << std::hex << (void*)req_dst.addr << std::endl;
     nixlXferReqH *req_handle;
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
-    extra_params1.notifMsg = "notification";
-    extra_params1.hasNotif = true;
+    extra_params1.notif = "notification";
     ret1 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_dst_descs, AGENT2_NAME, req_handle, &extra_params1);
     std::cout << "Xfer request created, status: " << nixlEnumStrings::statusStr(ret1) << std::endl;
     nixl_exit_on_failure(ret1, "Failed to create Xfer Req", AGENT1_NAME);
@@ -299,7 +300,7 @@ int main() {
     status = A2.fetchRemoteMD(AGENT1_NAME, &fetch_params);
     nixl_exit_on_failure(status, "Failed to fetch remote MD", AGENT2_NAME);
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // 4. Invalidate Metadata
     std::cout << "\n4. Invalidating metadata in etcd...\n";
@@ -308,27 +309,27 @@ int main() {
     status = A1.invalidateLocalMD();
     nixl_exit_on_failure(status, "Failed to invalidate local MD", AGENT1_NAME);
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // Try fetching the invalidated metadata
     std::cout << "\nTrying to fetch invalidated metadata for Agent1...\n";
     status = A2.fetchRemoteMD(AGENT1_NAME, &extra_params2);
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // Try invalidating again, this should log a debug message
     std::cout << "Trying to invalidate again...\n";
     status = A1.invalidateLocalMD();
     nixl_exit_on_failure(status, "Failed to invalidate local MD", AGENT1_NAME);
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // 5. Fetch metadata with invalid label. This should not block forever and print error message.
     std::cout << "\n5. Fetching metadata with invalid label...\n";
     status = A2.fetchRemoteMD("INVALID_AGENT", &fetch_params);
     nixl_exit_on_failure(status, "Failed to fetch remote MD", AGENT2_NAME);
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     free(addr1);
     free(addr2);

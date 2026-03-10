@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,8 +22,7 @@ obj_unit_test_dep = declare_dependency(
         '../../../../src/plugins/obj',
     ],
     dependencies: [
-        aws_s3.partial_dependency(compile_args: false, includes: true, link_args: true, links: true),
+        obj_backend_interface,
         dependency('asio', required: true),
     ],
-    link_with: obj_backend_lib,
 )

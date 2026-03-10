@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,6 +77,7 @@ class NIXLBench:
         obj_req_checksum="supported",
         # Additional nixlbench arguments
         large_blk_iter_ftr=16,
+        recreate_xfer=False,
     ):
         """
         Initialize a NIXLBench instance with benchmark configuration.
@@ -179,6 +180,7 @@ class NIXLBench:
         self.obj_endpoint_override = obj_endpoint_override
         self.obj_req_checksum = obj_req_checksum
         self.large_blk_iter_ftr = large_blk_iter_ftr
+        self.recreate_xfer = recreate_xfer
         self._override_defaults()
 
     def set_io_size(self, io_size: int):
@@ -340,6 +342,7 @@ class NIXLBench:
             "obj_req_checksum": self.obj_req_checksum,
             # Additional nixlbench parameters
             "large_blk_iter_ftr": self.large_blk_iter_ftr,
+            "recreate_xfer": self.recreate_xfer,
         }
 
     @staticmethod
@@ -401,6 +404,7 @@ class NIXLBench:
             "obj_req_checksum": "supported",
             # Additional nixlbench defaults
             "large_blk_iter_ftr": 16,
+            "recreate_xfer": False,
         }
 
     def plan(self, format: str = "text"):

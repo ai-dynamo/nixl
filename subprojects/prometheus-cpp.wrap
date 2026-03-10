@@ -4,3 +4,4 @@ revision = v1.3.0
 depth = 1
 clone-recursive = true
 method = cmake
+diff_files = fix-civetweb-security.patch

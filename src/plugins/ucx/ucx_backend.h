@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,12 +31,12 @@
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
-#include "common/str_tools.h"
 
 // Local includes
 #include "common/nixl_time.h"
-#include "ucx/rkey.h"
-#include "ucx/ucx_utils.h"
+#include "mem_list.h"
+#include "rkey.h"
+#include "ucx_utils.h"
 
 enum ucx_cb_op_t { NOTIF_STR };
 
@@ -69,6 +69,11 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
             return rkeyStr;
         }
 
+        [[nodiscard]] const nixlUcxMem &
+        getMem() const noexcept {
+            return mem;
+        }
+
     friend class nixlUcxEngine;
 };
 
@@ -92,16 +97,6 @@ public:
 private:
     std::vector<std::unique_ptr<nixl::ucx::rkey>> rkeys_;
 };
-
-// Forward declaration of CUDA context
-// It is only visible in ucx_backend.cpp to ensure that
-// HAVE_CUDA works properly
-// Once we will introduce static config (i.e. config.h) that
-// will be part of NIXL installation - we can have
-// HAVE_CUDA in h-files
-class nixlUcxCudaCtx;
-class nixlUcxCudaDevicePrimaryCtx;
-using nixlUcxCudaDevicePrimaryCtxPtr = std::shared_ptr<nixlUcxCudaDevicePrimaryCtx>;
 
 class nixlUcxEngine : public nixlBackendEngine {
 public:
@@ -191,23 +186,6 @@ public:
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
-    nixl_status_t
-    createGpuXferReq(const nixlBackendReqH &req_hndl,
-                     const nixl_meta_dlist_t &local_descs,
-                     const nixl_meta_dlist_t &remote_descs,
-                     nixlGpuXferReqH &gpu_req_hndl) const override;
-
-    void
-    releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const override;
-
-    nixl_status_t
-    getGpuSignalSize(size_t &signal_size) const override;
-
-    nixl_status_t
-    prepGpuSignal(const nixlBackendMD &meta,
-                  void *signal,
-                  const nixl_opt_b_args_t *opt_args = nullptr) const override;
-
     int
     progress();
 
@@ -220,10 +198,17 @@ public:
     nixl_status_t
     checkConn(const std::string &remote_agent);
 
-private:
-    // Helper to extract worker_id from opt_args->customParam or nullopt if not found
-    [[nodiscard]] std::optional<size_t>
-    getWorkerIdFromOptArgs(const nixl_opt_b_args_t *opt_args) const noexcept;
+    nixl_status_t
+    prepMemView(const nixl_remote_meta_dlist_t &,
+                nixlMemViewH &,
+                const nixl_opt_b_args_t * = nullptr) const override;
+
+    nixl_status_t
+    prepMemView(const nixl_meta_dlist_t &,
+                nixlMemViewH &,
+                const nixl_opt_b_args_t * = nullptr) const override;
+
+    void releaseMemView(nixlMemViewH) const override;
 
 protected:
     const std::vector<std::unique_ptr<nixlUcxWorker>> &
@@ -236,8 +221,8 @@ protected:
         return uws[worker_id];
     }
 
-    size_t
-    getWorkerId() const;
+    [[nodiscard]] size_t
+    getWorkerId(const nixl_opt_b_args_t *opt_args = nullptr) const noexcept;
 
     virtual size_t
     getSharedWorkersSize() const {
@@ -246,9 +231,6 @@ protected:
 
     void
     getNotifsImpl(notif_list_t &notif_list);
-
-    virtual int
-    vramApplyCtx();
 
     virtual void
     appendNotif(std::string remote_name, std::string msg);
@@ -265,13 +247,6 @@ protected:
     nixlUcxEngine(const nixlBackendInitParams &init_params);
 
 private:
-    void
-    vramInitCtx();
-    void
-    vramFiniCtx();
-    int
-    vramUpdateCtx(void *address, uint64_t dev_id, bool &restart_reqd);
-
     // Memory management helpers
     nixl_status_t
     internalMDHelper(const nixl_blob_t &blob, const std::string &agent, nixlBackendMD *&output);
@@ -309,19 +284,18 @@ private:
                        size_t start_idx,
                        size_t end_idx);
 
+    /**
+     * Get the worker ID from the optional arguments.
+     * Returns std::nullopt if the 'worker_id' option extraction fails.
+     */
+    [[nodiscard]] std::optional<size_t>
+    getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const noexcept;
+
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> uws;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
-
-    /* CUDA data*/
-    std::unique_ptr<nixlUcxCudaCtx> cudaCtx; // Context matching specific device
-    bool cuda_addr_wa;
-    mutable std::optional<size_t> gpuSignalSize_;
-
-    // Context to use when current context is missing
-    nixlUcxCudaDevicePrimaryCtxPtr m_cudaPrimaryCtx;
 
     const bool progressThreadEnabled_;
 
@@ -329,8 +303,7 @@ private:
     notif_list_t notifMainList;
 
     // Map of agent name to saved nixlUcxConnection info
-    std::unordered_map<std::string, ucx_connection_ptr_t, std::hash<std::string>, strEqual>
-        remoteConnMap;
+    std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
 };
 
 class nixlUcxThread;
@@ -347,9 +320,6 @@ public:
     getNotifs(notif_list_t &notif_list) override;
 
 protected:
-    int
-    vramApplyCtx() override;
-
     void
     appendNotif(std::string remote_name, std::string msg) override;
 
@@ -385,9 +355,6 @@ public:
     getNotifs(notif_list_t &notif_list) override;
 
 protected:
-    int
-    vramApplyCtx() override;
-
     void
     appendNotif(std::string remote_name, std::string msg) override;
 

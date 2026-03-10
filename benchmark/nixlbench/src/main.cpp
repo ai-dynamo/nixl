@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +19,6 @@
 #include <iostream>
 #include <nixl.h>
 #include <sys/time.h>
-#include <gflags/gflags.h>
 #include "utils/utils.h"
 #include "utils/scope_guard.h"
 #include "worker/nixl/nixl_worker.h"
@@ -124,8 +123,8 @@ static int processBatchSizes(xferBenchWorker &worker,
             worker.exchangeIOV(local_trans_lists, block_size);
             worker.poll(block_size);
 
-            if (xferBenchConfig::check_consistency && xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
-                xferBenchUtils::checkConsistency(local_trans_lists);
+            if (!xferBenchUtils::validateTransfer(false, local_trans_lists, local_trans_lists)) {
+                return EXIT_FAILURE;
             }
             if (IS_PAIRWISE_AND_SG()) {
                 // TODO: This is here just to call throughput reduction
@@ -141,15 +140,8 @@ static int processBatchSizes(xferBenchWorker &worker,
                 return 1;
             }
 
-            if (xferBenchConfig::check_consistency) {
-                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-                    xferBenchUtils::checkConsistency(local_trans_lists);
-                } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
-                    // Only storage backends support consistency check for write on initiator
-                    if (xferBenchConfig::isStorageBackend()) {
-                        xferBenchUtils::checkConsistency(remote_trans_lists);
-                    }
-                }
+            if (!xferBenchUtils::validateTransfer(true, local_trans_lists, remote_trans_lists)) {
+                return EXIT_FAILURE;
             }
 
             xferBenchUtils::printStats(
@@ -182,9 +174,7 @@ static std::unique_ptr<xferBenchWorker> createWorker(int *argc, char ***argv) {
 }
 
 int main(int argc, char *argv[]) {
-    gflags::ParseCommandLineFlags(&argc, &argv, true);
-
-    int ret = xferBenchConfig::loadFromFlags();
+    int ret = xferBenchConfig::parseConfig(argc, argv);
     if (0 != ret) {
         return EXIT_FAILURE;
     }
@@ -235,8 +225,6 @@ int main(int argc, char *argv[]) {
     if (0 != ret) {
         return EXIT_FAILURE;
     }
-
-    gflags::ShutDownCommandLineFlags();
 
     return worker_ptr->signaled() ? EXIT_FAILURE : EXIT_SUCCESS;
 }
