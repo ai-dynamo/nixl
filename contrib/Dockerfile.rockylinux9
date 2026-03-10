@@ -38,6 +38,7 @@ RUN dnf install -y dnf-plugins-core && \
     bzip2 \
     clang-devel \
     cmake \
+    curl \
     diffutils \
     distribution-gpg-keys-copr \
     dkms \
@@ -49,6 +50,7 @@ RUN dnf install -y dnf-plugins-core && \
     git \
     libaio \
     libaio-devel \
+    libcurl-devel \
     libtool \
     libtool-ltdl \
     make \
