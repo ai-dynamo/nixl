@@ -27,9 +27,10 @@
 #include <thread>
 #include "runtime/runtime.h"
 
-// Forward declaration for etcd client
+// Forward declarations for etcd client
 namespace etcd {
 class SyncClient;
+class KeepAlive;
 }
 
 enum xferBenchEtcdMsgType { XFER_BENCH_ETCD_MSG_TYPE_INT = 1, XFER_BENCH_ETCD_MSG_TYPE_CHAR = 2 };
@@ -45,6 +46,12 @@ private:
     std::string namespace_prefix;
     std::string benchmark_group;
     std::unique_ptr<etcd::SyncClient> client;
+
+    // Lease-based peer liveness: each rank's key is attached to a lease that
+    // auto-expires if the process dies (including SIGKILL). arePeersAlive()
+    // checks whether all peer rank keys are still present in etcd.
+    static constexpr int LEASE_TTL_S = 15;
+    std::shared_ptr<etcd::KeepAlive> keepalive;
 
     int my_rank; // Rank information
     int global_size;
@@ -93,6 +100,9 @@ public:
 
     // Barrier synchronization
     int barrier(const std::string& barrier_id) override;
+
+    // Check if all peer rank keys are still present in etcd
+    bool arePeersAlive() override;
 };
 
 #endif // _ETCD_RT_H

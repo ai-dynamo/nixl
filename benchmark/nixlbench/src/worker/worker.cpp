@@ -108,9 +108,12 @@ int xferBenchWorker::synchronize() {
 
     if (rt->barrier("sync") != 0) {
         std::cerr << "Failed to synchronize" << std::endl;
-        // assuming this is a fatal error, continue benchmarking after synchronization failure does
-        // not make sense
-        exit(EXIT_FAILURE);
+        // Use _Exit() instead of exit() to bypass atexit handlers (e.g. gRPC shutdown).
+        // exit() would deadlock with the etcd KeepAlive background thread: gRPC shutdown
+        // waits for open streams to close, but the KeepAlive thread keeps renewing the
+        // lease stream indefinitely. _Exit() kills all threads immediately, which closes
+        // the gRPC stream and lets the lease expire on the etcd server side.
+        std::_Exit(EXIT_FAILURE);
     }
 
     return 0;

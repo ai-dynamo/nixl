@@ -22,6 +22,7 @@
 #include <iomanip>
 #include <cstring>
 #include <etcd/SyncClient.hpp>
+#include <etcd/KeepAlive.hpp>
 #include <etcd/Response.hpp>
 #include "etcd_rt.h"
 
@@ -77,7 +78,13 @@ xferBenchEtcdRT::setup() {
 
     // Update registration information
     client->put(makeKey("size"), std::to_string(my_rank + 1));
-    client->put(makeKey("rank", my_rank), "active");
+
+    // Attach rank key to a lease so it auto-expires if this process dies.
+    // Use the standalone KeepAlive constructor (address-based) so it creates
+    // its own independent gRPC channel, avoiding any thread safety issues with
+    // the main client being used concurrently from two threads.
+    keepalive = std::make_shared<etcd::KeepAlive>(stored_etcd_endpoints, LEASE_TTL_S);
+    client->put(makeKey("rank", my_rank), "active", keepalive->Lease());
 
     // Release the lock
     client->unlock(lock_response.lock_key());
@@ -99,8 +106,31 @@ xferBenchEtcdRT::setup() {
 }
 
 xferBenchEtcdRT::~xferBenchEtcdRT() {
+    // Stop lease keepalive before cleanup so the rank key is removed by rmdir
+    // rather than expiring after the TTL
+    if (keepalive) {
+        keepalive->Cancel();
+        keepalive.reset();
+    }
     // All ranks delete, as some could be missing if ETCD state is confused
     client->rmdir(makeKey(""), true);
+}
+
+bool
+xferBenchEtcdRT::arePeersAlive() {
+    for (int r = 0; r < global_size; r++) {
+        if (r == my_rank) continue;
+        auto resp = client->get(makeKey("rank", r));
+        // For a single-key get(), is_ok() reflects gRPC success, NOT key existence:
+        // a missing key returns is_ok()=true with an empty value().key().
+        // resp.value().key() is non-empty only when the key actually exists in etcd.
+        if (!resp.is_ok() || resp.value().key().empty()) {
+            std::cerr << "nixlbench: peer rank " << r
+                      << " key missing (or etcd error) -- peer may have died" << std::endl;
+            return false;
+        }
+    }
+    return true;
 }
 
 int
