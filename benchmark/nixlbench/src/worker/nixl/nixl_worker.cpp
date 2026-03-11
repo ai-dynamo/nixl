@@ -1245,7 +1245,7 @@ execTransferIterations(nixlAgent *agent,
                        xferBenchTimer &timer,
                        xferBenchStats &thread_stats,
                        const bool recreate_per_iteration,
-                       const int* terminate_ptr = nullptr) {
+                       const int *terminate_ptr = nullptr) {
     nixlXferReqH *req = nullptr;
     nixlTime::us_t total_prepare_duration = 0;
 
@@ -1329,7 +1329,7 @@ execTransfer(nixlAgent *agent,
              const int num_iter,
              const int num_threads,
              xferBenchStats &stats,
-             const int* terminate_ptr = nullptr) {
+             const int *terminate_ptr = nullptr) {
     int ret = 0;
     stats.clear();
 
@@ -1399,9 +1399,14 @@ xferBenchNixlWorker::transfer(size_t block_size,
     }
 
     if (skip > 0) {
-        ret = execTransfer(
-            agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, stats,
-            &terminate);
+        ret = execTransfer(agent,
+                           local_iovs,
+                           remote_iovs,
+                           xfer_op,
+                           skip,
+                           xferBenchConfig::num_threads,
+                           stats,
+                           &terminate);
         if (ret < 0) {
             return std::variant<xferBenchStats, int>(ret);
         }
@@ -1412,9 +1417,14 @@ xferBenchNixlWorker::transfer(size_t block_size,
 
     stats.clear();
 
-    ret = execTransfer(
-        agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats,
-        &terminate);
+    ret = execTransfer(agent,
+                       local_iovs,
+                       remote_iovs,
+                       xfer_op,
+                       num_iter,
+                       xferBenchConfig::num_threads,
+                       stats,
+                       &terminate);
     if (ret < 0) {
         return std::variant<xferBenchStats, int>(ret);
     }
@@ -1445,8 +1455,8 @@ xferBenchNixlWorker::poll(size_t block_size) {
     constexpr int LIVENESS_CHECK_INTERVAL_S = 5;
     auto checkLiveness = [&]() {
         auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::seconds>(
-                now - last_liveness_check).count() >= LIVENESS_CHECK_INTERVAL_S) {
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_liveness_check).count() >=
+            LIVENESS_CHECK_INTERVAL_S) {
             last_liveness_check = now;
             if (rt && !rt->arePeersAlive()) {
                 std::cerr << "nixlbench: peer liveness check failed — aborting poll" << std::endl;
@@ -1466,7 +1476,8 @@ xferBenchNixlWorker::poll(size_t block_size) {
     do {
         status = agent->getNotifs(notifs);
         checkLiveness();
-    } while (!signaled() && status == NIXL_SUCCESS && total_iter != int(notifs["initiator"].size()));
+    } while (!signaled() && status == NIXL_SUCCESS &&
+             total_iter != int(notifs["initiator"].size()));
     synchronize();
 }
 

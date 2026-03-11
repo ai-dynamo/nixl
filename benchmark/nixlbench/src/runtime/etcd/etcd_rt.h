@@ -102,7 +102,8 @@ public:
     int barrier(const std::string& barrier_id) override;
 
     // Check if all peer rank keys are still present in etcd
-    bool arePeersAlive() override;
+    bool
+    arePeersAlive() override;
 };
 
 #endif // _ETCD_RT_H
