@@ -23,6 +23,7 @@ ARG ARCH="x86_64"
 ARG UCX_REF="v1.20.x"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG BUILD_TYPE="release"
+ARG URING_TAG="liburing-2.13"
 
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf config-manager --set-enabled powertools && \
@@ -55,14 +56,25 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     libibumad-devel \
     numactl-devel \
     librdmacm-devel \
-    hwloc \
-    hwloc-devel \
+    pciutils-devel \
     wget \
     zlib
 
 ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
 ENV LD_LIBRARY_PATH=/opt/rh/gcc-toolset-11/root/usr/lib64:$LD_LIBRARY_PATH
 ENV PKG_CONFIG_PATH="/opt/rh/gcc-toolset-11/root/usr/lib64/pkgconfig:${PKG_CONFIG_PATH}"
+
+# Build latest hwloc from source to avoid older RHEL8 API limitations.
+RUN cd /tmp && \
+    HWLOC_SERIES="$(echo ${HWLOC_VERSION} | cut -d. -f1,2)" && \
+    wget -q "https://download.open-mpi.org/release/hwloc/v${HWLOC_SERIES}/hwloc-${HWLOC_VERSION}.tar.gz" && \
+    tar -xzf "hwloc-${HWLOC_VERSION}.tar.gz" && \
+    cd "hwloc-${HWLOC_VERSION}" && \
+    ./configure --prefix=/usr/local --disable-nvml && \
+    make -j"$(nproc)" && \
+    make install && \
+    ldconfig && \
+    rm -rf "/tmp/hwloc-${HWLOC_VERSION}" "/tmp/hwloc-${HWLOC_VERSION}.tar.gz"
 
 # Build OpenSSL 3.x
 RUN yum install -y perl-IPC-Cmd perl-Test-Simple perl-Data-Dumper
@@ -119,23 +131,56 @@ RUN wget https://curl.se/download/curl-8.5.0.tar.gz && \
     ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl3 --enable-shared && \
     make -j$(nproc) && make install
 
-RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581
+RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760
 RUN mkdir aws_sdk_build && cd aws_sdk_build && \
     export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
     export CFLAGS="-I/usr/local/openssl3/include" && \
     export CXXFLAGS="-I/usr/local/openssl3/include" && \
-    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DCMAKE_PREFIX_PATH="/usr/local/openssl3;/usr/local" \
         -DCURL_LIBRARY=/usr/local/lib/libcurl.so \
         -DCURL_INCLUDE_DIR=/usr/local/include \
         -DOPENSSL_USE_STATIC_LIBS=OFF && \
     make -j${NPROC:-$(nproc)} && make install
 
+RUN git clone https://github.com/axboe/liburing.git && \
+     cd liburing && \
+     git checkout $URING_TAG && \
+     ./configure --cc=gcc --cxx=g++ && \
+     make -j library && make liburing.pc && make install && \
+     ldconfig && \
+     cd ..
+
+ENV PKG_CONFIG_PATH=/usr/lib/pkgconfig:$PKG_CONFIG_PATH
+
 RUN git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
      sed -i '/^LFLAGS_ALL =/{/-lrt/ b; s/$/ -lrt/}' Makefile && \
      make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
      cd ..
+
+# Required for Azure SDK
+RUN git clone --depth 1 https://gitlab.gnome.org/GNOME/libxml2.git --branch 2.15 && \
+    cd libxml2 && \
+    ACLOCAL_PATH=/usr/share/aclocal ./autogen.sh && make -j && \
+    make install
+
+RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
+    cd azure-sdk-for-cpp/ && \
+    mkdir build && cd build && \
+    export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
+    export CFLAGS="-isystem /usr/local/openssl3/include" && \
+    export CXXFLAGS="-isystem /usr/local/openssl3/include" && \
+    AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON \
+        -DCMAKE_PREFIX_PATH="/usr/local/openssl3;/usr/local" \
+        -DCURL_LIBRARY=/usr/local/lib/libcurl.so \
+        -DCURL_INCLUDE_DIR=/usr/local/include \
+        -DOPENSSL_USE_STATIC_LIBS=OFF && \
+    cmake --build . --target azure-storage-blobs azure-identity && \
+    cmake --install sdk/core && \
+    cmake --install sdk/storage/azure-storage-common && \
+    cmake --install sdk/storage/azure-storage-blobs && \
+    cmake --install sdk/identity
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -230,6 +275,10 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make -j$(nproc) && \
     make install && \
     ldconfig
+
+# Ensure pkg-config and linker can discover source-installed libs under /usr/local.
+ENV PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig:/usr/lib64/pkgconfig:/usr/lib/pkgconfig
+RUN printf "/usr/local/lib64\n/usr/local/lib\n" > /etc/ld.so.conf.d/usr-local.conf && ldconfig
 
 # By default, uv downloads python packages to $HOME/.cache/uv and hard links them
 # from the virtual environment. This means that the files reside in /root/.cache/uv,

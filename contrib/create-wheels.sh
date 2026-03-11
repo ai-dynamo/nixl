@@ -25,12 +25,12 @@ do
     tag="nixl-wheels-${cuda_version}"
     ./contrib/build-container.sh \
         --base-image 'nvcr.io/nvidia/cuda' \
-        --base-image-tag "${cuda_version}-devel-rockylinux9" \
+        --base-image-tag "${cuda_version}-devel-rockylinux8" \
         --wheel-base manylinux_2_34 \
         --python-versions "${PYTHON_VERSIONS}" \
         --tag $tag \
         --arch $arch \
-        --dockerfile contrib/Dockerfile.rockylinux9
+        --dockerfile contrib/Dockerfile.rockylinux8
     docker create --name temp-nixl $tag
     docker cp temp-nixl:/workspace/nixl/dist/ wheels/
     # Move all .whl files from wheels/dist subdirectories at any depth to wheels/
