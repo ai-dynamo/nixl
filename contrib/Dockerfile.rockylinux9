@@ -314,7 +314,7 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --platform $WHL_PLATFORM \
             --ucx-plugins-dir /usr/lib64/ucx \
             --nixl-plugins-dir $NIXL_PLUGIN_DIR \
-            --output-dir dist ; \
+            --output-dir dist || exit 1 ; \
     done
 
 # Copy the meta package wheel to the dist directory, which will be used to push to PyPI.
