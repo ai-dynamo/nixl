@@ -51,9 +51,9 @@
 #endif
 
 struct vmm_region {
-    CUdeviceptr ptr;
-    size_t size;
-    CUmemGenericAllocationHandle handle;
+    CUdeviceptr ptr = 0;
+    size_t size = 0;
+    CUmemGenericAllocationHandle handle = 0;
     bool is_cuda_malloc = false;
 };
 
