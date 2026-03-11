@@ -54,6 +54,7 @@ struct vmm_region {
     CUdeviceptr ptr;
     size_t size;
     CUmemGenericAllocationHandle handle;
+    bool is_cuda_malloc = false;
 };
 
 namespace nixl_ep {
