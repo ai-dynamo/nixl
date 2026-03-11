@@ -61,7 +61,7 @@
 
 namespace nixl_ep {
 
-vmm_region
+static vmm_region
 vmm_init(size_t size, CUdevice device) {
     if (size == 0) {
         throw std::invalid_argument("vmm_init: size must be non-zero");
@@ -171,7 +171,7 @@ err_release:
     throw std::runtime_error(err_msg);
 }
 
-void
+static void
 vmm_free(vmm_region &region) {
     if (!region.ptr) {
         return;
