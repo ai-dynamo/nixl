@@ -104,6 +104,10 @@ class MetadataExchangeTestFixture : public testing::Test {
                 dlist.addDesc(buffer.getBlobDesc());
             }
 
+            // Ignore EFA hardware mismatch warning
+            const gtest::LogIgnoreGuard lig_efa_warn(
+                "Amazon EFA\\(s\\) were detected, but the UCX backend was configured");
+
             ASSERT_EQ(agent->registerMem(dlist), NIXL_SUCCESS);
         }
 

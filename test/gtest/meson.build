@@ -50,6 +50,10 @@ else
     cuda_dependencies = []
 endif
 
+if libfabric_dep.found()
+    cpp_flags += '-DHAVE_LIBFABRIC'
+endif
+
 if get_option('test_all_plugins')
   cpp_flags+='-DTEST_ALL_PLUGINS'
 endif
@@ -80,7 +84,7 @@ else
 endif
 
 if ucx_dep.found()
-    gtest_sources += 'ucx_hw_warning_test.cpp'
+    gtest_sources += 'hw_warning_test.cpp'
     ucx_hw_warning_dep = [ucx_backend_interface, ucx_dep]
 else
     ucx_hw_warning_dep = []
