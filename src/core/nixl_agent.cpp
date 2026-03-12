@@ -1170,7 +1170,9 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
     // Same for users incorrectly recalling this method in error/done.
     if (req_hndl->status == NIXL_IN_PROG) {
         // Check if the remote was invalidated before completion
-        if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
+        // Skip check for local transfers (empty remote agent)
+        if (!req_hndl->remoteAgent.empty() &&
+            data->remoteSections.count(req_hndl->remoteAgent) == 0) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was invalidated during transfer";
             return NIXL_ERR_NOT_FOUND;
