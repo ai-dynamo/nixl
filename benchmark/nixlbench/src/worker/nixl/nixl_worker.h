@@ -45,6 +45,7 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<xferFileState> remote_fds;
         std::vector<std::vector<xferBenchIOV>> remote_iovs;
         std::vector<GusliDeviceConfig> gusli_devices;
+        std::vector<LibblkioDeviceConfig> libblkio_devices;
 
     public:
         xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices);
