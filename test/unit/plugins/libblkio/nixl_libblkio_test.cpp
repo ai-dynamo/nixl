@@ -118,7 +118,7 @@ namespace {
         size_t transfer_size = default_transfer_size;
         bool enable_direct_io = false;
         bool enable_io_polling = false;
-        std::string device_path = "/dev/loop0";
+        std::string device_path;
         std::string test_files_dir = default_test_files_dir_path;
     };
 
@@ -595,7 +595,7 @@ namespace {
         std::cout << std::endl;
         std::cout << "Options:" << std::endl;
         std::cout << "  -h, --help              Show this help message" << std::endl;
-        std::cout << "  -d, --device <path>     Device path (default: /dev/loop0)" << std::endl;
+        std::cout << "  -d, --device <path>     Device path (overridden by NIXL_LIBBLKIO_TEST_DEVICE)" << std::endl;
         std::cout << "  -t, --transfers <num>   Number of transfers (default: " << default_num_transfers << ")" << std::endl;
         std::cout << "  -s, --size <bytes>      Transfer size in bytes (default: " << default_transfer_size << ")" << std::endl;
         std::cout << "  --direct-io             Enable direct I/O" << std::endl;
@@ -664,6 +664,18 @@ int main(int argc, char* argv[]) {
             default:
                 break;
         }
+    }
+
+    // Check for NIXL_LIBBLKIO_TEST_DEVICE environment variable
+    const char *env_dev = std::getenv("NIXL_LIBBLKIO_TEST_DEVICE");
+    if (env_dev && *env_dev != '\0') {
+        config.device_path = env_dev;
+    }
+
+    // Require explicit device specification
+    if (config.device_path.empty()) {
+        std::cerr << "Error: Set NIXL_LIBBLKIO_TEST_DEVICE to a disposable block device" << std::endl;
+        return 1;
     }
 
     // Print test configuration
