@@ -52,7 +52,7 @@ namespace nixl_ep {
 struct NixlPeerInfo {
     void* rdma_buffer_ptr;
     int* sync_buffer_ptr;
-    uint64_t* barrier_ptr;  // For internode barrier (high-throughput mode)
+    uint64_t* ht_barrier_ptr;
     int device_id;
     int rank;
 };

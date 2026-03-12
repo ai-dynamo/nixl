@@ -172,7 +172,7 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     my_peer_info.rdma_buffer_ptr = rdma_buffer_ptr;
     my_peer_info.device_id = get_local_device_id();
     my_peer_info.sync_buffer_ptr = sync_buffer_ptr;
-    my_peer_info.barrier_ptr = local_barrier_counter;
+    my_peer_info.ht_barrier_ptr = local_barrier_counter;
     my_peer_info.rank = rank;
 
     nixl_peer_info.resize(max_num_ranks);
@@ -1203,7 +1203,7 @@ void Buffer::_nixl_ep_memory_views_create(void) {
         nixl_remote_dlist_t internode_barrier_descs(VRAM_SEG);
         for (int r = 0; r < max_num_ranks; r++) {
             std::string remote_agent_name = remote_set.count(r) ? nixl_agent_info->remote_agent_names[r] : nixl_null_agent;
-            internode_barrier_descs.addDesc(nixlRemoteDesc((uintptr_t)nixl_peer_info[r].barrier_ptr, sizeof(uint64_t), nixl_peer_info[r].device_id, remote_agent_name));
+            internode_barrier_descs.addDesc(nixlRemoteDesc((uintptr_t)nixl_peer_info[r].ht_barrier_ptr, sizeof(uint64_t), nixl_peer_info[r].device_id, remote_agent_name));
         }
         EP_HOST_ASSERT(nixl_agent_info->agent->prepMemView(internode_barrier_descs, gpu_ctx.internode_barrier_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
     }
