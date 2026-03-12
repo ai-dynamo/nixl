@@ -230,6 +230,17 @@ class NIXLBench:
                 f"Invalid destination for {backend}: {destination}, valid destinations are: {arg_to_seg_type.keys()}"
             )
 
+    def _configure_libblkio(self, source: str, destination: str):
+        """Configure LIBBLKIO plugin for block device operations"""
+        if source == "file":
+            self.op_type = "READ"
+            self.target_seg_type = "BLK_SEG"
+        elif destination == "file":
+            self.op_type = "WRITE"
+            self.initiator_seg_type = "BLK_SEG"
+        else:
+            raise ValueError(f"Invalid source for LIBBLKIO: {source}")
+
     def _configure_obj(self, source: str, destination: str):
         """Configure OBJ plugin for object storage operations"""
         if source == "memory":
@@ -248,6 +259,8 @@ class NIXLBench:
             self._configure_posix(source, destination)
         elif backend_lower in ["ucx", "gpunetio", "mooncake"]:
             self._configure_ucx(backend_lower, source, destination)
+        elif backend_lower == "libblkio":
+            self._configure_libblkio(source, destination)
         elif backend_lower == "obj":
             self._configure_obj(source, destination)
         else:
