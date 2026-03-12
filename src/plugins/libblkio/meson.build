@@ -1,10 +1,6 @@
 # libblkio plugin
-
-libblkio_dep = dependency('blkio', required: false)
-
-if not libblkio_dep.found()
-    libblkio_dep = dependency('libblkio', required: false)
-endif
+# Reuse libblkio_dep from root meson.build to ensure consistent detection
+# The root meson.build includes fallback find_library() detection
 
 if libblkio_dep.found()
     blkio_sources = [
