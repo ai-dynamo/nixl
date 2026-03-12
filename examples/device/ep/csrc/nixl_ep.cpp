@@ -1224,12 +1224,12 @@ void Buffer::_nixl_ep_init(void) {
     gpu_ctx = {
         .sync_buffer_ptr = sync_buffer_ptr,
         .sync_count_ptr = sync_count_ptr,
+        .last_barrier_counter = last_barrier_counter,
+        .local_barrier_counter_ptr = local_barrier_counter,
         .rdma_buffer_ptr = rdma_buffer_ptr,
         .max_num_ranks = max_num_ranks,
         .num_rdma_ranks = num_rdma_ranks,
         .rank = rank,
-        .last_barrier_counter = last_barrier_counter,
-        .local_barrier_counter_ptr = local_barrier_counter,
     };
 }
 
