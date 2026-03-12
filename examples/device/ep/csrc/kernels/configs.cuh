@@ -35,7 +35,7 @@
 #define NUM_CPU_TIMEOUT_SECS 100
 #define NUM_TIMEOUT_CYCLES 200000000000ull // 200G cycles ~= 100s
 #else
-#define NUM_CPU_TIMEOUT_SECS 100
+#define NUM_CPU_TIMEOUT_SECS 10
 #define NUM_TIMEOUT_CYCLES 20000000000ull // 20G cycles ~= 10s
 #endif
 

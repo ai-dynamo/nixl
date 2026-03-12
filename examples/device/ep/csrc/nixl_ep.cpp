@@ -168,10 +168,11 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     CUDA_CHECK(cudaMalloc(&last_barrier_counter, sizeof(uint64_t)));
     CUDA_CHECK(cudaMemset(last_barrier_counter, 0, sizeof(uint64_t)));
     CUDA_CHECK(cudaDeviceSynchronize());
+
     my_peer_info.rdma_buffer_ptr = rdma_buffer_ptr;
     my_peer_info.device_id = get_local_device_id();
     my_peer_info.sync_buffer_ptr = sync_buffer_ptr;
-    my_peer_info.barrier_ptr = local_barrier_counter;  // For internode barrier
+    my_peer_info.barrier_ptr = local_barrier_counter;
     my_peer_info.rank = rank;
 
     nixl_peer_info.resize(max_num_ranks);
@@ -1198,7 +1199,6 @@ void Buffer::_nixl_ep_memory_views_create(void) {
     EP_HOST_ASSERT(nixl_agent_info->agent->prepMemView(remote_descs, gpu_ctx.remote_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
     EP_HOST_ASSERT(nixl_agent_info->agent->prepMemView(barrier_descs, gpu_ctx.barrier_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
 
-    // Only create internode barrier memory view for internode mode (num_ranks > NUM_MAX_NVL_PEERS)
     if (!low_latency_mode && num_ranks > NUM_MAX_NVL_PEERS) {
         nixl_remote_dlist_t internode_barrier_descs(VRAM_SEG);
         for (int r = 0; r < max_num_ranks; r++) {
@@ -1253,9 +1253,6 @@ void Buffer::_nixl_agent_init() {
                                 ", status: " + std::to_string(status));
     }
 
-    // Set UCX-specific parameters
-    // Default channel count is 4 (sufficient for low-latency mode).
-    // For internode mode, set NIXL_EP_NUM_CHANNELS=<num_sms/2> to match the kernel's channel count.
     const char* num_channels_env = std::getenv("NIXL_EP_NUM_CHANNELS");
     init_params["ucx_num_device_channels"] = num_channels_env ? num_channels_env : "4";
     init_params["ucx_error_handling_mode"] = "none";
@@ -1286,7 +1283,6 @@ void Buffer::_nixl_agent_init() {
     barrier_cnt_dlist.addDesc(nixlBlobDesc((uintptr_t)(sync_count_ptr), max_num_ranks * sizeof(int), get_local_device_id(), ""));
     EP_HOST_ASSERT(agent->registerMem(barrier_cnt_dlist) == NIXL_SUCCESS);
 
-    /* Register internode barrier counter (for high-throughput mode) */
     if (!low_latency_mode && local_barrier_counter) {
         nixl_reg_dlist_t internode_barrier_dlist(VRAM_SEG);
         internode_barrier_dlist.addDesc(nixlBlobDesc((uintptr_t)(local_barrier_counter), sizeof(uint64_t), get_local_device_id(), ""));
