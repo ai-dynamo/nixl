@@ -169,7 +169,7 @@ public:
     static std::string posix_api_type;
     static int posix_ios_pool_size;
     static int posix_kernel_queue_size;
-    static std::libblkio_api_type;
+    static std::string libblkio_api_type;
     static bool storage_enable_direct;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
@@ -243,6 +243,11 @@ parseGusliDeviceList(const std::string &device_list,
                      const std::string &security_list,
                      const std::string &dev_offset_list,
                      int num_devices);
+
+// Parser for LIBBLKIO device list: "id:B:path,id:B:path,..."
+// num_devices: expected device count (validation)
+std::vector<LibblkioDeviceConfig>
+parseLibblkioDeviceList(const std::string &device_list, int num_devices);
 
 // Timer class for measuring durations at high resolution
 class xferBenchTimer {

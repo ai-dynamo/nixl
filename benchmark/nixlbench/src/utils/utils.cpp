@@ -730,7 +730,7 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_LIBBLKIO == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_LIBBLKIO == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
 }
 
@@ -856,6 +856,48 @@ parseGusliDeviceList(const std::string &device_list,
         std::cerr << "Warning: Number of device offsets (" << dev_offsets.size()
                   << ") doesn't match number of devices (" << devices.size()
                   << "). Using 'offset=1048576' for missing entries." << std::endl;
+    }
+
+    if (num_devices > 0 && devices.size() != static_cast<size_t>(num_devices)) {
+        std::cerr << "Error: Number of devices in device_list (" << devices.size()
+                  << ") must match num_devices (" << num_devices << ")" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    return devices;
+}
+
+std::vector<LibblkioDeviceConfig>
+parseLibblkioDeviceList(const std::string &device_list, int num_devices) {
+    std::vector<LibblkioDeviceConfig> devices;
+
+    if (device_list.empty()) {
+        std::cerr << "Error: LIBBLKIO backend requires device_list in format 'id:B:path'"
+                  << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    std::stringstream ss(device_list);
+    std::string device_spec;
+
+    while (std::getline(ss, device_spec, ',')) {
+        std::stringstream dev_ss(device_spec);
+        std::string id_str, type_str, path;
+        if (std::getline(dev_ss, id_str, ':') && std::getline(dev_ss, type_str, ':') &&
+            std::getline(dev_ss, path)) {
+            int device_id = std::stoi(id_str);
+            char device_type = type_str[0];
+            if (device_type != 'B') {
+                std::cerr << "Invalid LIBBLKIO device type: " << device_type
+                          << ". Must be 'B' (block device)" << std::endl;
+                exit(EXIT_FAILURE);
+            }
+            devices.push_back({device_id, device_type, path});
+        } else {
+            std::cerr << "Invalid LIBBLKIO device specification: " << device_spec
+                      << ". Expected format: 'id:B:path'" << std::endl;
+            exit(EXIT_FAILURE);
+        }
     }
 
     if (num_devices > 0 && devices.size() != static_cast<size_t>(num_devices)) {
