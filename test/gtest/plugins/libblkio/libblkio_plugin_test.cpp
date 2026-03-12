@@ -51,7 +51,10 @@ protected:
     void SetUp() override
     {
         const char *dev = std::getenv("NIXL_LIBBLKIO_TEST_DEVICE");
-        device_path_ = dev ? dev : "/dev/loop0";
+        if (!dev || *dev == '\0') {
+            GTEST_SKIP() << "Set NIXL_LIBBLKIO_TEST_DEVICE to a disposable block device";
+        }
+        device_path_ = dev;
 
         agent_ = new nixlAgent("libblkio_integration_test_agent", nixlAgentConfig(true));
 
