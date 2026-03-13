@@ -255,7 +255,36 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
 nixl_status_t
 nixlUcclEngine::connect(const std::string &remote_agent) {
-    // Unused
+    // Called by NIXL core when supportsLocal() == true, with remote_agent == own name.
+    // Establish a local (IPC) connection so prepXfer/postXfer can find a conn handle.
+    std::lock_guard<std::mutex> lock(conn_mutex_);
+
+    if (connected_agents_.count(remote_agent)) {
+        return NIXL_SUCCESS;  // already connected
+    }
+
+    std::string conn_info;
+    if (getConnInfo(conn_info) != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to get own conn info for local connect";
+        return NIXL_ERR_BACKEND;
+    }
+
+    std::unique_ptr<char[]> ip_addr;
+    int port = 0;
+    int gpu_index = 0;
+    if (!parseConnectionString(conn_info, ip_addr, port, gpu_index)) {
+        return NIXL_ERR_BACKEND;
+    }
+
+    // uccl_engine_connect detects local IP == own IP and routes to connect_local/accept_local
+    uccl_conn_t *conn = uccl_engine_connect(engine_, ip_addr.get(), gpu_index, port);
+    if (!conn) {
+        NIXL_ERROR << "Failed to establish local connection for agent " << remote_agent;
+        return NIXL_ERR_BACKEND;
+    }
+
+    NIXL_DEBUG << "Local (IPC) connection established for agent " << remote_agent;
+    connected_agents_[remote_agent] = reinterpret_cast<uint64_t>(conn);
     return NIXL_SUCCESS;
 }
 
