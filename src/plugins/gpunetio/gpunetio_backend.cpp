@@ -24,6 +24,8 @@
 #include "common/nixl_log.h"
 #include <absl/strings/str_split.h>
 
+#include <nvtx3/nvtx3.hpp>
+
 const char info_delimiter = '-';
 
 /****************************************
@@ -1237,10 +1239,16 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
 
         switch (operation) {
         case NIXL_READ:
-            doca_kernel_read(treq->stream, xferReqRingCpu[idx].qp_data, xferReqRingGpu, idx);
+            {
+                nvtx3::mark("nixl_doca_read");
+                doca_kernel_read(treq->stream, xferReqRingCpu[idx].qp_data, xferReqRingGpu, idx);
+            }
             break;
         case NIXL_WRITE:
-            doca_kernel_write(treq->stream, xferReqRingCpu[idx].qp_data, xferReqRingGpu, idx);
+            {
+                nvtx3::mark("nixl_doca_write");
+                doca_kernel_write(treq->stream, xferReqRingCpu[idx].qp_data, xferReqRingGpu, idx);
+            }
             break;
         default:
             return NIXL_ERR_INVALID_PARAM;
