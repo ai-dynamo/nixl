@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +47,12 @@ class xferBenchRT {
 
         // Add a barrier function to synchronize all processes
         virtual int barrier(const std::string& barrier_id) = 0;
+
+        // Check if all peer processes are still alive; returns true by default
+        virtual bool
+        arePeersAlive() {
+            return true;
+        }
 };
 
 #endif // __RUNTIME_H
