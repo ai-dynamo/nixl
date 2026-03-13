@@ -62,13 +62,13 @@ volumes:
 
 # Docker images for DL testing
 runs_on_dockers:
-  #- {
-  #   file: '.ci/dockerfiles/Dockerfile.base',
-  #   name: 'nixl-ci-dl-gpu-base-25.10-cuda13.0-ubuntu24.04',
-  #   tag: "${CI_IMAGE_TAG}",
-  #   arch: "aarch64",
-  #   build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
-  #  }
+  - {
+     file: '.ci/dockerfiles/Dockerfile.base',
+     name: 'nixl-ci-dl-gpu-base-25.10-cuda13.0-ubuntu24.04',
+     tag: "${CI_IMAGE_TAG}",
+     arch: "aarch64",
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+    }
 
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
