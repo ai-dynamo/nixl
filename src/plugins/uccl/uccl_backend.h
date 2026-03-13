@@ -133,7 +133,7 @@ private:
     std::string local_agent_name_;
     mutable std::string pending_local_agent_; // deferred local connect
     std::unordered_map<uint64_t, nixlUcclBackendMD *> mem_reg_info_;
-    std::unordered_map<std::string, uint64_t> connected_agents_; // agent name -> conn_id
+    mutable std::unordered_map<std::string, uint64_t> connected_agents_; // agent name -> conn_id
     std::thread listener_thread_;
     std::atomic<bool> stop_listener_;
 };

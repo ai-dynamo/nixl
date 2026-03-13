@@ -403,11 +403,13 @@ nixlUcclEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
     NIXL_DEBUG << "UCCL Load Local MD: " << std::hex << input_md->addr
                << "Meta Info:" << input_md->mr_id;
 
-    nixlUcclBackendMD *output_md = (nixlUcclBackendMD *)output;
-    output_md->addr = (void *)input_md->addr;
+    output = new nixlUcclBackendMD(true);
+    nixlUcclBackendMD *output_md = static_cast<nixlUcclBackendMD *>(output);
+    output_md->addr = input_md->addr;
     output_md->length = input_md->length;
     output_md->ref_cnt = 1;
-    output_md->mr_id = reinterpret_cast<uint64_t>(input_md->mr_id);
+    output_md->mr_id = input_md->mr_id;
+    memcpy(output_md->fifo_item, input_md->fifo_item, FIFO_SIZE);
 
     return NIXL_SUCCESS;
 }
