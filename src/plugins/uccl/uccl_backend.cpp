@@ -256,11 +256,26 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
 nixl_status_t
 nixlUcclEngine::connect(const std::string &remote_agent) {
     // Called by NIXL core when supportsLocal() == true, with remote_agent == own name.
-    // Establish a local (IPC) connection so prepXfer/postXfer can find a conn handle.
+    // We cannot establish the local (IPC) connection now because the UCCL engine
+    // is lazily initialized on first register_memory (which sets local_gpu_idx and
+    // creates the shm inbox rings).  Record the agent name; the actual connection
+    // is established on-demand when prepXfer/postXfer first needs it.
     std::lock_guard<std::mutex> lock(conn_mutex_);
+    pending_local_agent_ = remote_agent;
+    NIXL_DEBUG << "Deferred local connect for agent " << remote_agent;
+    return NIXL_SUCCESS;
+}
 
-    if (connected_agents_.count(remote_agent)) {
-        return NIXL_SUCCESS;  // already connected
+nixl_status_t
+nixlUcclEngine::ensureLocalConn() const {
+    // Lazily establish the local (IPC) connection that was deferred by connect().
+    // Must be called after register_memory so the UCCL engine is initialized.
+    if (pending_local_agent_.empty()) {
+        return NIXL_SUCCESS;
+    }
+    if (connected_agents_.count(pending_local_agent_)) {
+        pending_local_agent_.clear();
+        return NIXL_SUCCESS;
     }
 
     std::string conn_info;
@@ -276,15 +291,15 @@ nixlUcclEngine::connect(const std::string &remote_agent) {
         return NIXL_ERR_BACKEND;
     }
 
-    // uccl_engine_connect detects local IP == own IP and routes to connect_local/accept_local
     uccl_conn_t *conn = uccl_engine_connect(engine_, ip_addr.get(), gpu_index, port);
     if (!conn) {
-        NIXL_ERROR << "Failed to establish local connection for agent " << remote_agent;
+        NIXL_ERROR << "Failed to establish local connection for agent " << pending_local_agent_;
         return NIXL_ERR_BACKEND;
     }
 
-    NIXL_DEBUG << "Local (IPC) connection established for agent " << remote_agent;
-    connected_agents_[remote_agent] = reinterpret_cast<uint64_t>(conn);
+    NIXL_DEBUG << "Local (IPC) connection established for agent " << pending_local_agent_;
+    connected_agents_[pending_local_agent_] = reinterpret_cast<uint64_t>(conn);
+    pending_local_agent_.clear();
     return NIXL_SUCCESS;
 }
 
@@ -353,6 +368,15 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
     mem_reg_info_[mem.addr] = priv;
     NIXL_DEBUG << "Registering memory: " << std::hex << mem.addr << " Device: " << mem.devId
                << " ref_cnt: " << priv->ref_cnt << " mr_id: " << priv->mr_id;
+
+    // Engine is now initialized (uccl_engine_reg triggers reg() -> initialize_engine()).
+    // Establish the deferred local connection if one is pending.
+    if (!pending_local_agent_.empty()) {
+        nixl_status_t status = ensureLocalConn();
+        if (status != NIXL_SUCCESS) {
+            NIXL_WARN << "Deferred local connection failed (will retry on next registerMem)";
+        }
+    }
 
     return NIXL_SUCCESS;
 }

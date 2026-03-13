@@ -124,10 +124,14 @@ private:
     void
     startListener();
 
+    nixl_status_t
+    ensureLocalConn() const;
+
     mutable std::mutex mem_mutex_; // mem_reg_info_ mutex
     mutable std::mutex conn_mutex_; // connected_agents_ mutex
     uccl_engine_t *engine_;
     std::string local_agent_name_;
+    mutable std::string pending_local_agent_; // deferred local connect
     std::unordered_map<uint64_t, nixlUcclBackendMD *> mem_reg_info_;
     std::unordered_map<std::string, uint64_t> connected_agents_; // agent name -> conn_id
     std::thread listener_thread_;
