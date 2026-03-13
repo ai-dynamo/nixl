@@ -49,8 +49,7 @@ public:
 
     bool
     supportsLocal() const {
-        // TODO: Enable this when local transfers are supported
-        return false;
+        return true;
     }
 
     bool
