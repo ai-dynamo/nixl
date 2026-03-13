@@ -4854,8 +4854,25 @@ END OF TERMS AND CONDITIONS
 ## r-efi - 5.2.0
 **Repository URL**: https://github.com/r-efi/r-efi
 **License Type(s)**: Apache-2.0 OR LGPL-2.1-or-later OR MIT
+### License: https://github.com/r-efi/r-efi
+```
 
-(No license file found in crate)
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+```
 
 ## regex - 1.11.1
 **Repository URL**: https://github.com/rust-lang/regex
@@ -11457,6 +11474,23 @@ limitations under the License.
 ## wit-bindgen-rt - 0.39.0
 **Repository URL**: https://github.com/bytecodealliance/wit-bindgen
 **License Type(s)**: Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT
+### License: https://github.com/bytecodealliance/wit-bindgen/blob/main/LICENSE-APACHE
+```
 
-(No license file found in crate)
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+```
 
