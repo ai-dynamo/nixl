@@ -15,6 +15,7 @@
 
 import importlib
 import sys
+from typing import TYPE_CHECKING
 
 # Try packages in order
 candidates = ["nixl_cu13", "nixl_cu12"]
@@ -44,3 +45,9 @@ for sub_name in submodules:
     for attr in dir(module):
         if not attr.startswith("_"):
             setattr(sys.modules[__name__], attr, getattr(module, attr))
+
+if TYPE_CHECKING:
+    try:
+        from nixl_cu13 import _api, _bindings, _utils, logging  # noqa: F401
+    except ImportError:
+        from nixl_cu12 import _api, _bindings, _utils, logging  # noqa: F401
