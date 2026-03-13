@@ -34,7 +34,7 @@ if cargo.found() and get_option('rust')
   wrapper_sources = ['wrapper.cpp']
   wrapper_lib = static_library('nixl_wrapper',
       sources: wrapper_sources,
-      include_directories: [nixl_include_dir, include_directories('/usr/include')],
+      include_directories: [nixl_include_dir],
       link_with: nixl_lib,
       dependencies: [nixl_dep]
     )
