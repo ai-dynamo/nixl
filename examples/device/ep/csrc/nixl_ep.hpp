@@ -35,7 +35,10 @@
 #include <vector>
 #include <string>
 
+#include <cuda.h>
+#include <cuda_runtime.h>
 #include <memory>
+#include <stdexcept>
 #include "config.hpp"
 #include "event.hpp"
 #include "kernels/configs.cuh"
@@ -46,6 +49,13 @@
 #ifndef TORCH_EXTENSION_NAME
 #define TORCH_EXTENSION_NAME nixl_ep_cpp
 #endif
+
+struct vmm_region {
+    CUdeviceptr ptr = 0;
+    size_t size = 0;
+    CUmemGenericAllocationHandle handle = 0;
+    bool is_cuda_malloc = false;
+};
 
 namespace nixl_ep {
 
@@ -82,6 +92,13 @@ private:
     int *mask_buffer_ptr = nullptr;
     int *sync_buffer_ptr = nullptr;
     int *sync_count_ptr = nullptr;
+
+    /* Owning VMM allocations (keep raw ptrs above as aliases) */
+    vmm_region m_rdma_alloc;
+    vmm_region m_mask_alloc;
+    vmm_region m_sync_alloc;
+    vmm_region m_sync_count_alloc;
+    vmm_region m_workspace_alloc;
 
     // Device info and communication
     int device_id;

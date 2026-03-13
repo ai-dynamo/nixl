@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <cuda.h>
 #include <cuda_runtime.h>
 #include <memory>
 #include <optional>
@@ -59,6 +60,135 @@
 #endif
 
 namespace nixl_ep {
+
+static vmm_region
+vmm_init(size_t size, CUdevice device) {
+    if (size == 0) {
+        throw std::invalid_argument("vmm_init: size must be non-zero");
+    }
+
+    struct cuda_alloc_ctx {
+        bool fabric_supported;
+        CUmemAllocationProp prop;
+        size_t granularity;
+
+        cuda_alloc_ctx(CUdevice dev) : fabric_supported(false), prop({}), granularity(0) {
+            int version;
+            if (cuDriverGetVersion(&version) != CUDA_SUCCESS) {
+                throw std::runtime_error("Failed to get CUDA driver version");
+            }
+
+            if (version < 11000) {
+                return; /* too old — fall back to cudaMalloc */
+            }
+
+            int fab = 0;
+            if ((cuDeviceGetAttribute(&fab,
+                                      CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
+                                      dev) != CUDA_SUCCESS) ||
+                (!fab)) {
+                return; /* no fabric — fall back to cudaMalloc */
+            }
+
+            int rdma_vmm_supported = 0;
+            if (cuDeviceGetAttribute(&rdma_vmm_supported,
+                                     CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
+                                     dev) != CUDA_SUCCESS) {
+                throw std::runtime_error(
+                    "Failed to query GPUDirect RDMA with VMM support attribute");
+            }
+
+            if (!rdma_vmm_supported) {
+                throw std::runtime_error(
+                    "GPUDirect RDMA with CUDA VMM is not supported on this device");
+            }
+
+            prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+            prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+            prop.location.id = dev;
+            prop.allocFlags.gpuDirectRDMACapable = 1;
+            prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
+
+            if (cuMemGetAllocationGranularity(
+                    &granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM) != CUDA_SUCCESS) {
+                throw std::runtime_error("Failed to get CUDA allocation granularity");
+            }
+
+            fabric_supported = true;
+        }
+    };
+
+    static cuda_alloc_ctx ctx(device);
+
+    if (!ctx.fabric_supported) {
+        vmm_region region = {};
+        region.size = size;
+        region.is_cuda_malloc = true;
+        if (cudaMalloc(reinterpret_cast<void **>(&region.ptr), size) != cudaSuccess) {
+            throw std::runtime_error("cudaMalloc fallback failed (fabric not supported)");
+        }
+        return region;
+    }
+
+    vmm_region region = {};
+    CUmemAccessDesc access_desc = {};
+    const char *err_msg;
+
+    region.size = align_up<size_t>(size, ctx.granularity);
+
+    if (cuMemCreate(&region.handle, region.size, &ctx.prop, 0) != CUDA_SUCCESS) {
+        throw std::runtime_error("Failed to create CUDA VMM allocation");
+    }
+
+    if (cuMemAddressReserve(&region.ptr, region.size, 0, 0, 0) != CUDA_SUCCESS) {
+        err_msg = "Failed to reserve CUDA virtual address";
+        goto err_release;
+    }
+
+    if (cuMemMap(region.ptr, region.size, 0, region.handle, 0) != CUDA_SUCCESS) {
+        err_msg = "Failed to map CUDA VMM memory";
+        goto err_free;
+    }
+
+    access_desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+    access_desc.location.id = device;
+    access_desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+    if (cuMemSetAccess(region.ptr, region.size, &access_desc, 1) != CUDA_SUCCESS) {
+        err_msg = "Failed to set CUDA memory access";
+        goto err_unmap;
+    }
+
+    return region;
+
+err_unmap:
+    cuMemUnmap(region.ptr, region.size);
+err_free:
+    cuMemAddressFree(region.ptr, region.size);
+    region.ptr = 0;
+err_release:
+    cuMemRelease(region.handle);
+    region.handle = 0;
+    throw std::runtime_error(err_msg);
+}
+
+static void
+vmm_free(vmm_region &region) {
+    if (!region.ptr) {
+        return;
+    }
+    if (region.is_cuda_malloc) {
+        cudaFree(reinterpret_cast<void *>(region.ptr));
+        region.ptr = 0;
+        return;
+    }
+    cuMemUnmap(region.ptr, region.size);
+    cuMemAddressFree(region.ptr, region.size);
+    region.ptr = 0;
+    if (region.handle) {
+        cuMemRelease(region.handle);
+        region.handle = 0;
+    }
+}
 
 static void sleep_ms(int milliseconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
@@ -103,25 +233,28 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     EP_HOST_ASSERT(per_channel_bytes < std::numeric_limits<int>::max());
 
     // Create 32 MiB workspace
-    CUDA_CHECK(cudaMalloc(&workspace, NUM_WORKSPACE_BYTES));
+    m_workspace_alloc = vmm_init(NUM_WORKSPACE_BYTES, device_id);
+    workspace = reinterpret_cast<void *>(m_workspace_alloc.ptr);
     CUDA_CHECK(cudaMemsetAsync(workspace, 0, NUM_WORKSPACE_BYTES, comm_stream));
 
     EP_HOST_ASSERT(max_experts_per_rank > 0);
-    CUDA_CHECK(cudaMalloc(&rdma_buffer_ptr, num_rdma_bytes));
+    m_rdma_alloc = vmm_init(num_rdma_bytes, device_id);
+    rdma_buffer_ptr = reinterpret_cast<void *>(m_rdma_alloc.ptr);
     CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
 
     // Allocate and clean shrink buffer
-    mask_buffer_ptr = nullptr;
-    sync_buffer_ptr = nullptr;
     int num_mask_buffer_bytes = max_num_ranks * sizeof(int);
-    CUDA_CHECK(cudaMalloc(&mask_buffer_ptr, num_mask_buffer_bytes));
+    m_mask_alloc = vmm_init(num_mask_buffer_bytes, device_id);
+    mask_buffer_ptr = reinterpret_cast<int *>(m_mask_alloc.ptr);
     CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0xff, num_mask_buffer_bytes));
     CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
 
     int num_sync_buffer_bytes = max_num_ranks * sizeof(int);
-    CUDA_CHECK(cudaMalloc(&sync_buffer_ptr, num_sync_buffer_bytes));
+    m_sync_alloc = vmm_init(num_sync_buffer_bytes, device_id);
+    sync_buffer_ptr = reinterpret_cast<int *>(m_sync_alloc.ptr);
+    m_sync_count_alloc = vmm_init(num_sync_buffer_bytes, device_id);
+    sync_count_ptr = reinterpret_cast<int *>(m_sync_count_alloc.ptr);
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
-    CUDA_CHECK(cudaMalloc(&sync_count_ptr, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_count_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -174,20 +307,22 @@ void Buffer::destroy() {
 
     _nixl_ep_destroy();
 
-    cudaFree(rdma_buffer_ptr);
+    vmm_free(m_rdma_alloc);
+    rdma_buffer_ptr = nullptr;
 
     if (nixl_agent_info and nixl_agent_info->agent != nullptr and getenv("NIXL_ETCD_ENDPOINTS")) {
         nixl_agent_info->agent->invalidateLocalMD();
     }
 
-    rdma_buffer_ptr = nullptr;
+    vmm_free(m_mask_alloc);
+    mask_buffer_ptr = nullptr;
+    vmm_free(m_sync_alloc);
+    sync_buffer_ptr = nullptr;
+    vmm_free(m_sync_count_alloc);
+    sync_count_ptr = nullptr;
 
-    cudaFree(mask_buffer_ptr);
-    cudaFree(sync_buffer_ptr);
-    cudaFree(sync_count_ptr);
-
-    // Free workspace
-    CUDA_CHECK(cudaFree(workspace));
+    vmm_free(m_workspace_alloc);
+    workspace = nullptr;
 
     destroyed = true;
     available = false;
