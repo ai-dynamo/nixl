@@ -128,6 +128,13 @@ NB_ARG_STRING(
 NB_ARG_INT32(posix_ios_pool_size, 65536, "IO pool size for POSIX operations (default: 65536)");
 NB_ARG_INT32(posix_kernel_queue_size, 256, "Kernel queue size for AIO and URING (default: 256)");
 
+// LIBBLKIO options - only used when backend is LIBBLKIO
+DEFINE_string(
+    libblkio_api_type,
+    "IO_URING",
+    "API type for LIBBLKIO operations [IO_URING, VHOST_USER, VHOST_VDPA] (only used with LIBBLKIO backend)");
+NB_ARG_BOOL(libblkio_io_polling, false, "Enable I/O polling for LIBBLKIO operations (only used with LIBBLKIO backend)");
+
 // DOCA GPUNetIO options - only used when backend is DOCA GPUNetIO
 NB_ARG_STRING(
     gpunetio_device_list,
@@ -237,6 +244,8 @@ std::string xferBenchConfig::gpunetio_oob_list = "";
 std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
+std::string xferBenchConfig::libblkio_api_type = "";
+bool xferBenchConfig::libblkio_io_polling = false;
 int xferBenchConfig::posix_ios_pool_size = 0;
 int xferBenchConfig::posix_kernel_queue_size = 0;
 std::string xferBenchConfig::filepath = "";
@@ -366,6 +375,28 @@ xferBenchConfig::loadParams(void) {
             }
             posix_ios_pool_size = NB_ARG(posix_ios_pool_size);
             posix_kernel_queue_size = NB_ARG(posix_kernel_queue_size);
+        }
+
+        // Load LIBBLKIO-specific configurations if backend is LIBBLKIO
+        if (backend == XFERBENCH_BACKEND_LIBBLKIO) {
+            libblkio_api_type = NB_ARG(libblkio_api_type);
+            libblkio_io_polling = NB_ARG(libblkio_io_polling);
+
+            // Validate LIBBLKIO API type
+            if (libblkio_api_type != XFERBENCH_LIBBLKIO_API_IO_URING &&
+                libblkio_api_type != XFERBENCH_LIBBLKIO_API_VHOST_USER &&
+                libblkio_api_type != XFERBENCH_LIBBLKIO_API_VHOST_VDPA) {
+                std::cerr << "Invalid LIBBLKIO API type: " << libblkio_api_type
+                          << ". Must be one of [IO_URING, VHOST_USER, VHOST_VDPA]" << std::endl;
+                return -1;
+            }
+
+            // Validate device_list - LIBBLKIO requires explicit device list
+            std::string device_list = NB_ARG(device_list);
+            if (device_list.empty() || device_list == "all") {
+                std::cerr << "LIBBLKIO backend requires explicit device_list, not 'all' or empty" << std::endl;
+                return -1;
+            }
         }
 
         // Load DOCA-specific configurations if backend is DOCA
@@ -709,6 +740,7 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_LIBBLKIO == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
 }
 
@@ -845,17 +877,77 @@ parseGusliDeviceList(const std::string &device_list,
     return devices;
 }
 
+std::vector<LibblkioDeviceConfig>
+parseLibblkioDeviceList(const std::string &device_list, int num_devices) {
+    std::vector<LibblkioDeviceConfig> devices;
+
+    if (device_list.empty()) {
+        std::cerr << "Error: LIBBLKIO backend requires device_list in format 'id:B:path'"
+                  << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    std::stringstream ss(device_list);
+    std::string device_spec;
+
+    while (std::getline(ss, device_spec, ',')) {
+        std::stringstream dev_ss(device_spec);
+        std::string id_str, type_str, path;
+        if (std::getline(dev_ss, id_str, ':') && std::getline(dev_ss, type_str, ':') &&
+            std::getline(dev_ss, path)) {
+            int device_id;
+            try {
+                device_id = std::stoi(id_str);
+            } catch (const std::exception &e) {
+                std::cerr << "Invalid LIBBLKIO device ID: '" << id_str
+                          << "'. Must be a valid integer." << std::endl;
+                exit(EXIT_FAILURE);
+            }
+            if (type_str.size() != 1 || type_str[0] != 'B') {
+                std::cerr << "Invalid LIBBLKIO device type: '" << type_str
+                          << "'. Must be exactly 'B'" << std::endl;
+                exit(EXIT_FAILURE);
+            }
+            if (path.empty()) {
+                std::cerr << "Invalid LIBBLKIO device specification: " << device_spec
+                          << ". Expected format: 'id:B:path'" << std::endl;
+                exit(EXIT_FAILURE);
+            }
+            devices.push_back({device_id, path});
+        } else {
+            std::cerr << "Invalid LIBBLKIO device specification: " << device_spec
+                      << ". Expected format: 'id:B:path'" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if (num_devices > 0 && devices.size() != static_cast<size_t>(num_devices)) {
+        std::cerr << "Error: Number of devices in device_list (" << devices.size()
+                  << ") must match num_devices (" << num_devices << ")" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    return devices;
+}
+
 bool
 xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
     int i = 0, j = 0;
     static bool gusli_devmap_init = false;
     static std::vector<GusliDeviceConfig> gusli_devs;
+    static bool libblkio_devmap_init = false;
+    static std::vector<LibblkioDeviceConfig> libblkio_devs;
     if (!gusli_devmap_init && xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
         gusli_devs = parseGusliDeviceList(xferBenchConfig::device_list,
                                           xferBenchConfig::gusli_device_security,
                                           xferBenchConfig::gusli_device_byte_offsets,
                                           xferBenchConfig::num_initiator_dev);
         gusli_devmap_init = true;
+    }
+    if (!libblkio_devmap_init && xferBenchConfig::backend == XFERBENCH_BACKEND_LIBBLKIO) {
+        libblkio_devs = parseLibblkioDeviceList(xferBenchConfig::device_list,
+                                                xferBenchConfig::num_initiator_dev);
+        libblkio_devmap_init = true;
     }
     bool pass_check_consistency = true;
     for (const auto &iov_list : iov_lists) {
@@ -953,6 +1045,33 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                         ssize_t rc = pread(fd, addr, len, iov.addr);
                         if (rc < 0) {
                             std::cerr << "Failed to read from GUSLI device: " << it->device_path
+                                      << " with error: " << strerror(errno) << std::endl;
+                            close(fd);
+                            exit(EXIT_FAILURE);
+                        }
+                        close(fd);
+                    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_LIBBLKIO) {
+                        // Map device id -> path via device_list and read from the block device at LBA offset
+                        auto it = std::find_if(
+                            libblkio_devs.begin(), libblkio_devs.end(), [&](const LibblkioDeviceConfig &m) {
+                                return m.device_id == iov.devId;
+                            });
+                        if (it == libblkio_devs.end()) {
+                            std::cerr << "Failed to locate LIBBLKIO device id " << iov.devId
+                                      << " in device_list. Cannot validate." << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                        int oflags = O_RDONLY;
+                        if (xferBenchConfig::storage_enable_direct) oflags |= O_DIRECT;
+                        int fd = open(it->device_path.c_str(), oflags);
+                        if (fd < 0) {
+                            std::cerr << "Failed to open LIBBLKIO device path: " << it->device_path
+                                      << " with error: " << strerror(errno) << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                        ssize_t rc = pread(fd, addr, len, iov.addr);
+                        if (rc < 0) {
+                            std::cerr << "Failed to read from LIBBLKIO device: " << it->device_path
                                       << " with error: " << strerror(errno) << std::endl;
                             close(fd);
                             exit(EXIT_FAILURE);

@@ -19,14 +19,15 @@
 #include "nixl.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include <cstdlib>
 #include <dlfcn.h>
-#include <filesystem>
 #include <dirent.h>
+#include <filesystem>
 #include <unistd.h>  // For access() and F_OK
 #include <fstream>
-#include <string>
 #include <map>
-#include <dlfcn.h>
+#include <string>
+#include <unistd.h>
 
 using lock_guard = const std::lock_guard<std::mutex>;
 
@@ -199,6 +200,7 @@ telemetryLoader(void *handle, const std::string &plugin_path) {
 }
 } // namespace
 
+namespace {
 std::map<nixl_backend_t, std::string>
 loadPluginList(const std::string &filename) {
     std::map<nixl_backend_t, std::string> plugins;
@@ -223,19 +225,23 @@ loadPluginList(const std::string &filename) {
             std::string path = line.substr(pos + 1);
 
             auto trim = [](std::string& s) {
-                s.erase(0, s.find_first_not_of(" \t"));
-                s.erase(s.find_last_not_of(" \t") + 1);
+                s.erase(0, s.find_first_not_of(" \t\r"));
+                s.erase(s.find_last_not_of(" \t\r") + 1);
             };
             trim(name);
             trim(path);
 
-            // Add to map
-            plugins[name] = path;
+            // Add to map, rejecting duplicates
+            const auto [it, inserted] = plugins.emplace(name, path);
+            if (!inserted) {
+                NIXL_ERROR << "Duplicate plugin entry in " << filename << ": " << name;
+            }
         }
     }
 
     return plugins;
 }
+} // namespace
 
 std::shared_ptr<const nixlPluginHandle>
 nixlPluginManager::loadPluginFromPath(const std::string &plugin_path, nixlPluginLoaderFunc loader) {
@@ -435,17 +441,17 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
 }
 
 namespace {
-static bool
+bool
 startsWith(const std::string &str, const std::string &prefix) {
     return str.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), str.begin());
 }
 
-static bool
+bool
 endsWith(const std::string &str, const std::string &suffix) {
     return str.size() >= suffix.size() && std::equal(suffix.rbegin(), suffix.rend(), str.rbegin());
 }
 
-static std::string
+std::string
 extractPluginName(const std::string &filename, const std::string &prefix) {
     return filename.substr(prefix.size(), filename.size() - prefix.size() - kPluginSuffix.size());
 }
