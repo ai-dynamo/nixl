@@ -301,6 +301,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         backend_params["api_type"] = xferBenchConfig::libblkio_api_type;
         backend_params["device_list"] = xferBenchConfig::device_list;
         backend_params["direct_io"] = xferBenchConfig::storage_enable_direct ? "1" : "0";
+        backend_params["io_polling"] = xferBenchConfig::libblkio_io_polling ? "1" : "0";
 
         std::cout << "LIBBLKIO backend with API type: " << xferBenchConfig::libblkio_api_type
                   << std::endl;

@@ -869,7 +869,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // For local transfers (empty remote agent), use local memory section
-    bool is_local_transfer = remote_agent.empty();
+    const bool is_local_transfer = remote_agent.empty();
 
     if (!is_local_transfer && data->remoteSections.count(remote_agent) == 0) {
         NIXL_ERROR_FUNC << "metadata for remote agent '" << remote_agent << "' not found";

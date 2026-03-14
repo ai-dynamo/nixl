@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 Dell Technologies Inc. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Dell Technologies Inc. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -826,18 +826,12 @@ int main(int argc, char* argv[]) {
         config.device_path = env_dev;
     }
 
-    // Require explicit device specification
-    if (config.device_path.empty()) {
-        std::cerr << "Error: Set NIXL_LIBBLKIO_TEST_DEVICE to a disposable block device" << std::endl;
-        return 1;
-    }
-
     // Print test configuration
     std::cout << line_str << std::endl;
     std::cout << center_str("NIXL libblkio Plugin Test") << std::endl;
     std::cout << line_str << std::endl;
     std::cout << "Configuration:" << std::endl;
-    std::cout << "  Device: " << config.device_path << std::endl;
+    std::cout << "  Device: " << (config.device_path.empty() ? "<auto-setup>" : config.device_path) << std::endl;
     std::cout << "  Transfers: " << config.num_transfers << std::endl;
     std::cout << "  Transfer Size: " << config.transfer_size / 1024 << " KB" << std::endl;
     std::cout << "  Direct I/O: " << (config.enable_direct_io ? "enabled" : "disabled") << std::endl;
@@ -847,8 +841,8 @@ int main(int argc, char* argv[]) {
 
     bool all_tests_passed = true;
 
-    // Setup test environment if not skipped
-    if (!skip_setup) {
+    // Setup test environment if not skipped and no device specified
+    if (!skip_setup && config.device_path.empty()) {
         std::cout << "Setting up test environment..." << std::endl;
         if (!setup_test_environment(config)) {
             std::cerr << "Failed to setup test environment" << std::endl;
@@ -858,6 +852,17 @@ int main(int argc, char* argv[]) {
         }
         std::cout << "✓ Test environment setup complete" << std::endl;
     }
+
+    // Require device specification after setup
+    if (config.device_path.empty()) {
+        std::cerr << "Error: Set --device or NIXL_LIBBLKIO_TEST_DEVICE to a disposable block device"
+                  << std::endl;
+        return 1;
+    }
+
+    // Update configuration display with actual device
+    std::cout << "Using device: " << config.device_path << std::endl;
+    std::cout << std::endl;
 
     // Run tests
     if (!test_backend_creation(config)) {

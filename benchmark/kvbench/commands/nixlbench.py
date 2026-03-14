@@ -157,7 +157,7 @@ class NIXLBench:
         self.num_threads = num_threads
         self.op_type = op_type
         self.posix_api_type = posix_api_type
-        
+
         # Validate libblkio_api_type
         valid_libblkio_api_types = {"IO_URING", "VHOST_USER", "VHOST_VDPA"}
         if libblkio_api_type not in valid_libblkio_api_types:

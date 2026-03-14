@@ -170,6 +170,7 @@ public:
     static int posix_ios_pool_size;
     static int posix_kernel_queue_size;
     static std::string libblkio_api_type;
+    static bool libblkio_io_polling;
     static bool storage_enable_direct;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
