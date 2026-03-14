@@ -754,7 +754,7 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
     const auto r_it = remoteBackends_.find(remote_name);
     if (r_it != remoteBackends_.end()) {
         const auto rb_it = r_it->second.find(backend);
-        if (rb_it != r_it->second.end() ) {
+        if (rb_it != r_it->second.end()) {
             if (rb_it->second != conn_info) {
                 return NIXL_ERR_NOT_ALLOWED;
             }

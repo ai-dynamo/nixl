@@ -588,9 +588,8 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    nixlMemSection &section = init_side ?
-        static_cast<nixlMemSection &>(data->localSection_) :
-        static_cast<nixlMemSection &>(rem_sec_it->second);
+    nixlMemSection &section = init_side ? static_cast<nixlMemSection &>(data->localSection_) :
+                                          static_cast<nixlMemSection &>(rem_sec_it->second);
 
     if (!extra_params || (extra_params->backends.size() == 0)) {
         backend_set = section.queryBackends(descs.getType());
@@ -602,7 +601,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         }
     } else {
         backend_set = new backend_set_t();
-        for (auto & elm : extra_params->backends) {
+        for (auto &elm : extra_params->backends) {
             backend_set->insert(elm->engine);
         }
     }
