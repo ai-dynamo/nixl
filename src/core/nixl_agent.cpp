@@ -270,7 +270,7 @@ nixlAgentData::warnAboutEfaHardwareMismatch() {
     }
     efaWarningChecked = true;
 
-    if (backendEngines.count("UCX") != 0 && backendEngines.count("LIBFABRIC") == 0) {
+    if ((backendEngines_.count("UCX") != 0) && (backendEngines_.count("LIBFABRIC") == 0)) {
         const auto &hw_info = nixl::hwInfo::instance();
         if (hw_info.numEfaDevices > 0) {
             NIXL_WARN
@@ -376,10 +376,10 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         data->connMd_[type] = conn_info;
     }
 
-    // TODO: Simplify this e.g. by making nixlBackendH's c'tor public?
+    // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?
     std::unique_ptr<nixlBackendH> bknd_temp(new nixlBackendH(backend.get()));
-    const auto [it, inserted] = data->backendHandles_.insert_or_assign(type, std::move(bknd_temp));
-    // NIXL_ASSERT(inserted);
+    const auto [it, inserted] = data->backendHandles_.try_emplace(type, std::move(bknd_temp));
+    NIXL_ASSERT(inserted);
     bknd_hndl = it->second.get();
 
     data->backendEngines_.try_emplace(type, std::move(backend));
@@ -575,7 +575,6 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 
     // Using a set as order is not important to revert the operation
     backend_set_t* backend_set;
-    nixl_status_t  ret;
     int            count = 0;
     bool           init_side = (agent_name == NIXL_INIT_AGENT);
 
@@ -589,12 +588,12 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    if (!extra_params || extra_params->backends.size() == 0) {
-        if (init_side) {
-            backend_set = data->localSection_.queryBackends(descs.getType());
-        } else {
-            backend_set = rem_sec_it->second.queryBackends(descs.getType());
-        }
+    nixlMemSection &section = init_side ?
+        static_cast<nixlMemSection &>(data->localSection_) :
+        static_cast<nixlMemSection &>(rem_sec_it->second);
+
+    if (!extra_params || (extra_params->backends.size() == 0)) {
+        backend_set = section.queryBackends(descs.getType());
 
         if (!backend_set || backend_set->empty()) {
             NIXL_ERROR_FUNC << "no available backends for mem type '" << descs.getType() << "'";
@@ -603,8 +602,9 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         }
     } else {
         backend_set = new backend_set_t();
-        for (auto & elm : extra_params->backends)
+        for (auto & elm : extra_params->backends) {
             backend_set->insert(elm->engine);
+        }
     }
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
@@ -620,11 +620,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 
     for (auto & backend : *backend_set) {
         handle->descs[backend] = new nixl_meta_dlist_t(descs.getType());
-        if (init_side) {
-            ret = data->localSection_.populate(descs, backend, *(handle->descs[backend]));
-        } else {
-            ret = rem_sec_it->second.populate(descs, backend, *(handle->descs[backend]));
-        }
+        const nixl_status_t ret = section.populate(descs, backend, *(handle->descs[backend]));
 
         if (ret == NIXL_SUCCESS) {
             count++;
@@ -634,7 +630,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         }
     }
 
-    if (extra_params && extra_params->backends.size() > 0) {
+    if (extra_params && (extra_params->backends.size() > 0)) {
         delete backend_set;
     }
 
@@ -1724,7 +1720,7 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
             return NIXL_SUCCESS;
         }
     }
-    dummy.clear();
+
     // This is a checker method, returning not found is not an error to be logged
     return NIXL_ERR_NOT_FOUND;
 }

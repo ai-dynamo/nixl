@@ -387,7 +387,6 @@ nixl_status_t
 nixlRemoteSection::loadRemoteData(nixlSerDes *deserializer, backend_map_t &backendToEngineMap) {
     nixl_status_t ret;
     size_t seg_count;
-    nixl_backend_t nixl_backend;
 
     ret = deserializer->getBuf("nixlSecElms", &seg_count, sizeof(seg_count));
     if (ret != NIXL_SUCCESS) {
@@ -397,7 +396,7 @@ nixlRemoteSection::loadRemoteData(nixlSerDes *deserializer, backend_map_t &backe
     for (size_t i = 0; i < seg_count; ++i) {
         // In case of errors, no need to remove the previous entries
         // Agent will delete the full object.
-        nixl_backend = deserializer->getStr("bknd");
+        const nixl_backend_t nixl_backend = deserializer->getStr("bknd");
         if (nixl_backend.empty()) {
             return NIXL_ERR_INVALID_PARAM;
         }

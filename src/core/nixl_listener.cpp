@@ -574,7 +574,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                     const std::string &metadata_label = req_ip;
 
                     // Use local storeMetadataInEtcd function
-                    nixl_status_t ret =
+                    const nixl_status_t ret =
                         etcdClient->storeMetadataInEtcd(name_, metadata_label, my_MD);
                     if (ret != NIXL_SUCCESS) {
                         NIXL_ERROR << "Failed to store metadata in etcd: " << ret;
@@ -620,7 +620,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                         throw std::runtime_error("ETCD is not enabled");
                     }
 
-                    nixl_status_t ret = etcdClient->removeMetadataFromEtcd(name_);
+                    const nixl_status_t ret = etcdClient->removeMetadataFromEtcd(name_);
                     if (ret != NIXL_SUCCESS) {
                         NIXL_ERROR << "Failed to invalidate metadata in etcd: " << ret;
                     }
@@ -751,13 +751,15 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
     }
 
     // No need to reload same conn info, error if it changed
-    if ((remoteBackends_.count(remote_name) != 0) &&
-        (remoteBackends_[remote_name].count(backend) != 0)) {
-        if (remoteBackends_[remote_name][backend] != conn_info) {
-            return NIXL_ERR_NOT_ALLOWED;
+    const auto r_it = remoteBackends_.find(remote_name);
+    if (r_it != remoteBackends_.end()) {
+        const auto rb_it = r_it->second.find(backend);
+        if (rb_it != r_it->second.end() ) {
+            if (rb_it->second != conn_info) {
+                return NIXL_ERR_NOT_ALLOWED;
+            }
+            return NIXL_SUCCESS;
         }
-
-        return NIXL_SUCCESS;
     }
 
     nixlBackendEngine *eng = backendEngines_[backend].get();
