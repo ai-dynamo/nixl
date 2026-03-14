@@ -98,6 +98,7 @@ nixlLibblkioBackendReqH::unregister_blkio_bufs()
 {
     for (auto &[handle, region] : registered_regions_)
         blkio_unmap_mem_region(handle, &region);
+    registered_regions_.clear();
 }
 
 nixl_status_t

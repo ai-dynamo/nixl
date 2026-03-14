@@ -157,6 +157,14 @@ class NIXLBench:
         self.num_threads = num_threads
         self.op_type = op_type
         self.posix_api_type = posix_api_type
+        
+        # Validate libblkio_api_type
+        valid_libblkio_api_types = {"IO_URING", "VHOST_USER", "VHOST_VDPA"}
+        if libblkio_api_type not in valid_libblkio_api_types:
+            raise ValueError(
+                f"Invalid LIBBLKIO API type: {libblkio_api_type}. "
+                f"Must be one of {sorted(valid_libblkio_api_types)}"
+            )
         self.libblkio_api_type = libblkio_api_type
         self.runtime_type = runtime_type
         self.scheme = scheme
@@ -232,14 +240,17 @@ class NIXLBench:
 
     def _configure_libblkio(self, source: str, destination: str):
         """Configure LIBBLKIO plugin for block device operations"""
-        if source == "file":
+        if source == "file" and destination == "memory":
             self.op_type = "READ"
             self.target_seg_type = "BLK_SEG"
-        elif destination == "file":
+        elif source == "memory" and destination == "file":
             self.op_type = "WRITE"
             self.initiator_seg_type = "BLK_SEG"
         else:
-            raise ValueError(f"Invalid source for LIBBLKIO: {source}")
+            raise ValueError(
+                f"Invalid LIBBLKIO source/destination: {source}->{destination}; "
+                "expected file<->memory"
+            )
 
     def _configure_obj(self, source: str, destination: str):
         """Configure OBJ plugin for object storage operations"""

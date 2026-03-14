@@ -33,6 +33,9 @@
 #include <stdexcept>
 #include <cstdio>
 #include <getopt.h>
+#include <filesystem>
+#include <spawn.h>
+#include <sys/wait.h>
 
 namespace {
     const size_t page_size = sysconf(_SC_PAGESIZE);
@@ -50,7 +53,6 @@ namespace {
     constexpr size_t kb_size = 1024;
     constexpr size_t mb_size = 1024 * 1024;
     constexpr size_t gb_size = 1024 * 1024 * 1024;
-    constexpr double us_to_s(double us) { return us / 1000000.0; }
 
     constexpr int line_width = 60;
     constexpr int progress_bar_width = line_width - 2; // -2 for the brackets
@@ -131,47 +133,160 @@ namespace {
         int failed_transfers = 0;
     };
 
-    // Create test directory and setup loop device
-    bool setup_test_environment(const TestConfig& config) {
-        // Create test directory
-        std::string mkdir_cmd = "mkdir -p " + config.test_files_dir;
-        if (system(mkdir_cmd.c_str()) != 0) {
-            std::cerr << "Failed to create test directory: " << config.test_files_dir << std::endl;
+    // Safe helper functions to avoid shell injection
+    bool safe_create_file(const std::string& path, size_t size_mb) {
+        int fd = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (fd == -1) {
+            std::cerr << "Failed to create file: " << path << std::endl;
+            return false;
+        }
+        
+        // Write zeros using fallocate if available, otherwise write manually
+        if (posix_fallocate(fd, 0, size_mb * 1024 * 1024) != 0) {
+            // Fallback to manual write
+            std::vector<char> zeros(1024 * 1024, 0); // 1MB buffer
+            size_t remaining = size_mb * 1024 * 1024;
+            while (remaining > 0) {
+                size_t to_write = std::min(remaining, zeros.size());
+                ssize_t written = write(fd, zeros.data(), to_write);
+                if (written <= 0) {
+                    close(fd);
+                    return false;
+                }
+                remaining -= written;
+            }
+        }
+        close(fd);
+        return true;
+    }
+
+    bool safe_execute_command(const std::string& executable, const std::vector<std::string>& args) {
+        std::vector<char*> argv;
+        argv.push_back(const_cast<char*>(executable.c_str()));
+        for (const auto& arg : args) {
+            argv.push_back(const_cast<char*>(arg.c_str()));
+        }
+        argv.push_back(nullptr);
+
+        pid_t pid;
+        int status = posix_spawnp(&pid, executable.c_str(), nullptr, nullptr, argv.data(), nullptr);
+        if (status != 0) {
+            std::cerr << "Failed to spawn " << executable << ": " << strerror(errno) << std::endl;
             return false;
         }
 
-        // Create a test file for loop device
-        std::string test_file = config.test_files_dir + "/" + test_file_name;
-        std::string create_file_cmd = "dd if=/dev/zero of=" + test_file + 
-                                     " bs=1M count=100 status=none";
-        if (system(create_file_cmd.c_str()) != 0) {
+        if (waitpid(pid, &status, 0) == -1) {
+            std::cerr << "Failed to wait for " << executable << std::endl;
+            return false;
+        }
+
+        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
+
+    std::string safe_execute_command_with_output(const std::string& executable, const std::vector<std::string>& args) {
+        std::vector<char*> argv;
+        argv.push_back(const_cast<char*>(executable.c_str()));
+        for (const auto& arg : args) {
+            argv.push_back(const_cast<char*>(arg.c_str()));
+        }
+        argv.push_back(nullptr);
+
+        int pipefd[2];
+        if (pipe(pipefd) == -1) {
+            std::cerr << "Failed to create pipe" << std::endl;
+            return "";
+        }
+
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
+        posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
+        posix_spawn_file_actions_addclose(&actions, pipefd[0]);
+        posix_spawn_file_actions_addclose(&actions, pipefd[1]);
+
+        pid_t pid;
+        int status = posix_spawnp(&pid, executable.c_str(), &actions, nullptr, argv.data(), nullptr);
+        posix_spawn_file_actions_destroy(&actions);
+
+        close(pipefd[1]);
+
+        if (status != 0) {
+            close(pipefd[0]);
+            std::cerr << "Failed to spawn " << executable << ": " << strerror(errno) << std::endl;
+            return "";
+        }
+
+        std::string result;
+        char buffer[256];
+        ssize_t bytes_read;
+        while ((bytes_read = read(pipefd[0], buffer, sizeof(buffer))) > 0) {
+            result.append(buffer, bytes_read);
+        }
+        close(pipefd[0]);
+
+        waitpid(pid, &status, 0);
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            return "";
+        }
+
+        return result;
+    }
+
+    // Create test directory and setup loop device
+    bool setup_test_environment(TestConfig& config) {
+        // Validate test_files_dir to prevent path traversal
+        if (config.test_files_dir.empty() || 
+            config.test_files_dir.find("..") != std::string::npos ||
+            config.test_files_dir.find(";") != std::string::npos ||
+            config.test_files_dir.find("&") != std::string::npos ||
+            config.test_files_dir.find("|") != std::string::npos ||
+            config.test_files_dir.find("`") != std::string::npos ||
+            config.test_files_dir.find("$") != std::string::npos) {
+            std::cerr << "Invalid test directory path: " << config.test_files_dir << std::endl;
+            return false;
+        }
+
+        // Create test directory safely
+        std::error_code ec;
+        if (!std::filesystem::create_directories(config.test_files_dir, ec)) {
+            if (ec) {
+                std::cerr << "Failed to create test directory: " << config.test_files_dir 
+                          << " - " << ec.message() << std::endl;
+                return false;
+            }
+        }
+
+        // Create a test file for loop device safely
+        const std::string test_file = config.test_files_dir + "/" + test_file_name;
+        if (!safe_create_file(test_file, 100)) { // 100MB file
             std::cerr << "Failed to create test file: " << test_file << std::endl;
             return false;
         }
 
         // Setup loop device (this requires root privileges)
-        std::string setup_loop_cmd = "losetup -f " + test_file;
-        if (system(setup_loop_cmd.c_str()) != 0) {
+        if (!safe_execute_command("losetup", {"-f", test_file})) {
             std::cerr << "Failed to setup loop device (requires root privileges)" << std::endl;
             std::cerr << "Please run: sudo losetup -f " << test_file << std::endl;
             return false;
         }
 
-        // Find the loop device that was created
-        std::string find_loop_cmd = "losetup -j " + test_file + " | cut -d: -f1";
-        FILE* pipe = popen(find_loop_cmd.c_str(), "r");
-        if (!pipe) {
+        // Find the loop device that was created safely
+        std::string output = safe_execute_command_with_output("losetup", {"-j", test_file});
+        if (output.empty()) {
             std::cerr << "Failed to find loop device" << std::endl;
             return false;
         }
 
-        char buffer[256];
-        if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-            std::string loop_device = std::string(buffer);
-            loop_device.erase(loop_device.find_last_not_of("\n") + 1);
-            std::cout << "Using loop device: " << loop_device << std::endl;
+        // Parse output: format is "/dev/loopX: /path/to/file"
+        size_t colon_pos = output.find(':');
+        if (colon_pos == std::string::npos) {
+            std::cerr << "Invalid losetup output format" << std::endl;
+            return false;
         }
-        pclose(pipe);
+
+        config.device_path = output.substr(0, colon_pos);
+        // Remove any trailing whitespace
+        config.device_path.erase(config.device_path.find_last_not_of(" \t\n\r") + 1);
+        std::cout << "Using loop device: " << config.device_path << std::endl;
 
         return true;
     }
@@ -180,13 +295,27 @@ namespace {
     void cleanup_test_environment(const TestConfig& config) {
         std::string test_file = config.test_files_dir + "/" + test_file_name;
         
-        // Detach loop device
-        std::string detach_cmd = "losetup -j " + test_file + " | cut -d: -f1 | xargs -r losetup -d";
-        system(detach_cmd.c_str());
+        // Detach loop device safely
+        std::string output = safe_execute_command_with_output("losetup", {"-j", test_file});
+        if (!output.empty()) {
+            // Parse output to get device path
+            size_t colon_pos = output.find(':');
+            if (colon_pos != std::string::npos) {
+                std::string device_path = output.substr(0, colon_pos);
+                device_path.erase(device_path.find_last_not_of(" \t\n\r") + 1);
+                
+                // Detach the specific loop device
+                safe_execute_command("losetup", {"-d", device_path});
+            }
+        }
 
-        // Remove test directory
-        std::string cleanup_cmd = "rm -rf " + config.test_files_dir;
-        system(cleanup_cmd.c_str());
+        // Remove test directory safely
+        std::error_code ec;
+        std::filesystem::remove_all(config.test_files_dir, ec);
+        if (ec) {
+            std::cerr << "Warning: Failed to remove test directory: " << config.test_files_dir 
+                      << " - " << ec.message() << std::endl;
+        }
     }
 
     // Test basic backend creation and destruction
@@ -427,21 +556,28 @@ namespace {
 
             write_desc_list.addDesc(write_desc);
             read_desc_list.addDesc(read_desc);
+            
+            bool write_registered = false;
+            bool read_registered = false;
+            bool blk_registered = false;
+            
             status = agent.registerMem(write_desc_list);
             if (status != NIXL_SUCCESS) {
                 std::cerr << "Failed to register write buffer: " << status << std::endl;
-                agent.deregisterMem(read_desc_list);
-                agent.deregisterMem(write_desc_list);
+                // Nothing to deregister since write_desc_list registration failed
+                // and read_desc_list was never registered
                 return false;
             }
+            write_registered = true;
 
             status = agent.registerMem(read_desc_list);
             if (status != NIXL_SUCCESS) {
                 std::cerr << "Failed to register read buffer: " << status << std::endl;
-                agent.deregisterMem(write_desc_list);
+                agent.deregisterMem(write_desc_list);  // Only deregister write_desc_list
                 // Note: nixlAgent destructor handles backend cleanup
                 return false;
             }
+            read_registered = true;
 
             std::cout << "✓ Memory registered for I/O test" << std::endl;
 
@@ -457,10 +593,11 @@ namespace {
             status = agent.registerMem(blk_reg_list);
             if (status != NIXL_SUCCESS) {
                 std::cerr << "Failed to register BLK memory: " << status << std::endl;
-                agent.deregisterMem(write_desc_list);
-                agent.deregisterMem(read_desc_list);
+                if (write_registered) agent.deregisterMem(write_desc_list);
+                if (read_registered) agent.deregisterMem(read_desc_list);
                 return false;
             }
+            blk_registered = true;
 
             // Perform write operation using createXferReq with backend hint
             nixl_xfer_dlist_t write_list(DRAM_SEG);
@@ -482,8 +619,9 @@ namespace {
             status = agent.createXferReq(NIXL_WRITE, write_list, blk_list, "", req, &opt_args);
             if (status != NIXL_SUCCESS) {
                 std::cerr << "Failed to create write request: " << status << std::endl;
-                agent.deregisterMem(write_desc_list);
-                agent.deregisterMem(read_desc_list);
+                if (blk_registered) agent.deregisterMem(blk_reg_list);
+                if (write_registered) agent.deregisterMem(write_desc_list);
+                if (read_registered) agent.deregisterMem(read_desc_list);
                 // Note: nixlAgent destructor handles backend cleanup
                 return false;
             }
@@ -492,8 +630,9 @@ namespace {
             if (status != NIXL_SUCCESS) {
                 std::cerr << "Failed to post write request: " << status << std::endl;
                 agent.releaseXferReq(req);
-                agent.deregisterMem(write_desc_list);
-                agent.deregisterMem(read_desc_list);
+                if (blk_registered) agent.deregisterMem(blk_reg_list);
+                if (write_registered) agent.deregisterMem(write_desc_list);
+                if (read_registered) agent.deregisterMem(read_desc_list);
                 // Note: nixlAgent destructor handles backend cleanup
                 return false;
             }
@@ -502,8 +641,9 @@ namespace {
             if (status != NIXL_SUCCESS) {
                 std::cerr << "Write operation failed: " << status << std::endl;
                 agent.releaseXferReq(req);
-                agent.deregisterMem(write_desc_list);
-                agent.deregisterMem(read_desc_list);
+                if (blk_registered) agent.deregisterMem(blk_reg_list);
+                if (write_registered) agent.deregisterMem(write_desc_list);
+                if (read_registered) agent.deregisterMem(read_desc_list);
                 // Note: nixlAgent destructor handles backend cleanup
                 return false;
             }
@@ -527,8 +667,9 @@ namespace {
             status = agent.createXferReq(NIXL_READ, read_list, blk_list, "", req, &opt_args);
             if (status != NIXL_SUCCESS) {
                 std::cerr << "Failed to create read request: " << status << std::endl;
-                agent.deregisterMem(write_desc_list);
-                agent.deregisterMem(read_desc_list);
+                if (blk_registered) agent.deregisterMem(blk_reg_list);
+                if (write_registered) agent.deregisterMem(write_desc_list);
+                if (read_registered) agent.deregisterMem(read_desc_list);
                 // Note: nixlAgent destructor handles backend cleanup
                 return false;
             }
@@ -537,8 +678,9 @@ namespace {
             if (status != NIXL_SUCCESS) {
                 std::cerr << "Failed to post read request: " << status << std::endl;
                 agent.releaseXferReq(req);
-                agent.deregisterMem(write_desc_list);
-                agent.deregisterMem(read_desc_list);
+                if (blk_registered) agent.deregisterMem(blk_reg_list);
+                if (write_registered) agent.deregisterMem(write_desc_list);
+                if (read_registered) agent.deregisterMem(read_desc_list);
                 // Note: nixlAgent destructor handles backend cleanup
                 return false;
             }
@@ -547,8 +689,9 @@ namespace {
             if (status != NIXL_SUCCESS) {
                 std::cerr << "Read operation failed: " << status << std::endl;
                 agent.releaseXferReq(req);
-                agent.deregisterMem(write_desc_list);
-                agent.deregisterMem(read_desc_list);
+                if (blk_registered) agent.deregisterMem(blk_reg_list);
+                if (write_registered) agent.deregisterMem(write_desc_list);
+                if (read_registered) agent.deregisterMem(read_desc_list);
                 // Note: nixlAgent destructor handles backend cleanup
                 return false;
             }
@@ -567,8 +710,9 @@ namespace {
             // Verify data integrity
             if (memcmp(write_buffer.get(), read_buffer.get(), config.transfer_size) != 0) {
                 std::cerr << "✗ Data integrity check failed" << std::endl;
-                agent.deregisterMem(write_desc_list);
-                agent.deregisterMem(read_desc_list);
+                if (blk_registered) agent.deregisterMem(blk_reg_list);
+                if (write_registered) agent.deregisterMem(write_desc_list);
+                if (read_registered) agent.deregisterMem(read_desc_list);
                 // Note: nixlAgent destructor handles backend cleanup
                 return false;
             }
@@ -638,10 +782,20 @@ int main(int argc, char* argv[]) {
                 config.device_path = optarg;
                 break;
             case 't':
-                config.num_transfers = std::stoi(optarg);
+                try {
+                    config.num_transfers = std::stoi(optarg);
+                } catch (const std::exception& e) {
+                    std::cerr << "Invalid value for --transfers: " << optarg << std::endl;
+                    return 1;
+                }
                 break;
             case 's':
-                config.transfer_size = std::stoull(optarg);
+                try {
+                    config.transfer_size = std::stoull(optarg);
+                } catch (const std::exception& e) {
+                    std::cerr << "Invalid value for --size: " << optarg << std::endl;
+                    return 1;
+                }
                 break;
             case 1001:
                 config.enable_direct_io = true;

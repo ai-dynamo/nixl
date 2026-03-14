@@ -907,8 +907,9 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             return NIXL_ERR_NOT_FOUND;
         }
 
-        for (auto & elm : *local_set)
-            if (remote_set->count(elm) != 0) {
+        for (auto *elm : *local_set)
+            if (remote_set->count(elm) != 0 &&
+                (!is_local_transfer || elm->supportsLocal())) {
                 backend_set.insert(elm);
             }
 
@@ -917,8 +918,11 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             return NIXL_ERR_NOT_FOUND;
         }
     } else {
-        for (auto & elm : extra_params->backends)
-            backend_set.insert(elm->engine);
+        for (const auto &elm : extra_params->backends) {
+            if (!is_local_transfer || elm->engine->supportsLocal()) {
+                backend_set.insert(elm->engine);
+            }
+        }
     }
 
     // TODO: when central KV is supported, add a call to fetchRemoteMD
@@ -989,6 +993,13 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     if (data->telemetryEnabled) {
         handle->telemetry.totalBytes = total_bytes;
         handle->telemetry.descCount = handle->initiatorDescs->descCount();
+    }
+
+    // For local transfers, ensure the backend supports local operations
+    if (handle->remoteAgent.empty() && !handle->engine->supportsLocal()) {
+        NIXL_ERROR_FUNC << "Backend does not support local transfers";
+        data->addErrorTelemetry(NIXL_ERR_INVALID_PARAM);
+        return NIXL_ERR_INVALID_PARAM;
     }
 
     ret1 = handle->engine->prepXfer (handle->backendOp,

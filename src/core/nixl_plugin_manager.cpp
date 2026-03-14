@@ -225,14 +225,17 @@ loadPluginList(const std::string &filename) {
             std::string path = line.substr(pos + 1);
 
             auto trim = [](std::string& s) {
-                s.erase(0, s.find_first_not_of(" \t"));
-                s.erase(s.find_last_not_of(" \t") + 1);
+                s.erase(0, s.find_first_not_of(" \t\r"));
+                s.erase(s.find_last_not_of(" \t\r") + 1);
             };
             trim(name);
             trim(path);
 
-            // Add to map
-            plugins[name] = path;
+            // Add to map, rejecting duplicates
+            const auto [it, inserted] = plugins.emplace(name, path);
+            if (!inserted) {
+                NIXL_ERROR << "Duplicate plugin entry in " << filename << ": " << name;
+            }
         }
     }
 

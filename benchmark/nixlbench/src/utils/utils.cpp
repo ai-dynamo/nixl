@@ -377,7 +377,7 @@ xferBenchConfig::loadParams(void) {
 
         // Load LIBBLKIO-specific configurations if backend is LIBBLKIO
         if (backend == XFERBENCH_BACKEND_LIBBLKIO) {
-            libblkio_api_type = FLAGS_libblkio_api_type;
+            libblkio_api_type = NB_ARG(libblkio_api_type);
 
             // Validate LIBBLKIO API type
             if (libblkio_api_type != XFERBENCH_LIBBLKIO_API_IO_URING &&
@@ -385,6 +385,13 @@ xferBenchConfig::loadParams(void) {
                 libblkio_api_type != XFERBENCH_LIBBLKIO_API_VHOST_VDPA) {
                 std::cerr << "Invalid LIBBLKIO API type: " << libblkio_api_type
                           << ". Must be one of [IO_URING, VHOST_USER, VHOST_VDPA]" << std::endl;
+                return -1;
+            }
+
+            // Validate device_list - LIBBLKIO requires explicit device list
+            std::string device_list = NB_ARG(device_list);
+            if (device_list.empty() || device_list == "all") {
+                std::cerr << "LIBBLKIO backend requires explicit device_list, not 'all' or empty" << std::endl;
                 return -1;
             }
         }
@@ -885,14 +892,21 @@ parseLibblkioDeviceList(const std::string &device_list, int num_devices) {
         std::string id_str, type_str, path;
         if (std::getline(dev_ss, id_str, ':') && std::getline(dev_ss, type_str, ':') &&
             std::getline(dev_ss, path)) {
-            int device_id = std::stoi(id_str);
+            int device_id;
+            try {
+                device_id = std::stoi(id_str);
+            } catch (const std::exception &e) {
+                std::cerr << "Invalid LIBBLKIO device ID: '" << id_str
+                          << "'. Must be a valid integer." << std::endl;
+                exit(EXIT_FAILURE);
+            }
             char device_type = type_str[0];
             if (device_type != 'B') {
                 std::cerr << "Invalid LIBBLKIO device type: " << device_type
                           << ". Must be 'B' (block device)" << std::endl;
                 exit(EXIT_FAILURE);
             }
-            devices.push_back({device_id, device_type, path});
+            devices.push_back({device_id, path});
         } else {
             std::cerr << "Invalid LIBBLKIO device specification: " << device_spec
                       << ". Expected format: 'id:B:path'" << std::endl;

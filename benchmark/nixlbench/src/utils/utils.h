@@ -232,7 +232,6 @@ struct GusliDeviceConfig {
 // LIBBLKIO device config similar to GUSLI
 struct LibblkioDeviceConfig {
     int device_id;
-    char device_type; // 'B' for block device
     std::string device_path;
 };
 

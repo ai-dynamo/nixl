@@ -65,7 +65,6 @@ if enabled_plugins.get('GDS_MT')
     endif
 endif
 
-cc = meson.get_compiler('cpp')
 libtransfer_engine = cc.find_library('transfer_engine', required: false)
 disable_mooncake_backend = get_option('disable_mooncake_backend')
 if enabled_plugins.get('MOONCAKE')

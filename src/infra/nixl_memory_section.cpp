@@ -153,25 +153,25 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
     for (i = 0; i < mem_elms.descCount(); ++i) {
         // TODO: For now trusting the user, but there can be a more checks mode
         //       where we find overlaps and split the memories or warn the user
-        NIXL_INFO << "addDescList: registering desc " << i << " of " << mem_elms.descCount()
-                  << " type=" << nixl_mem << " devId=" << mem_elms[i].devId;
         ret = backend->registerMem(mem_elms[i], nixl_mem, local_sec.metadataP);
-        NIXL_INFO << "addDescList: registerMem returned " << ret
-                  << " metadataP=" << (void*)local_sec.metadataP;
-        if (ret != NIXL_SUCCESS)
+        if (ret != NIXL_SUCCESS) {
+            NIXL_INFO << "addDescList: registerMem failed for desc " << i 
+                      << " type=" << nixl_mem << " devId=" << mem_elms[i].devId 
+                      << " with error " << ret;
             break;
+        }
 
         if (backend->supportsLocal()) {
             ret = backend->loadLocalMD(local_sec.metadataP, self_sec.metadataP);
-            NIXL_INFO << "addDescList: loadLocalMD returned " << ret;
             if (ret != NIXL_SUCCESS) {
+                NIXL_INFO << "addDescList: loadLocalMD failed for desc " << i 
+                          << " with error " << ret;
                 backend->deregisterMem(local_sec.metadataP);
                 break;
             }
         }
         if (backend->supportsRemote()) {
             ret = backend->getPublicData(local_sec.metadataP, local_sec.metaBlob);
-            NIXL_INFO << "addDescList: getPublicData returned " << ret;
             if (ret != NIXL_SUCCESS) {
                 // A backend might use the same object for both initiator/target
                 // side of a transfer, so no need for unloadMD in that case.

@@ -920,18 +920,25 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             exit(EXIT_FAILURE);
         }
 
-        std::vector<std::string> filenames;
-        if (!xferBenchConfig::filenames.empty()) {
-            std::string filename;
-            std::stringstream ss(xferBenchConfig::filenames);
-            while (std::getline(ss, filename, ',')) {
-                filenames.push_back(filename);
+        // LIBBLKIO uses device_list from backend_params, not file descriptors
+        if (XFERBENCH_BACKEND_LIBBLKIO == xferBenchConfig::backend) {
+            // LIBBLKIO doesn't use file descriptors - it reads device paths from backend_params["device_list"]
+            // Skip file creation and descriptor setup
+            remote_fds.clear();
+        } else {
+            std::vector<std::string> filenames;
+            if (!xferBenchConfig::filenames.empty()) {
+                std::string filename;
+                std::stringstream ss(xferBenchConfig::filenames);
+                while (std::getline(ss, filename, ',')) {
+                    filenames.push_back(filename);
+                }
             }
-        }
-        remote_fds = createFileFds(getName(), num_files, filenames);
-        if (remote_fds.empty()) {
-            std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
-            exit(EXIT_FAILURE);
+            remote_fds = createFileFds(getName(), num_files, filenames);
+            if (remote_fds.empty()) {
+                std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
+                exit(EXIT_FAILURE);
+            }
         }
 
         int file_idx = 0;
