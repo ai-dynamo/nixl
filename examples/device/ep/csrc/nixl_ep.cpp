@@ -274,6 +274,7 @@ void Buffer::destroy() {
 
     // Free chunked mode staffs
     CUDA_CHECK(cudaFreeHost(const_cast<int*>(moe_recv_expert_counter)));
+    CUDA_CHECK(cudaFreeHost(const_cast<int*>(moe_recv_rdma_counter)));
 
     destroyed = true;
     available = false;
