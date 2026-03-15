@@ -31,7 +31,6 @@ from . import nixl_ep_cpp
 
 # noinspection PyUnresolvedReferences
 from .nixl_ep_cpp import Config, EventHandle
-from .utils import check_nvlink_connections
 from .utils import EventOverlap
 
 if TYPE_CHECKING:
@@ -87,9 +86,6 @@ class Buffer:
 
         if disable_ll_nvlink:
             os.environ["UCX_TLS"] = "^cuda_ipc"
-
-        if self.group is not None:
-            check_nvlink_connections(self.group)
 
         self.runtime = nixl_ep_cpp.Buffer(self.rank, low_latency_mode, explicitly_destroy)
 
