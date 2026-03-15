@@ -32,7 +32,7 @@ namespace cg = cooperative_groups;
 
 namespace nixl_ep {
 
-__device__ inline void* p2p_ptr_get(const gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst_rank) {
+__device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst_rank) {
     if (dst_rank == ctx.rank) return (void*) dst_ptr;
 
     void *remote_ptr = nixlGetPtr(ctx.remote_mvh, dst_rank);
