@@ -53,7 +53,6 @@ struct gpu_nixl_ctx {
     __device__ inline uint64_t offset_get(uint64_t ptr) {
         return ptr - reinterpret_cast<uint64_t>(rdma_buffer_ptr);
     }
-    __device__ inline void* p2p_ptr_get(uint64_t dst_ptr, int dst_rank);
 };
 
 

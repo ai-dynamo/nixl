@@ -32,13 +32,13 @@ namespace cg = cooperative_groups;
 
 namespace nixl_ep {
 
-__device__ inline void* gpu_nixl_ctx::p2p_ptr_get(uint64_t dst_ptr, int dst_rank) {
-    if (dst_rank == rank) return (void*) dst_ptr;
+__device__ inline void* p2p_ptr_get(const gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst_rank) {
+    if (dst_rank == ctx.rank) return (void*) dst_ptr;
 
-    void *remote_ptr = nixlGetPtr(remote_mvh, dst_rank);
+    void *remote_ptr = nixlGetPtr(ctx.remote_mvh, dst_rank);
     if (remote_ptr == nullptr) return nullptr;
 
-    return (void*) ((uint64_t) remote_ptr + offset_get(dst_ptr));
+    return (void*) ((uint64_t) remote_ptr + ctx.offset_get(dst_ptr));
 }
 
 namespace ep_kernels {
@@ -183,7 +183,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
                                      dst_expert_local_idx * num_ranks * num_max_dispatch_tokens_per_rank * num_bytes_per_msg +
                                      rank * num_max_dispatch_tokens_per_rank * num_bytes_per_msg +
                                      slot_idx * num_bytes_per_msg;
-                void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
+                void* dst_p2p_ptr = p2p_ptr_get(nixl_ctx, dst_ptr, dst_rank);
                 if (not is_rank_masked<true>(mask_buffer_ptr, dst_rank)) {
                     if (dst_p2p_ptr == 0) {
                         nixlMemViewElem src_mdesc{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(src_ptr)};
@@ -252,7 +252,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
         // Wait local sends issued and send expert counts
         while (ld_acquire_global(atomic_finish_counter_per_expert + responsible_expert_idx) != FINISHED_SUM_TAG * 2);
         auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_count + dst_expert_local_idx * num_ranks + rank);
-        void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
+        void* dst_p2p_ptr = p2p_ptr_get(nixl_ctx, dst_ptr, dst_rank);
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
             if (dst_p2p_ptr == 0) {
                 nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, static_cast<size_t>(dst_rank), nixl_ctx.offset_get(dst_ptr)};
@@ -722,7 +722,7 @@ combine(void* combined_x,
                 const auto buf_ptr = reinterpret_cast<int64_t>(rdma_send_x_vec_row);
                 const auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_x) +
                     (global_expert_idx * num_max_dispatch_tokens_per_rank + src_idx) * num_bytes_per_slot;
-                void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
+                void* dst_p2p_ptr = p2p_ptr_get(nixl_ctx, dst_ptr, dst_rank);
                 int num_send_bytes = hidden * sizeof(nv_bfloat16);
 
                 if (not zero_copy or dst_p2p_ptr != 0) {
@@ -801,7 +801,7 @@ combine(void* combined_x,
         if (sub_warp_id == 1 and lane_id == 0) {
             while (ld_acquire_global(atomic_clean_flag) == 0);
             auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_flag + global_expert_idx);
-            void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
+            void* dst_p2p_ptr = p2p_ptr_get(nixl_ctx, dst_ptr, dst_rank);
             if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
                 if (dst_p2p_ptr == 0) {
                     nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
