@@ -56,7 +56,7 @@ class Buffer:
         disable_ll_nvlink: bool = False,
         explicitly_destroy: bool = False,
         rank: int = 0,
-        low_latency_mode: bool = False,
+        low_latency_mode: bool = True,
         group: Optional[dist.ProcessGroup] = None,
         comm: Optional["mpi4py.MPI.Comm"] = None,
         tcp_store_group: Optional[dist.TCPStore] = None,
