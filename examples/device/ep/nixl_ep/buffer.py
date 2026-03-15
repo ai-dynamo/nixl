@@ -662,6 +662,27 @@ class Buffer:
         finally:
             self.tcp_store_group.delete_key(md_key)
 
+    def _ht_connect_ranks(self, remote_ranks: List[int]) -> None:
+        if self.group is not None:
+            def all_gather_object(obj):
+                object_list = [None] * self.group_size
+                dist.all_gather_object(object_list, obj, self.group)
+                return object_list
+        elif self.comm is not None:
+            def all_gather_object(obj):
+                return self.comm.allgather(obj)
+        else:
+            raise ValueError("Either 'group' or 'comm' must be configured.")
+
+        local_ipc_handle = self.runtime.get_local_ipc_handle()
+        ipc_handles = all_gather_object(local_ipc_handle)
+
+        if self.tcp_store_group is not None:
+            with self._fetch_remote_metadata_from_tcp_store(remote_ranks) as remote_mds:
+                self.runtime.connect_ranks(remote_ranks, remote_mds, ipc_handles)
+        else:
+            self.runtime.connect_ranks(remote_ranks, None, ipc_handles)
+
     def connect_ranks(self, remote_ranks: List[int]) -> None:
         """
         Add connections to remote ranks.
@@ -677,27 +698,7 @@ class Buffer:
             else:
                 self.runtime.connect_ranks(remote_ranks)
         else:
-            # High-throughput internode mode: need group for IPC handles
-            if self.group is not None:
-                def all_gather_object(obj):
-                    object_list = [None] * self.group_size
-                    dist.all_gather_object(object_list, obj, self.group)
-                    return object_list
-            elif self.comm is not None:
-                def all_gather_object(obj):
-                    return self.comm.allgather(obj)
-            else:
-                raise ValueError("Either 'group' or 'comm' must be configured.")
-
-            local_ipc_handle = self.runtime.get_local_ipc_handle()
-            ipc_handles = all_gather_object(local_ipc_handle)
-
-            # Use TCPStore for NIXL metadata exchange if available, otherwise use ETCD
-            if self.tcp_store_group is not None:
-                with self._fetch_remote_metadata_from_tcp_store(remote_ranks) as remote_mds:
-                    self.runtime.connect_ranks(remote_ranks, remote_mds, ipc_handles)
-            else:
-                self.runtime.connect_ranks(remote_ranks, None, ipc_handles)
+            self._ht_connect_ranks(remote_ranks)
 
 
     def disconnect_ranks(self, remote_ranks: List[int]) -> None:
