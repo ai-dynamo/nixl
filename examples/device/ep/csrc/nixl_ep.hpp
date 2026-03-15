@@ -159,7 +159,7 @@ private:
 public:
     Buffer(int rank, bool low_latency_mode, bool explicitly_destroy);
 
-    void update_memory_buffers(int num_ranks, int max_experts_per_rank,  int64_t num_nvl_bytes, int64_t num_rdma_bytes);
+    void update_memory_buffers(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes = 0);
 
     void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, const std::vector<std::optional<pybind11::bytearray>>& all_gathered_handles = {});
 

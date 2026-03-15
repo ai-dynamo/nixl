@@ -58,7 +58,7 @@ static void sleep_ms(int milliseconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
 }
 
-void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes, int64_t num_rdma_bytes)
+void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes)
 {
     if (!available) {
         init(num_ranks, num_experts_per_rank, num_nvl_bytes, num_rdma_bytes);

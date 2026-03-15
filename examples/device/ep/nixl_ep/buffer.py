@@ -616,7 +616,7 @@ class Buffer:
         )
 
     def update_memory_buffers(
-        self, num_ranks: int, num_experts_per_rank: int, num_nvl_bytes: int, num_rdma_bytes: int
+        self, num_ranks: int, num_experts_per_rank: int, num_rdma_bytes: int, num_nvl_bytes: int = 0
     ):
         """
         Allocate remote memory for the communication buffer.
@@ -624,14 +624,14 @@ class Buffer:
         Arguments:
             num_ranks: the number of ranks.
             num_experts_per_rank: the number of experts per rank.
-            num_nvl_bytes: the buffer size for intranode NVLink communication.
             num_rdma_bytes: the buffer size for RDMA communication.
+            num_nvl_bytes: the buffer size for intranode NVLink communication (default: 0).
         """
         self.group_size = num_ranks
         self.num_nvl_bytes = num_nvl_bytes
         self.num_rdma_bytes = num_rdma_bytes
         self.runtime.update_memory_buffers(
-            num_ranks, num_experts_per_rank, num_nvl_bytes,num_rdma_bytes
+            num_ranks, num_experts_per_rank, num_rdma_bytes, num_nvl_bytes
         )
 
     def set_tcp_store_group(self, tcp_store_group: Optional[dist.TCPStore]) -> None:
