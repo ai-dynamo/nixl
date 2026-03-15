@@ -62,6 +62,13 @@ do { \
 } while (0)
 #endif
 
+#define ASSERT_REACHED_ONCE(msg) \
+do { \
+    static bool reached = false; \
+    EP_HOST_ASSERT((!reached && msg)); \
+    reached = true; \
+} while (0)
+
 #ifndef EP_DEVICE_ASSERT
 #define EP_DEVICE_ASSERT(cond) \
 do { \

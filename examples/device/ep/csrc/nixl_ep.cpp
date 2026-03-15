@@ -352,6 +352,7 @@ void Buffer::_nixl_agents_peer_info_gather(std::vector<int>& ranks) {
 
 void Buffer::_ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles = {}) {
     if (num_nvl_bytes > 0) {
+        ASSERT_REACHED_ONCE("Elasticity is not supported on high-throughput yet");
         EP_HOST_ASSERT(all_gathered_handles.size() == max_num_ranks);
         for (int i = 0, offset = rdma_rank * num_nvl_ranks; i < num_nvl_ranks; ++ i) {
             EP_HOST_ASSERT(all_gathered_handles[offset + i].has_value());
@@ -377,6 +378,10 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std:
     const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles) {
     EP_HOST_ASSERT(!remote_ranks_list.empty());
     EP_HOST_ASSERT(!remote_mds.has_value() || remote_mds->size() == remote_ranks_list.size());
+
+    if (!low_latency_mode && num_nvl_bytes > 0) {
+        EP_HOST_ASSERT(remote_ranks.empty() && "connect_ranks called more than once in high-throughput mode; elasticity is not yet supported");
+    }
 
     std::vector<int> new_ranks;
     std::vector<nixl_blob_t> new_ranks_mds;
