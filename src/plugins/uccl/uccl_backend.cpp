@@ -644,44 +644,29 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     uint64_t transfer_id = 0;
     uccl_handle = static_cast<nixlUcclReqH *>(handle);
 
+    // Build optional IPC info pointers for cross-process local transfers
+    std::vector<char *> ipc_ptrs;
     if (uccl_handle->use_ipc) {
-        // Cross-process local transfer: use IPC APIs with externally-provided IPC info
-        std::vector<char *> ipc_ptrs(lcnt);
+        ipc_ptrs.resize(lcnt);
         for (size_t i = 0; i < lcnt; i++) {
             ipc_ptrs[i] = uccl_handle->ipc_infos[i].data();
         }
+    }
 
-        switch (operation) {
-        case NIXL_READ: {
-            result = uccl_engine_read_ipc_vector(conn, addr_v, size_v, ipc_ptrs, lcnt, &transfer_id);
-            break;
-        }
-        case NIXL_WRITE: {
-            std::vector<void const *> src_v(addr_v.begin(), addr_v.end());
-            result = uccl_engine_write_ipc_vector(conn, src_v, size_v, ipc_ptrs, lcnt, &transfer_id);
-            break;
-        }
-        default:
-            NIXL_ERROR << "Unsupported operation type: " << operation;
-            return NIXL_ERR_INVALID_PARAM;
-        }
-    } else {
-        // RDMA or same-process local transfer
-        switch (operation) {
-        case NIXL_READ: {
-            result = uccl_engine_read_vector(
-                conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
-            break;
-        }
-        case NIXL_WRITE: {
-            result = uccl_engine_write_vector(
-                conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
-            break;
-        }
-        default:
-            NIXL_ERROR << "Unsupported operation type: " << operation;
-            return NIXL_ERR_INVALID_PARAM;
-        }
+    switch (operation) {
+    case NIXL_READ: {
+        result = uccl_engine_read_vector(
+            conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id, ipc_ptrs);
+        break;
+    }
+    case NIXL_WRITE: {
+        result = uccl_engine_write_vector(
+            conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id, ipc_ptrs);
+        break;
+    }
+    default:
+        NIXL_ERROR << "Unsupported operation type: " << operation;
+        return NIXL_ERR_INVALID_PARAM;
     }
 
     if (result != 0) {
