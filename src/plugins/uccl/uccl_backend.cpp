@@ -559,11 +559,15 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         uccl_engine_update_fifo(uccl_handle->fifo_items[i], remote_addr, rsize);
 
         // For local connections (same-process or cross-process): prepare IPC info from remote MD
-        if (is_local_conn && rmd->has_ipc) {
-            uccl_handle->ipc_infos[i].assign(rmd->ipc_info, rmd->ipc_info + IPC_INFO_SIZE);
-            // Adjust offset for the actual sub-range within the registered region
-            uccl_engine_update_ipc_info(uccl_handle->ipc_infos[i].data(),
-                                         remote_addr, (uintptr_t)rmd->addr, rsize);
+        if (is_local_conn) {
+            if (rmd->has_ipc) {
+                uccl_handle->ipc_infos[i].assign(rmd->ipc_info, rmd->ipc_info + IPC_INFO_SIZE);
+                uccl_engine_update_ipc_info(uccl_handle->ipc_infos[i].data(),
+                                             remote_addr, (uintptr_t)rmd->addr, rsize);
+            } else {
+                // Same process
+                uccl_handle->ipc_infos[i].assign(IPC_INFO_SIZE, 0);
+            }
             uccl_handle->use_ipc = true;
         }
     }
