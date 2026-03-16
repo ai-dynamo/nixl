@@ -143,6 +143,7 @@ class nixlUcclBackendMD : public nixlBackendMD {
 public:
     nixlUcclBackendMD(bool isPrivate) : nixlBackendMD(isPrivate) {
         memset(fifo_item, 0, FIFO_SIZE);
+        memset(ipc_info, 0, IPC_INFO_BUF_SIZE);
     }
 
     virtual ~nixlUcclBackendMD() {}
@@ -152,6 +153,8 @@ public:
     int ref_cnt;
     uccl_mr_t mr_id; // UCCL memory region id
     char fifo_item[FIFO_SIZE];
+    char ipc_info[IPC_INFO_BUF_SIZE]; // serialized IPC transfer info for cross-process local
+    bool has_ipc = false;             // true if GPU buffer with valid IPC handle
 };
 
 // UCCL Backend Request Handle
@@ -165,6 +168,8 @@ public:
     uint64_t transfer_id;
     nixl_blob_t notif_msg;
     std::vector<FifoItem> fifo_items;
+    std::vector<std::vector<char>> ipc_infos; // for cross-process local transfers
+    bool use_ipc = false;                      // true if cross-process local path
 };
 
 #endif

@@ -186,14 +186,24 @@ nixl_status_t
 nixlUcclEngine::getPublicData(const nixlBackendMD *meta, std::string &str) const {
     nixlUcclBackendMD *priv = (nixlUcclBackendMD *)meta;
 
-    // Export fifo_item as hex string.
-    // The fifo_item is used to perform one-sided operation
+    // Export fifo_item as hex string (FIFO_SIZE * 2 hex chars).
     str.clear();
-    str.reserve(FIFO_SIZE * 2);
+    str.reserve(FIFO_SIZE * 2 + 2 + IPC_INFO_SIZE * 2);
     for (int i = 0; i < FIFO_SIZE; i++) {
         char hex[3];
         snprintf(hex, sizeof(hex), "%02x", static_cast<unsigned char>(priv->fifo_item[i]));
         str += hex;
+    }
+
+    // Append IPC info: "01" + hex(ipc_info) if has_ipc, else "00".
+    // This enables cross-process local (IPC) transfers.
+    str += (priv->has_ipc ? "01" : "00");
+    if (priv->has_ipc) {
+        for (int i = 0; i < IPC_INFO_SIZE; i++) {
+            char hex[3];
+            snprintf(hex, sizeof(hex), "%02x", static_cast<unsigned char>(priv->ipc_info[i]));
+            str += hex;
+        }
     }
 
     return NIXL_SUCCESS;
@@ -365,6 +375,11 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_ERR_BACKEND;
     }
 
+    // Retrieve pre-computed IPC info for GPU buffers (used by cross-process local transfers)
+    bool has_ipc = false;
+    uccl_engine_get_ipc_info(engine_, mem.addr, priv->ipc_info, &has_ipc);
+    priv->has_ipc = has_ipc;
+
     out = priv;
     mem_reg_info_[mem.addr] = priv;
     NIXL_DEBUG << "Registering memory: " << std::hex << mem.addr << " Device: " << mem.devId
@@ -411,6 +426,8 @@ nixlUcclEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
     output_md->ref_cnt = 1;
     output_md->mr_id = input_md->mr_id;
     memcpy(output_md->fifo_item, input_md->fifo_item, FIFO_SIZE);
+    memcpy(output_md->ipc_info, input_md->ipc_info, IPC_INFO_SIZE);
+    output_md->has_ipc = input_md->has_ipc;
 
     return NIXL_SUCCESS;
 }
@@ -429,20 +446,37 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
     output_md->length = input.len;
     output_md->ref_cnt = 1;
 
-    // Decode fifo_item from hex string
+    // Decode fifo_item and optional IPC info from hex string.
+    // Format: <fifo_item hex (128 chars)> [<ipc_flag (2 chars)> [<ipc_info hex (256 chars)>]]
     const std::string &hex_str = input.metaInfo;
+    size_t min_len = FIFO_SIZE * 2;  // 128 chars for fifo_item
 
-    if (hex_str.length() == FIFO_SIZE * 2) {
-        for (int i = 0; i < FIFO_SIZE; i++) {
-            std::string byte_str = hex_str.substr(i * 2, 2);
-            output_md->fifo_item[i] = static_cast<char>(strtoul(byte_str.c_str(), NULL, 16));
-        }
-    } else {
-        NIXL_ERROR << "Invalid fifo_item hex string length: " << hex_str.length() << " (expected "
-                   << FIFO_SIZE * 2 << ")";
+    if (hex_str.length() < min_len) {
+        NIXL_ERROR << "Invalid metaInfo hex string length: " << hex_str.length()
+                   << " (expected at least " << min_len << ")";
         delete output_md;
         output = nullptr;
         return NIXL_ERR_INVALID_PARAM;
+    }
+
+    // Decode fifo_item (first FIFO_SIZE*2 hex chars)
+    for (int i = 0; i < FIFO_SIZE; i++) {
+        std::string byte_str = hex_str.substr(i * 2, 2);
+        output_md->fifo_item[i] = static_cast<char>(strtoul(byte_str.c_str(), NULL, 16));
+    }
+
+    // Decode optional IPC info (appended after fifo_item)
+    size_t pos = min_len;
+    if (hex_str.length() > pos + 2) {
+        std::string ipc_flag = hex_str.substr(pos, 2);
+        pos += 2;
+        if (ipc_flag == "01" && hex_str.length() >= pos + IPC_INFO_SIZE * 2) {
+            for (int i = 0; i < IPC_INFO_SIZE; i++) {
+                std::string byte_str = hex_str.substr(pos + i * 2, 2);
+                output_md->ipc_info[i] = static_cast<char>(strtoul(byte_str.c_str(), NULL, 16));
+            }
+            output_md->has_ipc = true;
+        }
     }
 
     return NIXL_SUCCESS;
@@ -498,6 +532,13 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     uccl_handle->fifo_items.resize(lcnt);
 
+    // Check if this is a cross-process local connection (IPC path)
+    bool cross_process_local = uccl_engine_conn_is_cross_process_local(conn);
+
+    if (cross_process_local) {
+        uccl_handle->ipc_infos.resize(lcnt);
+    }
+
     std::lock_guard<std::mutex> lock(mem_mutex_);
     for (size_t i = 0; i < lcnt; i++) {
         lmd = (nixlUcclBackendMD *)local[i].metadataP;
@@ -516,6 +557,15 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         deserialize_fifo_item(rmd->fifo_item, &uccl_handle->fifo_items[i]);
 
         uccl_engine_update_fifo(uccl_handle->fifo_items[i], remote_addr, rsize);
+
+        // For cross-process local: prepare IPC info from remote MD
+        if (cross_process_local && rmd->has_ipc) {
+            uccl_handle->ipc_infos[i].assign(rmd->ipc_info, rmd->ipc_info + IPC_INFO_SIZE);
+            // Adjust offset for the actual sub-range within the registered region
+            uccl_engine_update_ipc_info(uccl_handle->ipc_infos[i].data(),
+                                         remote_addr, (uintptr_t)rmd->addr, rsize);
+            uccl_handle->use_ipc = true;
+        }
     }
 
     return NIXL_SUCCESS;
@@ -594,20 +644,44 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     uint64_t transfer_id = 0;
     uccl_handle = static_cast<nixlUcclReqH *>(handle);
 
-    switch (operation) {
-    case NIXL_READ: {
-        result = uccl_engine_read_vector(
-            conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
-        break;
-    }
-    case NIXL_WRITE: {
-        result = uccl_engine_write_vector(
-            conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
-        break;
-    }
-    default:
-        NIXL_ERROR << "Unsupported operation type: " << operation;
-        return NIXL_ERR_INVALID_PARAM;
+    if (uccl_handle->use_ipc) {
+        // Cross-process local transfer: use IPC APIs with externally-provided IPC info
+        std::vector<char *> ipc_ptrs(lcnt);
+        for (size_t i = 0; i < lcnt; i++) {
+            ipc_ptrs[i] = uccl_handle->ipc_infos[i].data();
+        }
+
+        switch (operation) {
+        case NIXL_READ: {
+            result = uccl_engine_read_ipc_vector(conn, addr_v, size_v, ipc_ptrs, lcnt, &transfer_id);
+            break;
+        }
+        case NIXL_WRITE: {
+            std::vector<void const *> src_v(addr_v.begin(), addr_v.end());
+            result = uccl_engine_write_ipc_vector(conn, src_v, size_v, ipc_ptrs, lcnt, &transfer_id);
+            break;
+        }
+        default:
+            NIXL_ERROR << "Unsupported operation type: " << operation;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+    } else {
+        // RDMA or same-process local transfer
+        switch (operation) {
+        case NIXL_READ: {
+            result = uccl_engine_read_vector(
+                conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
+            break;
+        }
+        case NIXL_WRITE: {
+            result = uccl_engine_write_vector(
+                conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
+            break;
+        }
+        default:
+            NIXL_ERROR << "Unsupported operation type: " << operation;
+            return NIXL_ERR_INVALID_PARAM;
+        }
     }
 
     if (result != 0) {
