@@ -18,6 +18,7 @@
 #ifndef _ETCD_RT_H
 #define _ETCD_RT_H
 
+#include <atomic>
 #include <string>
 #include <memory>
 #include <mutex>
@@ -55,7 +56,7 @@ private:
     int my_rank; // Rank information
     int global_size;
     uint64_t barrier_gen;
-    int *terminate;
+    std::atomic<int> *terminate;
 
     bool error() const { return terminate != nullptr && *terminate; };
     bool should_retry(int value, int max = 60) const {
@@ -79,7 +80,7 @@ public:
     xferBenchEtcdRT(const std::string &benchmark_group,
                     const std::string &etcd_endpoints,
                     const int size,
-                    int *terminate = nullptr);
+                    std::atomic<int> *terminate = nullptr);
     ~xferBenchEtcdRT();
 
     // Setup function to initialize connection and perform registration
@@ -103,6 +104,10 @@ public:
     // Check if all peer rank keys are still present in etcd
     bool
     arePeersAlive() override;
+
+    // Cancel keepalive and remove namespace keys before a forced _Exit()
+    void
+    cleanupForExit() override;
 };
 
 #endif // _ETCD_RT_H

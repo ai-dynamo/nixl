@@ -68,7 +68,8 @@ public:
     }
 };
 
-static xferBenchRT *createRT(int *terminate) {
+static xferBenchRT *
+createRT(std::atomic<int> *terminate) {
     // For storage backends without ETCD endpoints, use null runtime
     if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
         std::cout << "Using null runtime for storage backend without ETCD" << std::endl;
@@ -108,6 +109,9 @@ int xferBenchWorker::synchronize() {
 
     if (rt->barrier("sync") != 0) {
         std::cerr << "Failed to synchronize" << std::endl;
+        // Best-effort cleanup of non-leased etcd keys (e.g. the "size" key)
+        // so they don't poison subsequent runs in the same benchmark_group.
+        rt->cleanupForExit();
         // Use _Exit() instead of exit() to bypass atexit handlers (e.g. gRPC shutdown).
         // exit() would deadlock with the etcd KeepAlive background thread: gRPC shutdown
         // waits for open streams to close, but the KeepAlive thread keeps renewing the
@@ -171,7 +175,7 @@ bool xferBenchWorker::isTarget() {
     return ("target" == name);
 }
 
-int xferBenchWorker::terminate = 0;
+std::atomic<int> xferBenchWorker::terminate = 0;
 
 void xferBenchWorker::signalHandler(int signal) {
     static const char msg[] = "Ctrl-C received, exiting...\n";

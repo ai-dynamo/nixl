@@ -1245,7 +1245,7 @@ execTransferIterations(nixlAgent *agent,
                        xferBenchTimer &timer,
                        xferBenchStats &thread_stats,
                        const bool recreate_per_iteration,
-                       const int *terminate_ptr = nullptr) {
+                       const std::atomic<int> *terminate_ptr = nullptr) {
     nixlXferReqH *req = nullptr;
     nixlTime::us_t total_prepare_duration = 0;
 
@@ -1329,7 +1329,7 @@ execTransfer(nixlAgent *agent,
              const int num_iter,
              const int num_threads,
              xferBenchStats &stats,
-             const int *terminate_ptr = nullptr) {
+             const std::atomic<int> *terminate_ptr = nullptr) {
     int ret = 0;
     stats.clear();
 

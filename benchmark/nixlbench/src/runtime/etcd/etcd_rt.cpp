@@ -37,7 +37,7 @@ constexpr int lease_ttl_s = 15;
 xferBenchEtcdRT::xferBenchEtcdRT(const std::string &benchmark_group,
                                  const std::string &etcd_endpoints,
                                  const int size,
-                                 int *terminate_input) {
+                                 std::atomic<int> *terminate_input) {
     // Store parameters for later use in setup
     stored_etcd_endpoints = etcd_endpoints.empty() ? ETCD_EP_DEFAULT : etcd_endpoints;
     global_size = size;
@@ -118,7 +118,23 @@ xferBenchEtcdRT::~xferBenchEtcdRT() {
         keepalive.reset();
     }
     // All ranks delete, as some could be missing if ETCD state is confused
-    client->rmdir(makeKey(""), true);
+    if (client) {
+        client->rmdir(makeKey(""), true);
+    }
+}
+
+void
+xferBenchEtcdRT::cleanupForExit() {
+    // Cancel keepalive first so the gRPC stream closes before we touch etcd.
+    if (keepalive) {
+        keepalive->Cancel();
+        keepalive.reset();
+    }
+    // Remove the whole namespace so non-leased keys (e.g. "size") don't
+    // linger and poison the next run in the same benchmark_group.
+    if (client) {
+        client->rmdir(makeKey(""), true);
+    }
 }
 
 bool

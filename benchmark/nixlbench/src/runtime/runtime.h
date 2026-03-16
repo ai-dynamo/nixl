@@ -47,6 +47,11 @@ class xferBenchRT {
         arePeersAlive() {
             return true;
         }
+
+        // Best-effort cleanup of runtime state (e.g. etcd keys) before a
+        // forced exit that bypasses normal destructors.
+        virtual void
+        cleanupForExit() {}
 };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_RUNTIME_H
