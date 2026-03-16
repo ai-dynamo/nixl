@@ -41,6 +41,7 @@ endif
 unit_test_exe = executable('unit',
     sources : [
         'main.cpp',
+        '../common.cpp',
     ],
     cpp_args : cpp_args,
     dependencies : unit_test_deps,
