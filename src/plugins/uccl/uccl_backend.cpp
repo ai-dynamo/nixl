@@ -532,10 +532,10 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     uccl_handle->fifo_items.resize(lcnt);
 
-    // Check if this is a cross-process local connection (IPC path)
-    bool cross_process_local = uccl_engine_conn_is_cross_process_local(conn);
+    // Check if this is a local connection (same-process or cross-process IPC path)
+    bool is_local_conn = (remote_agent == local_agent_name_);
 
-    if (cross_process_local) {
+    if (is_local_conn) {
         uccl_handle->ipc_infos.resize(lcnt);
     }
 
@@ -558,8 +558,8 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
 
         uccl_engine_update_fifo(uccl_handle->fifo_items[i], remote_addr, rsize);
 
-        // For cross-process local: prepare IPC info from remote MD
-        if (cross_process_local && rmd->has_ipc) {
+        // For local connections (same-process or cross-process): prepare IPC info from remote MD
+        if (is_local_conn && rmd->has_ipc) {
             uccl_handle->ipc_infos[i].assign(rmd->ipc_info, rmd->ipc_info + IPC_INFO_SIZE);
             // Adjust offset for the actual sub-range within the registered region
             uccl_engine_update_ipc_info(uccl_handle->ipc_infos[i].data(),
