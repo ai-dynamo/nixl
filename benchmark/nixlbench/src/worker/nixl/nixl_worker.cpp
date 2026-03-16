@@ -109,9 +109,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     rank = rt->getRank();
 
-    nixlAgentConfig dev_meta;
-    dev_meta.useProgThread = enable_pt;
-    dev_meta.syncMode = sync_mode;
+    nixlAgentConfig dev_meta(enable_pt, false, 0, sync_mode);
 
     agent = new nixlAgent(name, dev_meta);
 
@@ -303,6 +301,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         backend_params["api_type"] = xferBenchConfig::libblkio_api_type;
         backend_params["device_list"] = xferBenchConfig::device_list;
         backend_params["direct_io"] = xferBenchConfig::storage_enable_direct ? "1" : "0";
+        backend_params["io_polling"] = xferBenchConfig::libblkio_io_polling ? "1" : "0";
 
         std::cout << "LIBBLKIO backend with API type: " << xferBenchConfig::libblkio_api_type
                   << std::endl;
@@ -877,6 +876,32 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_iovs.push_back(iov_list);
         }
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_LIBBLKIO) {
+        // LIBBLKIO backend uses block device descriptors from device_list
+        int expected_num_devices =
+            isInitiator() ? xferBenchConfig::num_initiator_dev : xferBenchConfig::num_target_dev;
+        libblkio_devices =
+            parseLibblkioDeviceList(xferBenchConfig::device_list, expected_num_devices);
+        if (libblkio_devices.empty()) {
+            std::cerr << "No LIBBLKIO devices configured" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                xferBenchIOV iov(
+                    0, buffer_size, libblkio_devices[i].device_id, libblkio_devices[i].device_path);
+                iov_list.push_back(iov);
+                // Register each BLK_SEG descriptor individually
+                nixl_reg_dlist_t desc_list(BLK_SEG);
+                nixlBlobDesc desc(iov.addr, iov.len, iov.devId, iov.metaInfo);
+                desc_list.addDesc(desc);
+                CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args),
+                                 "BLK_SEG registerMem failed");
+            }
+            remote_iovs.push_back(iov_list);
+        }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
         int num_files = xferBenchConfig::num_files;
@@ -896,18 +921,26 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             exit(EXIT_FAILURE);
         }
 
-        std::vector<std::string> filenames;
-        if (!xferBenchConfig::filenames.empty()) {
-            std::string filename;
-            std::stringstream ss(xferBenchConfig::filenames);
-            while (std::getline(ss, filename, ',')) {
-                filenames.push_back(filename);
+        // LIBBLKIO uses device_list from backend_params, not file descriptors
+        if (XFERBENCH_BACKEND_LIBBLKIO == xferBenchConfig::backend) {
+            // LIBBLKIO doesn't use file descriptors - it reads device paths from
+            // backend_params["device_list"] Skip file creation and descriptor setup
+            remote_fds.clear();
+        } else {
+            std::vector<std::string> filenames;
+            if (!xferBenchConfig::filenames.empty()) {
+                std::string filename;
+                std::stringstream ss(xferBenchConfig::filenames);
+                while (std::getline(ss, filename, ',')) {
+                    filenames.push_back(filename);
+                }
             }
-        }
-        remote_fds = createFileFds(getName(), num_files, filenames);
-        if (remote_fds.empty()) {
-            std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
-            exit(EXIT_FAILURE);
+            remote_fds = createFileFds(getName(), num_files, filenames);
+            if (remote_fds.empty()) {
+                std::cerr << "Failed to create " << xferBenchConfig::backend << " file"
+                          << std::endl;
+                exit(EXIT_FAILURE);
+            }
         }
 
         int file_idx = 0;
@@ -924,9 +957,6 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
 
             nixl_reg_dlist_t desc_list(FILE_SEG);
-            if (xferBenchConfig::backend == XFERBENCH_BACKEND_LIBBLKIO)
-                desc_list = nixl_reg_dlist_t(BLK_SEG);
-
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_iovs.push_back(iov_list);
@@ -1036,16 +1066,21 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_LIBBLKIO) {
+        for (auto &iov_list : remote_iovs) {
+            for (auto &iov : iov_list) {
+                cleanupBasicDescBlk(iov);
+            }
+            nixl_reg_dlist_t desc_list(BLK_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+        }
     } else if (xferBenchConfig::isStorageBackend()) {
         for (auto &iov_list : remote_iovs) {
             for (auto &iov : iov_list) {
                 cleanupBasicDescFile(iov);
             }
-
             nixl_reg_dlist_t desc_list(FILE_SEG);
-            if (xferBenchConfig::backend == XFERBENCH_BACKEND_LIBBLKIO)
-                desc_list = nixl_reg_dlist_t(BLK_SEG);
-
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
@@ -1141,6 +1176,14 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     iov_remote.len = block_size;
                     iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);
+                } else if (XFERBENCH_BACKEND_LIBBLKIO == xferBenchConfig::backend) {
+                    xferBenchIOV iov_remote(iov);
+                    iov_remote.addr = file_offset;
+                    iov_remote.len = block_size;
+                    iov_remote.devId = libblkio_devices[devidx].device_id;
+                    iov_remote.metaInfo = libblkio_devices[devidx].device_path;
+                    devidx++;
+                    remote_iov_list.push_back(iov_remote);
                 } else {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = file_offset;
@@ -1155,7 +1198,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 }
             }
             res.push_back(remote_iov_list);
-            if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+            if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+                XFERBENCH_BACKEND_LIBBLKIO == xferBenchConfig::backend) {
                 file_offset += block_size;
             }
         }
@@ -1363,7 +1407,7 @@ execTransfer(nixlAgent *agent,
         nixl_opt_args_t params;
         std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
         if (!xferBenchConfig::isStorageBackend()) {
-            params.notif = "0xBEEF";
+            params.notifMsg = "0xBEEF";
         }
 
         // Execute transfers

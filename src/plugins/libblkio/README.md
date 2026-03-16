@@ -44,11 +44,26 @@ The libblkio plugin currently supports:
 The libblkio plugin accepts the following backend parameters:
 
 ### Required Parameters
+
 - `api_type`: API type to use
   - `"IO_URING"`: Use io_uring backend (default)
   - `"VHOST_USER"`: Use virtio-blk-vhost-user (future support)
   - `"VHOST_VDPA"`: Use virtio-blk-vhost-vdpa (future support)
+
+### Device Resolution
+
+The plugin supports two device resolution modes:
+
+**Multi-Device Mode (device_list required)**:
 - `device_list`: Comma-separated list of devices in format `id:type:path` (e.g., `1:B:/dev/loop0,2:B:/dev/loop1`)
+  - Required when specifying multiple devices
+  - Each device is assigned a specific devId for precise control
+
+**Single-Device Mode (device_list optional)**:
+- When `device_list` is not provided, the plugin resolves the device path using:
+  1. `metaInfo` field from memory descriptor (highest priority)
+  2. `NIXL_LIBBLKIO_PATH` environment variable (fallback)
+- Suitable for simple single-device deployments
 
 ### Optional Parameters
 - `direct_io`: Enable direct I/O (default: `0`/false)
@@ -110,6 +125,8 @@ NIXLBench supports libblkio backend for storage performance benchmarking. The be
 
 ### Device List Format
 
+**Multi-Device Mode**:
+
 Devices are specified using the `--device_list` parameter with format `id:type:path`:
 - `id`: Numeric device identifier (e.g., 1, 2, 3)
 - `type`: Device type (currently only `B` for block device is supported)
@@ -117,9 +134,21 @@ Devices are specified using the `--device_list` parameter with format `id:type:p
 
 **Important**: The number of devices in `--device_list` must match `--num_initiator_dev` and `--num_target_dev`.
 
+**Single-Device Mode**:
+
+For simple deployments, you can omit `--device_list` and use alternative resolution:
+
+```bash
+# Using environment variable
+export NIXL_LIBBLKIO_PATH=/dev/loop0
+./nixlbench --backend=LIBBLKIO --op_type=WRITE
+
+# Or the plugin will use metaInfo from memory descriptor
+```
+
 ### libblkio-Specific Parameters
 
-**Required**:
+**Multi-Device Mode Required**:
 - `--device_list`: Device specs in format `id:type:path` (e.g., `1:B:/dev/loop0,2:B:/dev/loop1`)
 - `--num_initiator_dev`: Must match number of devices in `--device_list`
 - `--num_target_dev`: Must match number of devices in `--device_list`
@@ -127,6 +156,11 @@ Devices are specified using the `--device_list` parameter with format `id:type:p
 **Optional**:
 - `--libblkio_api_type`: API type to use (default: `IO_URING`)
 - `--storage_enable_direct`: Enable direct I/O (default: disabled)
+- `--libblkio_io_polling`: Enable I/O polling (default: disabled)
+
+**Single-Device Mode**:
+- `--device_list`: Optional (omit for environment/metaInfo resolution)
+- Device path resolved from `metaInfo` or `NIXL_LIBBLKIO_PATH` environment variable
 
 ### Advanced Examples
 
@@ -168,11 +202,11 @@ Docker by default may block certain syscalls required by libblkio. These need to
 
 ```bash
 # Download default seccomp profile
-wget https://github.com/moby/moby/blob/master/profiles/seccomp/default.json
+wget -O default.json https://raw.githubusercontent.com/moby/moby/master/profiles/seccomp/default.json
 
 # Add the following to the section, syscalls:names in default.json
 # "io_uring_setup",
-# "io_uring_enter", 
+# "io_uring_enter",
 # "io_uring_register",
 # "io_uring_sync"
 

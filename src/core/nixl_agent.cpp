@@ -869,7 +869,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // For local transfers (empty remote agent), use local memory section
-    bool is_local_transfer = remote_agent.empty();
+    const bool is_local_transfer = remote_agent.empty();
 
     if (!is_local_transfer && data->remoteSections.count(remote_agent) == 0) {
         NIXL_ERROR_FUNC << "metadata for remote agent '" << remote_agent << "' not found";
@@ -891,14 +891,13 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         // locally and remotely, and find the common ones.
         backend_set_t* local_set =
             data->memorySection->queryBackends(local_descs.getType());
-        backend_set_t* remote_set = nullptr;
+        backend_set_t *remote_set = nullptr;
 
         if (is_local_transfer) {
             // For local transfers, query the local memory section for remote descriptors
             remote_set = data->memorySection->queryBackends(remote_descs.getType());
         } else {
-            remote_set = data->remoteSections[remote_agent]->queryBackends(
-                                                remote_descs.getType());
+            remote_set = data->remoteSections[remote_agent]->queryBackends(remote_descs.getType());
         }
 
         if (!local_set || !remote_set) {
@@ -907,8 +906,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             return NIXL_ERR_NOT_FOUND;
         }
 
-        for (auto & elm : *local_set)
-            if (remote_set->count(elm) != 0) {
+        for (auto *elm : *local_set)
+            if (remote_set->count(elm) != 0 && (!is_local_transfer || elm->supportsLocal())) {
                 backend_set.insert(elm);
             }
 
@@ -917,8 +916,11 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             return NIXL_ERR_NOT_FOUND;
         }
     } else {
-        for (auto & elm : extra_params->backends)
-            backend_set.insert(elm->engine);
+        for (const auto &elm : extra_params->backends) {
+            if (!is_local_transfer || elm->engine->supportsLocal()) {
+                backend_set.insert(elm->engine);
+            }
+        }
     }
 
     // TODO: when central KV is supported, add a call to fetchRemoteMD
@@ -939,11 +941,10 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
         if (is_local_transfer) {
             // For local transfers, populate from local memory section
-            ret2 = data->memorySection->populate(
-                         remote_descs, backend, *handle->targetDescs);
+            ret2 = data->memorySection->populate(remote_descs, backend, *handle->targetDescs);
         } else {
             ret2 = data->remoteSections[remote_agent]->populate(
-                         remote_descs, backend, *handle->targetDescs);
+                remote_descs, backend, *handle->targetDescs);
         }
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
@@ -989,6 +990,13 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     if (data->telemetryEnabled) {
         handle->telemetry.totalBytes = total_bytes;
         handle->telemetry.descCount = handle->initiatorDescs->descCount();
+    }
+
+    // For local transfers, ensure the backend supports local operations
+    if (handle->remoteAgent.empty() && !handle->engine->supportsLocal()) {
+        NIXL_ERROR_FUNC << "Backend does not support local transfers";
+        data->addErrorTelemetry(NIXL_ERR_INVALID_PARAM);
+        return NIXL_ERR_INVALID_PARAM;
     }
 
     ret1 = handle->engine->prepXfer (handle->backendOp,
@@ -1070,8 +1078,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // Check if the remote was invalidated before post/repost
     // Skip check for local transfers (empty remote agent)
-    if (!req_hndl->remoteAgent.empty() &&
-        data->remoteSections.count(req_hndl->remoteAgent) == 0) {
+    if (!req_hndl->remoteAgent.empty() && data->remoteSections.count(req_hndl->remoteAgent) == 0) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated after transfer request creation";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
@@ -1170,7 +1177,9 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
     // Same for users incorrectly recalling this method in error/done.
     if (req_hndl->status == NIXL_IN_PROG) {
         // Check if the remote was invalidated before completion
-        if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
+        // Skip check for local transfers (empty remote agent)
+        if (!req_hndl->remoteAgent.empty() &&
+            data->remoteSections.count(req_hndl->remoteAgent) == 0) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was invalidated during transfer";
             return NIXL_ERR_NOT_FOUND;

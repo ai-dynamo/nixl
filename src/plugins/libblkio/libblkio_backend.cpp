@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 Dell Technologies Inc. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,30 +36,26 @@ nixlLibblkioBackendReqH::nixlLibblkioBackendReqH(const nixl_xfer_op_t &operation
       local_(local),
       remote_(remote),
       blkio_handles_(std::move(blkio_handles)),
-      status_(NIXL_SUCCESS)
-{
-}
+      status_(NIXL_SUCCESS) {}
 
-nixl_status_t nixlLibblkioBackendReqH::prepXfer()
-{
+nixl_status_t
+nixlLibblkioBackendReqH::prepXfer() {
     if (blkio_handles_.empty()) {
         NIXL_ERROR << "libblkio: no blkio handles";
         return NIXL_ERR_INVALID_PARAM;
     }
 
     if (local_.descCount() != remote_.descCount()) {
-        NIXL_ERROR << absl::StrFormat(
-            "libblkio: descriptor count mismatch - local: %d, remote: %d",
-            local_.descCount(),
-            remote_.descCount());
+        NIXL_ERROR << absl::StrFormat("libblkio: descriptor count mismatch - local: %d, remote: %d",
+                                      local_.descCount(),
+                                      remote_.descCount());
         return NIXL_ERR_INVALID_PARAM;
     }
 
     if (static_cast<int>(blkio_handles_.size()) != remote_.descCount()) {
-        NIXL_ERROR << absl::StrFormat(
-            "libblkio: handle count (%zu) != descriptor count (%d)",
-            blkio_handles_.size(),
-            remote_.descCount());
+        NIXL_ERROR << absl::StrFormat("libblkio: handle count (%zu) != descriptor count (%d)",
+                                      blkio_handles_.size(),
+                                      remote_.descCount());
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -75,8 +71,7 @@ nixl_status_t nixlLibblkioBackendReqH::prepXfer()
 }
 
 nixl_status_t
-nixlLibblkioBackendReqH::register_blkio_buf(struct blkio *handle, void *buf, size_t size)
-{
+nixlLibblkioBackendReqH::registerBlkioBuf(struct blkio *handle, void *buf, size_t size) {
     struct blkio_mem_region region;
     region.addr = buf;
     region.len = size;
@@ -94,15 +89,14 @@ nixlLibblkioBackendReqH::register_blkio_buf(struct blkio *handle, void *buf, siz
 }
 
 void
-nixlLibblkioBackendReqH::unregister_blkio_bufs()
-{
+nixlLibblkioBackendReqH::unregisterBlkioBufs() {
     for (auto &[handle, region] : registered_regions_)
         blkio_unmap_mem_region(handle, &region);
+    registered_regions_.clear();
 }
 
 nixl_status_t
-nixlLibblkioBackendReqH::postXfer()
-{
+nixlLibblkioBackendReqH::postXfer() {
     for (int i = 0; i < local_.descCount(); i++) {
         const auto &local_desc = local_[i];
         const auto &remote_desc = remote_[i];
@@ -111,55 +105,45 @@ nixlLibblkioBackendReqH::postXfer()
         struct blkioq *queue = blkio_get_queue(handle, 0);
         if (!queue) {
             NIXL_ERROR << absl::StrFormat("libblkio: failed to get queue for desc %d", i);
-            unregister_blkio_bufs();
+            unregisterBlkioBufs();
             return NIXL_ERR_BACKEND;
         }
 
         struct blkio_completion comp;
         int ret;
 
-        register_blkio_buf(handle, (void *)(local_desc.addr), local_desc.len);
+        registerBlkioBuf(handle, (void *)(local_desc.addr), local_desc.len);
 
         if (operation_ == NIXL_READ) {
-            blkioq_read(queue,
-                        remote_desc.addr,
-                        (void *)local_desc.addr,
-                        local_desc.len,
-                        &comp,
-                        0);
+            blkioq_read(queue, remote_desc.addr, (void *)local_desc.addr, local_desc.len, &comp, 0);
         } else {
-            blkioq_write(queue,
-                         remote_desc.addr,
-                         (void *)local_desc.addr,
-                         local_desc.len,
-                         &comp,
-                         0);
+            blkioq_write(
+                queue, remote_desc.addr, (void *)local_desc.addr, local_desc.len, &comp, 0);
         }
 
         ret = blkioq_do_io(queue, &comp, 1, 1, nullptr);
         if (ret < 0) {
             NIXL_ERROR << absl::StrFormat("libblkio: completion failed: %s", strerror(-ret));
             status_ = NIXL_ERR_BACKEND;
-            unregister_blkio_bufs();
+            unregisterBlkioBufs();
             return NIXL_ERR_BACKEND;
         }
 
         if (comp.ret < 0) {
             NIXL_ERROR << absl::StrFormat("libblkio: I/O error: %s", strerror(-comp.ret));
             status_ = NIXL_ERR_BACKEND;
-            unregister_blkio_bufs();
+            unregisterBlkioBufs();
             return NIXL_ERR_BACKEND;
         }
     }
 
-    unregister_blkio_bufs();
+    unregisterBlkioBufs();
     status_ = NIXL_SUCCESS;
     return status_;
 }
 
 nixl_status_t
-nixlLibblkioBackendReqH::checkXfer()
-{
+nixlLibblkioBackendReqH::checkXfer() {
     return status_;
 }
 
@@ -174,8 +158,7 @@ nixlLibblkioEngine::nixlLibblkioEngine(const nixlBackendInitParams *init_params)
       queue_size_(128),
       direct_io_(false),
       io_polling_(false),
-      next_blk_reg_idx_(0)
-{
+      next_blk_reg_idx_(0) {
     const nixl_b_params_t &params = getCustomParams();
 
     auto api_type_it = params.find("api_type");
@@ -208,11 +191,31 @@ nixlLibblkioEngine::nixlLibblkioEngine(const nixlBackendInitParams *init_params)
             entry.erase(0, entry.find_first_not_of(" \t"));
             entry.erase(entry.find_last_not_of(" \t") + 1);
             if (!entry.empty()) {
-                rawdevs_.push_back(entry);
+                // Parse entry in format "id:type:path"
+                std::stringstream entry_ss(entry);
+                std::string id_str, type_str, path;
+                if (std::getline(entry_ss, id_str, ':') && std::getline(entry_ss, type_str, ':') &&
+                    std::getline(entry_ss, path)) {
+                    try {
+                        uint64_t dev_id = std::stoull(id_str);
+                        rawdev_map_[dev_id] = path;
+                        rawdevs_.push_back(entry); // Keep for backward compatibility
+                    }
+                    catch (const std::exception &e) {
+                        NIXL_ERROR
+                            << absl::StrFormat("libblkio: invalid device id '%s' in entry '%s'",
+                                               id_str.c_str(),
+                                               entry.c_str());
+                    }
+                } else {
+                    NIXL_ERROR << absl::StrFormat(
+                        "libblkio: invalid device entry format '%s', expected id:type:path",
+                        entry.c_str());
+                }
             }
         }
         NIXL_INFO << absl::StrFormat("libblkio: parsed %zu device(s) from device_list",
-                                     rawdevs_.size());
+                                     rawdev_map_.size());
     }
 
     NIXL_INFO << absl::StrFormat(
@@ -222,8 +225,7 @@ nixlLibblkioEngine::nixlLibblkioEngine(const nixlBackendInitParams *init_params)
         io_polling_);
 }
 
-nixlLibblkioEngine::~nixlLibblkioEngine()
-{
+nixlLibblkioEngine::~nixlLibblkioEngine() {
     for (auto &device : devices_) {
         if (device.handle) {
             blkio_destroy(&device.handle);
@@ -233,8 +235,7 @@ nixlLibblkioEngine::~nixlLibblkioEngine()
 }
 
 struct blkio *
-nixlLibblkioEngine::getBlkioHandle(uint64_t devId) const
-{
+nixlLibblkioEngine::getBlkioHandle(uint64_t devId) const {
     for (const auto &dev : devices_) {
         if (dev.devId == devId) {
             return dev.handle;
@@ -244,16 +245,13 @@ nixlLibblkioEngine::getBlkioHandle(uint64_t devId) const
 }
 
 nixl_status_t
-nixlLibblkioEngine::createBlkioDevice(const std::string &path, uint64_t devId)
-{
+nixlLibblkioEngine::createBlkioDevice(const std::string &path, uint64_t devId) {
     if (getBlkioHandle(devId)) {
         return NIXL_SUCCESS;
     }
 
-    NIXL_INFO << absl::StrFormat("libblkio: creating device path=%s, devId=0x%lx, api_type=%s",
-                                 path,
-                                 devId,
-                                 api_type_);
+    NIXL_INFO << absl::StrFormat(
+        "libblkio: creating device path=%s, devId=0x%lx, api_type=%s", path, devId, api_type_);
 
     BlkioDevice dev;
     dev.devId = devId;
@@ -327,9 +325,8 @@ nixlLibblkioEngine::createBlkioDevice(const std::string &path, uint64_t devId)
 
 nixl_status_t
 nixlLibblkioEngine::registerMem(const nixlBlobDesc &mem,
-                               const nixl_mem_t &nixl_mem,
-                               nixlBackendMD *&out)
-{
+                                const nixl_mem_t &nixl_mem,
+                                nixlBackendMD *&out) {
     out = nullptr;
 
     if (nixl_mem != DRAM_SEG && nixl_mem != BLK_SEG) {
@@ -345,22 +342,40 @@ nixlLibblkioEngine::registerMem(const nixlBlobDesc &mem,
                                   mem.metaInfo);
 
     if (nixl_mem == BLK_SEG) {
-        if (rawdevs_.empty()) {
-            NIXL_ERROR << "libblkio: no devices in device_list";
-            return NIXL_ERR_INVALID_PARAM;
+        std::string devpath;
+        if (rawdev_map_.empty()) {
+            // Try metaInfo fallback first
+            if (!mem.metaInfo.empty()) {
+                devpath = mem.metaInfo;
+                NIXL_DEBUG << absl::StrFormat("libblkio: using metaInfo device path: %s", devpath);
+            } else {
+                // Try environment variable fallback
+                const char *env_path = std::getenv("NIXL_LIBBLKIO_PATH");
+                if (env_path && *env_path != '\0') {
+                    devpath = env_path;
+                    NIXL_DEBUG << absl::StrFormat("libblkio: using NIXL_LIBBLKIO_PATH: %s",
+                                                  devpath);
+                } else {
+                    NIXL_ERROR << "libblkio: no devices in device_list, metaInfo empty, and "
+                                  "NIXL_LIBBLKIO_PATH not set";
+                    return NIXL_ERR_INVALID_PARAM;
+                }
+            }
+        } else {
+            // Use device_list resolution by devId
+            auto it = rawdev_map_.find(mem.devId);
+            if (it == rawdev_map_.end()) {
+                NIXL_ERROR << absl::StrFormat("libblkio: device id 0x%lx not found in device_list",
+                                              mem.devId);
+                return NIXL_ERR_NOT_FOUND;
+            }
+            devpath = it->second;
+            NIXL_DEBUG << absl::StrFormat("libblkio: devId=0x%lx -> %s", mem.devId, devpath);
         }
 
-        std::string &rawdev = rawdevs_[next_blk_reg_idx_ % rawdevs_.size()];
-        next_blk_reg_idx_++;
-        NIXL_DEBUG << absl::StrFormat("libblkio: rawdev %s", rawdev);
-
-        size_t lastcolon = rawdev.find_last_of(':');
-        if (lastcolon != std::string::npos) {
-            std::string devpath = rawdev.substr(lastcolon + 1);
-            nixl_status_t status = createBlkioDevice(devpath, mem.devId);
-            if (status != NIXL_SUCCESS) {
-                return status;
-            }
+        nixl_status_t status = createBlkioDevice(devpath, mem.devId);
+        if (status != NIXL_SUCCESS) {
+            return status;
         }
     }
 
@@ -369,20 +384,18 @@ nixlLibblkioEngine::registerMem(const nixlBlobDesc &mem,
 }
 
 nixl_status_t
-nixlLibblkioEngine::deregisterMem(nixlBackendMD *meta)
-{
+nixlLibblkioEngine::deregisterMem(nixlBackendMD *meta) {
     delete meta;
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlLibblkioEngine::prepXfer(const nixl_xfer_op_t &operation,
-                            const nixl_meta_dlist_t &local,
-                            const nixl_meta_dlist_t &remote,
-                            const std::string &remote_agent,
-                            nixlBackendReqH *&handle,
-                            const nixl_opt_b_args_t *opt_args) const
-{
+                             const nixl_meta_dlist_t &local,
+                             const nixl_meta_dlist_t &remote,
+                             const std::string &remote_agent,
+                             nixlBackendReqH *&handle,
+                             const nixl_opt_b_args_t *opt_args) const {
     handle = nullptr;
 
     if (!remote_agent.empty() && remote_agent != localAgent) {
@@ -394,14 +407,12 @@ nixlLibblkioEngine::prepXfer(const nixl_xfer_op_t &operation,
     }
 
     if (local.getType() != DRAM_SEG) {
-        NIXL_ERROR << absl::StrFormat("libblkio: local must be DRAM_SEG, got %d",
-                                      local.getType());
+        NIXL_ERROR << absl::StrFormat("libblkio: local must be DRAM_SEG, got %d", local.getType());
         return NIXL_ERR_INVALID_PARAM;
     }
 
     if (remote.getType() != BLK_SEG) {
-        NIXL_ERROR << absl::StrFormat("libblkio: remote must be BLK_SEG, got %d",
-                                      remote.getType());
+        NIXL_ERROR << absl::StrFormat("libblkio: remote must be BLK_SEG, got %d", remote.getType());
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -409,24 +420,24 @@ nixlLibblkioEngine::prepXfer(const nixl_xfer_op_t &operation,
     for (int i = 0; i < remote.descCount(); i++) {
         struct blkio *h = getBlkioHandle(remote[i].devId);
         if (!h) {
-            NIXL_ERROR << absl::StrFormat("libblkio: no handle for devId=0x%lx at index %d",
-                                          remote[i].devId,
-                                          i);
+            NIXL_ERROR << absl::StrFormat(
+                "libblkio: no handle for devId=0x%lx at index %d", remote[i].devId, i);
             return NIXL_ERR_NOT_FOUND;
         }
         handles.push_back(h);
     }
 
     try {
-        auto req = std::make_unique<nixlLibblkioBackendReqH>(operation, local, remote,
-                                                             std::move(handles));
+        auto req =
+            std::make_unique<nixlLibblkioBackendReqH>(operation, local, remote, std::move(handles));
         nixl_status_t status = req->prepXfer();
         if (status != NIXL_SUCCESS) {
             return status;
         }
         handle = req.release();
         return NIXL_SUCCESS;
-    } catch (const std::exception &e) {
+    }
+    catch (const std::exception &e) {
         NIXL_ERROR << absl::StrFormat("libblkio: exception in prepXfer: %s", e.what());
         return NIXL_ERR_BACKEND;
     }
@@ -434,12 +445,11 @@ nixlLibblkioEngine::prepXfer(const nixl_xfer_op_t &operation,
 
 nixl_status_t
 nixlLibblkioEngine::postXfer(const nixl_xfer_op_t &operation,
-                            const nixl_meta_dlist_t &local,
-                            const nixl_meta_dlist_t &remote,
-                            const std::string &remote_agent,
-                            nixlBackendReqH *&handle,
-                            const nixl_opt_b_args_t *opt_args) const
-{
+                             const nixl_meta_dlist_t &local,
+                             const nixl_meta_dlist_t &remote,
+                             const std::string &remote_agent,
+                             nixlBackendReqH *&handle,
+                             const nixl_opt_b_args_t *opt_args) const {
     if (!handle) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -448,8 +458,7 @@ nixlLibblkioEngine::postXfer(const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
-nixlLibblkioEngine::checkXfer(nixlBackendReqH *handle) const
-{
+nixlLibblkioEngine::checkXfer(nixlBackendReqH *handle) const {
     if (!handle) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -458,8 +467,7 @@ nixlLibblkioEngine::checkXfer(nixlBackendReqH *handle) const
 }
 
 nixl_status_t
-nixlLibblkioEngine::releaseReqH(nixlBackendReqH *handle) const
-{
+nixlLibblkioEngine::releaseReqH(nixlBackendReqH *handle) const {
     if (!handle) {
         return NIXL_ERR_INVALID_PARAM;
     }
