@@ -40,9 +40,11 @@ agent::agent(const std::string &name) : agent_(name, getAgentConfig()) {
 }
 
 void
-agent::registerMem(const memBuffer &mb) {
+agent::registerMem(const std::vector<memBuffer> &mbs) {
     nixlDescList<nixlBlobDesc> blob_desc_list{VRAM_SEG};
-    blob_desc_list.addDesc(nixlBlobDesc{mb, mb.size(), 0});
+    for (const auto &mb : mbs) {
+        blob_desc_list.addDesc(nixlBlobDesc{mb, mb.size(), 0});
+    }
     if (agent_.registerMem(blob_desc_list) != NIXL_SUCCESS) {
         throw std::runtime_error("Failed to register memory");
     }
@@ -67,25 +69,9 @@ agent::loadRemoteMD(const nixl_blob_t &md) {
 }
 
 [[nodiscard]] void *
-agent::regAndPrepLocalMemView(const memBuffer &mb) {
-    registerMem(mb);
-    return prepLocalMemView(mb);
-}
-
-void *
-agent::prepRemoteMemView(const memBuffer &mb) {
-    if (!remoteAgentName_) {
-        throw std::runtime_error("Remote agent name is not set");
-    }
-
-    nixlDescList<nixlRemoteDesc> remote_desc_list(VRAM_SEG);
-    remote_desc_list.addDesc(nixlRemoteDesc{mb, mb.size(), 0, *remoteAgentName_});
-    nixlMemViewH mvh;
-    if (agent_.prepMemView(remote_desc_list, mvh) != NIXL_SUCCESS) {
-        throw std::runtime_error("Failed to prepare remote memory view");
-    }
-    addMemView(mvh);
-    return mvh;
+agent::regAndPrepLocalMemView(const std::vector<memBuffer> &mbs) {
+    registerMem(mbs);
+    return prepLocalMemView(mbs);
 }
 
 void *
@@ -107,9 +93,11 @@ agent::prepRemoteMemView(const std::vector<memBuffer> &mbs) {
 }
 
 void *
-agent::prepLocalMemView(const memBuffer &mb) {
+agent::prepLocalMemView(const std::vector<memBuffer> &mbs) {
     nixlDescList<nixlBasicDesc> basic_desc_list{VRAM_SEG};
-    basic_desc_list.addDesc(nixlBasicDesc{mb, mb.size(), 0});
+    for (const auto &mb : mbs) {
+        basic_desc_list.addDesc(nixlBasicDesc{mb, mb.size(), 0});
+    }
     nixlMemViewH mvh;
     if (agent_.prepMemView(basic_desc_list, mvh) != NIXL_SUCCESS) {
         throw std::runtime_error("Failed to prepare local memory view");

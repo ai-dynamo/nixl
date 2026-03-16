@@ -41,7 +41,7 @@ public:
     ~agent() = default;
 
     void
-    registerMem(const memBuffer &);
+    registerMem(const std::vector<memBuffer> &);
 
     [[nodiscard]] nixl_blob_t
     getLocalMD();
@@ -50,17 +50,14 @@ public:
     loadRemoteMD(const nixl_blob_t &);
 
     [[nodiscard]] void *
-    regAndPrepLocalMemView(const memBuffer &);
-
-    [[nodiscard]] void *
-    prepRemoteMemView(const memBuffer &);
+    regAndPrepLocalMemView(const std::vector<memBuffer> &);
 
     [[nodiscard]] void *
     prepRemoteMemView(const std::vector<memBuffer> &);
 
 private:
     [[nodiscard]] void *
-    prepLocalMemView(const memBuffer &);
+    prepLocalMemView(const std::vector<memBuffer> &);
 
     void
     addMemView(void *);

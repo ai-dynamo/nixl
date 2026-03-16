@@ -84,67 +84,83 @@ putChannelKernel(void *src_mvh, void *dst_mvh) {
 } // namespace
 
 namespace nixl::gpu {
-class deviceApiTest : public testing::Test {};
+class deviceApiTest : public testing::Test {
+protected:
+    void
+    SetUp() override {
+        int count;
+        if (cudaGetDeviceCount(&count) != cudaSuccess) {
+            FAIL() << "Failed to get CUDA device count";
+        }
+        if (count < 1) {
+            GTEST_SKIP() << "No CUDA-capable GPU is available";
+        }
+        if (cudaSetDevice(0) != cudaSuccess) {
+            FAIL() << "Failed to set CUDA device 0";
+        }
+
+        senderAgent_ = std::make_unique<agent>(std::string{sender_agent_name});
+        receiverAgent_ = std::make_unique<agent>(std::string{receiver_agent_name});
+    }
+
+    [[nodiscard]] void *
+    prepRemoteMemView(const std::vector<memBuffer> &mbs) {
+        receiverAgent_->registerMem(mbs);
+        senderAgent_->loadRemoteMD(receiverAgent_->getLocalMD());
+        return senderAgent_->prepRemoteMemView(mbs);
+    }
+
+    [[nodiscard]] void *
+    prepLocalMemView(const std::vector<memBuffer> &mbs) {
+        return senderAgent_->regAndPrepLocalMemView(mbs);
+    }
+
+private:
+    std::unique_ptr<agent> senderAgent_;
+    std::unique_ptr<agent> receiverAgent_;
+};
 
 TEST_F(deviceApiTest, atomicAdd) {
-    memBuffer counter{size};
+    std::vector<memBuffer> counters;
+    counters.emplace_back(std::move(memBuffer{size}));
 
-    agent sender_agent{std::string{sender_agent_name}};
-    agent receiver_agent{std::string{receiver_agent_name}};
-
-    receiver_agent.registerMem(counter);
-    sender_agent.loadRemoteMD(receiver_agent.getLocalMD());
-
-    void *counter_mvh = sender_agent.prepRemoteMemView(counter);
+    void *counter_mvh = prepRemoteMemView(counters);
 
     atomicAddKernel<<<1, 1>>>(counter_mvh);
 
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
-    EXPECT_EQ(counter, &test_value);
+    EXPECT_EQ(counters[0], &test_value);
 }
 
 TEST_F(deviceApiTest, putOffset) {
-    memBuffer src_mb{size, &test_value};
-    memBuffer dst_mb{size};
+    std::vector<memBuffer> src_mbs;
+    src_mbs.emplace_back(std::move(memBuffer{size, &test_value}));
+    std::vector<memBuffer> dst_mbs;
+    dst_mbs.emplace_back(std::move(memBuffer{size}));
 
-    agent sender_agent{std::string{sender_agent_name}};
-    agent receiver_agent{std::string{receiver_agent_name}};
-
-    void *src_mvh = sender_agent.regAndPrepLocalMemView(src_mb);
-
-    receiver_agent.registerMem(dst_mb);
-
-    sender_agent.loadRemoteMD(receiver_agent.getLocalMD());
-    void *dst_mvh = sender_agent.prepRemoteMemView(dst_mb);
+    void *src_mvh = prepLocalMemView(src_mbs);
+    void *dst_mvh = prepRemoteMemView(dst_mbs);
 
     putOffsetKernel<<<1, 1>>>(src_mvh, dst_mvh);
 
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
-    EXPECT_EQ(src_mb, dst_mb);
+    EXPECT_EQ(src_mbs[0], dst_mbs[0]);
 }
 
 TEST_F(deviceApiTest, putChannel) {
-    memBuffer src_mb{size, &test_value};
+    std::vector<memBuffer> src_mbs;
+    src_mbs.emplace_back(std::move(memBuffer{size, &test_value}));
     std::vector<memBuffer> dst_mbs;
     dst_mbs.emplace_back(std::move(memBuffer{size}));
     dst_mbs.emplace_back(std::move(memBuffer{size}));
 
-    agent sender_agent{std::string{sender_agent_name}};
-    agent receiver_agent{std::string{receiver_agent_name}};
-
-    void *src_mvh = sender_agent.regAndPrepLocalMemView(src_mb);
-
-    for (const auto &dst_mb : dst_mbs) {
-        receiver_agent.registerMem(dst_mb);
-    }
-
-    sender_agent.loadRemoteMD(receiver_agent.getLocalMD());
-    void *dst_mvh = sender_agent.prepRemoteMemView(dst_mbs);
+    void *src_mvh = prepLocalMemView(src_mbs);
+    void *dst_mvh = prepRemoteMemView(dst_mbs);
 
     putChannelKernel<<<1, 2>>>(src_mvh, dst_mvh);
 
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
-    EXPECT_EQ(src_mb, dst_mbs[0]);
-    EXPECT_EQ(src_mb, dst_mbs[1]);
+    EXPECT_EQ(src_mbs[0], dst_mbs[0]);
+    EXPECT_EQ(src_mbs[0], dst_mbs[1]);
 }
 } // namespace nixl::gpu
