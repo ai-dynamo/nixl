@@ -1449,14 +1449,14 @@ xferBenchNixlWorker::poll(size_t block_size) {
     total_iter = skip + num_iter;
 
     // Periodically check if all peers are still alive via etcd lease keys.
-    // Fires at most once every LIVENESS_CHECK_INTERVAL_S seconds to avoid
+    // Fires at most once every liveness_check_interval to avoid
     // saturating etcd with get() calls during tight polling loops.
+    using namespace std::chrono_literals;
     auto last_liveness_check = std::chrono::steady_clock::now();
-    constexpr int LIVENESS_CHECK_INTERVAL_S = 5;
+    constexpr auto liveness_check_interval = 5s;
     auto checkLiveness = [&]() {
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_liveness_check).count() >=
-            LIVENESS_CHECK_INTERVAL_S) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_liveness_check >= liveness_check_interval) {
             last_liveness_check = now;
             if (rt && !rt->arePeersAlive()) {
                 std::cerr << "nixlbench: peer liveness check failed — aborting poll" << std::endl;

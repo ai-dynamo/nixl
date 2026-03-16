@@ -50,8 +50,7 @@ private:
     // Lease-based peer liveness: each rank's key is attached to a lease that
     // auto-expires if the process dies (including SIGKILL). arePeersAlive()
     // checks whether all peer rank keys are still present in etcd.
-    static constexpr int LEASE_TTL_S = 15;
-    std::shared_ptr<etcd::KeepAlive> keepalive;
+    std::unique_ptr<etcd::KeepAlive> keepalive;
 
     int my_rank; // Rank information
     int global_size;

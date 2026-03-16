@@ -28,6 +28,11 @@
 
 #define ETCD_EP_DEFAULT "http://localhost:2379"
 
+namespace {
+// Lease TTL in seconds: rank key auto-expires this long after the last keepalive.
+constexpr int lease_ttl_s = 15;
+} // namespace
+
 // ETCD Runtime implementation
 xferBenchEtcdRT::xferBenchEtcdRT(const std::string &benchmark_group,
                                  const std::string &etcd_endpoints,
@@ -83,7 +88,7 @@ xferBenchEtcdRT::setup() {
     // Use the standalone KeepAlive constructor (address-based) so it creates
     // its own independent gRPC channel, avoiding any thread safety issues with
     // the main client being used concurrently from two threads.
-    keepalive = std::make_shared<etcd::KeepAlive>(stored_etcd_endpoints, LEASE_TTL_S);
+    keepalive = std::make_unique<etcd::KeepAlive>(stored_etcd_endpoints, lease_ttl_s);
     client->put(makeKey("rank", my_rank), "active", keepalive->Lease());
 
     // Release the lock

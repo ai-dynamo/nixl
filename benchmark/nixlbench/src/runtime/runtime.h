@@ -43,7 +43,7 @@ class xferBenchRT {
         virtual int barrier(const std::string& barrier_id) = 0;
 
         // Check if all peer processes are still alive; returns true by default
-        virtual bool
+        [[nodiscard]] virtual bool
         arePeersAlive() {
             return true;
         }
