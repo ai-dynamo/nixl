@@ -1029,7 +1029,8 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
 
     // Retry indefinitely until senddata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
-    int attempt = 0;
+    unsigned int attempt = 0;
+    unsigned int log_threshold = NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS;
 
     while (true) {
         // Libfabric fi_senddata call
@@ -1048,13 +1049,13 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
             // Resource temporarily unavailable - retry indefinitely for all providers
             attempt++;
 
-            // Log every N attempts to avoid log spam
-            if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
+            if (attempt == log_threshold ||
+                (attempt > INT_MAX / 2 && attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0)) {
                 NIXL_INFO << "fi_senddata still retrying EAGAIN on rail " << rail_id << " after "
                           << attempt << " attempts";
-            } else {
-                NIXL_TRACE << "fi_senddata returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << attempt << ")";
+                if (attempt <= INT_MAX / 2) {
+                    log_threshold *= 2;
+                }
             }
 
             // Progress completion queue to drain pending completions before retry
@@ -1096,7 +1097,8 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
 
     // Retry indefinitely until writedata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
-    int attempt = 0;
+    unsigned int attempt = 0;
+    unsigned int log_threshold = NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS;
 
     while (true) {
         // Libfabric fi_writedata call
@@ -1122,13 +1124,13 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
             // Resource temporarily unavailable - retry indefinitely for all providers
             attempt++;
 
-            // Log every N attempts to avoid log spam
-            if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
+            if (attempt == log_threshold ||
+                (attempt > INT_MAX / 2 && attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0)) {
                 NIXL_INFO << "fi_writedata still retrying EAGAIN on rail " << rail_id << " after "
                           << attempt << " attempts";
-            } else {
-                NIXL_TRACE << "fi_writedata returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << attempt << ")";
+                if (attempt <= INT_MAX / 2) {
+                    log_threshold *= 2;
+                }
             }
 
             // Progress completion queue to drain pending completions before retry
@@ -1169,7 +1171,8 @@ nixlLibfabricRail::postRead(void *local_buffer,
 
     // Retry indefinitely until readdata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
-    int attempt = 0;
+    unsigned int attempt = 0;
+    unsigned int log_threshold = NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS;
 
     while (true) {
         // Libfabric fi_read call
@@ -1194,13 +1197,13 @@ nixlLibfabricRail::postRead(void *local_buffer,
             // Resource temporarily unavailable - retry indefinitely for all providers
             attempt++;
 
-            // Log every N attempts to avoid log spam
-            if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
+            if (attempt == log_threshold ||
+                (attempt > INT_MAX / 2 && attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0)) {
                 NIXL_INFO << "fi_read still retrying EAGAIN on rail " << rail_id << " after "
                           << attempt << " attempts";
-            } else {
-                NIXL_TRACE << "fi_read returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << attempt << ")";
+                if (attempt <= INT_MAX / 2) {
+                    log_threshold *= 2;
+                }
             }
 
             // Progress completion queue to drain pending completions before retry
