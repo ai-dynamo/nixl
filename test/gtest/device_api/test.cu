@@ -23,15 +23,13 @@
 
 #include <gtest/gtest.h>
 
-#include <string_view>
-
 namespace {
 constexpr size_t max_polls{1000000};
 constexpr uint64_t test_value{0x1234567890ABCDEFULL};
 constexpr size_t size{sizeof(test_value)};
 constexpr size_t half_size{size / 2};
-constexpr std::string_view sender_agent_name{"sender"};
-constexpr std::string_view receiver_agent_name{"receiver"};
+const std::string sender_agent_name{"sender"};
+const std::string receiver_agent_name{"receiver"};
 
 __device__ void
 waitCompletion(nixl_status_t status, nixlGpuXferStatusH &xfer_status) {
@@ -77,9 +75,10 @@ __global__ void
 putChannelKernel(void *src_mvh, void *dst_mvh) {
     assert(threadIdx.x < 2);
     const size_t dst_index = threadIdx.x;
+    const unsigned channel_id = threadIdx.x;
     const nixlMemViewElem src{src_mvh, 0, 0};
     const nixlMemViewElem dst{dst_mvh, dst_index, 0};
-    putAndWait(src, dst, size, dst_index);
+    putAndWait(src, dst, size, channel_id);
 }
 } // namespace
 
@@ -99,8 +98,8 @@ protected:
             FAIL() << "Failed to set CUDA device 0";
         }
 
-        senderAgent_ = std::make_unique<agent>(std::string{sender_agent_name});
-        receiverAgent_ = std::make_unique<agent>(std::string{receiver_agent_name});
+        senderAgent_ = std::make_unique<agent>(sender_agent_name);
+        receiverAgent_ = std::make_unique<agent>(receiver_agent_name);
     }
 
     [[nodiscard]] void *

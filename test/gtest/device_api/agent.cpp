@@ -18,10 +18,9 @@
 #include "agent.h"
 
 #include <stdexcept>
-#include <string_view>
 
 namespace {
-constexpr std::string_view backend_name{"UCX"};
+const std::string backend_name{"UCX"};
 
 [[nodiscard]] constexpr nixlAgentConfig
 getAgentConfig() noexcept {
@@ -34,7 +33,7 @@ getAgentConfig() noexcept {
 namespace nixl::gpu {
 agent::agent(const std::string &name) : agent_(name, getAgentConfig()) {
     nixlBackendH *backend_handle;
-    if (agent_.createBackend(std::string(backend_name), {}, backend_handle) != NIXL_SUCCESS) {
+    if (agent_.createBackend(backend_name, {}, backend_handle) != NIXL_SUCCESS) {
         throw std::runtime_error("Failed to create backend");
     }
 }
