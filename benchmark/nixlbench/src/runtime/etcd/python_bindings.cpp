@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,7 @@ PYBIND11_MODULE (etcd_runtime, m) {
     m.doc() = "Python bindings for ETCD runtime";
 
     py::class_<xferBenchEtcdRT>(m, "EtcdRuntime")
-        .def(py::init<const std::string &, const std::string &, const int, int *>(),
+        .def(py::init<const std::string &, const std::string &, const int, std::atomic<int> *>(),
              py::arg("benchmark_group"),
              py::arg("etcd_endpoints"),
              py::arg("size"),
