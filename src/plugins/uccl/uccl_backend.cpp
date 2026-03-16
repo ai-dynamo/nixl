@@ -238,7 +238,7 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
     NIXL_DEBUG << "Connecting to " << ip_addr.get() << ":" << port << "?gpu=" << gpu_index
                << std::endl;
-    conn = uccl_engine_connect(engine_, ip_addr.get(), gpu_index, port);
+    conn = uccl_engine_connect(engine_, ip_addr.get(), gpu_index, port, false);
     if (!conn) {
         NIXL_ERROR << "Failed to connect to remote agent " << remote_agent;
         return NIXL_ERR_BACKEND;
@@ -291,13 +291,14 @@ nixlUcclEngine::ensureLocalConn() const {
         return NIXL_ERR_BACKEND;
     }
 
-    uccl_conn_t *conn = uccl_engine_connect(engine_, ip_addr.get(), gpu_index, port);
+    uccl_conn_t *conn = uccl_engine_connect(engine_, ip_addr.get(), gpu_index, port,
+                                             /*same_process=*/true);
     if (!conn) {
         NIXL_ERROR << "Failed to establish local connection for agent " << pending_local_agent_;
         return NIXL_ERR_BACKEND;
     }
 
-    NIXL_DEBUG << "Local (IPC) connection established for agent " << pending_local_agent_;
+    NIXL_DEBUG << "Same-process local connection established for agent " << pending_local_agent_;
     connected_agents_[pending_local_agent_] = reinterpret_cast<uint64_t>(conn);
     pending_local_agent_.clear();
     return NIXL_SUCCESS;
