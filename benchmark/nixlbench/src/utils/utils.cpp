@@ -244,6 +244,7 @@ int xferBenchConfig::posix_kernel_queue_size = 0;
 std::string xferBenchConfig::filepath = "";
 std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
+bool xferBenchConfig::recreate_xfer = false;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
 std::string xferBenchConfig::obj_secret_key = "";
@@ -652,6 +653,8 @@ xferBenchConfig::printConfig() {
             printOption("Number of files (--num_files=N)", std::to_string(num_files));
             printOption("Storage enable direct (--storage_enable_direct=[0,1])",
                         std::to_string(storage_enable_direct));
+            printOption("Recreate xfer request (--recreate_xfer=[0,1])",
+                        std::to_string(recreate_xfer));
         }
 
         // Print DOCA GPUNetIO options if backend is DOCA GPUNetIO
