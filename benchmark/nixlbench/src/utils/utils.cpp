@@ -82,6 +82,8 @@ NB_ARG_INT32(num_iter, 1000, "Max iterations");
 NB_ARG_BOOL(recreate_xfer,
             false,
             "Recreate xfer each iteration (default: false for all backends, true for GUSLI)");
+NB_ARG_BOOL(reregister_mem, false, "Register and deregister memory on every iteration");
+NB_ARG_INT32(pipeline_depth, 1, "Number of transfer requests in flight simultaneously");
 NB_ARG_INT32(large_blk_iter_ftr,
              16,
              "factor to reduce test iteration when testing large block size(>1MB)");
@@ -244,8 +246,8 @@ int xferBenchConfig::posix_kernel_queue_size = 0;
 std::string xferBenchConfig::filepath = "";
 std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
-bool xferBenchConfig::recreate_xfer = false;
 bool xferBenchConfig::reregister_mem = false;
+int xferBenchConfig::pipeline_depth = 1;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
 std::string xferBenchConfig::obj_secret_key = "";
@@ -457,6 +459,15 @@ xferBenchConfig::loadParams(void) {
     storage_enable_direct = NB_ARG(storage_enable_direct);
     recreate_xfer = NB_ARG(recreate_xfer);
     reregister_mem = NB_ARG(reregister_mem);
+    pipeline_depth = NB_ARG(pipeline_depth);
+    if (pipeline_depth < 1) {
+        std::cerr << "pipeline_depth must be >= 1" << std::endl;
+        return -1;
+    }
+    if (num_iter < 1) {
+        std::cerr << "num_iter must be >= 1" << std::endl;
+        return -1;
+    }
     use_hugepages = NB_ARG(use_hugepages);
     if (use_hugepages && (total_buffer_size % HUGEPAGE_SIZE) != 0) {
         size_t hugepage_aligned_size = ROUND_UP(total_buffer_size, HUGEPAGE_SIZE);
@@ -597,6 +608,8 @@ xferBenchConfig::printConfig() {
                     std::to_string(recreate_xfer));
         printOption("Re-register memory each iteration (--reregister_mem=[0,1])",
                     std::to_string(reregister_mem));
+        printOption("Pipeline depth (--pipeline_depth=N)",
+                    std::to_string(pipeline_depth));
         printOption("Use hugepages (--use_hugepages=[0,1])", std::to_string(use_hugepages));
 
         // Print GDS options if backend is GDS
@@ -662,10 +675,6 @@ xferBenchConfig::printConfig() {
             printOption("Number of files (--num_files=N)", std::to_string(num_files));
             printOption("Storage enable direct (--storage_enable_direct=[0,1])",
                         std::to_string(storage_enable_direct));
-            printOption("Recreate xfer request (--recreate_xfer=[0,1])",
-                        std::to_string(recreate_xfer));
-            printOption("Re-register memory (--reregister_mem=[0,1])",
-                        std::to_string(reregister_mem));
         }
 
         // Print DOCA GPUNetIO options if backend is DOCA GPUNetIO
