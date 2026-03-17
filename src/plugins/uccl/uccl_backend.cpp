@@ -658,7 +658,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         for (size_t i = 0; i < lcnt; i++) {
             ipc_ptrs[i] = uccl_handle->ipc_infos[i].data();
         }
-        NIXL_DEBUG << "Using IPC for tranfer";
+        NIXL_DEBUG << "Using IPC for transfer";
     }
 
     switch (operation) {
