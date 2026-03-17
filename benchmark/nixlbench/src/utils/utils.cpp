@@ -274,6 +274,7 @@ std::string xferBenchConfig::filepath = "";
 std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
 bool xferBenchConfig::recreate_xfer = false;
+bool xferBenchConfig::reregister_mem = false;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
 std::string xferBenchConfig::obj_secret_key = "";
@@ -486,6 +487,7 @@ xferBenchConfig::loadParams(void) {
     posix_api_type = NB_ARG(posix_api_type);
     storage_enable_direct = NB_ARG(storage_enable_direct);
     recreate_xfer = NB_ARG(recreate_xfer);
+    reregister_mem = NB_ARG(reregister_mem);
     use_hugepages = NB_ARG(use_hugepages);
     if (use_hugepages && (total_buffer_size % HUGEPAGE_SIZE) != 0) {
         size_t hugepage_aligned_size = ROUND_UP(total_buffer_size, HUGEPAGE_SIZE);
@@ -495,6 +497,11 @@ xferBenchConfig::loadParams(void) {
     }
     if (!recreate_xfer && XFERBENCH_BACKEND_GUSLI == backend) {
         std::cout << "GUSLI backend requires per-iteration request creation due to library bug."
+                  << " Setting recreate_xfer to true." << std::endl;
+        recreate_xfer = true;
+    }
+    if (!recreate_xfer && reregister_mem) {
+        std::cout << "reregister_mem requires per-iteration request creation."
                   << " Setting recreate_xfer to true." << std::endl;
         recreate_xfer = true;
     }
@@ -629,6 +636,8 @@ xferBenchConfig::printConfig() {
         printOption("Enable VMM (--enable_vmm=[0,1])", std::to_string(enable_vmm));
         printOption("Recreate xfer each iteration (--recreate_xfer=[0,1])",
                     std::to_string(recreate_xfer));
+        printOption("Re-register memory each iteration (--reregister_mem=[0,1])",
+                    std::to_string(reregister_mem));
         printOption("Use hugepages (--use_hugepages=[0,1])", std::to_string(use_hugepages));
 
         // Print GDS options if backend is GDS
@@ -696,6 +705,8 @@ xferBenchConfig::printConfig() {
                         std::to_string(storage_enable_direct));
             printOption("Recreate xfer request (--recreate_xfer=[0,1])",
                         std::to_string(recreate_xfer));
+            printOption("Re-register memory (--reregister_mem=[0,1])",
+                        std::to_string(reregister_mem));
         }
 
         // Print DOCA GPUNetIO options if backend is DOCA GPUNetIO
