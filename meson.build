@@ -140,7 +140,6 @@ if not (absl_log_dep.found() and
         absl_synchronization_dep.found() and
         absl_time_dep.found())
   message('System Abseil missing required components; using subproject fallback')
-  using_abseil_subproject = true
   abseil_proj = subproject('abseil-cpp')
   absl_log_dep = abseil_proj.get_variable('absl_log_dep')
   absl_log_initialize_dep = absl_log_dep
@@ -150,8 +149,10 @@ if not (absl_log_dep.found() and
   absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
   absl_synchronization_dep = abseil_proj.get_variable('absl_synchronization_dep')
   absl_time_dep = abseil_proj.get_variable('absl_time_dep')
+  summary({'Abseil source': 'subproject'}, section: 'Dependencies')
 else
   message('Using system Abseil dependencies')
+  summary({'Abseil source': 'system'}, section: 'Dependencies')
 endif
 taskflow_proj = dependency('taskflow', fallback: ['taskflow', 'taskflow_dep'])
 
