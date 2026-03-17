@@ -137,7 +137,7 @@ public:
 
     void init(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes);
 
-    ~Buffer() noexcept(false);
+    ~Buffer() noexcept;
 
     bool is_available() const;
 

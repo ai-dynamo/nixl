@@ -138,7 +138,7 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     _nixl_ep_init();
 }
 
-Buffer::~Buffer() noexcept(false) {
+Buffer::~Buffer() noexcept {
     if (not explicitly_destroy) {
         destroy();
     } else if (not destroyed) {
@@ -167,38 +167,60 @@ torch::Stream Buffer::get_comm_stream() const {
 }
 
 void Buffer::destroy() {
-    EP_HOST_ASSERT(not destroyed);
+    auto warn_cuda = [](cudaError_t status, const char* operation) {
+        if (status != cudaSuccess) {
+            printf("WARNING: destroy() failed to %s: %s\n",
+                   operation, cudaGetErrorString(status));
+            fflush(stdout);
+        }
+    };
+
+    auto warn_nixl = [](nixl_status_t status, const char* operation) {
+        if (status != NIXL_SUCCESS) {
+            printf("WARNING: destroy() failed to %s: status %d\n",
+                   operation, static_cast<int>(status));
+            fflush(stdout);
+        }
+    };
+
+    if (destroyed) {
+        return;
+    }
 
     // Synchronize
-    CUDA_CHECK(cudaDeviceSynchronize());
+    warn_cuda(cudaDeviceSynchronize(), "synchronize device");
 
     _nixl_ep_destroy();
 
     if (nixl_agent_info and nixl_agent_info->agent != nullptr) {
         if (getenv("NIXL_ETCD_ENDPOINTS")) {
-            nixl_agent_info->agent->invalidateLocalMD();
+            warn_nixl(nixl_agent_info->agent->invalidateLocalMD(),
+                      "invalidate local metadata");
         }
 
-        EP_HOST_ASSERT(nixl_agent_info->agent->deregisterMem(
-                           nixl_agent_info->rdma_reg_descs,
-                           &nixl_agent_info->extra_params) == NIXL_SUCCESS);
-        EP_HOST_ASSERT(nixl_agent_info->agent->deregisterMem(
-                           nixl_agent_info->sync_reg_descs,
-                           &nixl_agent_info->extra_params) == NIXL_SUCCESS);
-        EP_HOST_ASSERT(nixl_agent_info->agent->deregisterMem(
-                           nixl_agent_info->sync_count_reg_descs,
-                           &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+        warn_nixl(nixl_agent_info->agent->deregisterMem(
+                      nixl_agent_info->rdma_reg_descs,
+                      &nixl_agent_info->extra_params),
+                  "deregister RDMA memory");
+        warn_nixl(nixl_agent_info->agent->deregisterMem(
+                      nixl_agent_info->sync_reg_descs,
+                      &nixl_agent_info->extra_params),
+                  "deregister sync memory");
+        warn_nixl(nixl_agent_info->agent->deregisterMem(
+                      nixl_agent_info->sync_count_reg_descs,
+                      &nixl_agent_info->extra_params),
+                  "deregister sync-count memory");
 
         nixl_agent_info.reset();
     }
 
-    CUDA_CHECK(cudaFree(rdma_buffer_ptr));
-    CUDA_CHECK(cudaFree(mask_buffer_ptr));
-    CUDA_CHECK(cudaFree(sync_buffer_ptr));
-    CUDA_CHECK(cudaFree(sync_count_ptr));
+    warn_cuda(cudaFree(rdma_buffer_ptr), "free RDMA buffer");
+    warn_cuda(cudaFree(mask_buffer_ptr), "free mask buffer");
+    warn_cuda(cudaFree(sync_buffer_ptr), "free sync buffer");
+    warn_cuda(cudaFree(sync_count_ptr), "free sync-count buffer");
 
     // Free workspace
-    CUDA_CHECK(cudaFree(workspace));
+    warn_cuda(cudaFree(workspace), "free workspace");
 
     destroyed = true;
     available = false;
