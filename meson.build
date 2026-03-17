@@ -113,7 +113,46 @@ if get_option('buildtype') == 'release'
   abseil_flags = cpp.get_supported_arguments('-Wno-error=maybe-uninitialized', '-Wno-maybe-uninitialized')
   add_global_arguments(abseil_flags, language: 'cpp')
 endif
-abseil_proj = subproject('abseil-cpp')
+
+# Search for Abseil dependencies in the system first
+absl_base_dep = dependency('absl_base', required: false)
+absl_log_dep = dependency('absl_log', required: false)
+absl_log_initialize_dep = dependency('absl_log_initialize', required: false)
+absl_flat_hash_map_dep = dependency('absl_flat_hash_map', required: false)
+absl_status_dep = dependency('absl_status', required: false)
+absl_statusor_dep = dependency('absl_statusor', required: false)
+absl_strings_dep = dependency('absl_strings', required: false)
+absl_synchronization_dep = dependency('absl_synchronization', required: false)
+absl_time_dep = dependency('absl_time', required: false)
+
+if absl_base_dep.found() and not absl_log_dep.found()
+  error('Your Abseil version is too old: found absl_base but missing support for absl_log. ' +
+        'Cannot fallback to subproject because that would result in a mix of Abseil versions at runtime. ' +
+        'Please install a recent Abseil from source on your system and remove old libabsl & libabsl-dev packages.')
+endif
+
+if not (absl_log_dep.found() and
+        absl_log_initialize_dep.found() and
+        absl_flat_hash_map_dep.found() and
+        absl_status_dep.found() and
+        absl_statusor_dep.found() and
+        absl_strings_dep.found() and
+        absl_synchronization_dep.found() and
+        absl_time_dep.found())
+  message('System Abseil missing required components; using subproject fallback')
+  using_abseil_subproject = true
+  abseil_proj = subproject('abseil-cpp')
+  absl_log_dep = abseil_proj.get_variable('absl_log_dep')
+  absl_log_initialize_dep = absl_log_dep
+  absl_flat_hash_map_dep = abseil_proj.get_variable('absl_container_dep')
+  absl_status_dep = abseil_proj.get_variable('absl_status_dep')
+  absl_statusor_dep = absl_status_dep
+  absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
+  absl_synchronization_dep = abseil_proj.get_variable('absl_synchronization_dep')
+  absl_time_dep = abseil_proj.get_variable('absl_time_dep')
+else
+  message('Using system Abseil dependencies')
+endif
 taskflow_proj = dependency('taskflow', fallback: ['taskflow', 'taskflow_dep'])
 
 cuda_inc_path = get_option('cudapath_inc')

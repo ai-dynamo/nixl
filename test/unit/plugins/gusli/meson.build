@@ -13,9 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Get Abseil dependencies
-absl_log_dep = dependency('absl_log', required: true)
-
 nixl_gusli_app = executable('nixl_gusli_test', 'nixl_gusli_test.cpp',
                           dependencies: [nixl_dep, nixl_infra, absl_log_dep, nixl_test_utils_dep],
                           include_directories: [nixl_inc_dirs, utils_inc_dirs],
