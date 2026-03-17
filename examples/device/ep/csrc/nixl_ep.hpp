@@ -35,10 +35,7 @@
 #include <vector>
 #include <string>
 
-#include <cuda.h>
-#include <cuda_runtime.h>
 #include <memory>
-#include <stdexcept>
 #include "config.hpp"
 #include "event.hpp"
 #include "kernels/configs.cuh"

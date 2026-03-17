@@ -27,7 +27,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <cuda.h>
 #include <cuda_runtime.h>
 #include <memory>
 #include <optional>
