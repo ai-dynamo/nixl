@@ -329,8 +329,6 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
 
     _nixl_ep_memory_views_destroy();
 
-    _nixl_ep_memory_views_create();
-
     _nixl_agents_peer_info_cleanup(remote_ranks_list);
 
     _nixl_agents_disconnect(remote_ranks_list);
@@ -349,6 +347,8 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
                            *std::max_element(remote_ranks.begin(), remote_ranks.end()));
     }
     num_ranks = max_rank + 1;  // Sparse indexing maintained
+
+    _nixl_ep_memory_views_create();
 }
 
 std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>
