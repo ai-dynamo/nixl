@@ -277,8 +277,7 @@ nixlUcclEngine::connect(const std::string &remote_agent) {
 }
 
 nixl_status_t
-nixlUcclEngine::ensureLocalConn() const {
-    // Lazily establish the local (IPC) connection that was deferred by connect().
+nixlUcclEngine::prepareLocalConn() const {
     // Must be called after register_memory so the UCCL engine is initialized.
     if (pending_local_agent_.empty()) {
         return NIXL_SUCCESS;
@@ -301,8 +300,11 @@ nixlUcclEngine::ensureLocalConn() const {
         return NIXL_ERR_BACKEND;
     }
 
-    uccl_conn_t *conn = uccl_engine_connect(engine_, ip_addr.get(), gpu_index, port,
-                                             /*same_process=*/true);
+    uccl_conn_t *conn = uccl_engine_connect(engine_,
+                                            ip_addr.get(),
+                                            gpu_index,
+                                            port,
+                                            /*same_process=*/true);
     if (!conn) {
         NIXL_ERROR << "Failed to establish local connection for agent " << pending_local_agent_;
         return NIXL_ERR_BACKEND;
@@ -352,7 +354,6 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_SUCCESS;
     }
 
-    // Register memory with UCCL engine
     uccl_mr_t mr;
     int result = uccl_engine_reg(engine_, mem.addr, mem.len, mr);
     if (result != 0) {
@@ -385,12 +386,11 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
     NIXL_DEBUG << "Registering memory: " << std::hex << mem.addr << " Device: " << mem.devId
                << " ref_cnt: " << priv->ref_cnt << " mr_id: " << priv->mr_id;
 
-    // Engine is now initialized (uccl_engine_reg triggers reg() -> initialize_engine()).
-    // Establish the deferred local connection if one is pending.
+    // Prepare the deferred local connection if there are pending agents
     if (!pending_local_agent_.empty()) {
-        nixl_status_t status = ensureLocalConn();
+        nixl_status_t status = prepareLocalConn();
         if (status != NIXL_SUCCESS) {
-            NIXL_WARN << "Deferred local connection failed (will retry on next registerMem)";
+            NIXL_WARN << "Deferred local connection failed";
         }
     }
 
@@ -449,7 +449,7 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
     // Decode fifo_item and optional IPC info from hex string.
     // Format: <fifo_item hex (128 chars)> [<ipc_flag (2 chars)> [<ipc_info hex (256 chars)>]]
     const std::string &hex_str = input.metaInfo;
-    size_t min_len = FIFO_SIZE * 2;  // 128 chars for fifo_item
+    size_t min_len = FIFO_SIZE * 2; // 128 chars for fifo_item
 
     if (hex_str.length() < min_len) {
         NIXL_ERROR << "Invalid metaInfo hex string length: " << hex_str.length()
@@ -532,8 +532,8 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     uccl_handle->fifo_items.resize(lcnt);
 
-    // Check if this is a local connection (same-process or cross-process IPC path)
-    bool is_local_conn = (remote_agent == local_agent_name_);
+    // Check if this is a local connection (same-process or cross-process on same node)
+    bool is_local_conn = uccl_engine_conn_is_local(conn);
 
     if (is_local_conn) {
         uccl_handle->ipc_infos.resize(lcnt);
@@ -562,8 +562,8 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         if (is_local_conn) {
             if (rmd->has_ipc) {
                 uccl_handle->ipc_infos[i].assign(rmd->ipc_info, rmd->ipc_info + IPC_INFO_SIZE);
-                uccl_engine_update_ipc_info(uccl_handle->ipc_infos[i].data(),
-                                             remote_addr, (uintptr_t)rmd->addr, rsize);
+                uccl_engine_update_ipc_info(
+                    uccl_handle->ipc_infos[i].data(), remote_addr, (uintptr_t)rmd->addr, rsize);
             } else {
                 // Same process
                 uccl_handle->ipc_infos[i].assign(IPC_INFO_SIZE, 0);
@@ -655,6 +655,7 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         for (size_t i = 0; i < lcnt; i++) {
             ipc_ptrs[i] = uccl_handle->ipc_infos[i].data();
         }
+        NIXL_DEBUG << "Using IPC for tranfer";
     }
 
     switch (operation) {

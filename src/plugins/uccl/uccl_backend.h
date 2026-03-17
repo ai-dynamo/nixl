@@ -154,7 +154,7 @@ public:
     uccl_mr_t mr_id; // UCCL memory region id
     char fifo_item[FIFO_SIZE];
     char ipc_info[IPC_INFO_SIZE]; // serialized IPC transfer info for cross-process local
-    bool has_ipc = false;             // true if GPU buffer with valid IPC handle
+    bool has_ipc = false; // true if GPU buffer with valid IPC handle
 };
 
 // UCCL Backend Request Handle
@@ -169,7 +169,7 @@ public:
     nixl_blob_t notif_msg;
     std::vector<FifoItem> fifo_items;
     std::vector<std::vector<char>> ipc_infos; // for cross-process local transfers
-    bool use_ipc = false;                      // true if cross-process local path
+    bool use_ipc = false; // true if cross-process local path
 };
 
 #endif
