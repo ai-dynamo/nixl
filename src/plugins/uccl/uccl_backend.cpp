@@ -265,11 +265,10 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
 nixl_status_t
 nixlUcclEngine::connect(const std::string &remote_agent) {
-    // Called by NIXL core when supportsLocal() == true, with remote_agent == own name.
     // We cannot establish the local (IPC) connection now because the UCCL engine
     // is lazily initialized on first register_memory (which sets local_gpu_idx and
     // creates the shm inbox rings).  Record the agent name; the actual connection
-    // is established on-demand when prepXfer/postXfer first needs it.
+    // is established after memory registration
     std::lock_guard<std::mutex> lock(conn_mutex_);
     pending_local_agent_ = remote_agent;
     NIXL_DEBUG << "Deferred local connect for agent " << remote_agent;
@@ -354,6 +353,7 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_SUCCESS;
     }
 
+    // Register memory with UCCL engine
     uccl_mr_t mr;
     int result = uccl_engine_reg(engine_, mem.addr, mem.len, mr);
     if (result != 0) {
@@ -447,7 +447,6 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
     output_md->ref_cnt = 1;
 
     // Decode fifo_item and optional IPC info from hex string.
-    // Format: <fifo_item hex (128 chars)> [<ipc_flag (2 chars)> [<ipc_info hex (256 chars)>]]
     const std::string &hex_str = input.metaInfo;
     size_t min_len = FIFO_SIZE * 2; // 128 chars for fifo_item
 
@@ -465,7 +464,7 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
         output_md->fifo_item[i] = static_cast<char>(strtoul(byte_str.c_str(), NULL, 16));
     }
 
-    // Decode optional IPC info (appended after fifo_item)
+    // Decode IPC info (appended after fifo_item)
     size_t pos = min_len;
     if (hex_str.length() > pos + 2) {
         std::string ipc_flag = hex_str.substr(pos, 2);
