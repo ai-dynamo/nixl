@@ -132,3 +132,25 @@ wait_for_etcd() {
     done
     echo "Etcd is ready"
 }
+
+start_etcd_server() {
+    local namespace_prefix=$1
+    if [ -z "${namespace_prefix}" ]; then
+        echo "Usage: start_etcd_server <namespace_prefix>"
+        exit 1
+    fi
+
+    echo "==== Running ETCD server ===="
+    etcd_port=$(get_next_tcp_port)
+    etcd_peer_port=$(get_next_tcp_port)
+    export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
+    export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
+    export NIXL_ETCD_NAMESPACE="${namespace_prefix}/${etcd_port}"
+
+    etcd --listen-client-urls "${NIXL_ETCD_ENDPOINTS}" --advertise-client-urls "${NIXL_ETCD_ENDPOINTS}" \
+         --listen-peer-urls "${NIXL_ETCD_PEER_URLS}" --initial-advertise-peer-urls "${NIXL_ETCD_PEER_URLS}" \
+         --initial-cluster "default=${NIXL_ETCD_PEER_URLS}" &
+    ETCD_PID=$!
+
+    wait_for_etcd
+}
