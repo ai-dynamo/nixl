@@ -243,7 +243,7 @@ nixlPluginManager::loadPluginFromPath(const std::string &plugin_path, nixlPlugin
     // the library on dlclose. This is required because plugins link dynamically against Abseil,
     // which uses thread_local and static initialization that are unsafe to unload dynamically
     // and trigger glibc bugs on older versions (e.g. Ubuntu 22.04 / glibc 2.35).
-    void* handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
+    void *handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
     if (!handle) {
         NIXL_INFO << "Failed to load plugin from " << plugin_path << ": " << dlerror();
         return nullptr;
