@@ -245,6 +245,7 @@ std::string xferBenchConfig::filepath = "";
 std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
 bool xferBenchConfig::recreate_xfer = false;
+bool xferBenchConfig::reregister_mem = false;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
 std::string xferBenchConfig::obj_secret_key = "";
@@ -460,6 +461,7 @@ xferBenchConfig::loadParams(void) {
                   << " Setting recreate_xfer to true." << std::endl;
         recreate_xfer = true;
     }
+    reregister_mem = NB_ARG(reregister_mem);
 
     // Validate ETCD configuration
     if (!isStorageBackend() && etcd_endpoints.empty()) {
@@ -647,6 +649,8 @@ xferBenchConfig::printConfig() {
                         std::to_string(storage_enable_direct));
             printOption("Recreate xfer request (--recreate_xfer=[0,1])",
                         std::to_string(recreate_xfer));
+            printOption("Re-register memory (--reregister_mem=[0,1])",
+                        std::to_string(reregister_mem));
         }
 
         // Print DOCA GPUNetIO options if backend is DOCA GPUNetIO
