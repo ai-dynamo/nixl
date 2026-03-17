@@ -32,6 +32,9 @@ NIXLBENCH_BUILD_DIR=${NIXLBENCH_BUILD_DIR:-nixlbench_build}
 UCX_VERSION=${UCX_VERSION:-v1.20.x}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
+# Abseil and gRPC versions for consistent toolchain build.
+ABSL_TAG=${ABSL_TAG:-lts_2025_08_14}
+GRPC_TAG=${GRPC_TAG:-v1.73.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
@@ -88,8 +91,6 @@ else
                                  libpython3-dev \
                                  libboost-all-dev \
                                  libssl-dev \
-                                 libgrpc-dev \
-                                 libgrpc++-dev \
                                  libprotobuf-dev \
                                  libcpprest-dev \
                                  libaio-dev \
@@ -186,10 +187,59 @@ else
 
     ( \
       cd ${TMPDIR} && \
+      git clone https://github.com/abseil/abseil-cpp.git && \
+      cd abseil-cpp && \
+      git fetch --depth 1 origin "${ABSL_TAG}" && \
+      git checkout "${ABSL_TAG}" && \
+      mkdir -p build && cd build && \
+      cmake .. \
+          -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=ON \
+          -DABSL_PROPAGATE_CXX_STD=ON \
+          -DABSL_ENABLE_INSTALL=ON && \
+      make -j"$NPROC" && \
+      $SUDO make install && \
+      $SUDO ldconfig && \
+      cd ${TMPDIR} && \
+      rm -rf abseil-cpp \
+    )
+
+    ( \
+      cd ${TMPDIR} && \
+      git clone --recurse-submodules -b "${GRPC_TAG}" --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+      cd grpc && \
+      mkdir -p cmake/build && \
+      cd cmake/build && \
+      export CMAKE_PREFIX_PATH="/usr/local${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" && \
+      export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib/${ARCH}-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" && \
+      cmake ../.. \
+          -DgRPC_INSTALL=ON \
+          -DgRPC_BUILD_TESTS=OFF \
+          -DBUILD_SHARED_LIBS=ON \
+          -DCMAKE_CXX_STANDARD=17 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -DCMAKE_PREFIX_PATH=/usr/local \
+          -Dabsl_DIR=/usr/local/lib/cmake/absl \
+          -DgRPC_SSL_PROVIDER=package \
+          -DgRPC_ABSL_PROVIDER=package \
+          -DgRPC_PROTOBUF_PROVIDER=module \
+          -DgRPC_ZLIB_PROVIDER=package && \
+      make -j"$NPROC" && \
+      $SUDO make install && \
+      $SUDO ldconfig && \
+      cd ${TMPDIR} && \
+      rm -rf grpc \
+    )
+
+    ( \
+      cd ${TMPDIR} && \
       git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
       cd etcd-cpp-apiv3 && \
+      sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
       mkdir build && cd build && \
-      cmake .. && \
+      cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=17 -DCMAKE_PREFIX_PATH=/usr/local && \
       make -j"$NPROC" && \
       $SUDO make install && \
       $SUDO ldconfig \
