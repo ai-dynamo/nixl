@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,7 @@
         }                                                                       \
     } while(0)
 
-xferBenchNvshmemWorker::xferBenchNvshmemWorker(int *argc, char ***argv): xferBenchWorker(argc, argv) {
+xferBenchNvshmemWorker::xferBenchNvshmemWorker() : xferBenchWorker() {
     // Initialize NVSHMEM
     if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
 	    rank = rt->getRank();
