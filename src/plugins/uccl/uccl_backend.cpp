@@ -533,6 +533,7 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     // Check if this is a local connection (same-process or cross-process on same node)
     bool is_local_conn = uccl_engine_conn_is_local(conn);
+    bool is_same_process = (remote_agent == local_agent_name_);
 
     if (is_local_conn) {
         uccl_handle->ipc_infos.resize(lcnt);
@@ -557,17 +558,20 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
 
         uccl_engine_update_fifo(uccl_handle->fifo_items[i], remote_addr, rsize);
 
-        // For local connections (same-process or cross-process): prepare IPC info from remote MD
+        // For local connections: prepare IPC info from remote MD
+        // - has_ipc (GPU memory): works for both same-process and cross-process
+        // - !has_ipc (DRAM): only works for same-process (direct_addr)
+        //   Cross-process DRAM falls back to RDMA
         if (is_local_conn) {
             if (rmd->has_ipc) {
                 uccl_handle->ipc_infos[i].assign(rmd->ipc_info, rmd->ipc_info + IPC_INFO_SIZE);
                 uccl_engine_update_ipc_info(
                     uccl_handle->ipc_infos[i].data(), remote_addr, (uintptr_t)rmd->addr, rsize);
-            } else {
-                // Same process
+                uccl_handle->use_ipc = true;
+            } else if (is_same_process) {
                 uccl_handle->ipc_infos[i].assign(IPC_INFO_SIZE, 0);
+                uccl_handle->use_ipc = true;
             }
-            uccl_handle->use_ipc = true;
         }
     }
 
