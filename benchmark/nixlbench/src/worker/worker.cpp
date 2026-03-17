@@ -175,6 +175,9 @@ bool xferBenchWorker::isTarget() {
     return ("target" == name);
 }
 
+static_assert(std::atomic<int>::is_always_lock_free,
+              "xferBenchWorker::terminate must be lock-free for safe use in signal handlers");
+
 std::atomic<int> xferBenchWorker::terminate = 0;
 
 void xferBenchWorker::signalHandler(int signal) {
@@ -184,7 +187,7 @@ void xferBenchWorker::signalHandler(int signal) {
     auto size = write(stdout_fd, msg, sizeof(msg) - 1);
     (void)size;
 
-    if (++terminate > max_count) {
+    if (terminate.fetch_add(1, std::memory_order_relaxed) >= max_count) {
         std::_Exit(EXIT_FAILURE);
     }
 }

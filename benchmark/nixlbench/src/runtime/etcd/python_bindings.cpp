@@ -26,11 +26,14 @@ PYBIND11_MODULE (etcd_runtime, m) {
     m.doc() = "Python bindings for ETCD runtime";
 
     py::class_<xferBenchEtcdRT>(m, "EtcdRuntime")
-        .def(py::init<const std::string &, const std::string &, const int, std::atomic<int> *>(),
+        .def(py::init([](const std::string &benchmark_group,
+                         const std::string &etcd_endpoints,
+                         const int size) {
+                 return new xferBenchEtcdRT(benchmark_group, etcd_endpoints, size, nullptr);
+             }),
              py::arg("benchmark_group"),
              py::arg("etcd_endpoints"),
-             py::arg("size"),
-             py::arg("terminate") = nullptr)
+             py::arg("size"))
         .def("setup", &xferBenchEtcdRT::setup)
         .def("get_rank", &xferBenchEtcdRT::getRank)
         .def("get_size", &xferBenchEtcdRT::getSize)

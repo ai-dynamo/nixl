@@ -1266,6 +1266,10 @@ execTransferIterations(nixlAgent *agent,
     if (__builtin_expect(recreate_per_iteration, 0)) {
         // GUSLI path: Create/execute/release per iteration
         for (int i = 0; i < num_iter; ++i) {
+            // Check for signal (SIGTERM/SIGINT) to allow fast exit on peer death
+            if (__builtin_expect(terminate_ptr && *terminate_ptr, 0)) {
+                return -1;
+            }
             nixl_status_t create_rc =
                 agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
             if (__builtin_expect(create_rc != NIXL_SUCCESS, 0)) {
