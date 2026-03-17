@@ -1264,24 +1264,6 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     return res;
 }
 
-// Helper to execute a single transfer iteration
-static inline nixl_status_t
-execSingleTransfer(nixlAgent *agent,
-                   nixlXferReqH *req,
-                   xferBenchTimer &timer,
-                   xferBenchStats &thread_stats,
-                   const std::atomic<int> *terminate_ptr = nullptr) {
-    nixl_status_t rc = agent->postXferReq(req);
-    thread_stats.post_duration.add(timer.lap());
-    while (NIXL_IN_PROG == rc) {
-        if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
-            break;
-        }
-        rc = agent->getXferStatus(req);
-    }
-    return rc;
-}
-
 // Helper to prepare transfer descriptors based on backend type
 static void
 prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
@@ -1357,120 +1339,219 @@ deregisterIterationMem(nixlAgent *agent,
     return NIXL_SUCCESS;
 }
 
-static int
-execTransferIterations(nixlAgent *agent,
-                       const nixl_xfer_op_t op,
-                       nixl_xfer_dlist_t &local_desc,
-                       nixl_xfer_dlist_t &remote_desc,
-                       const std::string &target,
-                       nixl_opt_args_t &params,
-                       const int num_iter,
-                       xferBenchTimer &timer,
-                       xferBenchStats &thread_stats,
-                       const std::vector<xferBenchIOV> &local_iov,
-                       const std::vector<xferBenchIOV> &remote_iov,
-                       nixlBackendH *backend_engine,
-                       const std::atomic<int> *terminate_ptr = nullptr) {
+// Per-slot state for execTransferLoop. A slot owns its slice of the IOV
+// vector for the lifetime of the run; req/registered track the current
+// nixlXferReqH and registration state so the prepare/post/recycle helpers
+// can be called idempotently.
+struct slotState {
+    std::vector<xferBenchIOV> local_iov;
+    std::vector<xferBenchIOV> remote_iov;
     nixlXferReqH *req = nullptr;
-    nixlTime::us_t total_prepare_duration = 0;
-    const bool recreate_per_iteration = xferBenchConfig::recreate_xfer;
+    bool in_flight = false;
+    bool registered = false;
+    nixlTime::us_t post_ts = 0;
+};
+
+// Register memory (if --reregister_mem) and create the XferReq for a slot
+// that doesn't already have one. Records the wall-clock time as
+// prepare_duration.
+static nixl_status_t
+prepareSlot(nixlAgent *agent,
+            nixlBackendH *backend_engine,
+            const nixl_xfer_op_t op,
+            const std::string &target,
+            nixl_opt_args_t &params,
+            xferBenchStats &thread_stats,
+            slotState &slot) {
     const bool reregister = xferBenchConfig::reregister_mem;
+    const nixlTime::us_t prep_start = nixlTime::getUs();
 
-    if (!recreate_per_iteration) {
-        nixl_status_t create_rc =
-            agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
-        if (NIXL_SUCCESS != create_rc) {
-            std::cerr << "createXferReq failed: " << nixlEnumStrings::statusStr(create_rc)
+    if (reregister && !slot.registered) {
+        nixl_status_t rc =
+            registerIterationMem(agent, slot.local_iov, slot.remote_iov, backend_engine);
+        if (rc != NIXL_SUCCESS) return rc;
+        slot.registered = true;
+    }
+
+    if (!slot.req) {
+        nixl_xfer_dlist_t ld(GET_SEG_TYPE(true));
+        nixl_xfer_dlist_t rd(GET_SEG_TYPE(false));
+        prepareTransferDescriptors(ld, rd, slot.local_iov, slot.remote_iov);
+        nixl_status_t rc = agent->createXferReq(op, ld, rd, target, slot.req, &params);
+        if (rc != NIXL_SUCCESS) return rc;
+    }
+
+    thread_stats.prepare_duration.add(nixlTime::getUs() - prep_start);
+    return NIXL_SUCCESS;
+}
+
+// Post the slot's request and record post_duration. Marks the slot
+// in-flight; the caller drives completion via getXferStatus.
+static nixl_status_t
+postSlot(nixlAgent *agent, xferBenchStats &thread_stats, slotState &slot) {
+    const nixlTime::us_t post_start = nixlTime::getUs();
+    nixl_status_t rc = agent->postXferReq(slot.req);
+    if (rc != NIXL_SUCCESS && rc != NIXL_IN_PROG) return rc;
+    slot.post_ts = nixlTime::getUs();
+    thread_stats.post_duration.add(slot.post_ts - post_start);
+    slot.in_flight = true;
+    return NIXL_SUCCESS;
+}
+
+// Tear down the request and (if --reregister_mem) the registration so the
+// next prepareSlot exercises the full lifecycle.
+static nixl_status_t
+recycleSlot(nixlAgent *agent, nixlBackendH *backend_engine, slotState &slot) {
+    if (slot.req) {
+        agent->releaseXferReq(slot.req);
+        slot.req = nullptr;
+    }
+    if (xferBenchConfig::reregister_mem && slot.registered) {
+        nixl_status_t rc =
+            deregisterIterationMem(agent, slot.local_iov, slot.remote_iov, backend_engine);
+        slot.registered = false;
+        if (rc != NIXL_SUCCESS) return rc;
+    }
+    return NIXL_SUCCESS;
+}
+
+// Best-effort teardown for early-exit / error paths.
+static void
+cleanupSlots(nixlAgent *agent, nixlBackendH *backend_engine, std::vector<slotState> &slots) {
+    for (auto &slot : slots) {
+        if (slot.req) {
+            agent->releaseXferReq(slot.req);
+            slot.req = nullptr;
+        }
+        if (xferBenchConfig::reregister_mem && slot.registered) {
+            deregisterIterationMem(agent, slot.local_iov, slot.remote_iov, backend_engine);
+            slot.registered = false;
+        }
+    }
+}
+
+// Run num_iter transfers using a sliding window of pipeline_depth in-flight
+// requests. Depth=1 collapses to the original "one create, N posts, one
+// release" baseline (the previous execTransferIterations); --recreate_xfer
+// tears down and rebuilds the request between iterations, --reregister_mem
+// adds the matching registerMem/deregisterMem cycle.
+static int
+execTransferLoop(nixlAgent *agent,
+                 nixlBackendH *backend_engine,
+                 const nixl_xfer_op_t op,
+                 const std::string &target,
+                 nixl_opt_args_t &params,
+                 const int num_iter,
+                 xferBenchStats &thread_stats,
+                 const std::vector<xferBenchIOV> &local_iov,
+                 const std::vector<xferBenchIOV> &remote_iov,
+                 const std::atomic<int> *terminate_ptr = nullptr) {
+    const int depth = std::min(xferBenchConfig::pipeline_depth, num_iter);
+    if (depth < xferBenchConfig::pipeline_depth) {
+        std::cout << "Warning: pipeline_depth (" << xferBenchConfig::pipeline_depth
+                  << ") exceeds num_iter (" << num_iter << "), capping to " << depth << std::endl;
+    }
+    const bool recreate = xferBenchConfig::recreate_xfer;
+
+    if (local_iov.size() % depth != 0) {
+        std::cerr << "Error: descriptor count (" << local_iov.size()
+                  << ") is not evenly divisible by pipeline depth (" << depth << ")" << std::endl;
+        return -1;
+    }
+    const size_t entries_per_slot = local_iov.size() / depth;
+
+    std::vector<slotState> slots(depth);
+    for (int s = 0; s < depth; s++) {
+        auto lb = local_iov.begin() + s * entries_per_slot;
+        auto rb = remote_iov.begin() + s * entries_per_slot;
+        slots[s].local_iov.assign(lb, lb + entries_per_slot);
+        slots[s].remote_iov.assign(rb, rb + entries_per_slot);
+    }
+
+    int issued = 0;
+    int completed = 0;
+
+    for (int s = 0; s < depth; s++) {
+        if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+            cleanupSlots(agent, backend_engine, slots);
+            return -1;
+        }
+        nixl_status_t rc =
+            prepareSlot(agent, backend_engine, op, target, params, thread_stats, slots[s]);
+        if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+            std::cerr << "prepareSlot failed for slot " << s << ": "
+                      << nixlEnumStrings::statusStr(rc) << std::endl;
+            cleanupSlots(agent, backend_engine, slots);
+            return -1;
+        }
+        rc = postSlot(agent, thread_stats, slots[s]);
+        if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+            std::cerr << "postSlot failed for slot " << s << ": " << nixlEnumStrings::statusStr(rc)
                       << std::endl;
+            cleanupSlots(agent, backend_engine, slots);
             return -1;
         }
-        thread_stats.prepare_duration.add(timer.lap());
+        issued++;
     }
 
-    // Execute transfer iterations
-    // Branch prediction hint: most backends don't recreate per iteration
-    if (__builtin_expect(recreate_per_iteration, 0)) {
-        for (int i = 0; i < num_iter; ++i) {
-            if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+    while (completed < num_iter) {
+        if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+            cleanupSlots(agent, backend_engine, slots);
+            return -1;
+        }
+        for (int s = 0; s < depth; s++) {
+            if (!slots[s].in_flight) continue;
+
+            nixl_status_t rc = agent->getXferStatus(slots[s].req);
+            if (rc == NIXL_IN_PROG) continue;
+
+            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                std::cerr << "Transfer failed on slot " << s << ": "
+                          << nixlEnumStrings::statusStr(rc) << std::endl;
+                cleanupSlots(agent, backend_engine, slots);
                 return -1;
             }
-            if (reregister) {
-                nixl_status_t reg_rc =
-                    registerIterationMem(agent, local_iov, remote_iov, backend_engine);
-                if (__builtin_expect(reg_rc != NIXL_SUCCESS, 0)) {
-                    std::cerr << "registerMem failed during iteration" << std::endl;
+
+            completed++;
+            thread_stats.transfer_duration.add(nixlTime::getUs() - slots[s].post_ts);
+            slots[s].in_flight = false;
+
+            if (issued >= num_iter) continue;
+
+            if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+                cleanupSlots(agent, backend_engine, slots);
+                return -1;
+            }
+
+            if (recreate) {
+                rc = recycleSlot(agent, backend_engine, slots[s]);
+                if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                    std::cerr << "recycleSlot failed for slot " << s << ": "
+                              << nixlEnumStrings::statusStr(rc) << std::endl;
+                    cleanupSlots(agent, backend_engine, slots);
+                    return -1;
+                }
+                rc = prepareSlot(agent, backend_engine, op, target, params, thread_stats, slots[s]);
+                if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                    std::cerr << "prepareSlot failed on resubmit for slot " << s << ": "
+                              << nixlEnumStrings::statusStr(rc) << std::endl;
+                    cleanupSlots(agent, backend_engine, slots);
                     return -1;
                 }
             }
 
-
-            nixl_status_t create_rc =
-                agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
-            if (__builtin_expect(create_rc != NIXL_SUCCESS, 0)) {
-                std::cerr << "createXferReq failed: " << nixlEnumStrings::statusStr(create_rc)
-                          << std::endl;
-                if (reregister)
-                    deregisterIterationMem(agent, local_iov, remote_iov, backend_engine);
-                return -1;
-            }
-            total_prepare_duration += timer.lap();
-
-            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats, terminate_ptr);
-
+            rc = postSlot(agent, thread_stats, slots[s]);
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
-                std::cerr << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
-                          << std::endl;
-                agent->releaseXferReq(req);
-                if (reregister)
-                    deregisterIterationMem(agent, local_iov, remote_iov, backend_engine);
+                std::cerr << "postSlot failed on resubmit for slot " << s << ": "
+                          << nixlEnumStrings::statusStr(rc) << std::endl;
+                cleanupSlots(agent, backend_engine, slots);
                 return -1;
             }
-            thread_stats.transfer_duration.add(timer.lap());
-
-            if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0)) {
-                std::cerr << "NIXL releaseXferReq failed" << std::endl;
-                if (reregister)
-                    deregisterIterationMem(agent, local_iov, remote_iov, backend_engine);
-                return -1;
-            }
-
-            if (reregister) {
-                nixl_status_t dereg_rc =
-                    deregisterIterationMem(agent, local_iov, remote_iov, backend_engine);
-                if (__builtin_expect(dereg_rc != NIXL_SUCCESS, 0)) {
-                    std::cerr << "deregisterMem failed during iteration" << std::endl;
-                    return -1;
-                }
-            }
-        }
-        // Average prepare duration across iterations
-        thread_stats.prepare_duration.add(total_prepare_duration / num_iter);
-    } else {
-        // Standard path: Single request for all iterations
-        for (int i = 0; i < num_iter; ++i) {
-            // Check for signal (SIGTERM/SIGINT) to allow fast exit on peer death
-            if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
-                agent->releaseXferReq(req);
-                return -1;
-            }
-            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats, terminate_ptr);
-
-            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
-                std::cerr << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
-                          << std::endl;
-                agent->releaseXferReq(req);
-                return -1;
-            }
-            thread_stats.transfer_duration.add(timer.lap());
-        }
-
-        // Release request once after all iterations
-        if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0)) {
-            std::cerr << "NIXL releaseXferReq failed" << std::endl;
-            return -1;
+            issued++;
         }
     }
 
+    cleanupSlots(agent, backend_engine, slots);
     return 0;
 }
 
@@ -1492,15 +1573,9 @@ execTransfer(nixlAgent *agent,
     {
         xferBenchStats thread_stats;
         thread_stats.reserve(num_iter);
-        xferBenchTimer timer;
         const int tid = omp_get_thread_num();
         const auto &local_iov = local_iovs[tid];
         const auto &remote_iov = remote_iovs[tid];
-
-        // Prepare transfer descriptors
-        nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
-        nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
-        prepareTransferDescriptors(local_desc, remote_desc, local_iov, remote_iov);
 
         // Setup transfer parameters
         nixl_opt_args_t params;
@@ -1509,20 +1584,16 @@ execTransfer(nixlAgent *agent,
             params.notif = "0xBEEF";
         }
 
-        // Execute transfers
-        const int result = execTransferIterations(agent,
-                                                  op,
-                                                  local_desc,
-                                                  remote_desc,
-                                                  target,
-                                                  params,
-                                                  num_iter,
-                                                  timer,
-                                                  thread_stats,
-                                                  local_iov,
-                                                  remote_iov,
-                                                  backend_engine,
-                                                  terminate_ptr);
+        int result = execTransferLoop(agent,
+                                      backend_engine,
+                                      op,
+                                      target,
+                                      params,
+                                      num_iter,
+                                      thread_stats,
+                                      local_iov,
+                                      remote_iov,
+                                      terminate_ptr);
 
         if (__builtin_expect(result != 0, 0)) {
             ret = result;
