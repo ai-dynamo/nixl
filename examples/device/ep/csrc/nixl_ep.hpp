@@ -68,6 +68,9 @@ struct NixlAgentInfo
     std::vector<std::string> remote_agent_names;
     nixl_opt_args_t extra_params;
     nixlBackendH* backend;
+    nixl_reg_dlist_t rdma_reg_descs{VRAM_SEG};
+    nixl_reg_dlist_t sync_reg_descs{VRAM_SEG};
+    nixl_reg_dlist_t sync_count_reg_descs{VRAM_SEG};
     std::vector<bool> wire_up_done; // [num_peers]
 };
 

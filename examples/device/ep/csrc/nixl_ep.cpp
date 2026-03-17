@@ -174,17 +174,28 @@ void Buffer::destroy() {
 
     _nixl_ep_destroy();
 
-    cudaFree(rdma_buffer_ptr);
+    if (nixl_agent_info and nixl_agent_info->agent != nullptr) {
+        if (getenv("NIXL_ETCD_ENDPOINTS")) {
+            nixl_agent_info->agent->invalidateLocalMD();
+        }
 
-    if (nixl_agent_info and nixl_agent_info->agent != nullptr and getenv("NIXL_ETCD_ENDPOINTS")) {
-        nixl_agent_info->agent->invalidateLocalMD();
+        EP_HOST_ASSERT(nixl_agent_info->agent->deregisterMem(
+                           nixl_agent_info->rdma_reg_descs,
+                           &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+        EP_HOST_ASSERT(nixl_agent_info->agent->deregisterMem(
+                           nixl_agent_info->sync_reg_descs,
+                           &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+        EP_HOST_ASSERT(nixl_agent_info->agent->deregisterMem(
+                           nixl_agent_info->sync_count_reg_descs,
+                           &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+
+        nixl_agent_info.reset();
     }
 
-    rdma_buffer_ptr = nullptr;
-
-    cudaFree(mask_buffer_ptr);
-    cudaFree(sync_buffer_ptr);
-    cudaFree(sync_count_ptr);
+    CUDA_CHECK(cudaFree(rdma_buffer_ptr));
+    CUDA_CHECK(cudaFree(mask_buffer_ptr));
+    CUDA_CHECK(cudaFree(sync_buffer_ptr));
+    CUDA_CHECK(cudaFree(sync_count_ptr));
 
     // Free workspace
     CUDA_CHECK(cudaFree(workspace));
@@ -681,19 +692,21 @@ void Buffer::_nixl_agent_init() {
     nixl_agent_info->extra_params.backends.push_back(ucx_backend);
     nixl_agent_info->agent_name = agent_name;
 
-    /* Register RDMA buffer */
-    nixl_reg_dlist_t rdma_ptr_dlist(VRAM_SEG);
-    rdma_ptr_dlist.addDesc(nixlBlobDesc((uintptr_t)(rdma_buffer_ptr), num_rdma_bytes, get_local_device_id(), ""));
-    EP_HOST_ASSERT(agent->registerMem(rdma_ptr_dlist) == NIXL_SUCCESS);
+    nixl_agent_info->rdma_reg_descs.clear();
+    nixl_agent_info->rdma_reg_descs.addDesc(
+        nixlBlobDesc(reinterpret_cast<uintptr_t>(rdma_buffer_ptr), num_rdma_bytes, device_id, ""));
 
-    /* Register sync buffer */
-    nixl_reg_dlist_t sync_dlist(VRAM_SEG);
-    sync_dlist.addDesc(nixlBlobDesc((uintptr_t)(sync_buffer_ptr), max_num_ranks * sizeof(int), get_local_device_id(), ""));
-    EP_HOST_ASSERT(agent->registerMem(sync_dlist) == NIXL_SUCCESS);
+    nixl_agent_info->sync_reg_descs.clear();
+    nixl_agent_info->sync_reg_descs.addDesc(
+        nixlBlobDesc(reinterpret_cast<uintptr_t>(sync_buffer_ptr), max_num_ranks * sizeof(int), device_id, ""));
 
-    nixl_reg_dlist_t barrier_cnt_dlist(VRAM_SEG);
-    barrier_cnt_dlist.addDesc(nixlBlobDesc((uintptr_t)(sync_count_ptr), max_num_ranks * sizeof(int), get_local_device_id(), ""));
-    EP_HOST_ASSERT(agent->registerMem(barrier_cnt_dlist) == NIXL_SUCCESS);
+    nixl_agent_info->sync_count_reg_descs.clear();
+    nixl_agent_info->sync_count_reg_descs.addDesc(
+        nixlBlobDesc(reinterpret_cast<uintptr_t>(sync_count_ptr), max_num_ranks * sizeof(int), device_id, ""));
+
+    EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->rdma_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+    EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->sync_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+    EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->sync_count_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
 
     if (getenv("NIXL_ETCD_ENDPOINTS")) {
         status = nixl_agent_info->agent->sendLocalMD();
