@@ -98,7 +98,7 @@ vmm_init(size_t size, CUdevice device) {
     CUmemAccessDesc access_desc = {};
     const char *err_msg;
 
-    region.size = align_up<size_t>(size, ctx.granularity);
+    region.size = nixl_ep::align_up<size_t>(size, ctx.granularity);
 
     if (cuMemCreate(&region.handle, region.size, &ctx.prop, 0) != CUDA_SUCCESS) {
         throw std::runtime_error("Failed to create CUDA VMM allocation");
