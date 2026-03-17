@@ -115,11 +115,9 @@ static int processBatchSizes(xferBenchWorker &worker,
          !worker.signaled() &&
              batch_size <= xferBenchConfig::max_batch_size;
          batch_size *= 2) {
-        auto local_trans_lists = createTransferDescLists(worker,
-                                                         iov_lists,
-                                                         block_size,
-                                                         batch_size,
-                                                         num_threads);
+        size_t effective_batch = batch_size * std::max(1, xferBenchConfig::batch_queue_depth);
+        auto local_trans_lists =
+            createTransferDescLists(worker, iov_lists, block_size, effective_batch, num_threads);
 
         if (worker.isTarget()) {
             if (xferBenchConfig::isStorageBackend()) {

@@ -1463,6 +1463,154 @@ execTransferIterations(nixlAgent *agent,
 }
 
 static int
+execTransferPipelined(nixlAgent *agent,
+                      nixlBackendH *backend_engine,
+                      const nixl_xfer_op_t op,
+                      const std::string &target,
+                      nixl_opt_args_t &params,
+                      const int num_iter,
+                      xferBenchTimer &timer,
+                      xferBenchStats &thread_stats,
+                      const std::vector<xferBenchIOV> &local_iov,
+                      const std::vector<xferBenchIOV> &remote_iov) {
+    const int depth = std::min(xferBenchConfig::batch_queue_depth, num_iter);
+    const bool recreate = xferBenchConfig::recreate_xfer || xferBenchConfig::reregister_mem ||
+        (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
+    const bool reregister = xferBenchConfig::reregister_mem;
+    const size_t entries_per_slot = local_iov.size() / depth;
+
+    struct slot_state {
+        std::vector<xferBenchIOV> local_iov;
+        std::vector<xferBenchIOV> remote_iov;
+        nixlXferReqH *req = nullptr;
+        bool in_flight = false;
+    };
+
+    std::vector<slot_state> slots(depth);
+
+    for (int s = 0; s < depth; s++) {
+        auto lb = local_iov.begin() + s * entries_per_slot;
+        auto rb = remote_iov.begin() + s * entries_per_slot;
+        slots[s].local_iov.assign(lb, lb + entries_per_slot);
+        slots[s].remote_iov.assign(rb, rb + entries_per_slot);
+    }
+
+    int issued = 0;
+    int completed = 0;
+
+    auto build_descs = [](const std::vector<xferBenchIOV> &li,
+                          const std::vector<xferBenchIOV> &ri,
+                          nixl_xfer_dlist_t &ld,
+                          nixl_xfer_dlist_t &rd) {
+        ld = nixl_xfer_dlist_t(GET_SEG_TYPE(true));
+        rd = nixl_xfer_dlist_t(GET_SEG_TYPE(false));
+        prepareTransferDescriptors(ld, rd, li, ri);
+    };
+
+    auto cleanup_all = [&]() {
+        for (int j = 0; j < depth; j++) {
+            if (slots[j].req) {
+                if (reregister && slots[j].in_flight)
+                    deregisterIterationMem(
+                        agent, slots[j].local_iov, slots[j].remote_iov, backend_engine);
+                agent->releaseXferReq(slots[j].req);
+                slots[j].req = nullptr;
+            }
+        }
+    };
+
+    for (int s = 0; s < depth; s++) {
+        if (reregister) {
+            nixl_status_t rc = registerIterationMem(
+                agent, slots[s].local_iov, slots[s].remote_iov, backend_engine);
+            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                std::cerr << "registerMem failed for slot " << s << std::endl;
+                cleanup_all();
+                return -1;
+            }
+        }
+
+        nixl_xfer_dlist_t ld(GET_SEG_TYPE(true));
+        nixl_xfer_dlist_t rd(GET_SEG_TYPE(false));
+        build_descs(slots[s].local_iov, slots[s].remote_iov, ld, rd);
+
+        nixl_status_t rc = agent->createXferReq(op, ld, rd, target, slots[s].req, &params);
+        if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+            std::cerr << "createXferReq failed for slot " << s << ": "
+                      << nixlEnumStrings::statusStr(rc) << std::endl;
+            cleanup_all();
+            return -1;
+        }
+
+        agent->postXferReq(slots[s].req);
+        slots[s].in_flight = true;
+        issued++;
+    }
+    thread_stats.prepare_duration.add(timer.lap());
+
+    while (completed < num_iter) {
+        for (int s = 0; s < depth; s++) {
+            if (!slots[s].in_flight) continue;
+
+            nixl_status_t rc = agent->getXferStatus(slots[s].req);
+            if (rc == NIXL_IN_PROG) continue;
+
+            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                std::cerr << "Transfer failed on slot " << s << ": "
+                          << nixlEnumStrings::statusStr(rc) << std::endl;
+                cleanup_all();
+                return -1;
+            }
+
+            completed++;
+            thread_stats.transfer_duration.add(timer.lap());
+            slots[s].in_flight = false;
+
+            if (issued >= num_iter) continue;
+
+            if (recreate) {
+                agent->releaseXferReq(slots[s].req);
+                slots[s].req = nullptr;
+
+                if (reregister) {
+                    deregisterIterationMem(
+                        agent, slots[s].local_iov, slots[s].remote_iov, backend_engine);
+                    registerIterationMem(
+                        agent, slots[s].local_iov, slots[s].remote_iov, backend_engine);
+                }
+
+                nixl_xfer_dlist_t ld(GET_SEG_TYPE(true));
+                nixl_xfer_dlist_t rd(GET_SEG_TYPE(false));
+                build_descs(slots[s].local_iov, slots[s].remote_iov, ld, rd);
+
+                rc = agent->createXferReq(op, ld, rd, target, slots[s].req, &params);
+                if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                    std::cerr << "createXferReq failed on resubmit: "
+                              << nixlEnumStrings::statusStr(rc) << std::endl;
+                    cleanup_all();
+                    return -1;
+                }
+            }
+
+            agent->postXferReq(slots[s].req);
+            slots[s].in_flight = true;
+            issued++;
+        }
+    }
+
+    for (int s = 0; s < depth; s++) {
+        if (slots[s].req) {
+            if (reregister)
+                deregisterIterationMem(
+                    agent, slots[s].local_iov, slots[s].remote_iov, backend_engine);
+            agent->releaseXferReq(slots[s].req);
+        }
+    }
+
+    return 0;
+}
+
+static int
 execTransfer(nixlAgent *agent,
              nixlBackendH *backend_engine,
              const std::vector<std::vector<xferBenchIOV>> &local_iovs,
@@ -1484,11 +1632,6 @@ execTransfer(nixlAgent *agent,
         const auto &local_iov = local_iovs[tid];
         const auto &remote_iov = remote_iovs[tid];
 
-        // Prepare transfer descriptors
-        nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
-        nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
-        prepareTransferDescriptors(local_desc, remote_desc, local_iov, remote_iov);
-
         // Setup transfer parameters
         nixl_opt_args_t params;
         std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
@@ -1497,21 +1640,38 @@ execTransfer(nixlAgent *agent,
         }
 
         // Execute transfers
-        const bool recreate_per_iteration =
-            xferBenchConfig::recreate_xfer || xferBenchConfig::reregister_mem;
-        const int result = execTransferIterations(agent,
-                                                  op,
-                                                  local_desc,
-                                                  remote_desc,
-                                                  target,
-                                                  params,
-                                                  num_iter,
-                                                  timer,
-                                                  thread_stats,
-                                                  recreate_per_iteration,
-                                                  local_iov,
-                                                  remote_iov,
-                                                  backend_engine);
+        int result;
+        if (xferBenchConfig::batch_queue_depth > 1) {
+            result = execTransferPipelined(agent,
+                                           backend_engine,
+                                           op,
+                                           target,
+                                           params,
+                                           num_iter,
+                                           timer,
+                                           thread_stats,
+                                           local_iov,
+                                           remote_iov);
+        } else {
+            nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
+            nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
+            prepareTransferDescriptors(local_desc, remote_desc, local_iov, remote_iov);
+            const bool recreate_per_iteration =
+                xferBenchConfig::recreate_xfer || xferBenchConfig::reregister_mem;
+            result = execTransferIterations(agent,
+                                            op,
+                                            local_desc,
+                                            remote_desc,
+                                            target,
+                                            params,
+                                            num_iter,
+                                            timer,
+                                            thread_stats,
+                                            recreate_per_iteration,
+                                            local_iov,
+                                            remote_iov,
+                                            backend_engine);
+        }
 
         if (__builtin_expect(result != 0, 0)) {
             ret = result;
