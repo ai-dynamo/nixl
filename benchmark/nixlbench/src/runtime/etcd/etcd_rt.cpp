@@ -88,8 +88,23 @@ xferBenchEtcdRT::setup() {
     // Use the standalone KeepAlive constructor (address-based) so it creates
     // its own independent gRPC channel, avoiding any thread safety issues with
     // the main client being used concurrently from two threads.
-    keepalive = std::make_unique<etcd::KeepAlive>(stored_etcd_endpoints, lease_ttl_s);
-    client->put(makeKey("rank", my_rank), "active", keepalive->Lease());
+    try {
+        keepalive = std::make_unique<etcd::KeepAlive>(stored_etcd_endpoints, lease_ttl_s);
+    }
+    catch (const std::exception &e) {
+        client->unlock(lock_response.lock_key());
+        std::cerr << "Failed to start etcd keepalive: " << e.what() << std::endl;
+        return -1;
+    }
+
+    const auto rank_response = client->put(makeKey("rank", my_rank), "active", keepalive->Lease());
+    if (!rank_response.is_ok()) {
+        client->unlock(lock_response.lock_key());
+        keepalive->Cancel();
+        keepalive.reset();
+        std::cerr << "Failed to register rank key: " << rank_response.error_message() << std::endl;
+        return -1;
+    }
 
     // Release the lock
     client->unlock(lock_response.lock_key());
