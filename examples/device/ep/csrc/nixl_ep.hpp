@@ -43,19 +43,13 @@
 #include "event.hpp"
 #include "kernels/configs.cuh"
 #include "kernels/exception.cuh"
+#include "vmm.hpp"
 
 #include "nixl.h"
 
 #ifndef TORCH_EXTENSION_NAME
 #define TORCH_EXTENSION_NAME nixl_ep_cpp
 #endif
-
-struct vmm_region {
-    CUdeviceptr ptr = 0;
-    size_t size = 0;
-    CUmemGenericAllocationHandle handle = 0;
-    bool is_cuda_malloc = false;
-};
 
 namespace nixl_ep {
 
