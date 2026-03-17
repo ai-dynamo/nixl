@@ -125,7 +125,7 @@ private:
     startListener();
 
     nixl_status_t
-    ensureLocalConn() const;
+    prepareLocalConn() const;
 
     mutable std::mutex mem_mutex_; // mem_reg_info_ mutex
     mutable std::mutex conn_mutex_; // connected_agents_ mutex
@@ -151,10 +151,10 @@ public:
     void *addr;
     size_t length;
     int ref_cnt;
-    uccl_mr_t mr_id; // UCCL memory region id
+    uccl_mr_t mr_id;
     char fifo_item[FIFO_SIZE];
-    char ipc_info[IPC_INFO_SIZE]; // serialized IPC transfer info for cross-process local
-    bool has_ipc = false; // true if GPU buffer with valid IPC handle
+    char ipc_info[IPC_INFO_SIZE];
+    bool has_ipc = false;
 };
 
 // UCCL Backend Request Handle
@@ -168,8 +168,8 @@ public:
     uint64_t transfer_id;
     nixl_blob_t notif_msg;
     std::vector<FifoItem> fifo_items;
-    std::vector<std::vector<char>> ipc_infos; // for cross-process local transfers
-    bool use_ipc = false; // true if cross-process local path
+    std::vector<std::vector<char>> ipc_infos;
+    bool use_ipc = false;
 };
 
 #endif
