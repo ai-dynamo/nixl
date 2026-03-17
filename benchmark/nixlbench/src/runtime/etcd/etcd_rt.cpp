@@ -115,7 +115,6 @@ xferBenchEtcdRT::~xferBenchEtcdRT() {
     // rather than expiring after the TTL
     if (keepalive) {
         keepalive->Cancel();
-        keepalive.reset();
     }
     // All ranks delete, as some could be missing if ETCD state is confused
     if (client) {

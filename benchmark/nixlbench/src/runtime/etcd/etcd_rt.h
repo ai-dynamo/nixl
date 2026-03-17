@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef _ETCD_RT_H
-#define _ETCD_RT_H
+#ifndef NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_ETCD_ETCD_RT_H
+#define NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_ETCD_ETCD_RT_H
 
 #include <atomic>
 #include <string>
@@ -110,4 +110,4 @@ public:
     cleanupForExit() override;
 };
 
-#endif // _ETCD_RT_H
+#endif // NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_ETCD_ETCD_RT_H
