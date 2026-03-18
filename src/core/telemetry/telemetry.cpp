@@ -237,11 +237,6 @@ nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
 
 void
 nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
-
-    const size_t id = writeIdx_.fetch_add(3);
-    if (id + 3 > maxEventsBuffered_) {
-        return;
-    }
     const char *bytes_name = is_write ? "agent_tx_bytes" : "agent_rx_bytes";
     const char *requests_name = is_write ? "agent_tx_requests_num" : "agent_rx_requests_num";
 
@@ -249,14 +244,28 @@ nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, u
                           std::chrono::system_clock::now().time_since_epoch())
                           .count();
 
-    auto &write = eventBuffers_[writeBufIndex_.load()];
-    write[id] = nixlTelemetryEvent(time,
-                                   nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-                                   "agent_xfer_time",
-                                   xfer_time.count());
-    write[id + 1] = nixlTelemetryEvent(
+    const size_t id_xfer = writeIdx_.fetch_add(1);
+    if (id_xfer >= maxEventsBuffered_) {
+        return;
+    }
+    eventBuffers_[writeBufIndex_.load()][id_xfer] =
+        nixlTelemetryEvent(time,
+                           nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
+                           "agent_xfer_time",
+                           xfer_time.count());
+
+    const size_t id_bytes = writeIdx_.fetch_add(1);
+    if (id_bytes >= maxEventsBuffered_) {
+        return;
+    }
+    eventBuffers_[writeBufIndex_.load()][id_bytes] = nixlTelemetryEvent(
         time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_name, bytes);
-    write[id + 2] = nixlTelemetryEvent(
+
+    const size_t id_req = writeIdx_.fetch_add(1);
+    if (id_req >= maxEventsBuffered_) {
+        return;
+    }
+    eventBuffers_[writeBufIndex_.load()][id_req] = nixlTelemetryEvent(
         time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, requests_name, 1);
 }
 

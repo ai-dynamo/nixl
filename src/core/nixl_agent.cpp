@@ -333,8 +333,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.enableProgTh = data->config_.useProgThread;
     init_params.pthrDelay = data->config_.pthrDelay;
     init_params.syncMode = data->config_.syncMode;
-    init_params.enableTelemetry_ =
-        (data->telemetry_ != nullptr) && data->telemetryEnabled;
+    init_params.enableTelemetry_ = (data->telemetry_ != nullptr) && data->telemetryEnabled;
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
