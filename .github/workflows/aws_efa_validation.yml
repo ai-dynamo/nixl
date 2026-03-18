@@ -61,7 +61,6 @@ jobs:
           # Verify AWS credentials
           aws sts get-caller-identity >/dev/null
 
-      - name: Run AWS tests
       - name: Prepare test environment
         if: ${{ matrix.prepare_cmd != null }}
         working-directory: ./contrib/aws-efa
@@ -85,13 +84,11 @@ jobs:
         if: always()
         working-directory: ./contrib/aws-efa
         run: |
-          JOB_ID=$(grep 'JOB_ID=' test_output.log | head -n1 | cut -d= -f2 || true)
+          JOB_ID=$(grep 'JOB_ID=' test_output.log | head -n1 | cut -d= -f2)
           echo "JOB_ID=$JOB_ID"
-          if [ -n "$JOB_ID" ]; then
-            aws batch terminate-job \
-              --job-id "$JOB_ID" \
-              --reason 'Terminated by GitHub Actions' || true
-          fi
+          aws batch terminate-job \
+            --job-id "$JOB_ID" \
+            --reason 'Terminated by GitHub Actions' || true
 
       - name: Cleanup test environment
         if: ${{ always() && matrix.cleanup_cmd != null }}
