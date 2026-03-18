@@ -51,10 +51,9 @@ namespace nixl::config {
 namespace internal {
 
     template<typename... Ts>
-    [[noreturn]] void
-    throw_runtime_error(Ts &&...ts) {
+    [[noreturn]] void throw_runtime_error(Ts&&... ts) {
         std::ostringstream oss;
-        (void)(oss << ... << ts);
+        (void)( oss << ... << ts );
         throw std::runtime_error(std::move(oss).str());
     }
 
@@ -92,12 +91,9 @@ namespace internal {
                 return false;
             }
 
-            throw_runtime_error("Conversion to bool failed for string '",
-                                value,
-                                "' known are ",
-                                absl::StrJoin(positive, ", "),
-                                " as positive and ",
-                                absl::StrJoin(negative, ", "),
+            throw_runtime_error("Conversion to bool failed for string '", value,
+                                "' known are ", absl::StrJoin(positive, ", "),
+                                " as positive and ", absl::StrJoin(negative, ", "),
                                 " as negative (case insensitive)");
         }
 
@@ -154,11 +150,11 @@ namespace internal {
                 std::from_chars(start(value), value.data() + value.size(), result, base(value));
             switch (status.ec) {
             case std::errc::invalid_argument:
-                throw_runtime_error(
-                    "Invalid integer string '", value, "' for type ", typeid(integer).name());
+                throw_runtime_error("Invalid integer string '", value, "' for type ",
+                                    typeid(integer).name());
             case std::errc::result_out_of_range:
-                throw_runtime_error(
-                    "Integer string '", value, "' out of range for type ", typeid(integer).name());
+                throw_runtime_error("Integer string '", value, "' out of range for type ",
+                                    typeid(integer).name());
             default:
                 if (status.ptr != value.data() + value.size()) {
                     throw_runtime_error("Trailing garbage in integer string '", value, "'");
@@ -175,8 +171,8 @@ namespace internal {
                 if (fitsIn(value)) {
                     return static_cast<integer>(value);
                 }
-                throw_runtime_error(
-                    "Integer value '", value, "' out of range for type ", typeid(integer).name());
+                throw_runtime_error("Integer value '", value, "' out of range for type ",
+                                    typeid(integer).name());
             }
             throw_runtime_error("Invalid TOML type '", view.type(), "' for integer");
         }
