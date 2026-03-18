@@ -39,13 +39,6 @@
 #include "nixl_log.h"
 #include "nixl_types.h"
 
-#define NIXL_THROW_RUNTIME_ERROR(...)                   \
-    do {                                                \
-        std::ostringstream oss;                         \
-        oss << __VA_ARGS__;                             \
-        throw std::runtime_error(std::move(oss).str()); \
-    } while (true)
-
 // General design guideline for configuration handling:
 // - When something does not exist and there is a fallback, use the fallback.
 // - When something does exist and there is an error using it, propagate the error.
@@ -55,6 +48,13 @@
 namespace nixl::config {
 
 namespace internal {
+
+    template<typename... Ts>
+    [[noreturn]] void throw_runtime_error(Ts&&... ts) {
+        std::ostringstream oss;
+        (void)( oss << ... << ts );
+        throw std::runtime_error(std::move(oss).str());
+    }
 
     [[nodiscard]] std::optional<std::string>
     getenvOptional(const std::string &name);
@@ -90,10 +90,10 @@ namespace internal {
                 return false;
             }
 
-            NIXL_THROW_RUNTIME_ERROR("Conversion to bool failed for string '"
-                                     << value << "' known are " << absl::StrJoin(positive, ", ")
-                                     << " as positive and " + absl::StrJoin(negative, ", ")
-                                     << " as negative (case insensitive)");
+            throw_runtime_error("Conversion to bool failed for string '", value,
+                                "' known are ", absl::StrJoin(positive, ", "),
+                                " as positive and ", absl::StrJoin(negative, ", "),
+                                " as negative (case insensitive)");
         }
 
         [[nodiscard]] static bool
@@ -101,7 +101,7 @@ namespace internal {
             if (const auto *node = view.as_boolean()) {
                 return node->get();
             }
-            NIXL_THROW_RUNTIME_ERROR("Invalid TOML type '" << view.type() << "' for Boolean");
+            throw_runtime_error("Invalid TOML type '", view.type(), "' for Boolean");
         }
 
     private:
@@ -125,7 +125,7 @@ namespace internal {
             if (const auto *node = view.as_string()) {
                 return node->get();
             }
-            NIXL_THROW_RUNTIME_ERROR("Invalid TOML type '" << view.type() << "' for string");
+            throw_runtime_error("Invalid TOML type '", view.type(), "' for string");
         }
     };
 
@@ -149,15 +149,14 @@ namespace internal {
                 std::from_chars(start(value), value.data() + value.size(), result, base(value));
             switch (status.ec) {
             case std::errc::invalid_argument:
-                NIXL_THROW_RUNTIME_ERROR("Invalid integer string '" << value << "' for type "
-                                                                    << typeid(integer).name());
+                throw_runtime_error("Invalid integer string '", value, "' for type ",
+                                    typeid(integer).name());
             case std::errc::result_out_of_range:
-                NIXL_THROW_RUNTIME_ERROR("Integer string '" << value << "' out of range for type "
-                                                            << typeid(integer).name());
+                throw_runtime_error("Integer string '", value, "' out of range for type ",
+                                    typeid(integer).name());
             default:
                 if (status.ptr != value.data() + value.size()) {
-                    NIXL_THROW_RUNTIME_ERROR("Trailing garbage in integer string '" << value
-                                                                                    << "'");
+                    throw_runtime_error("Trailing garbage in integer string '", value, "'");
                 }
                 break;
             }
@@ -171,10 +170,10 @@ namespace internal {
                 if (value == static_cast<decltype(value)>(integer(value))) {
                     return integer(value);
                 }
-                NIXL_THROW_RUNTIME_ERROR("Integer value '" << value << "' out of range for type "
-                                                           << typeid(integer).name());
+                throw_runtime_error("Integer value '", value, "' out of range for type ",
+                                    typeid(integer).name());
             }
-            NIXL_THROW_RUNTIME_ERROR("Invalid TOML type '" << view.type() << "' for integer");
+            throw_runtime_error("Invalid TOML type '", view.type(), "' for integer");
         }
 
     private:
@@ -220,7 +219,7 @@ namespace internal {
             if (const auto *node = view.as_integer()) {
                 return std::chrono::milliseconds(node->get());
             }
-            NIXL_THROW_RUNTIME_ERROR("Invalid TOML type '" << view.type() << "' for milliseconds");
+            throw_runtime_error("Invalid TOML type '", view.type(), "' for milliseconds");
         }
     };
 
@@ -267,7 +266,7 @@ getValue(const std::string &env) {
     if (const auto view = internal::findTomlNode(env)) {
         return traits<type>::convert(view);
     }
-    NIXL_THROW_RUNTIME_ERROR("Missing config entry '" << env << "'");
+    internal::throw_runtime_error("Missing config entry '", env, "'");
 }
 
 template<typename type, template<typename...> class traits = internal::convertTraits>
@@ -295,7 +294,7 @@ getNonEmptyString(const std::string &env) {
     const std::string result = getValue<std::string>(env);
 
     if (result.empty()) {
-        NIXL_THROW_RUNTIME_ERROR("Config parameter '" << env << "' needs non-empty value");
+        internal::throw_runtime_error("Config parameter '", env, "' needs non-empty value");
     }
     return result;
 }

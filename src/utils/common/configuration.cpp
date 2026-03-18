@@ -31,7 +31,7 @@ namespace {
             return toml::parse_file(file.native());
         }
         catch (const std::exception &e) {
-            NIXL_THROW_RUNTIME_ERROR("Error " << e.what() << " reading TOML config file " << file);
+            internal::throw_runtime_error("Error ", e.what(), " reading TOML config file ", file);
         }
     }
 
@@ -92,7 +92,7 @@ namespace internal {
     [[nodiscard]] std::optional<std::string>
     getenvOptional(const std::string &name) {
         if (const char *value = std::getenv(name.c_str())) {
-            NIXL_DEBUG << "Found environment variable " << name << "=" << value;
+            NIXL_DEBUG << "Found environment variable " << name;
             return std::string(value);
         }
         NIXL_DEBUG << "Missing environment variable " << name;
