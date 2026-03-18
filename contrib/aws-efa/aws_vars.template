@@ -5,7 +5,7 @@
                 "command": [
                     "/bin/bash",
                     "-c",
-                    "${AWS_CMD}"
+                    ${AWS_CMD_JSON}
                 ],
                 "image": "${CONTAINER_IMAGE}",
                 "env": [

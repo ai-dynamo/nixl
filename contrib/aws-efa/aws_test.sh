@@ -56,6 +56,8 @@ if [ -n "$TEST_TIMEOUT" ]; then
 else
     export AWS_CMD="$AWS_CMD_BASE"
 fi
+AWS_CMD_JSON=$(printf '%s' "$AWS_CMD" | jq -Rs .)
+export AWS_CMD_JSON
 
 # Generate AWS job properties json from template
 envsubst < aws_vars.template > aws_vars.json
