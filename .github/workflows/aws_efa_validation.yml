@@ -32,6 +32,8 @@ jobs:
             test_scripts:
               - .gitlab/test_rust.sh $NIXL_INSTALL_DIR
           - test_name: "S3 Tests"
+            prepare_cmd: "./s3_prepare.sh"
+            cleanup_cmd: "./s3_cleanup.sh"
             test_scripts:
               - .gitlab/test_plugins.sh $NIXL_INSTALL_DIR
 
@@ -60,26 +62,28 @@ jobs:
           aws sts get-caller-identity >/dev/null
 
       - name: Run AWS tests
+      - name: Prepare test environment
+        if: ${{ matrix.prepare_cmd != null }}
+        working-directory: ./contrib/aws-efa
+        env:
+          NIXL_AWS_ACCESS_KEY_ID: ${{ secrets.NIXL_AWS_ACCESS_KEY_ID }}
+          NIXL_AWS_SECRET_ACCESS_KEY: ${{ secrets.NIXL_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          ${{ matrix.prepare_cmd }}
+
+      - name: Run AWS tests
         working-directory: ./contrib/aws-efa
         timeout-minutes: 180
         env:
           TEST_TIMEOUT: 60
-          NIXL_AWS_ACCESS_KEY_ID: ${{ secrets.NIXL_AWS_ACCESS_KEY_ID }}
-          NIXL_AWS_SECRET_ACCESS_KEY: ${{ secrets.NIXL_AWS_SECRET_ACCESS_KEY }}
         run: |
           set -o pipefail
-          if [ "${{ matrix.test_name }}" = "S3 Tests" ]; then
-            ./s3_prepare.sh
-          fi
           test_cmd='${{ join(matrix.test_scripts, ' && ') }}'
           ./aws_test.sh "$test_cmd" 2>&1 | tee test_output.log
 
       - name: Cleanup AWS resources
         if: always()
         working-directory: ./contrib/aws-efa
-        env:
-          NIXL_AWS_ACCESS_KEY_ID: ${{ secrets.NIXL_AWS_ACCESS_KEY_ID }}
-          NIXL_AWS_SECRET_ACCESS_KEY: ${{ secrets.NIXL_AWS_SECRET_ACCESS_KEY }}
         run: |
           JOB_ID=$(grep 'JOB_ID=' test_output.log | head -n1 | cut -d= -f2 || true)
           echo "JOB_ID=$JOB_ID"
@@ -88,8 +92,12 @@ jobs:
               --job-id "$JOB_ID" \
               --reason 'Terminated by GitHub Actions' || true
           fi
-          if [ "${{ matrix.test_name }}" = "S3 Tests" ]; then
-            export AWS_ACCESS_KEY_ID="$NIXL_AWS_ACCESS_KEY_ID"
-            export AWS_SECRET_ACCESS_KEY="$NIXL_AWS_SECRET_ACCESS_KEY"
-            aws s3 rb s3://nixl-ci-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} --force || true
-          fi
+
+      - name: Cleanup test environment
+        if: ${{ always() && matrix.cleanup_cmd != null }}
+        working-directory: ./contrib/aws-efa
+        env:
+          NIXL_AWS_ACCESS_KEY_ID: ${{ secrets.NIXL_AWS_ACCESS_KEY_ID }}
+          NIXL_AWS_SECRET_ACCESS_KEY: ${{ secrets.NIXL_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          ${{ matrix.cleanup_cmd }}
