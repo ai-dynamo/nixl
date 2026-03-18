@@ -274,7 +274,7 @@ else
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
       cmake .. -DBUILD_SHARED_LIBS=ON && \
-      make -j"$NPROC" && \
+      make -j4 && \
       $SUDO make install && \
       $SUDO ldconfig && \
       cd .. && \
