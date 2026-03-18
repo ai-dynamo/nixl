@@ -31,6 +31,9 @@ jobs:
           - test_name: "Rust Tests"
             test_scripts:
               - .gitlab/test_rust.sh $NIXL_INSTALL_DIR
+          - test_name: "S3 Tests"
+            test_scripts:
+              - .gitlab/test_plugins.sh $NIXL_INSTALL_DIR
 
     steps:
       - name: Checkout repository
@@ -61,17 +64,33 @@ jobs:
         timeout-minutes: 180
         env:
           TEST_TIMEOUT: 60
+          NIXL_AWS_ACCESS_KEY_ID: ${{ secrets.NIXL_AWS_ACCESS_KEY_ID }}
+          NIXL_AWS_SECRET_ACCESS_KEY: ${{ secrets.NIXL_AWS_SECRET_ACCESS_KEY }}
         run: |
           set -o pipefail
+          if [ "${{ matrix.test_name }}" = "S3 Tests" ]; then
+            ./s3_prepare.sh
+            export BUILD_CMD=".gitlab/build.sh \${NIXL_INSTALL_DIR} \${NIXL_INSTALL_DIR} -Ddisable_gds_backend=true"
+          fi
           test_cmd='${{ join(matrix.test_scripts, ' && ') }}'
           ./aws_test.sh "$test_cmd" 2>&1 | tee test_output.log
 
       - name: Cleanup AWS resources
         if: always()
         working-directory: ./contrib/aws-efa
+        env:
+          NIXL_AWS_ACCESS_KEY_ID: ${{ secrets.NIXL_AWS_ACCESS_KEY_ID }}
+          NIXL_AWS_SECRET_ACCESS_KEY: ${{ secrets.NIXL_AWS_SECRET_ACCESS_KEY }}
         run: |
-          JOB_ID=$(grep 'JOB_ID=' test_output.log | head -n1 | cut -d= -f2)
+          JOB_ID=$(grep 'JOB_ID=' test_output.log | head -n1 | cut -d= -f2 || true)
           echo "JOB_ID=$JOB_ID"
-          aws batch terminate-job \
-            --job-id "$JOB_ID" \
-            --reason 'Terminated by GitHub Actions' || true
+          if [ -n "$JOB_ID" ]; then
+            aws batch terminate-job \
+              --job-id "$JOB_ID" \
+              --reason 'Terminated by GitHub Actions' || true
+          fi
+          if [ "${{ matrix.test_name }}" = "S3 Tests" ]; then
+            export AWS_ACCESS_KEY_ID="$NIXL_AWS_ACCESS_KEY_ID"
+            export AWS_SECRET_ACCESS_KEY="$NIXL_AWS_SECRET_ACCESS_KEY"
+            aws s3 rb s3://nixl-ci-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} --force || true
+          fi
