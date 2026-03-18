@@ -240,6 +240,7 @@ RUN cd /usr/local/src && \
          --enable-shared             \
          --disable-static            \
          --disable-doxygen-doc       \
+         --enable-experimental-api   \
          --enable-optimizations      \
          --enable-cma                \
          --enable-devel-headers      \
@@ -298,7 +299,7 @@ WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE -Dbuild_nixl_ep=true \
+    meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE -Dbuild_nixl_ep=true -Ducx_path=/usr/local \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" && \
     cd build && \
