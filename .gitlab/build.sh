@@ -56,6 +56,15 @@ else
     SUDO=""
 fi
 
+# Print system information
+echo "==== System information: CPUs, memory ===="
+echo "NPROC: $NPROC"
+echo "nproc: $(nproc)"
+echo "free -h: $(free -h)"
+echo "cat /proc/meminfo: $(cat /proc/meminfo)"
+echo "cat /proc/cpuinfo: $(cat /proc/cpuinfo)"
+echo "==== End of system information ===="
+
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
