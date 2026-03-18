@@ -15,10 +15,14 @@
 # limitations under the License.
 #
 # Prepare S3 state and AWS pod env for S3 plugin tests.
-set -exE -o pipefail
 
 if [ -z "$NIXL_AWS_ACCESS_KEY_ID" ] || [ -z "$NIXL_AWS_SECRET_ACCESS_KEY" ]; then
     echo "Missing NIXL S3 credentials"
+    exit 1
+fi
+
+if [ -z "$GITHUB_RUN_ID" ]; then
+    echo "Missing required GitHub metadata: GITHUB_RUN_ID"
     exit 1
 fi
 
@@ -26,6 +30,8 @@ export AWS_ACCESS_KEY_ID="$NIXL_AWS_ACCESS_KEY_ID"
 export AWS_SECRET_ACCESS_KEY="$NIXL_AWS_SECRET_ACCESS_KEY"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-eu-central-1}"
 export AWS_DEFAULT_BUCKET="nixl-ci-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}"
+
+set -exE -o pipefail
 
 # Validate credentials before creating resources.
 aws sts get-caller-identity >/dev/null
