@@ -50,14 +50,12 @@ case "$GITHUB_REF" in
         ;;
 esac
 
-AWS_CMD_BASE="set -x && git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && cd nixl && git checkout ${checkout_ref} && bash contrib/aws-efa/aws_test_remote.sh \"\${NIXL_INSTALL_DIR}\""
 if [ -n "$TEST_TIMEOUT" ]; then
-    export AWS_CMD="timeout ${TEST_TIMEOUT}m bash -lc '$AWS_CMD_BASE'"
+    TIMEOUT_CMD="timeout ${TEST_TIMEOUT}m"
 else
-    export AWS_CMD="$AWS_CMD_BASE"
+    TIMEOUT_CMD=""
 fi
-AWS_CMD_JSON=$(printf '%s' "$AWS_CMD" | jq -Rs .)
-export AWS_CMD_JSON
+export AWS_CMD="set -x && git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && cd nixl && git checkout ${checkout_ref} && $TIMEOUT_CMD bash contrib/aws-efa/aws_test_remote.sh \"\${NIXL_INSTALL_DIR}\""
 
 # Generate AWS job properties json from template
 envsubst < aws_vars.template > aws_vars.json
