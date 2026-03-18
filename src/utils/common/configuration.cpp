@@ -37,7 +37,7 @@ namespace {
 
     [[nodiscard]] toml::table
     readFile() {
-        // First choice, use filename from environment variable if set.
+        // First choice, use config file path and name from environment variable if set.
 
         if (nixl_variable != nullptr) {
             if (const auto env = internal::getenvOptional(nixl_variable)) {
@@ -47,7 +47,7 @@ namespace {
             }
         }
 
-        // Second choice, use ~/.nixl.cfg (default) as config file if the file exists.
+        // Second choice, use config file in home directory if directory and file exist.
 
         if (home_filename && *home_filename) {
             if (const auto env = internal::getenvOptional("HOME")) {
@@ -62,7 +62,7 @@ namespace {
             }
         }
 
-        // Third choice, use /etc/nixl.cfg (default) as config file if the file exists.
+        // Third choice, use global config file if it exists.
 
         if (nixl_filename && *nixl_filename) {
             const std::filesystem::path file(nixl_filename);

@@ -249,26 +249,26 @@ getValueWithStatus(type &result, const std::string &env) {
     if (const auto opt = internal::getenvOptional(env)) {
         try {
             result = traits<std::decay_t<type>>::convert(*opt);
-            internal::warnIgnoreToml(env);
-            return NIXL_SUCCESS;
         }
         catch (const std::exception &e) {
             NIXL_DEBUG << "Unable to convert environment variable '" << env << "' to target type "
                        << typeid(type).name();
             return NIXL_ERR_MISMATCH;
         }
+        internal::warnIgnoreToml(env);
+        return NIXL_SUCCESS;
     }
 
     if (const auto view = internal::findTomlNode(env)) {
         try {
             result = traits<std::decay_t<type>>::convert(view);
-            return NIXL_SUCCESS;
         }
         catch (const std::exception &e) {
             NIXL_DEBUG << "Unable to convert config value '" << env << "' to target type "
                        << typeid(type).name();
             return NIXL_ERR_MISMATCH;
         }
+        return NIXL_SUCCESS;
     }
     return NIXL_ERR_NOT_FOUND;
 }
