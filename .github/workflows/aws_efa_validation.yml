@@ -8,7 +8,7 @@ on:
 
 jobs:
   run_aws_tests:
-    name: Run AWS Tests - ${{ matrix.test_name }}
+    name: ${{ matrix.test_name }}
     environment: SWX_AWS
     runs-on: ubuntu-24.04
     env:
