@@ -81,13 +81,9 @@ xferBenchEtcdRT::setup() {
         my_rank = 0;
     }
 
-    // Update registration information
-    client->put(makeKey("size"), std::to_string(my_rank + 1));
-
-    // Attach rank key to a lease so it auto-expires if this process dies.
-    // Use the standalone KeepAlive constructor (address-based) so it creates
-    // its own independent gRPC channel, avoiding any thread safety issues with
-    // the main client being used concurrently from two threads.
+    // Register the rank key with a lease before bumping "size"; a crash before
+    // registration leaves size unchanged. Standalone KeepAlive uses its own
+    // gRPC channel to avoid races with the main client.
     try {
         keepalive = std::make_unique<etcd::KeepAlive>(stored_etcd_endpoints, lease_ttl_s);
     }
@@ -105,6 +101,10 @@ xferBenchEtcdRT::setup() {
         std::cerr << "Failed to register rank key: " << rank_response.error_message() << std::endl;
         return -1;
     }
+
+    // Bump the non-leased "size" counter only after the rank key is successfully
+    // registered with a lease.
+    client->put(makeKey("size"), std::to_string(my_rank + 1));
 
     // Release the lock
     client->unlock(lock_response.lock_key());

@@ -1204,10 +1204,14 @@ static inline nixl_status_t
 execSingleTransfer(nixlAgent *agent,
                    nixlXferReqH *req,
                    xferBenchTimer &timer,
-                   xferBenchStats &thread_stats) {
+                   xferBenchStats &thread_stats,
+                   const std::atomic<int> *terminate_ptr = nullptr) {
     nixl_status_t rc = agent->postXferReq(req);
     thread_stats.post_duration.add(timer.lap());
     while (NIXL_IN_PROG == rc) {
+        if (__builtin_expect(terminate_ptr && terminate_ptr->load(std::memory_order_relaxed), 0)) {
+            break;
+        }
         rc = agent->getXferStatus(req);
     }
     return rc;
@@ -1279,7 +1283,7 @@ execTransferIterations(nixlAgent *agent,
             }
             total_prepare_duration += timer.lap();
 
-            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
+            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats, terminate_ptr);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
@@ -1304,7 +1308,7 @@ execTransferIterations(nixlAgent *agent,
                 agent->releaseXferReq(req);
                 return -1;
             }
-            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
+            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats, terminate_ptr);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
