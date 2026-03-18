@@ -20,7 +20,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
 ARG DEFAULT_PYTHON_VERSION="3.14"
 ARG ARCH="x86_64"
-ARG UCX_REF="v1.20.x"
+ARG UCX_REF="34243b1f79e450e9a49831bbbc9cad49fe646b46"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
@@ -298,7 +298,7 @@ WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE \
+    meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE -Dbuild_nixl_ep=true \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" && \
     cd build && \
