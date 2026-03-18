@@ -58,21 +58,37 @@ The following secrets are configured in the GitHub environment:
 
 ## Manual Execution
 
-To run the tests manually:
+`./aws_test.sh` runs the unified flow (build + EFA tests + S3 plugin tests). For manual runs, prepare S3 resources before starting and always clean them up afterward.
 
-1. Set your AWS account using `aws configure` command or env vars.
-2. Substitute GH variables:
+1. Set AWS account credentials for AWS Batch/EKS (`aws configure` or env vars).
+2. Export required GitHub metadata and NIXL S3 credentials.
+3. Run S3 setup, then the AWS validation flow.
+4. Run cleanup when done (or after failures).
 
 ```bash
 # Branch or commit SHA to test
 export GITHUB_REF="main"
 
-# Other required variables
+# Required GitHub metadata
 export GITHUB_SERVER_URL="https://github.com"
 export GITHUB_REPOSITORY="ai-dynamo/nixl"
 
+# Required for S3 prep/cleanup scripts (S3 plugin tests)
+export NIXL_AWS_ACCESS_KEY_ID="<nixl-s3-access-key>"
+export NIXL_AWS_SECRET_ACCESS_KEY="<nixl-s3-secret-key>"
+
+# Optional (defaults are used if unset)
+export AWS_DEFAULT_REGION="eu-central-1"
+# export TEST_TIMEOUT=60
+
+# Prepare S3 bucket and inject S3 env vars into aws_vars.template
+./s3_prepare.sh
+
 # Run the AWS validation flow (checkout, build, tests)
 ./aws_test.sh
+
+# Cleanup S3 resources created by s3_prepare.sh (recommended in all cases)
+./s3_cleanup.sh
 ```
 
 ## Test Execution Flow
