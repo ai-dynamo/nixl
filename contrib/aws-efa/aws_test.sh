@@ -20,9 +20,9 @@ usage() {
     echo ""
     echo "Description: Run NIXL tests on AWS infrastructure"
     echo ""
-    echo "Usage: $0 <test script> <test script args>"
+    echo "Usage: $0"
     echo ""
-    echo "Example: $0 .gitlab/test_cpp.sh \$NIXL_INSTALL_DIR && .test_script123.sh param123"
+    echo "Runs contrib/aws-efa/aws_test_remote.sh inside the AWS job."
     echo ""
     echo "Required environment variables:"
     echo "  GITHUB_REF        - Git reference to checkout (e.g., main, branch-xyz, commit SHA)"
@@ -35,43 +35,27 @@ usage() {
     exit 1
 }
 
-# Validate required parameters and environment variables
-if [ -z "$1" ]; then
-    echo "Error: Test command string argument is required"
-    usage
-fi
-
+# Validate required environment variables
 if [ -z "$GITHUB_REF" ] || [ -z "$GITHUB_SERVER_URL" ] || [ -z "$GITHUB_REPOSITORY" ]; then
     echo "Error: Missing required environment variables"
     usage
 fi
 
-test_cmd="$1"
 export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04"}
 
-# Set Git checkout command based on GITHUB_REF
+checkout_ref="$GITHUB_REF"
 case "$GITHUB_REF" in
     refs/heads/*)
-        export GIT_CHECKOUT_CMD="git checkout ${GITHUB_REF#refs/heads/}"
-        ;;
-    *)
-        export GIT_CHECKOUT_CMD="git checkout $GITHUB_REF"
+        checkout_ref="${GITHUB_REF#refs/heads/}"
         ;;
 esac
 
-# Construct command sequence to run within the AWS container
-setup_cmd="set -x && \
-    git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && \
-    cd nixl && \
-    ${GIT_CHECKOUT_CMD}"
-build_cmd=".gitlab/build.sh \${NIXL_INSTALL_DIR} \${UCX_INSTALL_DIR}"
-
-# Add timeout only if TEST_TIMEOUT is set (expects minutes)
+AWS_CMD_BASE="set -x && git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && cd nixl && git checkout ${checkout_ref} && bash contrib/aws-efa/aws_test_remote.sh \"\${NIXL_INSTALL_DIR}\""
 if [ -n "$TEST_TIMEOUT" ]; then
-    test_cmd="timeout ${TEST_TIMEOUT}m ${test_cmd}"
+    export AWS_CMD="timeout ${TEST_TIMEOUT}m bash -lc '$AWS_CMD_BASE'"
+else
+    export AWS_CMD="$AWS_CMD_BASE"
 fi
-
-export AWS_CMD="${setup_cmd} && ${build_cmd} && ${test_cmd}"
 
 # Generate AWS job properties json from template
 envsubst < aws_vars.template > aws_vars.json

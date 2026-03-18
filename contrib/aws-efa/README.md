@@ -40,6 +40,7 @@ aws ec2 describe-security-groups --group-ids $CLUSTER_SG \
 ## Files
 
 - **aws_test.sh**: Main script that submits and monitors AWS Batch jobs
+- **aws_test_remote.sh**: Remote test entrypoint executed inside the AWS pod
 - **aws_vars.template**: Template file for AWS Batch job configuration
 - **aws_job_def.json**: Job definition (Registered once, for reference only)
 
@@ -70,11 +71,8 @@ export GITHUB_REF="main"
 export GITHUB_SERVER_URL="https://github.com"
 export GITHUB_REPOSITORY="ai-dynamo/nixl"
 
-# Run the script with your test command(s)
-./aws_test.sh ".gitlab/test_cpp.sh /opt/nixl"
-
-# Multiple test commands can be chained with '&&'
-./aws_test.sh ".gitlab/test_cpp.sh /opt/nixl && .test_script2.sh param123"
+# Run the AWS validation flow (checkout, build, tests)
+./aws_test.sh
 ```
 
 ## Test Execution Flow

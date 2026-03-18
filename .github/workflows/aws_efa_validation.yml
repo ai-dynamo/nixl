@@ -8,7 +8,7 @@ on:
 
 jobs:
   run_aws_tests:
-    name: ${{ matrix.test_name }}
+    name: Run AWS Tests
     environment: SWX_AWS
     runs-on: ubuntu-24.04
     env:
@@ -18,25 +18,6 @@ jobs:
       # tmp workaround: pin UCX ver to 1.18 until EFA support is available in UCX 1.19.
       UCX_VERSION: v1.18.0
       KUBECTL_VERSION: v1.35.0
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - test_name: "EFA C++ Tests"
-            test_scripts:
-              - .gitlab/test_cpp.sh $NIXL_INSTALL_DIR
-          - test_name: "EFA Python Tests"
-            test_scripts:
-              - .gitlab/test_python.sh $NIXL_INSTALL_DIR
-          - test_name: "EFA Rust Tests"
-            test_scripts:
-              - .gitlab/test_rust.sh $NIXL_INSTALL_DIR
-          - test_name: "S3 Tests"
-            prepare_cmd: "./s3_prepare.sh"
-            cleanup_cmd: "./s3_cleanup.sh"
-            test_scripts:
-              - .gitlab/test_plugins.sh $NIXL_INSTALL_DIR
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -62,13 +43,12 @@ jobs:
           aws sts get-caller-identity >/dev/null
 
       - name: Prepare test environment
-        if: ${{ matrix.prepare_cmd != null }}
         working-directory: ./contrib/aws-efa
         env:
           NIXL_AWS_ACCESS_KEY_ID: ${{ secrets.NIXL_AWS_ACCESS_KEY_ID }}
           NIXL_AWS_SECRET_ACCESS_KEY: ${{ secrets.NIXL_AWS_SECRET_ACCESS_KEY }}
         run: |
-          ${{ matrix.prepare_cmd }}
+          ./s3_prepare.sh
 
       - name: Run AWS tests
         working-directory: ./contrib/aws-efa
@@ -77,8 +57,7 @@ jobs:
           TEST_TIMEOUT: 60
         run: |
           set -o pipefail
-          test_cmd='${{ join(matrix.test_scripts, ' && ') }}'
-          ./aws_test.sh "$test_cmd" 2>&1 | tee test_output.log
+          ./aws_test.sh 2>&1 | tee test_output.log
 
       - name: Cleanup AWS resources
         if: always()
@@ -91,10 +70,10 @@ jobs:
             --reason 'Terminated by GitHub Actions' || true
 
       - name: Cleanup test environment
-        if: ${{ always() && matrix.cleanup_cmd != null }}
+        if: always()
         working-directory: ./contrib/aws-efa
         env:
           NIXL_AWS_ACCESS_KEY_ID: ${{ secrets.NIXL_AWS_ACCESS_KEY_ID }}
           NIXL_AWS_SECRET_ACCESS_KEY: ${{ secrets.NIXL_AWS_SECRET_ACCESS_KEY }}
         run: |
-          ${{ matrix.cleanup_cmd }}
+          ./s3_cleanup.sh
