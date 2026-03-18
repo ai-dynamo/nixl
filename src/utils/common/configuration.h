@@ -22,7 +22,6 @@
 #include <charconv>
 #include <chrono>
 #include <cstdlib>
-#include <limits>
 #include <filesystem>
 #include <limits>
 #include <optional>
@@ -173,7 +172,7 @@ namespace internal {
         convert(const toml::node_view<const toml::node> &view) {
             if (const auto *node = view.as_integer()) {
                 const auto value = node->get();
-                if (fits(value)) {
+                if (in_range(value)) {
                     return integer(value);
                 }
                 throw_runtime_error(
@@ -183,17 +182,6 @@ namespace internal {
         }
 
     private:
-        [[nodiscard]] static bool
-        fitsIn(const int64_t value) noexcept {
-            if constexpr (std::is_signed_v<integer>) {
-                return value >= std::numeric_limits<integer>::min() &&
-                    value <= std::numeric_limits<integer>::max();
-            } else {
-                return value >= 0 &&
-                    static_cast<uint64_t>(value) <= std::numeric_limits<integer>::max();
-            }
-        }
-
         [[nodiscard]] static bool
         isHex(const std::string &value) noexcept {
             return std::is_unsigned_v<integer> && (value.size() > 2) && (value[0] == '0') &&
@@ -212,7 +200,7 @@ namespace internal {
 
         template<typename T>
         [[nodiscard]] static bool
-        fits(const T value) noexcept {
+        in_range(const T value) noexcept {
             static_assert(std::is_signed_v<T>);
             if constexpr (std::is_signed_v<integer>) {
                 return value >= std::numeric_limits<integer>::min() &&
@@ -259,9 +247,9 @@ template<typename type, template<typename...> class traits = internal::convertTr
 [[nodiscard]] nixl_status_t
 getValueWithStatus(type &result, const std::string &env) {
     if (const auto opt = internal::getenvOptional(env)) {
-        internal::warnIgnoreToml(env);
         try {
             result = traits<std::decay_t<type>>::convert(*opt);
+            internal::warnIgnoreToml(env);
             return NIXL_SUCCESS;
         }
         catch (const std::exception &e) {
@@ -289,8 +277,9 @@ template<typename type, template<typename...> class traits = internal::convertTr
 [[nodiscard]] type
 getValue(const std::string &env) {
     if (const auto opt = internal::getenvOptional(env)) {
+        auto result = traits<type>::convert(*opt);
         internal::warnIgnoreToml(env);
-        return traits<type>::convert(*opt);
+        return result;
     }
 
     if (const auto view = internal::findTomlNode(env)) {
@@ -303,8 +292,9 @@ template<typename type, template<typename...> class traits = internal::convertTr
 [[nodiscard]] std::optional<type>
 getValueOptional(const std::string &env) {
     if (const auto opt = internal::getenvOptional(env)) {
+        auto result = traits<type>::convert(*opt);
         internal::warnIgnoreToml(env);
-        return traits<type>::convert(*opt);
+        return result;
     }
 
     if (const auto view = internal::findTomlNode(env)) {

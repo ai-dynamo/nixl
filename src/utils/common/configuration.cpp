@@ -19,11 +19,11 @@
 
 namespace nixl::config {
 
-const char *home_filename __attribute__((weak)) = ".nixl.cfg";
-const char *nixl_filename __attribute__((weak)) = "/etc/nixl.cfg";
-const char *nixl_variable __attribute__((weak)) = "NIXL_CONFIG_FILE";
-
 namespace {
+
+    const char *home_filename = ".nixl.cfg";
+    const char *nixl_filename = "/etc/nixl.cfg";
+    const char *nixl_variable = "NIXL_CONFIG_FILE";
 
     [[nodiscard]] toml::table
     readFile(const std::filesystem::path &file) {
@@ -37,7 +37,7 @@ namespace {
 
     [[nodiscard]] toml::table
     readFile() {
-        // First choice, use $NIXL_CONFIG_FILE as config file if the environment variable is set.
+        // First choice, use filename from environment variable if set.
 
         if (nixl_variable != nullptr) {
             if (const auto env = internal::getenvOptional(nixl_variable)) {
