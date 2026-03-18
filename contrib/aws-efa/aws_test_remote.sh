@@ -28,10 +28,14 @@ run_group() {
     local group_name="$1"
     shift
     echo "::group::${group_name}"
-    "$@"
-    local rc=$?
+    local rc
+    if "$@"; then
+        rc=0
+    else
+        rc=$?
+    fi
     echo "::endgroup::"
-    return $rc
+    return "$rc"
 }
 
 run_group "Build" .gitlab/build.sh "${NIXL_INSTALL_DIR}" "${UCX_INSTALL_DIR}"
