@@ -427,9 +427,9 @@ main(int argc, char *argv[]) {
     // For Dell ObjectScale: accelerated=true, type=dell enables S3 over RDMA.
     if (use_accelerated) {
         params["accelerated"] = "true";
-    }
-    if (!accel_type.empty()) {
-        params["type"] = accel_type;
+        if (!accel_type.empty()) {
+            params["type"] = accel_type;
+        }
     }
 
     // Create backends
@@ -750,6 +750,12 @@ main(int argc, char *argv[]) {
 
     if (!use_vram) {
         expected_buffer = (char *)malloc(transfer_size);
+        if (!expected_buffer) {
+            std::cerr << "Failed to allocate validation buffer\n";
+            ret_code = 1;
+            goto cleanup;
+        }
+        fill_test_pattern(expected_buffer, transfer_size);
     }
 
     for (i = 0; i < num_transfers; i++) {
@@ -762,12 +768,6 @@ main(int argc, char *argv[]) {
             }
 #endif
         } else {
-            if (!expected_buffer) {
-                std::cerr << "Failed to allocate validation buffer\n";
-                ret_code = 1;
-                goto cleanup;
-            }
-            fill_test_pattern(expected_buffer, transfer_size);
             if (memcmp(dram_addr[i], expected_buffer, transfer_size) != 0) {
                 std::cerr << "DRAM buffer " << i << " validation failed\n";
                 ret_code = 1;

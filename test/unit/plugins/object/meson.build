@@ -20,6 +20,8 @@ object_test_deps = [nixl_dep, nixl_infra, nixl_common_dep,
 if cuda_dep.found()
     cpp_flags += '-DHAVE_CUDA'
     object_test_deps += [cuda_dep]
+else
+    cpp_flags += '-UHAVE_CUDA'
 endif
 
 nixl_object_app = executable('nixl_object_test', 'nixl_object_test.cpp',
