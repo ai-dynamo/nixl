@@ -72,6 +72,8 @@ public:
     void
     addPostTime(std::chrono::microseconds post_time);
 
+    bool recording{false};
+
 private:
     void
     initializeTelemetry();

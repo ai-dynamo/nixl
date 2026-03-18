@@ -135,13 +135,12 @@ nixlTelemetry::initializeTelemetry() {
     writeTask_.interval_ = run_interval;
     writeTask_.enabled_ = true;
     registerPeriodicTask(writeTask_);
+    recording = true;
 }
 
 bool
 nixlTelemetry::writeEventHelper() {
-    if (!exporter_ || maxEventsBuffered_ == 0) {
-        return true;
-    }
+
     // Block producers by setting writeIdx_=max so they get id>=max and skip.
     const int w = writeBufIndex_.load();
     const size_t num_events_raw = writeIdx_.exchange(maxEventsBuffered_);
@@ -177,9 +176,7 @@ void
 nixlTelemetry::updateData(const std::string &event_name,
                           nixl_telemetry_category_t category,
                           uint64_t value) {
-    if (!exporter_ || maxEventsBuffered_ == 0) {
-        return;
-    }
+
     const size_t id = writeIdx_.fetch_add(1);
     if (id >= maxEventsBuffered_) {
         return;
@@ -240,9 +237,7 @@ nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
 
 void
 nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
-    if (!exporter_ || maxEventsBuffered_ == 0) {
-        return;
-    }
+
     const size_t id = writeIdx_.fetch_add(3);
     if (id + 3 > maxEventsBuffered_) {
         return;
