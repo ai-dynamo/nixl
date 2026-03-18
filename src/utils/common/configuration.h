@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <limits>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -172,8 +173,8 @@ namespace internal {
         convert(const toml::node_view<const toml::node> &view) {
             if (const auto *node = view.as_integer()) {
                 const auto value = node->get();
-                if (fitsIn(value)) {
-                    return static_cast<integer>(value);
+                if (fits(value)) {
+                    return integer(value);
                 }
                 throw_runtime_error(
                     "Integer value '", value, "' out of range for type ", typeid(integer).name());
@@ -208,7 +209,20 @@ namespace internal {
         start(const std::string &value) noexcept {
             return value.data() + (isHex(value) ? 2 : 0);
         }
-    };
+
+        template<typename T>
+        [[nodiscard]] static bool
+        fits(const T value) noexcept {
+            static_assert(std::is_signed_v<T>);
+            if constexpr (std::is_signed_v<integer>) {
+                return value >= std::numeric_limits<integer>::min() &&
+                       value <= std::numeric_limits<integer>::max();
+            } else {
+                return value >= 0 &&
+                       static_cast<uint64_t>(value) <= std::numeric_limits<integer>::max();
+            }
+        }
+};
 
     // Error out for now, in case plain char will be used for strings of length 1.
     // Please use the integer types signed char or unsigned char for 8-bit integers.
