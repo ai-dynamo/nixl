@@ -22,6 +22,7 @@ if [ -z "${1:-}" ]; then
 fi
 
 NIXL_INSTALL_DIR="$1"
+UCX_INSTALL_DIR="${UCX_INSTALL_DIR:-$NIXL_INSTALL_DIR}"
 
 run_group() {
     local group_name="$1"
