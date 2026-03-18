@@ -55,7 +55,7 @@ if [ -n "$TEST_TIMEOUT" ]; then
 else
     TIMEOUT_CMD=""
 fi
-export AWS_CMD="set -x && git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && cd nixl && git checkout ${checkout_ref} && $TIMEOUT_CMD bash contrib/aws-efa/aws_test_remote.sh \"\${NIXL_INSTALL_DIR}\""
+export AWS_CMD="set -x && git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && cd nixl && git checkout ${checkout_ref} && $TIMEOUT_CMD bash contrib/aws-efa/aws_test_remote.sh ${NIXL_INSTALL_DIR}"
 
 # Generate AWS job properties json from template
 envsubst < aws_vars.template > aws_vars.json
