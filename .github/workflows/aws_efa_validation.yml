@@ -1,4 +1,4 @@
-name: AWS EFA NIXL Validation
+name: AWS NIXL Validation
 
 on:
   push:
@@ -22,13 +22,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - test_name: "C++ Tests"
+          - test_name: "EFA C++ Tests"
             test_scripts:
               - .gitlab/test_cpp.sh $NIXL_INSTALL_DIR
-          - test_name: "Python Tests"
+          - test_name: "EFA Python Tests"
             test_scripts:
               - .gitlab/test_python.sh $NIXL_INSTALL_DIR
-          - test_name: "Rust Tests"
+          - test_name: "EFA Rust Tests"
             test_scripts:
               - .gitlab/test_rust.sh $NIXL_INSTALL_DIR
           - test_name: "S3 Tests"
