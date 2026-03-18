@@ -187,10 +187,10 @@ namespace internal {
         fitsIn(const int64_t value) noexcept {
             if constexpr (std::is_signed_v<integer>) {
                 return value >= std::numeric_limits<integer>::min() &&
-                       value <= std::numeric_limits<integer>::max();
+                    value <= std::numeric_limits<integer>::max();
             } else {
                 return value >= 0 &&
-                       static_cast<uint64_t>(value) <= std::numeric_limits<integer>::max();
+                    static_cast<uint64_t>(value) <= std::numeric_limits<integer>::max();
             }
         }
 
@@ -216,13 +216,13 @@ namespace internal {
             static_assert(std::is_signed_v<T>);
             if constexpr (std::is_signed_v<integer>) {
                 return value >= std::numeric_limits<integer>::min() &&
-                       value <= std::numeric_limits<integer>::max();
+                    value <= std::numeric_limits<integer>::max();
             } else {
                 return value >= 0 &&
-                       static_cast<uint64_t>(value) <= std::numeric_limits<integer>::max();
+                    static_cast<uint64_t>(value) <= std::numeric_limits<integer>::max();
             }
         }
-};
+    };
 
     // Error out for now, in case plain char will be used for strings of length 1.
     // Please use the integer types signed char or unsigned char for 8-bit integers.
