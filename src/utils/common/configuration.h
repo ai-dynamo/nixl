@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <strings.h>
@@ -33,30 +34,37 @@
 
 #include <absl/strings/str_join.h>
 
+#include <toml++/toml.hpp>
+
 #include "nixl_log.h"
 #include "nixl_types.h"
 
+#define NIXL_THROW_RUNTIME_ERROR(...)           \
+    do { std::ostringstream oss; oss << __VA_ARGS__; throw std::runtime_error(std::move(oss).str()); } while(true)
+
+// General design guideline for configuration handling:
+// - When something does not exist and there is a fallback, use the fallback.
+// - When something does exist and there is an error using it, propagate the error.
+// Using the fallback in case of errors only hides the error and can lead to
+// unintended effects when mistakes are hidden or ignored instead of being fixed.
+
 namespace nixl::config {
 
-[[nodiscard]] inline std::optional<std::string>
-getenvOptional(const std::string &name) {
-    if (const char *value = std::getenv(name.c_str())) {
-        NIXL_DEBUG << "Obtained environment variable " << name << "=" << value;
-        return std::string(value);
-    }
-    NIXL_DEBUG << "Missing environment variable " << name;
-    return std::nullopt;
-}
+namespace internal {
 
-[[nodiscard]] inline std::string
-getenvDefaulted(const std::string &name, const std::string &fallback) {
-    if (const char *value = std::getenv(name.c_str())) {
-        NIXL_DEBUG << "Obtained environment variable " << name << "=" << value;
-        return std::string(value);
-    }
-    NIXL_DEBUG << "Using default '" << fallback << "' for missing environment variable " << name;
-    return fallback;
-}
+[[nodiscard]] std::optional<std::string>
+getenvOptional(const std::string &name);
+
+[[nodiscard]] std::string
+getenvDefaulted(const std::string &name, const std::string &fallback);
+
+[[nodiscard]] toml::node_view<const toml::node>
+findTomlNode(const toml::path &path);
+
+[[nodiscard]] toml::node_view<const toml::node>
+findTomlNode(const std::string &path);
+
+void warnIgnoreToml(const std::string &path);
 
 template<typename, typename = void> struct convertTraits;
 
@@ -76,10 +84,18 @@ template<> struct convertTraits<bool> {
             return false;
         }
 
-        const std::string msg = "Conversion to bool failed for string '" + value + "' known are " +
-            absl::StrJoin(positive, ", ") + " as positive and " + absl::StrJoin(negative, ", ") +
-            " as negative (case insensitive)";
-        throw std::runtime_error(msg);
+        NIXL_THROW_RUNTIME_ERROR("Conversion to bool failed for string '" << value <<
+                                 "' known are " << absl::StrJoin(positive, ", ") <<
+                                 " as positive and " + absl::StrJoin(negative, ", ") <<
+                                 " as negative (case insensitive)" );
+    }
+
+    [[nodiscard]] static bool
+    convert(const toml::node_view<const toml::node> &view) {
+        if (const auto *node = view.as_boolean()) {
+            return node->get();
+        }
+        NIXL_THROW_RUNTIME_ERROR("Invalid TOML type '" << view.type() << "' for Boolean");
     }
 
 private:
@@ -97,12 +113,25 @@ template<> struct convertTraits<std::string> {
     convert(const std::string &value) {
         return value;
     }
+
+    [[nodiscard]] static std::string
+    convert(const toml::node_view<const toml::node> &view) {
+        if (const auto *node = view.as_string()) {
+            return node->get();
+        }
+        NIXL_THROW_RUNTIME_ERROR("Invalid TOML type '" << view.type() << "' for string");
+    }
 };
 
 template<> struct convertTraits<std::filesystem::path> {
     [[nodiscard]] static std::filesystem::path
     convert(const std::string &value) {
         return std::filesystem::path(value);
+    }
+
+    [[nodiscard]] static std::filesystem::path
+    convert(const toml::node_view<const toml::node> &view) {
+        return std::filesystem::path(convertTraits<std::string>::convert(view));
     }
 };
 
@@ -114,18 +143,30 @@ template<typename integer> struct integralTraits {
             std::from_chars(start(value), value.data() + value.size(), result, base(value));
         switch (status.ec) {
         case std::errc::invalid_argument:
-            throw std::runtime_error("Invalid integer string '" + value + "' for type " +
+            NIXL_THROW_RUNTIME_ERROR("Invalid integer string '" << value << "' for type " <<
                                      typeid(integer).name());
         case std::errc::result_out_of_range:
-            throw std::runtime_error("Integer string '" + value + "' out of range for type " +
+            NIXL_THROW_RUNTIME_ERROR("Integer string '" << value << "' out of range for type " <<
                                      typeid(integer).name());
         default:
             if (status.ptr != value.data() + value.size()) {
-                throw std::runtime_error("Trailing garbage in integer string '" + value + "'");
+                NIXL_THROW_RUNTIME_ERROR("Trailing garbage in integer string '" << value << "'");
             }
             break;
         }
         return result;
+    }
+
+    [[nodiscard]] static integer
+    convert(const toml::node_view<const toml::node> &view) {
+        if (const auto *node = view.as_integer()) {
+            const auto value = node->get();
+            if (value == static_cast<decltype(value)>(integer(value))) {
+                return integer(value);
+            }
+            NIXL_THROW_RUNTIME_ERROR("Integer value '" << value << "' out of range for type " << typeid(integer).name());
+        }
+        NIXL_THROW_RUNTIME_ERROR("Invalid TOML type '" << view.type() << "' for integer");
     }
 
 private:
@@ -146,6 +187,10 @@ private:
     }
 };
 
+// Error out for now, in case plain char will be used for strings of length 1.
+// Please use the integer types signed char or unsigned char for 8-bit integers.
+template<> struct convertTraits<char> {};
+
 template<typename integer>
 struct convertTraits<integer, std::enable_if_t<std::is_integral_v<integer>>>
     : integralTraits<integer> {};
@@ -155,18 +200,45 @@ template<> struct convertTraits<std::chrono::milliseconds> {
     convert(const std::string &value) {
         return std::chrono::milliseconds(convertTraits<uint64_t>::convert(value));
     }
+
+    [[nodiscard]] static std::chrono::milliseconds
+    convert(const toml::node_view<const toml::node> &view) {
+        if (const auto *node = view.as_time()) {
+            const auto &time = node->get();
+            return std::chrono::milliseconds((time.hour * 3600000) + (time.minute * 60000) + (time.second * 1000) + (time.nanosecond / 1000000));
+        }
+        if( const auto *node = view.as_integer()) {
+            return std::chrono::milliseconds(node->get());
+        }
+        NIXL_THROW_RUNTIME_ERROR("Invalid TOML type '" << view.type() << "' for milliseconds");
+    }
 };
 
-template<typename type, template<typename...> class traits = convertTraits>
+} // namespace internal
+
+template<typename type, template<typename...> class traits = internal::convertTraits>
 [[nodiscard]] nixl_status_t
 getValueWithStatus(type &result, const std::string &env) {
-    if (const auto opt = getenvOptional(env)) {
+    if (const auto opt = internal::getenvOptional(env)) {
+        internal::warnIgnoreToml(env);
         try {
             result = traits<std::decay_t<type>>::convert(*opt);
             return NIXL_SUCCESS;
         }
         catch (const std::exception &e) {
-            NIXL_DEBUG << "Unable to convert value '" << *opt << "' from environment variable '"
+            NIXL_DEBUG << "Unable to convert environment variable '"
+                       << env << "' to target type " << typeid(type).name();
+            return NIXL_ERR_MISMATCH;
+        }
+    }
+
+    if (const auto view = internal::findTomlNode(env)) {
+        try {
+            result = traits<std::decay_t<type>>::convert(view);
+            return NIXL_SUCCESS;
+        }
+        catch (const std::exception &e) {
+            NIXL_DEBUG << "Unable to convert config value '"
                        << env << "' to target type " << typeid(type).name();
             return NIXL_ERR_MISMATCH;
         }
@@ -174,25 +246,35 @@ getValueWithStatus(type &result, const std::string &env) {
     return NIXL_ERR_NOT_FOUND;
 }
 
-template<typename type, template<typename...> class traits = convertTraits>
+template<typename type, template<typename...> class traits = internal::convertTraits>
 [[nodiscard]] type
 getValue(const std::string &env) {
-    if (const auto opt = getenvOptional(env)) {
+    if (const auto opt = internal::getenvOptional(env)) {
+        internal::warnIgnoreToml(env);
         return traits<type>::convert(*opt);
     }
-    throw std::runtime_error("Missing environment variable '" + env + "'");
+
+    if (const auto view = internal::findTomlNode(env)) {
+        return traits<type>::convert(view);
+    }
+    NIXL_THROW_RUNTIME_ERROR("Missing config entry '" << env << "'");
 }
 
-template<typename type, template<typename...> class traits = convertTraits>
+template<typename type, template<typename...> class traits = internal::convertTraits>
 [[nodiscard]] std::optional<type>
 getValueOptional(const std::string &env) {
-    if (const auto opt = getenvOptional(env)) {
+    if (const auto opt = internal::getenvOptional(env)) {
+        internal::warnIgnoreToml(env);
         return traits<type>::convert(*opt);
+    }
+
+    if (const auto view = internal::findTomlNode(env)) {
+        return traits<type>::convert(view);
     }
     return std::nullopt;
 }
 
-template<typename type, template<typename...> class traits = convertTraits>
+template<typename type, template<typename...> class traits = internal::convertTraits>
 [[nodiscard]] type
 getValueDefaulted(const std::string &env, const type &fallback) {
     return getValueOptional<type, traits>(env).value_or(fallback);
@@ -203,15 +285,14 @@ getNonEmptyString(const std::string &env) {
     const std::string result = getValue<std::string>(env);
 
     if (result.empty()) {
-        throw std::runtime_error("Environment variable '" + env + "' needs non-empty value");
+        NIXL_THROW_RUNTIME_ERROR("Config parameter '" << env << "' needs non-empty value");
     }
     return result;
 }
 
 [[nodiscard]] inline bool
 checkExistence(const std::string &env) {
-    // Will be less trivial with configuration files.
-    return std::getenv(env.c_str()) != nullptr;
+    return ( std::getenv(env.c_str()) != nullptr ) || bool(internal::findTomlNode(env));
 }
 
 } // namespace nixl::config
