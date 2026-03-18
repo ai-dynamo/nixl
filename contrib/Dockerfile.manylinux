@@ -328,6 +328,7 @@ ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     export UV_INDEX_STRATEGY=unsafe-best-match && \
+    if [ "$BUILD_NIXL_EP" = "true" ]; then EP_BUILD_FLAG="--build-nixl-ep"; else EP_BUILD_FLAG=""; fi && \
     rm -rf dist && mkdir -p dist && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         export PATH=$VIRTUAL_ENV/bin:$PATH && \
@@ -336,7 +337,8 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --platform $WHL_PLATFORM \
             --ucx-plugins-dir /usr/lib64/ucx \
             --nixl-plugins-dir $NIXL_PLUGIN_DIR \
-            --output-dir dist ; \
+            --output-dir dist \
+            $EP_BUILD_FLAG ; \
     done
 
 # Copy the meta package wheel to the dist directory, which will be used to push to PyPI.

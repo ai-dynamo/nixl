@@ -22,6 +22,7 @@ WHL_PLATFORM="manylinux_2_39_$ARCH"
 UCX_PLUGINS_DIR="/usr/lib64/ucx"
 NIXL_PLUGINS_DIR="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins"
 OUTPUT_DIR="dist"
+BUILD_NIXL_EP="false"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -58,10 +59,14 @@ while [[ $# -gt 0 ]]; do
             echo "  --output-dir: Directory to output the wheel to (default: $OUTPUT_DIR)"
             echo "  --ucx-plugins-dir: Directory to find UCX plugins in (default: $UCX_PLUGINS_DIR)"
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
+            echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires CUDA sm90-compatible environment)"
             echo "  --help: Show this help message"
             echo ""
             echo "Must be executed from the root of the NIXL repository."
             exit 0
+            ;;
+        --build-nixl-ep)
+            BUILD_NIXL_EP="true"
             ;;
         *)
             echo "Unknown argument: $1"
@@ -84,7 +89,11 @@ if [ "$CUDA_MAJOR" -ne 12 ] && [ "$CUDA_MAJOR" -ne 13 ]; then
 fi
 PKG_NAME="nixl-cu${CUDA_MAJOR}"
 ./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
-uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
+if [ "$BUILD_NIXL_EP" = "true" ]; then
+    uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION -Csetup-args=-Dbuild_nixl_ep=true
+else
+    uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
+fi
 
 # Bundle libraries
 mkdir $TMP_DIR/dist
