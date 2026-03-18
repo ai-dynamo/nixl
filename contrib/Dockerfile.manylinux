@@ -25,6 +25,7 @@ ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
 ARG URING_TAG="liburing-2.13"
+ARG BUILD_NIXL_EP="true"
 
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy && \
@@ -299,7 +300,13 @@ WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE -Dbuild_nixl_ep=true -Ducx_path=/usr/local \
+    if [ "$BUILD_NIXL_EP" = "true" ]; then \
+        echo "=== BUILD_NIXL_EP=true: Building NIXL with NIXL EP support ===" && \
+        NIXL_EP_FLAG="-Dbuild_nixl_ep=true"; \
+    else \
+        NIXL_EP_FLAG=""; \
+    fi && \
+    meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE $NIXL_EP_FLAG -Ducx_path=/usr/local \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" && \
     cd build && \
