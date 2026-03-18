@@ -70,7 +70,6 @@ jobs:
           set -o pipefail
           if [ "${{ matrix.test_name }}" = "S3 Tests" ]; then
             ./s3_prepare.sh
-            export BUILD_CMD=".gitlab/build.sh \${NIXL_INSTALL_DIR} \${NIXL_INSTALL_DIR} -Ddisable_gds_backend=true"
           fi
           test_cmd='${{ join(matrix.test_scripts, ' && ') }}'
           ./aws_test.sh "$test_cmd" 2>&1 | tee test_output.log
