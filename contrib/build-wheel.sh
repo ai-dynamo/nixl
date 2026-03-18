@@ -67,6 +67,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --build-nixl-ep)
             BUILD_NIXL_EP="true"
+            shift
             ;;
         *)
             echo "Unknown argument: $1"
