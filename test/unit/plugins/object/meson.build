@@ -13,9 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+cpp_flags = []
+object_test_deps = [nixl_dep, nixl_infra, nixl_common_dep,
+                    aws_s3.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)]
+
+if cuda_dep.found()
+    cpp_flags += '-DHAVE_CUDA'
+    object_test_deps += [cuda_dep]
+endif
+
 nixl_object_app = executable('nixl_object_test', 'nixl_object_test.cpp',
-                          dependencies: [nixl_dep, nixl_infra, nixl_common_dep,
-                          aws_s3.partial_dependency(compile_args: false, includes: true, link_args: true, links: true),
-                          ],
+                          dependencies: object_test_deps,
+                          cpp_args: cpp_flags,
                           include_directories: [nixl_inc_dirs, utils_inc_dirs],
                           install: true)
