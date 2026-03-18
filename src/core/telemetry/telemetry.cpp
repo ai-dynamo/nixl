@@ -121,11 +121,11 @@ nixlTelemetry::initializeTelemetry() {
 
     NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << *exporter_name;
 
-    max_events_buffered_ = buffer_size;
-    event_buffers_[0].resize(max_events_buffered_);
-    event_buffers_[1].resize(max_events_buffered_);
-    write_idx_.store(0);
-    write_buf_index_.store(0);
+    maxEventsBuffered_ = buffer_size;
+    eventBuffers_[0].resize(maxEventsBuffered_);
+    eventBuffers_[1].resize(maxEventsBuffered_);
+    writeIdx_.store(0);
+    writeBufIndex_.store(0);
 
     const auto run_interval =
         nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
@@ -139,18 +139,18 @@ nixlTelemetry::initializeTelemetry() {
 
 bool
 nixlTelemetry::writeEventHelper() {
-    if (!exporter_ || max_events_buffered_ == 0) {
+    if (!exporter_ || maxEventsBuffered_ == 0) {
         return true;
     }
-    // Block producers by setting write_idx_=max so they get id>=max and skip.
-    const int w = write_buf_index_.load();
-    const size_t num_events_raw = write_idx_.exchange(max_events_buffered_);
-    write_buf_index_.store(1 - w);
-    write_idx_.store(0);
-    const size_t num_events = std::min(num_events_raw, max_events_buffered_);
+    // Block producers by setting writeIdx_=max so they get id>=max and skip.
+    const int w = writeBufIndex_.load();
+    const size_t num_events_raw = writeIdx_.exchange(maxEventsBuffered_);
+    writeBufIndex_.store(1 - w);
+    writeIdx_.store(0);
+    const size_t num_events = std::min(num_events_raw, maxEventsBuffered_);
 
     for (size_t i = 0; i < num_events; ++i) {
-        exporter_->exportEvent(event_buffers_[w][i]);
+        exporter_->exportEvent(eventBuffers_[w][i]);
     }
 
     return true;
@@ -177,14 +177,14 @@ void
 nixlTelemetry::updateData(const std::string &event_name,
                           nixl_telemetry_category_t category,
                           uint64_t value) {
-    if (!exporter_ || max_events_buffered_ == 0) {
+    if (!exporter_ || maxEventsBuffered_ == 0) {
         return;
     }
-    const size_t id = write_idx_.fetch_add(1);
-    if (id >= max_events_buffered_) {
+    const size_t id = writeIdx_.fetch_add(1);
+    if (id >= maxEventsBuffered_) {
         return;
     }
-    event_buffers_[write_buf_index_.load()][id] =
+    eventBuffers_[writeBufIndex_.load()][id] =
         nixlTelemetryEvent(std::chrono::duration_cast<std::chrono::microseconds>(
                                std::chrono::system_clock::now().time_since_epoch())
                                .count(),
@@ -240,12 +240,11 @@ nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
 
 void
 nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
-    if (!exporter_ || max_events_buffered_ == 0) {
+    if (!exporter_ || maxEventsBuffered_ == 0) {
         return;
     }
-    const size_t id = write_idx_.fetch_add(3);
-    if (id + 3 > max_events_buffered_) {
-        write_idx_.fetch_sub(3);
+    const size_t id = writeIdx_.fetch_add(3);
+    if (id + 3 > maxEventsBuffered_) {
         return;
     }
     const char *bytes_name = is_write ? "agent_tx_bytes" : "agent_rx_bytes";
@@ -255,12 +254,11 @@ nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, u
                           std::chrono::system_clock::now().time_since_epoch())
                           .count();
 
-    auto &write = event_buffers_[write_buf_index_.load()];
-    write[id] =
-        nixlTelemetryEvent(time,
-                           nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-                           "agent_xfer_time",
-                           xfer_time.count());
+    auto &write = eventBuffers_[writeBufIndex_.load()];
+    write[id] = nixlTelemetryEvent(time,
+                                   nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
+                                   "agent_xfer_time",
+                                   xfer_time.count());
     write[id + 1] = nixlTelemetryEvent(
         time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_name, bytes);
     write[id + 2] = nixlTelemetryEvent(
