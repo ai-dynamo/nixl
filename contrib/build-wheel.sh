@@ -100,7 +100,7 @@ fi
 
 # Bundle libraries
 mkdir $TMP_DIR/dist
-auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' --exclude 'libefa*' --exclude 'libhwloc*' --exclude 'libfabric*' --exclude 'libtorch*' --exclude 'libc10*' $TMP_DIR/nixl*.whl --plat $WHL_PLATFORM --wheel-dir $TMP_DIR/dist
+auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' --exclude 'libefa*' --exclude 'libhwloc*' --exclude 'libfabric*' --exclude 'libtorch*' --exclude 'libc10*' --exclude 'libdoca*' $TMP_DIR/nixl*.whl --plat $WHL_PLATFORM --wheel-dir $TMP_DIR/dist
 ./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR $TMP_DIR/dist/*.whl
 cp $TMP_DIR/dist/*.whl $OUTPUT_DIR
 
