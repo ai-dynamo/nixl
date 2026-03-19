@@ -15,9 +15,6 @@
 
 plugin_gpunetio_deps = [dependency('libibverbs'), dependency('libmlx5'), dependency('doca-common'), dependency('doca-verbs'), dependency('doca-gpunetio')]
 
-#Get Abseil dependencies
-absl_log_dep = dependency('absl_log', required: true)
-
 gpu_cuda_args = []
 compile_flags = ['-D DOCA_ALLOW_EXPERIMENTAL_API']
 

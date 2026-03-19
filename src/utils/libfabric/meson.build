@@ -42,7 +42,7 @@ libfabric_utils_deps = [
     libfabric_dep,
     hwloc_dep,
     numa_dep,
-    abseil_proj.get_variable('absl_log_dep'),
+    absl_log_dep,
 ]
 
 libfabric_utils_cpp_args = []

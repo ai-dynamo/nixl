@@ -14,8 +14,6 @@
 # limitations under the License.
 
 gtest_dep = dependency('gtest', version : '>=1.11.0', required : false)
-absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
-absl_time_dep = abseil_proj.get_variable('absl_time_dep')
 
 if not gtest_dep.found()
     message('GTest not found, skipping gtest build')
