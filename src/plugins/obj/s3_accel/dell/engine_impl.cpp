@@ -294,6 +294,12 @@ CUObjIOOps obs_ops = {.get = objectGet, .put = objectPut};
  */
 S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params)
     : S3AccelObjEngineImpl(init_params) {
+    // Disable SDK response checksum validation by default for RDMA. RDMA GET
+    // responses have an empty HTTP body (Content-Length: 0) with data delivered
+    // out-of-band, so SDK body-checksum validation always fails when the server
+    // returns checksum headers. Transport integrity is ensured by RoCEv2 iCRC.
+    // emplace() preserves any user-provided override.
+    init_params->customParams->emplace("resp_checksum", "required");
     s3Client_ = std::make_shared<awsS3DellObsClient>(init_params->customParams, executor_);
     NIXL_INFO << "Object storage backend initialized with S3 Dell ObjectScale client";
 
@@ -314,6 +320,8 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
 S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params,
                                                std::shared_ptr<iS3Client> s3_client)
     : S3AccelObjEngineImpl(init_params, s3_client) {
+    // See primary constructor for rationale.
+    init_params->customParams->emplace("resp_checksum", "required");
     // Use the injected client if provided, otherwise create a new one
     if (s3_client) {
         s3Client_ = s3_client; // Use the injected mock client for testing
