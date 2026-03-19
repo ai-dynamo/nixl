@@ -91,7 +91,9 @@ fi
 PKG_NAME="nixl-cu${CUDA_MAJOR}"
 ./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
 if [ "$BUILD_NIXL_EP" = "true" ]; then
-    uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION -Csetup-args=-Dbuild_nixl_ep=true
+    uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION \
+        -Csetup-args=-Dbuild_nixl_ep=true \
+        -Csetup-args=-Dbuild_examples=true
 else
     uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
 fi
