@@ -98,6 +98,7 @@ RUN echo "INFO: Starting custom UCX build..." && \
     ./contrib/configure-release --with-cuda=/usr/local/cuda \
                                 $(if [ "$BUILD_TYPE" = "debug" ]; then echo "--enable-debug"; fi) \
                                 --enable-mt \
+                                --without-gdrcopy \
                                 --without-go && \
     make -j${NPROC:-$(nproc)} && \
     make install && \

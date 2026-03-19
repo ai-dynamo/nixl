@@ -202,7 +202,7 @@ RUN cd /usr/local/src && \
          --with-cuda=/usr/local/cuda \
          --with-verbs                \
          --with-dm                   \
-         --with-gdrcopy=/usr/local   \
+         --without-gdrcopy           \
          --with-efa  &&              \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
