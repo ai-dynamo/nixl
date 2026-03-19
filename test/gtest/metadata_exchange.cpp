@@ -131,6 +131,7 @@ protected:
 
             auto agent = std::make_unique<nixlAgent>(name, cfg);
             const auto port = agent->getListenPort();
+            ASSERT_GT(port, 0) << "Failed to get a valid OS-assigned listen port";
 
             agents_.emplace_back(std::move(agent), std::move(name), port);
         }
