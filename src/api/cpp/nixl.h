@@ -25,6 +25,7 @@
 #include "nixl_params.h"
 #include "nixl_descriptors.h"
 #include <chrono>
+#include <cstdint>
 #include <memory>
 
 /**
@@ -60,10 +61,10 @@ class nixlAgent {
          * @brief  Get the actual port the metadata listener is bound to.
          *         Useful when listenPort was set to 0 (OS-assigned port).
          *
-         * @return The port number, or -1 if no listener is active
+         * @return The port number, or 0 if no listener is active
          */
-        int
-        getListenPort() const;
+        [[nodiscard]] uint16_t
+        getListenPort() const noexcept;
 
         /**
          * @brief  Discover the available supported plugins found in the plugin paths

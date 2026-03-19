@@ -229,12 +229,12 @@ nixlAgent::~nixlAgent() {
     }
 }
 
-int
-nixlAgent::getListenPort() const {
+uint16_t
+nixlAgent::getListenPort() const noexcept {
     if (data->listener) {
-        return data->listener->getPort();
+        return static_cast<uint16_t>(data->listener->getPort());
     }
-    return -1;
+    return 0;
 }
 
 nixl_status_t

@@ -123,7 +123,7 @@ nixl_capi_status_t nixl_capi_create_agent(const char* name, nixl_capi_agent_t* a
 nixl_capi_status_t nixl_capi_destroy_agent(nixl_capi_agent_t agent);
 
 // Get the actual port the metadata listener is bound to
-int
+uint16_t
 nixl_capi_get_listen_port(nixl_capi_agent_t agent);
 
 // Get local metadata as a byte array

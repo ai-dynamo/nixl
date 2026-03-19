@@ -25,7 +25,7 @@ def parse_args():
         help="Local IP in target, peer IP (target's) in initiator",
     )
     parser.add_argument(
-        "--port-out",
+        "--listen-port-out",
         type=str,
         default="",
         help="Path to write the actual listen port to (file, FIFO, etc.)",
@@ -69,8 +69,8 @@ if __name__ == "__main__":
 
     # Target code
     if args.mode == "target":
-        if args.port_out:
-            with open(args.port_out, "w") as f:
+        if args.listen_port_out:
+            with open(args.listen_port_out, "w") as f:
                 f.write(str(agent.get_listen_port()))
 
         # Build transfer descriptors by unraveling first dim into list of row tensors

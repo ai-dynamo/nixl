@@ -269,7 +269,7 @@ class nixl_agent:
     @brief Get the actual port the metadata listener is bound to.
            Useful when listen_port was set to 0 (OS-assigned port).
 
-    @return The port number, or -1 if no listener is active.
+    @return The port number, or 0 if no listener is active.
     """
 
     def get_listen_port(self) -> int:

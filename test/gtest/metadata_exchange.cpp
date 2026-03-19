@@ -78,14 +78,14 @@ class MetadataExchangeTestFixture : public testing::Test {
         std::unique_ptr<nixlAgent> agent;
         const std::string name;
         const std::string ip = "127.0.0.1";
-        const int port;
+        const uint16_t port;
         nixlBackendH *backend_handle = nullptr;
         std::vector<MemBuffer> buffers;
 
-        AgentContext(std::unique_ptr<nixlAgent> agent, std::string name, int port) :
-            agent(std::move(agent)), name(std::move(name)), port(port)
-        {
-        }
+        AgentContext(std::unique_ptr<nixlAgent> agent, std::string name, uint16_t port)
+            : agent(std::move(agent)),
+              name(std::move(name)),
+              port(port) {}
 
         void createAgentBackend()
         {

@@ -167,10 +167,10 @@ nixl_capi_destroy_agent(nixl_capi_agent_t agent) {
     }
 }
 
-int
+uint16_t
 nixl_capi_get_listen_port(nixl_capi_agent_t agent) {
     if (!agent) {
-        return -1;
+        return 0;
     }
     return agent->inner->getListenPort();
 }

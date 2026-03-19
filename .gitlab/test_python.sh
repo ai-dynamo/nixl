@@ -102,7 +102,7 @@ run_two_peers() {
     shift
 
     port_out=$(mktemp -u) && mkfifo "$port_out"
-    python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 --port-out="$port_out" &
+    python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 --listen-port-out="$port_out" &
     port=$(timeout 30 cat "$port_out")
     rm -f "$port_out"
     [ -n "$port" ] || { echo "Target failed to report port"; exit 1; }

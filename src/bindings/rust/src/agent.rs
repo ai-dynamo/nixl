@@ -124,12 +124,18 @@ impl Agent {
     }
 
     /// Gets the actual port the metadata listener is bound to.
-    /// Returns -1 if no listener is active.
-    pub fn get_listen_port(&self) -> i32 {
-        unsafe {
+    /// Returns `None` if no listener is active.
+    pub fn get_listen_port(&self) -> Option<u16> {
+        let port = unsafe {
             crate::bindings::nixl_capi_get_listen_port(
                 self.inner.read().unwrap().handle.as_ptr(),
             )
+        };
+
+        if port == 0 {
+            None
+        } else {
+            Some(port)
         }
     }
 

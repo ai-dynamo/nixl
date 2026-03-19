@@ -59,8 +59,8 @@ class nixlMDStreamListener: public nixlMetadataStream {
         nixlMDStreamListener(int port);
         ~nixlMDStreamListener();
 
-        int
-        getPort() const {
+        [[nodiscard]] int
+        getPort() const noexcept {
             return port;
         }
 
