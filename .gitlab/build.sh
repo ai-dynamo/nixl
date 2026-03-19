@@ -285,6 +285,7 @@ else
             --enable-devel-headers \
             --with-verbs \
             --with-dm \
+            --without-gdrcopy \
             ${UCX_CUDA_BUILD_ARGS} && \
           make -j"$NPROC" && \
           make -j install-strip && \
