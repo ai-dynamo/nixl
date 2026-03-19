@@ -137,7 +137,7 @@ class nixl_agent_config:
         self,
         enable_prog_thread: bool = True,
         enable_listen_thread: bool = False,
-        listen_port: int = 0,
+        listen_port: int = DEFAULT_COMM_PORT,
         capture_telemetry: bool = False,
         num_threads: int = 0,
         backends: list[str] = ["UCX"],
@@ -264,6 +264,16 @@ class nixl_agent:
                     except Exception:
                         pass
             self._leaked_xfer_handles.clear()
+
+    """
+    @brief Get the actual port the metadata listener is bound to.
+           Useful when listen_port was set to 0 (OS-assigned port).
+
+    @return The port number, or -1 if no listener is active.
+    """
+
+    def get_listen_port(self) -> int:
+        return self.agent.getListenPort()
 
     """
     @brief Get the list of available plugins.

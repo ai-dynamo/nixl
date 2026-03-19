@@ -86,6 +86,16 @@ void nixlMDStreamListener::setupListener() {
         throw std::runtime_error("Failed to bind metadata listener socket");
     }
 
+    struct sockaddr_in bound_addr;
+    socklen_t addr_len = sizeof(bound_addr);
+    if (getsockname(socketFd, (struct sockaddr *)&bound_addr, &addr_len) == 0) {
+        port = ntohs(bound_addr.sin_port);
+    } else {
+        NIXL_PERROR << "getsockname failed after successful bind";
+        closeStream();
+        throw std::runtime_error("Failed to retrieve bound port for metadata listener");
+    }
+
     if (listen(socketFd, 128) < 0) {
         NIXL_PERROR << "Listening failed for stream Socket: "
                     << socketFd;

@@ -89,23 +89,34 @@ python3 test/python/prep_xfer_perf.py array
 
 echo "==== Running python examples ===="
 cd examples/python
-python3 partial_md_example.py --init-port "$(get_next_tcp_port)" --target-port "$(get_next_tcp_port)"
+python3 partial_md_example.py
 python3 partial_md_example.py --etcd
 python3 query_mem_example.py
 
-basic_two_peers_port=$(get_next_tcp_port)
-python3 basic_two_peers.py --mode="target" --ip=127.0.0.1 --port="$basic_two_peers_port"&
-sleep 15
-python3 basic_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$basic_two_peers_port"
+# Run a two-peers example: starts a target on an OS-assigned port, then
+# launches the initiator against it.
+# Extra arguments are passed as env vars to the initiator.
+# Usage: run_two_peers <script> [ENV=val ...]
+run_two_peers() {
+    script=$1
+    shift
+
+    port_out=$(mktemp -u) && mkfifo "$port_out"
+    python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 --port-out="$port_out" &
+    port=$(timeout 30 cat "$port_out")
+    rm -f "$port_out"
+    [ -n "$port" ] || { echo "Target failed to report port"; exit 1; }
+
+    env "$@" python3 "$script" --mode="initiator" --ip=127.0.0.1 --port="$port"
+}
+
+run_two_peers basic_two_peers.py
 
 # Running telemetry for the last test
-expanded_two_peers_port=$(get_next_tcp_port)
 mkdir -p /tmp/telemetry_test
 
-python3 expanded_two_peers.py --mode="target" --ip=127.0.0.1 --port="$expanded_two_peers_port"&
-sleep 15
-NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test \
-python3 expanded_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$expanded_two_peers_port"
+run_two_peers expanded_two_peers.py \
+    NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test
 
 python3 telemetry_reader.py --telemetry_path /tmp/telemetry_test/initiator &
 telePID=$!

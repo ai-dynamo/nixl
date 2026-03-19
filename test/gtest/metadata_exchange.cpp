@@ -121,16 +121,16 @@ protected:
 
     void SetUp() override
     {
-        // Create two agents
+        // Create two agents with OS-assigned ports
         for (int i = 0; i < AGENT_COUNT_; i++) {
-            const auto port = PortAllocator::next_tcp_port();
             std::string name = "agent_" + std::to_string(i);
             nixlAgentConfig cfg;
             cfg.useListenThread = true;
-            cfg.listenPort = port;
+            cfg.listenPort = 0; // OS-assigned
             cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
 
             auto agent = std::make_unique<nixlAgent>(name, cfg);
+            const auto port = agent->getListenPort();
 
             agents_.emplace_back(std::move(agent), std::move(name), port);
         }

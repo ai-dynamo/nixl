@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
@@ -23,6 +23,12 @@ def parse_args():
         type=str,
         default="initiator",
         help="Local IP in target, peer IP (target's) in initiator",
+    )
+    parser.add_argument(
+        "--port-out",
+        type=str,
+        default="",
+        help="Path to write the actual listen port to (file, FIFO, etc.)",
     )
     return parser.parse_args()
 
@@ -63,7 +69,9 @@ if __name__ == "__main__":
 
     # Target code
     if args.mode == "target":
-        ready = False
+        if args.port_out:
+            with open(args.port_out, "w") as f:
+                f.write(str(agent.get_listen_port()))
 
         # Build transfer descriptors by unraveling first dim into list of row tensors
         target_rows = [tensor[i, :] for i in range(tensor.shape[0])]
@@ -74,6 +82,7 @@ if __name__ == "__main__":
         target_desc_str = agent.get_serialized_descs(target_descs)
 
         # Send desc list to initiator when metadata is ready
+        ready = False
         while not ready:
             ready = agent.check_remote_metadata("initiator")
         agent.send_notif("initiator", target_desc_str)

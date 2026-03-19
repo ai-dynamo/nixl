@@ -59,6 +59,11 @@ class nixlMDStreamListener: public nixlMetadataStream {
         nixlMDStreamListener(int port);
         ~nixlMDStreamListener();
 
+        int
+        getPort() const {
+            return port;
+        }
+
         int         acceptClient();
         void        setupListener();
         void        startListenerForClients();

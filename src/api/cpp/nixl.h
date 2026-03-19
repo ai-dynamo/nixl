@@ -57,6 +57,15 @@ class nixlAgent {
         nixlAgent &operator=(nixlAgent&&) noexcept = delete;
 
         /**
+         * @brief  Get the actual port the metadata listener is bound to.
+         *         Useful when listenPort was set to 0 (OS-assigned port).
+         *
+         * @return The port number, or -1 if no listener is active
+         */
+        int
+        getListenPort() const;
+
+        /**
          * @brief  Discover the available supported plugins found in the plugin paths
          *
          * @param  plugins [out] Vector of available backend plugins

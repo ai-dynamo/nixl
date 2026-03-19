@@ -123,6 +123,16 @@ impl Agent {
         self.inner.read().unwrap().name.clone()
     }
 
+    /// Gets the actual port the metadata listener is bound to.
+    /// Returns -1 if no listener is active.
+    pub fn get_listen_port(&self) -> i32 {
+        unsafe {
+            crate::bindings::nixl_capi_get_listen_port(
+                self.inner.read().unwrap().handle.as_ptr(),
+            )
+        }
+    }
+
     /// Gets the list of available plugins
     pub fn get_available_plugins(&self) -> Result<utils::StringList, NixlError> {
         tracing::trace!("Getting available NIXL plugins");
@@ -1062,6 +1072,9 @@ pub enum ThreadSync {
     Default,
 }
 
+// Must match `default_comm_port` in nixl_types.h
+pub const DEFAULT_COMM_PORT: i32 = 8888;
+
 #[derive(Clone, Debug)]
 pub struct AgentConfig {
     pub enable_prog_thread: bool,
@@ -1079,7 +1092,7 @@ impl Default for AgentConfig {
         Self {
             enable_prog_thread: true,
             enable_listen_thread: false,
-            listen_port: 0,
+            listen_port: DEFAULT_COMM_PORT,
             thread_sync: ThreadSync::None,
             num_workers: 1,
             pthr_delay_us: 0,

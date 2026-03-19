@@ -29,7 +29,7 @@
 struct nixlAgentConfig {
     static constexpr bool kDefaultUseProgThread = false;
     static constexpr bool kDefaultUseListenThread = false;
-    static constexpr int kDefaultListenPort = 0;
+    static constexpr int kDefaultListenPort = default_comm_port;
     static constexpr nixl_thread_sync_t kDefaultSyncMode =
         nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT;
     static constexpr bool kDefaultCaptureTelemetry = false;
