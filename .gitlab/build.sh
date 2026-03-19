@@ -193,7 +193,8 @@ else
       git checkout "${ABSL_TAG}" && \
       mkdir -p build && cd build && \
       cmake .. \
-          -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DABSL_PROPAGATE_CXX_STD=ON \
@@ -211,17 +212,18 @@ else
       cd grpc && \
       mkdir -p cmake/build && \
       cd cmake/build && \
-      export CMAKE_PREFIX_PATH="/usr/local${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" && \
-      export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib/${ARCH}-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" && \
+      export CMAKE_PREFIX_PATH="${INSTALL_DIR}${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" && \
+      export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib/${ARCH}-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" && \
       cmake ../.. \
           -DgRPC_INSTALL=ON \
           -DgRPC_BUILD_TESTS=OFF \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_CXX_STANDARD=17 \
           -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_INSTALL_PREFIX=/usr/local \
-          -DCMAKE_PREFIX_PATH=/usr/local \
-          -Dabsl_DIR=/usr/local/lib/cmake/absl \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" \
+          -Dabsl_DIR="${INSTALL_DIR}/lib/cmake/absl" \
           -DgRPC_SSL_PROVIDER=package \
           -DgRPC_ABSL_PROVIDER=package \
           -DgRPC_PROTOBUF_PROVIDER=module \
@@ -239,7 +241,13 @@ else
       cd etcd-cpp-apiv3 && \
       sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
       mkdir build && cd build && \
-      cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=17 -DCMAKE_PREFIX_PATH=/usr/local && \
+      cmake .. \
+          -DBUILD_ETCD_CORE_ONLY=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DETCD_CMAKE_CXX_STANDARD=17 \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" && \
       make -j"$NPROC" && \
       $SUDO make install && \
       $SUDO ldconfig \
