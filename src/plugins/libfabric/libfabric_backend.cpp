@@ -676,10 +676,14 @@ nixlLibfabricEngine::getSupportedMems() const {
     if (runtime_ == FI_HMEM_CUDA) {
         NIXL_DEBUG << "CUDA runtime detected, adding VRAM support";
         mems.push_back(VRAM_SEG);
-    } else {
-        NIXL_DEBUG << "Non-CUDA runtime, skipping VRAM support";
-    }
+    } else
 #endif
+        if (runtime_ == FI_HMEM_NEURON) {
+        NIXL_DEBUG << "Neuron runtime detected, adding VRAM support";
+        mems.push_back(VRAM_SEG);
+    } else {
+        NIXL_DEBUG << "No accelerator runtime, skipping VRAM support";
+    }
     return mems;
 }
 
