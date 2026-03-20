@@ -282,9 +282,9 @@ else
 
     ( \
       cd ${TMPDIR} && \
-      MOONCAKE_VERSION=$(git ls-remote --tags --sort=-v:refname https://github.com/kvcache-ai/Mooncake.git 'v*' | head -1 | sed 's/.*refs\/tags\///') && \
+      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.9}" && \
       echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
-      git clone --depth 1 --branch ${MOONCAKE_VERSION} https://github.com/kvcache-ai/Mooncake.git && \
+      git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
