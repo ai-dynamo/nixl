@@ -65,6 +65,7 @@ RUN apt-get update -y && \
     clang \
     hwloc \
     libhwloc-dev \
+    pkg-config \
     # aws-sdk-cpp dependencies
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev \
     # azure-sdk-for-cpp dependencies
