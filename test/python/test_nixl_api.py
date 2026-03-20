@@ -250,7 +250,7 @@ def test_get_xfer_telemetry(backend_name):
             mem_type="DRAM",
         )
 
-        handle = agent1.initialize_xfer("WRITE", src, dst, agent2.name)
+        handle = agent1.initialize_xfer("WRITE", src, dst, agent2.name, b"telem_msg")
         st = agent1.transfer(handle)
         assert st in ("DONE", "PROC")
 
@@ -259,6 +259,9 @@ def test_get_xfer_telemetry(backend_name):
             assert st in ("DONE", "PROC")
             if st == "DONE":
                 break
+
+        while not agent2.check_remote_xfer_done(agent1.name, b"telem_msg"):
+            pass
 
         telem = agent1.get_xfer_telemetry(handle)
         assert telem.descCount == 2
@@ -307,7 +310,7 @@ def test_get_xfer_telemetry_cfg(backend_name):
             mem_type="DRAM",
         )
 
-        handle = agent1.initialize_xfer("WRITE", src, dst, agent2.name)
+        handle = agent1.initialize_xfer("WRITE", src, dst, agent2.name, b"telem_msg")
         st = agent1.transfer(handle)
         assert st in ("DONE", "PROC")
 
@@ -316,6 +319,9 @@ def test_get_xfer_telemetry_cfg(backend_name):
             assert st in ("DONE", "PROC")
             if st == "DONE":
                 break
+
+        while not agent2.check_remote_xfer_done(agent1.name, b"telem_msg"):
+            pass
 
         telem = agent1.get_xfer_telemetry(handle)
         assert telem.descCount == 2
