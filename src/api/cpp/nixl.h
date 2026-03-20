@@ -63,8 +63,8 @@ class nixlAgent {
          *
          * @return The port number, or 0 if no listener is active
          */
-        [[nodiscard]] uint16_t
-        getListenPort() const noexcept;
+        uint16_t
+        getListenPort() const;
 
         /**
          * @brief  Discover the available supported plugins found in the plugin paths

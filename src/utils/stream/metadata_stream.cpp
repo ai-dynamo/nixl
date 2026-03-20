@@ -16,6 +16,7 @@
  */
 #include "metadata_stream.h"
 #include <unistd.h>
+#include <cerrno>
 #include <cstring>
 #include <stdexcept>
 #include <sys/socket.h>
@@ -23,7 +24,7 @@
 #include <arpa/inet.h>
 #include "common/nixl_log.h"
 
-nixlMetadataStream::nixlMetadataStream(int port): port(port), socketFd(-1) {
+nixlMetadataStream::nixlMetadataStream(uint16_t port) : port(port), socketFd(-1) {
     memset(&listenerAddr, 0, sizeof(listenerAddr));
 }
 
@@ -53,9 +54,7 @@ void nixlMetadataStream::closeStream() {
    }
 }
 
-
-nixlMDStreamListener::nixlMDStreamListener(int port) :
-        nixlMetadataStream(port) {}
+nixlMDStreamListener::nixlMDStreamListener(uint16_t port) : nixlMetadataStream(port) {}
 
 nixlMDStreamListener::~nixlMDStreamListener() {
     if (listenerThread.joinable()) {
@@ -86,13 +85,14 @@ void nixlMDStreamListener::setupListener() {
         throw std::runtime_error("Failed to bind metadata listener socket");
     }
 
-    struct sockaddr_in bound_addr;
+    sockaddr_in bound_addr;
     socklen_t addr_len = sizeof(bound_addr);
-    if (getsockname(socketFd, (struct sockaddr *)&bound_addr, &addr_len) == 0) {
+    if (getsockname(socketFd, reinterpret_cast<sockaddr *>(&bound_addr), &addr_len) == 0) {
         port = ntohs(bound_addr.sin_port);
     } else {
         closeStream();
-        throw std::runtime_error("Failed to retrieve bound port for metadata listener");
+        throw std::runtime_error(
+            std::string("Failed to retrieve bound port for metadata listener: ") + strerror(errno));
     }
 
     if (listen(socketFd, 128) < 0) {
@@ -176,9 +176,9 @@ void nixlMDStreamListener::startListenerForClients() {
                                  this);
 }
 
-nixlMDStreamClient::nixlMDStreamClient(const std::string &listenerAddress,
-                                       int port) : nixlMetadataStream(port),
-                                       listenerAddress(listenerAddress) {}
+nixlMDStreamClient::nixlMDStreamClient(const std::string &listenerAddress, uint16_t port)
+    : nixlMetadataStream(port),
+      listenerAddress(listenerAddress) {}
 
 nixlMDStreamClient::~nixlMDStreamClient() {
     closeStream();

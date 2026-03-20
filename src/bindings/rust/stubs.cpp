@@ -126,11 +126,11 @@ nixl_capi_destroy_agent(nixl_capi_agent_t agent) {
     return real(agent);
 }
 
-uint16_t
-nixl_capi_get_listen_port(nixl_capi_agent_t agent) {
-    using fn_t = uint16_t (*)(nixl_capi_agent_t);
+nixl_capi_status_t
+nixl_capi_get_listen_port(nixl_capi_agent_t agent, uint16_t *port) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_agent_t, uint16_t *);
     static fn_t real = (fn_t)resolve("nixl_capi_get_listen_port");
-    return real(agent);
+    return real(agent, port);
 }
 
 // ---- Metadata functions ----

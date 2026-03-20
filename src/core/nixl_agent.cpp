@@ -230,9 +230,9 @@ nixlAgent::~nixlAgent() {
 }
 
 uint16_t
-nixlAgent::getListenPort() const noexcept {
+nixlAgent::getListenPort() const {
     if (data->listener) {
-        return static_cast<uint16_t>(data->listener->getPort());
+        return data->listener->getPort();
     }
     return 0;
 }
