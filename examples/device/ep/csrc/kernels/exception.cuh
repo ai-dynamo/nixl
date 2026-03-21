@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * This file incorporates material from the DeepSeek project, licensed under the MIT License.
  * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -61,6 +61,13 @@ do { \
     } \
 } while (0)
 #endif
+
+#define ASSERT_REACHED_ONCE(msg) \
+do { \
+    static bool reached = false; \
+    EP_HOST_ASSERT((!reached && msg)); \
+    reached = true; \
+} while (0)
 
 #ifndef EP_DEVICE_ASSERT
 #define EP_DEVICE_ASSERT(cond) \
