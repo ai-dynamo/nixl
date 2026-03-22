@@ -1,0 +1,13 @@
+ARG BASE_IMAGE=vllm/vllm-openai:latest
+FROM --platform=$TARGETPLATFORM ${BASE_IMAGE}
+
+# Build context is expected to contain only wheel files for one architecture.
+COPY . /tmp/nixl-wheels
+
+RUN set -eux; \
+    ls /tmp/nixl-wheels/*.whl >/dev/null; \
+    uv pip install --system --no-deps --force-reinstall /tmp/nixl-wheels/nixl-*.whl /tmp/nixl-wheels/nixl_cu12*cp312*.whl; \
+    uv pip install --system quart; \
+    rm -rf /tmp/nixl-wheels
+
+RUN curl https://raw.githubusercontent.com/vllm-project/vllm/b73b5b06290c0d1439b09db71eef15fe59bc1fbb/tests/v1/kv_connector/nixl_integration/toy_proxy_server.py -o toy_proxy_server.py
