@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'DOCA_MEMOS']
 
 enabled_plugins = {}
 
@@ -353,6 +353,12 @@ if libfabric_path != ''
 else
   libfabric_dep = dependency('libfabric', required: false)
 endif
+
+# DOCA KV (used by the DOCA_MEMOS plugin). These pkg-config files live in
+# /opt/mellanox/doca/lib64/pkgconfig, which is normally added to PKG_CONFIG_PATH
+# by /etc/profile.d when the DOCA SDK is installed.
+doca_kv_dep = dependency('doca-kv', required: false)
+doca_common_dep = dependency('doca-common', required: false)
 
 # UCX GPU device API detection
 nvcc_prog = find_program('nvcc', required: false)
