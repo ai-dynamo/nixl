@@ -710,6 +710,9 @@ void nixlPluginManager::registerBuiltinPlugins() {
 #ifdef STATIC_PLUGIN_INFINIA
     NIXL_REGISTER_STATIC_PLUGIN(Backend, INFINIA)
 #endif
+#ifdef STATIC_PLUGIN_DOCA_MEMOS
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, DOCA_MEMOS)
+#endif
 
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, BUFFER)
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, NOP)
