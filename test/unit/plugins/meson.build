@@ -111,3 +111,10 @@ if enabled_plugins.get('OBJ')
         subdir('object')
     endif
 endif
+
+# DOCA_MEMOS tests mock the DOCA functions (doca_memos_mocks.cpp) but compile
+# against the real DOCA KV API headers, so they require doca-kv/doca-common to be
+# present. Gate on the plugin being enabled and the dependencies being found.
+if enabled_plugins.get('DOCA_MEMOS') and doca_kv_dep.found() and doca_common_dep.found()
+    subdir('doca_memos')
+endif

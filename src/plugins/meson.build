@@ -125,15 +125,10 @@ if enabled_plugins.get('GPUNETIO')
 endif
 
 if enabled_plugins.get('DOCA_MEMOS')
-    if (not doca_kv_dep.found() or not doca_common_dep.found()) and is_explicit_enable
-        if not doca_kv_dep.found()
-            error('DOCA_MEMOS plugin requested but doca-kv dependency not found')
-        else
-            error('DOCA_MEMOS plugin requested but doca-common dependency not found')
-        endif
-    elif doca_kv_dep.found() and doca_common_dep.found()
-        subdir('doca_memos')
-    endif
+    # Always entered so doca_memos_backend_sources is defined for the unit
+    # tests; the plugin meson.build short-circuits internally when the DOCA
+    # dependencies are missing.
+    subdir('doca_memos')
 endif
 
 subdir('telemetry')

@@ -13,13 +13,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-doca_memos_sources = [
+# Backend source list, exported so the unit-test executable
+# (test/unit/plugins/doca_memos) can build the same translation units against
+# the DOCA mocks. Defined unconditionally; everything below is gated on the
+# DOCA dependencies being available, but the test only needs the file list.
+doca_memos_backend_sources = files(
     'doca_memos_backend.cpp',
     'doca_memos_backend.h',
-    'doca_memos_plugin.cpp',
     'doca_memos_progress_engine.cpp',
     'doca_memos_progress_engine.h',
+)
+
+doca_memos_sources = [
+    doca_memos_backend_sources,
+    files('doca_memos_plugin.cpp'),
 ]
+
+if not (doca_kv_dep.found() and doca_common_dep.found())
+    if is_explicit_enable
+        if not doca_kv_dep.found()
+            error('DOCA_MEMOS plugin requested but doca-kv dependency not found')
+        else
+            error('DOCA_MEMOS plugin requested but doca-common dependency not found')
+        endif
+    endif
+    subdir_done()
+endif
 
 doca_plugin_deps = plugin_deps + [doca_kv_dep, doca_common_dep]
 
