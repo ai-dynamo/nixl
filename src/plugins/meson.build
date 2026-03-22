@@ -140,6 +140,20 @@ if enabled_plugins.get('GPUNETIO')
     endif
 endif
 
+if enabled_plugins.get('DOCA_MEMOS')
+    if (not doca_kv_dep.found() or not doca_common_dep.found() or not libb2_dep.found()) and is_explicit_enable
+        if not doca_kv_dep.found()
+            error('DOCA_MEMOS plugin requested but doca-kv dependency not found')
+        elif not doca_common_dep.found()
+            error('DOCA_MEMOS plugin requested but doca-common dependency not found')
+        else
+            error('DOCA_MEMOS plugin requested but libb2 dependency not found')
+        endif
+    elif doca_kv_dep.found() and doca_common_dep.found() and libb2_dep.found()
+        subdir('doca_memos')
+    endif
+endif
+
 subdir('telemetry')
 
 if nixl_trace_enabled
