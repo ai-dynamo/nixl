@@ -278,12 +278,17 @@ nixlUcclEngine::connect(const std::string &remote_agent) {
 nixl_status_t
 nixlUcclEngine::prepareLocalConn() const {
     // Must be called after register_memory so the UCCL engine is initialized.
-    if (pending_local_agent_.empty()) {
-        return NIXL_SUCCESS;
-    }
-    if (connected_agents_.count(pending_local_agent_)) {
-        pending_local_agent_.clear();
-        return NIXL_SUCCESS;
+    std::string agent_name;
+    {
+        std::lock_guard<std::mutex> lock(conn_mutex_);
+        if (pending_local_agent_.empty()) {
+            return NIXL_SUCCESS;
+        }
+        if (connected_agents_.count(pending_local_agent_)) {
+            pending_local_agent_.clear();
+            return NIXL_SUCCESS;
+        }
+        agent_name = pending_local_agent_;
     }
 
     std::string conn_info;
@@ -305,13 +310,16 @@ nixlUcclEngine::prepareLocalConn() const {
                                             port,
                                             /*same_process=*/true);
     if (!conn) {
-        NIXL_ERROR << "Failed to establish local connection for agent " << pending_local_agent_;
+        NIXL_ERROR << "Failed to establish local connection for agent " << agent_name;
         return NIXL_ERR_BACKEND;
     }
 
-    NIXL_DEBUG << "Same-process local connection established for agent " << pending_local_agent_;
-    connected_agents_[pending_local_agent_] = reinterpret_cast<uint64_t>(conn);
-    pending_local_agent_.clear();
+    {
+        std::lock_guard<std::mutex> lock(conn_mutex_);
+        NIXL_DEBUG << "Same-process local connection established for agent " << agent_name;
+        connected_agents_[agent_name] = reinterpret_cast<uint64_t>(conn);
+        pending_local_agent_.clear();
+    }
     return NIXL_SUCCESS;
 }
 
@@ -386,12 +394,10 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
     NIXL_DEBUG << "Registering memory: " << std::hex << mem.addr << " Device: " << mem.devId
                << " ref_cnt: " << priv->ref_cnt << " mr_id: " << priv->mr_id;
 
-    // Prepare the deferred local connection if there are pending agents
-    if (!pending_local_agent_.empty()) {
-        nixl_status_t status = prepareLocalConn();
-        if (status != NIXL_SUCCESS) {
-            NIXL_WARN << "Deferred local connection failed";
-        }
+    // Prepare the deferred local connection if there are pending agents.
+    nixl_status_t conn_status = prepareLocalConn();
+    if (conn_status != NIXL_SUCCESS) {
+        NIXL_WARN << "Deferred local connection failed";
     }
 
     return NIXL_SUCCESS;
@@ -466,15 +472,27 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
 
     // Decode IPC info (appended after fifo_item)
     size_t pos = min_len;
-    if (hex_str.length() > pos + 2) {
+    if (hex_str.length() >= pos + 2) {
         std::string ipc_flag = hex_str.substr(pos, 2);
         pos += 2;
-        if (ipc_flag == "01" && hex_str.length() >= pos + IPC_INFO_SIZE * 2) {
+        if (ipc_flag == "01") {
+            if (hex_str.length() < pos + IPC_INFO_SIZE * 2) {
+                NIXL_ERROR << "IPC flag set but payload truncated: got " << (hex_str.length() - pos)
+                           << " hex chars, expected " << (IPC_INFO_SIZE * 2);
+                delete output_md;
+                output = nullptr;
+                return NIXL_ERR_INVALID_PARAM;
+            }
             for (int i = 0; i < IPC_INFO_SIZE; i++) {
                 std::string byte_str = hex_str.substr(pos + i * 2, 2);
                 output_md->ipc_info[i] = static_cast<char>(strtoul(byte_str.c_str(), NULL, 16));
             }
             output_md->has_ipc = true;
+        } else if (ipc_flag != "00") {
+            NIXL_ERROR << "Unknown IPC flag in metaInfo: " << ipc_flag;
+            delete output_md;
+            output = nullptr;
+            return NIXL_ERR_INVALID_PARAM;
         }
     }
 
