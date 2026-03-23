@@ -18,14 +18,14 @@ The UCCL P2P backend supports internode communication over RDMA, TCP and TCP-X a
     sudo make install
 ```
 
-    By default, UCCL builds with **RDMA** transport. To build with a different transport, set the corresponding flag:
+By default, UCCL builds with **RDMA** transport. To build with a different transport, set the corresponding flag:
 
-    | Transport | Build Command                                    |
-    |-----------|--------------------------------------------------|
-    | RDMA      | `make -j && sudo make install` *(default)*       |
-    | TCPX      | `USE_TCPX=1 make -j && sudo make install`        |
-    | TCP       | `USE_TCP=1 make -j && sudo make install`         |
-    | EFA       | `USE_EFA=1 make -j && sudo make install`         |
+| Transport | Build Command                                    |
+|-----------|--------------------------------------------------|
+| RDMA      | `make -j && sudo make install` *(default)*       |
+| TCPX      | `USE_TCPX=1 make -j && sudo make install`        |
+| TCP       | `USE_TCP=1 make -j && sudo make install`         |
+| EFA       | `USE_EFA=1 make -j && sudo make install`         |
 
 2. Build NIXL using regular method as in [README](https://github.com/ai-dynamo/nixl/blob/main/README.md).
 
