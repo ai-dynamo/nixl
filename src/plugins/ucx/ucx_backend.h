@@ -31,6 +31,7 @@
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
+#include "backend/notif_callbacks.h"
 
 // Local includes
 #include "common/nixl_time.h"
@@ -117,6 +118,11 @@ public:
 
     bool
     supportsNotif() const override {
+        return true;
+    }
+
+    bool
+    supportsNotifCallback() const override {
         return true;
     }
 
@@ -291,6 +297,10 @@ private:
     [[nodiscard]] std::optional<size_t>
     getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const noexcept;
 
+    // Initialization helper to make notifCallbacks_ const.
+    [[nodiscard]] nixlNotifCallbacks
+    setDefaultCallback(nixlNotifCallbacks callbacks);
+
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> uws;
@@ -301,6 +311,7 @@ private:
 
     /* Notifications */
     notif_list_t notifMainList;
+    const nixlNotifCallbacks notifCallbacks_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;

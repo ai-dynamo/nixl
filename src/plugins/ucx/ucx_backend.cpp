@@ -821,7 +821,8 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     : nixlBackendEngine(&init_params),
       sharedWorkerIndex_(1),
-      progressThreadEnabled_(init_params.enableProgTh) {
+      progressThreadEnabled_(init_params.enableProgTh),
+      notifCallbacks_(setDefaultCallback(init_params.notifCallbacks)) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
@@ -1379,6 +1380,16 @@ int nixlUcxEngine::progress() {
  * Notifications
 *****************************************/
 
+nixlNotifCallbacks
+nixlUcxEngine::setDefaultCallback(nixlNotifCallbacks callbacks) {
+    if (!callbacks.hasDefaultCallback()) {
+        callbacks.setDefaultCallback([engine = this](std::string&& remote, std::string&& message) {
+            engine->appendNotif(std::move(remote), std::move(message));
+        });
+    }
+    return callbacks;
+}
+
 //agent will provide cached msg
 nixl_status_t
 nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
@@ -1440,7 +1451,7 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     std::string remote_name = ser_des.getStr("name");
     std::string msg = ser_des.getStr("msg");
 
-    engine->appendNotif(std::move(remote_name), std::move(msg));
+    (void)engine->notifCallbacks_.call(std::move(remote_name), std::move(msg));
     return UCS_OK;
 }
 
