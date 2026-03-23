@@ -50,9 +50,13 @@
 #if HAVE_CUDA
 #define HANDLE_VRAM_SEGMENT(_seg_type) _seg_type = VRAM_SEG;
 #else
-#define HANDLE_VRAM_SEGMENT(_seg_type)                                        \
-    std::cerr << "VRAM segment type not supported without CUDA" << std::endl; \
-    std::exit(EXIT_FAILURE);
+#define HANDLE_VRAM_SEGMENT(_seg_type)                                                      \
+    if (neuronCoreCount() > 0) {                                                            \
+        _seg_type = VRAM_SEG;                                                               \
+    } else {                                                                                \
+        std::cerr << "VRAM segment type not supported without CUDA or Neuron" << std::endl; \
+        std::exit(EXIT_FAILURE);                                                            \
+    }
 #endif
 
 #define GET_SEG_TYPE(is_initiator)                                                          \
@@ -396,7 +400,7 @@ xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
 }
 
 #if HAVE_CUDA
-static std::optional<xferBenchIOV>
+[[maybe_unused]] static std::optional<xferBenchIOV>
 getVramDescCuda(int devid, size_t buffer_size, uint8_t memset_value) {
     void *addr;
     CHECK_CUDA_ERROR(cudaMalloc(&addr, buffer_size), "Failed to allocate CUDA buffer");
@@ -405,7 +409,7 @@ getVramDescCuda(int devid, size_t buffer_size, uint8_t memset_value) {
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
 }
 
-static std::optional<xferBenchIOV>
+[[maybe_unused]] static std::optional<xferBenchIOV>
 getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value) {
 #if HAVE_CUDA_FABRIC
     CUdeviceptr addr = 0;
@@ -459,7 +463,9 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value) {
 #endif /* HAVE_CUDA_FABRIC */
 }
 
-static std::optional<xferBenchIOV>
+#endif /* HAVE_CUDA */
+
+[[maybe_unused]] static std::optional<xferBenchIOV>
 getVramDescNeuron(int devid, size_t buffer_size, uint8_t memset_value) {
     void *addr;
     CHECK_NEURON_ERROR(neuronMalloc(&addr, buffer_size, devid), "Failed to allocate nrt tensor");
@@ -469,23 +475,26 @@ getVramDescNeuron(int devid, size_t buffer_size, uint8_t memset_value) {
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
 }
 
-static std::optional<xferBenchIOV>
+[[maybe_unused]] static std::optional<xferBenchIOV>
 getVramDesc(int devid, size_t buffer_size, bool isInit) {
     uint8_t memset_value =
         isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT : XFERBENCH_TARGET_BUFFER_ELEMENT;
 
-    // Assume no CUDA cores exist if Neuron cores are found.
-    // There are no AWS instance types with both NVIDIA GPUs and Neuron accelerators.
     if (neuronCoreCount() > 0) {
         return getVramDescNeuron(devid, buffer_size, memset_value);
     }
 
+#if HAVE_CUDA
     CHECK_CUDA_ERROR(cudaSetDevice(devid), "Failed to set device");
     if (xferBenchConfig::enable_vmm) {
         return getVramDescCudaVmm(devid, buffer_size, memset_value);
     } else {
         return getVramDescCuda(devid, buffer_size, memset_value);
     }
+#else
+    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+    return std::nullopt;
+#endif
 }
 
 std::optional<xferBenchIOV>
@@ -504,7 +513,6 @@ xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {
 
     return getVramDesc(mem_dev_id, buffer_size, isInitiator());
 }
-#endif /* HAVE_CUDA */
 
 // Helper to open a single file with appropriate flags
 static std::optional<xferFileState>
@@ -649,7 +657,6 @@ xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
     free((void *)iov.addr);
 }
 
-#if HAVE_CUDA
 void
 xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
     // Assume no CUDA cores exist if Neuron cores are found.
@@ -659,6 +666,7 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
         return;
     }
 
+#if HAVE_CUDA
     CHECK_CUDA_ERROR(cudaSetDevice(iov.devId), "Failed to set device");
     if (xferBenchConfig::enable_vmm) {
         CHECK_CUDA_DRIVER_ERROR(cuMemUnmap(iov.addr, iov.len), "Failed to unmap memory");
@@ -678,8 +686,8 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
         CHECK_CUDA_ERROR(cudaFreeAsync((void *)iov.addr, 0), "Failed to deallocate CUDA buffer");
         CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize stream 0");
     }
+#endif
 }
-#endif /* HAVE_CUDA */
 
 void
 xferBenchNixlWorker::cleanupBasicDescFile(xferBenchIOV &iov) {
@@ -935,11 +943,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                 basic_desc = initBasicDescDram(buffer_size, mem_dev_id);
                 break;
             }
-#if HAVE_CUDA
             case VRAM_SEG:
                 basic_desc = initBasicDescVram(buffer_size, i);
                 break;
-#endif
             default:
                 std::cerr << "Unsupported mem type: " << seg_type << std::endl;
                 exit(EXIT_FAILURE);
@@ -993,11 +999,9 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             case DRAM_SEG:
                 cleanupBasicDescDram(iov);
                 break;
-#if HAVE_CUDA
             case VRAM_SEG:
                 cleanupBasicDescVram(iov);
                 break;
-#endif
             default:
                 std::cerr << "Unsupported mem type: " << seg_type << std::endl;
                 exit(EXIT_FAILURE);
