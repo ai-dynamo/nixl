@@ -373,7 +373,8 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
     int num_local_experts = num_experts / num_ranks;
 
     // Buffer control
-    EPLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts);
+    int max_num_experts = max_num_ranks * max_experts_per_rank;
+    EPLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, max_num_ranks, max_num_experts);
     EP_HOST_ASSERT(layout.total_bytes <= num_rdma_bytes);
     auto buffer = layout.buffers[buffer_idx];
     auto next_buffer = layout.buffers[buffer_idx ^= 1];
@@ -488,7 +489,8 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
     auto num_combined_tokens = static_cast<int>(topk_weights.size(0));
 
     // Buffer control
-    EPLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts);
+    int max_num_experts = max_num_ranks * max_experts_per_rank;
+    EPLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, max_num_ranks, max_num_experts);
     EP_HOST_ASSERT(layout.total_bytes <= num_rdma_bytes);
     auto buffer = layout.buffers[buffer_idx];
     auto next_buffer = layout.buffers[buffer_idx ^= 1];
@@ -552,7 +554,8 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
 
 torch::Tensor
 Buffer::get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden, int num_experts) const {
-    EPLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts);
+    int max_num_experts = max_num_ranks * max_experts_per_rank;
+    EPLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, max_num_ranks, max_num_experts);
 
     auto buffer = layout.buffers[buffer_idx];
     auto dtype = torch::kBFloat16;
