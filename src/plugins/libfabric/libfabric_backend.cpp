@@ -295,7 +295,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
       rail_manager(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
       runtime_(FI_HMEM_SYSTEM) {
 
-    NIXL_DEBUG << "Initializing Libfabric Backend";
+    NIXL_INFO << "Initializing Libfabric Backend";
 
     // this is required for loading rail selection policy by configuration
     if (rail_manager.init(getCustomParams()) != NIXL_SUCCESS) {
@@ -344,7 +344,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
 
     // Initialize Rail Manager which will discover the topology and create all rails.
     try {
-        NIXL_DEBUG << "Rail Manager created with " << rail_manager.getNumRails() << " rails";
+        NIXL_INFO << "Rail Manager created with " << rail_manager.getNumRails() << " rails";
 
         // Set up notification callback on rail 0
         size_t notification_rail_id = 0;
@@ -383,12 +383,12 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
                 std::to_string(conn_status));
         }
 
-        NIXL_DEBUG << "Created self-connection for agent: " << localAgent << " on "
+        NIXL_INFO << "Created self-connection for agent: " << localAgent << " on "
                    << rail_manager.getNumRails() << " rails";
 
         // Start Progress thread for rail completion processing
         if (progress_thread_enabled_) {
-            NIXL_DEBUG << "Starting Progress thread for rails with delay: "
+            NIXL_INFO << "Starting Progress thread for rails with delay: "
                        << progress_thread_delay_.count() << " microseconds";
             progress_thread_stop_ = false;
             progress_thread_ = std::thread(&nixlLibfabricEngine::progressThread, this);
@@ -397,7 +397,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
                 NIXL_ERROR << "Failed to start Progress thread";
                 throw std::runtime_error("Failed to start Progress thread");
             }
-            NIXL_DEBUG << "Progress thread started successfully";
+            NIXL_INFO << "Progress thread started successfully";
         } else {
             NIXL_DEBUG << "Progress thread disabled, using manual progress in checkXfer/getNotifs";
         }
@@ -491,7 +491,7 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
         return conn_status;
     }
 
-    NIXL_DEBUG << "Successfully stored multirail connection for " << remote_agent << " on "
+    NIXL_INFO << "Successfully stored multirail connection for " << remote_agent << " on "
                << rail_manager.getNumRails() << " rails";
     return NIXL_SUCCESS;
 }
@@ -506,7 +506,7 @@ nixlLibfabricEngine::connect(const std::string &remote_agent) {
     // Check if connection is already established
     auto it = connections_.find(remote_agent);
     if (it != connections_.end() && it->second->overall_state_ == ConnectionState::CONNECTED) {
-        NIXL_DEBUG << "Connection already established for " << remote_agent
+        NIXL_INFO << "Connection already established for " << remote_agent
                    << ", fi_addr=" << it->second->rail_remote_addr_list_[0][0];
         return NIXL_SUCCESS;
     }
@@ -530,7 +530,7 @@ nixlLibfabricEngine::connect(const std::string &remote_agent) {
         return NIXL_ERR_NOT_FOUND;
     }
 
-    NIXL_DEBUG << "Successfully established connection for " << remote_agent;
+    NIXL_INFO << "Successfully established connection for " << remote_agent;
     return NIXL_SUCCESS;
 }
 
@@ -539,7 +539,7 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
     std::lock_guard<std::mutex> lock(connection_state_mutex_);
     auto it = connections_.find(remote_agent);
     if (it == connections_.end()) {
-        NIXL_ERROR << "Disconnect failed. No metadata connection info for " << remote_agent;
+        NIXL_WARN << "Disconnect failed. No metadata connection info for " << remote_agent;
         return NIXL_ERR_NOT_FOUND;
     }
     // Connection exists - check if already disconnected
@@ -573,7 +573,7 @@ nixlLibfabricEngine::createAgentConnection(
     }
 
     if (data_rail_endpoints.size() != rail_manager.getNumRails()) {
-        NIXL_INFO << "Rail count (local: " << rail_manager.getNumRails()
+        NIXL_DEBUG << "Rail count (local: " << rail_manager.getNumRails()
                   << ", remote: " << data_rail_endpoints.size() << ")";
     }
 
@@ -607,7 +607,7 @@ nixlLibfabricEngine::createAgentConnection(
     // Store connection
     connections_[agent_name] = conn;
 
-    NIXL_DEBUG << "Successfully created connection for agent: " << agent_name << " on "
+    NIXL_INFO << "Successfully created connection for agent: " << agent_name << " on "
                << rail_manager.getNumRails() << " rails";
 
     return NIXL_SUCCESS;
@@ -654,7 +654,7 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
     NIXL_DEBUG << "Agent index: " << it->second->agent_index_;
 
     conn_info->overall_state_ = ConnectionState::CONNECTED;
-    NIXL_DEBUG << "Connection state for agent " << remote_agent << " is now "
+    NIXL_INFO << "Connection state for agent " << remote_agent << " is now "
                << conn_info->overall_state_;
 
     return NIXL_SUCCESS;
