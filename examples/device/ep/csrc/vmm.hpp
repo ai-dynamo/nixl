@@ -19,15 +19,47 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <cstddef>
 
-struct vmm_region {
-    CUdeviceptr ptr = 0;
-    size_t size = 0;
-    CUmemGenericAllocationHandle handle = 0;
-    bool is_cuda_malloc = false;
+class vmm_region {
+public:
+    vmm_region() = default;
+    ~vmm_region();
+
+    vmm_region(vmm_region &&other) noexcept;
+    vmm_region &
+    operator=(vmm_region &&other) noexcept;
+
+    vmm_region(const vmm_region &) = delete;
+    vmm_region &
+    operator=(const vmm_region &) = delete;
+
+    [[nodiscard]] static vmm_region
+    allocate(size_t size, CUdevice device);
+
+    [[nodiscard]] CUdeviceptr
+    ptr() const noexcept {
+        return ptr_;
+    }
+
+    [[nodiscard]] size_t
+    size() const noexcept {
+        return size_;
+    }
+
+    [[nodiscard]] CUmemGenericAllocationHandle
+    handle() const noexcept {
+        return handle_;
+    }
+
+private:
+    void
+    release() noexcept;
+
+    CUdeviceptr ptr_ = 0;
+    size_t size_ = 0;
+    CUmemGenericAllocationHandle handle_ = 0;
+    bool is_cuda_malloc_ = false;
+    bool vmm_addr_reserved_ = false;
+    bool vmm_mapped_ = false;
 };
-
-vmm_region
-vmm_init(size_t size, CUdevice device);
-void
-vmm_free(vmm_region &region);

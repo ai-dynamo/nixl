@@ -103,27 +103,27 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     EP_HOST_ASSERT(per_channel_bytes < std::numeric_limits<int>::max());
 
     // Create 32 MiB workspace
-    m_workspace_alloc = vmm_init(NUM_WORKSPACE_BYTES, device_id);
-    workspace = reinterpret_cast<void *>(m_workspace_alloc.ptr);
+    m_workspace_alloc = vmm_region::allocate(NUM_WORKSPACE_BYTES, device_id);
+    workspace = reinterpret_cast<void *>(m_workspace_alloc.ptr());
     CUDA_CHECK(cudaMemsetAsync(workspace, 0, NUM_WORKSPACE_BYTES, comm_stream));
 
     EP_HOST_ASSERT(max_experts_per_rank > 0);
-    m_rdma_alloc = vmm_init(num_rdma_bytes, device_id);
-    rdma_buffer_ptr = reinterpret_cast<void *>(m_rdma_alloc.ptr);
+    m_rdma_alloc = vmm_region::allocate(num_rdma_bytes, device_id);
+    rdma_buffer_ptr = reinterpret_cast<void *>(m_rdma_alloc.ptr());
     CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
 
     // Allocate and clean shrink buffer
     int num_mask_buffer_bytes = max_num_ranks * sizeof(int);
-    m_mask_alloc = vmm_init(num_mask_buffer_bytes, device_id);
-    mask_buffer_ptr = reinterpret_cast<int *>(m_mask_alloc.ptr);
+    m_mask_alloc = vmm_region::allocate(num_mask_buffer_bytes, device_id);
+    mask_buffer_ptr = reinterpret_cast<int *>(m_mask_alloc.ptr());
     CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0xff, num_mask_buffer_bytes));
     CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
 
     int num_sync_buffer_bytes = max_num_ranks * sizeof(int);
-    m_sync_alloc = vmm_init(num_sync_buffer_bytes, device_id);
-    sync_buffer_ptr = reinterpret_cast<int *>(m_sync_alloc.ptr);
-    m_sync_count_alloc = vmm_init(num_sync_buffer_bytes, device_id);
-    sync_count_ptr = reinterpret_cast<int *>(m_sync_count_alloc.ptr);
+    m_sync_alloc = vmm_region::allocate(num_sync_buffer_bytes, device_id);
+    sync_buffer_ptr = reinterpret_cast<int *>(m_sync_alloc.ptr());
+    m_sync_count_alloc = vmm_region::allocate(num_sync_buffer_bytes, device_id);
+    sync_count_ptr = reinterpret_cast<int *>(m_sync_count_alloc.ptr());
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_count_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -177,21 +177,21 @@ void Buffer::destroy() {
 
     _nixl_ep_destroy();
 
-    vmm_free(m_rdma_alloc);
+    m_rdma_alloc = vmm_region{};
     rdma_buffer_ptr = nullptr;
 
     if (nixl_agent_info and nixl_agent_info->agent != nullptr and getenv("NIXL_ETCD_ENDPOINTS")) {
         nixl_agent_info->agent->invalidateLocalMD();
     }
 
-    vmm_free(m_mask_alloc);
+    m_mask_alloc = vmm_region{};
     mask_buffer_ptr = nullptr;
-    vmm_free(m_sync_alloc);
+    m_sync_alloc = vmm_region{};
     sync_buffer_ptr = nullptr;
-    vmm_free(m_sync_count_alloc);
+    m_sync_count_alloc = vmm_region{};
     sync_count_ptr = nullptr;
 
-    vmm_free(m_workspace_alloc);
+    m_workspace_alloc = vmm_region{};
     workspace = nullptr;
 
     destroyed = true;
