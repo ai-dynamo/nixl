@@ -23,8 +23,8 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
-ARG UCX_REF="v1.20.x"
-ARG BUILD_NIXL_EP="false"
+ARG UCX_REF="v1.21.x"
+ARG BUILD_NIXL_EP="true"
 ARG RDMA_CORE_PREFIX="/usr"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
@@ -65,6 +65,7 @@ RUN apt-get update -y && \
     clang \
     hwloc \
     libhwloc-dev \
+    pkg-config \
     # aws-sdk-cpp dependencies
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev \
     # azure-sdk-for-cpp dependencies
@@ -277,7 +278,7 @@ RUN rm -rf build && \
     mkdir build && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \
         echo "=== BUILD_NIXL_EP=true: Building NIXL with NIXL EP support ===" && \
-        NIXL_EP_FLAG="-Dbuild_nixl_ep=true"; \
+        NIXL_EP_FLAG="-Dbuild_nixl_ep=true -Dbuild_examples=true"; \
     else \
         NIXL_EP_FLAG=""; \
     fi && \
@@ -299,12 +300,14 @@ RUN cd src/bindings/rust && cargo build --release --locked
 # Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
 RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
     mkdir -p dist && \
+    if [ "$BUILD_NIXL_EP" = "true" ]; then EP_BUILD_FLAG="--build-nixl-ep"; else EP_BUILD_FLAG=""; fi && \
     ./contrib/build-wheel.sh \
     --python-version $DEFAULT_PYTHON_VERSION \
     --platform manylinux_2_39_$ARCH \
     --ucx-plugins-dir $UCX_PLUGIN_DIR \
     --nixl-plugins-dir $NIXL_PLUGIN_DIR \
-    --output-dir /workspace/nixl/dist
+    --output-dir /workspace/nixl/dist \
+    $EP_BUILD_FLAG
 
 RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
 RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl dist/nixl-*-none-any.whl

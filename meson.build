@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.0.0',
+project('nixl', 'CPP', version: '1.0.1',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -371,7 +371,10 @@ subdir('src')
 if get_option('build_tests') and get_option('buildtype') != 'release'
   subdir('test')
 endif
-if get_option('build_examples')
+
+# nixl_ep currently lives under examples/device/ep. Build that subtree when
+# either full examples are requested or nixl_ep is explicitly requested.
+if get_option('build_examples') or get_option('build_nixl_ep')
     subdir('examples')
 endif
 
