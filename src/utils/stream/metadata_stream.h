@@ -42,7 +42,7 @@ class nixlMetadataStream {
         void closeStream();
 
     public:
-        nixlMetadataStream(uint16_t port);
+        explicit nixlMetadataStream(uint16_t port) noexcept;
         ~nixlMetadataStream();
 };
 
@@ -56,13 +56,8 @@ class nixlMDStreamListener: public nixlMetadataStream {
         void            recvFromClients(int clientSocket);
 
     public:
-        nixlMDStreamListener(uint16_t port);
+        explicit nixlMDStreamListener(uint16_t port) noexcept;
         ~nixlMDStreamListener();
-
-        uint16_t
-        getPort() const {
-            return port;
-        }
 
         int         acceptClient();
         void        setupListener();

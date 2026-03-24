@@ -24,7 +24,7 @@
 #include <arpa/inet.h>
 #include "common/nixl_log.h"
 
-nixlMetadataStream::nixlMetadataStream(uint16_t port) : port(port), socketFd(-1) {
+nixlMetadataStream::nixlMetadataStream(uint16_t port) noexcept : port(port), socketFd(-1) {
     memset(&listenerAddr, 0, sizeof(listenerAddr));
 }
 
@@ -54,7 +54,7 @@ void nixlMetadataStream::closeStream() {
    }
 }
 
-nixlMDStreamListener::nixlMDStreamListener(uint16_t port) : nixlMetadataStream(port) {}
+nixlMDStreamListener::nixlMDStreamListener(uint16_t port) noexcept : nixlMetadataStream(port) {}
 
 nixlMDStreamListener::~nixlMDStreamListener() {
     if (listenerThread.joinable()) {
@@ -194,8 +194,7 @@ bool nixlMDStreamClient::setupClient() {
     listenerAddr.sin_family = AF_INET;
     listenerAddr.sin_port   = htons(port);
 
-    if (inet_pton(AF_INET, listenerAddress.c_str(),
-                  &listenerAddr.sin_addr) <= 0) {
+    if (inet_pton(AF_INET, listenerAddress.c_str(), &listenerAddr.sin_addr) <= 0) {
         NIXL_PERROR << "Invalid address/ Address not supported";
         closeStream();
         return false;
@@ -207,8 +206,7 @@ bool nixlMDStreamClient::setupClient() {
         closeStream();
         return false;
     }
-    NIXL_DEBUG << "Connected to listener at "
-               << listenerAddress << ":" << port;
+    NIXL_DEBUG << "Connected to listener at " << listenerAddress << ":" << port;
     return true;
 }
 
