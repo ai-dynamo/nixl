@@ -23,19 +23,16 @@
 
 class vmm_region {
 public:
-    vmm_region() = default;
-    ~vmm_region();
+    explicit vmm_region(size_t size, CUdevice device);
 
-    vmm_region(vmm_region &&other) noexcept;
-    vmm_region &
-    operator=(vmm_region &&other) noexcept;
+    ~vmm_region();
 
     vmm_region(const vmm_region &) = delete;
     vmm_region &
     operator=(const vmm_region &) = delete;
-
-    [[nodiscard]] static vmm_region
-    allocate(size_t size, CUdevice device);
+    vmm_region(vmm_region &&) = delete;
+    vmm_region &
+    operator=(vmm_region &&) = delete;
 
     [[nodiscard]] CUdeviceptr
     ptr() const noexcept {

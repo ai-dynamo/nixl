@@ -34,6 +34,7 @@
 #include <torch/python.h>
 
 #include "nixl_ep.hpp"
+#include "cuda_utils.hpp"
 #include "kernels/api.cuh"
 #include "kernels/configs.cuh"
 #include <cstdio>
@@ -102,28 +103,31 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     auto per_channel_bytes = ceil_div<int64_t>(num_rdma_bytes, denom_sms);
     EP_HOST_ASSERT(per_channel_bytes < std::numeric_limits<int>::max());
 
+    const CUdevice cu_dev = static_cast<CUdevice>(device_id);
+
     // Create 32 MiB workspace
-    m_workspace_alloc = vmm_region::allocate(NUM_WORKSPACE_BYTES, device_id);
-    workspace = reinterpret_cast<void *>(m_workspace_alloc.ptr());
+    m_workspace_alloc = std::make_unique<vmm_region>(NUM_WORKSPACE_BYTES, cu_dev);
+    workspace = reinterpret_cast<void *>(m_workspace_alloc->ptr());
     CUDA_CHECK(cudaMemsetAsync(workspace, 0, NUM_WORKSPACE_BYTES, comm_stream));
 
     EP_HOST_ASSERT(max_experts_per_rank > 0);
-    m_rdma_alloc = vmm_region::allocate(num_rdma_bytes, device_id);
-    rdma_buffer_ptr = reinterpret_cast<void *>(m_rdma_alloc.ptr());
+    m_rdma_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_rdma_bytes), cu_dev);
+    rdma_buffer_ptr = reinterpret_cast<void *>(m_rdma_alloc->ptr());
     CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
 
     // Allocate and clean shrink buffer
     int num_mask_buffer_bytes = max_num_ranks * sizeof(int);
-    m_mask_alloc = vmm_region::allocate(num_mask_buffer_bytes, device_id);
-    mask_buffer_ptr = reinterpret_cast<int *>(m_mask_alloc.ptr());
+    m_mask_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_mask_buffer_bytes), cu_dev);
+    mask_buffer_ptr = reinterpret_cast<int *>(m_mask_alloc->ptr());
     CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0xff, num_mask_buffer_bytes));
     CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
 
     int num_sync_buffer_bytes = max_num_ranks * sizeof(int);
-    m_sync_alloc = vmm_region::allocate(num_sync_buffer_bytes, device_id);
-    sync_buffer_ptr = reinterpret_cast<int *>(m_sync_alloc.ptr());
-    m_sync_count_alloc = vmm_region::allocate(num_sync_buffer_bytes, device_id);
-    sync_count_ptr = reinterpret_cast<int *>(m_sync_count_alloc.ptr());
+    m_sync_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes), cu_dev);
+    sync_buffer_ptr = reinterpret_cast<int *>(m_sync_alloc->ptr());
+    m_sync_count_alloc =
+        std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes), cu_dev);
+    sync_count_ptr = reinterpret_cast<int *>(m_sync_count_alloc->ptr());
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_count_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -189,7 +193,7 @@ void Buffer::destroy() {
     }
 
     // Synchronize
-    warn_cuda(cudaDeviceSynchronize(), "synchronize device");
+    warn_cuda_api(cudaDeviceSynchronize(), "destroy()", "synchronize device");
 
     _nixl_ep_destroy();
 
@@ -214,16 +218,16 @@ void Buffer::destroy() {
         nixl_agent_info.reset();
     }
 
-    m_rdma_alloc = vmm_region{};
+    m_rdma_alloc.reset();
     rdma_buffer_ptr = nullptr;
-    m_mask_alloc = vmm_region{};
+    m_mask_alloc.reset();
     mask_buffer_ptr = nullptr;
-    m_sync_alloc = vmm_region{};
+    m_sync_alloc.reset();
     sync_buffer_ptr = nullptr;
-    m_sync_count_alloc = vmm_region{};
+    m_sync_count_alloc.reset();
     sync_count_ptr = nullptr;
 
-    m_workspace_alloc = vmm_region{};
+    m_workspace_alloc.reset();
     workspace = nullptr;
 
     destroyed = true;

@@ -16,16 +16,20 @@
  */
 
 #include <stdexcept>
-#include <utility>
 
 #include "config.hpp"
+#include "cuda_utils.hpp"
 #include "vmm.hpp"
+
+namespace {
+constexpr const char *k_vmm_ctx = "vmm_region";
+}
 
 void
 vmm_region::release() noexcept {
     if (is_cuda_malloc_) {
         if (ptr_) {
-            cudaFree(reinterpret_cast<void *>(ptr_));
+            nixl_ep::warn_cuda_api(cudaFree(reinterpret_cast<void *>(ptr_)), k_vmm_ctx, "cudaFree");
         }
         ptr_ = 0;
         size_ = 0;
@@ -34,16 +38,16 @@ vmm_region::release() noexcept {
     }
 
     if (vmm_mapped_) {
-        cuMemUnmap(ptr_, size_);
+        nixl_ep::warn_cu_api(cuMemUnmap(ptr_, size_), k_vmm_ctx, "cuMemUnmap");
         vmm_mapped_ = false;
     }
     if (vmm_addr_reserved_ && ptr_) {
-        cuMemAddressFree(ptr_, size_);
+        nixl_ep::warn_cu_api(cuMemAddressFree(ptr_, size_), k_vmm_ctx, "cuMemAddressFree");
         ptr_ = 0;
         vmm_addr_reserved_ = false;
     }
     if (handle_) {
-        cuMemRelease(handle_);
+        nixl_ep::warn_cu_api(cuMemRelease(handle_), k_vmm_ctx, "cuMemRelease");
         handle_ = 0;
     }
     size_ = 0;
@@ -53,46 +57,9 @@ vmm_region::~vmm_region() {
     release();
 }
 
-vmm_region::vmm_region(vmm_region &&other) noexcept
-    : ptr_(other.ptr_),
-      size_(other.size_),
-      handle_(other.handle_),
-      is_cuda_malloc_(other.is_cuda_malloc_),
-      vmm_addr_reserved_(other.vmm_addr_reserved_),
-      vmm_mapped_(other.vmm_mapped_) {
-    other.ptr_ = 0;
-    other.size_ = 0;
-    other.handle_ = 0;
-    other.is_cuda_malloc_ = false;
-    other.vmm_addr_reserved_ = false;
-    other.vmm_mapped_ = false;
-}
-
-vmm_region &
-vmm_region::operator=(vmm_region &&other) noexcept {
-    if (this == &other) {
-        return *this;
-    }
-    release();
-    ptr_ = other.ptr_;
-    size_ = other.size_;
-    handle_ = other.handle_;
-    is_cuda_malloc_ = other.is_cuda_malloc_;
-    vmm_addr_reserved_ = other.vmm_addr_reserved_;
-    vmm_mapped_ = other.vmm_mapped_;
-    other.ptr_ = 0;
-    other.size_ = 0;
-    other.handle_ = 0;
-    other.is_cuda_malloc_ = false;
-    other.vmm_addr_reserved_ = false;
-    other.vmm_mapped_ = false;
-    return *this;
-}
-
-vmm_region
-vmm_region::allocate(size_t size, CUdevice device) {
+vmm_region::vmm_region(size_t size, CUdevice device) {
     if (size == 0) {
-        throw std::invalid_argument("vmm_region::allocate: size must be non-zero");
+        throw std::invalid_argument("vmm_region: size must be non-zero");
     }
 
     struct cuda_alloc_ctx {
@@ -148,44 +115,40 @@ vmm_region::allocate(size_t size, CUdevice device) {
 
     static cuda_alloc_ctx ctx(device);
 
-    vmm_region region;
-
     if (!ctx.fabric_supported) {
-        region.size_ = size;
-        region.is_cuda_malloc_ = true;
-        if (cudaMalloc(reinterpret_cast<void **>(&region.ptr_), size) != cudaSuccess) {
+        size_ = size;
+        is_cuda_malloc_ = true;
+        if (cudaMalloc(reinterpret_cast<void **>(&ptr_), size) != cudaSuccess) {
             throw std::runtime_error("cudaMalloc fallback failed (fabric not supported)");
         }
-        return region;
+        return;
     }
 
     CUmemAccessDesc access_desc = {};
 
-    region.size_ = nixl_ep::align_up<size_t>(size, ctx.granularity);
+    size_ = nixl_ep::align_up<size_t>(size, ctx.granularity);
 
-    if (cuMemCreate(&region.handle_, region.size_, &ctx.prop, 0) != CUDA_SUCCESS) {
+    if (cuMemCreate(&handle_, size_, &ctx.prop, 0) != CUDA_SUCCESS) {
         throw std::runtime_error("Failed to create CUDA VMM allocation");
     }
 
-    if (cuMemAddressReserve(&region.ptr_, region.size_, 0, 0, 0) != CUDA_SUCCESS) {
-        region.release();
+    if (cuMemAddressReserve(&ptr_, size_, 0, 0, 0) != CUDA_SUCCESS) {
+        release();
         throw std::runtime_error("Failed to reserve CUDA virtual address");
     }
-    region.vmm_addr_reserved_ = true;
+    vmm_addr_reserved_ = true;
 
-    if (cuMemMap(region.ptr_, region.size_, 0, region.handle_, 0) != CUDA_SUCCESS) {
-        region.release();
+    if (cuMemMap(ptr_, size_, 0, handle_, 0) != CUDA_SUCCESS) {
+        release();
         throw std::runtime_error("Failed to map CUDA VMM memory");
     }
-    region.vmm_mapped_ = true;
+    vmm_mapped_ = true;
 
     access_desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
     access_desc.location.id = device;
     access_desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-    if (cuMemSetAccess(region.ptr_, region.size_, &access_desc, 1) != CUDA_SUCCESS) {
-        region.release();
+    if (cuMemSetAccess(ptr_, size_, &access_desc, 1) != CUDA_SUCCESS) {
+        release();
         throw std::runtime_error("Failed to set CUDA memory access");
     }
-
-    return region;
 }
