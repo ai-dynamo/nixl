@@ -40,8 +40,7 @@ const std::string string_name = "string" + pid;
 } // namespace
 
 int
-main()
-{
+main() {
     const auto pid = ::getpid();
     const auto file = "nixl_test_" + std::to_string(pid) + ".cfg";
     const auto path = std::filesystem::temp_directory_path() / file;
