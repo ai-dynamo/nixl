@@ -48,4 +48,7 @@ for sub_name in submodules:
 
 if TYPE_CHECKING:
     from nixl import logging  # noqa: F401
-    from nixl._api import nixl_agent, nixl_agent_config  # type: ignore[attr-defined]  # noqa: F401
+    from nixl._api import (  # type: ignore[attr-defined]  # noqa: F401
+        nixl_agent,
+        nixl_agent_config,
+    )

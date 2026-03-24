@@ -20,6 +20,12 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     try:
-        from nixl_cu13._api import nixl_agent, nixl_agent_config  # type: ignore[import]  # noqa: F401
+        from nixl_cu13._api import (  # type: ignore[import]  # noqa: F401
+            nixl_agent,
+            nixl_agent_config,
+        )
     except ImportError:
-        from nixl_cu12._api import nixl_agent, nixl_agent_config  # type: ignore[import]  # noqa: F401
+        from nixl_cu12._api import (  # type: ignore[import]  # noqa: F401
+            nixl_agent,
+            nixl_agent_config,
+        )
