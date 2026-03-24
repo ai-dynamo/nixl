@@ -114,7 +114,8 @@ class nixlBackendEngine {
 
         // Determine whether a backend supports notification callbacks;
         // meaningful only when supportsNotif() == true.
-        virtual bool supportsNotifCallback() const {
+        virtual bool
+        supportsNotifCallback() const {
             return false;
         }
 

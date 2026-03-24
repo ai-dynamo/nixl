@@ -28,14 +28,14 @@ using nixl_notif_callback_t = std::function<void(std::string &&, std::string &&)
 struct nixlNotifCallback {
     nixlNotifCallback(const std::string &prefix, const nixl_notif_callback_t &callback)
         : prefix(prefix),
-          callback(callback)
-    {}
+          callback(callback) {}
 
     std::string prefix;
     nixl_notif_callback_t callback;
 };
 
-[[nodiscard]] inline bool operator<(const nixlNotifCallback &l, const nixlNotifCallback &r) noexcept {
+[[nodiscard]] inline bool
+operator<(const nixlNotifCallback &l, const nixlNotifCallback &r) noexcept {
     return l.prefix < r.prefix;
 }
 
@@ -65,9 +65,9 @@ public:
 
         callbacks_.emplace_back(prefix, callback);
 
-        if(callbacks_.size() == 1) {
+        if (callbacks_.size() == 1) {
             common_size_ = prefix.size();
-        } else if((common_size_ > 0) && (common_size_ == prefix.size())) {
+        } else if ((common_size_ > 0) && (common_size_ == prefix.size())) {
             std::sort(callbacks_.begin(), callbacks_.end());
         } else {
             common_size_ = 0;
@@ -76,9 +76,9 @@ public:
 
     void
     call(std::string &&remote, std::string &&message) const {
-        if(callbacks_.empty()) {
+        if (callbacks_.empty()) {
             call_default(std::move(remote), std::move(message));
-        } else if(common_size_ > 0) {
+        } else if (common_size_ > 0) {
             call_binary_search(std::move(remote), std::move(message));
         } else {
             call_linear_scan(std::move(remote), std::move(message));
@@ -88,20 +88,24 @@ public:
 private:
     void
     call_default(std::string &&remote, std::string &&message) const {
-        if(default_) {
+        if (default_) {
             default_(std::move(remote), std::move(message));
         }
     }
 
     void
     call_binary_search(std::string &&remote, std::string &&message) const {
-        if(message.size() >= common_size_) {
+        if (message.size() >= common_size_) {
             const std::string prefix = message.substr(0, common_size_);
-            const auto iter = std::lower_bound(callbacks_.begin(), callbacks_.end(), message, [&](const nixlNotifCallback &l, const std::string &r) {
-                    return l.prefix < prefix;
-            } );
+            const auto iter =
+                std::lower_bound(callbacks_.begin(),
+                                 callbacks_.end(),
+                                 message,
+                                 [&](const nixlNotifCallback &l, const std::string &r) {
+                                     return l.prefix < prefix;
+                                 });
 
-            if((iter != callbacks_.end()) && (prefix == iter->prefix)) {
+            if ((iter != callbacks_.end()) && (prefix == iter->prefix)) {
                 iter->callback(std::move(remote), std::move(message));
                 return;
             }
@@ -111,8 +115,8 @@ private:
 
     void
     call_linear_scan(std::string &&remote, std::string &&message) const {
-        for(const auto &cb : callbacks_) {
-            if(message.compare(0, cb.prefix.size(), cb.prefix) == 0) {
+        for (const auto &cb : callbacks_) {
+            if (message.compare(0, cb.prefix.size(), cb.prefix) == 0) {
                 cb.callback(std::move(remote), std::move(message));
                 return;
             }

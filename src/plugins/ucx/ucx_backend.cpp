@@ -1383,7 +1383,7 @@ int nixlUcxEngine::progress() {
 nixlNotifCallbacks
 nixlUcxEngine::setDefaultCallback(nixlNotifCallbacks callbacks) {
     if (!callbacks.hasDefaultCallback()) {
-        callbacks.setDefaultCallback([engine = this](std::string&& remote, std::string&& message) {
+        callbacks.setDefaultCallback([engine = this](std::string &&remote, std::string &&message) {
             engine->appendNotif(std::move(remote), std::move(message));
         });
     }

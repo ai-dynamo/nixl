@@ -29,9 +29,7 @@ const std::string name1 = "Agent";
 const std::string name2 = "Guard";
 
 struct testAgent {
-    testAgent(const std::string &name, const nixlAgentConfig &cfg)
-        : agent(name, cfg)
-    {}
+    testAgent(const std::string &name, const nixlAgentConfig &cfg) : agent(name, cfg) {}
 
     void
     createBackend() {
@@ -68,10 +66,7 @@ struct testAgent {
 };
 
 struct agentPair {
-    explicit agentPair(const nixlAgentConfig &cfg)
-        : agent1(name1, cfg),
-          agent2(name2, cfg)
-    {
+    explicit agentPair(const nixlAgentConfig &cfg) : agent1(name1, cfg), agent2(name2, cfg) {
         agent1.createBackend();
         agent2.createBackend();
         agent1.loadMetadataFrom(agent2, name2);
@@ -96,7 +91,7 @@ TEST(NotifCallbacks, DefaultWithProgressThread) {
 
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    cfg.notifCallbacks.setDefaultCallback([&](std::string&& remote, std::string&& message) {
+    cfg.notifCallbacks.setDefaultCallback([&](std::string &&remote, std::string &&message) {
         EXPECT_EQ(remote, name1);
         EXPECT_EQ(message, message1);
         promise.set_value(true);
@@ -113,17 +108,15 @@ TEST(NotifCallbacks, PrefixFixedSizeWithProgressThread) {
 
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    cfg.notifCallbacks.addCallback("notif", [&](std::string&& remote, std::string&& message) {
+    cfg.notifCallbacks.addCallback("notif", [&](std::string &&remote, std::string &&message) {
         EXPECT_EQ(remote, name1);
         EXPECT_EQ(message, message1);
         promise.set_value(true);
     });
-    cfg.notifCallbacks.addCallback("aaaaa", [](std::string&& remote, std::string&& message) {
-        ADD_FAILURE();
-    });
-    cfg.notifCallbacks.addCallback("zzzzz", [](std::string&& remote, std::string&& message) {
-        ADD_FAILURE();
-    });
+    cfg.notifCallbacks.addCallback(
+        "aaaaa", [](std::string &&remote, std::string &&message) { ADD_FAILURE(); });
+    cfg.notifCallbacks.addCallback(
+        "zzzzz", [](std::string &&remote, std::string &&message) { ADD_FAILURE(); });
 
     agentPair agents(cfg);
     agents.genNotif(message1);
@@ -136,17 +129,15 @@ TEST(NotifCallbacks, PrefixLinearScanWithProgressThread) {
 
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    cfg.notifCallbacks.addCallback("aaa", [](std::string&& remote, std::string&& message) {
-        ADD_FAILURE();
-    });
-    cfg.notifCallbacks.addCallback("notif", [&](std::string&& remote, std::string&& message) {
+    cfg.notifCallbacks.addCallback(
+        "aaa", [](std::string &&remote, std::string &&message) { ADD_FAILURE(); });
+    cfg.notifCallbacks.addCallback("notif", [&](std::string &&remote, std::string &&message) {
         EXPECT_EQ(remote, name1);
         EXPECT_EQ(message, message1);
         promise.set_value(true);
     });
-    cfg.notifCallbacks.addCallback("zzzzzzz", [](std::string&& remote, std::string&& message) {
-        ADD_FAILURE();
-    });
+    cfg.notifCallbacks.addCallback(
+        "zzzzzzz", [](std::string &&remote, std::string &&message) { ADD_FAILURE(); });
 
     agentPair agents(cfg);
     agents.genNotif(message1);
