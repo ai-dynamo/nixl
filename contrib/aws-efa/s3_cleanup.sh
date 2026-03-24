@@ -1,3 +1,4 @@
+#!/bin/bash
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -12,11 +13,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+if [ -z "$NIXL_AWS_ACCESS_KEY_ID" ] || [ -z "$NIXL_AWS_SECRET_ACCESS_KEY" ]; then
+    echo "Missing NIXL S3 credentials"
+    exit 1
+fi
 
-nixl_gusli_app = executable('nixl_gusli_test', 'nixl_gusli_test.cpp',
-                          dependencies: [nixl_dep, nixl_infra, absl_log_dep, nixl_test_utils_dep],
-                          include_directories: [nixl_inc_dirs, utils_inc_dirs],
-                          install: true)
+export AWS_ACCESS_KEY_ID="$NIXL_AWS_ACCESS_KEY_ID"
+export AWS_SECRET_ACCESS_KEY="$NIXL_AWS_SECRET_ACCESS_KEY"
+export AWS_DEFAULT_BUCKET="nixl-ci-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}"
 
-# Register the test with the test suite
-test('gusli_plugin_test', nixl_gusli_app)
+set -exE -o pipefail
+
+aws s3 rb "s3://${AWS_DEFAULT_BUCKET}" --force || true
