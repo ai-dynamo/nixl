@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,7 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-fs = import('fs')
-fs.copyfile('__init__.py')
-fs.copyfile('_api.py')
-fs.copyfile('logging.py')
+# This file is a type stub for static analysis tools (pyright, mypy, IDEs).
+# At runtime it is shadowed by the actual nixl_cu12.logging or nixl_cu13.logging
+# module, which __init__.py injects into sys.modules["nixl.logging"].
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from nixl_cu13.logging import get_logger  # type: ignore[import]  # noqa: F401
+    from nixl_cu12.logging import get_logger  # type: ignore[import]  # noqa: F401

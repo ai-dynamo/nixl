@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,7 +47,5 @@ for sub_name in submodules:
             setattr(sys.modules[__name__], attr, getattr(module, attr))
 
 if TYPE_CHECKING:
-    try:
-        from nixl_cu13 import _api, _bindings, _utils, logging  # noqa: F401
-    except ImportError:
-        from nixl_cu12 import _api, _bindings, _utils, logging  # noqa: F401
+    from nixl._api import nixl_agent, nixl_agent_config  # noqa: F401
+    from nixl import logging  # noqa: F401
