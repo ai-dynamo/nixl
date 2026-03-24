@@ -35,7 +35,7 @@ if _pkg is None:
 submodules = ["_api", "_bindings", "_utils", "logging"]
 for sub_name in submodules:
     # Import submodule from actual wheel
-    module = importlib.import_module(f"{pkg}.{sub_name}")
+    module = importlib.import_module(f"{_pkg.__name__}.{sub_name}")
     # Make it accessible as nixl._api, nixl._utils, nixl.logging
     sys.modules[f"nixl.{sub_name}"] = module
     # Also add the submodule itself to the nixl namespace
@@ -47,5 +47,5 @@ for sub_name in submodules:
             setattr(sys.modules[__name__], attr, getattr(module, attr))
 
 if TYPE_CHECKING:
-    from nixl._api import nixl_agent, nixl_agent_config  # noqa: F401
     from nixl import logging  # noqa: F401
+    from nixl._api import nixl_agent, nixl_agent_config  # type: ignore[attr-defined]  # noqa: F401

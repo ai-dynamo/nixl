@@ -19,5 +19,7 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nixl_cu13._api import nixl_agent, nixl_agent_config  # type: ignore[import]  # noqa: F401
-    from nixl_cu12._api import nixl_agent, nixl_agent_config  # type: ignore[import]  # noqa: F401
+    try:
+        from nixl_cu13._api import nixl_agent, nixl_agent_config  # type: ignore[import]  # noqa: F401
+    except ImportError:
+        from nixl_cu12._api import nixl_agent, nixl_agent_config  # type: ignore[import]  # noqa: F401
