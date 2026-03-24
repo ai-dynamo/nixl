@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_API_CPP_BACKEND_NOTIF_CALLBACKS_H
 #define NIXL_SRC_API_CPP_BACKEND_NOTIF_CALLBACKS_H
 
+#include <algorithm>
 #include <cassert>
 #include <functional>
 #include <string>
@@ -77,24 +78,24 @@ public:
     void
     call(std::string &&remote, std::string &&message) const {
         if (callbacks_.empty()) {
-            call_default(std::move(remote), std::move(message));
+            callDefault(std::move(remote), std::move(message));
         } else if (common_size_ > 0) {
-            call_binary_search(std::move(remote), std::move(message));
+            callBinarySearch(std::move(remote), std::move(message));
         } else {
-            call_linear_scan(std::move(remote), std::move(message));
+            callLinearScan(std::move(remote), std::move(message));
         }
     }
 
 private:
     void
-    call_default(std::string &&remote, std::string &&message) const {
+    callDefault(std::string &&remote, std::string &&message) const {
         if (default_) {
             default_(std::move(remote), std::move(message));
         }
     }
 
     void
-    call_binary_search(std::string &&remote, std::string &&message) const {
+    callBinarySearch(std::string &&remote, std::string &&message) const {
         if (message.size() >= common_size_) {
             const std::string prefix = message.substr(0, common_size_);
             const auto iter =
@@ -110,18 +111,18 @@ private:
                 return;
             }
         }
-        call_default(std::move(remote), std::move(message));
+        callDefault(std::move(remote), std::move(message));
     }
 
     void
-    call_linear_scan(std::string &&remote, std::string &&message) const {
+    callLinearScan(std::string &&remote, std::string &&message) const {
         for (const auto &cb : callbacks_) {
             if (message.compare(0, cb.prefix.size(), cb.prefix) == 0) {
                 cb.callback(std::move(remote), std::move(message));
                 return;
             }
         }
-        call_default(std::move(remote), std::move(message));
+        callDefault(std::move(remote), std::move(message));
     }
 
     size_t common_size_ = 0;
