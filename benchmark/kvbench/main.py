@@ -492,14 +492,22 @@ def kvcache_command(model, model_config, **kwargs):
     default="0",
     help="Split storage I/O into blocks of this size for higher queue depth. "
     "Accepts size suffixes: K, M, G (e.g., '1M' = 1MB). "
-    "0 = no splitting (legacy). Recommended: '1M' for NFS/VAST.",
+    "0 = no splitting (legacy). Recommended: '1M' for NFS/VAST with POSIX backend.",
 )
 @click.option(
     "--storage-posix-api",
     type=click.Choice(["auto", "aio", "uring"]),
     default="auto",
     help="POSIX async I/O API. auto=best available (libaio), "
-    "aio=Linux AIO (libaio), uring=io_uring.",
+    "aio=Linux AIO (libaio), uring=io_uring. Use 'uring' for best VAST performance.",
+)
+@click.option(
+    "--storage-num-handles",
+    type=int,
+    default=1,
+    help="Number of concurrent transfer handles per storage op. "
+    "Each handle gets its own async I/O queue. "
+    "Recommended: 8 with --storage-block-size 1M --storage-posix-api uring.",
 )
 def sequential_ct_perftest(
     config_file,
@@ -513,6 +521,7 @@ def sequential_ct_perftest(
     isolation_iters,
     storage_block_size,
     storage_posix_api,
+    storage_num_handles,
 ):
     """Run sequential custom traffic performance test using patterns defined in YAML config."""
     from test.sequential_custom_traffic_perftest import SequentialCTPerftest
@@ -681,6 +690,7 @@ def sequential_ct_perftest(
         storage_direct_io=use_direct_io if has_storage else False,
         storage_block_size=block_size_bytes,
         storage_posix_api=storage_posix_api,
+        storage_num_handles=storage_num_handles,
     )
     perftest.run(
         verify_buffers=verify_buffers,
