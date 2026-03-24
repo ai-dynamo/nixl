@@ -39,7 +39,8 @@ const std::string string_name = "string" + pid;
 
 } // namespace
 
-int main()
+int
+main()
 {
     const auto pid = ::getpid();
     const auto file = "nixl_test_" + std::to_string(pid) + ".cfg";
