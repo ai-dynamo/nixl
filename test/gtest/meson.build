@@ -14,8 +14,6 @@
 # limitations under the License.
 
 gtest_dep = dependency('gtest', version : '>=1.11.0', required : false)
-absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
-absl_time_dep = abseil_proj.get_variable('absl_time_dep')
 
 if not gtest_dep.found()
     message('GTest not found, skipping gtest build')
@@ -50,6 +48,10 @@ else
     cuda_dependencies = []
 endif
 
+if libfabric_dep.found()
+    cpp_flags += '-DHAVE_LIBFABRIC'
+endif
+
 if get_option('test_all_plugins')
   cpp_flags+='-DTEST_ALL_PLUGINS'
 endif
@@ -80,7 +82,7 @@ else
 endif
 
 if ucx_dep.found()
-    gtest_sources += 'ucx_hw_warning_test.cpp'
+    gtest_sources += 'hw_warning_test.cpp'
     ucx_hw_warning_dep = [ucx_backend_interface, ucx_dep]
 else
     ucx_hw_warning_dep = []

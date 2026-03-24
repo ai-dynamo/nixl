@@ -989,6 +989,20 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    // Update notification from opt_args on repost
+    if (opt_args && opt_args->hasNotif) {
+        backend_handle->has_notif = true;
+        backend_handle->binary_notifs.clear();
+        fragmentNotificationMessage(opt_args->notifMsg,
+                                    localAgent,
+                                    backend_handle->total_notif_msg_len,
+                                    backend_handle->binary_notifs);
+    } else if (opt_args && !opt_args->hasNotif) {
+        backend_handle->has_notif = false;
+        backend_handle->binary_notifs.clear();
+        backend_handle->total_notif_msg_len = 0;
+    }
+
     // Allocate xfer_id once in prepXfer
     backend_handle->post_xfer_id = LibfabricUtils::getNextXferId();
 
