@@ -446,7 +446,6 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     // Can become more sophisticated to have a soft error case
     for (size_t i=0; i<backend_list->size(); ++i) {
         nixlBackendEngine* backend = (*backend_list)[i];
-        // meta_descs use to be passed to loadLocalData
         nixl_sec_dlist_t sec_descs(descs.getType());
         nixl_status_t ret = data->localSection_.addDescList(descs, backend, sec_descs);
         if (ret == NIXL_SUCCESS) {
@@ -454,7 +453,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
                 const auto [it, inserted] =
                     data->remoteSections_.try_emplace(data->name_, data->name_);
 
-                ret = it->second.loadLocalData(sec_descs, backend);
+                ret = it->second.loadLocalData(std::move(sec_descs), backend);
                 if (ret == NIXL_SUCCESS) {
                     count++;
                 } else {
