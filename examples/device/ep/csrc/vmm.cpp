@@ -32,8 +32,6 @@ vmm_region::release() noexcept {
             nixl_ep::warn_cuda_api(cudaFree(reinterpret_cast<void *>(ptr_)), k_vmm_ctx, "cudaFree");
         }
         ptr_ = 0;
-        size_ = 0;
-        is_cuda_malloc_ = false;
         return;
     }
 
@@ -50,7 +48,6 @@ vmm_region::release() noexcept {
         nixl_ep::warn_cu_api(cuMemRelease(handle_), k_vmm_ctx, "cuMemRelease");
         handle_ = 0;
     }
-    size_ = 0;
 }
 
 vmm_region::~vmm_region() {
