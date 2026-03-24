@@ -64,6 +64,7 @@ class SequentialCTPerftest(CTPerftest):
         storage_direct_io: bool = False,
         storage_block_size: int = 0,
         storage_posix_api: str = "auto",
+        storage_num_handles: int = 1,
     ) -> None:
         """Initialize multi-pattern performance test.
 
@@ -75,6 +76,8 @@ class SequentialCTPerftest(CTPerftest):
             storage_block_size: Split storage I/O into blocks of this size (bytes).
                                0 = no splitting. Recommended: 1048576 (1MB).
             storage_posix_api: POSIX async I/O API ("auto", "aio", "uring")
+            storage_num_handles: Number of concurrent transfer handles per storage op.
+                               1 = legacy single handle. 8 = recommended for POSIX/URING.
         """
         self.my_rank = dist_rt.get_rank()
         self.world_size = dist_rt.get_world_size()
@@ -82,6 +85,7 @@ class SequentialCTPerftest(CTPerftest):
         self.n_iters = n_iters
         self.n_isolation_iters = n_isolation_iters
         self.warmup_iters = warmup_iters
+        self._storage_num_handles = storage_num_handles
 
         # Storage setup
         self._has_storage = (
@@ -151,6 +155,7 @@ class SequentialCTPerftest(CTPerftest):
                 block_size=storage_block_size,
                 backend_params=backend_params if backend_params else None,
             )
+            self._storage_backend._num_handles = storage_num_handles
             # Only create UCX if we have RDMA traffic patterns
             if self._has_rdma:
                 self.nixl_agent.create_backend("UCX")
@@ -273,7 +278,12 @@ class SequentialCTPerftest(CTPerftest):
     def _prepare_storage_xfer(
         self, tp_idx: int, operation: StorageOpType
     ) -> List[StorageXferHandle]:
-        """Prepare a NIXL transfer handle for storage read or write."""
+        """Prepare NIXL transfer handle(s) for storage read or write.
+
+        When storage_num_handles > 1, creates multiple concurrent handles
+        that split the file into regions. Each handle gets its own io_uring
+        queue in the POSIX backend, enabling parallel async I/O.
+        """
         if not self._storage_backend:
             return []
         storage_handle = self._storage_handles.get(self._get_storage_key(tp_idx))
@@ -285,26 +295,49 @@ class SequentialCTPerftest(CTPerftest):
                 return []
             size = storage_handle.read_size
             buf_offset = 0
-            get_handle_fn = self._storage_backend.get_read_handle
         else:
             if storage_handle.write_size == 0:
                 return []
             size = storage_handle.write_size
             buf_offset = storage_handle.read_size
-            get_handle_fn = self._storage_backend.get_write_handle
+
         buf = self.send_buf_by_mem_type.get(self.traffic_patterns[tp_idx].mem_type)
         if not buf:
             return []
-        raw_xfer = get_handle_fn(storage_handle, buf.get_chunk(size, offset=buf_offset))
-        if not raw_xfer:
-            return []
-        # Wrap raw handle in StorageXferHandle for consistent interface
+
+        buffer_chunk = buf.get_chunk(size, offset=buf_offset)
         file_path = str(
             storage_handle.backend_data.get(
                 "file_path", f"tp_{tp_idx}_rank_{self.my_rank}"
             )
         )
-        return [StorageXferHandle(raw_xfer, file_path, op_name)]
+        num_h = self._storage_num_handles
+
+        if num_h > 1:
+            if operation == StorageOpType.READ:
+                raw_xfers = self._storage_backend.get_read_handles(
+                    storage_handle, buffer_chunk, num_handles=num_h
+                )
+            else:
+                raw_xfers = self._storage_backend.get_write_handles(
+                    storage_handle, buffer_chunk, num_handles=num_h
+                )
+            return [
+                StorageXferHandle(xfer, file_path, f"{op_name}_{i}")
+                for i, xfer in enumerate(raw_xfers)
+            ]
+        else:
+            if operation == StorageOpType.READ:
+                raw_xfer = self._storage_backend.get_read_handle(
+                    storage_handle, buffer_chunk
+                )
+            else:
+                raw_xfer = self._storage_backend.get_write_handle(
+                    storage_handle, buffer_chunk
+                )
+            if not raw_xfer:
+                return []
+            return [StorageXferHandle(raw_xfer, file_path, op_name)]
 
     def _prepare_storage_read(self, tp_idx: int) -> List[Any]:
         """Get storage read transfer handle."""
@@ -814,6 +847,8 @@ class SequentialCTPerftest(CTPerftest):
             # Per-rank isolated BWs (bottleneck = min across ranks)
             rdma_bws = []
             for rank in tp.senders_ranks():
+                if rank >= len(isolated_rdma_stats_by_ranks):
+                    continue
                 rank_stats = isolated_rdma_stats_by_ranks[rank][i]
                 if rank_stats["p50"] > 0:
                     rank_size_gb = tp.total_src_size(rank) * 1e-9
@@ -823,7 +858,7 @@ class SequentialCTPerftest(CTPerftest):
             read_bws = []
             if tp.storage_ops:
                 for rank, ops in tp.storage_ops.items():
-                    if ops.read_size > 0:
+                    if ops.read_size > 0 and rank < len(isolated_read_stats_by_ranks):
                         rank_stats = isolated_read_stats_by_ranks[rank][i]
                         if rank_stats["p50"] > 0:
                             read_bws.append((ops.read_size * 1e-9) / rank_stats["p50"])
@@ -832,7 +867,7 @@ class SequentialCTPerftest(CTPerftest):
             write_bws = []
             if tp.storage_ops:
                 for rank, ops in tp.storage_ops.items():
-                    if ops.write_size > 0:
+                    if ops.write_size > 0 and rank < len(isolated_write_stats_by_ranks):
                         rank_stats = isolated_write_stats_by_ranks[rank][i]
                         if rank_stats["p50"] > 0:
                             write_bws.append((ops.write_size * 1e-9) / rank_stats["p50"])

@@ -185,6 +185,7 @@ class FilesystemBackend(StorageBackend):
         self._nixl_backend = nixl_backend
         self._use_direct_io = use_direct_io
         self._block_size = block_size
+        self._num_handles = 1  # Set by caller; controls file sharding
         self._handles: Dict[str, StorageHandle] = {}  # key -> handle
         self._file_descriptors: Dict[str, int] = {}  # file_path -> fd
         self._file_reg_descs: Dict[str, Any] = {}  # file_path -> nixl reg_descs
@@ -197,16 +198,15 @@ class FilesystemBackend(StorageBackend):
                 "create_backend(%s) returned: %s (may already exist)", nixl_backend, e
             )
 
-        logger.debug(
-            "FilesystemBackend initialized: base_path=%s, backend=%s, direct_io=%s, block_size=%d",
-            base_path,
-            nixl_backend,
-            use_direct_io,
-            block_size,
+        logger.info(
+            "FilesystemBackend: path=%s backend=%s direct_io=%s block_size=%d params=%s",
+            base_path, nixl_backend, use_direct_io, block_size, backend_params,
         )
 
-    def _get_file_path(self, tp_idx: int, rank: int) -> Path:
-        """Get file path for a rank."""
+    def _get_file_path(self, tp_idx: int, rank: int, shard: int = -1) -> Path:
+        """Get file path for a rank, optionally sharded."""
+        if shard >= 0:
+            return self._base_path / f"tp_{tp_idx}" / f"rank_{rank}_shard_{shard}.bin"
         return self._base_path / f"tp_{tp_idx}" / f"rank_{rank}.bin"
 
     def _create_file(self, file_path: Path, file_size: int, read_size: int, rank: int):
@@ -221,7 +221,6 @@ class FilesystemBackend(StorageBackend):
         )
 
         with open(file_path, "wb") as f:
-            # Prefill READ region (simulates cached data)
             if read_size > 0:
                 chunk_size = min(8 * 1024 * 1024, read_size)
                 chunk = bytes([rank % 256]) * chunk_size
@@ -231,17 +230,34 @@ class FilesystemBackend(StorageBackend):
                     f.write(chunk[:to_write])
                     written += to_write
 
-            # Preallocate WRITE region blocks (avoids first-write block allocation
-            # latency, which is especially important with O_DIRECT)
             if file_size > read_size:
                 try:
                     os.posix_fallocate(f.fileno(), read_size, file_size - read_size)
                 except OSError:
-                    # Fallback for filesystems that don't support fallocate
                     f.seek(file_size - 1)
                     f.write(b"\0")
             f.flush()
             os.fsync(f.fileno())
+
+    def _open_and_register_file(self, file_path: Path, file_size: int) -> int:
+        """Open a file and register it with NIXL. Returns fd."""
+        flags = os.O_RDWR
+        if self._use_direct_io:
+            flags |= os.O_DIRECT
+        fd = os.open(str(file_path), flags)
+        self._file_descriptors[str(file_path)] = fd
+
+        reg_list = [(0, file_size, fd, str(file_path))]
+        reg_descs = self._agent.register_memory(
+            reg_list, "FILE", backends=[self._nixl_backend]
+        )
+        self._file_reg_descs[str(file_path)] = reg_descs
+        return fd
+
+    @property
+    def _num_shards(self):
+        """Number of file shards per rank. Matches num_handles for parallel I/O."""
+        return self._num_handles if self._num_handles > 1 else 1
 
     def prepare(
         self,
@@ -250,51 +266,137 @@ class FilesystemBackend(StorageBackend):
         read_size: int,
         write_size: int,
     ) -> StorageHandle:
-        """Prepare storage file for a rank."""
-        file_path = self._get_file_path(tp_idx, rank)
+        """Prepare storage file(s) for a rank.
+
+        When num_handles > 1, creates N shard files (one per handle) so each
+        gets its own fd. The NFS client can then parallelize I/O across files.
+        This is the key to matching nixlbench's 45 GB/s per node.
+        """
         file_size = read_size + write_size
         key = f"{tp_idx}:{rank}"
+        n_shards = self._num_shards
 
-        # Create file if doesn't exist
-        if not file_path.exists():
-            self._create_file(file_path, file_size, read_size, rank)
+        if n_shards <= 1:
+            # Legacy: single file
+            file_path = self._get_file_path(tp_idx, rank)
+            if not file_path.exists():
+                self._create_file(file_path, file_size, read_size, rank)
+            fd = self._open_and_register_file(file_path, file_size)
 
-        # Open file with optional O_DIRECT for GDS
-        flags = os.O_RDWR
-        if self._use_direct_io:
-            flags |= os.O_DIRECT
-        fd = os.open(str(file_path), flags)
-        self._file_descriptors[str(file_path)] = fd
+            handle = StorageHandle(
+                tp_idx=tp_idx, rank=rank,
+                read_size=read_size, write_size=write_size,
+                backend_data={"file_path": str(file_path), "fd": fd},
+            )
+        else:
+            # Multi-file: N shards, each with size/N
+            align = max(self._block_size, 4096) if self._block_size > 0 else 4096
+            shard_read = ((read_size // n_shards + align - 1) // align) * align
+            shard_write = ((write_size // n_shards + align - 1) // align) * align if write_size > 0 else 0
+            shard_size = shard_read + shard_write
 
-        # Register with NIXL
-        reg_list = [(0, file_size, fd, str(file_path))]
-        reg_descs = self._agent.register_memory(
-            reg_list, "FILE", backends=[self._nixl_backend]
-        )
-        self._file_reg_descs[str(file_path)] = reg_descs
+            shard_fds = []
+            shard_paths = []
+            for s in range(n_shards):
+                fpath = self._get_file_path(tp_idx, rank, shard=s)
+                actual_read = min(shard_read, read_size - s * shard_read)
+                actual_read = max(actual_read, 0)
+                actual_size = actual_read + shard_write
+                if actual_size <= 0:
+                    break
+                if not fpath.exists():
+                    self._create_file(fpath, actual_size, actual_read, rank)
+                fd = self._open_and_register_file(fpath, actual_size)
+                shard_fds.append(fd)
+                shard_paths.append(str(fpath))
 
-        handle = StorageHandle(
-            tp_idx=tp_idx,
-            rank=rank,
-            read_size=read_size,
-            write_size=write_size,
-            backend_data={
-                "file_path": str(file_path),
-                "fd": fd,
-            },
-        )
+            handle = StorageHandle(
+                tp_idx=tp_idx, rank=rank,
+                read_size=read_size, write_size=write_size,
+                backend_data={
+                    "file_path": shard_paths[0],
+                    "fd": shard_fds[0],
+                    "shard_fds": shard_fds,
+                    "shard_paths": shard_paths,
+                    "shard_read_size": shard_read,
+                    "shard_write_size": shard_write,
+                },
+            )
+
+            logger.debug(
+                "Prepared sharded storage: tp=%d, rank=%d, %d shards x %d bytes",
+                tp_idx, rank, len(shard_fds), shard_size,
+            )
+
         self._handles[key] = handle
+        return handle
+
+    def _create_chunked_descs(self, fd, file_offset, total_size, buffer):
+        """Create file and local memory descriptors, optionally chunked for high queue depth.
+
+        When block_size > 0, splits the transfer into multiple small descriptors.
+        This increases the async I/O queue depth in the POSIX/GDS backend, allowing
+        the NFS client to pipeline requests across nconnect sessions.
+
+        Both local and file descriptor lists must have matching entry counts
+        (required by the POSIX backend: posix_backend.cpp line 57).
+
+        Args:
+            fd: File descriptor
+            file_offset: Starting offset in file
+            total_size: Total bytes to transfer
+            buffer: Memory buffer (torch tensor)
+
+        Returns:
+            (local_descs, file_descs) tuple of NIXL descriptor lists
+        """
+        bs = self._block_size
+        if bs <= 0 or total_size <= bs:
+            # Legacy: single descriptor (queue_depth = 1)
+            file_descs = self._agent.get_xfer_descs(
+                [(file_offset, total_size, fd)], "FILE"
+            )
+            local_descs = self._agent.get_xfer_descs(buffer)
+            return local_descs, file_descs
+
+        # Chunked: N descriptors of block_size each (queue_depth = N)
+        # This mimics nixlbench's approach: 64 x 1MB = 64 outstanding I/Os
+        buf_addr = buffer.data_ptr()
+        dev_id = buffer.device.index if buffer.is_cuda else 0
+
+        file_tuples = []
+        local_tuples = []
+        for off in range(0, total_size, bs):
+            chunk = min(bs, total_size - off)
+            file_tuples.append((file_offset + off, chunk, fd))
+            local_tuples.append((buf_addr + off, chunk, dev_id or 0))
+
+        file_descs = self._agent.get_xfer_descs(file_tuples, "FILE")
+        local_mem_type = "VRAM" if buffer.is_cuda else "DRAM"
+        local_descs = self._agent.get_xfer_descs(local_tuples, local_mem_type)
 
         logger.debug(
-            "Prepared storage: tp=%d, rank=%d, file=%s, read=%d, write=%d",
-            tp_idx,
-            rank,
-            file_path,
-            read_size,
-            write_size,
+            "Chunked I/O: %d descs x %d bytes (total %d, queue_depth=%d)",
+            len(file_tuples),
+            bs,
+            total_size,
+            len(file_tuples),
         )
 
-        return handle
+        return local_descs, file_descs
+
+    def _create_handle(self, op, fd, file_offset, size, buffer):
+        """Create a single NIXL transfer handle for a file region."""
+        local_descs, file_descs = self._create_chunked_descs(
+            fd, file_offset, size, buffer
+        )
+        return self._agent.initialize_xfer(
+            op,
+            local_descs,
+            file_descs,
+            self._agent.name,
+            backends=[self._nixl_backend],
+        )
 
     def _create_chunked_descs(self, fd, file_offset, total_size, buffer):
         """Create file and local memory descriptors, optionally chunked for high queue depth.
@@ -358,21 +460,9 @@ class FilesystemBackend(StorageBackend):
         """Get NIXL transfer handle for reading from file."""
         if handle.read_size == 0:
             return None
-
-        fd = handle.backend_data["fd"]
-        local_descs, file_descs = self._create_chunked_descs(
-            fd, 0, handle.read_size, buffer
+        return self._create_handle(
+            "READ", handle.backend_data["fd"], 0, handle.read_size, buffer
         )
-
-        xfer_handle = self._agent.initialize_xfer(
-            "READ",
-            local_descs,
-            file_descs,
-            self._agent.name,
-            backends=[self._nixl_backend],
-        )
-
-        return xfer_handle
 
     def get_write_handle(
         self,
@@ -382,22 +472,119 @@ class FilesystemBackend(StorageBackend):
         """Get NIXL transfer handle for writing to file."""
         if handle.write_size == 0:
             return None
-
         fd = handle.backend_data["fd"]
-        write_offset = handle.read_size  # Write starts after read region
-        local_descs, file_descs = self._create_chunked_descs(
-            fd, write_offset, handle.write_size, buffer
+        write_offset = handle.read_size
+        return self._create_handle(
+            "WRITE", fd, write_offset, handle.write_size, buffer
         )
 
-        xfer_handle = self._agent.initialize_xfer(
-            "WRITE",
-            local_descs,
-            file_descs,
-            self._agent.name,
-            backends=[self._nixl_backend],
-        )
+    def get_read_handles(
+        self,
+        handle: StorageHandle,
+        buffer: Any,
+        num_handles: int = 8,
+    ) -> list:
+        """Create multiple concurrent transfer handles for high-throughput reads.
 
-        return xfer_handle
+        When sharded files exist (prepare() created N files), each handle uses
+        a separate fd. The NFS client parallelizes I/O across different fds,
+        enabling ~10 GB/s per handle = N*10 GB/s total.
+
+        Args:
+            handle: StorageHandle from prepare()
+            buffer: Memory buffer (full size)
+            num_handles: Number of concurrent handles (default: 8, matching nixlbench)
+
+        Returns:
+            List of NIXL transfer handles
+        """
+        if handle.read_size == 0:
+            return []
+
+        if num_handles <= 1:
+            h = self.get_read_handle(handle, buffer)
+            return [h] if h else []
+
+        total = handle.read_size
+        shard_fds = handle.backend_data.get("shard_fds")
+
+        if shard_fds and len(shard_fds) > 1:
+            # Sharded: each handle reads from its own file/fd
+            shard_read = handle.backend_data["shard_read_size"]
+            handles = []
+            for i, fd in enumerate(shard_fds):
+                offset_in_buf = i * shard_read
+                size = min(shard_read, total - offset_in_buf)
+                if size <= 0:
+                    break
+                buf_slice = buffer[offset_in_buf:offset_in_buf + size]
+                # Each shard file starts at offset 0
+                xfer = self._create_handle("READ", fd, 0, size, buf_slice)
+                handles.append(xfer)
+            return handles
+        else:
+            # Single file: split into regions (same fd, limited by NFS)
+            fd = handle.backend_data["fd"]
+            align = max(self._block_size, 4096) if self._block_size > 0 else 4096
+            chunk_per_handle = ((total // num_handles + align - 1) // align) * align
+
+            handles = []
+            for i in range(num_handles):
+                offset = i * chunk_per_handle
+                size = min(chunk_per_handle, total - offset)
+                if size <= 0:
+                    break
+                buf_slice = buffer[offset:offset + size]
+                xfer = self._create_handle("READ", fd, offset, size, buf_slice)
+                handles.append(xfer)
+            return handles
+
+    def get_write_handles(
+        self,
+        handle: StorageHandle,
+        buffer: Any,
+        num_handles: int = 8,
+    ) -> list:
+        """Create multiple concurrent transfer handles for high-throughput writes."""
+        if handle.write_size == 0:
+            return []
+
+        if num_handles <= 1:
+            h = self.get_write_handle(handle, buffer)
+            return [h] if h else []
+
+        total = handle.write_size
+        shard_fds = handle.backend_data.get("shard_fds")
+
+        if shard_fds and len(shard_fds) > 1:
+            shard_read = handle.backend_data["shard_read_size"]
+            shard_write = handle.backend_data["shard_write_size"]
+            handles = []
+            for i, fd in enumerate(shard_fds):
+                offset_in_buf = i * shard_write
+                size = min(shard_write, total - offset_in_buf)
+                if size <= 0:
+                    break
+                buf_slice = buffer[offset_in_buf:offset_in_buf + size]
+                xfer = self._create_handle("WRITE", fd, shard_read, size, buf_slice)
+                handles.append(xfer)
+            return handles
+        else:
+            fd = handle.backend_data["fd"]
+            write_offset = handle.read_size
+            align = max(self._block_size, 4096) if self._block_size > 0 else 4096
+            chunk_per_handle = ((total // num_handles + align - 1) // align) * align
+
+            handles = []
+            for i in range(num_handles):
+                offset = i * chunk_per_handle
+                size = min(chunk_per_handle, total - offset)
+                if size <= 0:
+                    break
+                buf_slice = buffer[offset:offset + size]
+                xfer = self._create_handle("WRITE", fd, write_offset + offset, size, buf_slice)
+                handles.append(xfer)
+            return handles
 
     def close(self):
         """Close all files and deregister from NIXL."""
