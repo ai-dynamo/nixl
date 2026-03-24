@@ -229,14 +229,6 @@ nixlAgent::~nixlAgent() {
     }
 }
 
-uint16_t
-nixlAgent::getListenPort() const {
-    if (data->listener) {
-        return data->listener->getPort();
-    }
-    return 0;
-}
-
 nixl_status_t
 nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
     auto& plugin_manager = nixlPluginManager::getInstance();

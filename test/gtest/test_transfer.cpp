@@ -100,11 +100,11 @@ private:
 class TestTransfer : public nixl_test_t {
 protected:
     nixlAgentConfig
-    getConfig(bool capture_telemetry) {
+    getConfig(int listen_port, bool capture_telemetry) {
         nixlAgentConfig cfg;
         cfg.useProgThread = isProgressThreadEnabled();
-        cfg.useListenThread = true;
-        cfg.listenPort = 0; // OS-assigned
+        cfg.useListenThread = (listen_port > 0);
+        cfg.listenPort = listen_port;
         cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
         cfg.captureTelemetry = capture_telemetry;
         return cfg;
@@ -131,10 +131,9 @@ protected:
 
     void
     addAgent(unsigned int agent_num, bool capture_telemetry = false) {
-        auto agent =
-            std::make_unique<nixlAgent>(getAgentName(agent_num), getConfig(capture_telemetry));
-        ports.push_back(agent->getListenPort());
-        agents.emplace_back(std::move(agent));
+        ports.push_back(PortAllocator::next_tcp_port());
+        agents.emplace_back(std::make_unique<nixlAgent>(
+            getAgentName(agent_num), getConfig(getPort(agent_num), capture_telemetry)));
         nixlBackendH *backend_handle = nullptr;
         nixl_status_t status =
             agents.back()->createBackend(getBackendName(), getBackendParams(), backend_handle);

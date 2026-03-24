@@ -168,20 +168,6 @@ nixl_capi_destroy_agent(nixl_capi_agent_t agent) {
 }
 
 nixl_capi_status_t
-nixl_capi_get_listen_port(nixl_capi_agent_t agent, uint16_t *port) {
-    if (!agent || !port) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
-    }
-    try {
-        *port = agent->inner->getListenPort();
-        return NIXL_CAPI_SUCCESS;
-    }
-    catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
-    }
-}
-
-nixl_capi_status_t
 nixl_capi_get_local_md(nixl_capi_agent_t agent, void** data, size_t* len)
 {
   if (!agent || !data || !len) {

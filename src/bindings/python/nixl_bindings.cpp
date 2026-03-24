@@ -905,6 +905,5 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("ip_addr") = std::string(""),
             py::arg("port") = 0,
             py::call_guard<py::gil_scoped_release>())
-        .def("checkRemoteMD", &nixlAgent::checkRemoteMD)
-        .def("getListenPort", &nixlAgent::getListenPort);
+        .def("checkRemoteMD", &nixlAgent::checkRemoteMD);
 }

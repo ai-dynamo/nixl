@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
@@ -27,12 +27,6 @@ def parse_args():
         type=str,
         default="initiator",
         help="Local IP in target, peer IP (target's) in initiator",
-    )
-    parser.add_argument(
-        "--listen-port-out",
-        type=str,
-        default="",
-        help="Path to write the actual listen port to (file, FIFO, etc.)",
     )
     return parser.parse_args()
 
@@ -82,9 +76,6 @@ if __name__ == "__main__":
 
     # Target code: its memory is read first, then written at randomly selected locations, and then read again.
     if args.mode == "target":
-        if args.listen_port_out:
-            with open(args.listen_port_out, "w") as f:
-                f.write(str(agent.get_listen_port()))
 
         # Extract layout information to send to the initiator so it can generate descriptors locally.
         base_addr = tensor.data_ptr()

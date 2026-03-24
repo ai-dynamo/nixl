@@ -89,23 +89,25 @@ python3 test/python/prep_xfer_perf.py array
 
 echo "==== Running python examples ===="
 cd examples/python
-python3 partial_md_example.py
+python3 partial_md_example.py --init-port "$(get_next_tcp_port)" --target-port "$(get_next_tcp_port)"
 python3 partial_md_example.py --etcd
 python3 query_mem_example.py
 
-# Run a two-peers example: starts a target on an OS-assigned port, then
-# launches the initiator against it.
+# Run a two-peers example: starts a target on an OS-assigned port,
+# then launches the initiator against it.
 # Extra arguments are passed as env vars to the initiator.
 # Usage: run_two_peers <script> [ENV=val ...]
 run_two_peers() {
     script=$1
     shift
 
-    port_out=$(mktemp -u) && mkfifo "$port_out"
-    python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 --listen-port-out="$port_out" &
-    port=$(timeout 30 cat "$port_out")
-    rm -f "$port_out"
-    [ -n "$port" ] || { echo "Target failed to report port"; exit 1; }
+    python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 &
+    target_pid=$!
+    if ! port=$(wait_for_listen_port "$target_pid" 30); then
+        echo "Target (pid=$target_pid) failed to listen within 30s"
+        kill "$target_pid" 2>/dev/null
+        exit 1
+    fi
 
     env "$@" python3 "$script" --mode="initiator" --ip=127.0.0.1 --port="$port"
 }

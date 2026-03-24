@@ -266,16 +266,6 @@ class nixl_agent:
             self._leaked_xfer_handles.clear()
 
     """
-    @brief Get the actual port the metadata listener is bound to.
-           Useful when listen_port was set to 0 (OS-assigned port).
-
-    @return The port number, or 0 if no listener is active.
-    """
-
-    def get_listen_port(self) -> int:
-        return self.agent.getListenPort()
-
-    """
     @brief Get the list of available plugins.
 
     @return List of plugin names.

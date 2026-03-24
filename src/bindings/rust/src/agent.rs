@@ -123,23 +123,6 @@ impl Agent {
         self.inner.read().unwrap().name.clone()
     }
 
-    /// Gets the actual port the metadata listener is bound to.
-    /// Returns `None` if no listener is active.
-    pub fn get_listen_port(&self) -> Option<u16> {
-        let mut port: u16 = 0;
-        let status = unsafe {
-            crate::bindings::nixl_capi_get_listen_port(
-                self.inner.read().unwrap().handle.as_ptr(),
-                &mut port,
-            )
-        };
-
-        match status {
-            NIXL_CAPI_SUCCESS if port > 0 => Some(port),
-            _ => None,
-        }
-    }
-
     /// Gets the list of available plugins
     pub fn get_available_plugins(&self) -> Result<utils::StringList, NixlError> {
         tracing::trace!("Getting available NIXL plugins");

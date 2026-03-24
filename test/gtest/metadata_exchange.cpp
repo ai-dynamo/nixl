@@ -78,14 +78,14 @@ class MetadataExchangeTestFixture : public testing::Test {
         std::unique_ptr<nixlAgent> agent;
         const std::string name;
         const std::string ip = "127.0.0.1";
-        const uint16_t port;
+        const int port;
         nixlBackendH *backend_handle = nullptr;
         std::vector<MemBuffer> buffers;
 
-        AgentContext(std::unique_ptr<nixlAgent> agent, std::string name, uint16_t port)
-            : agent(std::move(agent)),
-              name(std::move(name)),
-              port(port) {}
+        AgentContext(std::unique_ptr<nixlAgent> agent, std::string name, int port) :
+            agent(std::move(agent)), name(std::move(name)), port(port)
+        {
+        }
 
         void createAgentBackend()
         {
@@ -121,17 +121,16 @@ protected:
 
     void SetUp() override
     {
-        // Create two agents with OS-assigned ports
+        // Create two agents
         for (int i = 0; i < AGENT_COUNT_; i++) {
+            const auto port = PortAllocator::next_tcp_port();
             std::string name = "agent_" + std::to_string(i);
             nixlAgentConfig cfg;
             cfg.useListenThread = true;
-            cfg.listenPort = 0; // OS-assigned
+            cfg.listenPort = port;
             cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
 
             auto agent = std::make_unique<nixlAgent>(name, cfg);
-            const auto port = agent->getListenPort();
-            ASSERT_GT(port, 0) << "Failed to get a valid OS-assigned listen port";
 
             agents_.emplace_back(std::move(agent), std::move(name), port);
         }

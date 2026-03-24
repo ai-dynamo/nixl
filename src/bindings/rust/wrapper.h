@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -121,10 +121,6 @@ nixl_capi_status_t nixl_capi_create_agent(const char* name, nixl_capi_agent_t* a
 
 // Destroy an agent
 nixl_capi_status_t nixl_capi_destroy_agent(nixl_capi_agent_t agent);
-
-// Get the actual port the metadata listener is bound to
-nixl_capi_status_t
-nixl_capi_get_listen_port(nixl_capi_agent_t agent, uint16_t *port);
 
 // Get local metadata as a byte array
 nixl_capi_status_t nixl_capi_get_local_md(nixl_capi_agent_t agent, void** data, size_t* len);
