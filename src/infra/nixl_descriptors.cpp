@@ -365,11 +365,21 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> other_descs, bool sorted)
         std::stable_sort(other_descs.begin(), other_descs.end());
     }
 
-    const size_t mid = descs.size();
-    descs.insert(descs.end(),
-                 std::make_move_iterator(other_descs.begin()),
-                 std::make_move_iterator(other_descs.end()));
-    std::inplace_merge(descs.begin(), descs.begin() + mid, descs.end());
+    if (descs.empty()) {
+        descs = std::move(other_descs);
+        return;
+    }
+
+    std::vector<nixlSectionDesc> merged;
+    merged.reserve(descs.size() + other_descs.size());
+
+    std::merge(std::make_move_iterator(descs.begin()),
+               std::make_move_iterator(descs.end()),
+               std::make_move_iterator(other_descs.begin()),
+               std::make_move_iterator(other_descs.end()),
+               std::back_inserter(merged));
+
+    descs = std::move(merged);
     assert(std::is_sorted(descs.begin(), descs.end()));
 }
 
