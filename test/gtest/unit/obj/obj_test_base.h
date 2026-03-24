@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_TEST_OBJ_TEST_BASE_H
-#define NIXL_TEST_OBJ_TEST_BASE_H
+#ifndef NIXL_TEST_GTEST_UNIT_OBJ_OBJ_TEST_BASE_H
+#define NIXL_TEST_GTEST_UNIT_OBJ_OBJ_TEST_BASE_H
 
 #include <gtest/gtest.h>
 #include "nixl_descriptors.h"
@@ -420,4 +420,4 @@ protected:
 
 } // namespace gtest::obj
 
-#endif // NIXL_TEST_OBJ_TEST_BASE_H
+#endif // NIXL_TEST_GTEST_UNIT_OBJ_OBJ_TEST_BASE_H
