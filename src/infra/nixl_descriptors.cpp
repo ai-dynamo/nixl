@@ -362,7 +362,7 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> other_descs, bool sorted)
     }
 
     if (!sorted) {
-        std::sort(other_descs.begin(), other_descs.end());
+        std::stable_sort(other_descs.begin(), other_descs.end());
     }
 
     const size_t mid = descs.size();
