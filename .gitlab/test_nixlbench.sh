@@ -38,8 +38,6 @@ export CPATH=${INSTALL_DIR}/include:$CPATH
 export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
-# Remove setting UCX_GDR_COPY_SHARED one all tests use a UCX version with UCX PR #11149
-export UCX_GDR_COPY_SHARED_MD=n
 
 echo "==== Show system info ===="
 env
@@ -47,18 +45,7 @@ nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 
-echo "==== Running ETCD server ===="
-etcd_port=$(get_next_tcp_port)
-etcd_peer_port=$(get_next_tcp_port)
-export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
-export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
-export NIXL_ETCD_NAMESPACE="/nixl/nixlbench_ci/${etcd_port}"
-etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
-     --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
-     --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
-ETCD_PID=$!
-
-wait_for_etcd
+start_etcd_server "/nixl/nixlbench_ci"
 
 echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}

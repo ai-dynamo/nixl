@@ -75,11 +75,6 @@ nixl_ep_inc_dirs = [
     torch_inc_dirs,
 ]
 
-doca_build_deps = []
-if doca_gpunetio_dep.found()
-    doca_build_deps = [doca_gpunetio_dep]
-endif
-
 nixl_ep_cpp_args = [
     '-DHAVE_CUDA',
     '-DTORCH_EXTENSION_NAME=nixl_ep_cpp',
@@ -145,7 +140,7 @@ nixl_ep_ext = py.extension_module('nixl_ep_cpp',
         pybind_dep,
         cuda_dep,
         torch_dep,
-    ] + ucx_build_deps + doca_build_deps,
+    ] + ucx_build_deps,
     include_directories: nixl_ep_inc_dirs,
     cpp_args: nixl_ep_cpp_args,
     cuda_args: nixl_ep_cuda_args,
