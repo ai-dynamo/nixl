@@ -174,13 +174,6 @@ torch::Stream Buffer::get_comm_stream() const {
 }
 
 void Buffer::destroy() {
-    auto warn_cuda = [](cudaError_t status, const char* operation) noexcept {
-        if (status != cudaSuccess) {
-            std::cerr << "WARNING: destroy() failed to " << operation
-                      << ": " << cudaGetErrorString(status) << '\n';
-        }
-    };
-
     auto warn_nixl = [](nixl_status_t status, const char* operation) noexcept {
         if (status != NIXL_SUCCESS) {
             std::cerr << "WARNING: destroy() failed to " << operation
