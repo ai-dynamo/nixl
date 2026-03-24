@@ -132,7 +132,7 @@ nixlLibfabricTopology::discoverProviderWithDevices() {
         NIXL_INFO << "Discovered " << num_devices << " " << provider_name
                   << " devices (TCP fallback)";
     } else if (provider_name == "none" || all_devices.empty()) {
-        NIXL_WARN << "No network devices found";
+        NIXL_ERROR << "No network devices found";
         return NIXL_ERR_BACKEND;
     }
 
