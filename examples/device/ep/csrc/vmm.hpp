@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +18,10 @@
 #pragma once
 
 #include <cuda.h>
-#include <cuda_runtime.h>
 #include <cstddef>
+#include <cstdint>
+
+namespace nixl_ep {
 
 class vmm_region {
 public:
@@ -34,22 +36,15 @@ public:
     vmm_region &
     operator=(vmm_region &&) = delete;
 
-    [[nodiscard]] CUdeviceptr
+    [[nodiscard]] void *
     ptr() const noexcept {
-        return ptr_;
-    }
-
-    [[nodiscard]] size_t
-    size() const noexcept {
-        return size_;
-    }
-
-    [[nodiscard]] CUmemGenericAllocationHandle
-    handle() const noexcept {
-        return handle_;
+        return reinterpret_cast<void *>(static_cast<std::uintptr_t>(ptr_));
     }
 
 private:
+    static void
+    warn_cu_api(CUresult status, const char *context, const char *operation) noexcept;
+
     void
     release() noexcept;
 
@@ -60,3 +55,5 @@ private:
     bool vmm_addr_reserved_ = false;
     bool vmm_mapped_ = false;
 };
+
+} // namespace nixl_ep

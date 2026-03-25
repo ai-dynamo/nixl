@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,37 +15,51 @@
  * limitations under the License.
  */
 
+#include <iostream>
 #include <stdexcept>
 
 #include "config.hpp"
-#include "cuda_utils.hpp"
 #include "vmm.hpp"
 
 namespace {
+
 constexpr const char *k_vmm_ctx = "vmm_region";
+}
+
+namespace nixl_ep {
+
+/** Log a non-fatal warning if a CUDA driver API call failed (e.g. during teardown). */
+void
+vmm_region::warn_cu_api(CUresult status, const char *context, const char *operation) noexcept {
+    if (status != CUDA_SUCCESS) {
+        const char *msg = nullptr;
+        if (cuGetErrorString(status, &msg) != CUDA_SUCCESS || msg == nullptr) {
+            msg = "unknown CUDA driver error";
+        }
+        std::cerr << "WARNING: " << context << " failed to " << operation << ": " << msg << '\n';
+    }
 }
 
 void
 vmm_region::release() noexcept {
     if (is_cuda_malloc_) {
         if (ptr_) {
-            nixl_ep::warn_cuda_api(cudaFree(reinterpret_cast<void *>(ptr_)), k_vmm_ctx, "cudaFree");
+            warn_cu_api(cuMemFree(ptr_), k_vmm_ctx, "cuMemFree");
         }
         ptr_ = 0;
         return;
     }
 
     if (vmm_mapped_) {
-        nixl_ep::warn_cu_api(cuMemUnmap(ptr_, size_), k_vmm_ctx, "cuMemUnmap");
+        warn_cu_api(cuMemUnmap(ptr_, size_), k_vmm_ctx, "cuMemUnmap");
         vmm_mapped_ = false;
     }
-    if (vmm_addr_reserved_ && ptr_) {
-        nixl_ep::warn_cu_api(cuMemAddressFree(ptr_, size_), k_vmm_ctx, "cuMemAddressFree");
+    if (ptr_) {
+        warn_cu_api(cuMemAddressFree(ptr_, size_), k_vmm_ctx, "cuMemAddressFree");
         ptr_ = 0;
-        vmm_addr_reserved_ = false;
     }
     if (handle_) {
-        nixl_ep::warn_cu_api(cuMemRelease(handle_), k_vmm_ctx, "cuMemRelease");
+        warn_cu_api(cuMemRelease(handle_), k_vmm_ctx, "cuMemRelease");
         handle_ = 0;
     }
 }
@@ -115,8 +129,8 @@ vmm_region::vmm_region(size_t size, CUdevice device) {
     if (!ctx.fabric_supported) {
         size_ = size;
         is_cuda_malloc_ = true;
-        if (cudaMalloc(reinterpret_cast<void **>(&ptr_), size) != cudaSuccess) {
-            throw std::runtime_error("cudaMalloc fallback failed (fabric not supported)");
+        if (cuMemAlloc(&ptr_, size) != CUDA_SUCCESS) {
+            throw std::runtime_error("cuMemAlloc fallback failed (fabric not supported)");
         }
         return;
     }
@@ -133,7 +147,6 @@ vmm_region::vmm_region(size_t size, CUdevice device) {
         release();
         throw std::runtime_error("Failed to reserve CUDA virtual address");
     }
-    vmm_addr_reserved_ = true;
 
     if (cuMemMap(ptr_, size_, 0, handle_, 0) != CUDA_SUCCESS) {
         release();
@@ -149,3 +162,5 @@ vmm_region::vmm_region(size_t size, CUdevice device) {
         throw std::runtime_error("Failed to set CUDA memory access");
     }
 }
+
+} // namespace nixl_ep

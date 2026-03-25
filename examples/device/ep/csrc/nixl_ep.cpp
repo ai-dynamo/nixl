@@ -107,7 +107,7 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
 
     // Create 32 MiB workspace
     m_workspace_alloc = std::make_unique<vmm_region>(NUM_WORKSPACE_BYTES, cu_dev);
-    workspace = reinterpret_cast<void *>(m_workspace_alloc->ptr());
+    workspace = m_workspace_alloc->ptr();
     CUDA_CHECK(cudaMemsetAsync(workspace, 0, NUM_WORKSPACE_BYTES, comm_stream));
 
     EP_HOST_ASSERT(max_experts_per_rank > 0);
@@ -118,16 +118,16 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     // Allocate and clean shrink buffer
     int num_mask_buffer_bytes = max_num_ranks * sizeof(int);
     m_mask_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_mask_buffer_bytes), cu_dev);
-    mask_buffer_ptr = reinterpret_cast<int *>(m_mask_alloc->ptr());
+    mask_buffer_ptr = static_cast<int *>(m_mask_alloc->ptr());
     CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0xff, num_mask_buffer_bytes));
     CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
 
     int num_sync_buffer_bytes = max_num_ranks * sizeof(int);
     m_sync_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes), cu_dev);
-    sync_buffer_ptr = reinterpret_cast<int *>(m_sync_alloc->ptr());
+    sync_buffer_ptr = static_cast<int *>(m_sync_alloc->ptr());
     m_sync_count_alloc =
         std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes), cu_dev);
-    sync_count_ptr = reinterpret_cast<int *>(m_sync_count_alloc->ptr());
+    sync_count_ptr = static_cast<int *>(m_sync_count_alloc->ptr());
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_count_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -174,6 +174,13 @@ torch::Stream Buffer::get_comm_stream() const {
 }
 
 void Buffer::destroy() {
+    auto warn_cuda = [](cudaError_t status, const char *operation) noexcept {
+        if (status != cudaSuccess) {
+            std::cerr << "WARNING: destroy() failed to " << operation << ": "
+                      << cudaGetErrorString(status) << '\n';
+        }
+    };
+
     auto warn_nixl = [](nixl_status_t status, const char* operation) noexcept {
         if (status != NIXL_SUCCESS) {
             std::cerr << "WARNING: destroy() failed to " << operation
