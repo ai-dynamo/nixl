@@ -93,27 +93,8 @@ python3 partial_md_example.py --init-port "$(get_next_tcp_port)" --target-port "
 python3 partial_md_example.py --etcd
 python3 query_mem_example.py
 
-# Wait for a process to start listening on a TCP port.
-# Polls ss until it finds a LISTEN socket owned by the given PID.
-# Usage: wait_for_listen_port <pid> [timeout_seconds]
-# Returns the port on stdout, or returns 1 on timeout.
-wait_for_listen_port() {
-    local pid=$1 timeout=${2:-30}
-    local port=""
-    while [ "$timeout" -gt 0 ]; do
-        port=$(ss -tlnp 2>/dev/null \
-               | awk -v p="pid=${pid}," '$0 ~ p { n=split($4, a, ":"); print a[n]; exit }')
-        if [ -n "$port" ]; then
-            echo "$port"
-            return 0
-        fi
-        sleep 1
-        timeout=$((timeout - 1))
-    done
-    return 1
-}
-
 # Run a two-peers example: starts a target on an OS-assigned port,
+# reads it from a FIFO by setting NIXL_MD_LISTENER_PORT_FILE,
 # then launches the initiator against it.
 # Extra arguments are passed as env vars to the initiator.
 # Usage: run_two_peers <script> [ENV=val ...]
@@ -121,13 +102,21 @@ run_two_peers() {
     script=$1
     shift
 
-    python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 &
+    local port_fifo port
+    port_fifo=$(mktemp -u)
+    mkfifo "$port_fifo"
+    trap "rm -f '$port_fifo'" EXIT
+
+    NIXL_MD_LISTENER_PORT_FILE="$port_fifo" \
+        python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 &
     target_pid=$!
-    if ! port=$(wait_for_listen_port "$target_pid" 30); then
-        echo "Target (pid=$target_pid) failed to listen within 30s"
+
+    if ! port=$(timeout 30 head -n1 "$port_fifo"); then
+        echo "Target (pid=$target_pid) failed to report port within 30s"
         kill "$target_pid" 2>/dev/null
         exit 1
     fi
+    rm -f "$port_fifo"
 
     env "$@" python3 "$script" --mode="initiator" --ip=127.0.0.1 --port="$port"
 }
