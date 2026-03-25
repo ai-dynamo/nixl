@@ -75,8 +75,8 @@ nixlLibfabricTopology::discoverTopology() {
     if (status != NIXL_SUCCESS) {
         return status;
     }
-    // For EFA devices, build PCIe to Libfabric device mapping and full topology
-    if (provider_name == "efa") {
+    // For EFA/CXI devices, build PCIe to Libfabric device mapping and full topology
+    if (provider_name == "efa" || provider_name == "cxi") {
         // Build PCIe to Libfabric device mapping
         status = buildPcieToLibfabricMapping();
         if (status != NIXL_SUCCESS) {
@@ -126,7 +126,7 @@ nixlLibfabricTopology::discoverProviderWithDevices() {
     num_devices = all_devices.size();
 
     // Set device type based on discovered provider
-    if (provider_name == "efa") {
+    if (provider_name == "efa" || provider_name == "cxi") {
         NIXL_INFO << "Discovered " << num_devices << " EFA devices";
     } else if (provider_name == "tcp" || provider_name == "sockets") {
         NIXL_INFO << "Discovered " << num_devices << " " << provider_name
@@ -476,6 +476,11 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
 
     // Configure hints for the discovered provider
     // This ensures consistency between device discovery and PCIe mapping
+    hints->caps = FI_MSG | FI_RMA;
+    hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
+    hints->mode = FI_CONTEXT;
+    hints->ep_attr->type = FI_EP_RDM;
+    hints->domain_attr->mr_mode = ~3;
     hints->fabric_attr->prov_name = strdup(provider_name.c_str());
 
     int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
