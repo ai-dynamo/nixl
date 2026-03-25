@@ -862,7 +862,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // For local transfers (empty remote agent), use local memory section
     const bool is_local_transfer = remote_agent.empty();
 
-    if (!is_local_transfer && data->remoteSections.count(remote_agent) == 0) {
+    if (!is_local_transfer && data->remoteSections_.count(remote_agent) == 0) {
         NIXL_ERROR_FUNC << "metadata for remote agent '" << remote_agent << "' not found";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
@@ -880,15 +880,15 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     if (!extra_params || extra_params->backends.size() == 0) {
         // Finding backends that support the corresponding memories
         // locally and remotely, and find the common ones.
-        backend_set_t* local_set =
-            data->memorySection->queryBackends(local_descs.getType());
+        backend_set_t *local_set = data->localSection_.queryBackends(local_descs.getType());
         backend_set_t *remote_set = nullptr;
 
         if (is_local_transfer) {
             // For local transfers, query the local memory section for remote descriptors
-            remote_set = data->memorySection->queryBackends(remote_descs.getType());
+            remote_set = data->localSection_.queryBackends(remote_descs.getType());
         } else {
-            remote_set = data->remoteSections[remote_agent]->queryBackends(remote_descs.getType());
+            remote_set =
+                data->remoteSections_.at(remote_agent).queryBackends(remote_descs.getType());
         }
 
         if (!local_set || !remote_set) {
@@ -925,15 +925,14 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // preference list or more exhaustive search.
     for (auto &backend : backend_set) {
         // If populate fails, it clears the resp before return
-        ret1 = data->memorySection->populate(
-                     local_descs, backend, *handle->initiatorDescs);
+        ret1 = data->localSection_.populate(local_descs, backend, *handle->initiatorDescs);
 
         if (is_local_transfer) {
             // For local transfers, populate from local memory section
-            ret2 = data->memorySection->populate(remote_descs, backend, *handle->targetDescs);
+            ret2 = data->localSection_.populate(remote_descs, backend, *handle->targetDescs);
         } else {
-            ret2 = data->remoteSections[remote_agent]->populate(
-                remote_descs, backend, *handle->targetDescs);
+            ret2 = data->remoteSections_.at(remote_agent)
+                       .populate(remote_descs, backend, *handle->targetDescs);
         }
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
@@ -1064,7 +1063,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // Check if the remote was invalidated before post/repost
     // Skip check for local transfers (empty remote agent)
-    if (!req_hndl->remoteAgent.empty() && data->remoteSections.count(req_hndl->remoteAgent) == 0) {
+    if (!req_hndl->remoteAgent.empty() && data->remoteSections_.count(req_hndl->remoteAgent) == 0) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated after transfer request creation";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
@@ -1165,7 +1164,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         // Check if the remote was invalidated before completion
         // Skip check for local transfers (empty remote agent)
         if (!req_hndl->remoteAgent.empty() &&
-            data->remoteSections.count(req_hndl->remoteAgent) == 0) {
+            data->remoteSections_.count(req_hndl->remoteAgent) == 0) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was invalidated during transfer";
             return NIXL_ERR_NOT_FOUND;
