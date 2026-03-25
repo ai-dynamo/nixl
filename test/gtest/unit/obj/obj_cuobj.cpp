@@ -16,7 +16,7 @@
  */
 
 /**
- * Dell ObjectScale accelerated engine unit tests.
+ * Unit tests for all cuobjclient based accelerated engine unit tests.
  *
  * This file is only built when the cuobjclient library is available.
  * It exercises the Dell S3-over-RDMA code path and adds the Accel/Dell

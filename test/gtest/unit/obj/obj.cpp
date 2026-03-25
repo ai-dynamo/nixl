@@ -206,7 +206,7 @@ TEST_P(objParamTestFixture, CheckObjectExists) {
 }
 
 // Instantiate parameterized tests for standard client configurations.
-// Accel and Dell configurations are instantiated in obj_dell.cpp (built only
+// Accel and Dell configurations are instantiated in obj_cuobj.cpp (built only
 // when the cuobjclient library is available).
 INSTANTIATE_TEST_SUITE_P(ObjClientTests,
                          objParamTestFixture,
