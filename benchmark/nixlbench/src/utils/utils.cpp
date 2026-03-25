@@ -872,30 +872,30 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                 xferBenchConfig::backend == XFERBENCH_BACKEND_GPUNETIO) {
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
                     if (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
-#if HAVE_CUDA
                         if (posix_memalign(&addr, xferBenchConfig::page_size, len) != 0) {
                             std::cerr << "Failed to allocate aligned buffer of size: " << len
                                       << std::endl;
                             exit(EXIT_FAILURE);
                         }
                         is_allocated = true;
-                        // Assume no CUDA cores exist if Neuron cores are found.
-                        // There are no AWS instance types with both NVIDIA GPUs and Neuron
-                        // accelerators.
                         if (neuronCoreCount() > 0) {
                             CHECK_NEURON_ERROR(
                                 neuronMemcpy(addr, (void *)iov.addr, len, neuronMemcpyDeviceToHost),
                                 "nrt_tensor_read failed");
-                        } else {
+                        }
+#if HAVE_CUDA
+                        else {
                             CHECK_CUDA_ERROR(
                                 cudaMemcpy(addr, (void *)iov.addr, len, cudaMemcpyDeviceToHost),
                                 "cudaMemcpy failed");
                         }
 #else
-                        std::cerr << "Failure in consistency check: VRAM segment type not "
-                                     "supported without CUDA"
-                                  << std::endl;
-                        exit(EXIT_FAILURE);
+                        else {
+                            std::cerr << "Failure in consistency check: VRAM segment type not "
+                                         "supported without CUDA or Neuron"
+                                      << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
 #endif
                     } else {
                         addr = (void *)iov.addr;
@@ -974,26 +974,27 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                      xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_VRAM) ||
                     (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
                      xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM)) {
-#if HAVE_CUDA
                     addr = calloc(1, len);
                     is_allocated = true;
-                    // Assume no CUDA cores exist if Neuron cores are found.
-                    // There are no AWS instance types with both NVIDIA GPUs and Neuron
-                    // accelerators.
                     if (neuronCoreCount() > 0) {
                         CHECK_NEURON_ERROR(
                             neuronMemcpy(addr, (void *)iov.addr, len, neuronMemcpyDeviceToHost),
                             "nrt_tensor_read failed");
-                    } else {
+                    }
+#if HAVE_CUDA
+                    else {
                         CHECK_CUDA_ERROR(
                             cudaMemcpy(addr, (void *)iov.addr, len, cudaMemcpyDeviceToHost),
                             "cudaMemcpy failed");
                     }
 #else
-                    std::cerr << "Failure in consistency check: VRAM segment type not supported "
-                                 "without CUDA"
-                              << std::endl;
-                    exit(EXIT_FAILURE);
+                    else {
+                        std::cerr
+                            << "Failure in consistency check: VRAM segment type not supported "
+                               "without CUDA or Neuron"
+                            << std::endl;
+                        exit(EXIT_FAILURE);
+                    }
 #endif
                 } else if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
                             xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_DRAM) ||
