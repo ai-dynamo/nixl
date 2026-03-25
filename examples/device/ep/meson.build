@@ -63,7 +63,6 @@ endif
 
 nixl_ep_sources = [
     'csrc/nixl_ep.cpp',
-    'csrc/kernels/nixl_ep.cu',
 ]
 
 nixl_ep_inc_dirs = [
@@ -127,6 +126,15 @@ if enable_fast_debug
     nixl_ep_cuda_args += ['-DENABLE_FAST_DEBUG']
 endif
 
+nixl_ep_kernel_lib = static_library('nixl_ep_kernels',
+    'csrc/kernels/nixl_ep.cu',
+    dependencies: [nixl_dep, cuda_dep] + ucx_build_deps,
+    include_directories: [nixl_inc_dirs, nixl_gpu_inc_dirs, include_directories('csrc'), include_directories('csrc/kernels')],
+    cuda_args: nixl_ep_cuda_args,
+    override_options: nixl_ep_override_options,
+    pic: true,
+)
+
 nixl_ep_install_rpath = join_paths(get_option('prefix'), get_option('libdir'))
 nixl_ep_install_rpath += ':' + join_paths(get_option('prefix'), get_option('libdir'), 'plugins')
 nixl_ep_install_rpath += ':' + torch_lib_dir
@@ -142,8 +150,9 @@ nixl_ep_ext = py.extension_module('nixl_ep_cpp',
     ] + ucx_build_deps,
     include_directories: nixl_ep_inc_dirs,
     cpp_args: nixl_ep_cpp_args,
-    cuda_args: nixl_ep_cuda_args,
+    objects: nixl_ep_kernel_lib.extract_all_objects(),
     link_with: [nixl_lib],
+    link_language: 'cuda',
     build_rpath: nixl_ep_rpath,
     install_rpath: nixl_ep_install_rpath,
     override_options: nixl_ep_override_options,
