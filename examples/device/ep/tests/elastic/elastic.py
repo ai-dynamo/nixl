@@ -646,11 +646,15 @@ def main():
         start_method="spawn",
     )
 
-    for p in ctx.processes:
-        try:
-            p.join()
-        except Exception:
-            pass
+    failed = []
+    for i, p in enumerate(ctx.processes):
+        p.join()
+        if p.exitcode != 0:
+            failed.append((i, p.exitcode))
+    if failed:
+        raise RuntimeError(
+            f"Worker processes failed: {', '.join(f'worker {i} (exit code {code})' for i, code in failed)}"
+        )
 
 
 if __name__ == "__main__":

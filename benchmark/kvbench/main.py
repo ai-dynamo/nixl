@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -120,6 +120,7 @@ def plan_command(model, model_config, model_configs, format, **kwargs):
 
     # Process each model config
     all_plans = []
+    errors = []
     for config_file in config_files:
         # Skip if file doesn't exist
         if not os.path.exists(config_file):
@@ -189,6 +190,7 @@ def plan_command(model, model_config, model_configs, format, **kwargs):
                 click.echo()
         except Exception as e:
             click.echo(f"Error processing config file {config_file}: {str(e)}")
+            errors.append((config_file, e))
 
     # For JSON format, output all plans as an array
     if format == "json" and all_plans:
@@ -210,6 +212,12 @@ def plan_command(model, model_config, model_configs, format, **kwargs):
 
         # Print CSV output
         click.echo(output.getvalue())
+
+    if errors:
+        raise click.ClickException(
+            f"Failed to process {len(errors)} config file(s): "
+            + ", ".join(f for f, _ in errors)
+        )
 
 
 @cli.command("profile")
