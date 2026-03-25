@@ -93,11 +93,11 @@ TEST(NotifCallbacks, AddCallbackFailures) {
     nixlNotifCallbacks cbs;
     EXPECT_THROW(cbs.addCallback("", dummy_callback), std::runtime_error);
     EXPECT_THROW(cbs.addCallback("foo", nixl_notif_callback_t()), std::runtime_error);
-    cbs.addCallback("foo", dummy_callback);
-    EXPECT_THROW(cbs.addCallback("f", dummy_callback), std::runtime_error);
-    EXPECT_THROW(cbs.addCallback("fo", dummy_callback), std::runtime_error);
-    EXPECT_THROW(cbs.addCallback("foo", dummy_callback), std::runtime_error);
-    EXPECT_THROW(cbs.addCallback("foooo", dummy_callback), std::runtime_error);
+    cbs.addCallback("xyz", dummy_callback);
+    EXPECT_THROW(cbs.addCallback("x", dummy_callback), std::runtime_error);
+    EXPECT_THROW(cbs.addCallback("xy", dummy_callback), std::runtime_error);
+    EXPECT_THROW(cbs.addCallback("xyz", dummy_callback), std::runtime_error);
+    EXPECT_THROW(cbs.addCallback("xyzx", dummy_callback), std::runtime_error);
 }
 
 TEST(NotifCallbacks, DefaultWithProgressThread) {
