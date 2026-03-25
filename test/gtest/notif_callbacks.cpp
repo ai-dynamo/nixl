@@ -82,7 +82,7 @@ struct agentPair {
     getNotifs() {
         nixl_notifs_t result;
         const auto status = agent2.agent.getNotifs(result);
-        ASSERT_EQ(status, NILX_SUCCESS);
+        ASSERT_EQ(status, NIXL_SUCCESS);
         return result;
     }
 
