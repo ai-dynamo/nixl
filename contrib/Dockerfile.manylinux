@@ -18,8 +18,8 @@ ARG BASE_IMAGE
 ARG BASE_IMAGE_TAG
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
-ARG DEFAULT_PYTHON_VERSION="3.14"
 ARG ARCH="x86_64"
+ARG UCX_SOURCE="https://github.com/openucx/ucx.git"
 ARG UCX_REF="v1.21.x"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
@@ -243,9 +243,6 @@ ENV CUDA_PATH=/usr/local/cuda
 
 WORKDIR /workspace
 
-RUN rm -rf /usr/lib/ucx
-RUN rm -rf /opt/hpcx/ucx
-
 RUN cd /workspace && \
     git clone --depth 1 https://github.com/NVIDIA/gdrcopy.git && \
     cd gdrcopy && \
@@ -257,28 +254,6 @@ RUN cd /workspace && \
     rpm -Uvh gdrcopy-kmod-*.el8.noarch.rpm && \
     rpm -Uvh gdrcopy-*.el8.$ARCH.rpm && \
     rpm -Uvh gdrcopy-devel-*.el8.noarch.rpm
-
-RUN cd /usr/local/src && \
-     git clone https://github.com/openucx/ucx.git && \
-     cd ucx && 			     \
-     git checkout $UCX_REF &&	     \
-     ./autogen.sh && \
-     ./contrib/configure-release-mt  \
-         --enable-shared             \
-         --disable-static            \
-         --disable-doxygen-doc       \
-         --enable-experimental-api   \
-         --enable-optimizations      \
-         --enable-cma                \
-         --enable-devel-headers      \
-         --with-cuda=/usr/local/cuda \
-         --with-verbs                \
-         --with-dm                   \
-         --without-gdrcopy           \
-         --with-efa  &&              \
-     make -j &&                      \
-     make -j install-strip &&        \
-     ldconfig
 
 # Build libfabric from source
 RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
@@ -301,6 +276,7 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
+# Create Python virtual environment
 # By default, uv downloads python packages to $HOME/.cache/uv and hard links them
 # from the virtual environment. This means that the files reside in /root/.cache/uv,
 # which is not what we want since some systems mount user home dir into /root,
@@ -310,7 +286,7 @@ ENV UV_CACHE_DIR=/workspace/.cache/uv
 RUN mkdir -p $UV_CACHE_DIR
 # Create a new virtual environment
 ENV VIRTUAL_ENV=/workspace/.venv
-RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python 3.12
 # Activate the virtual environment
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install python dependencies
@@ -321,6 +297,37 @@ RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | c
 # Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
+# Build UCX from source
+RUN rm -rf /usr/lib/ucx
+RUN rm -rf /opt/hpcx/ucx
+COPY --from=ucx_external . /usr/local/src/ucx
+RUN cd /usr/local/src && \
+    if echo "$UCX_SOURCE" | grep -Eq '^(https?|ssh|git)://|^git@'; then \
+        rm -rf ucx && \
+        git clone "$UCX_SOURCE" ucx && \
+        cd ucx && \
+        git checkout $UCX_REF; \
+    fi && \
+    cd ucx && \
+    ./autogen.sh && \
+    ./contrib/configure-release-mt  \
+        --enable-shared             \
+        --disable-static            \
+        --disable-doxygen-doc       \
+        --enable-experimental-api   \
+        --enable-optimizations      \
+        --enable-cma                \
+        --enable-devel-headers      \
+        --with-cuda=/usr/local/cuda \
+        --with-verbs                \
+        --with-dm                   \
+        --without-gdrcopy           \
+        --with-efa  &&              \
+    make -j &&                      \
+    make -j install-strip &&        \
+    ldconfig
+
+# Build NIXL from source
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
 
@@ -347,8 +354,7 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
-# Create the wheel
-# No need to specifically add path to libcuda.so here, meson finds the stubs and links them
+# Create the wheels for all Python versions
 ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
@@ -372,5 +378,3 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
 RUN if [ "$(echo $CUDA_VERSION | cut -d. -f1)" = "12" ]; then \
       cp build/src/bindings/python/nixl-meta/nixl*.whl dist/; \
     fi
-
-RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl build/src/bindings/python/nixl-meta/nixl*.whl

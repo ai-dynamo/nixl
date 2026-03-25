@@ -36,6 +36,7 @@ WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 UCX_REF=${UCX_REF:-v1.21.x}
+UCX_SOURCE=${UCX_SOURCE:-https://github.com/openucx/ucx.git}
 BUILD_NIXL_EP="true"
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
@@ -119,9 +120,21 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
-        --ucx-upstream)
-            # Master branch (v1.20) also containing EFA SRD support
-            UCX_REF=9d2b88a1f67faf9876f267658bd077b379b8bb76
+        --ucx-source)
+            if [ "$2" ]; then
+                UCX_SOURCE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --ucx-ref)
+            if [ "$2" ]; then
+                UCX_REF=$2
+                shift
+            else
+                missing_requirement $1
+            fi
             ;;
         --build-nixl-ep)
             BUILD_NIXL_EP=true
@@ -180,6 +193,7 @@ show_build_options() {
         echo "UCX Ref: ${UCX_REF}"
         echo "NIXL EP: Disabled"
     fi
+    echo "UCX Source: ${UCX_SOURCE}"
     echo "Build Type: ${BUILD_TYPE}"
 }
 
@@ -193,7 +207,9 @@ show_help() {
     echo "  [--build-type [debug|release] to select build type (default: release)]"
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
-    echo "  [--ucx-upstream use ucx master branch]"
+    echo "  [--ucx <url|path>]"
+    echo "      url: clone UCX from git URL"
+    echo "      path: existing local UCX directory (absolute or relative)"
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (uses latest UCX master)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
@@ -211,6 +227,17 @@ error() {
 
 get_options "$@"
 
+if [ -d "$UCX_SOURCE" ]; then
+    UCX_EXTERNAL_CONTEXT=$(readlink -f "$UCX_SOURCE")
+elif [[ "$UCX_SOURCE" =~ ^(https?|ssh|git):// ]] || [[ "$UCX_SOURCE" =~ ^git@ ]]; then
+    # Docker requires a directory-like context. For URL mode, use an empty
+    # temporary directory so ucx_external contributes no files.
+    UCX_EXTERNAL_CONTEXT=$(mktemp -d)
+    trap 'rm -rf "$UCX_EXTERNAL_CONTEXT"' EXIT
+else
+    error "ERROR: --ucx-source must be a git URL or an existing directory path."
+fi
+
 if [ -d "$NIXL_DIR/build" ]; then
     echo "Please delete the build directory before creating container"
     exit 1
@@ -221,6 +248,7 @@ BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
+BUILD_ARGS+=" --build-arg UCX_SOURCE=$UCX_SOURCE"
 BUILD_ARGS+=" --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
@@ -228,4 +256,6 @@ BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
+docker build --platform linux/$ARCH \
+    --build-context ucx_external="$UCX_EXTERNAL_CONTEXT" \
+    -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
