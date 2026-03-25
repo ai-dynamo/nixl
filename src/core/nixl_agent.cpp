@@ -154,25 +154,25 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 
     const auto telemetry_enabled = nixl::config::getValueOptional<bool>(TELEMETRY_ENABLED_VAR);
 
-    if (telemetry_enabled) {
-        if (*telemetry_enabled) {
-            telemetry_ = std::make_unique<nixlTelemetry>(name);
-            telemetryEnabled = telemetry_->recording;
-            if (!telemetryEnabled) {
-                NIXL_WARN << "NIXL_TELEMETRY_ENABLE is set but no telemetry exporter is configured "
-                             "(set NIXL_TELEMETRY_EXPORTER or NIXL_TELEMETRY_DIR); "
-                             "per-transfer telemetry and error export are disabled.";
-            }
-        } else if (config.captureTelemetry) {
-            telemetryEnabled = true;
+    const bool env_on = telemetry_enabled && *telemetry_enabled;
+    const bool config_wants = config.captureTelemetry;
+
+    if (env_on || config_wants) {
+        if (telemetry_enabled && !*telemetry_enabled && config_wants) {
             NIXL_WARN << "NIXL telemetry is enabled through config, "
                          "ignoring the NIXL_TELEMETRY_ENABLE environment variable";
-        } else {
-            NIXL_DEBUG << "NIXL telemetry is disabled";
         }
-    } else if (config.captureTelemetry) {
-        telemetryEnabled = true;
-        NIXL_DEBUG << "Capturing NIXL telemetry based on config (without an output file)";
+        telemetry_ = std::make_unique<nixlTelemetry>(name);
+        telemetryEnabled = telemetry_->recording;
+        if (!telemetryEnabled) {
+            NIXL_WARN << "Telemetry was requested but no exporter is configured "
+                         "(set NIXL_TELEMETRY_EXPORTER or NIXL_TELEMETRY_DIR); "
+                         "per-transfer telemetry and error export are disabled.";
+        } else if (!env_on && config_wants) {
+            NIXL_DEBUG << "Capturing NIXL telemetry based on config";
+        }
+    } else if (telemetry_enabled && !*telemetry_enabled) {
+        NIXL_DEBUG << "NIXL telemetry is disabled";
     }
 }
 
@@ -333,7 +333,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.enableProgTh = data->config_.useProgThread;
     init_params.pthrDelay = data->config_.pthrDelay;
     init_params.syncMode = data->config_.syncMode;
-    init_params.enableTelemetry_ = (data->telemetry_ != nullptr) && data->telemetryEnabled;
+    init_params.enableTelemetry_ = data->telemetryEnabled;
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
