@@ -78,6 +78,14 @@ struct agentPair {
         ASSERT_EQ(status, NIXL_SUCCESS);
     }
 
+    [[nodiscard]] nixl_notifs_t
+    getNotifs() {
+        nixl_notifs_t result;
+        const auto status = agent2.agent.getNotifs(result);
+        ASSERT_EQ(status, NILX_SUCCESS);
+        return result;
+    }
+
     testAgent agent1;
     testAgent agent2;
 };
@@ -115,6 +123,7 @@ TEST(NotifCallbacks, DefaultWithProgressThread) {
     agents.genNotif(message1);
     const auto future = promise.get_future();
     EXPECT_EQ(future.wait_for(std::chrono::milliseconds(5000)), std::future_status::ready);
+    EXPECT_TRUE(agents.getNotifs().empty());
 }
 
 TEST(NotifCallbacks, PrefixBinarySearchWithProgressThread) {
@@ -136,6 +145,7 @@ TEST(NotifCallbacks, PrefixBinarySearchWithProgressThread) {
     agents.genNotif(message1);
     const auto future = promise.get_future();
     EXPECT_EQ(future.wait_for(std::chrono::milliseconds(5000)), std::future_status::ready);
+    EXPECT_TRUE(agents.getNotifs().empty());
 }
 
 TEST(NotifCallbacks, PrefixLinearScanWithProgressThread) {
@@ -157,4 +167,5 @@ TEST(NotifCallbacks, PrefixLinearScanWithProgressThread) {
     agents.genNotif(message1);
     const auto future = promise.get_future();
     EXPECT_EQ(future.wait_for(std::chrono::milliseconds(5000)), std::future_status::ready);
+    EXPECT_TRUE(agents.getNotifs().empty());
 }
