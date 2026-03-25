@@ -23,10 +23,7 @@
 #include <array>
 #include <string>
 #include <set>
-#include <cassert>
-
 #include "nixl_descriptors.h"
-#include "nixl.h"
 #include "backend/backend_engine.h"
 
 using section_key_t = std::pair<nixl_mem_t, nixlBackendEngine*>;
@@ -76,12 +73,15 @@ public:
     void
     addDesc(const nixlSectionDesc &desc) override;
 
-    bool
-    verifySorted() const;
+    void
+    addDescs(std::vector<nixlSectionDesc> other_descs);
 
-    nixlSectionDesc &
+    void
+    addDescs(nixlSecDescList &&other);
+
+    // Returns const ref to prevent mutation of descriptor fields after insertion
+    const nixlSectionDesc &
     operator[](size_t index) {
-        assert(verifySorted());
         return descs[index];
     }
 
@@ -98,6 +98,10 @@ public:
     nixlSecDescList(const nixlSecDescList &) = default;
     nixlSecDescList &
     operator=(const nixlSecDescList &) = default;
+
+private:
+    void
+    addDescs(std::vector<nixlSectionDesc> other_descs, bool sorted);
 };
 
 using nixl_sec_dlist_t = nixlSecDescList;
@@ -168,7 +172,7 @@ class nixlRemoteSection : public nixlMemSection {
 
         // When adding self as a remote agent for local operations
         nixl_status_t
-        loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEngine *backend);
+        loadLocalData(nixlSecDescList &&mem_elms, nixlBackendEngine *backend);
         ~nixlRemoteSection();
 };
 

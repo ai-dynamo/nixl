@@ -15,10 +15,9 @@
  * limitations under the License.
  */
 #include <algorithm>
-#include <functional>
+#include <cassert>
 #include <stdexcept>
 #include <iostream>
-#include "nixl.h"
 #include "nixl_descriptors.h"
 #include "mem_section.h"
 #include "backend/backend_aux.h"
@@ -351,23 +350,47 @@ operator== <nixlRemoteMetaDesc>(const nixlDescList<nixlRemoteMetaDesc> &lhs,
 // nixlSecDescList keeps the elements sorted
 void
 nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
-    auto &vec = this->descs;
-    auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
-    if (itr == vec.end())
-        vec.push_back(desc);
-    else
-        vec.insert(itr, desc);
+    auto itr = std::upper_bound(descs.begin(), descs.end(), desc);
+    descs.insert(itr, desc);
+    assert(std::is_sorted(descs.begin(), descs.end()));
 }
 
-bool
-nixlSecDescList::verifySorted() const {
-    const auto &vec = this->descs;
-    int size = (int)vec.size();
-    if (size <= 1) return (size == 1);
-    for (int i = 0; i < size - 1; ++i) {
-        if (vec[i + 1] < vec[i]) return false;
+void
+nixlSecDescList::addDescs(std::vector<nixlSectionDesc> other_descs, bool sorted) {
+    if (other_descs.empty()) {
+        return;
     }
-    return true;
+
+    if (!sorted) {
+        std::stable_sort(other_descs.begin(), other_descs.end());
+    }
+
+    if (descs.empty()) {
+        descs = std::move(other_descs);
+        return;
+    }
+
+    std::vector<nixlSectionDesc> merged;
+    merged.reserve(descs.size() + other_descs.size());
+
+    std::merge(std::make_move_iterator(descs.begin()),
+               std::make_move_iterator(descs.end()),
+               std::make_move_iterator(other_descs.begin()),
+               std::make_move_iterator(other_descs.end()),
+               std::back_inserter(merged));
+
+    descs = std::move(merged);
+    assert(std::is_sorted(descs.begin(), descs.end()));
+}
+
+void
+nixlSecDescList::addDescs(std::vector<nixlSectionDesc> other_descs) {
+    addDescs(std::move(other_descs), false);
+}
+
+void
+nixlSecDescList::addDescs(nixlSecDescList &&other) {
+    addDescs(std::move(other.descs), true);
 }
 
 int
