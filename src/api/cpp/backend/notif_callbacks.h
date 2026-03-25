@@ -18,8 +18,9 @@
 #define NIXL_SRC_API_CPP_BACKEND_NOTIF_CALLBACKS_H
 
 #include <algorithm>
-#include <cassert>
+#include <cstring>
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -61,71 +62,106 @@ public:
 
     void
     addCallback(const std::string &prefix, const nixl_notif_callback_t &callback) {
-        assert(callback);
-        assert(!prefix.empty());
+        checkNewCallback(prefix, callback);
 
         callbacks_.emplace_back(prefix, callback);
 
         if (callbacks_.size() == 1) {
-            common_size_ = prefix.size();
-        } else if ((common_size_ > 0) && (common_size_ == prefix.size())) {
+            commonPrefixSize_ = prefix.size();
+        } else if ((commonPrefixSize_ > 0) && (commonPrefixSize_ == prefix.size())) {
             std::sort(callbacks_.begin(), callbacks_.end());
         } else {
-            common_size_ = 0;
+            commonPrefixSize_ = 0;
         }
     }
 
     void
     call(std::string &&remote, std::string &&message) const {
-        if (callbacks_.empty()) {
-            callDefault(std::move(remote), std::move(message));
-        } else if (common_size_ > 0) {
-            callBinarySearch(std::move(remote), std::move(message));
-        } else {
-            callLinearScan(std::move(remote), std::move(message));
-        }
-    }
-
-private:
-    void
-    callDefault(std::string &&remote, std::string &&message) const {
-        if (default_) {
+        if (const iterator iter = findCallback(message); iter != callbacks_.end()) {
+            iter->callback(std::move(remote), std::move(message));
+        } else if (default_) {
             default_(std::move(remote), std::move(message));
         }
     }
 
-    void
-    callBinarySearch(std::string &&remote, std::string &&message) const {
-        if (message.size() >= common_size_) {
-            const std::string prefix = message.substr(0, common_size_);
-            const auto iter =
-                std::lower_bound(callbacks_.begin(),
-                                 callbacks_.end(),
-                                 message,
-                                 [&](const nixlNotifCallback &l, const std::string &r) {
-                                     return l.prefix < prefix;
-                                 });
+private:
+    using iterator = std::vector<nixlNotifCallback>::const_iterator;
 
-            if ((iter != callbacks_.end()) && (prefix == iter->prefix)) {
-                iter->callback(std::move(remote), std::move(message));
-                return;
-            }
+    void
+    checkNewCallback(const std::string &prefix, const nixl_notif_callback_t &callback) const {
+        if (!callback) {
+            throw std::runtime_error("Empty notification callback function not allowed with prefix");
         }
-        callDefault(std::move(remote), std::move(message));
+
+        if (prefix.empty()) {
+            throw std::runtime_error("Empty notification callback prefix is not allowed");
+        }
+
+        if (hasOverlap(prefix)) {
+            throw std::runtime_error("New notification callback prefix overlaps previous prefix");
+        }
     }
 
-    void
-    callLinearScan(std::string &&remote, std::string &&message) const {
+    [[nodiscard]] static bool
+    isPrefixOf(const std::string &prefix, const std::string &string) noexcept {
+        return (string.size() >= prefix.size()) && (std::memcmp(prefix.data(), string.data(), prefix.size()) == 0);
+    }
+
+    [[nodiscard]] bool
+    hasOverlap(const std::string &prefix) const noexcept {
         for (const auto &cb : callbacks_) {
-            if (message.compare(0, cb.prefix.size(), cb.prefix) == 0) {
-                cb.callback(std::move(remote), std::move(message));
-                return;
+            if (isPrefixOf(prefix, cb.prefix) || isPrefixOf(cb.prefix, prefix)) {
+                return true;
             }
         }
-        callDefault(std::move(remote), std::move(message));
+        return false;
     }
 
-    size_t common_size_ = 0;
+    [[nodiscard]] iterator
+    findCallback(const std::string &message) const {
+        if (callbacks_.empty()) {
+            return callbacks_.end();
+        }
+
+        // Missing a delimiter of prefix in message makes straight binary
+        // search only possible when all prefixes have the same size.
+
+        if (commonPrefixSize_ > 0) {
+            return findBinarySearch(message);
+        } else {
+            return findLinearScan(message);
+        }
+    }
+
+    [[nodiscard]] iterator
+    findBinarySearch(const std::string &message) const {
+        if (message.size() < commonPrefixSize_) {
+            return callbacks_.end();
+        }
+
+        const std::string prefix = message.substr(0, commonPrefixSize_);
+        const auto iter =
+            std::lower_bound(callbacks_.begin(),
+                             callbacks_.end(),
+                             prefix,
+                             [](const nixlNotifCallback &l, const std::string &r) {
+                                 return l.prefix < r;
+                             });
+
+        if ((iter == callbacks_.end()) || (prefix != iter->prefix)) {
+            return callbacks_.end();
+        }
+        return iter;
+    }
+
+    [[nodiscard]] iterator
+    findLinearScan(const std::string &message) const {
+        return std::find_if(callbacks_.begin(), callbacks_.end(), [&](const nixlNotifCallback &cb){
+            return isPrefixOf(cb.prefix, message);
+        });
+    }
+
+    size_t commonPrefixSize_ = 0;
     nixl_notif_callback_t default_;
     std::vector<nixlNotifCallback> callbacks_;
 };

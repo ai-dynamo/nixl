@@ -362,7 +362,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         }
 
         if (data->config_.notifCallbacks.hasAnyCallback() && !backend->supportsNotifCallback()) {
-            NIXL_ERROR_FUNC << "backend '" << type << "' does not support notif callbacks";
+            NIXL_ERROR_FUNC << "backend '" << type << "' does not support notification callbacks";
             return NIXL_ERR_BACKEND;
         }
 

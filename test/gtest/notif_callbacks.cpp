@@ -82,9 +82,23 @@ struct agentPair {
     testAgent agent2;
 };
 
-const std::string message1 = "notification_message_1";
+const std::string prefix1 = "notif";
+const std::string message1 = prefix1 + "ication_message_1";
+
+const nixl_notif_callback_t dummy_callback([](std::string &&, std::string&&){});
 
 } // namespace
+
+TEST(NotifCallbacks, AddCallbackFailures) {
+    nixlNotifCallbacks cbs;
+    EXPECT_THROW(cbs.addCallback("", dummy_callback), std::runtime_error);
+    EXPECT_THROW(cbs.addCallback("foo", nixl_notif_callback_t()), std::runtime_error);
+    cbs.addCallback("foo", dummy_callback);
+    EXPECT_THROW(cbs.addCallback("f", dummy_callback), std::runtime_error);
+    EXPECT_THROW(cbs.addCallback("fo", dummy_callback), std::runtime_error);
+    EXPECT_THROW(cbs.addCallback("foo", dummy_callback), std::runtime_error);
+    EXPECT_THROW(cbs.addCallback("foooo", dummy_callback), std::runtime_error);
+}
 
 TEST(NotifCallbacks, DefaultWithProgressThread) {
     std::promise<bool> promise;
@@ -103,12 +117,12 @@ TEST(NotifCallbacks, DefaultWithProgressThread) {
     EXPECT_EQ(future.wait_for(std::chrono::milliseconds(5000)), std::future_status::ready);
 }
 
-TEST(NotifCallbacks, PrefixFixedSizeWithProgressThread) {
+TEST(NotifCallbacks, PrefixBinarySearchWithProgressThread) {
     std::promise<bool> promise;
 
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    cfg.notifCallbacks.addCallback("notif", [&](std::string &&remote, std::string &&message) {
+    cfg.notifCallbacks.addCallback(prefix1, [&](std::string &&remote, std::string &&message) {
         EXPECT_EQ(remote, name1);
         EXPECT_EQ(message, message1);
         promise.set_value(true);
@@ -131,7 +145,7 @@ TEST(NotifCallbacks, PrefixLinearScanWithProgressThread) {
     cfg.useProgThread = true;
     cfg.notifCallbacks.addCallback(
         "aaa", [](std::string &&remote, std::string &&message) { ADD_FAILURE(); });
-    cfg.notifCallbacks.addCallback("notif", [&](std::string &&remote, std::string &&message) {
+    cfg.notifCallbacks.addCallback(prefix1, [&](std::string &&remote, std::string &&message) {
         EXPECT_EQ(remote, name1);
         EXPECT_EQ(message, message1);
         promise.set_value(true);
