@@ -75,13 +75,18 @@ const nixlBackendInitParams obj_crt_test_params = {.localAgent = crt_agent_name,
 
 class setupObjTestFixture : public setupBackendTestFixture {
 protected:
+    nixl_b_params_t localParams_;
+
     setupObjTestFixture() {
+        localParams_ = *GetParam().customParams;
         const char *endpoint = std::getenv("NIXL_OBJ_ENDPOINT_OVERRIDE");
         if (endpoint && endpoint[0] != '\0') {
-            obj_params["endpoint_override"] = endpoint;
-            obj_params["req_checksum"] = "required";
+            localParams_["endpoint_override"] = endpoint;
+            localParams_["req_checksum"] = "required";
         }
-        localBackendEngine_ = std::make_shared<nixlObjEngine>(&GetParam());
+        nixlBackendInitParams initParams = GetParam();
+        initParams.customParams = &localParams_;
+        localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
     }
 };
 
@@ -129,12 +134,18 @@ INSTANTIATE_TEST_SUITE_P(ObjTests, setupObjTestFixture, testing::Values(obj_test
 // Separate test suite for S3 CRT client with crtMinLimit enabled
 class setupObjCrtTestFixture : public setupBackendTestFixture {
 protected:
+    nixl_b_params_t localParams_;
+
     setupObjCrtTestFixture() {
+        localParams_ = *GetParam().customParams;
         const char *endpoint = std::getenv("NIXL_OBJ_ENDPOINT_OVERRIDE");
         if (endpoint && endpoint[0] != '\0') {
-            obj_crt_params["endpoint_override"] = endpoint;
+            localParams_["endpoint_override"] = endpoint;
+            localParams_["req_checksum"] = "required";
         }
-        localBackendEngine_ = std::make_shared<nixlObjEngine>(&GetParam());
+        nixlBackendInitParams initParams = GetParam();
+        initParams.customParams = &localParams_;
+        localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
     }
 };
 

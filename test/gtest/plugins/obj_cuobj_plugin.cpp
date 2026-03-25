@@ -24,6 +24,10 @@
 #include "transfer_handler.h"
 #include "obj/obj_backend.h"
 
+#ifdef HAVE_CUDA
+#include <cuda_runtime.h>
+#endif
+
 namespace gtest::plugins::obj {
 
 nixl_b_params_t obj_accel_params = {{"accelerated", "true"}};
@@ -54,13 +58,18 @@ const nixlBackendInitParams obj_dell_test_params = {.localAgent = dell_agent_nam
 // Note: These tests require the cuobjclient library to be available at compile time
 class setupObjAccelTestFixture : public setupBackendTestFixture {
 protected:
+    nixl_b_params_t localParams_;
+
     setupObjAccelTestFixture() {
+        localParams_ = *GetParam().customParams;
         const char *endpoint = std::getenv("NIXL_OBJ_ENDPOINT_OVERRIDE");
         if (endpoint && endpoint[0] != '\0') {
-            obj_accel_params["endpoint_override"] = endpoint;
-            obj_accel_params["req_checksum"] = "required";
+            localParams_["endpoint_override"] = endpoint;
+            localParams_["req_checksum"] = "required";
         }
-        localBackendEngine_ = std::make_shared<nixlObjEngine>(&GetParam());
+        nixlBackendInitParams initParams = GetParam();
+        initParams.customParams = &localParams_;
+        localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
     }
 };
 
@@ -116,11 +125,16 @@ INSTANTIATE_TEST_SUITE_P(ObjAccelTests,
  */
 class setupObjDellTestFixture : public setupBackendTestFixture {
 protected:
+    nixl_b_params_t localParams_;
+
     setupObjDellTestFixture() {
+        localParams_ = *GetParam().customParams;
         const char *endpoint = std::getenv("NIXL_OBJ_ENDPOINT_OVERRIDE");
         if (endpoint && endpoint[0] != '\0') {
-            obj_dell_params["endpoint_override"] = endpoint;
-            localBackendEngine_ = std::make_shared<nixlObjEngine>(&GetParam());
+            localParams_["endpoint_override"] = endpoint;
+            nixlBackendInitParams initParams = GetParam();
+            initParams.customParams = &localParams_;
+            localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
         }
     }
 
@@ -179,6 +193,11 @@ TEST_P(setupObjDellTestFixture, DellQueryMemTest) {
 // RDMA descriptor registration, and putObjectRdmaAsync/getObjectRdmaAsync for
 // GPU-direct RDMA transfers.
 TEST_P(setupObjDellTestFixture, DellVramXferTest) {
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
+    }
     transferHandler<VRAM_SEG, OBJ_SEG> transfer(
         localBackendEngine_, localBackendEngine_, dell_agent_name, dell_agent_name, false, 1);
     transfer.setLocalMem();

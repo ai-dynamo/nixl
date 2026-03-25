@@ -142,14 +142,30 @@ private:
 template<> class memoryHandler<VRAM_SEG> {
 public:
     memoryHandler(size_t len, int dev_id) : buf_(nullptr), len_(len), devId_(dev_id), md_(nullptr) {
-        cudaSetDevice(dev_id);
-        cudaMalloc(&buf_, len_);
+        cudaError_t err = cudaSetDevice(dev_id);
+        if (err != cudaSuccess) {
+            NIXL_ERROR << "cudaSetDevice(" << dev_id << ") failed: " << cudaGetErrorString(err);
+            throw std::runtime_error("cudaSetDevice failed");
+        }
+        err = cudaMalloc(&buf_, len_);
+        if (err != cudaSuccess) {
+            buf_ = nullptr;
+            NIXL_ERROR << "cudaMalloc(" << len_ << ") failed: " << cudaGetErrorString(err);
+            throw std::runtime_error("cudaMalloc failed");
+        }
     }
 
     ~memoryHandler() {
         if (buf_) {
-            cudaSetDevice(devId_);
-            cudaFree(buf_);
+            cudaError_t err = cudaSetDevice(devId_);
+            if (err != cudaSuccess) {
+                NIXL_ERROR << "cudaSetDevice(" << devId_
+                           << ") failed in destructor: " << cudaGetErrorString(err);
+            }
+            err = cudaFree(buf_);
+            if (err != cudaSuccess) {
+                NIXL_ERROR << "cudaFree failed: " << cudaGetErrorString(err);
+            }
         }
     }
 
@@ -158,15 +174,31 @@ public:
         std::vector<uint8_t> host(len_);
         for (auto &entry : host)
             entry = start_byte++;
-        cudaSetDevice(devId_);
-        cudaMemcpy(buf_, host.data(), len_, cudaMemcpyHostToDevice);
+        cudaError_t err = cudaSetDevice(devId_);
+        if (err != cudaSuccess) {
+            NIXL_ERROR << "cudaSetDevice(" << devId_ << ") failed: " << cudaGetErrorString(err);
+            throw std::runtime_error("cudaSetDevice failed");
+        }
+        err = cudaMemcpy(buf_, host.data(), len_, cudaMemcpyHostToDevice);
+        if (err != cudaSuccess) {
+            NIXL_ERROR << "cudaMemcpy H2D failed: " << cudaGetErrorString(err);
+            throw std::runtime_error("cudaMemcpy failed");
+        }
     }
 
     bool
     checkIncreasing(uint8_t start_byte) {
         std::vector<uint8_t> host(len_);
-        cudaSetDevice(devId_);
-        cudaMemcpy(host.data(), buf_, len_, cudaMemcpyDeviceToHost);
+        cudaError_t err = cudaSetDevice(devId_);
+        if (err != cudaSuccess) {
+            NIXL_ERROR << "cudaSetDevice(" << devId_ << ") failed: " << cudaGetErrorString(err);
+            return false;
+        }
+        err = cudaMemcpy(host.data(), buf_, len_, cudaMemcpyDeviceToHost);
+        if (err != cudaSuccess) {
+            NIXL_ERROR << "cudaMemcpy D2H failed: " << cudaGetErrorString(err);
+            return false;
+        }
         for (auto &entry : host) {
             uint8_t expected_byte = start_byte++;
             if (entry != expected_byte) {
@@ -180,8 +212,16 @@ public:
 
     void
     reset() {
-        cudaSetDevice(devId_);
-        cudaMemset(buf_, 0x00, len_);
+        cudaError_t err = cudaSetDevice(devId_);
+        if (err != cudaSuccess) {
+            NIXL_ERROR << "cudaSetDevice(" << devId_ << ") failed: " << cudaGetErrorString(err);
+            throw std::runtime_error("cudaSetDevice failed");
+        }
+        err = cudaMemset(buf_, 0x00, len_);
+        if (err != cudaSuccess) {
+            NIXL_ERROR << "cudaMemset failed: " << cudaGetErrorString(err);
+            throw std::runtime_error("cudaMemset failed");
+        }
     }
 
     void
