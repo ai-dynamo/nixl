@@ -109,7 +109,7 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
 
     EP_HOST_ASSERT(max_experts_per_rank > 0);
     m_rdma_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_rdma_bytes));
-    rdma_buffer_ptr = reinterpret_cast<void *>(m_rdma_alloc->ptr());
+    rdma_buffer_ptr = m_rdma_alloc->ptr();
     CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
 
     // Allocate and clean shrink buffer
