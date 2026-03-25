@@ -170,6 +170,10 @@ public:
         }
     }
 
+    memoryHandler(const memoryHandler &) = delete;
+    memoryHandler &
+    operator=(const memoryHandler &) = delete;
+
     void
     setIncreasing(uint8_t start_byte) {
         std::vector<uint8_t> host(len_);
