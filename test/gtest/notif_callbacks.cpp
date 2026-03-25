@@ -85,7 +85,7 @@ struct agentPair {
 const std::string prefix1 = "notif";
 const std::string message1 = prefix1 + "ication_message_1";
 
-const nixl_notif_callback_t dummy_callback([](std::string &&, std::string&&){});
+const nixl_notif_callback_t dummy_callback([](std::string &&, std::string &&) {});
 
 } // namespace
 

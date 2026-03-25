@@ -90,7 +90,8 @@ private:
     void
     checkNewCallback(const std::string &prefix, const nixl_notif_callback_t &callback) const {
         if (!callback) {
-            throw std::runtime_error("Empty notification callback function not allowed with prefix");
+            throw std::runtime_error(
+                "Empty notification callback function not allowed with prefix");
         }
 
         if (prefix.empty()) {
@@ -104,7 +105,8 @@ private:
 
     [[nodiscard]] static bool
     isPrefixOf(const std::string &prefix, const std::string &string) noexcept {
-        return (string.size() >= prefix.size()) && (std::memcmp(prefix.data(), string.data(), prefix.size()) == 0);
+        return (string.size() >= prefix.size()) &&
+            (std::memcmp(prefix.data(), string.data(), prefix.size()) == 0);
     }
 
     [[nodiscard]] bool
@@ -140,13 +142,11 @@ private:
         }
 
         const std::string prefix = message.substr(0, commonPrefixSize_);
-        const auto iter =
-            std::lower_bound(callbacks_.begin(),
-                             callbacks_.end(),
-                             prefix,
-                             [](const nixlNotifCallback &l, const std::string &r) {
-                                 return l.prefix < r;
-                             });
+        const auto iter = std::lower_bound(
+            callbacks_.begin(),
+            callbacks_.end(),
+            prefix,
+            [](const nixlNotifCallback &l, const std::string &r) { return l.prefix < r; });
 
         if ((iter == callbacks_.end()) || (prefix != iter->prefix)) {
             return callbacks_.end();
@@ -156,7 +156,7 @@ private:
 
     [[nodiscard]] iterator
     findLinearScan(const std::string &message) const {
-        return std::find_if(callbacks_.begin(), callbacks_.end(), [&](const nixlNotifCallback &cb){
+        return std::find_if(callbacks_.begin(), callbacks_.end(), [&](const nixlNotifCallback &cb) {
             return isPrefixOf(cb.prefix, message);
         });
     }
