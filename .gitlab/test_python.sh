@@ -93,19 +93,41 @@ python3 partial_md_example.py --init-port "$(get_next_tcp_port)" --target-port "
 python3 partial_md_example.py --etcd
 python3 query_mem_example.py
 
-basic_two_peers_port=$(get_next_tcp_port)
-python3 basic_two_peers.py --mode="target" --ip=127.0.0.1 --port="$basic_two_peers_port"&
-sleep 15
-python3 basic_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$basic_two_peers_port"
+# Run a two-peers example: starts a target on an OS-assigned port,
+# reads it from a FIFO by setting NIXL_MD_LISTENER_PORT_FILE,
+# then launches the initiator against it.
+# Extra arguments are passed as env vars to the initiator.
+# Usage: run_two_peers <script> [ENV=val ...]
+run_two_peers() {
+    script=$1
+    shift
+
+    local port_fifo port
+    port_fifo=$(mktemp -u)
+    mkfifo "$port_fifo"
+    trap "rm -f '$port_fifo'" EXIT
+
+    NIXL_MD_LISTENER_PORT_FILE="$port_fifo" \
+        python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 &
+    target_pid=$!
+
+    if ! port=$(timeout 30 head -n1 "$port_fifo"); then
+        echo "Target (pid=$target_pid) failed to report port within 30s"
+        kill "$target_pid" 2>/dev/null
+        exit 1
+    fi
+    rm -f "$port_fifo"
+
+    env "$@" python3 "$script" --mode="initiator" --ip=127.0.0.1 --port="$port"
+}
+
+run_two_peers basic_two_peers.py
 
 # Running telemetry for the last test
-expanded_two_peers_port=$(get_next_tcp_port)
 mkdir -p /tmp/telemetry_test
 
-python3 expanded_two_peers.py --mode="target" --ip=127.0.0.1 --port="$expanded_two_peers_port"&
-sleep 15
-NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test \
-python3 expanded_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$expanded_two_peers_port"
+run_two_peers expanded_two_peers.py \
+    NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test
 
 python3 telemetry_reader.py --telemetry_path /tmp/telemetry_test/initiator &
 telePID=$!
