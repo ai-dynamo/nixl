@@ -25,7 +25,7 @@ namespace nixl_ep {
 
 class vmm_region {
 public:
-    explicit vmm_region(size_t size, CUdevice device);
+    explicit vmm_region(size_t size);
 
     ~vmm_region();
 
