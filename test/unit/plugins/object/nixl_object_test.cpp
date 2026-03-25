@@ -31,6 +31,10 @@
 #include "nixl.h"
 #include "common/nixl_time.h"
 
+#ifdef HAVE_CUDA
+#include <cuda_runtime.h>
+#endif
+
 // Default values
 #define DEFAULT_NUM_TRANSFERS 64
 #define DEFAULT_TRANSFER_SIZE (16 * 1024 * 1024) // 16MB
@@ -94,11 +98,16 @@ print_usage(const char *program_name) {
               << DEFAULT_ITERATIONS << ")\n"
               << "  -e, --endpoint ENDPOINT S3 Endpoint URL\n"
               << "  -u, --bucket BUCKET     S3 Bucket name\n"
+              << "  -a, --accelerated       Enable accelerated engine mode\n"
+              << "  -T, --type TYPE         Vendor type for accelerated engine (e.g., dell)\n"
+              << "  -v, --vram              Use VRAM (GPU memory) instead of DRAM\n"
               << "  -h, --help              Show this help message\n"
               << "\nExamples:\n"
               << "  " << program_name << " -n 100 -s 16M -t 5\n"
               << "  " << program_name
-              << " -n 100 -s 16M -t 5 -e http://s3.example.com:9000 -u my-bucket\n";
+              << " -n 100 -s 16M -t 5 -e http://s3.example.com:9000 -u my-bucket\n"
+              << "  " << program_name << " -a -T dell -e http://10.10.10.10:9000 -u my-bucket\n"
+              << "  " << program_name << " -v -a -T dell -e http://10.10.10.10:9000 -u my-bucket\n";
 }
 
 /**
@@ -173,6 +182,69 @@ clear_buffer(void *buffer, size_t size) {
     memset(buffer, 0, size);
 }
 
+#ifdef HAVE_CUDA
+/**
+ * @brief Fill GPU buffer with a repeating test pattern
+ * @param gpu_buffer Pointer to the GPU buffer to fill
+ * @param size Size of the buffer in bytes
+ * @return cudaSuccess on success, error code on failure
+ */
+cudaError_t
+fill_gpu_test_pattern(void *gpu_buffer, size_t size) {
+    char *host_buffer = (char *)malloc(size);
+    if (!host_buffer) {
+        return cudaErrorMemoryAllocation;
+    }
+
+    fill_test_pattern(host_buffer, size);
+    cudaError_t err = cudaMemcpy(gpu_buffer, host_buffer, size, cudaMemcpyHostToDevice);
+    free(host_buffer);
+    return err;
+}
+
+/**
+ * @brief Clear a GPU buffer by setting all bytes to zero
+ * @param gpu_buffer Pointer to the GPU buffer to clear
+ * @param size Size of the buffer in bytes
+ * @return cudaSuccess on success, error code on failure
+ */
+cudaError_t
+clear_gpu_buffer(void *gpu_buffer, size_t size) {
+    return cudaMemset(gpu_buffer, 0, size);
+}
+
+/**
+ * @brief Validate GPU buffer contents against the expected test pattern
+ * @param gpu_buffer Pointer to the GPU buffer to validate
+ * @param size Size of the buffer in bytes
+ * @return true if contents match expected pattern, false otherwise
+ */
+bool
+validate_gpu_buffer(void *gpu_buffer, size_t size) {
+    char *host_buffer = (char *)malloc(size);
+    char *expected_buffer = (char *)malloc(size);
+    if (!host_buffer || !expected_buffer) {
+        free(host_buffer);
+        free(expected_buffer);
+        return false;
+    }
+
+    cudaError_t err = cudaMemcpy(host_buffer, gpu_buffer, size, cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        free(host_buffer);
+        free(expected_buffer);
+        return false;
+    }
+
+    fill_test_pattern(expected_buffer, size);
+    bool match = (memcmp(host_buffer, expected_buffer, size) == 0);
+
+    free(host_buffer);
+    free(expected_buffer);
+    return match;
+}
+#endif
+
 // Helper function to format duration
 /**
  * @brief Format duration in microseconds to a human-readable string
@@ -201,6 +273,7 @@ int
 main(int argc, char *argv[]) {
     nixl_status_t ret = NIXL_SUCCESS;
     void **dram_addr = NULL;
+    void **vram_addr = NULL;
     int status = 0;
     int i;
     int opt;
@@ -212,11 +285,16 @@ main(int argc, char *argv[]) {
     int iterations = DEFAULT_ITERATIONS;
     std::string endpoint;
     std::string bucket;
+    bool use_accelerated = false;
+    std::string accel_type;
+    bool use_vram = false;
     int ret_code = 0;
+    char *expected_buffer = NULL;
     nixlXferReqH *write_req = nullptr;
     nixlXferReqH *read_req = nullptr;
     bool obj_registered = false;
     bool dram_registered = false;
+    bool vram_registered = false;
 
     // Parse command line options
     static struct option long_options[] = {{"num-transfers", required_argument, 0, 'n'},
@@ -224,10 +302,13 @@ main(int argc, char *argv[]) {
                                            {"iterations", required_argument, 0, 't'},
                                            {"endpoint", required_argument, 0, 'e'},
                                            {"bucket", required_argument, 0, 'u'},
+                                           {"accelerated", no_argument, 0, 'a'},
+                                           {"type", required_argument, 0, 'T'},
+                                           {"vram", no_argument, 0, 'v'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
-    while ((opt = getopt_long(argc, argv, "n:s:t:he:u:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "n:s:t:he:u:aT:v", long_options, NULL)) != -1) {
         switch (opt) {
         case 'e':
             endpoint = optarg;
@@ -258,6 +339,15 @@ main(int argc, char *argv[]) {
             iterations = parsed;
             break;
         }
+        case 'a':
+            use_accelerated = true;
+            break;
+        case 'T':
+            accel_type = optarg;
+            break;
+        case 'v':
+            use_vram = true;
+            break;
         case 'h':
             print_usage(argv[0]);
             return 0;
@@ -267,17 +357,41 @@ main(int argc, char *argv[]) {
         }
     }
 
+    // Validate VRAM option: requires CUDA at compile time and a GPU at runtime
+    if (use_vram) {
+#ifndef HAVE_CUDA
+        std::cerr << "Error: VRAM mode requires CUDA support (build with CUDA enabled)\n";
+        return 1;
+#else
+        int gpu_count = 0;
+        if (cudaGetDeviceCount(&gpu_count) != cudaSuccess || gpu_count == 0) {
+            std::cerr << "Error: VRAM mode requested but no CUDA GPU available\n";
+            return 1;
+        }
+#endif
+    }
 
-    // Allocate DRAM array
-    dram_addr = new void *[num_transfers]();
+    // Warn if --type is specified without --accelerated (type is ignored without it)
+    if (!accel_type.empty() && !use_accelerated) {
+        std::cerr << "Warning: --type has no effect without --accelerated\n";
+    }
+
+    // Allocate pointer arrays for VRAM (GPU) or DRAM (CPU) transfer buffers
+    if (use_vram) {
+        vram_addr = new void *[num_transfers]();
+    } else {
+        dram_addr = new void *[num_transfers]();
+    }
 
     // Initialize NIXL components
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    nixlBlobDesc *dram_buf = new nixlBlobDesc[num_transfers];
+    nixlBlobDesc *dram_buf = use_vram ? NULL : new nixlBlobDesc[num_transfers];
+    nixlBlobDesc *vram_buf = use_vram ? new nixlBlobDesc[num_transfers] : NULL;
     nixlBlobDesc *objects = new nixlBlobDesc[num_transfers];
     nixlBackendH *obj;
     nixl_reg_dlist_t dram_for_obj(DRAM_SEG);
+    nixl_reg_dlist_t vram_for_obj(VRAM_SEG);
     nixl_reg_dlist_t obj_for_obj(OBJ_SEG);
 
     std::cout << "\n============================================================" << std::endl;
@@ -285,7 +399,13 @@ main(int argc, char *argv[]) {
               << std::endl;
     std::cout << "============================================================" << std::endl;
     std::cout << "Configuration:" << std::endl;
-    std::cout << "- Mode: DRAM" << std::endl;
+    std::cout << "- Mode: " << (use_vram ? "VRAM" : "DRAM") << std::endl;
+    if (use_accelerated) {
+        std::cout << "- Accelerated: true" << std::endl;
+        if (!accel_type.empty()) {
+            std::cout << "- Type: " << accel_type << std::endl;
+        }
+    }
     std::cout << "- Number of transfers: " << num_transfers << std::endl;
     std::cout << "- Transfer size: " << transfer_size << " bytes" << std::endl;
     std::cout << "- Total data: " << std::fixed << std::setprecision(2)
@@ -303,6 +423,14 @@ main(int argc, char *argv[]) {
                               {"use_virtual_addressing", "false"},
                               {"req_checksum", "required"}};
 
+    // Enable accelerated engine and vendor type when requested.
+    // For Dell ObjectScale: accelerated=true, type=dell enables S3 over RDMA.
+    if (use_accelerated) {
+        params["accelerated"] = "true";
+        if (!accel_type.empty()) {
+            params["type"] = accel_type;
+        }
+    }
 
     // Create backends
     ret = agent.createBackend(DEFAULT_BACKEND, params, obj);
@@ -320,19 +448,46 @@ main(int argc, char *argv[]) {
 
     std::string object_prefix = generate_timestamped_object_prefix("test-key-");
     for (i = 0; i < num_transfers; i++) {
-        // Allocate and initialize DRAM buffer
-        if (posix_memalign(&dram_addr[i], PAGE_SIZE, transfer_size) != 0) {
-            std::cerr << "DRAM allocation failed\n";
-            ret_code = 1;
-            goto cleanup;
-        }
-        fill_test_pattern(dram_addr[i], transfer_size);
+        if (use_vram) {
+#ifdef HAVE_CUDA
+            // Allocate and initialize VRAM buffer
+            cudaError_t cuda_err;
+            cuda_err = cudaMalloc(&vram_addr[i], transfer_size);
+            if (cuda_err != cudaSuccess) {
+                std::cerr << "CUDA malloc failed for buffer " << i << " (" << transfer_size
+                          << " bytes): " << cudaGetErrorString(cuda_err) << "\n";
+                ret_code = 1;
+                goto cleanup;
+            }
+            cuda_err = fill_gpu_test_pattern(vram_addr[i], transfer_size);
+            if (cuda_err != cudaSuccess) {
+                std::cerr << "CUDA buffer " << i
+                          << " initialization failed: " << cudaGetErrorString(cuda_err) << "\n";
+                ret_code = 1;
+                goto cleanup;
+            }
 
-        // Set up DRAM descriptor
-        dram_buf[i].addr = (uintptr_t)(dram_addr[i]);
-        dram_buf[i].len = transfer_size;
-        dram_buf[i].devId = 0;
-        dram_for_obj.addDesc(dram_buf[i]);
+            // Set up VRAM descriptor
+            vram_buf[i].addr = (uintptr_t)(vram_addr[i]);
+            vram_buf[i].len = transfer_size;
+            vram_buf[i].devId = 0;
+            vram_for_obj.addDesc(vram_buf[i]);
+#endif
+        } else {
+            // Allocate and initialize DRAM buffer
+            if (posix_memalign(&dram_addr[i], PAGE_SIZE, transfer_size) != 0) {
+                std::cerr << "DRAM allocation failed\n";
+                ret_code = 1;
+                goto cleanup;
+            }
+            fill_test_pattern(dram_addr[i], transfer_size);
+
+            // Set up DRAM descriptor
+            dram_buf[i].addr = (uintptr_t)(dram_addr[i]);
+            dram_buf[i].len = transfer_size;
+            dram_buf[i].devId = 0;
+            dram_for_obj.addDesc(dram_buf[i]);
+        }
 
         objects[i].addr = 0;
         objects[i].len = transfer_size;
@@ -355,13 +510,24 @@ main(int argc, char *argv[]) {
     }
     obj_registered = true;
 
-    ret = agent.registerMem(dram_for_obj);
-    if (ret != NIXL_SUCCESS) {
-        std::cerr << "Failed to register DRAM memory\n";
-        ret_code = 1;
-        goto cleanup;
+    // Register local memory with the backend (VRAM_SEG for GPU, DRAM_SEG for CPU)
+    if (use_vram) {
+        ret = agent.registerMem(vram_for_obj);
+        if (ret != NIXL_SUCCESS) {
+            std::cerr << "Failed to register VRAM memory\n";
+            ret_code = 1;
+            goto cleanup;
+        }
+        vram_registered = true;
+    } else {
+        ret = agent.registerMem(dram_for_obj);
+        if (ret != NIXL_SUCCESS) {
+            std::cerr << "Failed to register DRAM memory\n";
+            ret_code = 1;
+            goto cleanup;
+        }
+        dram_registered = true;
     }
-    dram_registered = true;
 
     us_t reg_end = getUs();
 
@@ -379,12 +545,16 @@ main(int argc, char *argv[]) {
     us_t write_duration(0);
 
     // Create descriptor lists for all transfers
-    nixl_reg_dlist_t src_reg(DRAM_SEG);
+    nixl_reg_dlist_t src_reg(use_vram ? VRAM_SEG : DRAM_SEG);
     nixl_reg_dlist_t obj_reg(OBJ_SEG);
 
     // Add all descriptors
     for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
-        src_reg.addDesc(dram_buf[transfer_idx]);
+        if (use_vram) {
+            src_reg.addDesc(vram_buf[transfer_idx]);
+        } else {
+            src_reg.addDesc(dram_buf[transfer_idx]);
+        }
         obj_reg.addDesc(objects[transfer_idx]);
         printProgress(float(transfer_idx + 1) / num_transfers);
     }
@@ -449,7 +619,19 @@ main(int argc, char *argv[]) {
     std::cout << "PHASE 3: Clearing buffers for read test" << std::endl;
     std::cout << "============================================================" << std::endl;
     for (i = 0; i < num_transfers; i++) {
-        clear_buffer(dram_addr[i], transfer_size);
+        if (use_vram) {
+#ifdef HAVE_CUDA
+            cudaError_t clr_err = clear_gpu_buffer(vram_addr[i], transfer_size);
+            if (clr_err != cudaSuccess) {
+                std::cerr << "Failed to clear VRAM buffer " << i << ": "
+                          << cudaGetErrorString(clr_err) << std::endl;
+                ret_code = 1;
+                goto cleanup;
+            }
+#endif
+        } else {
+            clear_buffer(dram_addr[i], transfer_size);
+        }
         printProgress(float(i + 1) / num_transfers);
     }
 
@@ -492,12 +674,16 @@ main(int argc, char *argv[]) {
     us_t read_duration(0);
 
     // Create descriptor lists for all transfers
-    nixl_reg_dlist_t read_src_reg(DRAM_SEG);
+    nixl_reg_dlist_t read_src_reg(use_vram ? VRAM_SEG : DRAM_SEG);
     nixl_reg_dlist_t read_obj_reg(OBJ_SEG);
 
     // Add all descriptors
     for (int transfer_idx = 0; transfer_idx < num_transfers; transfer_idx++) {
-        read_src_reg.addDesc(dram_buf[transfer_idx]);
+        if (use_vram) {
+            read_src_reg.addDesc(vram_buf[transfer_idx]);
+        } else {
+            read_src_reg.addDesc(dram_buf[transfer_idx]);
+        }
         read_obj_reg.addDesc(objects[transfer_idx]);
         printProgress(float(transfer_idx + 1) / num_transfers);
     }
@@ -561,20 +747,32 @@ main(int argc, char *argv[]) {
     std::cout << "\n============================================================" << std::endl;
     std::cout << "PHASE 6: Validating read data" << std::endl;
     std::cout << "============================================================" << std::endl;
-    char *expected_buffer = (char *)malloc(transfer_size);
 
-    for (i = 0; i < num_transfers; i++) {
+    if (!use_vram) {
+        expected_buffer = (char *)malloc(transfer_size);
         if (!expected_buffer) {
             std::cerr << "Failed to allocate validation buffer\n";
             ret_code = 1;
             goto cleanup;
         }
         fill_test_pattern(expected_buffer, transfer_size);
-        if (memcmp(dram_addr[i], expected_buffer, transfer_size) != 0) {
-            std::cerr << "DRAM buffer " << i << " validation failed\n";
-            free(expected_buffer);
-            ret_code = 1;
-            goto cleanup;
+    }
+
+    for (i = 0; i < num_transfers; i++) {
+        if (use_vram) {
+#ifdef HAVE_CUDA
+            if (!validate_gpu_buffer(vram_addr[i], transfer_size)) {
+                std::cerr << "VRAM buffer " << i << " validation failed\n";
+                ret_code = 1;
+                goto cleanup;
+            }
+#endif
+        } else {
+            if (memcmp(dram_addr[i], expected_buffer, transfer_size) != 0) {
+                std::cerr << "DRAM buffer " << i << " validation failed\n";
+                ret_code = 1;
+                goto cleanup;
+            }
         }
 
         printProgress(float(i + 1) / num_transfers);
@@ -600,19 +798,36 @@ cleanup:
     // Cleanup resources
     free(expected_buffer);
 
+    // Deregister memory regions
     if (obj_registered) {
         agent.deregisterMem(obj_for_obj);
         obj_registered = false;
+    }
+    if (vram_registered) {
+        agent.deregisterMem(vram_for_obj);
+        vram_registered = false;
     }
     if (dram_registered) {
         agent.deregisterMem(dram_for_obj);
         dram_registered = false;
     }
-    for (i = 0; i < num_transfers; i++) {
-        if (dram_addr[i]) free(dram_addr[i]);
+
+    // Free transfer buffers: cudaFree for VRAM, free() for DRAM
+    if (use_vram) {
+#ifdef HAVE_CUDA
+        for (i = 0; i < num_transfers; i++) {
+            if (vram_addr[i]) cudaFree(vram_addr[i]);
+        }
+#endif
+        delete[] vram_addr;
+        delete[] vram_buf;
+    } else {
+        for (i = 0; i < num_transfers; i++) {
+            if (dram_addr[i]) free(dram_addr[i]);
+        }
+        delete[] dram_addr;
+        delete[] dram_buf;
     }
-    delete[] dram_addr;
-    delete[] dram_buf;
 
     delete[] objects;
 
