@@ -324,7 +324,7 @@ sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpu
 # Clone and build GUSLI
 git clone https://github.com/nvidia/gusli.git
 cd gusli
-make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0
+make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1
 
 # Install library and headers
 sudo cp libgusli_clnt.so /usr/lib/

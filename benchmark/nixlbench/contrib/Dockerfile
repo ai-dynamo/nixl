@@ -174,7 +174,7 @@ RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch 
 
 RUN git clone https://github.com/nvidia/gusli.git && \
     cd gusli && \
-    make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+    make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 && \
     cd ..
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
