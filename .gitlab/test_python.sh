@@ -93,6 +93,26 @@ python3 partial_md_example.py --init-port "$(get_next_tcp_port)" --target-port "
 python3 partial_md_example.py --etcd
 python3 query_mem_example.py
 
+# Wait for a process to start listening on a TCP port.
+# Polls ss until it finds a LISTEN socket owned by the given PID.
+# Usage: wait_for_listen_port <pid> [timeout_seconds]
+# Returns the port on stdout, or returns 1 on timeout.
+wait_for_listen_port() {
+    local pid=$1 timeout=${2:-30}
+    local port=""
+    while [ "$timeout" -gt 0 ]; do
+        port=$(ss -tlnp 2>/dev/null \
+               | awk -v p="pid=${pid}," '$0 ~ p { n=split($4, a, ":"); print a[n]; exit }')
+        if [ -n "$port" ]; then
+            echo "$port"
+            return 0
+        fi
+        sleep 1
+        timeout=$((timeout - 1))
+    done
+    return 1
+}
+
 # Run a two-peers example: starts a target on an OS-assigned port,
 # then launches the initiator against it.
 # Extra arguments are passed as env vars to the initiator.
