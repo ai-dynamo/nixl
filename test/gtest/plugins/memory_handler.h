@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __MEMORY_HANDLER_H
-#define __MEMORY_HANDLER_H
+#ifndef NIXL_TEST_GTEST_PLUGINS_MEMORY_HANDLER_H
+#define NIXL_TEST_GTEST_PLUGINS_MEMORY_HANDLER_H
 
 #include <absl/strings/str_format.h>
 #include "backend/backend_aux.h"
@@ -258,4 +258,4 @@ private:
 #endif // HAVE_CUDA
 
 } // namespace gtest::plugins
-#endif // __MEMORY_HANDLER_H
+#endif // NIXL_TEST_GTEST_PLUGINS_MEMORY_HANDLER_H
