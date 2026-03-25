@@ -18,6 +18,7 @@
 #define NIXL_TEST_GTEST_PLUGINS_MEMORY_HANDLER_H
 
 #include <absl/strings/str_format.h>
+#include <stdexcept>
 #include "backend/backend_aux.h"
 #include "backend_engine.h"
 #include "common/nixl_log.h"
