@@ -19,6 +19,7 @@
 #include "libfabric_rail_manager.h"
 #include "libfabric/libfabric_common.h"
 #include "libfabric/libfabric_topology.h"
+#include "libfabric/libfabric_tracepoints.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include <sstream>
@@ -362,6 +363,12 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 
     // Determine striping strategy
     bool use_striping = shouldUseStriping(transfer_size) && selected_rails.size() > 1;
+    NIXL_TRACE_TRANSFER_BEGIN(op_type == nixlLibfabricReq::WRITE ? NIXL_TP_OP_WRITE :
+                                                                   NIXL_TP_OP_READ,
+                              transfer_size,
+                              (int)selected_rails.size(),
+                              use_striping ? 1 : 0,
+                              xfer_id);
     NIXL_DEBUG << "use_striping=" << use_striping;
     if (!use_striping) {
         // Round-robin: use one rail for entire transfer
@@ -517,6 +524,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     }
 
     NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
+    NIXL_TRACE_TRANSFER_END(submitted_count_out, xfer_id);
 
     return NIXL_SUCCESS;
 }

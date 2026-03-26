@@ -37,6 +37,14 @@ hwloc_dep = dependency('hwloc', required: true)
 # Find numa dependency
 numa_dep = dependency('numa', required: true)
 
+# Optional LTTng-UST tracepoint support
+if get_option('enable_trace')
+    lttng_ust_dep = dependency('lttng-ust', required: true)
+    libfabric_utils_sources += files('libfabric_tracepoints.cpp')
+else
+    lttng_ust_dep = disabler()
+endif
+
 # Set up dependencies and compile args
 libfabric_utils_deps = [
     libfabric_dep,
@@ -46,6 +54,11 @@ libfabric_utils_deps = [
 ]
 
 libfabric_utils_cpp_args = []
+
+if get_option('enable_trace')
+    libfabric_utils_deps += [lttng_ust_dep]
+    libfabric_utils_cpp_args += ['-DHAVE_LIBLTTNG_UST=1']
+endif
 
 # Detect optional libfabric features at compile time to enable/disable
 # functionality based on the installed libfabric version
