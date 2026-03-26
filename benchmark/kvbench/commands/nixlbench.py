@@ -52,6 +52,7 @@ class NIXLBench:
         num_threads=1,
         op_type="WRITE",
         posix_api_type="AIO",
+        libblkio_api_type="IO_URING",
         runtime_type="ETCD",
         scheme="pairwise",
         start_batch_size=None,
@@ -107,6 +108,7 @@ class NIXLBench:
             num_threads (int, optional): Number of threads. Defaults to 1.
             op_type (str, optional): Operation type. Defaults to "WRITE".
             posix_api_type (str, optional): POSIX API type. Defaults to "AIO".
+            libblkio_api_type (str, optional): LIBBLKIO API type. Defaults to "IO_URING".
             runtime_type (str, optional): Runtime type. Defaults to "ETCD".
             scheme (str, optional): Communication scheme. Defaults to "pairwise".
             start_batch_size (int, optional): Starting batch size. Defaults to 1.
@@ -155,6 +157,15 @@ class NIXLBench:
         self.num_threads = num_threads
         self.op_type = op_type
         self.posix_api_type = posix_api_type
+
+        # Validate libblkio_api_type
+        valid_libblkio_api_types = {"IO_URING", "VHOST_USER", "VHOST_VDPA"}
+        if libblkio_api_type not in valid_libblkio_api_types:
+            raise ValueError(
+                f"Invalid LIBBLKIO API type: {libblkio_api_type}. "
+                f"Must be one of {sorted(valid_libblkio_api_types)}"
+            )
+        self.libblkio_api_type = libblkio_api_type
         self.runtime_type = runtime_type
         self.scheme = scheme
         self.start_batch_size = start_batch_size
@@ -227,6 +238,20 @@ class NIXLBench:
                 f"Invalid destination for {backend}: {destination}, valid destinations are: {arg_to_seg_type.keys()}"
             )
 
+    def _configure_libblkio(self, source: str, destination: str):
+        """Configure LIBBLKIO plugin for block device operations"""
+        if source == "file" and destination == "memory":
+            self.op_type = "READ"
+            self.target_seg_type = "BLK_SEG"
+        elif source == "memory" and destination == "file":
+            self.op_type = "WRITE"
+            self.initiator_seg_type = "BLK_SEG"
+        else:
+            raise ValueError(
+                f"Invalid LIBBLKIO source/destination: {source}->{destination}; "
+                "expected file<->memory"
+            )
+
     def _configure_obj(self, source: str, destination: str):
         """Configure OBJ plugin for object storage operations"""
         if source == "memory":
@@ -245,6 +270,8 @@ class NIXLBench:
             self._configure_posix(source, destination)
         elif backend_lower in ["ucx", "gpunetio", "mooncake"]:
             self._configure_ucx(backend_lower, source, destination)
+        elif backend_lower == "libblkio":
+            self._configure_libblkio(source, destination)
         elif backend_lower == "obj":
             self._configure_obj(source, destination)
         else:
@@ -315,6 +342,7 @@ class NIXLBench:
             "num_threads": self.num_threads,
             "op_type": self.op_type,
             "posix_api_type": self.posix_api_type,
+            "libblkio_api_type": self.libblkio_api_type,
             "runtime_type": self.runtime_type,
             "scheme": self.scheme,
             "start_batch_size": self.start_batch_size,
@@ -375,6 +403,7 @@ class NIXLBench:
             "num_threads": 1,
             "op_type": "WRITE",
             "posix_api_type": "AIO",
+            "libblkio_api_type": "IO_URING",
             "runtime_type": "ETCD",
             "scheme": "pairwise",
             "start_batch_size": 1,

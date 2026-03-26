@@ -26,6 +26,11 @@ endif
 subdir('agent')
 unit_test_deps += [agent_unit_test_dep]
 
+if enabled_plugins.get('LIBBLKIO') and has_libblkio_plugin
+    subdir('plugins/libblkio')
+    unit_test_deps += [libblkio_unit_test_dep]
+endif
+
 cpp = meson.get_compiler('cpp')
 azure_storage_blobs = cpp.find_library('azure-storage-blobs', required: false)
 if enabled_plugins.get('AZURE_BLOB') and azure_storage_blobs.found()
