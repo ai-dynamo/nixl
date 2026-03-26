@@ -18,6 +18,7 @@
 #include "worker/nixl/nixl_worker.h"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #if HAVE_CUDA
 #include <cuda.h>
@@ -1203,10 +1204,14 @@ static inline nixl_status_t
 execSingleTransfer(nixlAgent *agent,
                    nixlXferReqH *req,
                    xferBenchTimer &timer,
-                   xferBenchStats &thread_stats) {
+                   xferBenchStats &thread_stats,
+                   const std::atomic<int> *terminate_ptr = nullptr) {
     nixl_status_t rc = agent->postXferReq(req);
     thread_stats.post_duration.add(timer.lap());
     while (NIXL_IN_PROG == rc) {
+        if (__builtin_expect(terminate_ptr && terminate_ptr->load(std::memory_order_relaxed), 0)) {
+            break;
+        }
         rc = agent->getXferStatus(req);
     }
     return rc;
@@ -1243,7 +1248,8 @@ execTransferIterations(nixlAgent *agent,
                        const int num_iter,
                        xferBenchTimer &timer,
                        xferBenchStats &thread_stats,
-                       const bool recreate_per_iteration) {
+                       const bool recreate_per_iteration,
+                       const std::atomic<int> *terminate_ptr = nullptr) {
     nixlXferReqH *req = nullptr;
     nixlTime::us_t total_prepare_duration = 0;
 
@@ -1264,6 +1270,10 @@ execTransferIterations(nixlAgent *agent,
     if (__builtin_expect(recreate_per_iteration, 0)) {
         // GUSLI path: Create/execute/release per iteration
         for (int i = 0; i < num_iter; ++i) {
+            // Check for signal (SIGTERM/SIGINT) to allow fast exit on peer death
+            if (__builtin_expect(terminate_ptr && *terminate_ptr, 0)) {
+                return -1;
+            }
             nixl_status_t create_rc =
                 agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
             if (__builtin_expect(create_rc != NIXL_SUCCESS, 0)) {
@@ -1273,7 +1283,7 @@ execTransferIterations(nixlAgent *agent,
             }
             total_prepare_duration += timer.lap();
 
-            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
+            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats, terminate_ptr);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
@@ -1293,7 +1303,12 @@ execTransferIterations(nixlAgent *agent,
     } else {
         // Standard path: Single request for all iterations
         for (int i = 0; i < num_iter; ++i) {
-            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
+            // Check for signal (SIGTERM/SIGINT) to allow fast exit on peer death
+            if (__builtin_expect(terminate_ptr && *terminate_ptr, 0)) {
+                agent->releaseXferReq(req);
+                return -1;
+            }
+            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats, terminate_ptr);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
@@ -1321,7 +1336,8 @@ execTransfer(nixlAgent *agent,
              const nixl_xfer_op_t op,
              const int num_iter,
              const int num_threads,
-             xferBenchStats &stats) {
+             xferBenchStats &stats,
+             const std::atomic<int> *terminate_ptr = nullptr) {
     int ret = 0;
     stats.clear();
 
@@ -1357,7 +1373,8 @@ execTransfer(nixlAgent *agent,
                                                   num_iter,
                                                   timer,
                                                   thread_stats,
-                                                  xferBenchConfig::recreate_xfer);
+                                                  xferBenchConfig::recreate_xfer,
+                                                  terminate_ptr);
 
         if (__builtin_expect(result != 0, 0)) {
             ret = result;
@@ -1390,8 +1407,14 @@ xferBenchNixlWorker::transfer(size_t block_size,
     }
 
     if (skip > 0) {
-        ret = execTransfer(
-            agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, stats);
+        ret = execTransfer(agent,
+                           local_iovs,
+                           remote_iovs,
+                           xfer_op,
+                           skip,
+                           xferBenchConfig::num_threads,
+                           stats,
+                           &terminate);
         if (ret < 0) {
             return std::variant<xferBenchStats, int>(ret);
         }
@@ -1402,8 +1425,14 @@ xferBenchNixlWorker::transfer(size_t block_size,
 
     stats.clear();
 
-    ret = execTransfer(
-        agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats);
+    ret = execTransfer(agent,
+                       local_iovs,
+                       remote_iovs,
+                       xfer_op,
+                       num_iter,
+                       xferBenchConfig::num_threads,
+                       stats,
+                       &terminate);
     if (ret < 0) {
         return std::variant<xferBenchStats, int>(ret);
     }
@@ -1427,16 +1456,36 @@ xferBenchNixlWorker::poll(size_t block_size) {
     }
     total_iter = skip + num_iter;
 
+    // Periodically check if all peers are still alive via etcd lease keys.
+    // Fires at most once every liveness_check_interval to avoid
+    // saturating etcd with get() calls during tight polling loops.
+    using namespace std::chrono_literals;
+    auto last_liveness_check = std::chrono::steady_clock::now();
+    constexpr auto liveness_check_interval = 5s;
+    auto checkLiveness = [&]() {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_liveness_check >= liveness_check_interval) {
+            last_liveness_check = now;
+            if (rt && !rt->arePeersAlive()) {
+                std::cerr << "nixlbench: peer liveness check failed — aborting poll" << std::endl;
+                terminate = 1;
+            }
+        }
+    };
+
     /* Ensure warmup is done*/
     do {
         status = agent->getNotifs(notifs);
-    } while (status == NIXL_SUCCESS && skip != int(notifs["initiator"].size()));
+        checkLiveness();
+    } while (!signaled() && status == NIXL_SUCCESS && skip != int(notifs["initiator"].size()));
     synchronize();
 
     /* Polling for actual iterations*/
     do {
         status = agent->getNotifs(notifs);
-    } while (status == NIXL_SUCCESS && total_iter != int(notifs["initiator"].size()));
+        checkLiveness();
+    } while (!signaled() && status == NIXL_SUCCESS &&
+             total_iter != int(notifs["initiator"].size()));
     synchronize();
 }
 
