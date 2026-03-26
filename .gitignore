@@ -21,3 +21,36 @@ cufile.log
 
 # Asio
 subprojects/asio-*
+
+# Subproject wrap lock
+subprojects/.wraplock
+
+# Python caches
+__pycache__/
+*.egg-info/
+
+# Compiled shared objects (built on compute nodes)
+*.cpython-*.so
+
+# kvbench experiments
+benchmark/kvbench/devdata/
+benchmark/kvbench/plots/
+benchmark/kvbench/test/decode_centric_*/
+benchmark/kvbench/test/nixl_api_test.py
+benchmark/kvbench/test/nixl_multinode_test.py
+benchmark/kvbench/test/run_nixl_multinode.sbatch
+benchmark/kvbench/test/run_rank.sh
+benchmark/kvbench/test/test_storage_backend.py
+benchmark/kvbench/test/test_ucx_gds.py
+benchmark/kvbench/test/test_umr_qp.py
+benchmark/kvbench/test_plans/*
+!benchmark/kvbench/test_plans/README.md
+!benchmark/kvbench/test_plans/isr1_pre_test/
+benchmark/kvbench/test_plans/isr1_pre_test/*
+!benchmark/kvbench/test_plans/isr1_pre_test/run_8nodes_storage_tp8_264tp_vast.sbatch
+!benchmark/kvbench/test_plans/isr1_pre_test/run_storage_posix_large.sbatch
+!benchmark/kvbench/test_plans/isr1_pre_test/run_rdma_storage.sbatch
+!benchmark/kvbench/test_plans/isr1_pre_test/run_sat_v2.sbatch
+!benchmark/kvbench/test_plans/isr1_pre_test/bind_8gpus.sh
+benchmark/kvbench/tools/
+benchmark/kvbench/tp4.txt

@@ -18,6 +18,9 @@
 #include <pybind11/stl.h>
 #include <pybind11/operators.h>
 #include <pybind11/numpy.h>
+#include <thread>
+#include <algorithm>
+#include <omp.h>
 #include <pybind11/chrono.h>
 
 #include <tuple>
@@ -29,6 +32,94 @@
 namespace py = pybind11;
 
 typedef std::map<std::string, std::vector<py::bytes>> nixl_py_notifs_t;
+
+// ============================================================================
+// Storage transfer engine — copied from nixlbench nixl_worker.cpp with minimal
+// shims. Uses the exact same OMP + NIXL API call pattern that achieves 48 GB/s.
+// ============================================================================
+
+struct StorageIOV {
+    uintptr_t addr;
+    size_t len;
+    int devId;
+};
+
+static void
+storageIOVToXferDlist(const std::vector<StorageIOV> &iov_list, nixl_xfer_dlist_t &dlist) {
+    nixlBasicDesc desc;
+    for (const auto &iov : iov_list) {
+        desc.addr = iov.addr;
+        desc.len = iov.len;
+        desc.devId = iov.devId;
+        dlist.addDesc(desc);
+    }
+}
+
+static inline nixl_status_t
+storageExecSingle(nixlAgent *agent, nixlXferReqH *req) {
+    nixl_status_t rc = agent->postXferReq(req);
+    while (NIXL_IN_PROG == rc) {
+        rc = agent->getXferStatus(req);
+    }
+    return rc;
+}
+
+static int
+storageExecIterations(nixlAgent *agent,
+                      const nixl_xfer_op_t op,
+                      nixl_xfer_dlist_t &local_desc,
+                      nixl_xfer_dlist_t &remote_desc,
+                      const std::string &target,
+                      nixl_opt_args_t &params,
+                      const int num_iter) {
+    nixlXferReqH *req = nullptr;
+    nixl_status_t create_rc =
+        agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
+    if (NIXL_SUCCESS != create_rc) return -1;
+
+    for (int i = 0; i < num_iter; ++i) {
+        nixl_status_t rc = storageExecSingle(agent, req);
+        if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+            agent->releaseXferReq(req);
+            return -1;
+        }
+    }
+    if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0))
+        return -1;
+    return 0;
+}
+
+static int64_t
+storageExecTransfer(nixlAgent *agent,
+                    const std::vector<std::vector<StorageIOV>> &local_iovs,
+                    const std::vector<std::vector<StorageIOV>> &remote_iovs,
+                    const std::string &agent_name,
+                    const nixl_xfer_op_t op,
+                    const int num_iter,
+                    const int num_threads) {
+    int ret = 0;
+    auto t_start = std::chrono::high_resolution_clock::now();
+#pragma omp parallel num_threads(num_threads)
+    {
+        const int tid = omp_get_thread_num();
+        const auto &local_iov = local_iovs[tid];
+        const auto &remote_iov = remote_iovs[tid];
+
+        nixl_xfer_dlist_t local_desc(DRAM_SEG);
+        nixl_xfer_dlist_t remote_desc(FILE_SEG);
+        storageIOVToXferDlist(local_iov, local_desc);
+        storageIOVToXferDlist(remote_iov, remote_desc);
+
+        nixl_opt_args_t params;
+        const int result = storageExecIterations(agent, op, local_desc, remote_desc,
+                                                  agent_name, params, num_iter);
+        if (__builtin_expect(result != 0, 0))
+            ret = result;
+    }
+    auto t_end = std::chrono::high_resolution_clock::now();
+    if (ret != 0) return -1;
+    return std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start).count();
+}
 
 class nixlNotPostedError : public std::runtime_error {
 public:
@@ -716,6 +807,135 @@ PYBIND11_MODULE(_bindings, m) {
                 throw_nixl_exception(ret);
                 return ret;
             },
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "parallelPostXferReqs",
+            [](nixlAgent &agent, std::vector<uintptr_t> reqhs, int num_threads) {
+                int n = reqhs.size();
+                if (n == 0) return;
+                if (num_threads <= 0 || num_threads > n) num_threads = n;
+
+                std::vector<std::thread> threads;
+                threads.reserve(num_threads);
+
+                auto worker = [&agent, &reqhs, n](int start, int end) {
+                    for (int i = start; i < end; i++) {
+                        nixlXferReqH *req = (nixlXferReqH *)reqhs[i];
+                        nixl_status_t rc = agent.postXferReq(req);
+                        while (NIXL_IN_PROG == rc) {
+                            rc = agent.getXferStatus(req);
+                        }
+                    }
+                };
+
+                int per_thread = (n + num_threads - 1) / num_threads;
+                for (int t = 0; t < num_threads; t++) {
+                    int start = t * per_thread;
+                    int end = std::min(start + per_thread, n);
+                    if (start < end) {
+                        threads.emplace_back(worker, start, end);
+                    }
+                }
+                for (auto &t : threads) t.join();
+            },
+            py::arg("reqhs"),
+            py::arg("num_threads") = 0,
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "parallelStorageTransfer",
+            [](nixlAgent &agent,
+               std::vector<std::vector<std::tuple<uint64_t, uint64_t, int>>> file_desc_lists,
+               const std::string &agent_name,
+               std::vector<uintptr_t> backends,
+               int num_iters, int warmup_iters, int num_threads) -> double {
+                // Uses nixlbench's exact execTransfer/execIterations functions
+                // (copied above) for guaranteed identical performance.
+
+                int n = file_desc_lists.size();
+                if (n == 0) return 0.0;
+                if (num_threads <= 0 || num_threads > n) num_threads = n;
+
+                long page_size = sysconf(_SC_PAGESIZE);
+                if (page_size <= 0) page_size = 4096;
+
+                // Build IOV lists and compute per-thread buffer sizes
+                std::vector<size_t> thread_buf_sizes(n);
+                size_t total_bytes = 0;
+                for (int i = 0; i < n; i++) {
+                    size_t sz = 0;
+                    for (auto &[off, len, fd] : file_desc_lists[i]) sz += len;
+                    sz = ((sz + page_size - 1) / page_size) * page_size;
+                    thread_buf_sizes[i] = sz;
+                    total_bytes += sz;
+                }
+
+                // Allocate + register DRAM buffers (main thread, like nixlbench allocateMemory)
+                nixl_opt_args_t reg_opt;
+                for (auto bk : backends)
+                    reg_opt.backends.push_back((nixlBackendH *)bk);
+
+                std::vector<void*> thread_bufs(n, nullptr);
+                std::vector<nixl_reg_dlist_t> dram_regs;
+                dram_regs.reserve(n);
+
+                for (int i = 0; i < n; i++) {
+                    void *buf = nullptr;
+                    if (posix_memalign(&buf, page_size, thread_buf_sizes[i]) != 0 || !buf)
+                        return -1.0;
+                    memset(buf, 0, thread_buf_sizes[i]);
+                    thread_bufs[i] = buf;
+
+                    nixl_reg_dlist_t reg_list(DRAM_SEG);
+                    nixlBlobDesc reg_desc;
+                    reg_desc.addr = (uintptr_t)buf;
+                    reg_desc.len = thread_buf_sizes[i];
+                    reg_desc.devId = 0;
+                    reg_list.addDesc(reg_desc);
+                    agent.registerMem(reg_list, &reg_opt);
+                    dram_regs.push_back(std::move(reg_list));
+                }
+
+                // Build local (DRAM) and remote (FILE) IOV lists for storageExecTransfer
+                std::vector<std::vector<StorageIOV>> local_iovs(n);
+                std::vector<std::vector<StorageIOV>> remote_iovs(n);
+                for (int i = 0; i < n; i++) {
+                    size_t buf_offset = 0;
+                    for (auto &[off, sz, fd] : file_desc_lists[i]) {
+                        local_iovs[i].push_back({(uintptr_t)thread_bufs[i] + buf_offset, sz, 0});
+                        remote_iovs[i].push_back({off, sz, fd});
+                        buf_offset += sz;
+                    }
+                }
+
+                // Warmup pass (not timed, like nixlbench transfer())
+                if (warmup_iters > 0) {
+                    int64_t wt = storageExecTransfer(
+                        &agent, local_iovs, remote_iovs, agent_name,
+                        NIXL_READ, warmup_iters, num_threads);
+                    if (wt < 0) { /* warmup error, continue anyway */ }
+                }
+
+                // Timed pass (uses nixlbench's exact OMP + transfer code)
+                int64_t elapsed_us = storageExecTransfer(
+                    &agent, local_iovs, remote_iovs, agent_name,
+                    NIXL_READ, num_iters, num_threads);
+
+                // Cleanup
+                for (int i = 0; i < n; i++) {
+                    agent.deregisterMem(dram_regs[i], &reg_opt);
+                    free(thread_bufs[i]);
+                }
+
+                if (elapsed_us < 0) return -1.0;
+                double wall_time = (double)elapsed_us / 1e6;
+                return (double)(total_bytes * num_iters) / wall_time / (1024.0*1024.0*1024.0);
+            },
+            py::arg("file_desc_lists"),
+            py::arg("agent_name"),
+            py::arg("backends") = std::vector<uintptr_t>({}),
+            py::arg("num_iters") = 20,
+            py::arg("warmup_iters") = 5,
+            py::arg("num_threads") = 0,
             py::call_guard<py::gil_scoped_release>())
         .def(
             "getXferTelemetry",
