@@ -25,7 +25,6 @@
 
 #include <string>
 #include <vector>
-#include <mutex>
 #include <memory>
 #include <chrono>
 #include <functional>
@@ -73,19 +72,25 @@ public:
     void
     addPostTime(std::chrono::microseconds post_time);
 
+    bool recording{false};
+
 private:
     void
     initializeTelemetry();
     void
     registerPeriodicTask(periodicTask &task);
     void
-    updateData(const std::string &event_name, nixl_telemetry_category_t category, uint64_t value);
+    updateData(const char *event_name, nixl_telemetry_category_t category, uint64_t value);
     bool
     writeEventHelper();
     std::unique_ptr<nixlTelemetryExporter> exporter_;
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
-    std::vector<nixlTelemetryEvent> events_;
-    std::mutex mutex_;
+    // Double buffer: writeBufIndex_ is 0|1 — same role as colleague's write* -> arr. Swap = one
+    // store.
+    std::vector<nixlTelemetryEvent> eventBuffers_[2];
+    size_t maxEventsBuffered_{0};
+    std::atomic<size_t> writeIdx_{0};
+    std::atomic<int> writeBufIndex_{0};
     asio::thread_pool pool_;
     periodicTask writeTask_;
     std::string agentName_;
