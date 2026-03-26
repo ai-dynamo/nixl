@@ -251,6 +251,13 @@ nixlLibfabricTopology::getNumaRailCount() const {
 
 void
 nixlLibfabricTopology::printTopologyInfo() const {
+    NIXL_INFO << "Topology: " << num_numa_nodes << " NUMA nodes, "
+              << num_devices << " NICs, "
+              << num_nvidia_accel << " NVIDIA GPUs, "
+              << num_aws_accel << " AWS accelerators";
+    if (avg_nic_speed > 0) {
+        NIXL_INFO << "Avg NIC bandwidth: " << avg_nic_speed << " Gbps";
+    }
     NIXL_TRACE << "=== Libfabric Topology Information ===";
     NIXL_TRACE << "Topology discovered: " << (topology_discovered ? "Yes" : "No");
     NIXL_TRACE << "Number of AWS accelerators: " << num_aws_accel;
@@ -263,13 +270,13 @@ nixlLibfabricTopology::printTopologyInfo() const {
     NIXL_TRACE << "Accelerator-PCI → EFA mapping:";
     for (const auto &pair : pci_to_efa_devices) {
         std::stringstream ss;
-        ss << "  Accelerator-PCI " << pair.first << " → [";
+        ss << "  " << pair.first << " → [";
         for (size_t i = 0; i < pair.second.size(); ++i) {
             if (i > 0) ss << ", ";
             ss << pair.second[i];
         }
         ss << "]";
-        NIXL_TRACE << ss.str();
+        NIXL_INFO << ss.str();
     }
     NIXL_TRACE << "Host memory (DRAM) will limit number of EFA devices used per-NUMA node "
                   "according to maximum PCIe switch bandwidth";
