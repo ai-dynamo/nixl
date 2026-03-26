@@ -316,11 +316,11 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         vramInitCtx();
         // CUDA address workaround
         if (nixl::config::checkExistence("NIXL_DISABLE_CUDA_ADDR_WA")) {
-            NIXL_DEBUG << "Disabling CUDA address workaround";
+            NIXL_INFO << "CUDA address workaround: disabled";
             cuda_addr_wa_ = false;
         } else {
             cuda_addr_wa_ = true;
-            NIXL_DEBUG << "CUDA address workaround enabled";
+            NIXL_INFO << "CUDA address workaround: enabled";
         }
     }
 #endif
@@ -332,14 +332,14 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
     if (getInitParam("striping_threshold", threshold_str) == NIXL_SUCCESS) {
         try {
             striping_threshold_ = std::stoull(threshold_str);
-            NIXL_DEBUG << "Using custom striping threshold: " << striping_threshold_ << " bytes";
+            NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes (custom)";
         }
         catch (const std::exception &e) {
             NIXL_WARN << "Invalid striping_threshold value '" << threshold_str
                       << "', using default: " << striping_threshold_ << " bytes";
         }
     } else {
-        NIXL_DEBUG << "Using default striping threshold: " << striping_threshold_ << " bytes";
+        NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes (default)";
     }
 
     // Initialize Rail Manager which will discover the topology and create all rails.
@@ -556,7 +556,7 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
 
     // Remove connection from map
     connections_.erase(remote_agent);
-    NIXL_DEBUG << "Connection erased from the connection map for agent: " << remote_agent;
+    NIXL_INFO << "Disconnected from agent: " << remote_agent;
     return NIXL_SUCCESS;
 }
 
