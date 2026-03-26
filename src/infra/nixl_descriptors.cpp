@@ -134,7 +134,7 @@ void nixlBlobDesc::print(const std::string &suffix) const {
 template<class T> nixlDescList<T>::nixlDescList(const nixl_mem_t &type, const int &init_size) {
     static_assert (std::is_base_of<nixlBasicDesc, T>::value);
     this->type = type;
-    this->descs.resize(init_size);
+    this->descs.reserve(init_size);
 }
 
 template <class T>
@@ -190,6 +190,11 @@ nixlDescList<T>::nixlDescList(nixlSerDes* deserializer) {
 
 template <class T>
 void nixlDescList<T>::addDesc (const T &desc) {
+    if (desc.len == 0) {
+        NIXL_WARN << "addDesc: zero-length descriptor detected"
+                  << " (addr=0x" << std::hex << desc.addr << std::dec << ", devId=" << desc.devId
+                  << ")";
+    }
     descs.push_back(desc);
 }
 
