@@ -20,6 +20,7 @@
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "libfabric_common.h"
+#include "libfabric_tracepoints.h"
 
 #include <cstring>
 #include <stdexcept>
@@ -896,6 +897,7 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
     uint64_t msg_type = NIXL_GET_MSG_TYPE_FROM_IMM(comp->data);
     uint16_t agent_idx = NIXL_GET_AGENT_INDEX_FROM_IMM(comp->data);
     uint32_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(comp->data);
+    NIXL_TRACE_RECV_COMPLETION(rail_id, agent_idx, xfer_id, comp->len);
     NIXL_TRACE << "Received control message type " << msg_type << " agent_idx=" << agent_idx
                << " XFER_ID=" << xfer_id << " imm_data=" << std::hex << comp->data << std::dec;
 
@@ -950,6 +952,7 @@ nixlLibfabricRail::processRemoteWriteCompletion(struct fi_cq_data_entry *comp) c
     uint64_t msg_type = NIXL_GET_MSG_TYPE_FROM_IMM(comp->data);
     uint16_t agent_idx = NIXL_GET_AGENT_INDEX_FROM_IMM(comp->data);
     uint32_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(comp->data);
+    NIXL_TRACE_REMOTE_WRITE_COMPLETION(rail_id, agent_idx, xfer_id, comp->len);
 
     // For remote write completions, we don't need to post a new receive
     // The write operation doesn't consume a receive buffer
@@ -1027,6 +1030,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
                << " XFER_ID=" << NIXL_GET_XFER_ID_FROM_IMM(immediate_data)
                << " dest_addr=" << dest_addr << std::dec << " context=" << &req->ctx;
 
+    NIXL_TRACE_POST_SEND_BEGIN(rail_id, req->buffer_size, req->xfer_id);
     // Retry indefinitely until senddata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
     int attempt = 0;
@@ -1041,6 +1045,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
             NIXL_TRACE << "Send posted successfully"
                        << (attempt > 0 ? " after " + std::to_string(attempt + 1) + " attempts" :
                                          "");
+            NIXL_TRACE_POST_SEND_END(rail_id, req->buffer_size, attempt, req->xfer_id);
             return NIXL_SUCCESS;
         }
 
@@ -1095,6 +1100,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                << " remote_key=" << remote_key << " context=" << &req->ctx;
 
     // Retry indefinitely until writedata succeeds or fails for all providers
+    NIXL_TRACE_POST_WRITE_BEGIN(rail_id, length, req->xfer_id);
     int ret = -FI_EAGAIN;
     int attempt = 0;
 
@@ -1115,6 +1121,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
             NIXL_TRACE << "RDMA write posted successfully"
                        << (attempt > 0 ? " after " + std::to_string(attempt + 1) + " attempts" :
                                          "");
+            NIXL_TRACE_POST_WRITE_END(rail_id, length, attempt, req->xfer_id);
             return NIXL_SUCCESS;
         }
 
@@ -1167,6 +1174,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
                << " dest_addr=" << dest_addr << " remote_addr=" << (void *)remote_addr
                << " remote_key=" << remote_key << " context=" << &req->ctx;
 
+    NIXL_TRACE_POST_READ_BEGIN(rail_id, length, req->xfer_id);
     // Retry indefinitely until readdata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
     int attempt = 0;
@@ -1187,6 +1195,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
             NIXL_TRACE << "RDMA read posted successfully"
                        << (attempt > 0 ? " after " + std::to_string(attempt + 1) + " attempts" :
                                          "");
+            NIXL_TRACE_POST_READ_END(rail_id, length, attempt, req->xfer_id);
             return NIXL_SUCCESS;
         }
 
