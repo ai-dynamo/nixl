@@ -229,8 +229,7 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
         throw std::runtime_error("Failed to create rails for libfabric rail manager");
     }
 
-    NIXL_INFO << "Created " << rails_.size()
-              << " rails using provider=" << selected_provider_name;
+    NIXL_INFO << "Created " << rails_.size() << " rails using provider=" << selected_provider_name;
 }
 
 nixlLibfabricRailManager::~nixlLibfabricRailManager() {
@@ -799,8 +798,8 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
                    << " (mr=" << static_cast<const void *>(mr) << ", key=" << key << ")";
     }
 
-    NIXL_INFO << "Registered memory on " << selected_rails.size() << " rails, mem_type="
-              << mem_type << " device=" << device_id;
+    NIXL_INFO << "Registered memory on " << selected_rails.size() << " rails, mem_type=" << mem_type
+              << " device=" << device_id;
 
     return NIXL_SUCCESS;
 }
