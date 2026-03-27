@@ -97,6 +97,15 @@ nixlLibfabricTopology::discoverTopology() {
                 NIXL_ERROR << "Failed to build accelerator to EFA mapping";
                 return status;
             }
+        } else {
+            // normally the nic info map is built as part of accelerator <--> EFA mapping
+            // but on machines without any accelerators (e.g. C series), we need to build this
+            // map separately (required for NUMA-aware rail selection)
+            status = buildNicInfoMap();
+            if (status != NIXL_SUCCESS) {
+                NIXL_ERROR << "Failed to build NIC info map";
+                return status;
+            }
         }
     } else {
         // For TCP/sockets devices, bypass complex topology discovery
@@ -574,34 +583,14 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
 
         if (hwloc_node) {
             NicInfo nic;
-            nic.libfabric_name = libfabric_name;
-            nic.hwloc_node = hwloc_node;
-            nic.line_speed = getPcieDevSpeed(pcie_addr);
-            // NOTE: upstream link speed is given in decimal GB/s (i.e. multiple of 10^9) as float,
-            // so we convert it to size_t decimal Gbps
-            nic.upstream_link_speed = (size_t)(hwloc_node->attr->pcidev.linkspeed * 8.0f);
-            nic.numa_node_id = getPcieDevNumaNodeId(hwloc_node, pcie_addr);
-            nic.domain_id = domain_id;
-            nic.bus_id = bus_id;
-            nic.device_id = device_id;
-            nic.function_id = function_id;
-            if (!getPcieDevParentSwitchData(hwloc_node,
-                                            pcie_addr,
-                                            nic.parent_switch_domain,
-                                            nic.parent_switch_bus_id,
-                                            nic.parent_switch_link_speed)) {
-                NIXL_TRACE << "Could not locate parent PCIe bridge/switch of NIC "
-                           << libfabric_name;
-                nic.parent_switch_domain = UINT16_MAX;
-                nic.parent_switch_bus_id = UINT8_MAX;
-            }
-            nic_info_map.insert(NicInfoMap::value_type(libfabric_name, nic));
-            NIXL_DEBUG << "EFA device " << libfabric_name << " mapped to NUMA node "
-                       << nic.numa_node_id << " (PCIe address " << pcie_addr
-                       << ", speed: " << nic.line_speed
-                       << " Gbps, upstream link speed: " << nic.upstream_link_speed
-                       << " Gbps, parent switch domain/bus-id: " << nic.parent_switch_domain << "/"
-                       << nic.parent_switch_bus_id << ")";
+            collectNicInfo(nic,
+                           libfabric_name,
+                           pcie_addr,
+                           hwloc_node,
+                           domain_id,
+                           bus_id,
+                           device_id,
+                           function_id);
             discovered_nics.push_back(nic);
             NIXL_TRACE << "Correlated NIC: " << pcie_addr << " → " << libfabric_name;
         } else {
@@ -672,6 +661,56 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
         }
     }
     // step 5: compute the capacity limit of each NUMA node and some other topology metrics
+    buildNumaSpeedMap();
+    calcAvgNumaNodeBandwidth();
+    calcAvgNicBandwidth();
+    calcAvgNicUpstreamBandwidth();
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlLibfabricTopology::buildNicInfoMap() {
+    // Build NIC info structures by correlating libfabric with hwloc
+    // Discover NICs by correlating libfabric devices with hwloc objects
+    for (const auto &pair : pcie_to_libfabric_map) {
+        // parse PCIe address from string
+        const std::string &pcie_addr = pair.first;
+        const std::string &libfabric_name = pair.second;
+
+        // Parse PCIe address
+        uint16_t domain_id;
+        uint8_t bus_id, device_id, function_id;
+        if (sscanf(pcie_addr.c_str(),
+                   "%hx:%hhx:%hhx.%hhx",
+                   &domain_id,
+                   &bus_id,
+                   &device_id,
+                   &function_id) != 4) {
+            NIXL_WARN << "Failed to parse PCIe address: " << pcie_addr;
+            continue;
+        }
+
+        // Find corresponding hwloc object
+        hwloc_obj_t hwloc_node =
+            hwloc_get_pcidev_by_busid(hwloc_topology, domain_id, bus_id, device_id, function_id);
+
+        if (hwloc_node) {
+            NicInfo nic;
+            collectNicInfo(nic,
+                           libfabric_name,
+                           pcie_addr,
+                           hwloc_node,
+                           domain_id,
+                           bus_id,
+                           device_id,
+                           function_id);
+            NIXL_TRACE << "Correlated NIC: " << pcie_addr << " → " << libfabric_name;
+        } else {
+            NIXL_WARN << "Could not find hwloc object for PCIe address: " << pcie_addr;
+        }
+    }
+
+    // now compute the capacity limit of each NUMA node and some other topology metrics
     buildNumaSpeedMap();
     calcAvgNumaNodeBandwidth();
     calcAvgNicBandwidth();
@@ -875,6 +914,44 @@ nixlLibfabricTopology::getPcieDevParentSwitchData(hwloc_obj_t obj,
 }
 
 void
+nixlLibfabricTopology::collectNicInfo(NicInfo &nic,
+                                      const std::string &name,
+                                      const std::string &pcie_addr,
+                                      hwloc_obj_t hwloc_node,
+                                      uint16_t domain_id,
+                                      uint8_t bus_id,
+                                      uint8_t device_id,
+                                      uint8_t function_id) {
+
+    nic.libfabric_name = name;
+    nic.hwloc_node = hwloc_node;
+    nic.line_speed = getPcieDevSpeed(pcie_addr);
+    // NOTE: upstream link speed is given in decimal GB/s (i.e. multiple of 10^9) as float,
+    // so we convert it to size_t decimal Gbps
+    nic.upstream_link_speed = (size_t)(hwloc_node->attr->pcidev.linkspeed * 8.0f);
+    nic.numa_node_id = getPcieDevNumaNodeId(hwloc_node, pcie_addr);
+    nic.domain_id = domain_id;
+    nic.bus_id = bus_id;
+    nic.device_id = device_id;
+    nic.function_id = function_id;
+    if (!getPcieDevParentSwitchData(hwloc_node,
+                                    pcie_addr,
+                                    nic.parent_switch_domain,
+                                    nic.parent_switch_bus_id,
+                                    nic.parent_switch_link_speed)) {
+        NIXL_TRACE << "Could not locate parent PCIe bridge/switch of NIC " << name;
+        nic.parent_switch_domain = UINT16_MAX;
+        nic.parent_switch_bus_id = UINT8_MAX;
+    }
+    nic_info_map.insert(NicInfoMap::value_type(name, nic));
+    NIXL_DEBUG << "EFA device " << name << " mapped to NUMA node " << nic.numa_node_id
+               << " (PCIe address " << pcie_addr << ", speed: " << nic.line_speed
+               << " Gbps, upstream link speed: " << nic.upstream_link_speed
+               << " Gbps, parent switch domain/bus-id: " << nic.parent_switch_domain << "/"
+               << nic.parent_switch_bus_id << ")";
+}
+
+void
 nixlLibfabricTopology::buildNumaSpeedMap() {
     // build the NUMA bandwidth limit map
     // traverse from each NIC to its topmost parent bridge object and record link info
@@ -966,6 +1043,14 @@ nixlLibfabricTopology::buildNumaSpeedMap() {
                 }
             }
         }
+    }
+
+    // if nothing usable was found then stop
+    // (usable means a NIC with parent switch having non-zero link speed)
+    if (link_speed_map.empty()) {
+        NIXL_TRACE
+            << "Could not find any NIC connected to a PCIe switch, NIC speed map building aborted";
+        return;
     }
 
     // now we process the link speed map and accumulate per NUMA node
