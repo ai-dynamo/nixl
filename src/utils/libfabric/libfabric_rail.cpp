@@ -46,8 +46,8 @@ RequestPool::initializeBasePool(size_t pool_size) {
     }
 
     NIXL_DEBUG << "InitializeBasePool - Rail " << rail_id_
-              << " completed. Total requests: " << requests_.size()
-              << " Free requests: " << free_indices_.size();
+               << " completed. Total requests: " << requests_.size()
+               << " Free requests: " << free_indices_.size();
 }
 
 void
@@ -140,7 +140,7 @@ RequestPool::allocateReq(uint32_t req_id) {
         }
 
         NIXL_DEBUG << "AllocateReq on Rail " << rail_id_ << " successfully expanded pool from "
-                  << old_size << " to " << requests_.size() << " requests";
+                   << old_size << " to " << requests_.size() << " requests";
     }
 
     size_t idx = free_indices_.top();
@@ -208,8 +208,8 @@ ControlRequestPool::createBufferChunk(size_t chunk_size, BufferChunk &chunk) {
     }
 
     NIXL_DEBUG << "CreateBufferChunk on Rail " << rail_id_ << " successfully created buffer chunk:"
-              << " buffer=" << chunk.buffer << " size=" << chunk.size << " mr=" << chunk.mr
-              << " mr_key=" << fi_mr_key(chunk.mr);
+               << " buffer=" << chunk.buffer << " size=" << chunk.size << " mr=" << chunk.mr
+               << " mr_key=" << fi_mr_key(chunk.mr);
 
     return NIXL_SUCCESS;
 }
@@ -242,7 +242,7 @@ ControlRequestPool::initialize(struct fid_domain *domain) {
     }
 
     NIXL_DEBUG << "InitializeWithBuffers on Rail " << rail_id_ << " successfully initialized with "
-              << buffer_chunks_.size() << " buffer chunks";
+               << buffer_chunks_.size() << " buffer chunks";
 
     return NIXL_SUCCESS;
 }
@@ -250,7 +250,7 @@ ControlRequestPool::initialize(struct fid_domain *domain) {
 nixl_status_t
 ControlRequestPool::expandPool() {
     NIXL_DEBUG << "Expanding control request pool on rail " << rail_id_ << " from "
-              << requests_.size() << " to " << (requests_.size() * 2) << " requests";
+               << requests_.size() << " to " << (requests_.size() * 2) << " requests";
 
     size_t current_size = requests_.size();
     size_t expansion_size = initial_pool_size_; // Add same amount as initial size
@@ -293,7 +293,8 @@ ControlRequestPool::expandPool() {
     }
 
     NIXL_DEBUG << "Successfully expanded control request pool on rail " << rail_id_ << " to "
-              << requests_.size() << " requests with " << buffer_chunks_.size() << " buffer chunks";
+               << requests_.size() << " requests with " << buffer_chunks_.size()
+               << " buffer chunks";
 
     return NIXL_SUCCESS;
 }
@@ -347,7 +348,7 @@ DataRequestPool::initialize() {
 nixl_status_t
 DataRequestPool::expandPool() {
     NIXL_DEBUG << "Expanding data request pool on rail " << rail_id_ << " from " << requests_.size()
-              << " to " << (requests_.size() * 2) << " requests";
+               << " to " << (requests_.size() * 2) << " requests";
 
     size_t current_size = requests_.size();
     size_t expansion_size = initial_pool_size_; // Add same amount as initial size
@@ -364,7 +365,7 @@ DataRequestPool::expandPool() {
     }
 
     NIXL_DEBUG << "Successfully expanded data request pool on rail " << rail_id_ << " to "
-              << requests_.size() << " requests";
+               << requests_.size() << " requests";
 
     return NIXL_SUCCESS;
 }
@@ -590,7 +591,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
 
         // Post initial pool of receives using new resource management system
         NIXL_DEBUG << "Pre-posting " << NIXL_LIBFABRIC_RECV_POOL_SIZE << " recv requests for rail "
-                  << rail_id;
+                   << rail_id;
 
         for (size_t i = 0; i < NIXL_LIBFABRIC_RECV_POOL_SIZE; ++i) {
             nixlLibfabricReq *recv_req = allocateControlRequest(
@@ -610,7 +611,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         }
 
         NIXL_DEBUG << "Successfully pre-posted " << NIXL_LIBFABRIC_RECV_POOL_SIZE
-                  << " recv requests for rail " << rail_id;
+                   << " recv requests for rail " << rail_id;
         NIXL_TRACE << "Successfully initialized rail " << rail_id;
     }
     catch (...) {
@@ -1051,7 +1052,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
             // Log every N attempts to avoid log spam
             if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
                 NIXL_DEBUG << "fi_senddata still retrying EAGAIN on rail " << rail_id << " after "
-                          << attempt << " attempts";
+                           << attempt << " attempts";
             } else {
                 NIXL_TRACE << "fi_senddata returned EAGAIN on rail " << rail_id
                            << ", retrying (attempt " << attempt << ")";
@@ -1125,7 +1126,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
             // Log every N attempts to avoid log spam
             if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
                 NIXL_DEBUG << "fi_writedata still retrying EAGAIN on rail " << rail_id << " after "
-                          << attempt << " attempts";
+                           << attempt << " attempts";
             } else {
                 NIXL_TRACE << "fi_writedata returned EAGAIN on rail " << rail_id
                            << ", retrying (attempt " << attempt << ")";
@@ -1197,7 +1198,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
             // Log every N attempts to avoid log spam
             if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
                 NIXL_DEBUG << "fi_read still retrying EAGAIN on rail " << rail_id << " after "
-                          << attempt << " attempts";
+                           << attempt << " attempts";
             } else {
                 NIXL_TRACE << "fi_read returned EAGAIN on rail " << rail_id
                            << ", retrying (attempt " << attempt << ")";
