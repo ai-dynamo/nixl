@@ -384,7 +384,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         }
 
         NIXL_INFO << "Created self-connection for agent: " << localAgent << " on "
-                   << rail_manager.getNumRails() << " rails";
+                  << rail_manager.getNumRails() << " rails";
 
         // Start Progress thread for rail completion processing
         if (progress_thread_enabled_) {
@@ -393,7 +393,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
             }
 
             NIXL_INFO << "Starting Progress thread for rails with delay: "
-                       << progress_thread_delay_.count() << " microseconds";
+                      << progress_thread_delay_.count() << " microseconds";
             progress_thread_stop_ = false;
             progress_thread_ = std::thread(&nixlLibfabricEngine::progressThread, this);
 
@@ -496,7 +496,7 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
     }
 
     NIXL_INFO << "Successfully stored multirail connection for " << remote_agent << " on "
-               << rail_manager.getNumRails() << " rails";
+              << rail_manager.getNumRails() << " rails";
     return NIXL_SUCCESS;
 }
 
@@ -511,7 +511,7 @@ nixlLibfabricEngine::connect(const std::string &remote_agent) {
     auto it = connections_.find(remote_agent);
     if (it != connections_.end() && it->second->overall_state_ == ConnectionState::CONNECTED) {
         NIXL_INFO << "Connection already established for " << remote_agent
-                   << ", fi_addr=" << it->second->rail_remote_addr_list_[0][0];
+                  << ", fi_addr=" << it->second->rail_remote_addr_list_[0][0];
         return NIXL_SUCCESS;
     }
 
@@ -578,7 +578,7 @@ nixlLibfabricEngine::createAgentConnection(
 
     if (data_rail_endpoints.size() != rail_manager.getNumRails()) {
         NIXL_DEBUG << "Rail count (local: " << rail_manager.getNumRails()
-                  << ", remote: " << data_rail_endpoints.size() << ")";
+                   << ", remote: " << data_rail_endpoints.size() << ")";
     }
 
     // Create connection object
@@ -612,7 +612,7 @@ nixlLibfabricEngine::createAgentConnection(
     connections_[agent_name] = conn;
 
     NIXL_INFO << "Successfully created connection for agent: " << agent_name << " on "
-               << rail_manager.getNumRails() << " rails";
+              << rail_manager.getNumRails() << " rails";
 
     return NIXL_SUCCESS;
 }
@@ -659,7 +659,7 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
 
     conn_info->overall_state_ = ConnectionState::CONNECTED;
     NIXL_INFO << "Connection state for agent " << remote_agent << " is now "
-               << conn_info->overall_state_;
+              << conn_info->overall_state_;
 
     return NIXL_SUCCESS;
 }

@@ -247,10 +247,8 @@ nixlLibfabricTopology::getNumaRailCount() const {
 
 void
 nixlLibfabricTopology::printTopologyInfo() const {
-    NIXL_INFO << "Topology: " << num_numa_nodes << " NUMA nodes, "
-              << num_devices << " NICs, "
-              << num_nvidia_accel << " NVIDIA GPUs, "
-              << num_aws_accel << " AWS accelerators";
+    NIXL_INFO << "Topology: " << num_numa_nodes << " NUMA nodes, " << num_devices << " NICs, "
+              << num_nvidia_accel << " NVIDIA GPUs, " << num_aws_accel << " AWS accelerators";
     if (avg_nic_speed > 0) {
         NIXL_INFO << "Avg NIC bandwidth: " << avg_nic_speed << " Gbps";
     }
