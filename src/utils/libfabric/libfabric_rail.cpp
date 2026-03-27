@@ -1039,7 +1039,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
                << " XFER_ID=" << NIXL_GET_XFER_ID_FROM_IMM(immediate_data)
                << " dest_addr=" << dest_addr << std::dec << " context=" << &req->ctx;
 
-    NIXL_TRACE_POST_SEND_BEGIN(rail_id, req->buffer_size);
+    NIXL_TRACE_POST_SEND_BEGIN(rail_id, req->buffer_size, req->xfer_id);
     // Retry indefinitely until senddata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
     int attempt = 0;
@@ -1062,7 +1062,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
             NIXL_TRACE << "Send posted successfully"
                        << (attempt > 0 ? " after " + std::to_string(attempt + 1) + " attempts" :
                                          "");
-            NIXL_TRACE_POST_SEND_END(rail_id, req->buffer_size, attempt);
+            NIXL_TRACE_POST_SEND_END(rail_id, req->buffer_size, attempt, req->xfer_id);
             return NIXL_SUCCESS;
         }
 

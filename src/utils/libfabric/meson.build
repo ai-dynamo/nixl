@@ -58,6 +58,8 @@ libfabric_utils_cpp_args = []
 if get_option('enable_trace')
     libfabric_utils_deps += [lttng_ust_dep]
     libfabric_utils_cpp_args += ['-DHAVE_LIBLTTNG_UST=1']
+else
+    libfabric_utils_cpp_args += ['-DHAVE_LIBLTTNG_UST=0']
 endif
 
 # Detect optional libfabric features at compile time to enable/disable

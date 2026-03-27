@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2026 Amazon.com, Inc. and affiliates.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,8 +37,9 @@
 
 #if HAVE_LIBLTTNG_UST == 1
 
-#if !defined(NIXL_LIBFABRIC_TRACEPOINTS_H) || defined(LTTNG_UST_TRACEPOINT_HEADER_MULTI_READ)
-#define NIXL_LIBFABRIC_TRACEPOINTS_H
+#if !defined(NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_TRACEPOINTS_H) || \
+    defined(LTTNG_UST_TRACEPOINT_HEADER_MULTI_READ)
+#define NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_TRACEPOINTS_H
 
 #include <lttng/tracepoint.h>
 
@@ -65,7 +66,7 @@ LTTNG_UST_TRACEPOINT_EVENT(
 
 LTTNG_UST_TRACEPOINT_EVENT(
     nixl_libfabric,
-    transfer_end,
+    transfer_submitted,
     LTTNG_UST_TP_ARGS(size_t, submitted_count, uint16_t, xfer_id),
     LTTNG_UST_TP_FIELDS(lttng_ust_field_integer(size_t, submitted_count, submitted_count)
                             lttng_ust_field_integer(uint16_t, xfer_id, xfer_id)))
@@ -110,19 +111,22 @@ LTTNG_UST_TRACEPOINT_EVENT(
 
 /* ===== Send ===== */
 
-LTTNG_UST_TRACEPOINT_EVENT(nixl_libfabric,
-                           post_send_begin,
-                           LTTNG_UST_TP_ARGS(size_t, rail_id, size_t, length),
-                           LTTNG_UST_TP_FIELDS(lttng_ust_field_integer(size_t, rail_id, rail_id)
-                                                   lttng_ust_field_integer(size_t, length, length)))
+LTTNG_UST_TRACEPOINT_EVENT(
+    nixl_libfabric,
+    post_send_begin,
+    LTTNG_UST_TP_ARGS(size_t, rail_id, size_t, length, uint16_t, xfer_id),
+    LTTNG_UST_TP_FIELDS(lttng_ust_field_integer(size_t, rail_id, rail_id)
+                            lttng_ust_field_integer(size_t, length, length)
+                                lttng_ust_field_integer(uint16_t, xfer_id, xfer_id)))
 
 LTTNG_UST_TRACEPOINT_EVENT(
     nixl_libfabric,
     post_send_end,
-    LTTNG_UST_TP_ARGS(size_t, rail_id, size_t, length, int, attempts),
+    LTTNG_UST_TP_ARGS(size_t, rail_id, size_t, length, int, attempts, uint16_t, xfer_id),
     LTTNG_UST_TP_FIELDS(lttng_ust_field_integer(size_t, rail_id, rail_id)
                             lttng_ust_field_integer(size_t, length, length)
-                                lttng_ust_field_integer(int, attempts, attempts)))
+                                lttng_ust_field_integer(int, attempts, attempts)
+                                    lttng_ust_field_integer(uint16_t, xfer_id, xfer_id)))
 
 /* ===== Completion events (receiver side) ===== */
 
@@ -144,7 +148,7 @@ LTTNG_UST_TRACEPOINT_EVENT(
                                 lttng_ust_field_integer(uint16_t, xfer_id, xfer_id)
                                     lttng_ust_field_integer(size_t, length, length)))
 
-#endif /* !defined(NIXL_LIBFABRIC_TRACEPOINTS_H) || \
+#endif /* !defined(NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_TRACEPOINTS_H) || \
           defined(LTTNG_UST_TRACEPOINT_HEADER_MULTI_READ) */
 
 #include <lttng/tracepoint-event.h>
@@ -165,8 +169,8 @@ LTTNG_UST_TRACEPOINT_EVENT(
 
 #define NIXL_TRACE_TRANSFER_BEGIN(op, sz, nr, stripe, xid) \
     lttng_ust_tracepoint(nixl_libfabric, transfer_begin, op, sz, nr, stripe, xid)
-#define NIXL_TRACE_TRANSFER_END(cnt, xid) \
-    lttng_ust_tracepoint(nixl_libfabric, transfer_end, cnt, xid)
+#define NIXL_TRACE_TRANSFER_SUBMITTED(cnt, xid) \
+    lttng_ust_tracepoint(nixl_libfabric, transfer_submitted, cnt, xid)
 
 #define NIXL_TRACE_POST_WRITE_BEGIN(rail, len, xid) \
     lttng_ust_tracepoint(nixl_libfabric, post_write_begin, rail, len, xid)
@@ -178,10 +182,10 @@ LTTNG_UST_TRACEPOINT_EVENT(
 #define NIXL_TRACE_POST_READ_END(rail, len, att, xid) \
     lttng_ust_tracepoint(nixl_libfabric, post_read_end, rail, len, att, xid)
 
-#define NIXL_TRACE_POST_SEND_BEGIN(rail, len) \
-    lttng_ust_tracepoint(nixl_libfabric, post_send_begin, rail, len)
-#define NIXL_TRACE_POST_SEND_END(rail, len, att) \
-    lttng_ust_tracepoint(nixl_libfabric, post_send_end, rail, len, att)
+#define NIXL_TRACE_POST_SEND_BEGIN(rail, len, xid) \
+    lttng_ust_tracepoint(nixl_libfabric, post_send_begin, rail, len, xid)
+#define NIXL_TRACE_POST_SEND_END(rail, len, att, xid) \
+    lttng_ust_tracepoint(nixl_libfabric, post_send_end, rail, len, att, xid)
 
 #define NIXL_TRACE_REMOTE_WRITE_COMPLETION(rail, aidx, xid, len) \
     lttng_ust_tracepoint(nixl_libfabric, remote_write_completion, rail, aidx, xid, len)

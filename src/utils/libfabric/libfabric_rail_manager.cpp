@@ -381,6 +381,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
         if (!req) {
             NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
+            NIXL_TRACE_TRANSFER_SUBMITTED(0, xfer_id);
             return NIXL_ERR_BACKEND;
         }
         // Set completion callback and populate request
@@ -433,6 +434,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             NIXL_ERROR << "Failed to submit "
                        << (op_type == nixlLibfabricReq::WRITE ? "write" : "read") << " on rail "
                        << rail_id << ", request released";
+            NIXL_TRACE_TRANSFER_SUBMITTED(0, xfer_id);
             return status;
         }
 
@@ -459,6 +461,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             if (!req) {
                 NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
                 return NIXL_ERR_BACKEND;
+                NIXL_TRACE_TRANSFER_SUBMITTED(0, xfer_id);
             }
 
             req->completion_callback = completion_callback;
@@ -514,6 +517,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                            << (op_type == nixlLibfabricReq::WRITE ? "write" : "read") << " on rail "
                            << rail_id << ", request released";
                 return status;
+                NIXL_TRACE_TRANSFER_SUBMITTED(0, xfer_id);
             }
 
             // Track submitted request
@@ -524,7 +528,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     }
 
     NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
-    NIXL_TRACE_TRANSFER_END(submitted_count_out, xfer_id);
+    NIXL_TRACE_TRANSFER_SUBMITTED(submitted_count_out, xfer_id);
 
     return NIXL_SUCCESS;
 }
