@@ -37,8 +37,8 @@ void
 resetSeqId();
 } // namespace LibfabricUtils
 
-// Static round-robin counter for rail selection
-static std::atomic<size_t> round_robin_counter{0};
+// Thread-local round-robin counter for rail selection (avoids cross-core cache-line bouncing)
+static thread_local size_t round_robin_counter{0};
 static const std::string NUM_RAILS_TAG{"num_rails"};
 
 // retrieves the NUMA node id of a given memory buffer
@@ -365,7 +365,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     NIXL_DEBUG << "use_striping=" << use_striping;
     if (!use_striping) {
         // Round-robin: use one rail for entire transfer
-        const auto counter_value = round_robin_counter.fetch_add(1);
+        const auto counter_value = round_robin_counter++;
         const size_t rail_id = selected_rails[counter_value % selected_rails.size()];
         const size_t remote_ep_id =
             remote_selected_endpoints[counter_value % remote_selected_endpoints.size()];
