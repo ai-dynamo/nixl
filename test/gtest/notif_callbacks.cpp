@@ -35,12 +35,12 @@ struct testAgent {
     createBackend() {
         {
             const auto status = agent.getPluginParams(ucx, memories, params);
-            ASSERT_EQ(status, NIXL_SUCCESS);
+            EXPECT_EQ(status, NIXL_SUCCESS);
         }
         {
             const auto status = agent.createBackend(ucx, params, backend);
-            ASSERT_EQ(status, NIXL_SUCCESS);
-            ASSERT_NE(backend, nullptr);
+            EXPECT_EQ(status, NIXL_SUCCESS);
+            EXPECT_NE(backend, nullptr);
         }
     }
 
@@ -49,13 +49,13 @@ struct testAgent {
         std::string md;
         {
             const auto status = src.agent.getLocalMD(md);
-            ASSERT_EQ(status, NIXL_SUCCESS);
+            EXPECT_EQ(status, NIXL_SUCCESS);
         }
         {
             std::string name;
             const auto status = agent.loadRemoteMD(md, name);
-            ASSERT_EQ(status, NIXL_SUCCESS);
-            ASSERT_EQ(name, src_name);
+            EXPECT_EQ(status, NIXL_SUCCESS);
+            EXPECT_EQ(name, src_name);
         }
     }
 
@@ -75,14 +75,14 @@ struct agentPair {
     void
     genNotif(const std::string &msg) {
         const auto status = agent1.agent.genNotif(name2, msg);
-        ASSERT_EQ(status, NIXL_SUCCESS);
+        EXPECT_EQ(status, NIXL_SUCCESS);
     }
 
     [[nodiscard]] nixl_notifs_t
     getNotifs() {
         nixl_notifs_t result;
         const auto status = agent2.agent.getNotifs(result);
-        ASSERT_EQ(status, NIXL_SUCCESS);
+        EXPECT_EQ(status, NIXL_SUCCESS);
         return result;
     }
 
