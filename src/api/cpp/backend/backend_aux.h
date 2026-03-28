@@ -14,13 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __BACKEND_AUX_H_
-#define __BACKEND_AUX_H_
+#ifndef NIXL_SRC_API_CPP_BACKEND_BACKEND_AUX_H
+#define NIXL_SRC_API_CPP_BACKEND_BACKEND_AUX_H
 
 #include <mutex>
 #include <string>
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
+#include "notif_callbacks.h"
 #include "common/nixl_time.h"
 
 // Might be removed to be decided by backend, or changed to high
@@ -53,6 +54,7 @@ class nixlBackendInitParams {
         nixlTime::us_t    pthrDelay;
         nixl_thread_sync_t syncMode;
         bool enableTelemetry_;
+        nixlNotifCallbacks notifCallbacks;
 };
 
 // Pure virtual class to have a common pointer type

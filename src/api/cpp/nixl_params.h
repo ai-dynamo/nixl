@@ -14,12 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _NIXL_PARAMS_H
-#define _NIXL_PARAMS_H
+#ifndef NIXL_SRC_API_CPP_NIXL_PARAMS_H
+#define NIXL_SRC_API_CPP_NIXL_PARAMS_H
 
 #include <string>
+#include <chrono>
 #include <cstdint>
+
 #include "nixl_types.h"
+#include "backend/notif_callbacks.h"
 
 /**
  * @struct nixlAgentConfig
@@ -67,6 +70,13 @@ struct nixlAgentConfig {
      *      Timeout for waiting for metadata changes when watching etcd keys.
      */
     std::chrono::microseconds etcdWatchTimeout = kDefaultEtcdWatchTimeout;
+
+    /**
+     * @var Callback functions to be called on received notifs.
+     *      Callbacks added for a prefix are called when a received notif's
+     *      message data begins with the prefix.
+     */
+    nixlNotifCallbacks notifCallbacks;
 
     /**
      * @brief  Default constructor.

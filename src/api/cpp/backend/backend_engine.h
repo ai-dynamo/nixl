@@ -112,6 +112,13 @@ class nixlBackendEngine {
         // pure virtual, and return errors, as parent shouldn't call if supportsNotif is false.
         virtual bool supportsNotif() const = 0;
 
+        // Determine whether a backend supports notification callbacks;
+        // meaningful only when supportsNotif() == true.
+        virtual bool
+        supportsNotifCallback() const {
+            return false;
+        }
+
         virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?
 
 
