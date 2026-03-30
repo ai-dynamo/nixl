@@ -57,7 +57,7 @@ public:
     }
 
     inline friend bool operator==(const nixlSectionDesc &lhs, const nixlSectionDesc &rhs) {
-        return (static_cast<nixlMetaDesc>(lhs) == static_cast<nixlMetaDesc>(rhs));
+        return (static_cast<const nixlMetaDesc &>(lhs) == static_cast<const nixlMetaDesc &>(rhs));
     }
 
     inline void print(const std::string &suffix) const {
