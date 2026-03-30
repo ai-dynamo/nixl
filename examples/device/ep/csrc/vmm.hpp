@@ -52,7 +52,6 @@ private:
     size_t size_ = 0;
     CUmemGenericAllocationHandle handle_ = 0;
     bool is_cuda_malloc_ = false;
-    bool vmm_addr_reserved_ = false;
     bool vmm_mapped_ = false;
 };
 
