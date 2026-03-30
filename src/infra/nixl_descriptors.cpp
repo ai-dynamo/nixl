@@ -448,13 +448,13 @@ nixlSecDescList::getSortedIndices(const nixlDescList<T> &queries) const {
         return queries[a] < queries[b];
     });
 
-    std::vector<size_t> indices(count);
+    std::vector<size_t> indices;
+    indices.reserve(count);
     auto begin = this->descs.cbegin();
-    size_t idx = 0;
     for (const size_t i : order) {
         auto rel_index = getIndexInRange(begin, this->descs.cend(), queries[i]);
         if (rel_index < 0) return std::nullopt;
-        indices[idx++] = static_cast<size_t>(begin - this->descs.cbegin()) + rel_index;
+        indices.push_back(static_cast<size_t>(begin - this->descs.cbegin()) + rel_index);
         begin += rel_index + 1;
     }
     return indices;
