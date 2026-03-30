@@ -303,21 +303,20 @@ nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
         }
 
         const nixlSecDescList &base = it->second;
-        std::vector<nixlSectionDesc> batch;
-        batch.reserve(mem_elms.descCount());
-        for (const auto &desc : mem_elms) {
-            const int index = base.getIndex(desc);
-            if (index < 0) {
-                ret = NIXL_ERR_NOT_FOUND;
-                break;
-            }
-            batch.push_back(base[index]);
-        }
-        if (ret != NIXL_SUCCESS) {
+        auto sorted_indices = base.getSortedIndices(mem_elms);
+        if (!sorted_indices) {
+            ret = NIXL_ERR_NOT_FOUND;
             break;
         }
+
+        std::vector<nixlSectionDesc> batch;
+        batch.reserve(sorted_indices->size());
+        for (size_t idx : *sorted_indices) {
+            batch.push_back(base[idx]);
+        }
+
         nixlSecDescList resp(nixl_mem);
-        resp.addDescs(std::move(batch));
+        resp.addDescs(std::move(batch), true);
         mem_elms_to_serialize.try_emplace(sec_key, std::move(resp));
     }
 
