@@ -71,6 +71,11 @@ public:
     addXferTime(std::chrono::microseconds transaction_time, bool is_write, uint64_t bytes);
     void
     addPostTime(std::chrono::microseconds post_time);
+    void
+    addTransferComplete(std::chrono::microseconds post_time,
+                        std::chrono::microseconds xfer_time,
+                        bool is_write,
+                        uint64_t bytes);
 
     bool recording{false};
 

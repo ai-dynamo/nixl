@@ -55,29 +55,25 @@ telemetryCategoryStr(const nixl_telemetry_category_t &category);
  * @brief A structure to hold individual telemetry event data for cyclic buffer storage
  */
 struct nixlTelemetryEvent {
-    uint64_t timestampUs_;
     nixl_telemetry_category_t category_; // Main event category for filtering
     char eventName_[MAX_EVENT_NAME_LEN]; // Detailed event name/identifier
     uint64_t value_; // Numeric value associated with the event
 
     nixlTelemetryEvent() noexcept = default;
 
-    nixlTelemetryEvent(uint64_t timestamp_us,
-                       nixl_telemetry_category_t category,
+    nixlTelemetryEvent(nixl_telemetry_category_t category,
                        const char *event_name,
                        uint64_t value) noexcept
-        : timestampUs_(timestamp_us),
-          category_(category),
+        : category_(category),
           value_(value) {
         strncpy(eventName_, event_name, MAX_EVENT_NAME_LEN - 1);
         eventName_[MAX_EVENT_NAME_LEN - 1] = '\0';
     }
 
-    nixlTelemetryEvent(uint64_t timestamp_us,
-                       nixl_telemetry_category_t category,
+    nixlTelemetryEvent(nixl_telemetry_category_t category,
                        const std::string &event_name,
                        uint64_t value) noexcept
-        : nixlTelemetryEvent(timestamp_us, category, event_name.c_str(), value) {}
+        : nixlTelemetryEvent(category, event_name.c_str(), value) {}
 };
 
 #endif
