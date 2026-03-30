@@ -389,7 +389,7 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
         std::stable_sort(batch.begin(), batch.end());
     }
 
-    addSortedDescs(batch);
+    addSortedDescs(std::move(batch));
 }
 
 void
@@ -410,6 +410,8 @@ nixlSecDescList::bulkRemove(std::vector<size_t> indices, bool sorted) {
     }
 
     auto &vec = this->descs;
+    assert(indices.back() < vec.size());
+    assert(std::adjacent_find(indices.begin(), indices.end()) == indices.end());
     size_t write = indices[0];
     size_t ri = 1;
     for (size_t read = write + 1; read < vec.size(); ++read) {

@@ -101,6 +101,9 @@ public:
     nixlSecDescList(const nixlSecDescList &) = default;
     nixlSecDescList &
     operator=(const nixlSecDescList &) = default;
+    nixlSecDescList(nixlSecDescList &&) = default;
+    nixlSecDescList &
+    operator=(nixlSecDescList &&) = default;
 
 private:
     void
