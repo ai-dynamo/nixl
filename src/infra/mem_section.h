@@ -21,7 +21,6 @@
 #include <unordered_map>
 #include <map>
 #include <array>
-#include <optional>
 #include <string>
 #include <set>
 #include "nixl_descriptors.h"
@@ -75,7 +74,7 @@ public:
     addDesc(const nixlSectionDesc &desc) override;
 
     void
-    addDescs(std::vector<nixlSectionDesc> other_descs, bool sorted = false);
+    addDescs(std::vector<nixlSectionDesc> batch, bool sorted = false);
 
     void
     addDescs(nixlSecDescList &&other);
@@ -92,10 +91,6 @@ public:
     int
     getIndex(const nixlBasicDesc &query) const override;
 
-    template<typename T>
-    std::optional<std::vector<size_t>>
-    getSortedIndices(const nixlDescList<T> &queries) const;
-
     int
     getCoveringIndex(const nixlBasicDesc &query) const;
 
@@ -106,6 +101,10 @@ public:
     nixlSecDescList(const nixlSecDescList &) = default;
     nixlSecDescList &
     operator=(const nixlSecDescList &) = default;
+
+private:
+    void
+    addSortedDescs(std::vector<nixlSectionDesc> batch);
 };
 
 using nixl_sec_dlist_t = nixlSecDescList;

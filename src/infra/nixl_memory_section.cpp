@@ -218,17 +218,22 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
 
     nixlSecDescList &target = it->second;
 
-    auto sorted_indices = target.getSortedIndices(mem_elms);
-    if (!sorted_indices) {
-        // Don't deregister anything in case any is missing
-        return NIXL_ERR_NOT_FOUND;
+    std::vector<size_t> indices;
+    indices.reserve(mem_elms.descCount());
+    for (const auto &elm : mem_elms) {
+        int index = target.getIndex(elm);
+        if (index < 0) {
+            // Don't deregister anything in case any is missing
+            return NIXL_ERR_NOT_FOUND;
+        }
+        indices.push_back(static_cast<size_t>(index));
     }
 
-    for (const size_t idx : *sorted_indices) {
+    for (const size_t idx : indices) {
         backend->deregisterMem(target[idx].metadataP);
     }
 
-    target.bulkRemove(std::move(*sorted_indices), true);
+    target.bulkRemove(std::move(indices));
 
     if (target.isEmpty()) {
         sectionMap.erase(sec_key); // Invalidates target.
@@ -301,20 +306,21 @@ nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
         }
 
         const nixlSecDescList &base = it->second;
-        auto sorted_indices = base.getSortedIndices(mem_elms);
-        if (!sorted_indices) {
-            ret = NIXL_ERR_NOT_FOUND;
+        std::vector<nixlSectionDesc> batch;
+        batch.reserve(mem_elms.descCount());
+        for (const auto &desc : mem_elms) {
+            const int index = base.getIndex(desc);
+            if (index < 0) {
+                ret = NIXL_ERR_NOT_FOUND;
+                break;
+            }
+            batch.push_back(base[index]);
+        }
+        if (ret != NIXL_SUCCESS) {
             break;
         }
-
-        std::vector<nixlSectionDesc> batch;
-        batch.reserve(sorted_indices->size());
-        for (const size_t idx : *sorted_indices) {
-            batch.push_back(base[idx]);
-        }
-
         nixlSecDescList resp(nixl_mem);
-        resp.addDescs(std::move(batch), true);
+        resp.addDescs(std::move(batch));
         mem_elms_to_serialize.try_emplace(sec_key, std::move(resp));
     }
 
