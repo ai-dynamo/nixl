@@ -55,6 +55,12 @@ public:
         return bool(default_);
     }
 
+    // Notification callbacks are called on the thread that received the notif,
+    // usually the progress thread. Any non-trivial tasks MUST be handed off to
+    // a separate thread by the callback. In particular callbacks SHOULD NOT call
+    // functions on any NIXL agent, and MUST NOT call functions on the agent that
+    // received the notif for which they were called.
+
     // The default callback is invoked when no callback with a matching
     // prefix was registered.
 
