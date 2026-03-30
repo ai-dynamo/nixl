@@ -24,13 +24,10 @@
 namespace {
 
 constexpr const char *k_vmm_ctx = "vmm_region";
-}
-
-namespace nixl_ep {
 
 /** Log a non-fatal warning if a CUDA driver API call failed (e.g. during teardown). */
 void
-vmm_region::warn_cu_api(CUresult status, const char *context, const char *operation) noexcept {
+warn_cu_api(CUresult status, const char *context, const char *operation) noexcept {
     if (status != CUDA_SUCCESS) {
         const char *msg = nullptr;
         if (cuGetErrorString(status, &msg) != CUDA_SUCCESS || msg == nullptr) {
@@ -39,6 +36,10 @@ vmm_region::warn_cu_api(CUresult status, const char *context, const char *operat
         std::cerr << "WARNING: " << context << " failed to " << operation << ": " << msg << '\n';
     }
 }
+
+} // namespace
+
+namespace nixl_ep {
 
 void
 vmm_region::release() noexcept {
@@ -112,8 +113,10 @@ vmm_region::vmm_region(size_t size) {
             }
 
             if (!rdma_vmm_supported) {
-                throw std::runtime_error(
-                    "GPUDirect RDMA with CUDA VMM is not supported on this device");
+                std::cerr << "DIAG: " << k_vmm_ctx
+                          << " - GPUDirect RDMA with CUDA VMM not supported; falling back to "
+                             "cuMemAlloc\n";
+                return;
             }
 
             prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
@@ -134,13 +137,13 @@ vmm_region::vmm_region(size_t size) {
         }
     };
 
-    static cuda_alloc_ctx ctx{};
+    static cuda_alloc_ctx ctx;
 
     if (!ctx.fabric_supported) {
         size_ = size;
         is_cuda_malloc_ = true;
         if (cuMemAlloc(&ptr_, size) != CUDA_SUCCESS) {
-            throw std::runtime_error("cuMemAlloc fallback failed (fabric not supported)");
+            throw std::runtime_error("cuMemAlloc fallback failed");
         }
         return;
     }

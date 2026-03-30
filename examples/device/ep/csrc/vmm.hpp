@@ -42,9 +42,6 @@ public:
     }
 
 private:
-    static void
-    warn_cu_api(CUresult status, const char *context, const char *operation) noexcept;
-
     void
     release() noexcept;
 
