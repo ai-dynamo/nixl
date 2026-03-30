@@ -55,10 +55,22 @@ public:
         return bool(default_);
     }
 
+    // The default callback is invoked when no callback with a matching
+    // prefix was registered.
+
     void
     setDefaultCallback(const nixl_notif_callback_t &callback) {
         default_ = callback;
     }
+
+    // Prefixes are matched against the start of a received notification,
+    // there is no delimiter.
+    // When registering multiple callbacks with prefixes, these prefixes
+    // must not be prefixes of each other.
+    // The expected primary use case of all prefixes having the same length
+    // is optimized better (logarithmic) than the generic case (linear).
+    // If use cases with a large set of registered prefixes arise things
+    // can be optimized further.
 
     void
     addCallback(const std::string &prefix, const nixl_notif_callback_t &callback) {
@@ -141,12 +153,12 @@ private:
             return callbacks_.end();
         }
 
-        const std::string prefix = message.substr(0, commonPrefixSize_);
+        const std::string_view prefix(message.data(), commonPrefixSize_);
         const auto iter = std::lower_bound(
             callbacks_.begin(),
             callbacks_.end(),
             prefix,
-            [](const nixlNotifCallback &l, const std::string &r) { return l.prefix < r; });
+            [](const nixlNotifCallback &l, const std::string_view r) { return l.prefix < r; });
 
         if ((iter == callbacks_.end()) || (prefix != iter->prefix)) {
             return callbacks_.end();
