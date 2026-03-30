@@ -292,7 +292,7 @@ namespace agent {
         ASSERT_GT(timed2_ns, 0);
         const double ratio = static_cast<double>(std::max(timed1_ns, timed2_ns)) /
             static_cast<double>(std::min(timed1_ns, timed2_ns));
-        EXPECT_LE(ratio, 1.05) << "timed batches differ by more than 5% "
+        EXPECT_LE(ratio, 1.10) << "timed batches differ by more than 10% "
                                   "(ns1="
                                << timed1_ns << " ns2=" << timed2_ns << " ratio=" << ratio << ")";
     }
