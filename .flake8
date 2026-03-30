@@ -1,0 +1,3 @@
+[flake8]
+per-file-ignores =
+    examples/device/ep/nixl_ep/__init__.py:E402
