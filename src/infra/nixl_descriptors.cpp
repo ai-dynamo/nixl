@@ -227,7 +227,7 @@ nixlDescList<nixlBasicDesc> nixlDescList<T>::trim() const {
 template <class T>
 int nixlDescList<T>::getIndex(const nixlBasicDesc &query) const {
     auto itr = std::find(descs.begin(), descs.end(), query);
-    if (itr == descs.end()) return NIXL_ERR_NOT_FOUND; // not found
+    if (itr == descs.end()) return -1; // not found
     return itr - descs.begin();
 }
 
@@ -350,33 +350,35 @@ operator== <nixlRemoteMetaDesc>(const nixlDescList<nixlRemoteMetaDesc> &lhs,
 // nixlSecDescList keeps the elements sorted
 void
 nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
-    auto itr = std::upper_bound(descs.begin(), descs.end(), desc);
-    descs.insert(itr, desc);
-    assert(std::is_sorted(descs.begin(), descs.end()));
+    auto &vec = this->descs;
+    auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
+    vec.insert(itr, desc);
+    assert(std::is_sorted(vec.begin(), vec.end()));
 }
 
 void
-nixlSecDescList::addDescs(std::vector<nixlSectionDesc> other_descs, bool sorted) {
-    if (other_descs.empty()) {
+nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
+    if (batch.empty()) {
         return;
     }
 
     if (!sorted) {
-        std::stable_sort(other_descs.begin(), other_descs.end());
+        std::stable_sort(batch.begin(), batch.end());
     }
 
-    if (descs.empty()) {
-        descs = std::move(other_descs);
+    auto &vec = this->descs;
+    if (vec.empty()) {
+        vec = std::move(batch);
         return;
     }
 
     std::vector<nixlSectionDesc> merged;
-    merged.reserve(descs.size() + other_descs.size());
+    merged.reserve(vec.size() + batch.size());
 
-    std::merge(std::make_move_iterator(descs.begin()),
-               std::make_move_iterator(descs.end()),
-               std::make_move_iterator(other_descs.begin()),
-               std::make_move_iterator(other_descs.end()),
+    std::merge(std::make_move_iterator(vec.begin()),
+               std::make_move_iterator(vec.end()),
+               std::make_move_iterator(batch.begin()),
+               std::make_move_iterator(batch.end()),
                std::back_inserter(merged));
 
     descs = std::move(merged);
@@ -384,8 +386,8 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> other_descs, bool sorted)
 }
 
 void
-nixlSecDescList::addDescs(std::vector<nixlSectionDesc> other_descs) {
-    addDescs(std::move(other_descs), false);
+nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch) {
+    addDescs(std::move(batch), false);
 }
 
 void
@@ -393,14 +395,76 @@ nixlSecDescList::addDescs(nixlSecDescList &&other) {
     addDescs(std::move(other.descs), true);
 }
 
+void
+nixlSecDescList::bulkRemove(std::vector<size_t> indices, bool sorted) {
+    if (indices.empty()) {
+        return;
+    }
+
+    if (sorted) {
+        assert(std::is_sorted(indices.begin(), indices.end()));
+    } else {
+        std::sort(indices.begin(), indices.end());
+    }
+
+    auto &vec = this->descs;
+    size_t ri = 0;
+    size_t write = 0;
+    for (size_t read = 0; read < vec.size(); ++read) {
+        if (ri < indices.size() && read == indices[ri]) {
+            ++ri;
+        } else {
+            if (write != read) vec[write] = std::move(vec[read]);
+            ++write;
+        }
+    }
+    vec.resize(write);
+}
+
+namespace {
+int
+getIndexInRange(std::vector<nixlSectionDesc>::const_iterator begin,
+                std::vector<nixlSectionDesc>::const_iterator end,
+                const nixlBasicDesc &query) {
+    auto itr = std::lower_bound(begin, end, query);
+    if (itr == end || static_cast<const nixlBasicDesc &>(*itr) != query) return -1;
+    return static_cast<int>(itr - begin);
+}
+} // namespace
+
 int
 nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
-    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
-    if (itr == this->descs.end()) return NIXL_ERR_NOT_FOUND;
-    if (static_cast<const nixlBasicDesc &>(*itr) == query)
-        return static_cast<int>(itr - this->descs.begin());
-    return NIXL_ERR_NOT_FOUND;
+    return getIndexInRange(this->descs.cbegin(), this->descs.cend(), query);
 }
+
+template<typename T>
+std::optional<std::vector<size_t>>
+nixlSecDescList::getSortedIndices(const nixlDescList<T> &queries) const {
+    if (queries.isEmpty()) return std::vector<size_t>{};
+
+    size_t count = queries.descCount();
+    std::vector<size_t> order(count);
+    for (size_t i = 0; i < count; ++i)
+        order[i] = i;
+
+    std::sort(order.begin(), order.end(), [&queries](size_t a, size_t b) {
+        return queries[a] < queries[b];
+    });
+
+    std::vector<size_t> indices(count);
+    auto begin = this->descs.cbegin();
+    size_t idx = 0;
+    for (size_t i : order) {
+        auto rel_index = getIndexInRange(begin, this->descs.cend(), queries[i]);
+        if (rel_index < 0) return std::nullopt;
+        indices[idx++] = static_cast<size_t>(begin - this->descs.cbegin()) + rel_index;
+        begin += rel_index + 1;
+    }
+    return indices;
+}
+
+template std::optional<std::vector<size_t>>
+nixlSecDescList::getSortedIndices<nixlBlobDesc>(const nixlDescList<nixlBlobDesc> &) const;
 
 int
 nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query) const {

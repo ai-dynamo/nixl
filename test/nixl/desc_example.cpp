@@ -202,10 +202,8 @@ int main()
         std::cout << "Caught expected error: " << e.what() << std::endl;
     }
     dlist2.remDesc(dlist2.getIndex(meta3));
-    nixl_exit_on_failure((dlist2.getIndex(meta3) == NIXL_ERR_NOT_FOUND),
-                         "Dlist2 descriptor not removed");
-    nixl_exit_on_failure((dlist3.getIndex(meta1) == NIXL_ERR_NOT_FOUND),
-                         "Dlist3 descriptor not removed");
+    nixl_exit_on_failure((dlist2.getIndex(meta3) < 0), "Dlist2 descriptor not removed");
+    nixl_exit_on_failure((dlist3.getIndex(meta1) < 0), "Dlist3 descriptor not removed");
     try {
         dlist3.remDesc(dlist3.getIndex(meta4));
     } catch (const std::out_of_range& e) {

@@ -218,20 +218,19 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
 
     nixlSecDescList &target = it->second;
 
+    // TODO: Check if we can improve this by sorting and fetching indices with successive narrowing.
     // First check if the mem_elms are present in the list,
     // don't deregister anything in case any is missing.
-    for (auto & elm : mem_elms) {
-        int index = target.getIndex(elm);
-        if (index < 0)
-            return NIXL_ERR_NOT_FOUND;
+    auto sorted_indices = target.getSortedIndices(mem_elms);
+    if (!sorted_indices) {
+        return NIXL_ERR_NOT_FOUND;
     }
 
-    for (auto & elm : mem_elms) {
-        int index = target.getIndex(elm);
-        // Already checked, elm should always be found. Can add a check in debug mode.
-        backend->deregisterMem(target[index].metadataP);
-        target.remDesc(index);
+    for (size_t idx : *sorted_indices) {
+        backend->deregisterMem(target[idx].metadataP);
     }
+
+    target.bulkRemove(std::move(*sorted_indices), true);
 
     if (target.isEmpty()) {
         sectionMap.erase(sec_key); // Invalidates target.
@@ -357,6 +356,7 @@ nixl_status_t nixlRemoteSection::addDescList (
 
     nixlSecDescList &target = emplace(nixl_mem, backend);
 
+    // TODO: check if this is a bottleneck, and if so use bulk ops.
     // Add entries to the target list.
     nixlSectionDesc out;
     nixlBasicDesc *p = &out;
