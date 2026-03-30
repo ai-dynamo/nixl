@@ -17,6 +17,8 @@ import os
 import pickle
 import tempfile
 
+import pytest
+
 import nixl._bindings as nixl
 import nixl._utils as nixl_utils
 from nixl.logging import get_logger
@@ -195,65 +197,50 @@ def test_query_mem():
         try:
             params, mems = agent.getPluginParams("POSIX")
             backend = agent.createBackend("POSIX", params)
-
-            descs = nixl.nixlRegDList(nixl.FILE_SEG)
-
-            # Test 1: Query with empty descriptor list
-            try:
-                resp = agent.queryMem(descs, backend)
-                assert len(resp) == 0
-            except Exception as e:
-                # Some backends might not support queryMem, which is okay
-                logger.exception(
-                    "queryMem with empty list failed (expected for some backends): %s",
-                    e,
-                )
-
-            # Test 2: Query with actual file descriptors
-            # Existing file 1
-            descs.addDesc((0, 0, 0, temp_file1.name))
-            # Non-existent file
-            descs.addDesc((0, 0, 0, non_existent_file))
-            # Existing file 2
-            descs.addDesc((0, 0, 0, temp_file2.name))
-
-            try:
-                resp = agent.queryMem(descs, backend)
-
-                # Verify results
-                assert len(resp) == 3
-
-                # First file should be accessible (returns dict with info)
-                assert resp[0] is not None
-                assert isinstance(resp[0], dict)
-                assert "size" in resp[0]
-                assert "mode" in resp[0]
-
-                # Second file should not be accessible (returns None)
-                assert resp[1] is None
-
-                # Third file should be accessible (returns dict with info)
-                assert resp[2] is not None
-                assert isinstance(resp[2], dict)
-                assert "size" in resp[2]
-                assert "mode" in resp[2]
-
-            except Exception as e:
-                # Some backends might not support queryMem, which is okay
-                logger.exception(
-                    "queryMem failed (expected for some backends): %s",
-                    e,
-                )
         except Exception as e:
-            logger.exception("Backend creation failed: %s", e)
-            # Try MOCK_DRAM as fallback
+            logger.exception("POSIX backend creation failed: %s", e)
             try:
                 params, mems = agent.getPluginParams("MOCK_DRAM")
                 backend = agent.createBackend("MOCK_DRAM", params)
-                logger.info("Using MOCK_DRAM backend")
+                logger.info("Using MOCK_DRAM backend as fallback")
             except Exception as e2:
-                logger.exception("MOCK_DRAM also failed: %s", e2)
-                return
+                pytest.skip(
+                    f"No working backends available (POSIX: {e}, MOCK_DRAM: {e2})"
+                )
+
+        descs = nixl.nixlRegDList(nixl.FILE_SEG)
+
+        # Test 1: Query with empty descriptor list
+        resp = agent.queryMem(descs, backend)
+        assert len(resp) == 0
+
+        # Test 2: Query with actual file descriptors
+        # Existing file 1
+        descs.addDesc((0, 0, 0, temp_file1.name))
+        # Non-existent file
+        descs.addDesc((0, 0, 0, non_existent_file))
+        # Existing file 2
+        descs.addDesc((0, 0, 0, temp_file2.name))
+
+        resp = agent.queryMem(descs, backend)
+
+        # Verify results
+        assert len(resp) == 3
+
+        # First file should be accessible (returns dict with info)
+        assert resp[0] is not None
+        assert isinstance(resp[0], dict)
+        assert "size" in resp[0]
+        assert "mode" in resp[0]
+
+        # Second file should not be accessible (returns None)
+        assert resp[1] is None
+
+        # Third file should be accessible (returns dict with info)
+        assert resp[2] is not None
+        assert isinstance(resp[2], dict)
+        assert "size" in resp[2]
+        assert "mode" in resp[2]
 
     finally:
         # Clean up temporary files
