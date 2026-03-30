@@ -335,6 +335,15 @@ public:
     void
     setNotificationCallback(std::function<void(const std::string &)> callback);
 
+    /**
+     * @brief Enable or disable a progress thread that handles CQ draining.
+     *
+     * @param enabled  true to enable progress-thread CQ draining,
+     *                 false to disable it.
+     */
+    void
+    setProgressThreadEnabled(bool enabled);
+
     /** Set callback for XFER_ID tracking */
     void
     setXferIdCallback(std::function<void(uint32_t)> callback);
@@ -367,8 +376,11 @@ private:
     struct fid_cq *cq; // from rail_cqs[rail_id]
     struct fid_av *av; // from rail_avs[rail_id]
 
-    // CQ progress mutex to protect completion queue operations
-    mutable std::mutex cq_progress_mutex_;
+    // EP mutex to protect endpoint and CQ operations
+    mutable std::mutex ep_mutex_;
+
+    // Whether a progress thread is handling CQ draining
+    bool progress_thread_enabled_ = false;
 
     // Callback functions
     std::function<void(const std::string &)> notificationCallback;
