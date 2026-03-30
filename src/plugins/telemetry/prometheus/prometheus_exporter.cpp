@@ -48,6 +48,9 @@ getHostname() {
 }
 } // namespace
 
+std::mutex nixlTelemetryPrometheusExporter::s_exposer_mutex_;
+std::weak_ptr<prometheus::Exposer> nixlTelemetryPrometheusExporter::s_exposer_weak_;
+
 nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
@@ -62,11 +65,19 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
         bind_address_ = prometheusExporterPublicAddress + ":" + std::to_string(port_);
     }
 
-    exposer_ = std::make_unique<prometheus::Exposer>(bind_address_);
+    std::lock_guard<std::mutex> lock(s_exposer_mutex_);
+    exposer_ = s_exposer_weak_.lock();
+    if (!exposer_) {
+        exposer_ = std::make_shared<prometheus::Exposer>(bind_address_);
+        s_exposer_weak_ = exposer_;
+        NIXL_INFO << "Prometheus exporter initialized on " << bind_address_;
+    } else {
+        NIXL_INFO << "Prometheus exporter for agent '" << agent_name_
+                  << "' sharing existing server on " << bind_address_;
+    }
     exposer_->RegisterCollectable(registry_);
 
     initializeMetrics();
-    NIXL_INFO << "Prometheus exporter initialized on " << bind_address_;
 }
 
 // To make access cheaper we are creating static metrics with the labels already set

@@ -31,6 +31,8 @@
 #include <prometheus/gauge.h>
 #include <prometheus/histogram.h>
 
+#include <mutex>
+
 /**
  * @class nixlTelemetryPrometheusExporter
  * @brief Prometheus-based telemetry exporter implementation
@@ -38,6 +40,11 @@
  * This class implements the telemetry exporter interface to export
  * telemetry events to a Prometheus-compatible format using prometheus-cpp.
  * It exposes metrics via an HTTP endpoint that can be scraped by Prometheus.
+ *
+ * Multiple agents in the same process share a single Exposer (HTTP server)
+ * on the configured port. Each agent registers its own Registry so metrics
+ * are distinguished by the agent_name label. The Exposer is created by the
+ * first agent and destroyed when the last agent's exporter is released.
  */
 class nixlTelemetryPrometheusExporter : public nixlTelemetryExporter {
 public:
@@ -51,13 +58,16 @@ public:
     exportEvent(const nixlTelemetryEvent &event) override;
 
 private:
+    static std::mutex s_exposer_mutex_;
+    static std::weak_ptr<prometheus::Exposer> s_exposer_weak_;
+
     // Prometheus components
     const bool local_ = false;
     const uint16_t port_;
     const std::string agent_name_;
     const std::string hostname_;
     std::shared_ptr<prometheus::Registry> registry_;
-    std::unique_ptr<prometheus::Exposer> exposer_;
+    std::shared_ptr<prometheus::Exposer> exposer_;
     std::string bind_address_;
 
 
