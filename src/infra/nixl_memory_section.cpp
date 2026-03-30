@@ -434,6 +434,33 @@ nixlRemoteSection::loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEng
     return NIXL_SUCCESS;
 }
 
+nixl_status_t
+nixlRemoteSection::remLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine *backend) {
+
+    if (!backend || !backend->supportsLocal()) {
+        return NIXL_SUCCESS;
+    }
+
+    nixl_mem_t nixl_mem = mem_elms.getType();
+    section_key_t sec_key = std::make_pair(nixl_mem, backend);
+    auto it = sectionMap.find(sec_key);
+    if (it == sectionMap.end()) {
+        return NIXL_SUCCESS;
+    }
+
+    nixlSecDescList &target = it->second;
+
+    for (auto &elm : mem_elms) {
+        int index = target.getIndex(elm);
+        if (index >= 0) {
+            backend->unloadMD(target[index].metadataP);
+            target.remDesc(index);
+        }
+    }
+
+    return NIXL_SUCCESS;
+}
+
 nixlRemoteSection::~nixlRemoteSection() {
     for (auto &[sec_key, dlist] : sectionMap) {
         nixlBackendEngine* eng = sec_key.second;

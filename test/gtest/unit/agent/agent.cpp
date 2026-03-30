@@ -17,6 +17,8 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <algorithm>
+#include <chrono>
 #include <random>
 
 #include "common.h"
@@ -225,6 +227,74 @@ namespace agent {
         EXPECT_EQ(agent_helper_->initAndRegisterMemory(blob, reg_dlist, extra_params, backend),
                   NIXL_SUCCESS);
         EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+    }
+
+    TEST_F(singleAgentSessionFixture, RegisterDeregisterMemRepeatedTest) {
+        constexpr int kWarmupIters = 3;
+        constexpr int kTimedIters = 64;
+        constexpr size_t kPoolSize = 128;
+
+        using clock = std::chrono::steady_clock;
+        using time_span = std::chrono::nanoseconds;
+
+        nixl_opt_args_t extra_params;
+        nixl_reg_dlist_t reg_dlist(DRAM_SEG);
+        nixl_b_params_t params;
+        nixlBackendH *backend;
+
+        EXPECT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        std::vector<std::unique_ptr<blob>> pool;
+        pool.reserve(kPoolSize);
+        for (size_t i = 0; i < kPoolSize; ++i) {
+            pool.push_back(std::make_unique<blob>());
+        }
+
+        // Each round: registerMem once per pool entry, then deregisterMem once per entry.
+        auto run_batch = [&](int rounds = 1) {
+            for (int r = 0; r < rounds; ++r) {
+                for (auto &bp : pool) {
+                    reg_dlist.clear();
+                    extra_params.backends.clear();
+                    reg_dlist.addDesc(bp->getDesc());
+                    extra_params.backends.push_back(backend);
+                    EXPECT_EQ(agent_->registerMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+                }
+                for (auto &bp : pool) {
+                    reg_dlist.clear();
+                    extra_params.backends.clear();
+                    reg_dlist.addDesc(bp->getDesc());
+                    extra_params.backends.push_back(backend);
+                    EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+                }
+            }
+        };
+
+        // Warmup
+        run_batch(kWarmupIters);
+
+        // First measurement
+        auto start = clock::now();
+        run_batch();
+        const int64_t timed1_ns =
+            std::chrono::duration_cast<time_span>(clock::now() - start).count();
+
+        // Many cycles
+        run_batch(kTimedIters);
+
+        // Second measurement
+        start = clock::now();
+        run_batch();
+        const int64_t timed2_ns =
+            std::chrono::duration_cast<time_span>(clock::now() - start).count();
+
+        ASSERT_GT(timed1_ns, 0);
+        ASSERT_GT(timed2_ns, 0);
+        const double ratio = static_cast<double>(std::max(timed1_ns, timed2_ns)) /
+            static_cast<double>(std::min(timed1_ns, timed2_ns));
+        EXPECT_LE(ratio, 1.05) << "timed batches differ by more than 5% "
+                                  "(ns1="
+                               << timed1_ns << " ns2=" << timed2_ns << " ratio=" << ratio << ")";
     }
 
     INSTANTIATE_TEST_SUITE_P(DramRegisterMemoryInstantiation,
