@@ -227,7 +227,7 @@ nixlDescList<nixlBasicDesc> nixlDescList<T>::trim() const {
 template <class T>
 int nixlDescList<T>::getIndex(const nixlBasicDesc &query) const {
     auto itr = std::find(descs.begin(), descs.end(), query);
-    if (itr == descs.end()) return -1; // not found
+    if (itr == descs.end()) return NIXL_ERR_NOT_FOUND; // not found
     return itr - descs.begin();
 }
 
@@ -364,6 +364,8 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
 
     if (!sorted) {
         std::stable_sort(batch.begin(), batch.end());
+    } else {
+        assert(std::is_sorted(batch.begin(), batch.end()));
     }
 
     auto &vec = this->descs;
@@ -383,11 +385,6 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
 
     descs = std::move(merged);
     assert(std::is_sorted(descs.begin(), descs.end()));
-}
-
-void
-nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch) {
-    addDescs(std::move(batch), false);
 }
 
 void
@@ -427,7 +424,7 @@ getIndexInRange(std::vector<nixlSectionDesc>::const_iterator begin,
                 std::vector<nixlSectionDesc>::const_iterator end,
                 const nixlBasicDesc &query) {
     auto itr = std::lower_bound(begin, end, query);
-    if (itr == end || static_cast<const nixlBasicDesc &>(*itr) != query) return -1;
+    if (itr == end || static_cast<const nixlBasicDesc &>(*itr) != query) return NIXL_ERR_NOT_FOUND;
     return static_cast<int>(itr - begin);
 }
 } // namespace
@@ -442,7 +439,7 @@ std::optional<std::vector<size_t>>
 nixlSecDescList::getSortedIndices(const nixlDescList<T> &queries) const {
     if (queries.isEmpty()) return std::vector<size_t>{};
 
-    size_t count = queries.descCount();
+    const size_t count = queries.descCount();
     std::vector<size_t> order(count);
     for (size_t i = 0; i < count; ++i)
         order[i] = i;
@@ -454,7 +451,7 @@ nixlSecDescList::getSortedIndices(const nixlDescList<T> &queries) const {
     std::vector<size_t> indices(count);
     auto begin = this->descs.cbegin();
     size_t idx = 0;
-    for (size_t i : order) {
+    for (const size_t i : order) {
         auto rel_index = getIndexInRange(begin, this->descs.cend(), queries[i]);
         if (rel_index < 0) return std::nullopt;
         indices[idx++] = static_cast<size_t>(begin - this->descs.cbegin()) + rel_index;

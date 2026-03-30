@@ -75,7 +75,7 @@ public:
     addDesc(const nixlSectionDesc &desc) override;
 
     void
-    addDescs(std::vector<nixlSectionDesc> other_descs);
+    addDescs(std::vector<nixlSectionDesc> other_descs, bool sorted = false);
 
     void
     addDescs(nixlSecDescList &&other);
@@ -106,9 +106,6 @@ public:
     nixlSecDescList(const nixlSecDescList &) = default;
     nixlSecDescList &
     operator=(const nixlSecDescList &) = default;
-
-    void
-    addDescs(std::vector<nixlSectionDesc> other_descs, bool sorted);
 };
 
 using nixl_sec_dlist_t = nixlSecDescList;

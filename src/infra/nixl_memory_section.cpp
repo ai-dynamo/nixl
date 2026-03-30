@@ -218,15 +218,13 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
 
     nixlSecDescList &target = it->second;
 
-    // TODO: Check if we can improve this by sorting and fetching indices with successive narrowing.
-    // First check if the mem_elms are present in the list,
-    // don't deregister anything in case any is missing.
     auto sorted_indices = target.getSortedIndices(mem_elms);
     if (!sorted_indices) {
+        // Don't deregister anything in case any is missing
         return NIXL_ERR_NOT_FOUND;
     }
 
-    for (size_t idx : *sorted_indices) {
+    for (const size_t idx : *sorted_indices) {
         backend->deregisterMem(target[idx].metadataP);
     }
 
@@ -311,7 +309,7 @@ nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
 
         std::vector<nixlSectionDesc> batch;
         batch.reserve(sorted_indices->size());
-        for (size_t idx : *sorted_indices) {
+        for (const size_t idx : *sorted_indices) {
             batch.push_back(base[idx]);
         }
 
@@ -330,7 +328,7 @@ nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
 nixlLocalSection::~nixlLocalSection() {
     for (auto &[sec_key, dlist] : sectionMap) {
         nixlBackendEngine* eng = sec_key.second;
-        for (const auto &elm : dlist) {
+        for (auto &elm : dlist) {
             eng->deregisterMem(elm.metadataP);
         }
     }
@@ -355,7 +353,6 @@ nixl_status_t nixlRemoteSection::addDescList (
 
     nixlSecDescList &target = emplace(nixl_mem, backend);
 
-    // TODO: check if this is a bottleneck, and if so use bulk ops.
     // Add entries to the target list.
     nixlSectionDesc out;
     nixlBasicDesc *p = &out;
@@ -434,7 +431,7 @@ nixlRemoteSection::loadLocalData(nixlSecDescList &&mem_elms, nixlBackendEngine *
 nixlRemoteSection::~nixlRemoteSection() {
     for (auto &[sec_key, dlist] : sectionMap) {
         nixlBackendEngine* eng = sec_key.second;
-        for (const auto &elm : dlist) {
+        for (auto &elm : dlist) {
             eng->unloadMD(elm.metadataP);
         }
     }
