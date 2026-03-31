@@ -45,11 +45,29 @@ getHostname() {
 }
 } // namespace
 
+DocaSharedContext::~DocaSharedContext() {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    if (source) {
+        doca_telemetry_exporter_source_flush(source);
+        doca_telemetry_exporter_metrics_destroy_context(source);
+        doca_telemetry_exporter_source_destroy(source);
+    }
+    if (schema) {
+        doca_telemetry_exporter_schema_destroy(schema);
+    }
+#pragma GCC diagnostic pop
+}
+
+std::mutex nixlTelemetryDocaExporter::s_ctx_mutex_;
+std::weak_ptr<DocaSharedContext> nixlTelemetryDocaExporter::s_ctx_weak_;
+
 nixlTelemetryDocaExporter::nixlTelemetryDocaExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
       local_(nixl::config::getValueDefaulted(docaPrometheusLocalVar, false)),
-      port_(nixl::config::getValueDefaulted(docaPrometheusPortVar, docaPrometheusExporterDefaultPort)),
+      port_(nixl::config::getValueDefaulted(docaPrometheusPortVar,
+                                            docaPrometheusExporterDefaultPort)),
       agent_name_(init_params.agentName),
       hostname_(getHostname()) {
     if (local_) {
@@ -65,24 +83,6 @@ nixlTelemetryDocaExporter::nixlTelemetryDocaExporter(
     }
 
     initialized_ = true;
-    NIXL_INFO << "DOCA Telemetry exporter initialized on " << bind_address_;
-}
-
-nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    if (source_) {
-        doca_telemetry_exporter_source_flush(source_);
-        doca_telemetry_exporter_metrics_destroy_context(source_);
-        doca_telemetry_exporter_source_destroy(source_);
-        source_ = nullptr;
-    }
-
-    if (schema_) {
-        doca_telemetry_exporter_schema_destroy(schema_);
-        schema_ = nullptr;
-    }
-#pragma GCC diagnostic pop
 }
 
 nixl_status_t
@@ -92,77 +92,70 @@ nixlTelemetryDocaExporter::initializeDoca(const nixlTelemetryExporterInitParams 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
-    setenv("PROMETHEUS_ENDPOINT", bind_address_.c_str(), 1);
-    result = doca_telemetry_exporter_schema_init("nixl_telemetry", &schema_);
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to initialize DOCA schema: " << result;
-        return NIXL_ERR_UNKNOWN;
+    std::lock_guard<std::mutex> lock(s_ctx_mutex_);
+    ctx_ = s_ctx_weak_.lock();
+    if (!ctx_) {
+        auto new_ctx = std::make_shared<DocaSharedContext>();
+
+        setenv("PROMETHEUS_ENDPOINT", bind_address_.c_str(), 1);
+
+        result = doca_telemetry_exporter_schema_init("nixl_telemetry", &new_ctx->schema);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to initialize DOCA schema: " << result;
+            return NIXL_ERR_UNKNOWN;
+        }
+
+        result = doca_telemetry_exporter_schema_start(new_ctx->schema);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to start DOCA schema: " << result;
+            return NIXL_ERR_UNKNOWN;
+        }
+
+        result = doca_telemetry_exporter_source_create(new_ctx->schema, &new_ctx->source);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to create DOCA source: " << result;
+            return NIXL_ERR_UNKNOWN;
+        }
+
+        doca_telemetry_exporter_source_set_id(new_ctx->source, "nixl");
+        doca_telemetry_exporter_source_set_tag(new_ctx->source, "nixl");
+
+        result = doca_telemetry_exporter_source_start(new_ctx->source);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to start DOCA source: " << result;
+            return NIXL_ERR_UNKNOWN;
+        }
+
+        result = doca_telemetry_exporter_metrics_create_context(new_ctx->source);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to create DOCA metrics context: " << result;
+            return NIXL_ERR_UNKNOWN;
+        }
+
+        result = doca_telemetry_exporter_metrics_add_constant_label(
+            new_ctx->source, "hostname", hostname_.c_str());
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to add constant label: " << result;
+            return NIXL_ERR_UNKNOWN;
+        }
+
+        const char *label_names[] = {"category", "agent_name"};
+        result = doca_telemetry_exporter_metrics_add_label_names(
+            new_ctx->source, label_names, 2, &new_ctx->label_set_id);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to create label set: " << result;
+            return NIXL_ERR_UNKNOWN;
+        }
+
+        doca_telemetry_exporter_metrics_set_flush_interval_ms(new_ctx->source, 1000);
+
+        ctx_ = new_ctx;
+        s_ctx_weak_ = ctx_;
+        NIXL_INFO << "DOCA Telemetry exporter initialized on " << bind_address_;
+    } else {
+        NIXL_INFO << "DOCA Telemetry exporter for agent '" << agent_name_
+                  << "' sharing existing server on " << bind_address_;
     }
-
-    result = doca_telemetry_exporter_schema_start(schema_);
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to start DOCA schema: " << result;
-        doca_telemetry_exporter_schema_destroy(schema_);
-        return NIXL_ERR_UNKNOWN;
-    }
-
-    result = doca_telemetry_exporter_source_create(schema_, &source_);
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to create DOCA source: " << result;
-        doca_telemetry_exporter_source_destroy(source_);
-        doca_telemetry_exporter_schema_destroy(schema_);
-        return NIXL_ERR_UNKNOWN;
-    }
-
-    doca_telemetry_exporter_source_set_id(source_, params.agentName.c_str());
-    doca_telemetry_exporter_source_set_tag(source_, "nixl");
-
-    result = doca_telemetry_exporter_source_start(source_);
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to start DOCA source: " << result;
-        doca_telemetry_exporter_source_destroy(source_);
-        doca_telemetry_exporter_schema_destroy(schema_);
-        return NIXL_ERR_UNKNOWN;
-    }
-
-    result = doca_telemetry_exporter_metrics_create_context(source_);
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to create DOCA metrics context: " << result;
-        return NIXL_ERR_UNKNOWN;
-    }
-
-    result =
-        doca_telemetry_exporter_metrics_add_constant_label(source_, "hostname", hostname_.c_str());
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to add constant label: " << result;
-        doca_telemetry_exporter_metrics_destroy_context(source_);
-        doca_telemetry_exporter_source_destroy(source_);
-        doca_telemetry_exporter_schema_destroy(schema_);
-        return NIXL_ERR_UNKNOWN;
-    }
-
-    result = doca_telemetry_exporter_metrics_add_constant_label(
-        source_, "agent_name", agent_name_.c_str());
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to add constant label: " << result;
-        doca_telemetry_exporter_metrics_destroy_context(source_);
-        doca_telemetry_exporter_source_destroy(source_);
-        doca_telemetry_exporter_schema_destroy(schema_);
-        return NIXL_ERR_UNKNOWN;
-    }
-
-    const char *label_names[] = {"category"};
-    result =
-        doca_telemetry_exporter_metrics_add_label_names(source_, label_names, 1, &label_set_id_);
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to create label set: " << result;
-        doca_telemetry_exporter_metrics_destroy_context(source_);
-        doca_telemetry_exporter_source_destroy(source_);
-        doca_telemetry_exporter_schema_destroy(schema_);
-        return NIXL_ERR_UNKNOWN;
-    }
-
-    doca_telemetry_exporter_metrics_set_flush_interval_ms(source_, 1000);
 
 #pragma GCC diagnostic pop
 
@@ -174,8 +167,12 @@ nixlTelemetryDocaExporter::registerCounter(const nixlTelemetryEvent &event,
                                            const char *label_values[]) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    return doca_telemetry_exporter_metrics_add_counter(
-        source_, event.timestampUs_, event.eventName_, event.value_, label_set_id_, label_values);
+    return doca_telemetry_exporter_metrics_add_counter(ctx_->source,
+                                                       event.timestampUs_,
+                                                       event.eventName_,
+                                                       event.value_,
+                                                       ctx_->label_set_id,
+                                                       label_values);
 #pragma GCC diagnostic pop
 }
 
@@ -184,8 +181,12 @@ nixlTelemetryDocaExporter::registerGauge(const nixlTelemetryEvent &event,
                                          const char *label_values[]) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    return doca_telemetry_exporter_metrics_add_gauge(
-        source_, event.timestampUs_, event.eventName_, event.value_, label_set_id_, label_values);
+    return doca_telemetry_exporter_metrics_add_gauge(ctx_->source,
+                                                     event.timestampUs_,
+                                                     event.eventName_,
+                                                     event.value_,
+                                                     ctx_->label_set_id,
+                                                     label_values);
 #pragma GCC diagnostic pop
 }
 
@@ -200,7 +201,7 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
     try {
         switch (event.category_) {
         case nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER: {
-            const char *label_values[] = {docaExporterTransferCategory};
+            const char *label_values[] = {docaExporterTransferCategory, agent_name_.c_str()};
             result = registerCounter(event, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add counter: " << result;
@@ -209,7 +210,7 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
             break;
         }
         case nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND: {
-            const char *label_values[] = {docaExporterBackendCategory};
+            const char *label_values[] = {docaExporterBackendCategory, agent_name_.c_str()};
             result = registerCounter(event, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add counter: " << result;
@@ -218,7 +219,7 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
             break;
         }
         case nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE: {
-            const char *label_values[] = {docaExporterPerformanceCategory};
+            const char *label_values[] = {docaExporterPerformanceCategory, agent_name_.c_str()};
             result = registerGauge(event, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add gauge: " << result;
@@ -227,7 +228,7 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
             break;
         }
         case nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY: {
-            const char *label_values[] = {docaExporterMemoryCategory};
+            const char *label_values[] = {docaExporterMemoryCategory, agent_name_.c_str()};
             result = registerGauge(event, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add gauge: " << result;

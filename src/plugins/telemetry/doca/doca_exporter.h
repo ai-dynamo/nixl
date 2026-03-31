@@ -26,25 +26,30 @@
 #include <memory>
 #include <mutex>
 
+struct DocaSharedContext {
+    doca_telemetry_exporter_schema *schema = nullptr;
+    doca_telemetry_exporter_source *source = nullptr;
+    doca_telemetry_exporter_label_set_id_t label_set_id = 0;
+    ~DocaSharedContext();
+};
+
 class nixlTelemetryDocaExporter : public nixlTelemetryExporter {
 public:
     explicit nixlTelemetryDocaExporter(const nixlTelemetryExporterInitParams &init_params);
-
-    ~nixlTelemetryDocaExporter() override;
 
     nixl_status_t
     exportEvent(const nixlTelemetryEvent &event) override;
 
 private:
+    static std::mutex s_ctx_mutex_;
+    static std::weak_ptr<DocaSharedContext> s_ctx_weak_;
+
     const bool local_ = false;
     const uint16_t port_;
     bool initialized_ = false;
     const std::string agent_name_;
     const std::string hostname_;
-    doca_telemetry_exporter_schema *schema_ = nullptr;
-    doca_telemetry_exporter_source *source_ = nullptr;
-    doca_telemetry_exporter_label_set_id_t label_set_id_ = 0;
-    std::mutex mutex_;
+    std::shared_ptr<DocaSharedContext> ctx_;
     std::string bind_address_;
 
     nixl_status_t
