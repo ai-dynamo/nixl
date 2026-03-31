@@ -336,4 +336,3 @@ nixlEnumStrings::telemetryCategoryStr(const nixl_telemetry_category_t &category)
     if (category_int >= nixl_telemetry_category_str.size()) return "BAD_CATEGORY";
     return nixl_telemetry_category_str[category_int];
 }
-

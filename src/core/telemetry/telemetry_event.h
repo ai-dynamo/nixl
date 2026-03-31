@@ -67,17 +67,28 @@ telemetryCategoryStr(const nixl_telemetry_category_t &category);
 inline std::string
 telemetryEventNameStr(nixl_telemetry_event_name_t name) {
     switch (name) {
-    case nixl_telemetry_event_name_t::AGENT_TX_BYTES:            return "agent_tx_bytes";
-    case nixl_telemetry_event_name_t::AGENT_RX_BYTES:            return "agent_rx_bytes";
-    case nixl_telemetry_event_name_t::AGENT_TX_REQUESTS_NUM:     return "agent_tx_requests_num";
-    case nixl_telemetry_event_name_t::AGENT_RX_REQUESTS_NUM:     return "agent_rx_requests_num";
-    case nixl_telemetry_event_name_t::AGENT_MEMORY_REGISTERED:   return "agent_memory_registered";
-    case nixl_telemetry_event_name_t::AGENT_MEMORY_DEREGISTERED: return "agent_memory_deregistered";
-    case nixl_telemetry_event_name_t::AGENT_XFER_TIME:           return "agent_xfer_time";
-    case nixl_telemetry_event_name_t::AGENT_XFER_POST_TIME:      return "agent_xfer_post_time";
-    case nixl_telemetry_event_name_t::AGENT_ERROR:               return "agent_error";
-    case nixl_telemetry_event_name_t::AGENT_BACKEND:             return "agent_backend";
-    default:                                                      return "unknown_event";
+    case nixl_telemetry_event_name_t::AGENT_TX_BYTES:
+        return "agent_tx_bytes";
+    case nixl_telemetry_event_name_t::AGENT_RX_BYTES:
+        return "agent_rx_bytes";
+    case nixl_telemetry_event_name_t::AGENT_TX_REQUESTS_NUM:
+        return "agent_tx_requests_num";
+    case nixl_telemetry_event_name_t::AGENT_RX_REQUESTS_NUM:
+        return "agent_rx_requests_num";
+    case nixl_telemetry_event_name_t::AGENT_MEMORY_REGISTERED:
+        return "agent_memory_registered";
+    case nixl_telemetry_event_name_t::AGENT_MEMORY_DEREGISTERED:
+        return "agent_memory_deregistered";
+    case nixl_telemetry_event_name_t::AGENT_XFER_TIME:
+        return "agent_xfer_time";
+    case nixl_telemetry_event_name_t::AGENT_XFER_POST_TIME:
+        return "agent_xfer_post_time";
+    case nixl_telemetry_event_name_t::AGENT_ERROR:
+        return "agent_error";
+    case nixl_telemetry_event_name_t::AGENT_BACKEND:
+        return "agent_backend";
+    default:
+        return "unknown_event";
     }
 }
 }
