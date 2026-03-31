@@ -117,9 +117,14 @@ nixl_ep_rpath += ':' + nixl_lib_dir
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'core')
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'plugins')
 
-# For now, nixl ep cannot be built with -G due to register usage limits
+
 nixl_ep_override_options = []
-if get_option('buildtype') == 'debug'
+if get_option('nvcc_device_debug')
+    nixl_ep_override_options = ['optimization=3']
+    nixl_ep_cuda_args += ['-G', '-DNIXL_EP_NVCC_DEVICE_DEBUG']
+    nixl_ep_cpp_args += ['-g']
+    nixl_ep_cuda_args += ['-Xcompiler', '-g']
+elif get_option('buildtype') == 'debug'
     nixl_ep_override_options = ['optimization=3']
     nixl_ep_cpp_args += ['-g']
 endif

@@ -1590,7 +1590,7 @@ template <int kNumRanks,
           int kNumTMALoadBytes = 0,
           typename GetAddrFn,
           typename ReceiveTWFn>
-__device__ int combine_token(bool is_token_in_rank,
+__device__ __forceinline__ int combine_token(bool is_token_in_rank,
                              int head_idx,
                              int lane_id,
                              int hidden_int4,
