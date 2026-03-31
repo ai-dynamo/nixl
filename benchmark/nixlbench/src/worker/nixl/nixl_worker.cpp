@@ -50,13 +50,15 @@
 #if HAVE_CUDA
 #define HANDLE_VRAM_SEGMENT(_seg_type) _seg_type = VRAM_SEG;
 #else
-#define HANDLE_VRAM_SEGMENT(_seg_type)                                                      \
-    if (neuronCoreCount() > 0) {                                                            \
-        _seg_type = VRAM_SEG;                                                               \
-    } else {                                                                                \
-        std::cerr << "VRAM segment type not supported without CUDA or Neuron" << std::endl; \
-        std::exit(EXIT_FAILURE);                                                            \
-    }
+#define HANDLE_VRAM_SEGMENT(_seg_type)                                                          \
+    do {                                                                                        \
+        if (neuronCoreCount() > 0) {                                                            \
+            _seg_type = VRAM_SEG;                                                               \
+        } else {                                                                                \
+            std::cerr << "VRAM segment type not supported without CUDA or Neuron" << std::endl; \
+            std::exit(EXIT_FAILURE);                                                            \
+        }                                                                                       \
+    } while (0)
 #endif
 
 #define GET_SEG_TYPE(is_initiator)                                                          \
@@ -686,6 +688,8 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
         CHECK_CUDA_ERROR(cudaFreeAsync((void *)iov.addr, 0), "Failed to deallocate CUDA buffer");
         CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize stream 0");
     }
+#else
+    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
 #endif
 }
 
