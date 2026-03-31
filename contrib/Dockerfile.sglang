@@ -19,13 +19,11 @@ FROM --platform=$TARGETPLATFORM ${BASE_IMAGE}
 # Build context is expected to contain only wheel files for one architecture.
 COPY . /tmp/nixl-wheels
 
-# INSTALL_CU13=1 for CUDA 13 runtime image; 0 otherwise.
-ARG INSTALL_CU13=0
-
 RUN set -eux; \
     ls -lah /tmp/nixl-wheels/*.whl ; \
     pip install --no-deps --force-reinstall /tmp/nixl-wheels/nixl-*.whl /tmp/nixl-wheels/nixl_cu12*cp312*.whl; \
-    if [ "${INSTALL_CU13}" = "1" ]; then \
+    CUDA_MAJOR="${CUDA_VERSION%%.*}"; \
+    if [ "${CUDA_MAJOR}" = "13" ]; then \
       pip install --no-deps --force-reinstall /tmp/nixl-wheels/nixl_cu13*cp312*.whl; \
     fi; \
     rm -rf /tmp/nixl-wheels
