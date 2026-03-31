@@ -25,4 +25,6 @@ RUN set -eux; \
     uv pip install --system quart; \
     rm -rf /tmp/nixl-wheels
 
-RUN curl https://raw.githubusercontent.com/vllm-project/vllm/b73b5b06290c0d1439b09db71eef15fe59bc1fbb/tests/v1/kv_connector/nixl_integration/toy_proxy_server.py -o toy_proxy_server.py
+RUN curl -fL --retry 3 --retry-delay 2 \
+    https://raw.githubusercontent.com/vllm-project/vllm/b73b5b06290c0d1439b09db71eef15fe59bc1fbb/tests/v1/kv_connector/nixl_integration/toy_proxy_server.py \
+    -o toy_proxy_server.py
