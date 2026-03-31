@@ -134,8 +134,7 @@ void
 nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
                                                  const std::string &help,
                                                  const std::string &category) {
-    auto &family =
-        prometheus::BuildCounter().Name(name + "_total").Help(help).Register(*registry_);
+    auto &family = prometheus::BuildCounter().Name(name + "_total").Help(help).Register(*registry_);
     auto &metric =
         family.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
     counters_[name] = {&family, &metric};
