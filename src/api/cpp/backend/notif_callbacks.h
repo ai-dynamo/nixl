@@ -41,6 +41,10 @@ operator<(const nixlNotifCallback &l, const nixlNotifCallback &r) noexcept {
     return l.prefix < r.prefix;
 }
 
+// This class is thread agnostic; only a single thread should call mutating functions
+// while preparing the instance in a nixlAgentConfig; the backends should keep a const
+// copy that is safe for concurrent read-only access.
+
 class nixlNotifCallbacks {
 public:
     nixlNotifCallbacks() = default;
@@ -95,7 +99,8 @@ public:
 
     void
     call(std::string &&remote, std::string &&message) const {
-        if (const iterator iter = findCallback(message); iter != callbacks_.end()) {
+        const iterator iter = findCallback(message);
+        if (iter != callbacks_.end()) {
             iter->callback(std::move(remote), std::move(message));
         } else if (default_) {
             default_(std::move(remote), std::move(message));
