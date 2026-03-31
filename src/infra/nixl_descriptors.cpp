@@ -16,6 +16,8 @@
  */
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
+#include <iterator>
 #include <stdexcept>
 #include <iostream>
 #include "nixl_descriptors.h"
@@ -369,16 +371,27 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
         return;
     }
 
-    std::vector<nixlSectionDesc> merged;
-    merged.reserve(vec.size() + batch.size());
+    const size_t old_size = vec.size();
+    const size_t batch_size = batch.size();
+    const size_t new_size = old_size + batch_size;
 
-    std::merge(std::make_move_iterator(vec.begin()),
-               std::make_move_iterator(vec.end()),
-               std::make_move_iterator(batch.begin()),
-               std::make_move_iterator(batch.end()),
-               std::back_inserter(merged));
+    vec.resize(new_size);
 
-    descs = std::move(merged);
+    auto dst = vec.rbegin();
+    auto a = std::make_reverse_iterator(vec.begin() + old_size);
+    auto a_end = vec.rend();
+    auto b = batch.rbegin();
+    auto b_end = batch.rend();
+
+    while (a != a_end && b != b_end) {
+        auto &src = (*b < *a) ? a : b;
+        *dst++ = std::move(*src++);
+    }
+    while (b != b_end) {
+        *dst++ = std::move(*b++);
+    }
+
+    assert(std::is_sorted(vec.begin(), vec.end()));
 }
 
 void
@@ -386,7 +399,7 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
     if (sorted) {
         assert(std::is_sorted(batch.begin(), batch.end()));
     } else {
-        std::stable_sort(batch.begin(), batch.end());
+        std::sort(batch.begin(), batch.end());
     }
 
     addSortedDescs(std::move(batch));
