@@ -632,11 +632,7 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
         return;
     }
 
-    const nixl::hwInfo hw_info;
-
-    NIXL_DEBUG << "hwInfo { "
-               << "numNvidiaGpus=" << hw_info.numNvidiaGpus << ", "
-               << "numIbDevices=" << hw_info.numIbDevices << " }";
+    const auto &hw_info = nixl::hwInfo::instance();
 
     if (hw_info.numNvidiaGpus > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_CUDA)) {
         NIXL_WARN << hw_info.numNvidiaGpus
@@ -644,8 +640,8 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
                   << "GPU memory is not supported.";
     }
 
-    if (ucpVersion_ >= UCP_VERSION(1, 21)) {
-        // `UCS_MEMORY_TYPE_RDMA` is included in `memory_types` only from UCX 1.21
+    if (ucpVersion_ >= UCP_VERSION(1, 22)) {
+        // `UCS_MEMORY_TYPE_RDMA` to be checked explicitly only from UCX 1.22
         if (hw_info.numIbDevices > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_RDMA)) {
             NIXL_WARN << hw_info.numIbDevices
                       << " IB device(s) were detected, but accelerated IB support was not found! "

@@ -72,18 +72,7 @@ else
     echo "/sys/module/nv_peer_mem/version not found"
 fi
 
-echo "==== Running ETCD server ===="
-etcd_port=$(get_next_tcp_port)
-etcd_peer_port=$(get_next_tcp_port)
-export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
-export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
-export NIXL_ETCD_NAMESPACE="/nixl/cpp_ci/${etcd_port}"
-etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
-     --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
-     --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
-ETCD_PID=$!
-
-wait_for_etcd
+start_etcd_server "/nixl/cpp_ci"
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
@@ -94,8 +83,7 @@ if $TEST_LIBFABRIC ; then
     ./bin/nixl_example LIBFABRIC
 fi
 ./bin/nixl_etcd_example
-# Remove setting UCX_GDR_COPY_SHARED one all tests use a UCX version with UCX PR #11149
-UCX_GDR_COPY_SHARED_MD=n ./bin/ucx_backend_test
+./bin/ucx_backend_test
 mkdir -p /tmp/telemetry_test
 NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test ./bin/agent_example &
 sleep 5
@@ -108,8 +96,7 @@ kill -s INT $telePID
 
 ./bin/nixl_posix_test -n 128 -s 1048576
 ./bin/nixl_gusli_test -n 4 -s 16
-# Remove setting UCX_GDR_COPY_SHARED one all tests use a UCX version with UCX PR #11149
-UCX_GDR_COPY_SHARED_MD=n ./bin/ucx_backend_multi
+./bin/ucx_backend_multi
 ./bin/serdes_test
 # TODO: Enable Mooncake test once data corruption issue is resolved
 # if $HAS_GPU ; then
