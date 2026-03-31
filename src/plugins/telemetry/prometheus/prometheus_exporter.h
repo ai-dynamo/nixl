@@ -68,6 +68,7 @@ private:
         prometheus::Family<prometheus::Counter> *family;
         prometheus::Counter *metric;
     };
+
     struct GaugeEntry {
         prometheus::Family<prometheus::Gauge> *family;
         prometheus::Gauge *metric;
