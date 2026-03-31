@@ -178,7 +178,7 @@ class nixlRemoteSection : public nixlMemSection {
 
         // When adding self as a remote agent for local operations
         nixl_status_t
-        loadLocalData(nixlSecDescList &&mem_elms, nixlBackendEngine *backend);
+        loadLocalData(nixlSecDescList mem_elms, nixlBackendEngine *backend);
         ~nixlRemoteSection();
 };
 

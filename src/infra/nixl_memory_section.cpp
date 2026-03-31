@@ -421,7 +421,7 @@ nixlRemoteSection::loadRemoteData(nixlSerDes *deserializer, backend_map_t &backe
 }
 
 nixl_status_t
-nixlRemoteSection::loadLocalData(nixlSecDescList &&mem_elms, nixlBackendEngine *backend) {
+nixlRemoteSection::loadLocalData(nixlSecDescList mem_elms, nixlBackendEngine *backend) {
     if (mem_elms.isEmpty()) { // Shouldn't happen
         return NIXL_ERR_UNKNOWN;
     }
