@@ -24,14 +24,13 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <mutex>
 
 #include <prometheus/registry.h>
 #include <prometheus/exposer.h>
 #include <prometheus/counter.h>
 #include <prometheus/gauge.h>
 #include <prometheus/histogram.h>
-
-#include <mutex>
 
 /**
  * @class nixlTelemetryPrometheusExporter
@@ -41,41 +40,42 @@
  * telemetry events to a Prometheus-compatible format using prometheus-cpp.
  * It exposes metrics via an HTTP endpoint that can be scraped by Prometheus.
  *
- * Multiple agents in the same process share a single Exposer (HTTP server)
- * on the configured port. Each agent registers its own Registry so metrics
- * are distinguished by the agent_name label. The Exposer is created by the
- * first agent and destroyed when the last agent's exporter is released.
+ * All agents in the same process share a single Exposer (HTTP server) and
+ * Registry. Each agent adds its own metric instances distinguished by the
+ * agent_name label. The shared resources are created by the first agent
+ * and destroyed when the last agent's exporter is released.
  */
 class nixlTelemetryPrometheusExporter : public nixlTelemetryExporter {
 public:
-    /**
-     * @brief Constructor using init params (plugin-compatible)
-     * @param init_params Initialization parameters
-     */
     explicit nixlTelemetryPrometheusExporter(const nixlTelemetryExporterInitParams &init_params);
+    ~nixlTelemetryPrometheusExporter() override;
 
     nixl_status_t
     exportEvent(const nixlTelemetryEvent &event) override;
 
 private:
-    static std::mutex s_exposer_mutex_;
+    static std::mutex s_mutex_;
     static std::weak_ptr<prometheus::Exposer> s_exposer_weak_;
+    static std::weak_ptr<prometheus::Registry> s_registry_weak_;
 
-    // Prometheus components
-    const bool local_ = false;
-    const uint16_t port_;
     const std::string agent_name_;
     const std::string hostname_;
-    std::shared_ptr<prometheus::Registry> registry_;
     std::shared_ptr<prometheus::Exposer> exposer_;
+    std::shared_ptr<prometheus::Registry> registry_;
     std::string bind_address_;
 
+    struct CounterEntry {
+        prometheus::Family<prometheus::Counter> *family;
+        prometheus::Counter *metric;
+    };
+    struct GaugeEntry {
+        prometheus::Family<prometheus::Gauge> *family;
+        prometheus::Gauge *metric;
+    };
 
-    // Maps to track created metrics by event name
-    std::unordered_map<std::string, prometheus::Counter *> counters_;
-    std::unordered_map<std::string, prometheus::Gauge *> gauges_;
+    std::unordered_map<std::string, CounterEntry> counters_;
+    std::unordered_map<std::string, GaugeEntry> gauges_;
 
-    // Helper methods
     void
     initializeMetrics();
 
