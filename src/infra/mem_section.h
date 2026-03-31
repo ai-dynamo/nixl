@@ -59,7 +59,7 @@ public:
     }
 
     inline friend bool operator==(const nixlSectionDesc &lhs, const nixlSectionDesc &rhs) {
-        return (static_cast<nixlMetaDesc>(lhs) == static_cast<nixlMetaDesc>(rhs));
+        return (static_cast<const nixlMetaDesc &>(lhs) == static_cast<const nixlMetaDesc &>(rhs));
     }
 
     inline void print(const std::string &suffix) const {
@@ -76,12 +76,15 @@ public:
     void
     addDesc(const nixlSectionDesc &desc) override;
 
-    bool
-    verifySorted() const;
+    void
+    addDescs(std::vector<nixlSectionDesc> batch, bool sorted = false);
 
-    nixlSectionDesc &
+    void
+    addDescs(nixlSecDescList &&other);
+
+    // Returns const ref to prevent mutation of descriptor fields after insertion
+    const nixlSectionDesc &
     operator[](size_t index) {
-        assert(verifySorted());
         return descs[index];
     }
 
@@ -98,6 +101,13 @@ public:
     nixlSecDescList(const nixlSecDescList &) = default;
     nixlSecDescList &
     operator=(const nixlSecDescList &) = default;
+    nixlSecDescList(nixlSecDescList &&) = default;
+    nixlSecDescList &
+    operator=(nixlSecDescList &&) = default;
+
+private:
+    void
+    addSortedDescs(std::vector<nixlSectionDesc> batch);
 };
 
 using nixl_sec_dlist_t = nixlSecDescList;
@@ -168,7 +178,7 @@ class nixlRemoteSection : public nixlMemSection {
 
         // When adding self as a remote agent for local operations
         nixl_status_t
-        loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEngine *backend);
+        loadLocalData(nixlSecDescList &&mem_elms, nixlBackendEngine *backend);
         ~nixlRemoteSection();
 };
 

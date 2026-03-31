@@ -15,10 +15,11 @@
  * limitations under the License.
  */
 #include <algorithm>
-#include <functional>
+#include <cassert>
+#include <cstddef>
+#include <iterator>
 #include <stdexcept>
 #include <iostream>
-#include "nixl.h"
 #include "nixl_descriptors.h"
 #include "mem_section.h"
 #include "backend/backend_aux.h"
@@ -353,30 +354,76 @@ void
 nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
     auto &vec = this->descs;
     auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
-    if (itr == vec.end())
-        vec.push_back(desc);
-    else
-        vec.insert(itr, desc);
+    [[maybe_unused]] auto pos = vec.insert(itr, desc);
+    assert(pos == vec.begin() || !(*pos < *std::prev(pos)));
+    assert(std::next(pos) == vec.end() || !(*std::next(pos) < *pos));
 }
 
-bool
-nixlSecDescList::verifySorted() const {
-    const auto &vec = this->descs;
-    int size = (int)vec.size();
-    if (size <= 1) return (size == 1);
-    for (int i = 0; i < size - 1; ++i) {
-        if (vec[i + 1] < vec[i]) return false;
+void
+nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
+    if (batch.empty()) {
+        return;
     }
-    return true;
+
+    auto &vec = this->descs;
+    if (vec.empty()) {
+        vec = std::move(batch);
+        return;
+    }
+
+    if (!(batch.front() < vec.back())) {
+        vec.insert(vec.end(),
+                   std::make_move_iterator(batch.begin()),
+                   std::make_move_iterator(batch.end()));
+        return;
+    }
+
+    const size_t old_size = vec.size();
+    const size_t batch_size = batch.size();
+    const size_t new_size = old_size + batch_size;
+
+    vec.resize(new_size);
+
+    auto dst = vec.rbegin();
+    auto a = std::make_reverse_iterator(vec.begin() + old_size);
+    auto a_end = vec.rend();
+    auto b = batch.rbegin();
+    auto b_end = batch.rend();
+
+    while (a != a_end && b != b_end) {
+        auto &src = (*b < *a) ? a : b;
+        *dst++ = std::move(*src++);
+    }
+    while (b != b_end) {
+        *dst++ = std::move(*b++);
+    }
+
+    assert(std::is_sorted(vec.begin(), vec.end()));
 }
+
+void
+nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
+    if (sorted) {
+        assert(std::is_sorted(batch.begin(), batch.end()));
+    } else {
+        std::sort(batch.begin(), batch.end());
+    }
+
+    addSortedDescs(std::move(batch));
+}
+
+void
+nixlSecDescList::addDescs(nixlSecDescList &&other) {
+    addSortedDescs(std::move(other.descs));
+}
+
 
 int
 nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
     auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
-    if (itr == this->descs.end()) return NIXL_ERR_NOT_FOUND;
-    if (static_cast<const nixlBasicDesc &>(*itr) == query)
-        return static_cast<int>(itr - this->descs.begin());
-    return NIXL_ERR_NOT_FOUND;
+    if (itr == this->descs.end() || static_cast<const nixlBasicDesc &>(*itr) != query)
+        return NIXL_ERR_NOT_FOUND;
+    return static_cast<int>(itr - this->descs.begin());
 }
 
 int
