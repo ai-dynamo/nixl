@@ -1271,7 +1271,8 @@ execTransferIterations(nixlAgent *agent,
         // GUSLI path: Create/execute/release per iteration
         for (int i = 0; i < num_iter; ++i) {
             // Check for signal (SIGTERM/SIGINT) to allow fast exit on peer death
-            if (__builtin_expect(terminate_ptr && *terminate_ptr, 0)) {
+            if (__builtin_expect(terminate_ptr && terminate_ptr->load(std::memory_order_relaxed),
+                                 0)) {
                 return -1;
             }
             nixl_status_t create_rc =
@@ -1304,7 +1305,8 @@ execTransferIterations(nixlAgent *agent,
         // Standard path: Single request for all iterations
         for (int i = 0; i < num_iter; ++i) {
             // Check for signal (SIGTERM/SIGINT) to allow fast exit on peer death
-            if (__builtin_expect(terminate_ptr && *terminate_ptr, 0)) {
+            if (__builtin_expect(terminate_ptr && terminate_ptr->load(std::memory_order_relaxed),
+                                 0)) {
                 agent->releaseXferReq(req);
                 return -1;
             }
@@ -1466,9 +1468,9 @@ xferBenchNixlWorker::poll(size_t block_size) {
         const auto now = std::chrono::steady_clock::now();
         if (now - last_liveness_check >= liveness_check_interval) {
             last_liveness_check = now;
-            if (rt && !rt->arePeersAlive()) {
+            if (rt && !rt->areAllPeersAlive()) {
                 std::cerr << "nixlbench: peer liveness check failed — aborting poll" << std::endl;
-                terminate = 1;
+                terminate.store(1, std::memory_order_relaxed);
             }
         }
     };

@@ -44,7 +44,7 @@ class xferBenchRT {
 
         // Check if all peer processes are still alive; returns true by default
         [[nodiscard]] virtual bool
-        arePeersAlive() {
+        areAllPeersAlive() {
             return true;
         }
 

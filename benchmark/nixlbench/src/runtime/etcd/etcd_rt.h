@@ -49,7 +49,7 @@ private:
     std::unique_ptr<etcd::SyncClient> client;
 
     // Lease-based peer liveness: each rank's key is attached to a lease that
-    // auto-expires if the process dies (including SIGKILL). arePeersAlive()
+    // auto-expires if the process dies (including SIGKILL). areAllPeersAlive()
     // checks whether all peer rank keys are still present in etcd.
     std::unique_ptr<etcd::KeepAlive> keepalive;
 
@@ -103,7 +103,7 @@ public:
 
     // Check if all peer rank keys are still present in etcd
     bool
-    arePeersAlive() override;
+    areAllPeersAlive() override;
 
     // Cancel keepalive and remove namespace keys before a forced _Exit()
     void

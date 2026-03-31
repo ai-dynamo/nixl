@@ -152,7 +152,7 @@ xferBenchEtcdRT::cleanupForExit() {
 }
 
 bool
-xferBenchEtcdRT::arePeersAlive() {
+xferBenchEtcdRT::areAllPeersAlive() {
     for (int r = 0; r < global_size; r++) {
         if (r == my_rank) continue;
         auto resp = client->get(makeKey("rank", r));
