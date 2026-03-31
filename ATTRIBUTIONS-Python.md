@@ -882,7 +882,7 @@ License: `Apache Software License 2.0`
 ## filelock (3.25.2)
 
 ### Licenses
-License: `Unlicense`
+License: `MIT`
 
   - `licenses/LICENSE`:
 ```
