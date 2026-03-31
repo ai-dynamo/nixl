@@ -262,14 +262,10 @@ nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, u
                            nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
                            nixl_telemetry_event_name_t::AGENT_XFER_TIME,
                            static_cast<uint64_t>(xfer_time.count()));
-    fillTelemetryEventSlot(arr[id_base + 1],
-                           nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-                           bytes_name,
-                           bytes);
-    fillTelemetryEventSlot(arr[id_base + 2],
-                           nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-                           requests_name,
-                           1);
+    fillTelemetryEventSlot(
+        arr[id_base + 1], nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_name, bytes);
+    fillTelemetryEventSlot(
+        arr[id_base + 2], nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, requests_name, 1);
 }
 
 void
