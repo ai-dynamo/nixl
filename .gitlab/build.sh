@@ -435,6 +435,23 @@ else
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
     mkdir -p dist && cp ${NIXL_BUILD_DIR}/src/bindings/python/nixl-meta/nixl-*.whl dist/
 
+    # Verify the nixl_ep device-debug (-G) build compiles, so future changes
+    # keep the nvcc_device_debug feature working. Compile-only (no install/run).
+    # nixl_ep requires sm_90 or newer, so detect the GPU compute capability and
+    # only run the check when it qualifies, building for the detected arch.
+    NIXL_EP_GPU_COMPUTE_CAP=""
+    if test -d "$CUDA_HOME" && command -v nvidia-smi >/dev/null 2>&1; then
+        NIXL_EP_GPU_COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n1 | tr -d '. ')
+    fi
+    if [ -n "${NIXL_EP_GPU_COMPUTE_CAP}" ] && [ "${NIXL_EP_GPU_COMPUTE_CAP}" -ge 90 ] 2>/dev/null; then
+        NIXL_DEVICE_DEBUG_BUILD_DIR=${NIXL_DEVICE_DEBUG_BUILD_DIR:-nixl_device_debug_build}
+        # shellcheck disable=SC2086
+        meson setup ${NIXL_DEVICE_DEBUG_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" -Dbuild_nixl_ep=true -Dnvcc_device_debug=true -Dnixl_cuda_arch_list=${NIXL_EP_GPU_COMPUTE_CAP}
+        ninja -j"$NPROC" -C ${NIXL_DEVICE_DEBUG_BUILD_DIR}
+    else
+        echo "nixl_ep -G (nvcc_device_debug) check skipped: requires an sm_90+ GPU (detected compute_cap='${NIXL_EP_GPU_COMPUTE_CAP:-none}')."
+    fi
+
     # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
     # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
 

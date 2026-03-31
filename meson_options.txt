@@ -43,6 +43,7 @@ option('sanitizer', type: 'combo',
 # Tracing (nixl::trace)
 option('with_trace', type: 'boolean', value: true, description: 'Build the nixl::trace tracing facade')
 option('trace_backends', type: 'string', value: 'nvtx', description: 'Comma-separated tracing backends to compile in (e.g. nvtx, chakra)')
+option('nvcc_device_debug', type: 'boolean', value: false, description: 'Add -G flag to nvcc for CUDA device debug info')
 
 # Tests
 option('build_tests', type: 'boolean', value: true, description: 'Build all tests')
