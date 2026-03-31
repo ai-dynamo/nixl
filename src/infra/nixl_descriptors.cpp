@@ -423,8 +423,11 @@ nixlSecDescList::bulkRemove(std::vector<size_t> indices, bool sorted) {
     }
 
     auto &vec = this->descs;
+
+    // assert that the indices are valid and unique
     assert(indices.back() < vec.size());
     assert(std::adjacent_find(indices.begin(), indices.end()) == indices.end());
+
     size_t write = indices[0];
     size_t ri = 1;
     for (size_t read = write + 1; read < vec.size(); ++read) {
