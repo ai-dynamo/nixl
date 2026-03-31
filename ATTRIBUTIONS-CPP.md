@@ -479,7 +479,7 @@ AND/OR REDISTRIBUTE THE LIBRARY AS PERMITTED ABOVE, BE LIABLE TO YOU
 FOR DAMAGES, INCLUDING ANY GENERAL, SPECIAL, INCIDENTAL OR
 ```
 
-## prometheus-cpp
+## prometheus-cpp - v1.3.0
 
 - **Repository URL**: https://github.com/jupp0r/prometheus-cpp
 - **License URL**: https://github.com/jupp0r/prometheus-cpp/blob/master/LICENSE
