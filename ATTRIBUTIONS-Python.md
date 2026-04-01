@@ -882,7 +882,7 @@ License: `Apache Software License 2.0`
 ## filelock (3.25.2)
 
 ### Licenses
-License: `Unlicense`
+License: `MIT`
 
   - `licenses/LICENSE`:
 ```
@@ -9160,7 +9160,7 @@ DEALINGS IN THE SOFTWARE.
 ## mypy-extensions (1.1.0)
 
 ### Licenses
-License: `None`
+License: `Apache-2.0`
 
   - `licenses/LICENSE`:
 ```
@@ -9253,7 +9253,7 @@ NetworkX is distributed with the 3-clause BSD license.
 ## nixl (1.0.1)
 
 ### Licenses
-License: `None`
+License: `Apache-2.0`
 
   - `licenses/LICENSE`:
 ```
@@ -9474,7 +9474,7 @@ License: `None`
 ## nixl-cu13 (1.0.1)
 
 ### Licenses
-License: `None`
+License: `Apache-2.0`
 
   - `licenses/LICENSE`:
 ```
