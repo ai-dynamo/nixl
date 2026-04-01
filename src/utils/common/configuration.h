@@ -93,12 +93,12 @@ namespace internal {
             }
 
             throwRuntimeError("Conversion to bool failed for string '",
-                                value,
-                                "' known are ",
-                                absl::StrJoin(positive, ", "),
-                                " as positive and ",
-                                absl::StrJoin(negative, ", "),
-                                " as negative (case insensitive)");
+                              value,
+                              "' known are ",
+                              absl::StrJoin(positive, ", "),
+                              " as positive and ",
+                              absl::StrJoin(negative, ", "),
+                              " as negative (case insensitive)");
         }
 
         [[nodiscard]] static bool
