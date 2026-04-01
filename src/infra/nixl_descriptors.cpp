@@ -431,6 +431,7 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
 
 void
 nixlSecDescList::addDescs(nixlSecDescList &&other) {
+    assert(type == other.type);
     addDescs(std::move(other.descs), true);
 }
 
