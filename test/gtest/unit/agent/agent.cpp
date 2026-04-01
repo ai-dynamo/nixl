@@ -293,8 +293,8 @@ namespace agent {
         const double ratio = static_cast<double>(std::max(timed1_ns, timed2_ns)) /
             static_cast<double>(std::min(timed1_ns, timed2_ns));
         EXPECT_LE(ratio, 2.) << "timed batches differ by more than 100% "
-                                  "(ns1="
-                               << timed1_ns << " ns2=" << timed2_ns << " ratio=" << ratio << ")";
+                                "(ns1="
+                             << timed1_ns << " ns2=" << timed2_ns << " ratio=" << ratio << ")";
     }
 
     INSTANTIATE_TEST_SUITE_P(DramRegisterMemoryInstantiation,
