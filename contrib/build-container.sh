@@ -173,11 +173,10 @@ show_build_options() {
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
+    echo "UCX Ref: ${UCX_REF}"
     if [ "$BUILD_NIXL_EP" = "true" ]; then
-        echo "UCX Ref: master (latest) - BUILD_NIXL_EP enabled"
         echo "NIXL EP: Enabled"
     else
-        echo "UCX Ref: ${UCX_REF}"
         echo "NIXL EP: Disabled"
     fi
     echo "Build Type: ${BUILD_TYPE}"
