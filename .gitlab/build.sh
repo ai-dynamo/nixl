@@ -288,7 +288,7 @@ else
       cd Mooncake && \
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
-      cmake .. -DBUILD_SHARED_LIBS=ON -G Ninja && \
+      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
       ninja && \
       $SUDO ninja install && \
       $SUDO ldconfig && \
