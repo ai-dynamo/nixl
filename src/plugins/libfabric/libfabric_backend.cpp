@@ -577,8 +577,8 @@ nixlLibfabricEngine::createAgentConnection(
     }
 
     if (data_rail_endpoints.size() != rail_manager.getNumRails()) {
-        NIXL_DEBUG << "Rail count (local: " << rail_manager.getNumRails()
-                   << ", remote: " << data_rail_endpoints.size() << ")";
+        NIXL_WARN << "Rail count mismatch (local: " << rail_manager.getNumRails()
+                  << ", remote: " << data_rail_endpoints.size() << ")";
     }
 
     // Create connection object

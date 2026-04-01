@@ -268,7 +268,7 @@ nixlLibfabricTopology::printTopologyInfo() const {
     NIXL_TRACE << "Accelerator-PCI → EFA mapping:";
     for (const auto &pair : pci_to_efa_devices) {
         std::stringstream ss;
-        ss << "  " << pair.first << " → [";
+        ss << "Accelerator-PCI " << pair.first << " → [";
         for (size_t i = 0; i < pair.second.size(); ++i) {
             if (i > 0) ss << ", ";
             ss << pair.second[i];

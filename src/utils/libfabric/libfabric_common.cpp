@@ -279,7 +279,7 @@ getCustomIntParam(const nixl_b_params_t &custom_params, const std::string &key, 
                       << value_str.substr(pos) << "'), using default: " << value;
             return NIXL_ERR_INVALID_PARAM;
         }
-        if (parsed_value >= SIZE_MAX) {
+        if (parsed_value > SIZE_MAX) {
             NIXL_WARN << "Invalid " << key << " configuration value '" << parsed_value
                       << "': exceeding maximum allowed " << SIZE_MAX
                       << ", using default: " << value;
