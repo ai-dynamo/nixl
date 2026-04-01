@@ -21,9 +21,9 @@ namespace nixl::config {
 
 namespace {
 
-    const char *home_filename = ".nixl.cfg";
-    const char *nixl_filename = "/etc/nixl.cfg";
-    const char *nixl_variable = "NIXL_CONFIG_FILE";
+    const char *const home_filename = ".nixl.cfg";
+    const char *const nixl_filename = "/etc/nixl.cfg";
+    const char *const nixl_variable = "NIXL_CONFIG_FILE";
 
     [[nodiscard]] toml::table
     readFile(const std::filesystem::path &file) {
@@ -31,7 +31,7 @@ namespace {
             return toml::parse_file(file.native());
         }
         catch (const std::exception &e) {
-            internal::throw_runtime_error("Error ", e.what(), " reading TOML config file ", file);
+            internal::throwRuntimeError("Error ", e.what(), " reading TOML config file ", file);
         }
     }
 
@@ -49,29 +49,25 @@ namespace {
 
         // Second choice, use config file in home directory if directory and file exist.
 
-        if (home_filename && *home_filename) {
-            if (const auto env = internal::getenvOptional("HOME")) {
-                const std::filesystem::path home(*env);
-                const std::filesystem::path file =
-                    std::filesystem::weakly_canonical(home / home_filename);
-                if (std::filesystem::exists(file)) {
-                    NIXL_DEBUG << "Reading nixl config file " << file;
-                    return readFile(file);
-                }
-                NIXL_DEBUG << "Config file " << file << " does not exist";
-            }
-        }
-
-        // Third choice, use global config file if it exists.
-
-        if (nixl_filename && *nixl_filename) {
-            const std::filesystem::path file(nixl_filename);
+        if (const auto env = internal::getenvOptional("HOME")) {
+            const std::filesystem::path home(*env);
+            const std::filesystem::path file =
+                std::filesystem::weakly_canonical(home / home_filename);
             if (std::filesystem::exists(file)) {
                 NIXL_DEBUG << "Reading nixl config file " << file;
                 return readFile(file);
             }
             NIXL_DEBUG << "Config file " << file << " does not exist";
         }
+
+        // Third choice, use global config file if it exists.
+
+        const std::filesystem::path file(nixl_filename);
+        if (std::filesystem::exists(file)) {
+            NIXL_DEBUG << "Reading nixl config file " << file;
+            return readFile(file);
+        }
+        NIXL_DEBUG << "Config file " << file << " does not exist";
 
         // Fallback, empty config file and only use environment variables.
 
@@ -129,7 +125,7 @@ namespace internal {
     void
     warnIgnoreToml(const std::string &path) {
         if (getConfig().at_path(toml::path(path))) {
-            NIXL_WARN << "Ignoring config file entry '" << path << "' for environment variable";
+            NIXL_DEBUG << "Ignoring config file entry '" << path << "' for environment variable";
         }
     }
 

@@ -52,7 +52,7 @@ namespace internal {
 
     template<typename... Ts>
     [[noreturn]] void
-    throw_runtime_error(Ts &&...ts) {
+    throwRuntimeError(Ts &&...ts) {
         std::ostringstream oss;
         (void)(oss << ... << ts);
         throw std::runtime_error(std::move(oss).str());
@@ -92,7 +92,7 @@ namespace internal {
                 return false;
             }
 
-            throw_runtime_error("Conversion to bool failed for string '",
+            throwRuntimeError("Conversion to bool failed for string '",
                                 value,
                                 "' known are ",
                                 absl::StrJoin(positive, ", "),
@@ -106,7 +106,7 @@ namespace internal {
             if (const auto *node = view.as_boolean()) {
                 return node->get();
             }
-            throw_runtime_error("Invalid TOML type '", view.type(), "' for Boolean");
+            throwRuntimeError("Invalid TOML type '", view.type(), "' for Boolean");
         }
 
     private:
@@ -130,7 +130,7 @@ namespace internal {
             if (const auto *node = view.as_string()) {
                 return node->get();
             }
-            throw_runtime_error("Invalid TOML type '", view.type(), "' for string");
+            throwRuntimeError("Invalid TOML type '", view.type(), "' for string");
         }
     };
 
@@ -154,14 +154,14 @@ namespace internal {
                 std::from_chars(start(value), value.data() + value.size(), result, base(value));
             switch (status.ec) {
             case std::errc::invalid_argument:
-                throw_runtime_error(
+                throwRuntimeError(
                     "Invalid integer string '", value, "' for type ", typeid(integer).name());
             case std::errc::result_out_of_range:
-                throw_runtime_error(
+                throwRuntimeError(
                     "Integer string '", value, "' out of range for type ", typeid(integer).name());
             default:
                 if (status.ptr != value.data() + value.size()) {
-                    throw_runtime_error("Trailing garbage in integer string '", value, "'");
+                    throwRuntimeError("Trailing garbage in integer string '", value, "'");
                 }
                 break;
             }
@@ -175,10 +175,10 @@ namespace internal {
                 if (in_range(value)) {
                     return integer(value);
                 }
-                throw_runtime_error(
+                throwRuntimeError(
                     "Integer value '", value, "' out of range for type ", typeid(integer).name());
             }
-            throw_runtime_error("Invalid TOML type '", view.type(), "' for integer");
+            throwRuntimeError("Invalid TOML type '", view.type(), "' for integer");
         }
 
     private:
@@ -237,7 +237,7 @@ namespace internal {
             if (const auto *node = view.as_integer()) {
                 return std::chrono::milliseconds(node->get());
             }
-            throw_runtime_error("Invalid TOML type '", view.type(), "' for milliseconds");
+            throwRuntimeError("Invalid TOML type '", view.type(), "' for milliseconds");
         }
     };
 
@@ -285,7 +285,7 @@ getValue(const std::string &env) {
     if (const auto view = internal::findTomlNode(env)) {
         return traits<type>::convert(view);
     }
-    internal::throw_runtime_error("Missing config entry '", env, "'");
+    internal::throwRuntimeError("Missing config entry '", env, "'");
 }
 
 template<typename type, template<typename...> class traits = internal::convertTraits>
@@ -314,7 +314,7 @@ getNonEmptyString(const std::string &env) {
     const std::string result = getValue<std::string>(env);
 
     if (result.empty()) {
-        internal::throw_runtime_error("Config parameter '", env, "' needs non-empty value");
+        internal::throwRuntimeError("Config parameter '", env, "' needs non-empty value");
     }
     return result;
 }
