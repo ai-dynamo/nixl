@@ -179,10 +179,10 @@ RUN rm -rf /opt/hpcx/ucx
 
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
-     cd ucx &&                       \
+     cd ucx && \
      echo "=== Using UCX_REF=$UCX_REF ===" && \
-     git checkout $UCX_REF &&        \
-     EXPERIMENTAL_API_PARAM="" &&     \
+     git checkout $UCX_REF && \
+     if [ "$BUILD_NIXL_EP" = "true" ]; then EXPERIMENTAL_API_PARAM="--enable-experimental-api"; else EXPERIMENTAL_API_PARAM=""; fi && \
      ./autogen.sh && \
      ./contrib/configure-release-mt  \
          --prefix=$UCX_PREFIX        \
