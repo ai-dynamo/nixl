@@ -28,6 +28,7 @@
 #include "absl/strings/str_join.h"
 
 const std::string nixl_null_agent = "NULL_AGENT";
+constexpr size_t ADD_SORTED_DESCS_THRESHOLD = 4;
 
 /*** Class nixlBasicDesc implementation ***/
 
@@ -371,16 +372,17 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
         return;
     }
 
-    if (!(batch.front() < vec.back())) {
-        vec.insert(vec.end(),
-                   std::make_move_iterator(batch.begin()),
-                   std::make_move_iterator(batch.end()));
-        return;
-    }
-
     const size_t old_size = vec.size();
     const size_t batch_size = batch.size();
     const size_t new_size = old_size + batch_size;
+
+    if (!(batch.front() < vec.back())) {
+        vec.reserve(new_size);
+        for (auto &d : batch) {
+            vec.emplace_back(std::move(d));
+        }
+        return;
+    }
 
     vec.resize(new_size);
 
@@ -403,6 +405,16 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
 
 void
 nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
+    if (batch.size() <= ADD_SORTED_DESCS_THRESHOLD) {
+        auto &vec = this->descs;
+        for (auto &d : batch) {
+            auto itr = std::upper_bound(vec.begin(), vec.end(), d);
+            vec.insert(itr, std::move(d));
+        }
+        assert(std::is_sorted(vec.begin(), vec.end()));
+        return;
+    }
+
     if (sorted) {
         assert(std::is_sorted(batch.begin(), batch.end()));
     } else {
@@ -414,7 +426,7 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
 
 void
 nixlSecDescList::addDescs(nixlSecDescList &&other) {
-    addSortedDescs(std::move(other.descs));
+    addDescs(std::move(other.descs), true);
 }
 
 
