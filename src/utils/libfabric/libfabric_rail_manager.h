@@ -212,6 +212,7 @@ public:
                              const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
                              uint16_t agent_idx,
                              uint16_t xfer_id,
+                             int device_id,
                              std::function<void()> completion_callback,
                              size_t &submitted_count_out);
     /** Determine if striping should be used for given transfer size

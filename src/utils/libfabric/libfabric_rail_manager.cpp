@@ -351,6 +351,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
     uint16_t agent_idx,
     uint16_t xfer_id,
+    int device_id,
     std::function<void()> completion_callback,
     size_t &submitted_count_out) {
     // Initialize output parameter
@@ -363,7 +364,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 
     // Determine striping strategy
     bool use_striping = shouldUseStriping(transfer_size) && selected_rails.size() > 1;
-    NIXL_TRACE_TRANSFER_BEGIN(op_type == nixlLibfabricReq::WRITE ? NIXL_TP_OP_WRITE :
+    NIXL_TRACE_TRANSFER_BEGIN(device_id,
+                              op_type == nixlLibfabricReq::WRITE ? NIXL_TP_OP_WRITE :
                                                                    NIXL_TP_OP_READ,
                               transfer_size,
                               (int)selected_rails.size(),
@@ -381,11 +383,12 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
         if (!req) {
             NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
-            NIXL_TRACE_TRANSFER_SUBMITTED(0, xfer_id);
+            NIXL_TRACE_TRANSFER_SUBMITTED(device_id, 0, xfer_id);
             return NIXL_ERR_BACKEND;
         }
         // Set completion callback and populate request
         req->completion_callback = completion_callback;
+        req->device_id = device_id;
         req->chunk_offset = 0;
         req->chunk_size = transfer_size;
         req->local_addr = local_addr;
@@ -434,7 +437,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             NIXL_ERROR << "Failed to submit "
                        << (op_type == nixlLibfabricReq::WRITE ? "write" : "read") << " on rail "
                        << rail_id << ", request released";
-            NIXL_TRACE_TRANSFER_SUBMITTED(0, xfer_id);
+            NIXL_TRACE_TRANSFER_SUBMITTED(device_id, 0, xfer_id);
             return status;
         }
 
@@ -460,11 +463,12 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
             if (!req) {
                 NIXL_ERROR << "Failed to allocate request for rail " << rail_id;
+                NIXL_TRACE_TRANSFER_SUBMITTED(device_id, 0, xfer_id);
                 return NIXL_ERR_BACKEND;
-                NIXL_TRACE_TRANSFER_SUBMITTED(0, xfer_id);
             }
 
             req->completion_callback = completion_callback;
+            req->device_id = device_id;
 
             // Calculate and populate chunk info
             size_t chunk_offset = i * chunk_size;
@@ -516,8 +520,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                 NIXL_ERROR << "Failed to submit "
                            << (op_type == nixlLibfabricReq::WRITE ? "write" : "read") << " on rail "
                            << rail_id << ", request released";
+                NIXL_TRACE_TRANSFER_SUBMITTED(device_id, 0, xfer_id);
                 return status;
-                NIXL_TRACE_TRANSFER_SUBMITTED(0, xfer_id);
             }
 
             // Track submitted request
@@ -528,7 +532,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     }
 
     NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
-    NIXL_TRACE_TRANSFER_SUBMITTED(submitted_count_out, xfer_id);
+    NIXL_TRACE_TRANSFER_SUBMITTED(device_id, submitted_count_out, xfer_id);
 
     return NIXL_SUCCESS;
 }

@@ -1070,6 +1070,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             conn_it->second->rail_remote_addr_list_,
             conn_it->second->agent_index_,
             backend_handle->post_xfer_id,
+            device_id,
             [backend_handle]() {
                 backend_handle->increment_completed_requests();
             }, // Completion callback

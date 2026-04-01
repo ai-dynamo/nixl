@@ -873,6 +873,11 @@ nixlLibfabricRail::processLocalTransferCompletion(struct fi_cq_data_entry *comp,
         if (req->completion_callback) {
             NIXL_TRACE << "Calling completion callback for " << operation_type << " request "
                        << req->xfer_id;
+            NIXL_TRACE_LOCAL_TRANSFER_COMPLETION(
+                req->device_id,
+                rail_id,
+                req->operation_type == nixlLibfabricReq::WRITE ? NIXL_TP_OP_WRITE : NIXL_TP_OP_READ,
+                req->xfer_id);
             req->completion_callback();
             NIXL_TRACE << "Completion callback completed for " << operation_type;
         }
@@ -1039,7 +1044,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
                << " XFER_ID=" << NIXL_GET_XFER_ID_FROM_IMM(immediate_data)
                << " dest_addr=" << dest_addr << std::dec << " context=" << &req->ctx;
 
-    NIXL_TRACE_POST_SEND_BEGIN(rail_id, req->buffer_size, req->xfer_id);
+    NIXL_TRACE_POST_SEND_BEGIN(req->device_id, rail_id, req->buffer_size, req->xfer_id);
     // Retry indefinitely until senddata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
     int attempt = 0;
@@ -1062,7 +1067,8 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
             NIXL_TRACE << "Send posted successfully"
                        << (attempt > 0 ? " after " + std::to_string(attempt + 1) + " attempts" :
                                          "");
-            NIXL_TRACE_POST_SEND_END(rail_id, req->buffer_size, attempt, req->xfer_id);
+            NIXL_TRACE_POST_SEND_END(
+                req->device_id, rail_id, req->buffer_size, attempt, req->xfer_id);
             return NIXL_SUCCESS;
         }
 
@@ -1124,7 +1130,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                << " remote_key=" << remote_key << " context=" << &req->ctx;
 
     // Retry indefinitely until writedata succeeds or fails for all providers
-    NIXL_TRACE_POST_WRITE_BEGIN(rail_id, length, req->xfer_id);
+    NIXL_TRACE_POST_WRITE_BEGIN(req->device_id, rail_id, length, req->xfer_id);
     int ret = -FI_EAGAIN;
     int attempt = 0;
 
@@ -1148,7 +1154,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
             NIXL_TRACE << "RDMA write posted successfully"
                        << (attempt > 0 ? " after " + std::to_string(attempt + 1) + " attempts" :
                                          "");
-            NIXL_TRACE_POST_WRITE_END(rail_id, length, attempt, req->xfer_id);
+            NIXL_TRACE_POST_WRITE_END(req->device_id, rail_id, length, attempt, req->xfer_id);
             return NIXL_SUCCESS;
         }
 
@@ -1208,7 +1214,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
                << " dest_addr=" << dest_addr << " remote_addr=" << (void *)remote_addr
                << " remote_key=" << remote_key << " context=" << &req->ctx;
 
-    NIXL_TRACE_POST_READ_BEGIN(rail_id, length, req->xfer_id);
+    NIXL_TRACE_POST_READ_BEGIN(req->device_id, rail_id, length, req->xfer_id);
     // Retry indefinitely until readdata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
     int attempt = 0;
@@ -1232,7 +1238,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
             NIXL_TRACE << "RDMA read posted successfully"
                        << (attempt > 0 ? " after " + std::to_string(attempt + 1) + " attempts" :
                                          "");
-            NIXL_TRACE_POST_READ_END(rail_id, length, attempt, req->xfer_id);
+            NIXL_TRACE_POST_READ_END(req->device_id, rail_id, length, attempt, req->xfer_id);
             return NIXL_SUCCESS;
         }
 
