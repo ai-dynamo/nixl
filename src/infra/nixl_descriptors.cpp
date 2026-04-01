@@ -377,6 +377,8 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
     const size_t new_size = old_size + batch_size;
 
     if (!(batch.front() < vec.back())) {
+        // The batch comes directly after the existing elements, so we can append them directly
+        // NOTE: Using vec.insert() with iterators degrades performance
         vec.reserve(new_size);
         for (auto &d : batch) {
             vec.emplace_back(std::move(d));
@@ -384,6 +386,7 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
         return;
     }
 
+    // Merge the batch into the existing vector in-place in reverse order to reduce copies
     vec.resize(new_size);
 
     auto dst = vec.rbegin();
@@ -406,6 +409,8 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
 void
 nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
     if (batch.size() <= ADD_SORTED_DESCS_THRESHOLD) {
+        // For small batches it's more efficient to insert one by one
+        // NOTE: Calling vec.reserve() here degrades performance
         auto &vec = this->descs;
         for (auto &d : batch) {
             auto itr = std::upper_bound(vec.begin(), vec.end(), d);
