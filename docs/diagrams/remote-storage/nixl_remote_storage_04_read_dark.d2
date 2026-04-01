@@ -1,0 +1,68 @@
+# NIXL Remote Storage — Phase 4: Remote Read Request (Dark)
+
+shape: sequence_diagram
+
+client: "Client\n(NIXL Agent)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+server: "Storage Server\n(NIXL Agent)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+storage: "Local Storage\n(GDS / POSIX)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+
+client -> client: "4.1 get_serialized_descs(VRAM descs)" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+client -> server: "4.2 send_notif(\"READ\" + iterations + descs)" {
+  style.font-size: 20
+  style.stroke: "#F5A623"
+}
+server -> server: "4.3 deserialize_descs(received data)" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+server -> storage: "4.4 initialize_xfer(READ, DRAM, FILE)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+server -> storage: "4.5 transfer — storage read" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 3
+}
+server -> client: "4.6 initialize_xfer(WRITE, DRAM, client VRAM)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+server -> client: "4.7 transfer — network write to client" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 3
+}
+server -> server: "4.8 repeat 4.4–4.7 (pipelined)" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+  style.stroke-dash: 5
+}
+server -> client: "4.9 send_notif(\"COMPLETE\")" {
+  style.font-size: 20
+  style.stroke: "#F5A623"
+}
+client -> client: "4.10 check_remote_xfer_done(\"COMPLETE\")" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}

@@ -1,0 +1,106 @@
+navigation:
+  # ==================== Getting Started ====================
+  - section: Getting Started
+    contents:
+      - page: Overview
+        path: getting-started/overview.md
+      - page: Architecture
+        path: getting-started/architecture.md
+      - page: Quick Start
+        path: getting-started/quick-start.md
+      - page: Contribution Guide
+        path: getting-started/contributing.md
+
+  # ==================== User Guide ====================
+  - section: User Guide
+    contents:
+      - section: NIXL Backends
+        collapsed: open-by-default
+        path: user-guide/backends/index.md
+        contents:
+          # Network transports
+          - page: UCX
+            path: user-guide/backends/ucx.md
+          - page: Libfabric
+            path: user-guide/backends/libfabric.md
+          - page: Mooncake
+            path: user-guide/backends/mooncake.md
+          - page: UCCL-P2P
+            path: user-guide/backends/uccl.md
+          - page: DOCA GPUNetIO
+            path: user-guide/backends/gpunetio.md
+          # Storage & file backends
+          - page: GPUDirect Storage
+            path: user-guide/backends/gds.md
+          - page: GPUDirect Storage MT
+            path: user-guide/backends/gds-mt.md
+          - page: POSIX
+            path: user-guide/backends/posix.md
+          - page: HF3FS
+            path: user-guide/backends/hf3fs.md
+          - page: OBJ
+            path: user-guide/backends/obj.md
+          - page: Azure Blob
+            path: user-guide/backends/azure-blob.md
+          - page: GUSLI
+            path: user-guide/backends/gusli.md
+      - page: "Metadata Exchange with ETCD"
+        path: user-guide/etcd-metadata-exchange.md
+      - page: Telemetry Guide
+        path: user-guide/telemetry.md
+
+  # ==================== Developer Guide ====================
+  - section: Developer Guide
+    contents:
+      - section: Building NIXL from Source
+        collapsed: open-by-default
+        path: user-guide/building-nixl/index.md
+        contents:
+          - page: Docker
+            path: user-guide/building-nixl/docker.md
+          - page: "NIXL C++ (Meson)"
+            path: user-guide/building-nixl/nixl-cpp.md
+          - page: Python Bindings
+            path: user-guide/building-nixl/python-bindings.md
+          - page: Rust Bindings
+            path: user-guide/building-nixl/rust-bindings.md
+      - page: Building a Backend Plugin
+        path: development/building-a-backend-plugin.md
+
+  # ==================== Examples ====================
+  - section: Examples
+    contents:
+      - page: Basic Two-Peer Transfer
+        path: examples/basic-transfer.md
+      - page: GDS Direct Storage
+        path: examples/gds-direct-storage.md
+      - page: Remote Storage Transfer
+        path: examples/remote-storage.md
+      - page: "NIXL-EP: Expert-Parallel Communication"
+        path: examples/nixl-ep.md
+      - page: ETCD Metadata Exchange
+        path: examples/etcd-metadata-exchange.md
+      - page: Telemetry Reader
+        path: examples/telemetry-reader.md
+
+  # ==================== API Reference ====================
+  - section: API Reference
+    contents:
+      - page: C++ API
+        path: api-reference/cpp-api.md
+      - page: Python API
+        path: api-reference/python-api.md
+      - page: Rust API
+        path: api-reference/rust-api.md
+      - page: Device API
+        path: api-reference/device-api.md
+      - page: "Plugin (Southbound) API"
+        path: development/sb-api-reference.md
+
+  # ==================== Resources ====================
+  - section: Resources
+    contents:
+      - page: Environment Variables
+        path: resources/environment-variables.md
+      - page: Troubleshooting
+        path: resources/troubleshooting.md

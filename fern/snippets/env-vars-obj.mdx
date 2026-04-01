@@ -1,0 +1,13 @@
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AWS_DEFAULT_BUCKET` | String | None | Default S3 bucket name. Used as fallback when `bucket` is not specified in backend parameters. |
+| `AWS_ENDPOINT_OVERRIDE` | String (URL) | None | Custom S3 endpoint URL. Used as fallback when `endpoint_override` is not specified in backend parameters. Set this for S3-compatible storage services (e.g., MinIO, Ceph). |
+
+The OBJ backend also recognizes standard AWS SDK environment variables for authentication:
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `AWS_ACCESS_KEY_ID` | String | AWS access key for authentication. |
+| `AWS_SECRET_ACCESS_KEY` | String | AWS secret key for authentication. |
+| `AWS_SESSION_TOKEN` | String | AWS session token for temporary credentials. |
+| `AWS_REGION` | String | AWS region for the S3 endpoint. |

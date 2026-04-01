@@ -1,0 +1,89 @@
+instances:
+  - url: nixl.docs.buildwithfern.com
+    # edit-this-page: removed — ai-dynamo/nixl GitHub repo does not contain fern/ directory.
+    # Re-add when fern/ is pushed to the public GitHub repo. See .planning/debug/edit-this-page-not-visible.md
+
+title: NIXL Documentation
+
+# Navbar with GitHub link
+navbar-links:
+  - type: github
+    value: https://github.com/ai-dynamo/nixl
+
+# Custom footer component
+footer: ./components/CustomFooter.tsx
+
+layout:
+  searchbar-placement: header
+  page-width: 1376px
+  sidebar-width: 248px
+  content-width: 812px
+  tabs-placement: header
+  hide-feedback: true
+
+experimental:
+  mdx-components:
+    - ./components
+
+css:
+  - ./main.css
+
+colors:
+  accentPrimary:
+    dark: '#76B900'
+    light: '#76B900'
+  background:
+    light: '#FFFFFF'
+    dark: '#000000'
+
+typography:
+  bodyFont:
+    name: NVIDIA
+    paths:
+      - path: ../docs/assets/fonts/NVIDIASans.woff2
+        style: normal
+      - path: ../docs/assets/fonts/NVIDIASans_Italic.woff2
+        style: italic
+  codeFont:
+    name: RobotoMono
+    paths:
+      - path: ../docs/assets/fonts/RobotoMono.woff2
+
+theme:
+  page-actions: toolbar
+  footer-nav: minimal
+
+page-actions:
+  default: ask-ai
+  options:
+    copy-page: true
+    view-as-markdown: true
+    ask-ai: true
+    claude: true
+    chatgpt: true
+    cursor: false
+    vscode: false
+
+# ai-search: removed — AI search requires Fern Dashboard enablement + Pro plan.
+# Basic DocSearch works without this block. Re-add when Dashboard is enabled.
+# See .planning/debug/search-bar-no-entry-symbol.md
+
+products:
+  - display-name: NIXL
+    path: ../docs/index.yml
+    versions:
+      - display-name: v1.0.0
+        path: ../docs/index.yml
+        availability: stable
+
+logo:
+  dark: ../docs/assets/NVIDIA_dark.svg
+  light: ../docs/assets/NVIDIA_light.svg
+  height: 20
+  href: https://nvidia.com
+  right-text: Documentation
+
+favicon: ../docs/assets/NVIDIA_symbol.svg
+
+# Redirects scaffolding - empty, ready for future use
+redirects: []

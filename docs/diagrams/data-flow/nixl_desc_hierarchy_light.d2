@@ -1,0 +1,57 @@
+# NIXL Descriptor Class Hierarchy — Light Mode
+# Render: d2 --theme 0 --pad 20 docs/diagrams/data-flow/nixl_desc_hierarchy_light.d2 docs/figures/data-flow/nixl_desc_hierarchy_light.svg
+
+direction: down
+
+nixlBasicDesc: "nixlBasicDesc" {
+  shape: class
+  style.font-size: 15
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+  style.font-color: "#333333"
+
+  addr: "addr : uintptr_t"
+  len: "len : size_t"
+  devId: "devId : uint64_t"
+}
+
+nixlBlobDesc: "nixlBlobDesc" {
+  shape: class
+  style.font-size: 15
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+  style.font-color: "#333333"
+
+  metaInfo: "metaInfo : nixl_blob_t"
+}
+
+nixlRemoteDesc: "nixlRemoteDesc" {
+  shape: class
+  style.font-size: 15
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+  style.font-color: "#333333"
+
+  remoteAgent: "remoteAgent : std::string"
+}
+
+nixlBasicDesc -> nixlBlobDesc: "extends" {
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  target-arrowhead: {
+    shape: triangle
+    style.filled: false
+  }
+}
+
+nixlBasicDesc -> nixlRemoteDesc: "extends" {
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  target-arrowhead: {
+    shape: triangle
+    style.filled: false
+  }
+}

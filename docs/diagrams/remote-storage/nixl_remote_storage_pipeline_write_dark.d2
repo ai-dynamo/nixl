@@ -1,0 +1,71 @@
+# NIXL Remote Storage — Write Pipeline (Dark)
+# Shows pipelined overlap: network read N runs concurrently with storage write N-1
+
+shape: sequence_diagram
+
+client: "Client\n(NIXL Agent)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+server: "Storage Server\n(NIXL Agent)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+storage: "Local Storage\n(GDS / POSIX)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+
+client -> server: "Network Read 1" {
+  style.font-size: 20
+  style.stroke: "#6C8EBF"
+  style.stroke-width: 3
+}
+
+server -> storage: "Storage Write 1" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 3
+}
+client -> server: "Network Read 2  ← overlaps with Write 1" {
+  style.font-size: 20
+  style.stroke: "#6C8EBF"
+  style.stroke-width: 3
+}
+
+server -> storage: "Storage Write 2" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 3
+}
+client -> server: "Network Read 3  ← overlaps with Write 2" {
+  style.font-size: 20
+  style.stroke: "#6C8EBF"
+  style.stroke-width: 3
+}
+
+server -> storage: "Storage Write 3" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 3
+}
+client -> server: "Network Read N  ← overlaps with Write N-1" {
+  style.font-size: 20
+  style.stroke: "#6C8EBF"
+  style.stroke-width: 3
+  style.stroke-dash: 5
+}
+
+server -> storage: "Storage Write N" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 3
+}
