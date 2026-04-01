@@ -187,7 +187,7 @@ void xferBenchWorker::signalHandler(int signal) {
     auto size = write(stdout_fd, msg, sizeof(msg) - 1);
     (void)size;
 
-    if (terminate.fetch_add(1, std::memory_order_relaxed) >= max_count) {
+    if (terminate.fetch_add(1) >= max_count) {
         std::_Exit(EXIT_FAILURE);
     }
 }

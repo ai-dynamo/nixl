@@ -1209,7 +1209,7 @@ execSingleTransfer(nixlAgent *agent,
     nixl_status_t rc = agent->postXferReq(req);
     thread_stats.post_duration.add(timer.lap());
     while (NIXL_IN_PROG == rc) {
-        if (__builtin_expect(terminate_ptr && terminate_ptr->load(std::memory_order_relaxed), 0)) {
+        if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
             break;
         }
         rc = agent->getXferStatus(req);
@@ -1271,8 +1271,7 @@ execTransferIterations(nixlAgent *agent,
         // GUSLI path: Create/execute/release per iteration
         for (int i = 0; i < num_iter; ++i) {
             // Check for signal (SIGTERM/SIGINT) to allow fast exit on peer death
-            if (__builtin_expect(terminate_ptr && terminate_ptr->load(std::memory_order_relaxed),
-                                 0)) {
+            if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
                 return -1;
             }
             nixl_status_t create_rc =
@@ -1305,8 +1304,7 @@ execTransferIterations(nixlAgent *agent,
         // Standard path: Single request for all iterations
         for (int i = 0; i < num_iter; ++i) {
             // Check for signal (SIGTERM/SIGINT) to allow fast exit on peer death
-            if (__builtin_expect(terminate_ptr && terminate_ptr->load(std::memory_order_relaxed),
-                                 0)) {
+            if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
                 agent->releaseXferReq(req);
                 return -1;
             }
@@ -1470,7 +1468,7 @@ xferBenchNixlWorker::poll(size_t block_size) {
             last_liveness_check = now;
             if (rt && !rt->areAllPeersAlive()) {
                 std::cerr << "nixlbench: peer liveness check failed — aborting poll" << std::endl;
-                terminate.store(1, std::memory_order_relaxed);
+                terminate.store(1);
             }
         }
     };
