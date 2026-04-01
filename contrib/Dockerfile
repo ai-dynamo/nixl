@@ -180,16 +180,9 @@ RUN rm -rf /opt/hpcx/ucx
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx &&                       \
-     if [ "$BUILD_NIXL_EP" = "true" ]; then \
-         echo "=== BUILD_NIXL_EP=true: Using latest UCX master branch (ignoring UCX_REF=$UCX_REF) ===" && \
-         UCX_COMMIT=$(git rev-parse --short HEAD) && \
-         echo "Using UCX commit: $UCX_COMMIT" && \
-         EXPERIMENTAL_API_PARAM="--enable-experimental-api"; \
-     else                            \
-         echo "=== Using UCX_REF=$UCX_REF ===" && \
-         git checkout $UCX_REF &&    \
-         EXPERIMENTAL_API_PARAM="";   \
-     fi &&                           \
+     echo "=== Using UCX_REF=$UCX_REF ===" && \
+     git checkout $UCX_REF &&        \
+     EXPERIMENTAL_API_PARAM="" &&     \
      ./autogen.sh && \
      ./contrib/configure-release-mt  \
          --prefix=$UCX_PREFIX        \
