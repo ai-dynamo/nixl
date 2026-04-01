@@ -1,0 +1,38 @@
+# NIXL ETCD Metadata Exchange — Phase 2: Publish Metadata (Light)
+
+shape: sequence_diagram
+
+agent_a: "NIXL Agent\n(\"EtcdAgent1\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+agent_b: "NIXL Agent\n(\"EtcdAgent2\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+etcd: "etcd Server\n(localhost:2379)" {
+  style.font-size: 20
+  style.stroke: "#666666"
+  style.fill: "#F5F5F5"
+}
+
+agent_a -> agent_a: "2.1 serialize metadata (descs + UCX rkeys)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+agent_a -> etcd: "2.2 sendLocalMD() — PUT /nixl/agents/EtcdAgent1/metadata" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent_b -> agent_b: "2.3 serialize metadata (descs + UCX rkeys)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+agent_b -> etcd: "2.4 sendLocalMD() — PUT /nixl/agents/EtcdAgent2/metadata" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}

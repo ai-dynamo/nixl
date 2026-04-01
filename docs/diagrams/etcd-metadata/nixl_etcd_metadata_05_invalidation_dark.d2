@@ -1,0 +1,50 @@
+# NIXL ETCD Metadata Exchange — Phase 5: Invalidation & Teardown (Dark)
+
+shape: sequence_diagram
+
+agent_a: "NIXL Agent\n(\"EtcdAgent1\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+etcd: "etcd Server\n(localhost:2379)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+agent_b: "NIXL Agent\n(\"EtcdAgent2\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+
+agent_a -> agent_a: "5.1 releaseXferReq(handle)" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}
+agent_a -> agent_a: "5.2 deregisterMem(dlist1)" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+agent_b -> agent_b: "5.3 deregisterMem(dlist2)" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+agent_a -> etcd: "5.4 invalidateLocalMD() — DELETE /nixl/agents/EtcdAgent1/" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}
+etcd -> agent_b: "5.5 Watcher fires DELETE event for EtcdAgent1" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+  style.stroke-dash: 3
+}
+agent_b -> agent_b: "5.6 discard cached EtcdAgent1 metadata" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}

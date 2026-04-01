@@ -1,0 +1,59 @@
+# NIXL ETCD Metadata Exchange — Phase 4: Transfer (Dark)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+agent_a: "NIXL Agent\n(\"EtcdAgent1\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+agent_b: "NIXL Agent\n(\"EtcdAgent2\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+
+conductor -> agent_a: "4.1 createXferReq(WRITE, src, dst, \"EtcdAgent2\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent_a -> agent_a: "4.2 resolve backend (UCX auto-select)" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+conductor -> agent_a: "4.3 postXferReq(handle)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent_a -> agent_b: "4.4 RDMA write — data transfer" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 3
+}
+conductor -> agent_a: "4.5 getXferStatus(handle) [poll]" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+agent_a -> conductor: "4.6 status: SUCCESS" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-dash: 3
+}
+agent_a -> agent_b: "4.7 notification: \"notification\"" {
+  style.font-size: 20
+  style.stroke: "#F5A623"
+}
+agent_b -> agent_b: "4.8 getNotifs() — receive notification" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}

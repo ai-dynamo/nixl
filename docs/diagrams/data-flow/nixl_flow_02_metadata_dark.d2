@@ -1,0 +1,61 @@
+# NIXL Data Flow — Phase 2: Metadata Exchange (Dark)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+agent_a: "NIXL Agent\n(Node 1)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+agent_b: "NIXL Agent\n(Node 2)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+metadata_server: "Metadata Server\n(etcd / Redis)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+
+agent_a -> agent_a: "2.1 get_local_metadata()" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+agent_b -> agent_b: "2.2 get_local_metadata()" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+agent_a -> metadata_server: "2.3 send_local_metadata()" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent_b -> metadata_server: "2.4 send_local_metadata()" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent_a -> metadata_server: "2.5 fetch_remote_metadata(\"Node2\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+metadata_server -> agent_a: "2.6 return Node2 metadata" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-dash: 3
+}
+agent_a -> agent_b: "2.7 make_connection(\"Node2\") [optional]" {
+  style.font-size: 20
+  style.stroke: "#666666"
+  style.stroke-dash: 5
+}

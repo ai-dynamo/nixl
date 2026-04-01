@@ -1,0 +1,52 @@
+# NIXL Basic Two Peers Transfer — Phase 3: Transfer Execution (Light)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#333333"
+  style.fill: "#F5F5F5"
+}
+initiator: "Initiator Agent\n(Auto Port)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+target: "Target Agent\n(Port 5555)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+
+conductor -> initiator: "3.1 initialize_xfer(READ, local, remote, \"target\", \"Done_reading\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+initiator -> initiator: "3.2 resolve backend (UCX auto-select)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+conductor -> initiator: "3.3 transfer(xfer_handle)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+initiator -> target: "3.4 RDMA read — data transfer (ones tensor)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 3
+}
+conductor -> initiator: "3.5 check_xfer_state(handle) [poll]" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+initiator -> conductor: "3.6 state: DONE" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-dash: 3
+}
+initiator -> target: "3.7 send_notif(\"target\", \"Done_reading\")" {
+  style.font-size: 20
+  style.stroke: "#F5A623"
+}

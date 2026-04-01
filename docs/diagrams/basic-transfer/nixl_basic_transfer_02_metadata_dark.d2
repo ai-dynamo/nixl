@@ -1,0 +1,51 @@
+# NIXL Basic Two Peers Transfer — Phase 2: Metadata & Descriptor Exchange (Dark)
+
+shape: sequence_diagram
+
+target: "Target Agent\n(Port 5555)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+initiator: "Initiator Agent\n(Auto Port)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+
+initiator -> target: "2.1 fetch_remote_metadata(\"target\", ip, 5555)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+initiator -> target: "2.2 send_local_metadata(ip, 5555)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+initiator -> initiator: "2.3 check_remote_metadata(\"target\") [poll]" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+target -> target: "2.4 get_xfer_descs(target_rows)" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+target -> target: "2.5 get_serialized_descs(target_descs)" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+target -> initiator: "2.6 send_notif(\"initiator\", serialized_descs)" {
+  style.font-size: 20
+  style.stroke: "#F5A623"
+}
+initiator -> initiator: "2.7 get_new_notifs() [poll]" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+initiator -> initiator: "2.8 deserialize_descs(notifs[\"target\"])" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}

@@ -1,0 +1,55 @@
+# NIXL Data Flow — Phase 1: Initialization (Dark)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+agent_a: "NIXL Agent\n(Node 1)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+agent_b: "NIXL Agent\n(Node 2)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+metadata_server: "Metadata Server\n(etcd / Redis)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+
+conductor -> agent_a: "1.1 create_agent(\"Node1\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+conductor -> agent_b: "1.2 create_agent(\"Node2\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+conductor -> agent_a: "1.3 create_transfer_backend(UCX)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+conductor -> agent_b: "1.4 create_transfer_backend(UCX)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent_a -> agent_a: "1.5 register_memory(VRAM segments)" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+agent_b -> agent_b: "1.6 register_memory(VRAM segments)" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}

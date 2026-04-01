@@ -1,0 +1,54 @@
+# NIXL Basic Two Peers Transfer — Phase 1: Initialization (Light)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#333333"
+  style.fill: "#F5F5F5"
+}
+target: "Target Agent\n(Port 5555)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+initiator: "Initiator Agent\n(Auto Port)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+
+conductor -> target: "1.1 create_agent(\"target\", port=5555)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+conductor -> initiator: "1.2 create_agent(\"initiator\", port=0)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+target -> target: "1.3 create_backend(\"UCX\")" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+initiator -> initiator: "1.4 create_backend(\"UCX\")" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+conductor -> target: "1.5 allocate tensor (ones, 10x16 float32)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+conductor -> initiator: "1.6 allocate tensor (zeros, 10x16 float32)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+target -> target: "1.7 register_memory(target_tensor)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+initiator -> initiator: "1.8 register_memory(initiator_tensor)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}

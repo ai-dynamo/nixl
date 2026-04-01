@@ -1,0 +1,50 @@
+# NIXL Basic Two Peers Transfer — Phase 4: Teardown (Light)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#333333"
+  style.fill: "#F5F5F5"
+}
+initiator: "Initiator Agent\n(Auto Port)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+target: "Target Agent\n(Port 5555)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+
+initiator -> initiator: "4.1 remove_remote_agent(\"target\")" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}
+initiator -> initiator: "4.2 release_xfer_handle(handle)" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}
+initiator -> target: "4.3 invalidate_local_metadata(ip, 5555)" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}
+initiator -> initiator: "4.4 deregister_memory(initiator_reg)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+target -> target: "4.5 deregister_memory(target_reg)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+conductor -> initiator: "4.6 delete agent(\"initiator\")" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}
+conductor -> target: "4.7 delete agent(\"target\")" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}

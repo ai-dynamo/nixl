@@ -1,0 +1,124 @@
+[
+  {
+    "name": "AZURE_BLOB",
+    "version": "0.1.0",
+    "memoryTypes": [
+      "DRAM",
+      "OBJ"
+    ],
+    "sourceFile": "src/plugins/azure_blob/azure_blob_plugin.cpp",
+    "category": "object-storage"
+  },
+  {
+    "name": "GDS",
+    "version": "0.1.1",
+    "memoryTypes": [
+      "DRAM",
+      "VRAM",
+      "FILE"
+    ],
+    "sourceFile": "src/plugins/cuda_gds/gds_plugin.cpp",
+    "category": "storage"
+  },
+  {
+    "name": "GDS_MT",
+    "version": "0.1.0",
+    "memoryTypes": [
+      "DRAM",
+      "VRAM",
+      "FILE"
+    ],
+    "sourceFile": "src/plugins/gds_mt/gds_mt_plugin.cpp",
+    "category": "storage"
+  },
+  {
+    "name": "DOCA GPUNetIO",
+    "version": "0.2.0",
+    "memoryTypes": [
+      "DRAM",
+      "VRAM"
+    ],
+    "sourceFile": "src/plugins/gpunetio/gpunetio_plugin.cpp",
+    "category": "gpu-direct"
+  },
+  {
+    "name": "GUSLI",
+    "version": "0.1.0",
+    "memoryTypes": [
+      "BLK",
+      "DRAM"
+    ],
+    "sourceFile": "src/plugins/gusli/gusli_plugin.cpp",
+    "category": "block-storage"
+  },
+  {
+    "name": "HF3FS",
+    "version": "0.1.0",
+    "memoryTypes": [
+      "FILE",
+      "DRAM"
+    ],
+    "sourceFile": "src/plugins/hf3fs/hf3fs_plugin.cpp",
+    "category": "storage"
+  },
+  {
+    "name": "Libfabric",
+    "version": "0.1.0",
+    "memoryTypes": [
+      "DRAM",
+      "VRAM"
+    ],
+    "sourceFile": "src/plugins/libfabric/libfabric_plugin.cpp",
+    "category": "network"
+  },
+  {
+    "name": "MOONCAKE",
+    "version": "0.1.0",
+    "memoryTypes": [
+      "DRAM",
+      "VRAM"
+    ],
+    "sourceFile": "src/plugins/mooncake/mooncake_plugin.cpp",
+    "category": "network"
+  },
+  {
+    "name": "OBJ",
+    "version": "0.10.0",
+    "memoryTypes": [
+      "DRAM",
+      "OBJ"
+    ],
+    "sourceFile": "src/plugins/obj/obj_plugin.cpp",
+    "category": "object-storage"
+  },
+  {
+    "name": "POSIX",
+    "version": "0.1.0",
+    "memoryTypes": [
+      "DRAM",
+      "FILE"
+    ],
+    "sourceFile": "src/plugins/posix/posix_plugin.cpp",
+    "category": "storage"
+  },
+  {
+    "name": "UCCL",
+    "version": "0.1.0",
+    "memoryTypes": [
+      "DRAM",
+      "VRAM"
+    ],
+    "sourceFile": "src/plugins/uccl/uccl_plugin.cpp",
+    "category": "network"
+  },
+  {
+    "name": "UCX",
+    "version": "0.1.0",
+    "memoryTypes": [
+      "DRAM",
+      "VRAM"
+    ],
+    "sourceFile": "src/plugins/ucx/ucx_plugin.cpp",
+    "category": "network"
+  }
+]

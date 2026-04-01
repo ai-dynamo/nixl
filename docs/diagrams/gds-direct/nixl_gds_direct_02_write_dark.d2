@@ -1,0 +1,50 @@
+# NIXL GDS Direct Storage — Phase 2: Write Transfer (Dark)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+agent: "NIXL Agent\n(\"GDSTester\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+storage: "Local Storage\n(NVMe / File)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+
+conductor -> agent: "2.1 initialize_xfer(WRITE, DRAM buf1, FILE)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent -> agent: "2.2 resolve backend (GDS auto-select)" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+conductor -> agent: "2.3 transfer(xfer_handle_write)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent -> storage: "2.4 GDS direct write — DRAM buf1 to file" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 3
+}
+conductor -> agent: "2.5 check_xfer_state(handle) [poll]" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+agent -> conductor: "2.6 state: DONE" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-dash: 3
+}

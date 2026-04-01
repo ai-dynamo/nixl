@@ -1,0 +1,56 @@
+# NIXL GDS Direct Storage — Phase 1: Initialization (Dark)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+agent: "NIXL Agent\n(\"GDSTester\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+storage: "Local Storage\n(NVMe / File)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+
+conductor -> agent: "1.1 create_agent(\"GDSTester\", backends=[])" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent -> agent: "1.2 get_plugin_list() — verify GDS available" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+conductor -> agent: "1.3 create_backend(\"GDS\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+conductor -> agent: "1.4 allocate DRAM buf1 (16*4096 B, fill 0xba)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+conductor -> agent: "1.5 allocate DRAM buf2 (16*4096 B, empty)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent -> agent: "1.6 register_memory(DRAM: buf1, buf2)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+conductor -> storage: "1.7 open/create file (O_RDWR | O_CREAT)" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+agent -> agent: "1.8 register_memory(FILE: fd, size)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}

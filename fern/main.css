@@ -1,0 +1,1320 @@
+/*!
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* === Phase 6 CSS Audit Summary ===
+ * Total Fern-targeting rules audited: ~25 selectors
+ * Blocking issues fixed: 2 (pointer-events:none, dropdown svg display:none) -- see FIXED(phase-6)
+ * Non-blocking issues documented: 1 (search kbd hidden) -- see TODO(phase-6)
+ * All other Fern-targeting rules: OK -- no platform feature conflict
+ * Full audit report: .planning/phases/06-platform-features-docs-audit/06-AUDIT-REPORT.md
+ * === End Audit Summary === */
+
+/* Color themes for light and dark modes */
+:root {
+    /* Brand Colors */
+    --nv-color-green: #74B900;
+    --nv-color-green-2: #004B31;
+    --nv-color-black: #000000;
+    --nv-color-white: #FFFFFF;
+
+    /* Grey Scale - Light */
+    --nv-light-grey-1: #f7f7f7;
+    --nv-light-grey-2: #EEEEEE;
+    --nv-light-grey-3: #DDDDDD;
+    --nv-light-grey-4: #CCCCCC;
+    --nv-light-grey-5: #999999;
+
+    /* Grey Scale - Dark */
+    --nv-dark-grey-1: #111111;
+    --nv-dark-grey-2: #1A1A1A;
+    --nv-dark-grey-3: #222222;
+    --nv-dark-grey-4: #333333;
+    --nv-dark-grey-5: #666666;
+
+    /* Colors by Usage */
+    --nv-color-text: #000000;
+    --nv-color-bg-default: #FFFFFF;
+    --nv-color-bg-alt: #f7f7f7;
+    --nv-color-success: #76B900;
+    --nv-color-error: #f44336;
+
+    /* Theme-independent settings */
+    --rounded: 999px;
+}
+main {
+    min-height: calc(100vh - 200px);
+}
+
+/* Typography - Headers */
+h1 {
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1.25em;
+}
+
+h2 {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.25em;
+}
+
+h3 {
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.25em;
+}
+
+h4 {
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.25em;
+}
+
+/* Typography - Paragraphs */
+.prose {
+    color: var(--nv-dark-grey-2) !important;
+}
+.dark .prose {
+    color: var(--nv-light-grey-2) !important;
+}
+p {
+    text-decoration-thickness: 3px;
+}
+/* AUDIT(phase-6): OK -- markdown link styling, cosmetic only */
+.fern-mdx-link {
+    color: var(--tw-prose-body);
+    text-decoration-color: var(--accent);
+    font-weight: var(--font-weight-normal);
+}
+
+/* Light theme (default) */
+html:not([data-theme]),html[data-theme=light] {
+    --pst-color-background: #fff;
+    --pst-color-on-background: #fff;
+    --pst-color-shadow: #ccc;
+    --pst-color-heading: #000;
+    --pst-color-text-base: #1a1a1a;
+    --pst-color-text-muted: #666;
+    --pst-color-surface: #f7f7f7;
+    --pst-color-on-surface: #333;
+    --pst-color-primary: var(--nv-color-green-2);
+    --pst-color-table-row-hover-bg: var(--nv-color-green);
+    --pst-color-link: var(--pst-color-text-base);
+    --pst-color-link-hover: var(--pst-color-text-base);
+    --pst-color-inline-code: var(--pst-color-primary);
+    --pst-color-inline-code-links: var(--pst-color-primary);
+    --pst-color-secondary: var(--pst-color-primary);
+    --pst-color-secondary-bg: var(--nv-color-green);
+    --pst-color-accent: var(--nv-color-green);
+}
+
+/* Dark theme */
+html[data-theme=dark] {
+    --pst-color-background: #111;
+    --pst-color-on-background: #000;
+    --pst-color-shadow: #000;
+    --pst-color-heading: #fff;
+    --pst-color-text-base: #eee;
+    --pst-color-text-muted: #999;
+    --pst-color-surface: #1a1a1a;
+    --pst-color-on-surface: #ddd;
+    --pst-color-primary: var(--nv-color-green);
+    --pst-color-table-row-hover-bg: var(--nv-color-green-2);
+    --pst-color-link: var(--pst-color-text-base);
+    --pst-color-link-hover: var(--pst-color-text-base);
+    --pst-color-inline-code: var(--pst-color-primary);
+    --pst-color-inline-code-links: var(--pst-color-primary);
+    --pst-color-secondary: var(--pst-color-primary);
+    --pst-color-secondary-bg: var(--nv-color-green-2);
+    --pst-color-accent: var(--nv-color-green);
+}
+
+/* Product and version selector styling */
+/* FIXED(phase-6): Removed pointer-events:none that blocked version dropdown interaction.
+   Previously disabled because only 'dev' version existed. Now v1.0.0 is configured. */
+.fern-product-selector {
+    border-radius: 8px;
+    padding-right: 2px;
+}
+
+/* FIXED(phase-6): Removed display:none that hid dropdown arrow indicator.
+   Arrow now visible to show version selector is interactive. */
+
+/* AUDIT(phase-6): OK -- bold font on product name, cosmetic only */
+.fern-product-selector .product-dropdown-trigger p {
+    font-weight: bold !important;
+}
+/* AUDIT(phase-6): OK -- grid layout for product radio buttons, cosmetic only */
+.fern-product-selector-radio-group {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    max-width: 1000px;
+}
+
+@media (max-width: 768px) {
+    .fern-product-selector-radio-group {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+/* AUDIT(phase-6): OK -- version selector styling, hover effects, does not block interaction */
+.fern-version-selector {
+    transform: translateY(-1px);
+}
+
+.fern-version-selector .version-dropdown-trigger {
+    outline: 1px solid var(--border, var(--grayscale-a5)) !important;
+    border-radius: 5px;
+    transition: box-shadow 0.3s ease, outline 0.3s ease;
+}
+.product-dropdown-trigger {
+    padding-left: 0px !important;
+}
+
+.product-dropdown-trigger, .version-dropdown-trigger {
+    background-color: transparent !important;
+}
+.product-dropdown-trigger svg:hover {
+    stroke: var(--nv-color-green) !important;
+}
+.version-dropdown-trigger:hover {
+    box-shadow: 0 0 0 1px var(--nv-color-green) !important;
+}
+.version-dropdown-trigger svg:hover {
+    stroke: var(--nv-color-green) !important;
+}
+
+/* ===== VIS-01: Header navigation (D-01) ===== */
+/* Logo + "Documentation" are non-clickable (flat static text) */
+/* "NIXL" navbar link navigates to overview */
+/* Version selector (v1.0.0) remains interactive per D-02 */
+.fern-header-logo-container a {
+    pointer-events: none !important;
+    cursor: default !important;
+    text-decoration: none !important;
+}
+/* Keep "NIXL" text visible but kill the dropdown behavior */
+.product-dropdown-trigger {
+    pointer-events: none !important;
+    cursor: default !important;
+}
+.product-dropdown-trigger svg {
+    display: none !important;
+}
+/* Hide the product dropdown popup (Radix portals to <body>, not inside .fern-product-selector) */
+[data-radix-popper-content-wrapper]:has(.fern-product-selector-radio-group) {
+    display: none !important;
+}
+
+/* Sidebar styling */
+/* AUDIT(phase-6): OK -- sidebar styling, no platform feature conflict */
+#fern-sidebar {
+    border-right: 1px solid var(--border, var(--grayscale-a5)) !important;
+    height: 100vh !important;
+}
+.fern-sidebar-link:not(:hover) {
+    background-color: transparent !important;
+}
+.fern-sidebar-link {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+    border-radius: 0px !important;
+    &.nested {
+        padding-left: 1rem !important;
+    }
+}
+/* Section-level sidebar links (pages that have children) should match sidebar heading padding */
+.fern-sidebar-group > li > .fern-sidebar-link:has(+ .fern-sidebar-group) {
+    padding-left: 0.25rem !important;
+}
+.fern-sidebar-group {
+    padding: 0 !important;
+}
+#fern-sidebar-scroll-area {
+    padding-right: 0 !important;
+}
+
+/* Header styling */
+/* AUDIT(phase-6): OK -- header styling, no platform feature conflict */
+.fern-header-content {
+    padding-left: 18.5px;
+    margin-top: -5px;
+    margin-bottom: -5px;
+}
+#fern-header {
+    border-color: var(--border, var(--grayscale-a5)) !important;
+}
+@keyframes header-background-fade {
+    0% {
+        background-color: transparent;
+    }
+    100% {
+        background-color: var(--header-background);
+    }
+}
+
+[data-theme=default]#fern-header {
+    animation: header-background-fade linear;
+    animation-timeline: scroll();
+    animation-range: 0 50px;
+}
+/* AUDIT(phase-6): OK -- navbar link button styling, cosmetic only */
+.fern-header-navbar-links .fern-button {
+    background-color: transparent !important;
+}
+.fern-header-navbar-links > button {
+    background-color: transparent !important;
+}
+.fern-header-logo-container > div > div > a > img {
+    padding-right: 0.5rem;
+}
+.fern-header-logo-container .font-heading {
+    font-size: 16px !important;
+    font-weight: bold !important;
+    color: var(--grayscale-a12) !important;
+    border-inline: 1px solid var(--border, var(--grayscale-a5));
+    padding: 15px 1rem;
+    margin: -20px 0.5rem;
+}
+@media (max-width: 1024px) {
+    .fern-header-logo-container .font-heading {
+        display: none !important;
+    }
+}
+
+/* Search bar styling */
+/* AUDIT(phase-6): OK -- transparent background is cosmetic styling, search button remains functional */
+#fern-search-button {
+    background-color: transparent !important;
+    border-radius: var(--rounded);
+    transition: box-shadow 0.3s ease, outline 0.3s ease;
+}
+#fern-search-button:hover {
+    box-shadow: 0 0 0 1px var(--nv-color-green) !important;
+}
+/* TODO(phase-6): Hides keyboard shortcut hint (e.g. Cmd+K) from search button. Non-blocking -- cosmetic only. */
+#fern-search-button .fern-kbd {
+    display: none;
+}
+
+/* AUDIT(phase-6): OK -- footer toolbar button styling, does not block functionality */
+.fern-layout-footer-toolbar button {
+    background-color: transparent !important;
+    border-color: transparent !important;
+    padding-inline: 0px !important;
+}
+
+/* ========== Custom footer (native React component) ========== */
+.bd-footer {
+    border-top: 1px solid var(--border, var(--grayscale-a5)) !important;
+    font-family: NVIDIA, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+    font-size: 0.875rem;
+    padding: 2rem 0;
+    width: 100%;
+}
+.bd-footer * {
+    font-family: inherit;
+}
+.bd-footer__inner {
+    padding: 0 2rem;
+}
+.footer-items__start {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+.footer-logos-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 1rem;
+}
+.footer-brand {
+    display: inline-block;
+    text-decoration: none;
+}
+.footer-brand .logo__image {
+    height: 24px;
+    width: auto;
+    transition: opacity 0.2s ease;
+}
+.footer-brand:hover .logo__image {
+    opacity: 0.8;
+}
+.footer-brand-fern {
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+}
+/* Logo theme visibility */
+.only-light {
+    display: block;
+    filter: invert(1);
+}
+.only-dark {
+    display: none;
+}
+.dark .only-light {
+    display: none;
+}
+.dark .only-dark {
+    display: block;
+    filter: none;
+}
+/* Diagram light/dark mode swap (Phase 7) */
+.diagram-light { display: block; }
+.diagram-dark { display: none; }
+.dark .diagram-light { display: none; }
+.dark .diagram-dark { display: block; }
+/* Ensure all images inside Frame/figure containers fill their width */
+.fern-card img {
+    width: 100% !important;
+    height: auto !important;
+}
+.footer-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0;
+}
+.footer-links a {
+    color: var(--grayscale-a11);
+    text-decoration: none;
+    transition: color 0.2s ease;
+    white-space: nowrap;
+}
+.pipe-separator {
+    color: var(--grayscale-a11);
+    white-space: nowrap;
+}
+.copyright {
+    color: var(--grayscale-a11);
+    font-size: 0.875rem;
+    line-height: 1.65;
+    margin: 0;
+}
+@media (max-width: 768px) {
+    .bd-footer { padding: 1.5rem 0; }
+    .bd-footer__inner { padding: 0 1.5rem; }
+    .footer-items__start { gap: 1rem; }
+    .footer-links { flex-direction: row; gap: 0.5rem 0.75rem; }
+    .footer-links a { white-space: normal; word-break: break-word; }
+}
+@media (max-width: 480px) {
+    .footer-links { gap: 0.5rem; }
+    .footer-links a { font-size: 0.8125rem; }
+    .copyright { font-size: 0.8125rem; }
+}
+
+/* Built with Fern link + tooltip */
+.built-with-fern-link {
+    display: flex;
+    align-items: baseline;
+    gap: 0.25rem;
+    text-decoration: none;
+    position: relative;
+}
+.built-with-fern-logo {
+    height: 1rem;
+    margin: 0;
+    transition: filter 150ms ease;
+}
+.built-with-fern-logo path { fill: var(--grayscale-a12); }
+.built-with-fern-link:hover .built-with-fern-logo { filter: saturate(1) opacity(1); }
+.built-with-fern-link:hover .built-with-fern-logo path:nth-child(2) { fill: #51C233; }
+.built-with-fern-tooltip {
+    position: absolute;
+    top: 50%;
+    right: calc(100%);
+    bottom: auto;
+    left: auto;
+    transform: translateY(-50%);
+    margin: 0;
+    margin-right: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background-color: #FFFFFF;
+    color: #000000;
+    font-size: 0.85rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--grayscale-a5);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 150ms ease;
+    transition-delay: 0s;
+    z-index: 50;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    width: max-content;
+}
+.built-with-fern-link:hover .built-with-fern-tooltip {
+    opacity: 1;
+    transition-delay: 0.75s;
+}
+.dark .built-with-fern-tooltip {
+    background-color: #000000;
+    color: #FFFFFF;
+}
+.built-with-fern-logo-dark { display: none; }
+.dark .built-with-fern-logo-light { display: none; }
+.dark .built-with-fern-logo-dark { display: block; }
+@media (prefers-color-scheme: dark) {
+    .built-with-fern-logo-light { display: none; }
+    .built-with-fern-logo-dark { display: block; }
+}
+
+/* Footer navigation */
+/* AUDIT(phase-6): OK -- footer nav styling, cosmetic only */
+.fern-footer-nav {
+    border-radius: var(--rounded);
+    background-color: transparent !important;
+    transition: box-shadow 0.3s ease, outline 0.3s ease;
+}
+
+/* Figure caption callouts */
+.fig-caption {
+    --callout-border: transparent !important;
+    --callout-icon-color: var(--grayscale-a8) !important;
+    background-color: var(--nv-light-grey-1) !important;
+    font-size: 0.875rem;
+}
+.dark .fig-caption {
+    background-color: var(--nv-dark-grey-2) !important;
+}
+.fig-caption p {
+    font-style: italic;
+    color: var(--tw-prose-body) !important;
+}
+
+/* Hide line numbers */
+.code-block-line-gutter {
+    display: none !important;
+}
+.fern-footer-prev h4, .fern-footer-next h4 {
+    font-size: inherit !important;
+}
+/* ===== VIS-03: Active sidebar green bar (D-06, D-07) ===== */
+/* Active page link -- 3px NVIDIA green left border bar */
+/* content + position required for :before to render on ALL pages, not just nested */
+.fern-sidebar-link[data-state="active"] {
+    position: relative !important;
+}
+.fern-sidebar-link[data-state="active"]:before {
+    content: "" !important;
+    position: absolute !important;
+    left: 0px !important;
+    top: 0px !important;
+    bottom: 0px !important;
+    width: 3px !important;
+    background-color: #76B900 !important;
+}
+.fern-sidebar-link.nested[data-state="active"]:before {
+    content: "" !important;
+    position: absolute !important;
+    left: 0px !important;
+    top: 0px !important;
+    bottom: 0px !important;
+    width: 3px !important;
+    background-color: #76B900 !important;
+}
+/* Keep active link text color as default (not overridden) per D-06 */
+/* AUDIT(phase-6): OK */
+.fern-sidebar-link[data-state="active"] {
+    color: unset !important;
+}
+/* D-07: Full path tracing -- ancestor section headers also get green bar */
+/* Uses :has() selector (confirmed working in Phase 9 interactive diagram styles) */
+.fern-sidebar-group:has(.fern-sidebar-link[data-state="active"]) > .fern-sidebar-heading:before {
+    content: "" !important;
+    position: absolute !important;
+    left: 0px !important;
+    top: 0px !important;
+    bottom: 0px !important;
+    width: 3px !important;
+    background-color: #76B900 !important;
+}
+.fern-sidebar-group:has(.fern-sidebar-link[data-state="active"]) > .fern-sidebar-heading {
+    position: relative !important;
+}
+
+/* AUDIT(phase-6): OK -- selection item icon border removal, cosmetic only */
+.fern-selection-item .fern-selection-item-icon {
+    border-color: transparent !important;
+}
+
+/* Button styling */
+/* AUDIT(phase-6): OK -- button styling (border-radius, colors), cosmetic only */
+.fern-button {
+    border-radius: var(--rounded);
+    font-weight: bold;
+}
+.fern-button.filled.primary {
+    color: var(--nv-color-black);
+}
+.dark .fern-button.filled.primary {
+    background-color: var(--nv-color-white);
+}
+.dark .fern-button.filled.primary:hover {
+    background-color: var(--nv-light-grey-2);
+}
+.fern-button.outlined.normal {
+    background-color: transparent;
+    --tw-ring-color: transparent;
+    color: var(--nv-color-black);
+}
+.fern-button.outlined.normal:hover {
+    color: var(--nv-color-green);
+}
+.dark .fern-button.outlined.normal {
+    color: var(--nv-color-white);
+}
+.dark .fern-button.outlined.normal:hover {
+    color: var(--nv-color-green);
+}
+
+/* Card styling */
+/* AUDIT(phase-6): OK -- card styling and hover effect, cosmetic only */
+.fern-card {
+    transition: box-shadow 0.3s ease, outline 0.3s ease;
+}
+svg.card-icon {
+    height: 24px !important;
+    width: 24px !important;
+}
+.card-icon {
+    background-color: transparent !important;
+}
+.fern-card:hover {
+    box-shadow: 0 0 0 1px var(--nv-color-green) !important;
+}
+/* AUDIT(phase-6): OK -- badge styling, cosmetic only */
+.fern-docs-badge {
+    border-radius: var(--rounded);
+}
+/* AUDIT(phase-6): OK -- hover style override, page action buttons remain clickable */
+.fern-page-actions button:hover {
+    background-color: transparent !important;
+}
+/* AUDIT(phase-6): OK -- hover style override, page action links remain clickable */
+.fern-page-actions a:hover {
+    background-color: transparent !important;
+}
+
+/* Moving logo to footer */
+/* AUDIT(phase-6): OK -- intentionally hidden, relocated to custom footer component */
+#builtwithfern, #builtwithfern * {
+    display: none !important;
+}
+
+/* ========== Interactive Software Stack Diagram (Phase 9) ========== */
+
+/* Container */
+.nixl-stack-diagram {
+    max-width: 100%;
+    padding: 12px;
+    border: 1px solid var(--nv-light-grey-3);
+    border-radius: 8px;
+    background: var(--nv-color-bg-default);
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.dark .nixl-stack-diagram {
+    border-color: var(--nv-dark-grey-4);
+    background: var(--nv-dark-grey-1);
+    color: var(--nv-light-grey-2);
+}
+
+/* Layer rows */
+.nixl-stack-layer {
+    background: var(--pst-color-surface);
+    border: 1px solid var(--nv-light-grey-3);
+    border-radius: 6px;
+    padding: 16px;
+    text-align: center;
+}
+.dark .nixl-stack-layer {
+    border-color: var(--nv-dark-grey-4);
+    background: var(--nv-dark-grey-2);
+}
+
+/* Backend plugins 5-column grid */
+.nixl-stack-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+}
+
+/* Category column */
+.nixl-stack-category {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+/* Category header */
+.nixl-stack-category-header {
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: center;
+    min-height: 2.5em;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+}
+
+/* CONT-04: Category header color-coding for stack diagram */
+.nixl-stack-category:nth-child(1) .nixl-stack-category-header { color: #0077B6 !important; } /* Network - blue */
+.nixl-stack-category:nth-child(2) .nixl-stack-category-header { color: #CC5500 !important; } /* GPU Initiated Communication - orange */
+.nixl-stack-category:nth-child(3) .nixl-stack-category-header { color: #6A4C93 !important; } /* File - purple */
+.nixl-stack-category:nth-child(4) .nixl-stack-category-header { color: #1B7A6D !important; } /* Object - teal */
+.nixl-stack-category:nth-child(5) .nixl-stack-category-header { color: #A4243B !important; } /* Block - red */
+
+/* Dark mode overrides */
+.dark .nixl-stack-category:nth-child(1) .nixl-stack-category-header { color: #48CAE4 !important; } /* Network - sky blue */
+.dark .nixl-stack-category:nth-child(2) .nixl-stack-category-header { color: #E07A1C !important; } /* GPU Initiated Communication - orange */
+.dark .nixl-stack-category:nth-child(3) .nixl-stack-category-header { color: #B185DB !important; } /* File - light purple */
+.dark .nixl-stack-category:nth-child(4) .nixl-stack-category-header { color: #52B69A !important; } /* Object - light teal */
+.dark .nixl-stack-category:nth-child(5) .nixl-stack-category-header { color: #E5383B !important; } /* Block - red */
+
+/* Plugin box */
+.nixl-stack-plugin {
+    background: var(--pst-color-surface);
+    border: 1px solid var(--nv-light-grey-3);
+    border-radius: 4px;
+    padding: 6px 2px;
+    min-height: 34px;
+    font-size: 12px;
+    line-height: 1.25;
+    width: 90%;
+    text-align: center;
+    cursor: pointer;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 150ms ease, border-color 150ms ease, background-color 150ms ease;
+}
+.dark .nixl-stack-plugin {
+    border-color: var(--nv-dark-grey-4);
+    background: var(--nv-dark-grey-2);
+}
+
+/* Memory type row */
+.nixl-stack-memrow {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+/* Memory type box */
+.nixl-stack-memtype {
+    background: var(--pst-color-surface);
+    border: 1px solid var(--nv-light-grey-3);
+    border-radius: 4px;
+    padding: 8px 16px;
+    min-height: 36px;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: center;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 150ms ease, border-color 150ms ease, background-color 150ms ease;
+}
+.dark .nixl-stack-memtype {
+    border-color: var(--nv-dark-grey-4);
+    background: var(--nv-dark-grey-2);
+}
+
+/* Tooltip — hidden by default */
+.nixl-stack-tooltip {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--pst-color-surface);
+    border: 1px solid var(--nv-color-green);
+    color: var(--pst-color-text-base);
+    font-size: 12px;
+    max-width: 500px;
+    width: max-content;
+    white-space: nowrap;
+    word-wrap: break-word;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0;
+    transition: opacity 150ms ease;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.dark .nixl-stack-tooltip {
+    background: var(--nv-dark-grey-2);
+    color: var(--nv-light-grey-2);
+}
+.nixl-stack-tooltip-title {
+    font-weight: 700;
+}
+.nixl-stack-tooltip-desc {
+    color: var(--pst-color-text-muted);
+}
+.dark .nixl-stack-tooltip-desc {
+    color: var(--nv-light-grey-5);
+}
+.nixl-stack-tooltip-mem {
+    color: var(--nv-color-green);
+    margin-top: 2px;
+}
+
+/* Show tooltip on hover/focus */
+.nixl-stack-plugin:hover > .nixl-stack-tooltip,
+.nixl-stack-plugin:focus > .nixl-stack-tooltip {
+    opacity: 1;
+}
+
+/* Direct hover/focus highlight on plugin and memory type */
+.nixl-stack-plugin:hover,
+.nixl-stack-plugin:focus,
+.nixl-stack-memtype:hover,
+.nixl-stack-memtype:focus {
+    border: 2px solid #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+    opacity: 1;
+}
+
+/* --- Cross-highlighting via CSS :has() --- */
+
+/* When any plugin is hovered/focused, dim ALL memory types */
+.nixl-stack-diagram:has(.nixl-stack-plugin:hover) .nixl-stack-memtype,
+.nixl-stack-diagram:has(.nixl-stack-plugin:focus) .nixl-stack-memtype {
+    opacity: 0.3;
+}
+
+/* When any memory type is hovered/focused, dim ALL plugins */
+.nixl-stack-diagram:has(.nixl-stack-memtype:hover) .nixl-stack-plugin,
+.nixl-stack-diagram:has(.nixl-stack-memtype:focus) .nixl-stack-plugin {
+    opacity: 0.3;
+}
+
+/* Un-dim + highlight matching memory types when a plugin is hovered/focused */
+.nixl-stack-diagram:has([data-mem-dram]:hover) [data-type="DRAM"],
+.nixl-stack-diagram:has([data-mem-dram]:focus) [data-type="DRAM"],
+.nixl-stack-diagram:has([data-mem-vram]:hover) [data-type="VRAM"],
+.nixl-stack-diagram:has([data-mem-vram]:focus) [data-type="VRAM"],
+.nixl-stack-diagram:has([data-mem-file]:hover) [data-type="FILE"],
+.nixl-stack-diagram:has([data-mem-file]:focus) [data-type="FILE"],
+.nixl-stack-diagram:has([data-mem-obj]:hover) [data-type="OBJ"],
+.nixl-stack-diagram:has([data-mem-obj]:focus) [data-type="OBJ"],
+.nixl-stack-diagram:has([data-mem-blk]:hover) [data-type="BLK"],
+.nixl-stack-diagram:has([data-mem-blk]:focus) [data-type="BLK"] {
+    opacity: 1;
+    border: 2px solid #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+/* Un-dim + highlight matching plugins when a memory type is hovered/focused */
+.nixl-stack-diagram:has([data-type="DRAM"]:hover) [data-mem-dram],
+.nixl-stack-diagram:has([data-type="DRAM"]:focus) [data-mem-dram],
+.nixl-stack-diagram:has([data-type="VRAM"]:hover) [data-mem-vram],
+.nixl-stack-diagram:has([data-type="VRAM"]:focus) [data-mem-vram],
+.nixl-stack-diagram:has([data-type="FILE"]:hover) [data-mem-file],
+.nixl-stack-diagram:has([data-type="FILE"]:focus) [data-mem-file],
+.nixl-stack-diagram:has([data-type="OBJ"]:hover) [data-mem-obj],
+.nixl-stack-diagram:has([data-type="OBJ"]:focus) [data-mem-obj],
+.nixl-stack-diagram:has([data-type="BLK"]:hover) [data-mem-blk],
+.nixl-stack-diagram:has([data-type="BLK"]:focus) [data-mem-blk] {
+    opacity: 1;
+    border: 2px solid #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+/* Section label */
+.nixl-stack-section-label {
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.25;
+    margin-bottom: 8px;
+}
+
+/* Agent layer subtitle */
+.nixl-stack-subtitle {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--pst-color-text-muted);
+    display: block;
+}
+.dark .nixl-stack-subtitle {
+    color: var(--nv-light-grey-5);
+}
+
+/* Layer title */
+.nixl-stack-layer-title {
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+/* Layer display */
+.nixl-stack-layer {
+    display: block;
+}
+
+/* Links within the diagram should inherit text color, no underline */
+.nixl-stack-diagram a {
+    color: inherit;
+    text-decoration: none;
+}
+.nixl-stack-diagram a:hover {
+    color: inherit;
+    text-decoration: none;
+}
+
+/* Responsive: tablet */
+@media (max-width: 811px) {
+    .nixl-stack-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+/* Responsive: mobile */
+@media (max-width: 480px) {
+    .nixl-stack-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .nixl-stack-memrow {
+        flex-direction: column;
+        align-items: center;
+    }
+}
+
+/* ========== Phase 21: Three-Layer Agent Box ========== */
+
+/* Agent box — single unified container with three internal layers */
+.nixl-stack-agent-box {
+    border: 1px solid var(--nv-light-grey-3);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--pst-color-surface);
+}
+.dark .nixl-stack-agent-box {
+    border-color: var(--nv-dark-grey-4);
+    background: var(--nv-dark-grey-2);
+}
+
+/* Agent layers — stacked vertically, separated by borders */
+.nixl-stack-agent-layer {
+    padding: 12px 16px;
+    text-align: center;
+    border-bottom: 1px solid var(--nv-light-grey-3);
+}
+.nixl-stack-agent-layer:last-child {
+    border-bottom: none;
+}
+.dark .nixl-stack-agent-layer {
+    border-bottom-color: var(--nv-dark-grey-4);
+}
+.dark .nixl-stack-agent-layer:last-child {
+    border-bottom: none;
+}
+
+/* Agent layer titles */
+.nixl-stack-agent-layer-title {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+/* Agent layer subtitles (API language labels) */
+.nixl-stack-agent-layer-sub {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--pst-color-text-muted);
+    display: block;
+    margin-top: 2px;
+}
+.dark .nixl-stack-agent-layer-sub {
+    color: var(--nv-light-grey-5);
+}
+
+/* NIXL Core layer — slightly distinct background */
+.nixl-stack-agent-core {
+    background: rgba(116, 185, 0, 0.04);
+}
+.dark .nixl-stack-agent-core {
+    background: rgba(116, 185, 0, 0.06);
+}
+
+/* Chips container — flexbox with center alignment and wrapping */
+.nixl-stack-agent-chips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+/* Individual chip — pill/badge style with NVIDIA green accent */
+.nixl-stack-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.3;
+    border-radius: 999px;
+    background: rgba(116, 185, 0, 0.1);
+    color: var(--pst-color-text-base);
+    border: 1px solid rgba(116, 185, 0, 0.3);
+    white-space: nowrap;
+}
+.dark .nixl-stack-chip {
+    background: rgba(116, 185, 0, 0.12);
+    border-color: rgba(116, 185, 0, 0.25);
+    color: var(--nv-light-grey-2);
+}
+
+/* ========== Phase 21: Backend → Compute Type Cross-Highlighting ========== */
+
+/* When a backend with data-backend-compute-nvidia is hovered/focused,
+   highlight the NVIDIA compute type element */
+.nixl-stack-diagram:has([data-backend-compute-nvidia]:hover) [data-compute-nvidia],
+.nixl-stack-diagram:has([data-backend-compute-nvidia]:focus) [data-compute-nvidia] {
+    opacity: 1 !important;
+    border: 2px solid #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+/* When a backend with data-backend-compute-aws is hovered/focused,
+   highlight the AWS compute type element */
+.nixl-stack-diagram:has([data-backend-compute-aws]:hover) [data-compute-aws],
+.nixl-stack-diagram:has([data-backend-compute-aws]:focus) [data-compute-aws] {
+    opacity: 1 !important;
+    border: 2px solid #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+/* ========== Phase 12: Compute Types + Memory Tooltips ========== */
+
+/* Side-by-side bottom row: Memory Types (left) + Compute Types (right) */
+.nixl-stack-bottom-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+}
+
+.nixl-stack-bottom-section {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+}
+
+/* Compute type row */
+.nixl-stack-compute-row {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+/* Compute type box — matches memory type styling */
+.nixl-stack-compute-type {
+    background: var(--pst-color-surface);
+    border: 1px solid var(--nv-light-grey-3);
+    border-radius: 4px;
+    padding: 8px 16px;
+    min-height: 36px;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: center;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 150ms ease, border-color 150ms ease, background-color 150ms ease;
+}
+.dark .nixl-stack-compute-type {
+    border-color: var(--nv-dark-grey-4);
+    background: var(--nv-dark-grey-2);
+}
+
+/* Memory type tooltip — positioned BELOW the memory type box */
+.nixl-stack-mem-tooltip {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--pst-color-surface);
+    border: 1px solid var(--nv-color-green);
+    color: var(--pst-color-text-base);
+    font-size: 12px;
+    font-weight: 400;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0;
+    transition: opacity 150ms ease;
+}
+
+.dark .nixl-stack-mem-tooltip {
+    background: var(--nv-dark-grey-2);
+    color: var(--nv-light-grey-2);
+}
+
+/* Memory types need relative positioning for tooltip anchoring */
+.nixl-stack-memtype {
+    position: relative;
+}
+
+/* Show memory tooltip on hover/focus */
+.nixl-stack-memtype:hover > .nixl-stack-mem-tooltip,
+.nixl-stack-memtype:focus > .nixl-stack-mem-tooltip {
+    opacity: 1;
+}
+
+/* Direct hover/focus highlight on compute type */
+.nixl-stack-compute-type:hover,
+.nixl-stack-compute-type:focus {
+    border: 2px solid #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+    opacity: 1;
+}
+
+/* --- Compute type cross-highlighting via CSS :has() --- */
+
+/* When any compute type is hovered/focused, dim ALL plugins, memory types, AND other compute types */
+.nixl-stack-diagram:has(.nixl-stack-compute-type:hover) .nixl-stack-plugin,
+.nixl-stack-diagram:has(.nixl-stack-compute-type:focus) .nixl-stack-plugin,
+.nixl-stack-diagram:has(.nixl-stack-compute-type:hover) .nixl-stack-memtype,
+.nixl-stack-diagram:has(.nixl-stack-compute-type:focus) .nixl-stack-memtype,
+.nixl-stack-diagram:has(.nixl-stack-compute-type:hover) .nixl-stack-compute-type,
+.nixl-stack-diagram:has(.nixl-stack-compute-type:focus) .nixl-stack-compute-type {
+    opacity: 0.3;
+}
+
+/* NVIDIA: un-dim + highlight all VRAM-supporting backends (7 backends: UCX, LIBFABRIC, MOONCAKE, UCCL-P2P, GPUNETIO, GDS, GDS_MT) */
+/* All these backends have data-mem-vram attribute */
+.nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-mem-vram],
+.nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-mem-vram] {
+    opacity: 1;
+    border: 2px solid #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+/* NVIDIA: also highlight the memory types those backends use (VRAM, DRAM, FILE) */
+.nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-type="VRAM"],
+.nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-type="VRAM"],
+.nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-type="DRAM"],
+.nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-type="DRAM"],
+.nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-type="FILE"],
+.nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-type="FILE"] {
+    opacity: 1;
+    border: 2px solid #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+/* NVIDIA: un-dim the hovered compute type itself */
+.nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-compute-nvidia],
+.nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-compute-nvidia] {
+    opacity: 1;
+    border: 2px solid #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+/* AWS: un-dim LIBFABRIC (has data-backend-compute-aws attribute on it) */
+.nixl-stack-diagram:has([data-compute-aws]:hover) .nixl-stack-plugin[data-backend-compute-aws],
+.nixl-stack-diagram:has([data-compute-aws]:focus) .nixl-stack-plugin[data-backend-compute-aws] {
+    opacity: 1;
+    border: 2px solid #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+/* AWS: highlight VRAM and DRAM memory types (LIBFABRIC supports both) */
+.nixl-stack-diagram:has([data-compute-aws]:hover) [data-type="VRAM"],
+.nixl-stack-diagram:has([data-compute-aws]:focus) [data-type="VRAM"],
+.nixl-stack-diagram:has([data-compute-aws]:hover) [data-type="DRAM"],
+.nixl-stack-diagram:has([data-compute-aws]:focus) [data-type="DRAM"] {
+    opacity: 1;
+    border: 2px solid #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+/* AWS: un-dim the hovered compute type itself */
+.nixl-stack-diagram:has([data-compute-aws]:hover) [data-compute-aws],
+.nixl-stack-diagram:has([data-compute-aws]:focus) [data-compute-aws] {
+    opacity: 1;
+    border: 2px solid #74B900;
+    background-color: rgba(116, 185, 0, 0.1);
+}
+
+/* When any plugin is hovered/focused, also dim compute types */
+.nixl-stack-diagram:has(.nixl-stack-plugin:hover) .nixl-stack-compute-type,
+.nixl-stack-diagram:has(.nixl-stack-plugin:focus) .nixl-stack-compute-type {
+    opacity: 0.3;
+}
+
+/* When any memory type is hovered/focused, also dim compute types */
+.nixl-stack-diagram:has(.nixl-stack-memtype:hover) .nixl-stack-compute-type,
+.nixl-stack-diagram:has(.nixl-stack-memtype:focus) .nixl-stack-compute-type {
+    opacity: 0.3;
+}
+
+/* Responsive: tablet — stack bottom row vertically */
+@media (max-width: 811px) {
+    .nixl-stack-bottom-row {
+        flex-direction: column;
+    }
+}
+
+/* ========== Phase 14: CSS & Visual Fixes ========== */
+
+/* ===== VIS-05: Scrollbar suppression (D-01, D-02) ===== */
+/* ===== VIS-06: Code block sizing — width and height (D-03, D-04, D-05) ===== */
+
+/* Tables: Fern wraps tables in Radix scroll area with inline overflow:scroll.
+   Hide the horizontal scrollbar. Keep table sizing as-is — tables need full width. */
+.fern-scroll-area:has(.fern-table) .fern-scroll-area-scrollbar[data-orientation="horizontal"] {
+    display: none !important;
+}
+
+/* Code blocks: suppress unnecessary scrollbars, shrink-wrap width, remove excess height.
+   Fern structure: outer div.bg-card-background.w-full > pre.code-block-root >
+     div.fern-scroll-area > div[data-radix-scroll-area-viewport](overflow:scroll inline) >
+       div(min-width:100%;display:table) > div.code-block > table
+   Problems: outer div has w-full (100% width), viewport has inline overflow:scroll,
+   Radix adds visible scrollbar elements. */
+
+/* 1. Outer wrapper: shrink to content, but leave room for hover buttons (report + copy).
+   Fern's outer div has Tailwind w-full. We override to fit-content with a min-width
+   so very short snippets still have space for the absolutely-positioned action buttons. */
+div:has(> .code-block-root) {
+    width: fit-content !important;
+    max-width: 100%;
+    min-width: 250px;
+}
+
+/* 2. Right padding inside the code area so hover buttons don't overlap code text */
+.code-block-root .code-block-inner {
+    padding-right: 56px;
+}
+
+/* 3. Radix scroll viewport: override inline overflow:scroll to auto */
+.code-block-root [data-radix-scroll-area-viewport] {
+    overflow: auto !important;
+}
+
+/* 4. Remove the forced min-width:100% on the inner table wrapper */
+.code-block-root [data-radix-scroll-area-viewport] > div {
+    min-width: unset !important;
+}
+
+/* 5. Hide horizontal Radix scrollbar — not needed with fit-content width.
+   Keep vertical scrollbar visible when content overflows (e.g., long code examples). */
+.code-block-root .fern-scroll-area-scrollbar[data-orientation="horizontal"] {
+    display: none !important;
+}
+
+/* 6. Remove excess height on code blocks */
+.code-block-root {
+    min-height: unset;
+}
+.prose pre {
+    min-height: unset;
+}
+
+/* 7. Expand code block height for large monitors — show more code at once.
+   Fern default constrains code blocks to ~400px height. Override with generous
+   max-height so users on large monitors see more code without internal scrolling.
+   The scrollbar still appears for very long snippets (>1000px). */
+.code-block-root [data-radix-scroll-area-viewport] {
+    max-height: 1000px !important;
+}
+
+/* ===== VIS-07: Sidebar tab sync fix (D-06, D-07) ===== */
+/* Fern generates a right-side Table of Contents (TOC) from page headings at build time.
+   On pages with <Tabs> components, the TOC shows headings from ALL tabs combined,
+   but only one tab's content is visible at a time. Switching tabs does not update the TOC,
+   leaving stale/irrelevant headings visible. This is a known Fern platform limitation.
+
+   Fix: Hide the right sidebar (TOC) on pages that contain tab components.
+   The :has() selector detects pages with Fern tab content and hides the right sidebar.
+   This prevents confusion from stale headings without requiring JS. */
+
+/* Hide the right-side TOC/sidebar on any page that contains Fern tab panels */
+/* Fern renders tabs with role="tabpanel" attribute on tab content containers */
+.fern-layout-content:has([role="tabpanel"]) + .fern-layout-right-sidebar,
+.fern-layout-content:has([role="tabpanel"]) ~ .fern-layout-right-sidebar {
+    display: none !important;
+}
+
+/* Fallback: target the right sidebar container directly when tabs exist anywhere on page */
+body:has([role="tabpanel"]) .fern-layout-right-sidebar {
+    display: none !important;
+}
+
+/* Expand the main content area to fill the space freed by hiding the right sidebar */
+.fern-layout-content:has([role="tabpanel"]) {
+    max-width: 100%;
+}
+
+/* ===== VIS-08: Typography consistency (D-08, D-09, D-10) ===== */
+/* Audit findings:
+   1. text-decoration-thickness: 3px on p elements causes overly thick underlines on links
+   2. No explicit heading margins — relying on Fern defaults which may be inconsistent
+   3. Inline code font size not explicitly set — may vary across contexts
+   Fix: normalize text decoration, add consistent heading margins, set inline code size */
+
+/* Fix overly thick link underlines — reduce from 3px to default (auto) */
+p {
+    text-decoration-thickness: auto;
+}
+
+/* Consistent heading bottom margins for visual rhythm */
+/* Fern defaults may vary — set explicit values for predictable spacing */
+.prose h1 {
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+}
+.prose h2 {
+    margin-top: 1.75rem;
+    margin-bottom: 0.75rem;
+}
+.prose h3 {
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+.prose h4 {
+    margin-top: 1.25rem;
+    margin-bottom: 0.5rem;
+}
+
+/* First heading on page should not have top margin */
+.prose > h1:first-child,
+.prose > h2:first-child {
+    margin-top: 0;
+}
+
+/* Inline code font size — ensure consistency with code blocks */
+.prose code:not(pre code) {
+    font-size: 0.875em;
+}
+
+

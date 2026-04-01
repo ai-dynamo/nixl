@@ -1,0 +1,60 @@
+# NIXL Data Flow — Phase 5: Dynamic Scaling (Dark)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+agent_a: "NIXL Agent\n(Node 1)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+agent_b: "NIXL Agent\n(Node 2)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+metadata_server: "Metadata Server\n(etcd / Redis)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+agent_c: "NIXL Agent\n(Node 3 — new)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+  style.stroke-dash: 5
+}
+
+conductor -> agent_c: "5.1 create_agent(\"Node3\") [new node]" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent_c -> agent_c: "5.2 register_memory + backends" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+agent_c -> metadata_server: "5.3 send_local_metadata()" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent_a -> metadata_server: "5.4 fetch_remote_metadata(\"Node3\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+conductor -> agent_a: "5.5 invalidate_remote_agent(\"NodeX\") [on failure]" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+  style.stroke-dash: 5
+}
