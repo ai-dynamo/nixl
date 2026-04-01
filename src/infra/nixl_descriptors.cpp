@@ -28,8 +28,6 @@
 #include "absl/strings/str_join.h"
 
 const std::string nixl_null_agent = "NULL_AGENT";
-constexpr size_t ADD_SORTED_DESCS_THRESHOLD = 4;
-
 /*** Class nixlBasicDesc implementation ***/
 
 // No Virtual function in nixlBasicDesc class or its children, as we want
@@ -408,7 +406,9 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
 
 void
 nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
-    if (batch.size() <= ADD_SORTED_DESCS_THRESHOLD) {
+    constexpr size_t add_sorted_descs_threshold = 4;
+
+    if (batch.size() <= add_sorted_descs_threshold) {
         // For small batches it's more efficient to insert one by one
         // NOTE: Calling vec.reserve() here degrades performance
         auto &vec = this->descs;
