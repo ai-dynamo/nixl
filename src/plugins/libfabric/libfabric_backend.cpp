@@ -388,6 +388,10 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
 
         // Start Progress thread for rail completion processing
         if (progress_thread_enabled_) {
+            for (size_t i = 0; i < rail_manager.getNumRails(); ++i) {
+                rail_manager.getRail(i).setProgressThreadEnabled(true);
+            }
+
             NIXL_DEBUG << "Starting Progress thread for rails with delay: "
                        << progress_thread_delay_.count() << " microseconds";
             progress_thread_stop_ = false;
@@ -987,6 +991,20 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     if (!backend_handle) {
         NIXL_ERROR << "Failed to cast handle to nixlLibfabricBackendH";
         return NIXL_ERR_INVALID_PARAM;
+    }
+
+    // Update notification from opt_args on repost
+    if (opt_args && opt_args->hasNotif) {
+        backend_handle->has_notif = true;
+        backend_handle->binary_notifs.clear();
+        fragmentNotificationMessage(opt_args->notifMsg,
+                                    localAgent,
+                                    backend_handle->total_notif_msg_len,
+                                    backend_handle->binary_notifs);
+    } else if (opt_args && !opt_args->hasNotif) {
+        backend_handle->has_notif = false;
+        backend_handle->binary_notifs.clear();
+        backend_handle->total_notif_msg_len = 0;
     }
 
     // Allocate xfer_id once in prepXfer

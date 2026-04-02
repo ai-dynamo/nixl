@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,8 +35,8 @@ ARCH=$(uname -m)
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
-UCX_REF=${UCX_REF:-v1.20.x}
-BUILD_NIXL_EP="false"
+UCX_REF=${UCX_REF:-v1.21.x}
+BUILD_NIXL_EP="true"
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 if [ "$CI" = "true" ]; then
@@ -173,11 +173,10 @@ show_build_options() {
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
+    echo "UCX Ref: ${UCX_REF}"
     if [ "$BUILD_NIXL_EP" = "true" ]; then
-        echo "UCX Ref: master (latest) - BUILD_NIXL_EP enabled"
         echo "NIXL EP: Enabled"
     else
-        echo "UCX Ref: ${UCX_REF}"
         echo "NIXL EP: Disabled"
     fi
     echo "Build Type: ${BUILD_TYPE}"
