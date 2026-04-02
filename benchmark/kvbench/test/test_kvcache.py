@@ -29,6 +29,11 @@ def examples_dir():
     return Path(p).parent / "examples"
 
 
+@pytest.fixture
+def mixed_precision_strategy():
+    return {"model_quant_mode": "fp8", "kvcache_quant_mode": "fp16"}
+
+
 @pytest.mark.parametrize(
     "model_arch, model_config, expected_kv_size",
     [
@@ -96,6 +101,50 @@ def test_io_size(examples_dir, model_arch, model_config, expected_io_size):
 
     model = BaseModelArch.from_yaml(examples_dir / model_arch)
     config = ModelConfig.from_yaml(examples_dir / model_config)
+    model.set_model_config(config)
+
+    assert model is not None
+    assert model.get_io_size() == expected_io_size
+
+
+@pytest.mark.parametrize(
+    "model_arch, model_config, expected_kv_size",
+    [
+        ("model_llama_3_1_8b.yaml", "block-tp1-pp1.yaml", 131072),
+        ("model_gpt_oss_20b.yaml", "block-tp1-pp1.yaml", 49152),
+        ("model_qwen3_8b.yaml", "block-tp1-pp1.yaml", 147456),
+    ],
+)
+def test_kvcache_size_uses_kvcache_quant_mode(
+    examples_dir, mixed_precision_strategy, model_arch, model_config, expected_kv_size
+):
+    from models.models import BaseModelArch, ModelConfig
+
+    model = BaseModelArch.from_yaml(examples_dir / model_arch)
+    config = ModelConfig.from_yaml(examples_dir / model_config)
+    config = config.update({"strategy": mixed_precision_strategy})
+    model.set_model_config(config)
+
+    assert model is not None
+    assert model.get_kv_size_per_token() == expected_kv_size
+
+
+@pytest.mark.parametrize(
+    "model_arch, model_config, expected_io_size",
+    [
+        ("model_llama_3_1_8b.yaml", "block-tp8-pp2.yaml", 8192),
+        ("model_gpt_oss_20b.yaml", "block-tp8-pp2.yaml", 3072),
+        ("model_qwen3_8b.yaml", "block-tp8-pp2.yaml", 9216),
+    ],
+)
+def test_io_size_uses_kvcache_quant_mode(
+    examples_dir, mixed_precision_strategy, model_arch, model_config, expected_io_size
+):
+    from models.models import BaseModelArch, ModelConfig
+
+    model = BaseModelArch.from_yaml(examples_dir / model_arch)
+    config = ModelConfig.from_yaml(examples_dir / model_config)
+    config = config.update({"strategy": mixed_precision_strategy})
     model.set_model_config(config)
 
     assert model is not None
