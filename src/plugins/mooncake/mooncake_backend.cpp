@@ -97,6 +97,10 @@ nixlMooncakeEngine::getSupportedMems() const {
 
 // Through parent destructor the unregister will be called.
 nixlMooncakeEngine::~nixlMooncakeEngine() {
+    // Close all open remote segments before destroying the engine.
+    for (auto &[agent, info] : connected_agents_) {
+        closeSegment(engine_, info.segment_id);
+    }
     destroyTransferEngine(engine_);
 }
 
@@ -114,10 +118,14 @@ nixlMooncakeEngine::connect(const std::string &remote_agent) {
     return NIXL_SUCCESS;
 }
 
-// TODO We purposely set this function as empty.
-// Will be changed to follow NIXL's paradigm after refactoring Mooncake Transfer Engine.
 nixl_status_t
 nixlMooncakeEngine::disconnect(const std::string &remote_agent) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = connected_agents_.find(remote_agent);
+    if (it == connected_agents_.end())
+        return NIXL_SUCCESS;
+    closeSegment(engine_, it->second.segment_id);
+    connected_agents_.erase(it);
     return NIXL_SUCCESS;
 }
 
