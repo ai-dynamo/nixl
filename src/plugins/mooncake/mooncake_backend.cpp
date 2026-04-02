@@ -307,14 +307,23 @@ nixl_status_t
 nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
     bool has_failed = false;
+    bool has_pending = false;
     for (size_t index = 0; index < priv->request_count; ++index) {
         transfer_status_t status;
         int rc = getTransferStatus(engine_, priv->batch_id, index, &status);
-        if (rc || status.status == STATUS_FAILED)
+        // STATUS_CANCELED: set when the underlying RDMA endpoint is reset or
+        //   destroyed (e.g. remote disconnect, link error). Terminal, no retry.
+        // STATUS_TIMEOUT:  set by the worker thread when a slice exceeds the
+        //   configured timeout (default 10 s). The endpoint is then disabled,
+        //   making retries futile. Terminal, no retry.
+        if (rc || status.status == STATUS_FAILED ||
+            status.status == STATUS_CANCELED || status.status == STATUS_TIMEOUT)
             has_failed = true;
         else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING)
-            return NIXL_IN_PROG;
+            has_pending = true;
     }
+    if (has_pending)
+        return NIXL_IN_PROG;
     if (!has_failed) {
         // Each batch_id has the batch size, and cannot process more requests
         // than the batch size. So, free the batch id here to workaround the issue
