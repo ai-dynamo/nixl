@@ -120,13 +120,20 @@ nixlMooncakeEngine::connect(const std::string &remote_agent) {
 
 nixl_status_t
 nixlMooncakeEngine::disconnect(const std::string &remote_agent) {
-    const std::lock_guard<std::mutex> lock(mutex_);
-    auto it = connected_agents_.find(remote_agent);
-    if (it == connected_agents_.end()) {
-        return NIXL_SUCCESS;
+    segment_id_t segment_id;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        auto it = connected_agents_.find(remote_agent);
+        if (it == connected_agents_.end()) {
+            return NIXL_SUCCESS;
+        }
+        segment_id = it->second.segment_id;
+        // Erase under the lock so concurrent postXfer/genNotif calls will see
+        // the agent as gone and return NIXL_ERR_INVALID_PARAM before using
+        // the segment handle.
+        connected_agents_.erase(it);
     }
-    closeSegment(engine_, it->second.segment_id);
-    connected_agents_.erase(it);
+    closeSegment(engine_, segment_id);
     return NIXL_SUCCESS;
 }
 
