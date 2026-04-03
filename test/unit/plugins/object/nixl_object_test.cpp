@@ -187,22 +187,15 @@ clear_buffer(void *buffer, size_t size) {
 
 #ifdef HAVE_CUDA
 /**
- * @brief Fill GPU buffer with a repeating test pattern
+ * @brief Fill GPU buffer from a pre-filled host pattern buffer
  * @param gpu_buffer Pointer to the GPU buffer to fill
+ * @param host_buffer Host buffer containing the test pattern
  * @param size Size of the buffer in bytes
  * @return cudaSuccess on success, error code on failure
  */
 cudaError_t
-fill_gpu_test_pattern(void *gpu_buffer, size_t size) {
-    char *host_buffer = (char *)malloc(size);
-    if (!host_buffer) {
-        return cudaErrorMemoryAllocation;
-    }
-
-    fill_test_pattern(host_buffer, size);
-    cudaError_t err = cudaMemcpy(gpu_buffer, host_buffer, size, cudaMemcpyHostToDevice);
-    free(host_buffer);
-    return err;
+fill_gpu_test_pattern(void *gpu_buffer, const char *host_buffer, size_t size) {
+    return cudaMemcpy(gpu_buffer, host_buffer, size, cudaMemcpyHostToDevice);
 }
 
 /**
@@ -347,8 +340,13 @@ main(int argc, char *argv[]) {
         }
     }
 
-    // Validate VRAM option: requires CUDA at compile time and a GPU at runtime
+    // Validate VRAM option: requires --accelerated and CUDA
     if (use_vram) {
+        if (!use_accelerated) {
+            std::cerr << "Error: --vram requires --accelerated (VRAM_SEG is not supported by the "
+                         "default OBJ backend)\n";
+            return 1;
+        }
 #ifndef HAVE_CUDA
         std::cerr << "Error: VRAM mode requires CUDA support (build with CUDA enabled)\n";
         return 1;
@@ -436,6 +434,12 @@ main(int argc, char *argv[]) {
     std::cout << "PHASE 1: Allocating and initializing buffers" << std::endl;
     std::cout << "============================================================" << std::endl;
 
+    // Pre-allocate host-side buffers: pattern buffer for writes and validation,
+    // and a staging buffer for GPU readback during validation.
+    auto host_buffer = use_vram ? std::make_unique<char[]>(transfer_size) : nullptr;
+    auto expected_buffer = std::make_unique<char[]>(transfer_size);
+    fill_test_pattern(expected_buffer.get(), transfer_size);
+
     std::string object_prefix = generate_timestamped_object_prefix("test-key-");
     for (i = 0; i < num_transfers; i++) {
         if (use_vram) {
@@ -449,7 +453,7 @@ main(int argc, char *argv[]) {
                 ret_code = 1;
                 goto cleanup;
             }
-            cuda_err = fill_gpu_test_pattern(vram_addr[i], transfer_size);
+            cuda_err = fill_gpu_test_pattern(vram_addr[i], expected_buffer.get(), transfer_size);
             if (cuda_err != cudaSuccess) {
                 std::cerr << "CUDA buffer " << i
                           << " initialization failed: " << cudaGetErrorString(cuda_err) << "\n";
@@ -737,13 +741,6 @@ main(int argc, char *argv[]) {
     std::cout << "\n============================================================" << std::endl;
     std::cout << "PHASE 6: Validating read data" << std::endl;
     std::cout << "============================================================" << std::endl;
-
-    // Pre-allocate validation buffers once for all transfers
-    auto host_buffer = use_vram ? std::make_unique<char[]>(transfer_size) : nullptr;
-    auto expected_buffer = std::make_unique<char[]>(transfer_size);
-
-    // Generate expected pattern once
-    fill_test_pattern(expected_buffer.get(), transfer_size);
 
     for (i = 0; i < num_transfers; i++) {
         if (use_vram) {
