@@ -16,7 +16,10 @@
  */
 
 #include <iostream>
+#include <memory>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <algorithm>
 #include <cassert>
 #include <fcntl.h>
@@ -217,31 +220,19 @@ clear_gpu_buffer(void *gpu_buffer, size_t size) {
  * @brief Validate GPU buffer contents against the expected test pattern
  * @param gpu_buffer Pointer to the GPU buffer to validate
  * @param size Size of the buffer in bytes
+ * @param host_buffer Host buffer to copy GPU data to
+ * @param expected_buffer Expected buffer contents
  * @return true if contents match expected pattern, false otherwise
  */
 bool
-validate_gpu_buffer(void *gpu_buffer, size_t size) {
-    char *host_buffer = (char *)malloc(size);
-    char *expected_buffer = (char *)malloc(size);
-    if (!host_buffer || !expected_buffer) {
-        free(host_buffer);
-        free(expected_buffer);
-        return false;
-    }
-
+validate_gpu_buffer(void *gpu_buffer, size_t size, char *host_buffer, const char *expected_buffer) {
+    // Copy GPU buffer to host
     cudaError_t err = cudaMemcpy(host_buffer, gpu_buffer, size, cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
-        free(host_buffer);
-        free(expected_buffer);
         return false;
     }
 
-    fill_test_pattern(expected_buffer, size);
-    bool match = (memcmp(host_buffer, expected_buffer, size) == 0);
-
-    free(host_buffer);
-    free(expected_buffer);
-    return match;
+    return memcmp(host_buffer, expected_buffer, size) == 0;
 }
 #endif
 
@@ -289,7 +280,6 @@ main(int argc, char *argv[]) {
     std::string accel_type;
     bool use_vram = false;
     int ret_code = 0;
-    char *expected_buffer = NULL;
     nixlXferReqH *write_req = nullptr;
     nixlXferReqH *read_req = nullptr;
     bool obj_registered = false;
@@ -748,27 +738,25 @@ main(int argc, char *argv[]) {
     std::cout << "PHASE 6: Validating read data" << std::endl;
     std::cout << "============================================================" << std::endl;
 
-    if (!use_vram) {
-        expected_buffer = (char *)malloc(transfer_size);
-        if (!expected_buffer) {
-            std::cerr << "Failed to allocate validation buffer\n";
-            ret_code = 1;
-            goto cleanup;
-        }
-        fill_test_pattern(expected_buffer, transfer_size);
-    }
+    // Pre-allocate validation buffers once for all transfers
+    auto host_buffer = use_vram ? std::make_unique<char[]>(transfer_size) : nullptr;
+    auto expected_buffer = std::make_unique<char[]>(transfer_size);
+
+    // Generate expected pattern once
+    fill_test_pattern(expected_buffer.get(), transfer_size);
 
     for (i = 0; i < num_transfers; i++) {
         if (use_vram) {
 #ifdef HAVE_CUDA
-            if (!validate_gpu_buffer(vram_addr[i], transfer_size)) {
+            if (!validate_gpu_buffer(
+                    vram_addr[i], transfer_size, host_buffer.get(), expected_buffer.get())) {
                 std::cerr << "VRAM buffer " << i << " validation failed\n";
                 ret_code = 1;
                 goto cleanup;
             }
 #endif
         } else {
-            if (memcmp(dram_addr[i], expected_buffer, transfer_size) != 0) {
+            if (memcmp(dram_addr[i], expected_buffer.get(), transfer_size) != 0) {
                 std::cerr << "DRAM buffer " << i << " validation failed\n";
                 ret_code = 1;
                 goto cleanup;
@@ -794,9 +782,6 @@ cleanup:
     if (read_req) {
         agent.releaseXferReq(read_req);
     }
-
-    // Cleanup resources
-    free(expected_buffer);
 
     // Deregister memory regions
     if (obj_registered) {
