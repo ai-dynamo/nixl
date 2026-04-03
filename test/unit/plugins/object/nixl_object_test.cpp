@@ -208,6 +208,7 @@ main(int argc, char *argv[]) {
     int num_transfers = DEFAULT_NUM_TRANSFERS;
     nixlTime::us_t total_time(0);
     nixlTime::us_t reg_time(0);
+    nixlTime::us_t query_time(0);
     double total_data_gb = 0;
     int iterations = DEFAULT_ITERATIONS;
     std::string endpoint;
@@ -457,15 +458,22 @@ main(int argc, char *argv[]) {
     nixl_opt_args_t extra_params;
     extra_params.backends = {obj};
     std::vector<nixl_query_resp_t> resp;
+
+    std::cout << "\n============================================================" << std::endl;
+    std::cout << "PHASE 4: Querying Objects" << std::endl;
+    std::cout << "============================================================" << std::endl;
+
+    // Time the queryMem operation
+    const us_t query_start = getUs();
     status = agent.queryMem(obj_for_obj, resp, &extra_params);
+    const us_t query_end = getUs();
+    query_time = (query_end - query_start);
+
     if (status != NIXL_SUCCESS) {
         std::cerr << "Failed to query object memory status\n";
         ret_code = 1;
         goto cleanup;
     }
-    std::cout << "\n============================================================" << std::endl;
-    std::cout << "PHASE 4: Querying Objects" << std::endl;
-    std::cout << "============================================================" << std::endl;
     std::cout << "\nQueryMem Results:" << std::endl;
     std::cout << "response count: " << resp.size() << std::endl;
     if (resp.size() != static_cast<size_t>(num_transfers)) {
@@ -482,6 +490,7 @@ main(int argc, char *argv[]) {
         }
     }
     std::cout << "All queried objects are valid." << std::endl;
+    std::cout << "- Time: " << format_duration(query_time) << std::endl;
 
 
     // Perform read test
