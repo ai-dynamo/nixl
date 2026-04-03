@@ -104,6 +104,7 @@ print_usage(const char *program_name) {
               << "  -a, --accelerated       Enable accelerated engine mode\n"
               << "  -T, --type TYPE         Vendor type for accelerated engine (e.g., dell)\n"
               << "  -v, --vram              Use VRAM (GPU memory) instead of DRAM\n"
+              << "                          (requires --accelerated and CUDA/GPU support)\n"
               << "  -h, --help              Show this help message\n"
               << "\nExamples:\n"
               << "  " << program_name << " -n 100 -s 16M -t 5\n"
@@ -278,6 +279,9 @@ main(int argc, char *argv[]) {
     bool obj_registered = false;
     bool dram_registered = false;
     bool vram_registered = false;
+#ifdef HAVE_CUDA
+    int cuda_dev_id = 0;
+#endif
 
     // Parse command line options
     static struct option long_options[] = {{"num-transfers", required_argument, 0, 'n'},
@@ -356,6 +360,10 @@ main(int argc, char *argv[]) {
             std::cerr << "Error: VRAM mode requested but no CUDA GPU available\n";
             return 1;
         }
+        if (cudaGetDevice(&cuda_dev_id) != cudaSuccess) {
+            std::cerr << "Error: Failed to get current CUDA device\n";
+            return 1;
+        }
 #endif
     }
 
@@ -420,6 +428,14 @@ main(int argc, char *argv[]) {
         }
     }
 
+    // Pre-allocate host-side buffers: pattern buffer for writes and validation,
+    // and a staging buffer for GPU readback during validation.
+    auto host_buffer = use_vram ? std::make_unique<char[]>(transfer_size) : nullptr;
+    auto expected_buffer = std::make_unique<char[]>(transfer_size);
+    fill_test_pattern(expected_buffer.get(), transfer_size);
+
+    std::string object_prefix = generate_timestamped_object_prefix("test-key-");
+
     // Create backends
     ret = agent.createBackend(DEFAULT_BACKEND, params, obj);
     if (ret != NIXL_SUCCESS || obj == NULL) {
@@ -434,13 +450,6 @@ main(int argc, char *argv[]) {
     std::cout << "PHASE 1: Allocating and initializing buffers" << std::endl;
     std::cout << "============================================================" << std::endl;
 
-    // Pre-allocate host-side buffers: pattern buffer for writes and validation,
-    // and a staging buffer for GPU readback during validation.
-    auto host_buffer = use_vram ? std::make_unique<char[]>(transfer_size) : nullptr;
-    auto expected_buffer = std::make_unique<char[]>(transfer_size);
-    fill_test_pattern(expected_buffer.get(), transfer_size);
-
-    std::string object_prefix = generate_timestamped_object_prefix("test-key-");
     for (i = 0; i < num_transfers; i++) {
         if (use_vram) {
 #ifdef HAVE_CUDA
@@ -464,7 +473,7 @@ main(int argc, char *argv[]) {
             // Set up VRAM descriptor
             vram_buf[i].addr = (uintptr_t)(vram_addr[i]);
             vram_buf[i].len = transfer_size;
-            vram_buf[i].devId = 0;
+            vram_buf[i].devId = cuda_dev_id;
             vram_for_obj.addDesc(vram_buf[i]);
 #endif
         } else {
