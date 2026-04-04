@@ -15,14 +15,15 @@
  * limitations under the License.
  */
 
-#ifndef __UTILS_H
-#define __UTILS_H
+#ifndef NIXL_BENCHMARK_NIXLBENCH_SRC_UTILS_UTILS_H
+#define NIXL_BENCHMARK_NIXLBENCH_SRC_UTILS_UTILS_H
 
 #include "config.h"
 #include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 #include <optional>
@@ -64,6 +65,7 @@
 
 // Runtime types
 #define XFERBENCH_RT_ETCD "ETCD"
+constexpr inline std::string_view xferbench_rt_asio = "ASIO";
 
 // Backend types
 #define XFERBENCH_BACKEND_UCX "UCX"
@@ -155,6 +157,8 @@ public:
     static size_t progress_threads;
     static std::string device_list;
     static std::string etcd_endpoints;
+    static std::string asio_address; // IPv4
+    static uint16_t asio_port;
     static std::string benchmark_group;
     static std::string filepath;
     static std::string filenames;
@@ -371,4 +375,4 @@ public:
     printStats(bool is_target, size_t block_size, size_t batch_size, xferBenchStats stats);
 };
 
-#endif // __UTILS_H
+#endif

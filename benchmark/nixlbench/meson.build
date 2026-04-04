@@ -112,6 +112,9 @@ etcd_dep = dependency('etcd-cpp-api', required : false)
 # GFlags
 gflags_dep = dependency('gflags', required: true)
 
+# ASIO (usually via libasio-dev package)
+asio_dep = [dependency('asio', required: true)]
+
 # Check for tomlplusplus (header only)
 tomlplusplus_dep = dependency('tomlplusplus', required: true, default_options: ['build_lib=false', 'compile_library=false'])
 
@@ -169,7 +172,7 @@ configure_file(
     install_dir: get_option('includedir') / 'nixlbench'
 )
 
-deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, gflags_dep, tomlplusplus_dep]
+deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, gflags_dep, tomlplusplus_dep, asio_dep]
 args = []
 if etcd_available
     deps += [etcd_dep]
