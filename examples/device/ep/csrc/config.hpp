@@ -122,7 +122,11 @@ struct EPLayout {
     }
 };
 
-size_t get_rdma_size_hint(int num_max_dispatch_tokens_per_rank, int hidden, int num_ranks, int num_experts) {
+inline size_t
+get_rdma_size_hint(int num_max_dispatch_tokens_per_rank,
+                   int hidden,
+                   int num_ranks,
+                   int num_experts) {
     auto num_bytes = EPLayout(nullptr, num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts).total_bytes;
     return ((num_bytes + NUM_BUFFER_ALIGNMENT_BYTES) / NUM_BUFFER_ALIGNMENT_BYTES) * NUM_BUFFER_ALIGNMENT_BYTES;
 }
