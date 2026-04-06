@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # This file incorporates material from the DeepSeek project, licensed under the MIT License.
 # The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 from typing import Callable, Optional, Union
 
@@ -143,7 +144,9 @@ def bench(fn, num_warmups: int = 50, num_tests: int = 50, post_fn=None):
 
     times = np.array(
         [s.elapsed_time(e) / 1e3 for s, e in zip(start_events, end_events)]
-    )[1:]
+    )
+    if len(times) > 1:
+        times = times[1:]
     return np.average(times), np.min(times), np.max(times)
 
 
@@ -280,3 +283,38 @@ def bench_kineto(
 
 def hash_tensor(t: torch.Tensor):
     return t.view(torch.int).sum().item()
+
+
+class CudaTimer:
+    def __enter__(self):
+        torch.cuda.synchronize()
+        self._start = torch.cuda.Event(enable_timing=True)
+        self._end = torch.cuda.Event(enable_timing=True)
+        self._start.record()
+        return self
+
+    def __exit__(self, *args):
+        self._end.record()
+        torch.cuda.synchronize()
+        self.elapsed_s = self._start.elapsed_time(self._end) / 1e3
+
+
+_barrier_counter = 0
+
+
+def tcp_store_barrier(tcp_store, rank, num_ranks, timeout=60):
+    # Synchronize all ranks using TCPStore set/wait
+    global _barrier_counter
+    name = f"ctrl_{_barrier_counter}"
+    _barrier_counter += 1
+    key = f"{name}/{rank}"
+    tcp_store.set(key, "1")
+    keys = [f"{name}/{r}" for r in range(num_ranks)]
+    tcp_store.wait(keys, timedelta(seconds=timeout))
+
+
+def stats(times):
+    if not times:
+        return 0.0, 0.0, 0.0
+    a = np.array(times)
+    return float(np.average(a)), float(np.min(a)), float(np.max(a))
