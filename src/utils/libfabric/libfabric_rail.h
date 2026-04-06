@@ -25,6 +25,7 @@
 #include <mutex>
 #include <ostream>
 #include <stack>
+#include <atomic>
 
 #include "nixl.h"
 #include "backend/backend_aux.h"
@@ -335,6 +336,15 @@ public:
     void
     setNotificationCallback(std::function<void(const std::string &)> callback);
 
+    /**
+     * @brief Enable or disable a progress thread that handles CQ draining.
+     *
+     * @param enabled  true to enable progress-thread CQ draining,
+     *                 false to disable it.
+     */
+    void
+    setProgressThreadEnabled(bool enabled);
+
     /** Set callback for XFER_ID tracking */
     void
     setXferIdCallback(std::function<void(uint32_t)> callback);
@@ -359,6 +369,32 @@ public:
     fi_info *
     getRailInfo() const;
 
+    /** Get notification receive buffer base address */
+    uint64_t
+    getNotifRecvBufferAddr() const {
+        return reinterpret_cast<uint64_t>(notif_recv_buffer_);
+    }
+
+    /** Get notification receive buffer remote key */
+    uint64_t
+    getNotifRecvKey() const {
+        return notif_recv_key_;
+    }
+
+    /** Get next notification slot index and advance head */
+    uint32_t
+    allocateNotifSlot() {
+        return notif_recv_head_.fetch_add(1, std::memory_order_relaxed) %
+               NIXL_LIBFABRIC_NOTIF_NUM_SLOTS;
+    }
+
+    /** Get pointer to a specific notification slot */
+    void *
+    getNotifSlot(uint32_t slot_idx) const {
+        return static_cast<char *>(notif_recv_buffer_) +
+               (slot_idx * NIXL_LIBFABRIC_NOTIF_SLOT_SIZE);
+    }
+
 private:
     // Core libfabric resources
     struct fi_info *info; // from rail_infos[rail_id]
@@ -367,8 +403,11 @@ private:
     struct fid_cq *cq; // from rail_cqs[rail_id]
     struct fid_av *av; // from rail_avs[rail_id]
 
-    // CQ progress mutex to protect completion queue operations
-    mutable std::mutex cq_progress_mutex_;
+    // EP mutex to protect endpoint and CQ operations
+    mutable std::mutex ep_mutex_;
+
+    // Whether a progress thread is handling CQ draining
+    bool progress_thread_enabled_ = false;
 
     // Callback functions
     std::function<void(const std::string &)> notificationCallback;
@@ -381,6 +420,12 @@ private:
 
     // Provider capability flags
     bool provider_supports_hmem_;
+
+    // Notification receive buffer for WRITE-based control messages
+    void *notif_recv_buffer_;          ///< Ring buffer for incoming notification WRITEs
+    struct fid_mr *notif_recv_mr_;     ///< MR for notification receive buffer
+    uint64_t notif_recv_key_;          ///< Remote access key for notification receive buffer
+    std::atomic<uint32_t> notif_recv_head_; ///< Next slot for remote to write into
 
 
     nixl_status_t

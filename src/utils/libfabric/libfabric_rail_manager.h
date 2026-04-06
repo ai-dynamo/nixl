@@ -21,9 +21,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
-#include <unordered_set>
 #include <functional>
-#include <mutex>
 #include <atomic>
 #include "libfabric_rail.h"
 
@@ -226,10 +224,12 @@ public:
     enum class ControlMessageType : int {
         NOTIFICATION, ///< User notification message
     };
-    /** Send control message via control rail
+    /** Send control message via RDMA WRITE to remote notification buffer
      * @param msg_type Type of control message
      * @param req Control request with data buffer
      * @param dest_addr Destination address
+     * @param remote_notif_addr Remote notification buffer base address
+     * @param remote_notif_key Remote notification buffer rkey
      * @param agent_idx Agent index for message routing
      * @param completion_callback Optional completion callback
      * @return NIXL_SUCCESS on success, error code on failure
@@ -238,6 +238,8 @@ public:
     postControlMessage(ControlMessageType msg_type,
                        nixlLibfabricReq *req,
                        fi_addr_t dest_addr,
+                       uint64_t remote_notif_addr,
+                       uint64_t remote_notif_key,
                        uint16_t agent_idx = 0,
                        std::function<void()> completion_callback = nullptr);
     // Progress APIs
@@ -315,6 +317,18 @@ public:
         const std::string &serialized_data,
         std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &data_endpoints_out) const;
 
+    /** Get cached remote notification buffer address from last deserializeConnectionInfo call */
+    uint64_t
+    getLastRemoteNotifAddr() const {
+        return remote_notif_addr_cache_;
+    }
+
+    /** Get cached remote notification buffer key from last deserializeConnectionInfo call */
+    uint64_t
+    getLastRemoteNotifKey() const {
+        return remote_notif_key_cache_;
+    }
+
     const nixlLibfabricTopology *
     getTopology() const {
         return topology.get();
@@ -351,9 +365,8 @@ private:
     // EFA device to rail mapping
     std::unordered_map<std::string, size_t> efa_device_to_rail_map;
 
-    // Active Rail Tracking System
-    std::unordered_set<size_t> active_rails_;
-    mutable std::mutex active_rails_mutex_;
+    // Active Rail Tracking System — lock-free bitmask (supports up to 64 rails)
+    std::atomic<uint64_t> active_rails_bitmask_{0};
 
     // rail selection policy for DRAM memory type
     std::unique_ptr<nixlLibfabricRailSelectionPolicy> dram_rail_selection_policy_;
@@ -377,6 +390,10 @@ private:
         nixlSerDes &ser_des,
         const std::string &key_prefix,
         std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints_out) const;
+
+    // Cached remote notification buffer metadata from last deserializeConnectionInfo
+    mutable uint64_t remote_notif_addr_cache_ = 0;
+    mutable uint64_t remote_notif_key_cache_ = 0;
 };
 
 #endif // NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_RAIL_MANAGER_H
