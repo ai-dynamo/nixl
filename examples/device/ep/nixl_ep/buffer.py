@@ -141,7 +141,7 @@ class Buffer:
             num_experts: the number of all experts.
 
         Returns:
-            size: the buffer size recommended.
+            size: the RDMA buffer size recommended.
         """
         return nixl_ep_cpp.get_low_latency_buffer_size_hint(
             num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts
@@ -532,7 +532,7 @@ class Buffer:
                 num_recv_tokens, num_rdma_recv_tokens,
                 rdma_channel_prefix_matrix, recv_rdma_rank_prefix_sum, gbl_channel_prefix_matrix, recv_gbl_rank_prefix_sum,
                 expert_alignment, config, getattr(previous_event, 'event', None), async_finish, allocate_on_comm_stream)
-            return (recv_x, recv_x_scales) if x_scales is not None else recv_x, None, None, None, None, EventOverlap(event)
+            return (recv_x, recv_x_scales) if x_scales is not None else recv_x, None, None, None, None, EventOverlap(event)  # type: ignore[return-value]
         else:
             assert num_tokens_per_rank is not None and is_token_in_rank is not None and num_tokens_per_expert is not None
             recv_x, recv_x_scales, recv_topk_idx, recv_topk_weights, num_recv_tokens_per_expert_list, \

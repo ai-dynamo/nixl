@@ -21,7 +21,6 @@
 from typing import Any, Optional, Tuple
 
 import torch
-import torch.distributed as dist
 
 # noinspection PyUnresolvedReferences
 from .nixl_ep_cpp import EventHandle

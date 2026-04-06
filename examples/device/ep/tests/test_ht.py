@@ -25,14 +25,14 @@ import time
 
 # Add elastic subdirectory to path for store_group import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'elastic'))
-import store_group
+import store_group  # noqa: E402
 
-import torch
-import torch.distributed as dist
+import torch  # noqa: E402
+import torch.distributed as dist  # noqa: E402
 
 # noinspection PyUnresolvedReferences
-import nixl_ep
-from utils import init_dist, bench, bench_kineto, calc_diff, create_grouped_scores, inplace_unique, per_token_cast_to_fp8, per_token_cast_back
+import nixl_ep  # noqa: E402
+from utils import init_dist, bench, bench_kineto, calc_diff, create_grouped_scores, inplace_unique, per_token_cast_to_fp8, per_token_cast_back  # noqa: E402
 
 TCP_STORE_PORT = 9999
 
@@ -152,6 +152,8 @@ def test_main(args: argparse.Namespace, num_sms: int,
                         check_data(recv_x, recv_gbl_rank_prefix_sum)
                     if with_topk:
                         # Check `topk_idx`
+                        assert recv_topk_idx is not None
+                        assert recv_topk_weights is not None
                         assert (recv_topk_idx.eq(-1) | ((recv_topk_idx >= 0) & (recv_topk_idx < (num_experts // num_ranks)))).sum().item() == recv_topk_idx.numel()
                         for i, count in enumerate(recv_num_tokens_per_expert_list):
                             assert recv_topk_idx.eq(i).sum().item() == count
@@ -231,11 +233,11 @@ def test_main(args: argparse.Namespace, num_sms: int,
 
         if isinstance(current_x, tuple):
             # Gather FP8 the best config from rank 0
-            best_dispatch_results = torch.tensor([best_results[0], best_results[1], best_results[2]], dtype=torch.int32, device='cuda')
+            best_dispatch_results = torch.tensor([best_results[0], best_results[1], best_results[2]], dtype=torch.int32, device='cuda')  # type: ignore[index]
             all_best_fp8_results_list = [torch.zeros_like(best_dispatch_results) for _ in range(torch.distributed.get_world_size())]
             dist.all_gather(all_best_fp8_results_list, best_dispatch_results, group=group)
             best_dispatch_results = all_best_fp8_results_list[0].tolist()
-    dispatch_config = nixl_ep.Config(best_dispatch_results[0], best_dispatch_results[1], nvl_buffer_size, best_dispatch_results[2], rdma_buffer_size)
+    dispatch_config = nixl_ep.Config(best_dispatch_results[0], best_dispatch_results[1], nvl_buffer_size, best_dispatch_results[2], rdma_buffer_size)  # type: ignore[index]
 
     dispatch_args = {'x': x, 'num_tokens_per_rank': num_tokens_per_rank, 'num_tokens_per_rdma_rank': num_tokens_per_rdma_rank,
                      'is_token_in_rank': is_token_in_rank, 'num_tokens_per_expert': num_tokens_per_expert,
@@ -255,7 +257,7 @@ def test_main(args: argparse.Namespace, num_sms: int,
                     best_time, best_results = t, (num_sms, nvl_chunk_size, rdma_chunk_size, notify_t)
 
     if local_rank == 0:
-        print(f'[tuning] Best combine: SMs {best_results[0]}, NVL chunk {best_results[1]}, RDMA chunk {best_results[2]}, transmit: {best_time * 1e6:.2f} us, notify: {best_results[3] * 1e6:.2f} us, BW: {combine_bf16_rdma_recv_bytes / 1e9 / best_time:.2f} GB/s (RDMA), {combine_bf16_nvl_send_bytes / 1e9 / best_time:.2f} GB/s (NVL)', flush=True)
+        print(f'[tuning] Best combine: SMs {best_results[0]}, NVL chunk {best_results[1]}, RDMA chunk {best_results[2]}, transmit: {best_time * 1e6:.2f} us, notify: {best_results[3] * 1e6:.2f} us, BW: {combine_bf16_rdma_recv_bytes / 1e9 / best_time:.2f} GB/s (RDMA), {combine_bf16_nvl_send_bytes / 1e9 / best_time:.2f} GB/s (NVL)', flush=True)  # type: ignore[index]
         print('', flush=True)
 
 
