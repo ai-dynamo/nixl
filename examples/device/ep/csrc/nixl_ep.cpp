@@ -103,25 +103,28 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_byte
     EP_HOST_ASSERT(per_channel_bytes < std::numeric_limits<int>::max());
 
     // Create 32 MiB workspace
-    CUDA_CHECK(cudaMalloc(&workspace, NUM_WORKSPACE_BYTES));
+    m_workspace_alloc = std::make_unique<vmm_region>(NUM_WORKSPACE_BYTES);
+    workspace = m_workspace_alloc->ptr();
     CUDA_CHECK(cudaMemsetAsync(workspace, 0, NUM_WORKSPACE_BYTES, comm_stream));
 
     EP_HOST_ASSERT(max_experts_per_rank > 0);
-    CUDA_CHECK(cudaMalloc(&rdma_buffer_ptr, num_rdma_bytes));
+    m_rdma_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_rdma_bytes));
+    rdma_buffer_ptr = m_rdma_alloc->ptr();
     CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
 
     // Allocate and clean shrink buffer
-    mask_buffer_ptr = nullptr;
-    sync_buffer_ptr = nullptr;
     int num_mask_buffer_bytes = max_num_ranks * sizeof(int);
-    CUDA_CHECK(cudaMalloc(&mask_buffer_ptr, num_mask_buffer_bytes));
+    m_mask_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_mask_buffer_bytes));
+    mask_buffer_ptr = static_cast<int *>(m_mask_alloc->ptr());
     CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0xff, num_mask_buffer_bytes));
     CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
 
     int num_sync_buffer_bytes = max_num_ranks * sizeof(int);
-    CUDA_CHECK(cudaMalloc(&sync_buffer_ptr, num_sync_buffer_bytes));
+    m_sync_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes));
+    sync_buffer_ptr = static_cast<int *>(m_sync_alloc->ptr());
+    m_sync_count_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes));
+    sync_count_ptr = static_cast<int *>(m_sync_count_alloc->ptr());
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
-    CUDA_CHECK(cudaMalloc(&sync_count_ptr, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_count_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -167,10 +170,10 @@ torch::Stream Buffer::get_comm_stream() const {
 }
 
 void Buffer::destroy() {
-    auto warn_cuda = [](cudaError_t status, const char* operation) noexcept {
+    auto warn_cuda = [](cudaError_t status, const char *operation) noexcept {
         if (status != cudaSuccess) {
-            std::cerr << "WARNING: destroy() failed to " << operation
-                      << ": " << cudaGetErrorString(status) << '\n';
+            std::cerr << "WARNING: destroy() failed to " << operation << ": "
+                      << cudaGetErrorString(status) << '\n';
         }
     };
 
@@ -195,7 +198,6 @@ void Buffer::destroy() {
             warn_nixl(nixl_agent_info->agent->invalidateLocalMD(),
                       "invalidate local metadata");
         }
-
         warn_nixl(nixl_agent_info->agent->deregisterMem(
                       nixl_agent_info->rdma_reg_descs,
                       &nixl_agent_info->extra_params),
@@ -212,13 +214,17 @@ void Buffer::destroy() {
         nixl_agent_info.reset();
     }
 
-    warn_cuda(cudaFree(rdma_buffer_ptr), "free RDMA buffer");
-    warn_cuda(cudaFree(mask_buffer_ptr), "free mask buffer");
-    warn_cuda(cudaFree(sync_buffer_ptr), "free sync buffer");
-    warn_cuda(cudaFree(sync_count_ptr), "free sync-count buffer");
+    m_rdma_alloc.reset();
+    rdma_buffer_ptr = nullptr;
+    m_mask_alloc.reset();
+    mask_buffer_ptr = nullptr;
+    m_sync_alloc.reset();
+    sync_buffer_ptr = nullptr;
+    m_sync_count_alloc.reset();
+    sync_count_ptr = nullptr;
 
-    // Free workspace
-    warn_cuda(cudaFree(workspace), "free workspace");
+    m_workspace_alloc.reset();
+    workspace = nullptr;
 
     destroyed = true;
     available = false;
