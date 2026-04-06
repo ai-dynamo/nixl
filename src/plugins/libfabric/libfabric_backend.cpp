@@ -388,10 +388,6 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
 
         // Start Progress thread for rail completion processing
         if (progress_thread_enabled_) {
-            for (size_t i = 0; i < rail_manager.getNumRails(); ++i) {
-                rail_manager.getRail(i).setProgressThreadEnabled(true);
-            }
-
             NIXL_DEBUG << "Starting Progress thread for rails with delay: "
                        << progress_thread_delay_.count() << " microseconds";
             progress_thread_stop_ = false;

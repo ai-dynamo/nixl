@@ -747,11 +747,6 @@ nixlLibfabricRail::setNotificationCallback(std::function<void(const std::string 
 }
 
 void
-nixlLibfabricRail::setProgressThreadEnabled(bool enabled) {
-    progress_thread_enabled_ = enabled;
-}
-
-void
 nixlLibfabricRail::setXferIdCallback(std::function<void(uint32_t)> callback) {
     xferIdCallback = callback;
 }
@@ -1144,7 +1139,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
             }
 
             // Progress completion queue to drain pending completions before retry
-            if (!progress_thread_enabled_) {
+            {
                 nixl_status_t progress_status = progressCompletionQueue();
                 if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
                     NIXL_ERROR << "progressCompletionQueue failed on rail " << rail_id
@@ -1228,7 +1223,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
             }
 
             // Progress completion queue to drain pending completions before retry
-            if (!progress_thread_enabled_) {
+            {
                 nixl_status_t progress_status = progressCompletionQueue();
                 if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
                     NIXL_ERROR << "progressCompletionQueue failed on rail " << rail_id
@@ -1310,7 +1305,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
             }
 
             // Progress completion queue to drain pending completions before retry
-            if (!progress_thread_enabled_) {
+            {
                 nixl_status_t progress_status = progressCompletionQueue();
                 if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
                     NIXL_ERROR << "progressCompletionQueue failed on rail " << rail_id
