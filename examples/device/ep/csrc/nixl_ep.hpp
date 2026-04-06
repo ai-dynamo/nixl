@@ -40,6 +40,7 @@
 #include "event.hpp"
 #include "kernels/configs.cuh"
 #include "kernels/exception.cuh"
+#include "vmm.hpp"
 
 #include "nixl.h"
 
@@ -85,6 +86,13 @@ private:
     int *mask_buffer_ptr = nullptr;
     int *sync_buffer_ptr = nullptr;
     int *sync_count_ptr = nullptr;
+
+    /* Owning VMM allocations (keep raw ptrs above as aliases) */
+    std::unique_ptr<vmm_region> m_rdma_alloc;
+    std::unique_ptr<vmm_region> m_mask_alloc;
+    std::unique_ptr<vmm_region> m_sync_alloc;
+    std::unique_ptr<vmm_region> m_sync_count_alloc;
+    std::unique_ptr<vmm_region> m_workspace_alloc;
 
     // Device info and communication
     int device_id;
