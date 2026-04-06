@@ -580,10 +580,10 @@ main(int argc, char **argv) {
     for (nixl_backend_t b: plugins)
         std::cout << b << "\n";
 
-    ret1 = A1.getPluginParams("UCX", mems1, init1);
-    ret2 = A2.getPluginParams("UCX", mems2, init2);
-    nixl_exit_on_failure(ret1, "Failed to get plugin params for UCX", agent1);
-    nixl_exit_on_failure(ret2, "Failed to get plugin params for UCX", agent2);
+    ret1 = A1.getPluginParams(backend, mems1, init1);
+    ret2 = A2.getPluginParams(backend, mems2, init2);
+    nixl_exit_on_failure(ret1, "Failed to get plugin params for " + backend, agent1);
+    nixl_exit_on_failure(ret2, "Failed to get plugin params for " + backend, agent2);
 
     std::cout << "Params before init:\n";
     printParams(init1, mems1);
