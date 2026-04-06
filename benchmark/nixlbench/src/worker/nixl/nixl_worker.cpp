@@ -47,19 +47,16 @@
         }                                                                                       \
     } while (0)
 
+static nixl_mem_t
+resolveVramSegment() {
 #if HAVE_CUDA
-#define HANDLE_VRAM_SEGMENT(_seg_type) _seg_type = VRAM_SEG;
+    return VRAM_SEG;
 #else
-#define HANDLE_VRAM_SEGMENT(_seg_type)                                                          \
-    do {                                                                                        \
-        if (neuronCoreCount() > 0) {                                                            \
-            _seg_type = VRAM_SEG;                                                               \
-        } else {                                                                                \
-            std::cerr << "VRAM segment type not supported without CUDA or Neuron" << std::endl; \
-            std::exit(EXIT_FAILURE);                                                            \
-        }                                                                                       \
-    } while (0)
+    if (neuronCoreCount() > 0) return VRAM_SEG;
+    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+    std::exit(EXIT_FAILURE);
 #endif
+}
 
 #define GET_SEG_TYPE(is_initiator)                                                          \
     ({                                                                                      \
@@ -69,7 +66,7 @@
         if (0 == _seg_type_str.compare("DRAM")) {                                           \
             _seg_type = DRAM_SEG;                                                           \
         } else if (0 == _seg_type_str.compare("VRAM")) {                                    \
-            HANDLE_VRAM_SEGMENT(_seg_type);                                                 \
+            _seg_type = resolveVramSegment();                                               \
         } else {                                                                            \
             std::cerr << "Invalid segment type: " << _seg_type_str << std::endl;            \
             exit(EXIT_FAILURE);                                                             \
@@ -401,8 +398,23 @@ xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, mem_dev_id);
 }
 
+static std::optional<xferBenchIOV>
+getVramDescNeuron(int devid, size_t buffer_size, uint8_t memset_value) {
+    void *addr;
+    CHECK_NEURON_ERROR(neuronMalloc(&addr, buffer_size, devid), "Failed to allocate nrt tensor");
+    CHECK_NEURON_ERROR(neuronMemset(addr, memset_value, buffer_size),
+                       "Failed to set device memory");
+
+    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
+}
+
+static void
+cleanupVramNeuron(xferBenchIOV &iov) {
+    CHECK_NEURON_ERROR(neuronFree((void *)iov.addr), "Failed to free nrt tensor");
+}
+
 #if HAVE_CUDA
-[[maybe_unused]] static std::optional<xferBenchIOV>
+static std::optional<xferBenchIOV>
 getVramDescCuda(int devid, size_t buffer_size, uint8_t memset_value) {
     void *addr;
     CHECK_CUDA_ERROR(cudaMalloc(&addr, buffer_size), "Failed to allocate CUDA buffer");
@@ -411,7 +423,7 @@ getVramDescCuda(int devid, size_t buffer_size, uint8_t memset_value) {
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
 }
 
-[[maybe_unused]] static std::optional<xferBenchIOV>
+static std::optional<xferBenchIOV>
 getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value) {
 #if HAVE_CUDA_FABRIC
     CUdeviceptr addr = 0;
@@ -465,19 +477,23 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value) {
 #endif /* HAVE_CUDA_FABRIC */
 }
 
-#endif /* HAVE_CUDA */
-
-[[maybe_unused]] static std::optional<xferBenchIOV>
-getVramDescNeuron(int devid, size_t buffer_size, uint8_t memset_value) {
-    void *addr;
-    CHECK_NEURON_ERROR(neuronMalloc(&addr, buffer_size, devid), "Failed to allocate nrt tensor");
-    CHECK_NEURON_ERROR(neuronMemset(addr, memset_value, buffer_size),
-                       "Failed to set device memory");
-
-    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
+static void
+cleanupVramCuda(xferBenchIOV &iov) {
+    CHECK_CUDA_ERROR(cudaSetDevice(iov.devId), "Failed to set device");
+    if (xferBenchConfig::enable_vmm) {
+        CHECK_CUDA_DRIVER_ERROR(cuMemUnmap(iov.addr, iov.len), "Failed to unmap memory");
+        CHECK_CUDA_DRIVER_ERROR(cuMemRelease(iov.handle), "Failed to release memory");
+        CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree(iov.addr, iov.padded_size),
+                                "Failed to free reserved address");
+    } else {
+        CHECK_CUDA_ERROR(cudaFreeAsync((void *)iov.addr, 0), "Failed to deallocate CUDA buffer");
+        CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize stream 0");
+    }
 }
 
-[[maybe_unused]] static std::optional<xferBenchIOV>
+#endif /* HAVE_CUDA */
+
+static std::optional<xferBenchIOV>
 getVramDesc(int devid, size_t buffer_size, bool isInit) {
     uint8_t memset_value =
         isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT : XFERBENCH_TARGET_BUFFER_ELEMENT;
@@ -661,33 +677,13 @@ xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
 
 void
 xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
-    // Assume no CUDA cores exist if Neuron cores are found.
-    // There are no AWS instance types with both NVIDIA GPUs and Neuron accelerators.
     if (neuronCoreCount() > 0) {
-        CHECK_NEURON_ERROR(neuronFree((void *)iov.addr), "Failed to free nrt tensor");
+        cleanupVramNeuron(iov);
         return;
     }
 
 #if HAVE_CUDA
-    CHECK_CUDA_ERROR(cudaSetDevice(iov.devId), "Failed to set device");
-    if (xferBenchConfig::enable_vmm) {
-        CHECK_CUDA_DRIVER_ERROR(cuMemUnmap(iov.addr, iov.len), "Failed to unmap memory");
-        CHECK_CUDA_DRIVER_ERROR(cuMemRelease(iov.handle), "Failed to release memory");
-        CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree(iov.addr, iov.padded_size),
-                                "Failed to free reserved address");
-    } else {
-        /*
-         * CUDA streams allow for concurrent execution of kernels and memory operations. However,
-         * memory management functions like cudaFree are implicitly synchronized with all streams to
-         * guarantee safety. This means cudaFree will wait for all kernels (in any stream) that
-         * might use the memory to finish before actually freeing it.
-         * If the application hangs on cudaFree due to kernels running in other streams, switching
-         * to cudaFreeAsync can allow the host to proceed without waiting for the entire device
-         * synchronization.
-         */
-        CHECK_CUDA_ERROR(cudaFreeAsync((void *)iov.addr, 0), "Failed to deallocate CUDA buffer");
-        CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize stream 0");
-    }
+    cleanupVramCuda(iov);
 #else
     std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
 #endif
