@@ -385,14 +385,14 @@ public:
     uint32_t
     allocateNotifSlot() {
         return notif_recv_head_.fetch_add(1, std::memory_order_relaxed) %
-               NIXL_LIBFABRIC_NOTIF_NUM_SLOTS;
+            NIXL_LIBFABRIC_NOTIF_NUM_SLOTS;
     }
 
     /** Get pointer to a specific notification slot */
     void *
     getNotifSlot(uint32_t slot_idx) const {
         return static_cast<char *>(notif_recv_buffer_) +
-               (slot_idx * NIXL_LIBFABRIC_NOTIF_SLOT_SIZE);
+            (slot_idx * NIXL_LIBFABRIC_NOTIF_SLOT_SIZE);
     }
 
 private:
@@ -422,9 +422,9 @@ private:
     bool provider_supports_hmem_;
 
     // Notification receive buffer for WRITE-based control messages
-    void *notif_recv_buffer_;          ///< Ring buffer for incoming notification WRITEs
-    struct fid_mr *notif_recv_mr_;     ///< MR for notification receive buffer
-    uint64_t notif_recv_key_;          ///< Remote access key for notification receive buffer
+    void *notif_recv_buffer_; ///< Ring buffer for incoming notification WRITEs
+    struct fid_mr *notif_recv_mr_; ///< MR for notification receive buffer
+    uint64_t notif_recv_key_; ///< Remote access key for notification receive buffer
     std::atomic<uint32_t> notif_recv_head_; ///< Next slot for remote to write into
 
 

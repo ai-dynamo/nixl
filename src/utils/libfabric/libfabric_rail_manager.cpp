@@ -895,9 +895,8 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
         remote_notif_addr + ((uint64_t)slot_idx * NIXL_LIBFABRIC_NOTIF_SLOT_SIZE);
 
     NIXL_DEBUG << "Sending control message via WRITE type " << msg_type_value
-               << " agent_idx=" << agent_idx << " XFER_ID=" << xfer_id
-               << " slot=" << slot_idx << " remote_addr=" << remote_slot_addr
-               << " on rail " << rail_id;
+               << " agent_idx=" << agent_idx << " XFER_ID=" << xfer_id << " slot=" << slot_idx
+               << " remote_addr=" << remote_slot_addr << " on rail " << rail_id;
 
     // Mark rail 0 as active so its CQ gets progressed
     markRailActive(rail_id);
@@ -906,9 +905,14 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     void *local_desc = fi_mr_desc(req->mr);
 
     // Use RDMA WRITE with immediate data instead of SEND
-    nixl_status_t status = rails_[rail_id]->postWrite(
-        req->buffer, req->buffer_size, local_desc, imm_data, dest_addr, remote_slot_addr,
-        remote_notif_key, req);
+    nixl_status_t status = rails_[rail_id]->postWrite(req->buffer,
+                                                      req->buffer_size,
+                                                      local_desc,
+                                                      imm_data,
+                                                      dest_addr,
+                                                      remote_slot_addr,
+                                                      remote_notif_key,
+                                                      req);
 
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to WRITE control message type " << static_cast<int>(msg_type)
@@ -1042,10 +1046,8 @@ nixlLibfabricRailManager::serializeConnectionInfo(const std::string &user_prefix
 
     // Add notification buffer metadata from rail 0
     if (!rails_.empty()) {
-        ser_des.addStr("notif_buf_addr",
-                       std::to_string(rails_[0]->getNotifRecvBufferAddr()));
-        ser_des.addStr("notif_buf_key",
-                       std::to_string(rails_[0]->getNotifRecvKey()));
+        ser_des.addStr("notif_buf_addr", std::to_string(rails_[0]->getNotifRecvBufferAddr()));
+        ser_des.addStr("notif_buf_key", std::to_string(rails_[0]->getNotifRecvKey()));
     }
 
     str = ser_des.exportStr();
