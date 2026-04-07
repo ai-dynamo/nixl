@@ -372,5 +372,3 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
 RUN if [ "$(echo $CUDA_VERSION | cut -d. -f1)" = "12" ]; then \
       cp build/src/bindings/python/nixl-meta/nixl*.whl dist/; \
     fi
-
-RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl build/src/bindings/python/nixl-meta/nixl*.whl
