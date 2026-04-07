@@ -59,7 +59,7 @@ public:
     }
 
     inline friend bool operator==(const nixlSectionDesc &lhs, const nixlSectionDesc &rhs) {
-        return (static_cast<const nixlMetaDesc &>(lhs) == static_cast<const nixlMetaDesc &>(rhs));
+        return static_cast<const nixlMetaDesc &>(lhs) == static_cast<const nixlMetaDesc &>(rhs);
     }
 
     inline void print(const std::string &suffix) const {
@@ -69,6 +69,8 @@ public:
 
 class nixlSecDescList : public nixlDescList<nixlSectionDesc> {
 public:
+    enum class order : bool { UNSORTED, SORTED };
+
     explicit nixlSecDescList(const nixl_mem_t &type) : nixlDescList<nixlSectionDesc>(type, 0) {}
 
     using nixlDescList<nixlSectionDesc>::operator[]; // bring in const overload
@@ -77,7 +79,7 @@ public:
     addDesc(const nixlSectionDesc &desc) override;
 
     void
-    addDescs(std::vector<nixlSectionDesc> batch, bool sorted = false);
+    addDescs(std::vector<nixlSectionDesc> batch, order ord = order::UNSORTED);
 
     void
     addDescs(nixlSecDescList &&other);

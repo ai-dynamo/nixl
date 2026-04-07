@@ -406,7 +406,7 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
 }
 
 void
-nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
+nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, order ord) {
     constexpr size_t add_sorted_descs_threshold = 4;
 
     if (batch.size() <= add_sorted_descs_threshold) {
@@ -421,7 +421,7 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
         return;
     }
 
-    if (sorted) {
+    if (ord == order::SORTED) {
         assert(std::is_sorted(batch.begin(), batch.end()));
     } else {
         std::sort(batch.begin(), batch.end());
@@ -433,7 +433,7 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, bool sorted) {
 void
 nixlSecDescList::addDescs(nixlSecDescList &&other) {
     assert(type == other.type);
-    addDescs(std::move(other.descs), true);
+    addDescs(std::move(other.descs), order::SORTED);
 }
 
 
