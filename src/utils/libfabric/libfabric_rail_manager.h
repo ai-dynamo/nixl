@@ -21,7 +21,9 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <functional>
+#include <mutex>
 #include <atomic>
 #include "libfabric_rail.h"
 
@@ -365,8 +367,9 @@ private:
     // EFA device to rail mapping
     std::unordered_map<std::string, size_t> efa_device_to_rail_map;
 
-    // Active Rail Tracking System — lock-free bitmask (supports up to 64 rails)
-    std::atomic<uint64_t> active_rails_bitmask_{0};
+    // Active Rail Tracking System
+    std::unordered_set<size_t> active_rails_;
+    mutable std::mutex active_rails_mutex_;
 
     // rail selection policy for DRAM memory type
     std::unique_ptr<nixlLibfabricRailSelectionPolicy> dram_rail_selection_policy_;

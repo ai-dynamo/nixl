@@ -394,8 +394,8 @@ private:
     struct fid_cq *cq; // from rail_cqs[rail_id]
     struct fid_av *av; // from rail_avs[rail_id]
 
-    // EP mutex to protect endpoint and CQ operations
-    mutable std::mutex ep_mutex_;
+    // CQ progress mutex to protect completion queue operations
+    mutable std::mutex cq_progress_mutex_;
 
     // Callback functions
     std::function<void(const std::string &)> notificationCallback;

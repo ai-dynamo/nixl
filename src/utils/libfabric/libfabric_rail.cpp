@@ -761,7 +761,7 @@ nixlLibfabricRail::progressCompletionQueue() const {
 
     // Only protect libfabric CQ hardware operations
     {
-        std::lock_guard<std::mutex> ep_lock(ep_mutex_);
+        std::lock_guard<std::mutex> cq_lock(cq_progress_mutex_);
 
         // Non-blocking read (used by progress thread or fallback)
         ret = fi_cq_read(cq, completions, NIXL_LIBFABRIC_CQ_BATCH_SIZE);
@@ -1066,11 +1066,7 @@ nixlLibfabricRail::postRecv(nixlLibfabricReq *req) const {
     NIXL_TRACE << "Posting receive on endpoint=" << endpoint << " buffer=" << req->buffer
                << " size=" << req->buffer_size << " context=" << &req->ctx;
 
-    int ret;
-    {
-        const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
-        ret = fi_recvmsg(endpoint, &msg, 0);
-    }
+    int ret = fi_recvmsg(endpoint, &msg, 0);
     if (ret) {
         NIXL_ERROR << "fi_recvmsg failed on rail " << rail_id << ": " << fi_strerror(-ret);
         return NIXL_ERR_BACKEND;
@@ -1106,16 +1102,8 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
 
     while (true) {
         // Libfabric fi_senddata call
-        {
-            const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
-            ret = fi_senddata(endpoint,
-                              req->buffer,
-                              req->buffer_size,
-                              desc,
-                              immediate_data,
-                              dest_addr,
-                              &req->ctx);
-        }
+        ret = fi_senddata(
+            endpoint, req->buffer, req->buffer_size, desc, immediate_data, dest_addr, &req->ctx);
 
         if (ret == 0) {
             // Success
@@ -1139,16 +1127,9 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
             }
 
             // Progress completion queue to drain pending completions before retry
-            {
-                nixl_status_t progress_status = progressCompletionQueue();
-                if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
-                    NIXL_ERROR << "progressCompletionQueue failed on rail " << rail_id
-                               << " during fi_senddata retry";
-                    return progress_status;
-                }
-                if (progress_status == NIXL_SUCCESS) {
-                    NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
-                }
+            nixl_status_t progress_status = progressCompletionQueue();
+            if (progress_status == NIXL_SUCCESS) {
+                NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
             }
 
             continue;
@@ -1188,18 +1169,15 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
 
     while (true) {
         // Libfabric fi_writedata call
-        {
-            const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
-            ret = fi_writedata(endpoint,
-                               local_buffer,
-                               length,
-                               local_desc,
-                               immediate_data,
-                               dest_addr,
-                               remote_addr,
-                               remote_key,
-                               &req->ctx);
-        }
+        ret = fi_writedata(endpoint,
+                           local_buffer,
+                           length,
+                           local_desc,
+                           immediate_data,
+                           dest_addr,
+                           remote_addr,
+                           remote_key,
+                           &req->ctx);
 
         if (ret == 0) {
             // Success
@@ -1223,16 +1201,9 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
             }
 
             // Progress completion queue to drain pending completions before retry
-            {
-                nixl_status_t progress_status = progressCompletionQueue();
-                if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
-                    NIXL_ERROR << "progressCompletionQueue failed on rail " << rail_id
-                               << " during fi_writedata retry";
-                    return progress_status;
-                }
-                if (progress_status == NIXL_SUCCESS) {
-                    NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
-                }
+            nixl_status_t progress_status = progressCompletionQueue();
+            if (progress_status == NIXL_SUCCESS) {
+                NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
             }
 
             continue;
@@ -1271,17 +1242,14 @@ nixlLibfabricRail::postRead(void *local_buffer,
 
     while (true) {
         // Libfabric fi_read call
-        {
-            const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
-            ret = fi_read(endpoint,
-                          local_buffer,
-                          length,
-                          local_desc,
-                          dest_addr,
-                          remote_addr,
-                          remote_key,
-                          &req->ctx);
-        }
+        ret = fi_read(endpoint,
+                      local_buffer,
+                      length,
+                      local_desc,
+                      dest_addr,
+                      remote_addr,
+                      remote_key,
+                      &req->ctx);
 
         if (ret == 0) {
             // Success
@@ -1305,16 +1273,9 @@ nixlLibfabricRail::postRead(void *local_buffer,
             }
 
             // Progress completion queue to drain pending completions before retry
-            {
-                nixl_status_t progress_status = progressCompletionQueue();
-                if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
-                    NIXL_ERROR << "progressCompletionQueue failed on rail " << rail_id
-                               << " during fi_read retry";
-                    return progress_status;
-                }
-                if (progress_status == NIXL_SUCCESS) {
-                    NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
-                }
+            nixl_status_t progress_status = progressCompletionQueue();
+            if (progress_status == NIXL_SUCCESS) {
+                NIXL_TRACE << "Progressed completions on rail " << rail_id << " before retry";
             }
 
             continue;

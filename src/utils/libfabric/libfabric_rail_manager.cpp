@@ -301,10 +301,6 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
         NIXL_ERROR << "No network devices discovered; cannot create rails";
         return NIXL_ERR_BACKEND;
     }
-    if (num_rails_ > 64) {
-        NIXL_ERROR << "active_rails_bitmask_ supports at most 64 rails, got " << num_rails_;
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
     // Pre-allocate to ensure contiguous memory allocation
     rails_.reserve(num_rails_);
 
@@ -926,16 +922,20 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
 
 nixl_status_t
 nixlLibfabricRailManager::progressActiveRails() {
-    // Read bitmask once — always include rail 0 for notifications
-    uint64_t mask = active_rails_bitmask_.load(std::memory_order_relaxed) | 1ULL;
+    std::unordered_set<size_t> rails_to_process;
 
-    // Process rails without any locking
+    // Copy active rails under lock to avoid iterator invalidation
+    {
+        std::lock_guard<std::mutex> lock(active_rails_mutex_);
+        // Always progress rail 0 for notifications
+        rails_to_process.insert(0);
+        rails_to_process.insert(active_rails_.begin(), active_rails_.end());
+    }
+
+    // Process rails without holding the lock
     bool any_completions = false;
     nixl_status_t first_error = NIXL_SUCCESS;
-    while (mask) {
-        size_t rail_id = __builtin_ctzll(mask);
-        mask &= mask - 1; // clear lowest set bit
-
+    for (size_t rail_id : rails_to_process) {
         if (rail_id >= rails_.size()) {
             NIXL_ERROR << "Invalid rail ID: " << rail_id;
             continue;
@@ -955,7 +955,7 @@ nixlLibfabricRailManager::progressActiveRails() {
     }
 
     if (any_completions) {
-        NIXL_TRACE << "Processed active rails, completions found";
+        NIXL_TRACE << "Processed " << rails_to_process.size() << " rails, completions found";
     }
     if (first_error != NIXL_SUCCESS) {
         return first_error;
@@ -1173,16 +1173,17 @@ nixlLibfabricRailManager::deserializeRailEndpoints(
 
 void
 nixlLibfabricRailManager::markRailActive(size_t rail_id) {
-    if (rail_id >= rails_.size() || rail_id >= 64) {
+    if (rail_id >= rails_.size()) {
         NIXL_ERROR << "Invalid rail ID for markRailActive: " << rail_id;
         return;
     }
 
-    uint64_t bit = 1ULL << rail_id;
-    uint64_t prev = active_rails_bitmask_.fetch_or(bit, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(active_rails_mutex_);
+    bool was_inserted = active_rails_.insert(rail_id).second;
 
-    if (!(prev & bit)) {
-        NIXL_DEBUG << "Marked rail " << rail_id << " as active";
+    if (was_inserted) {
+        NIXL_DEBUG << "Marked rail " << rail_id
+                   << " as active (total active: " << active_rails_.size() << ")";
     } else {
         NIXL_TRACE << "Rail " << rail_id << " was already active";
     }
@@ -1190,13 +1191,11 @@ nixlLibfabricRailManager::markRailActive(size_t rail_id) {
 
 void
 nixlLibfabricRailManager::markRailInactive(size_t rail_id) {
-    if (rail_id >= 64) return;
-
-    uint64_t bit = 1ULL << rail_id;
-    uint64_t prev = active_rails_bitmask_.fetch_and(~bit, std::memory_order_relaxed);
-
-    if (prev & bit) {
-        NIXL_DEBUG << "Marked rail " << rail_id << " as inactive";
+    std::lock_guard<std::mutex> lock(active_rails_mutex_);
+    size_t erased = active_rails_.erase(rail_id);
+    if (erased > 0) {
+        NIXL_DEBUG << "Marked rail " << rail_id
+                   << " as inactive (total active: " << active_rails_.size() << ")";
     } else {
         NIXL_TRACE << "Rail " << rail_id << " was not in active set";
     }
@@ -1204,13 +1203,16 @@ nixlLibfabricRailManager::markRailInactive(size_t rail_id) {
 
 void
 nixlLibfabricRailManager::clearActiveRails() {
-    uint64_t prev = active_rails_bitmask_.exchange(0, std::memory_order_relaxed);
-    NIXL_DEBUG << "Cleared " << __builtin_popcountll(prev) << " active rails";
+    std::lock_guard<std::mutex> lock(active_rails_mutex_);
+    size_t cleared_count = active_rails_.size();
+    active_rails_.clear();
+    NIXL_DEBUG << "Cleared " << cleared_count << " active rails";
 }
 
 size_t
 nixlLibfabricRailManager::getActiveRailCount() const {
-    return __builtin_popcountll(active_rails_bitmask_.load(std::memory_order_relaxed));
+    std::lock_guard<std::mutex> lock(active_rails_mutex_);
+    return active_rails_.size();
 }
 
 // System accelerator type getter
