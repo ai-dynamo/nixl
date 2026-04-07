@@ -162,8 +162,6 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     sync_count_ptr = static_cast<int *>(m_sync_count_alloc->ptr());
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_count_ptr, 0, num_sync_buffer_bytes));
-    CUDA_CHECK(cudaMalloc(&local_barrier_cnt_ptr, num_sync_buffer_bytes));
-    CUDA_CHECK(cudaMemset(local_barrier_cnt_ptr, 0, num_sync_buffer_bytes));
 
     // Allocate barrier counters for high-throughput mode
     CUDA_CHECK(cudaMalloc(&local_ht_barrier_counter, sizeof(uint64_t)));
@@ -303,7 +301,6 @@ void Buffer::destroy() {
     m_sync_count_alloc.reset();
     sync_count_ptr = nullptr;
 
-    warn_cuda(cudaFree(local_barrier_cnt_ptr), "free local barrier count");
     warn_cuda(cudaFree(local_ht_barrier_counter), "free local ht barrier counter");
     warn_cuda(cudaFree(last_ht_barrier_counter), "free last ht barrier counter");
 
@@ -438,7 +435,6 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std:
         new_ranks.push_back(remote_rank);
         CUDA_CHECK(cudaMemset(mask_buffer_ptr + remote_rank, 0, sizeof(int)));
         CUDA_CHECK(cudaMemset(sync_count_ptr + remote_rank, 0, sizeof(int)));
-        CUDA_CHECK(cudaMemset(local_barrier_cnt_ptr + remote_rank, 0, sizeof(int)));
         CUDA_CHECK(cudaMemset(sync_buffer_ptr + remote_rank, 0, sizeof(int)));
 
         if (remote_mds.has_value())
