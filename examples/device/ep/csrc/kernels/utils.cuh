@@ -85,6 +85,9 @@ __device__ __forceinline__ void trap() {
 __device__ __forceinline__ void memory_fence() {
     asm volatile("fence.acq_rel.sys;":: : "memory");
 }
+__device__  __forceinline__ void st_relaxed_sys_global(const int *ptr, int val) {
+    asm volatile("st.relaxed.sys.global.s32 [%0], %1;"::"l"(ptr), "r"(val) : "memory");
+}
 
 __device__  __forceinline__ void st_release_sys_global(const int *ptr, int val) {
     asm volatile("st.release.sys.global.s32 [%0], %1;"::"l"(ptr), "r"(val) : "memory");
@@ -135,6 +138,41 @@ __device__ __forceinline__ int atomic_add_release_global(const int* ptr, int val
 __device__ __forceinline__ int atomic_add_release_global(const uint64_t* ptr, uint64_t value) {
     uint64_t ret;
     asm volatile("atom.add.release.gpu.global.u64 %0, [%1], %2;" : "=l"(ret) : "l"(ptr), "l"(value));
+    return ret;
+}
+__device__ __forceinline__ int ld_acquire_cta(const int *ptr) {
+    int ret;
+    asm volatile("ld.acquire.cta.s32 %0, [%1];" : "=r"(ret) : "l"(ptr));
+    return ret;
+}
+
+__device__ __forceinline__ int ld_acquire_cta(const volatile int *ptr) {
+    int ret;
+    asm volatile("ld.acquire.cta.s32 %0, [%1];" : "=r"(ret) : "l"(ptr));
+    return ret;
+}
+
+__device__  __forceinline__ int ld_volatile_global(const int *ptr) {
+    int ret;
+    asm volatile("ld.volatile.global.s32 %0, [%1];" : "=r"(ret) : "l"(ptr));
+    return ret;
+}
+
+__device__  __forceinline__ float ld_volatile_global(const float *ptr) {
+    float ret;
+    asm volatile("ld.volatile.global.f32 %0, [%1];" : "=f"(ret) : "l"(ptr));
+    return ret;
+}
+
+__device__  __forceinline__ int64_t ld_volatile_global(const int64_t *ptr) {
+    int64_t ret;
+    asm volatile("ld.volatile.global.s64 %0, [%1];" : "=l"(ret) : "l"(ptr));
+    return ret;
+}
+
+__device__  __forceinline__ int64_t ld_volatile_global(const uint64_t *ptr) {
+    int64_t ret;
+    asm volatile("ld.volatile.global.u64 %0, [%1];" : "=l"(ret) : "l"(ptr));
     return ret;
 }
 
@@ -266,6 +304,11 @@ __device__ __forceinline__ uint32_t elect_one_sync() {
 #endif
 }
 
+__device__ __forceinline__ void fence_view_async_shared() {
+    asm volatile("fence.proxy.async.shared::cta; \n" :: );
+}
+
+
 // TMA PTX instructions
 #ifndef DISABLE_SM90_FEATURES
 __device__ __forceinline__ void fence_barrier_init() {
@@ -332,7 +375,7 @@ __device__ __forceinline__ void tma_store_1d(const void* smem_ptr, const void* g
     asm volatile("cp.async.bulk.commit_group;");
 }
 
-template <int N>
+template <int N = 0>
 __device__ __forceinline__ void tma_store_wait() {
     asm volatile("cp.async.bulk.wait_group.read %0;" :: "n"(N) : "memory");
 }
@@ -420,6 +463,62 @@ __forceinline__ __device__ out_dtype_t extract_required_scale_format(float value
         return value;
     }
 }
+
+template <int kNumRanks, bool kSyncOnly = false>
+__forceinline__ __device__ void
+barrier_block(int** barrier_signal_ptrs, int rank) {
+    auto thread_id = static_cast<int>(threadIdx.x);
+
+    // For non-sync-only cases, the memory operations by other threads in the block must be visible to the `sys` scope
+    if constexpr (not kSyncOnly) {
+        memory_fence();
+        __syncthreads();
+    }
+
+    // Add self-ranks, sub other ranks
+    if (thread_id < kNumRanks) {
+        atomicAdd_system(barrier_signal_ptrs[rank] + thread_id, FINISHED_SUM_TAG);
+        atomicSub_system(barrier_signal_ptrs[thread_id] + rank, FINISHED_SUM_TAG);
+    }
+    EP_DEVICE_ASSERT(kNumRanks <= blockDim.x);
+
+    // Check timeout
+    auto start_time = clock64();
+    while (true) {
+        auto value = thread_id < kNumRanks ? ld_volatile_global(barrier_signal_ptrs[rank] + thread_id) : 0;
+        if (__all_sync(0xffffffff, value <= 0))
+            break;
+
+        if (clock64() - start_time > NUM_TIMEOUT_CYCLES and thread_id < kNumRanks) {
+            printf("NixlEP timeout check failed: rank = %d, thread = %d, value = %d)\n", rank, thread_id, value);
+            trap();
+        }
+    }
+    __syncthreads();
+}
+
+__forceinline__ __device__ int atomic_cas_cta_acquire(int* addr, int x, int y) {
+    int ret;
+    asm volatile("atom.acquire.cta.shared::cta.cas.b32 %0, [%1], %2, %3;" : "=r"(ret) : "l"(addr), "r"(x), "r"(y) : "memory");
+    return ret;
+}
+
+__forceinline__ __device__ int atomic_exch_cta_release(int* addr, int x) {
+    int ret;
+    asm volatile("atom.release.cta.shared::cta.exch.b32 %0, [%1], %2;" : "=r"(ret) : "l"(addr), "r"(x) : "memory");
+    return ret;
+}
+
+__forceinline__ __device__ void acquire_lock(int* mutex) {
+    // To make later memory operations valid, we must use `acquire` for memory semantics
+    while (atomic_cas_cta_acquire(mutex, 0, 1) != 0);
+}
+
+__forceinline__ __device__ void release_lock(int* mutex) {
+    // To make previous memory operations visible to other threads, we must use `release` for memory semantics
+    atomic_exch_cta_release(mutex, 0);
+}
+
 
 // Operation functors
 template <typename T> struct ReduceSum { __device__ T operator()(T a, T b) const { return a + b; } };
