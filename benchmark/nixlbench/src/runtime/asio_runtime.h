@@ -49,8 +49,7 @@ struct xferBenchAsioIncoming {
     std::string data;
 };
 
-class xferBenchAsioRT
-    : public xferBenchRT {
+class xferBenchAsioRT : public xferBenchRT {
 public:
     xferBenchAsioRT(const std::string &ip, const std::uint16_t port)
         : endpoint_(asio::ip::address::from_string(ip), asio::ip::port_type(port)),
@@ -66,13 +65,15 @@ public:
         thread_.join();
     }
 
-    int sendInt(int *buffer, int dest_rank) override {
+    int
+    sendInt(int *buffer, int dest_rank) override {
         assert(1 - getRank() == dest_rank);
         postSend(asio_msg_type_t::INTEGER, buffer, sizeof(int));
         return 0;
     }
 
-    int recvInt(int *buffer, int src_rank) override {
+    int
+    recvInt(int *buffer, int src_rank) override {
         assert(1 - getRank() == src_rank);
         recvWait(asio_msg_type_t::INTEGER, [&](const std::string &data) {
             assert(data.size() == sizeof(int));
@@ -82,7 +83,8 @@ public:
         return 0;
     }
 
-    int broadcastInt(int *buffer, size_t count, int root_rank) override {
+    int
+    broadcastInt(int *buffer, size_t count, int root_rank) override {
         assert(count <= (1 << 28));
         if (getRank() == root_rank) {
             postSend(asio_msg_type_t::INTEGER_ARRAY, buffer, count * sizeof(int));
@@ -98,14 +100,16 @@ public:
         return 0;
     }
 
-    int sendChar(char *buffer, size_t count, int dest_rank) override {
+    int
+    sendChar(char *buffer, size_t count, int dest_rank) override {
         assert(count <= (1 << 30));
         assert(1 - getRank() == dest_rank);
         postSend(asio_msg_type_t::STRING, buffer, count);
         return 0;
     }
 
-    int recvChar(char *buffer, size_t count, int src_rank) override {
+    int
+    recvChar(char *buffer, size_t count, int src_rank) override {
         assert(count <= (1 << 30));
         assert(1 - getRank() == src_rank);
         recvWait(asio_msg_type_t::STRING, [&](const std::string &data) {
@@ -116,7 +120,8 @@ public:
         return 0;
     }
 
-    int reduceSumDouble(double *local_value, double *global_value, int dest_rank) override {
+    int
+    reduceSumDouble(double *local_value, double *global_value, int dest_rank) override {
         assert(dest_rank < getSize());
         if (getRank() == dest_rank) {
             postSend(asio_msg_type_t::REDUCE, local_value, sizeof(double));
@@ -133,17 +138,18 @@ public:
         return 0;
     }
 
-    int barrier(const std::string &barrier_id) override {
+    int
+    barrier(const std::string &barrier_id) override {
         const std::string barrier_name = barrier_id + "/" + std::to_string(++barrier_);
         postSend(asio_msg_type_t::BARRIER, barrier_name.data(), barrier_name.size());
-        recvWait(asio_msg_type_t::BARRIER, [&](const std::string &data) {
-            return data == barrier_name;
-        });
+        recvWait(asio_msg_type_t::BARRIER,
+                 [&](const std::string &data) { return data == barrier_name; });
         return 0;
     }
 
 private:
-    void main() {
+    void
+    main() {
         try {
             connectSocket();
             while (!context_.stopped()) {
@@ -197,7 +203,7 @@ private:
         try {
             result->bind(endpoint_);
         }
-        catch(const std::exception &) {
+        catch (const std::exception &) {
             return {}; // Use connect() instead of listen() and accept() on bind error.
         }
 
@@ -205,9 +211,12 @@ private:
         return result;
     }
 
-    void postSend(const asio_msg_type_t type, const void *data, const std::size_t size) {
+    void
+    postSend(const asio_msg_type_t type, const void *data, const std::size_t size) {
         const std::size_t head = size | (size_t(type) << 56);
-        const std::string buffer = std::string(reinterpret_cast<const char *>(&head), sizeof(head)) + std::string(reinterpret_cast<const char *>(data), size);
+        const std::string buffer =
+            std::string(reinterpret_cast<const char *>(&head), sizeof(head)) +
+            std::string(reinterpret_cast<const char *>(data), size);
         {
             const std::unique_lock lock(mutex_);
 
@@ -225,50 +234,60 @@ private:
         });
     }
 
-    void sendImpl() {
+    void
+    sendImpl() {
         assert(!outgoing_.empty());
 
-        asio::async_write(*socket_, asio::buffer(outgoing_.front()), [this](const asio::error_code &ec, const std::size_t done) {
-            if (ec.value()) {
-                throw std::runtime_error("ASIO Write failed: " + ec.message());
-            }
-            outgoing_.pop_front();
+        asio::async_write(*socket_,
+                          asio::buffer(outgoing_.front()),
+                          [this](const asio::error_code &ec, const std::size_t done) {
+                              if (ec.value()) {
+                                  throw std::runtime_error("ASIO Write failed: " + ec.message());
+                              }
+                              outgoing_.pop_front();
 
-            if (!outgoing_.empty()) {
-                sendImpl();
-            }
-        });
+                              if (!outgoing_.empty()) {
+                                  sendImpl();
+                              }
+                          });
     }
 
-    void recvHead() {
-        asio::async_read(*socket_, asio::buffer(&head_, sizeof(head_)), [this](const asio::error_code &ec, const std::size_t done) {
-            if (ec.value()) {
-                throw std::runtime_error("ASIO Read head failed: " + ec.message());
-            }
-            temp_.type = asio_msg_type_t(head_ >> 56);
-            temp_.data.clear();
-            temp_.data.resize(head_ & 0x1ffffffffull);
-            recvData();
-        });
+    void
+    recvHead() {
+        asio::async_read(*socket_,
+                         asio::buffer(&head_, sizeof(head_)),
+                         [this](const asio::error_code &ec, const std::size_t done) {
+                             if (ec.value()) {
+                                 throw std::runtime_error("ASIO Read head failed: " + ec.message());
+                             }
+                             temp_.type = asio_msg_type_t(head_ >> 56);
+                             temp_.data.clear();
+                             temp_.data.resize(head_ & 0x1ffffffffull);
+                             recvData();
+                         });
     }
 
-    void recvData() {
-        asio::async_read(*socket_, asio::buffer(temp_.data.data(), temp_.data.size()), [this](const asio::error_code &ec, const std::size_t done) {
-            if (ec.value()) {
-                throw std::runtime_error("ASIO Read data failed: " + ec.message());
-            }
-            // Lock scope
-            {
-                const std::unique_lock lock(mutex_);
-                incoming_.emplace_back(temp_);
-                cond_.notify_one();
-            }
-            recvHead();
-        });
+    void
+    recvData() {
+        asio::async_read(*socket_,
+                         asio::buffer(temp_.data.data(), temp_.data.size()),
+                         [this](const asio::error_code &ec, const std::size_t done) {
+                             if (ec.value()) {
+                                 throw std::runtime_error("ASIO Read data failed: " + ec.message());
+                             }
+                             // Lock scope
+                             {
+                                 const std::unique_lock lock(mutex_);
+                                 incoming_.emplace_back(temp_);
+                                 cond_.notify_one();
+                             }
+                             recvHead();
+                         });
     }
 
-    template< typename F >
-    void recvWait(const asio_msg_type_t type, F&& f) {
+    template<typename F>
+    void
+    recvWait(const asio_msg_type_t type, F &&f) {
         std::unique_lock lock(mutex_);
         if (exception_) {
             std::rethrow_exception(exception_);
@@ -278,14 +297,14 @@ private:
         // the list is expected to be very small and not checked frequently.
 
         if (!cond_.wait_for(lock, std::chrono::seconds(15), [&]() {
-            for (auto it = incoming_.begin(); it != incoming_.end(); ++it) {
-                if ((it->type == type) && f(it->data)) {
-                    incoming_.erase(it);
-                    return true;
+                for (auto it = incoming_.begin(); it != incoming_.end(); ++it) {
+                    if ((it->type == type) && f(it->data)) {
+                        incoming_.erase(it);
+                        return true;
+                    }
                 }
-            }
-            return false;
-        })) {
+                return false;
+            })) {
             throw std::runtime_error("ASIO Receive timeout");
         }
 
@@ -296,7 +315,7 @@ private:
 
     const asio::ip::tcp::endpoint endpoint_;
 
-    std::atomic<unsigned> barrier_{ 0 };
+    std::atomic<unsigned> barrier_{0};
 
     std::mutex mutex_;
     std::condition_variable cond_;

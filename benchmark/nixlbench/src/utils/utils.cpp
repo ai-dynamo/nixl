@@ -54,7 +54,9 @@ NB_ARG_STRING(
     benchmark_group,
     "default",
     "Name of benchmark group. Use different names to run multiple benchmarks in parallel");
-NB_ARG_STRING(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD, ASIO]");
+NB_ARG_STRING(runtime_type,
+              XFERBENCH_RT_ETCD,
+              "Runtime type to use for communication [ETCD, ASIO]");
 NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
@@ -478,11 +480,12 @@ xferBenchConfig::loadParams(void) {
             if (etcd_endpoints.empty()) {
                 // For non-storage backends, set default ETCD endpoint
                 etcd_endpoints = "http://localhost:2379";
-                std::cout << "Using default ETCD endpoint for non-storage backend: " << etcd_endpoints
-                          << std::endl;
+                std::cout << "Using default ETCD endpoint for non-storage backend: "
+                          << etcd_endpoints << std::endl;
             }
         } else if (runtime_type == xferbench_rt_asio) {
-            std::cout << "Using address " << asio_address << " port " << asio_port << " for ASIO runtime" << std::endl;
+            std::cout << "Using address " << asio_address << " port " << asio_port
+                      << " for ASIO runtime" << std::endl;
         }
     }
 

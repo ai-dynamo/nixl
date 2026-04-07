@@ -75,8 +75,7 @@ namespace {
 determineTotal() {
     int total = 2;
     if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
-        total = xferBenchConfig::num_initiator_dev +
-            xferBenchConfig::num_target_dev;
+        total = xferBenchConfig::num_initiator_dev + xferBenchConfig::num_target_dev;
     }
     if (xferBenchConfig::isStorageBackend()) {
         total = 1;
@@ -84,7 +83,8 @@ determineTotal() {
     return total;
 }
 
-xferBenchRT *createRT(int *terminate) {
+xferBenchRT *
+createRT(int *terminate) {
     // For storage backends without ETCD endpoints, use null runtime
     if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
         std::cout << "Using null runtime for storage backend without ETCD" << std::endl;
@@ -110,13 +110,15 @@ xferBenchRT *createRT(int *terminate) {
         return new xferBenchAsioRT(xferBenchConfig::asio_address, xferBenchConfig::asio_port);
     }
 
-    std::cerr << "Invalid runtime: " << xferBenchConfig::runtime_type << " for total number " << total << std::endl;
+    std::cerr << "Invalid runtime: " << xferBenchConfig::runtime_type << " for total number "
+              << total << std::endl;
     exit(EXIT_FAILURE);
 }
 
 } // namespace
 
-int xferBenchWorker::synchronize() {
+int
+xferBenchWorker::synchronize() {
     if (rt->barrier("sync") != 0) {
         std::cerr << "Failed to synchronize" << std::endl;
         // assuming this is a fatal error, continue benchmarking after synchronization failure does
@@ -139,7 +141,8 @@ xferBenchWorker::xferBenchWorker() {
     int rank = rt->getRank();
 
     // For storage backends without ETCD, always act as initiator
-    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty() && (xferBenchConfig::runtime_type == XFERBENCH_RT_ETCD)) {
+    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty() &&
+        (xferBenchConfig::runtime_type == XFERBENCH_RT_ETCD)) {
         name = "initiator";
     } else if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
         if (rank >= 0 && rank < xferBenchConfig::num_initiator_dev) {
