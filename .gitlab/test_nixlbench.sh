@@ -95,7 +95,7 @@ run_nixlbench_two_workers_etcd() {
     args="$@"
     benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
     command_line="./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group $benchmark_group $args"
-    parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 3 ; $command_line"
+    parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 4 ; $command_line"
 }
 
 start_etcd_server "/nixl/nixlbench_ci"

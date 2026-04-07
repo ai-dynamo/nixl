@@ -111,7 +111,7 @@ createRT(int *terminate) {
     }
 
     std::cerr << "Invalid runtime: " << xferBenchConfig::runtime_type << " for total number "
-              << total << std::endl;
+              << total << " -- only ETCD runtime supports more than 2" << std::endl;
     exit(EXIT_FAILURE);
 }
 

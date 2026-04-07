@@ -113,7 +113,7 @@ etcd_dep = dependency('etcd-cpp-api', required : false)
 gflags_dep = dependency('gflags', required: true)
 
 # ASIO (usually via libasio-dev package)
-asio_dep = [dependency('asio', required: true)]
+asio_dep = dependency('asio', required: true)
 
 # Check for tomlplusplus (header only)
 tomlplusplus_dep = dependency('tomlplusplus', required: true, default_options: ['build_lib=false', 'compile_library=false'])

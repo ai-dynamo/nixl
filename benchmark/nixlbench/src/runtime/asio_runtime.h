@@ -123,8 +123,9 @@ public:
     int
     reduceSumDouble(double *local_value, double *global_value, int dest_rank) override {
         assert(dest_rank < getSize());
-        if (getRank() == dest_rank) {
+        if (getRank() != dest_rank) {
             postSend(asio_msg_type_t::REDUCE, local_value, sizeof(double));
+            *global_value = -1.0;
         } else {
             recvWait(asio_msg_type_t::REDUCE, [&](const std::string &data) {
                 if (data.size() == sizeof(double)) {
@@ -204,6 +205,7 @@ private:
             result->bind(endpoint_);
         }
         catch (const std::exception &) {
+            std::cout << "ASIO runtime bind() failed -- using connect() instead" << std::endl;
             return {}; // Use connect() instead of listen() and accept() on bind error.
         }
 
