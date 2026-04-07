@@ -128,21 +128,24 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     workspace = m_workspace_alloc->ptr();
     CUDA_CHECK(cudaMemsetAsync(workspace, 0, NUM_WORKSPACE_BYTES, comm_stream));
 
-    // MoE counter
-    CUDA_CHECK(cudaMallocHost(&moe_recv_counter, sizeof(int64_t), cudaHostAllocMapped));
-    CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_counter_mapped, const_cast<int*>(moe_recv_counter), 0));
-    *moe_recv_counter = -1;
+    if (!low_latency_mode) {
+        // MoE counter
+        CUDA_CHECK(cudaMallocHost(&moe_recv_counter, sizeof(int), cudaHostAllocMapped));
+        CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_counter_mapped, const_cast<int*>(moe_recv_counter), 0));
+        *moe_recv_counter = -1;
 
-    // MoE expert-level counter
-    CUDA_CHECK(cudaMallocHost(&moe_recv_expert_counter, sizeof(int) * NUM_MAX_LOCAL_EXPERTS, cudaHostAllocMapped));
-    CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_expert_counter_mapped, const_cast<int*>(moe_recv_expert_counter), 0));
-    for (int i = 0; i < NUM_MAX_LOCAL_EXPERTS; ++ i)
-        moe_recv_expert_counter[i] = -1;
+        // MoE expert-level counter
+        CUDA_CHECK(cudaMallocHost(&moe_recv_expert_counter, sizeof(int) * NUM_MAX_LOCAL_EXPERTS, cudaHostAllocMapped));
+        CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_expert_counter_mapped, const_cast<int*>(moe_recv_expert_counter), 0));
+        for (int i = 0; i < NUM_MAX_LOCAL_EXPERTS; ++ i)
+            moe_recv_expert_counter[i] = -1;
 
-    // MoE RDMA-level counter
-    CUDA_CHECK(cudaMallocHost(&moe_recv_rdma_counter, sizeof(int), cudaHostAllocMapped));
-    CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_rdma_counter_mapped, const_cast<int*>(moe_recv_rdma_counter), 0));
-    *moe_recv_rdma_counter = -1;
+        // MoE RDMA-level counter
+        CUDA_CHECK(cudaMallocHost(&moe_recv_rdma_counter, sizeof(int), cudaHostAllocMapped));
+        CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_rdma_counter_mapped, const_cast<int*>(moe_recv_rdma_counter), 0));
+        *moe_recv_rdma_counter = -1;
+    }
+
     EP_HOST_ASSERT(max_experts_per_rank > 0);
     m_rdma_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_rdma_bytes));
     rdma_buffer_ptr = m_rdma_alloc->ptr();
@@ -163,11 +166,13 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_count_ptr, 0, num_sync_buffer_bytes));
 
-    // Allocate barrier counters for high-throughput mode
-    CUDA_CHECK(cudaMalloc(&local_ht_barrier_counter, sizeof(uint64_t)));
-    CUDA_CHECK(cudaMemset(local_ht_barrier_counter, 0, sizeof(uint64_t)));
-    CUDA_CHECK(cudaMalloc(&last_ht_barrier_counter, sizeof(uint64_t)));
-    CUDA_CHECK(cudaMemset(last_ht_barrier_counter, 0, sizeof(uint64_t)));
+    if (!low_latency_mode) {
+        CUDA_CHECK(cudaMalloc(&local_ht_barrier_counter, sizeof(uint64_t)));
+        CUDA_CHECK(cudaMemset(local_ht_barrier_counter, 0, sizeof(uint64_t)));
+        CUDA_CHECK(cudaMalloc(&last_ht_barrier_counter, sizeof(uint64_t)));
+        CUDA_CHECK(cudaMemset(last_ht_barrier_counter, 0, sizeof(uint64_t)));
+    }
+
     CUDA_CHECK(cudaDeviceSynchronize());
 
     my_peer_info.rdma_buffer_ptr = rdma_buffer_ptr;
@@ -259,16 +264,16 @@ void Buffer::destroy() {
 
     if (num_nvl_bytes > 0) {
         intranode::barrier(barrier_signal_ptrs_gpu, nvl_rank, num_nvl_ranks, comm_stream);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        warn_cuda(cudaDeviceSynchronize(), "synchronize device after intranode barrier");
 
         // Close remote IPC
         if (is_available()) {
             for (int i = 0; i < num_nvl_ranks; ++ i) if (i != nvl_rank)
-                CUDA_CHECK(cudaIpcCloseMemHandle(buffer_ptrs[i]));
+                warn_cuda(cudaIpcCloseMemHandle(buffer_ptrs[i]), "close remote IPC handle");
         }
 
         // Free local buffer
-        CUDA_CHECK(cudaFree(buffer_ptrs[nvl_rank]));
+        warn_cuda(cudaFree(buffer_ptrs[nvl_rank]), "free local NVL buffer");
     }
 
     if (nixl_agent_info and nixl_agent_info->agent != nullptr) {
@@ -288,6 +293,11 @@ void Buffer::destroy() {
                       nixl_agent_info->sync_count_reg_descs,
                       &nixl_agent_info->extra_params),
                   "deregister sync-count memory");
+        if (local_ht_barrier_counter != nullptr) {
+            warn_nixl(nixl_agent_info->agent->deregisterMem(
+                          nixl_agent_info->ht_barrier_reg_descs),
+                      "deregister ht barrier memory");
+        }
 
         nixl_agent_info.reset();
     }
@@ -301,15 +311,24 @@ void Buffer::destroy() {
     m_sync_count_alloc.reset();
     sync_count_ptr = nullptr;
 
-    warn_cuda(cudaFree(local_ht_barrier_counter), "free local ht barrier counter");
-    warn_cuda(cudaFree(last_ht_barrier_counter), "free last ht barrier counter");
+    if (!low_latency_mode) {
+        warn_cuda(cudaFree(local_ht_barrier_counter), "free local ht barrier counter");
+        local_ht_barrier_counter = nullptr;
+        warn_cuda(cudaFree(last_ht_barrier_counter), "free last ht barrier counter");
+        last_ht_barrier_counter = nullptr;
+    }
+
+    if (!low_latency_mode) {
+        warn_cuda(cudaFreeHost(const_cast<int*>(moe_recv_counter)), "free moe receive counter");
+        moe_recv_counter = nullptr;
+        warn_cuda(cudaFreeHost(const_cast<int*>(moe_recv_expert_counter)), "free moe receive expert counter");
+        moe_recv_expert_counter = nullptr;
+        warn_cuda(cudaFreeHost(const_cast<int*>(moe_recv_rdma_counter)), "free moe receive rdma counter");
+        moe_recv_rdma_counter = nullptr;
+    }
 
     m_workspace_alloc.reset();
     workspace = nullptr;
-
-    CUDA_CHECK(cudaFreeHost(const_cast<int*>(moe_recv_counter)));
-    CUDA_CHECK(cudaFreeHost(const_cast<int*>(moe_recv_expert_counter)));
-    CUDA_CHECK(cudaFreeHost(const_cast<int*>(moe_recv_rdma_counter)));
 
     destroyed = true;
     available = false;
@@ -1326,15 +1345,16 @@ void Buffer::_nixl_agent_init() {
     nixl_agent_info->sync_count_reg_descs.clear();
     nixl_agent_info->sync_count_reg_descs.addDesc(
         nixlBlobDesc(reinterpret_cast<uintptr_t>(sync_count_ptr), max_num_ranks * sizeof(int), device_id, ""));
+    nixl_agent_info->ht_barrier_reg_descs.clear();
 
     EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->rdma_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
     EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->sync_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
     EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->sync_count_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
 
     if (!low_latency_mode && local_ht_barrier_counter) {
-        nixl_reg_dlist_t ht_barrier_dlist(VRAM_SEG);
-        ht_barrier_dlist.addDesc(nixlBlobDesc((uintptr_t)(local_ht_barrier_counter), sizeof(uint64_t), get_local_device_id(), ""));
-        EP_HOST_ASSERT(agent->registerMem(ht_barrier_dlist) == NIXL_SUCCESS);
+        nixl_agent_info->ht_barrier_reg_descs.addDesc(
+            nixlBlobDesc((uintptr_t)(local_ht_barrier_counter), sizeof(uint64_t), get_local_device_id(), ""));
+        EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->ht_barrier_reg_descs) == NIXL_SUCCESS);
     }
 
     if (getenv("NIXL_ETCD_ENDPOINTS")) {
