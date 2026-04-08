@@ -71,10 +71,6 @@ page-actions:
 products:
   - display-name: NIXL
     path: ../docs/index.yml
-    versions:
-      - display-name: v1.0.0
-        path: ../docs/index.yml
-        availability: stable
 
 logo:
   dark: ../docs/assets/NVIDIA_dark.svg

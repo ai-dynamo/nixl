@@ -1,5 +1,5 @@
 ---
-title: ETCD Metadata Exchange
+title: etcd Metadata Exchange
 description: Use etcd for automatic distributed metadata exchange between Transfer Agents, eliminating manual side-channel metadata serialization.
 ---
 
