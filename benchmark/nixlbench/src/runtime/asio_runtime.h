@@ -195,7 +195,7 @@ private:
     }
 
     [[nodiscard]] std::unique_ptr<asio::ip::tcp::acceptor>
-    attemptAcceptor() noexcept {
+    attemptAcceptor() {
         auto result = std::make_unique<asio::ip::tcp::acceptor>(context_);
 
         result->open(endpoint_.protocol());
