@@ -44,10 +44,28 @@ navigation:
             path: user-guide/backends/azure-blob.md
           - page: GUSLI
             path: user-guide/backends/gusli.md
-      - page: "Metadata Exchange with ETCD"
+      - page: "Metadata Exchange with etcd"
         path: user-guide/etcd-metadata-exchange.md
       - page: Telemetry Guide
         path: user-guide/telemetry.md
+      - section: Benchmarking NIXL
+        contents:
+          - section: NIXLBench
+            collapsed: open-by-default
+            path: user-guide/benchmarking/nixlbench/index.md
+            contents:
+              - page: Building NIXLBench
+                path: user-guide/benchmarking/nixlbench/build.md
+              - page: Using NIXLBench
+                path: user-guide/benchmarking/nixlbench/usage.md
+          - section: KVBench
+            collapsed: open-by-default
+            path: user-guide/benchmarking/kvbench/index.md
+            contents:
+              - page: Building KVBench
+                path: user-guide/benchmarking/kvbench/build.md
+              - page: Using KVBench
+                path: user-guide/benchmarking/kvbench/commands.md
 
   # ==================== Developer Guide ====================
   - section: Developer Guide
@@ -78,7 +96,7 @@ navigation:
         path: examples/remote-storage.md
       - page: "NIXL-EP: Expert-Parallel Communication"
         path: examples/nixl-ep.md
-      - page: ETCD Metadata Exchange
+      - page: etcd Metadata Exchange
         path: examples/etcd-metadata-exchange.md
       - page: Telemetry Reader
         path: examples/telemetry-reader.md
