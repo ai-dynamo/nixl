@@ -407,17 +407,9 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
 
 void
 nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, order ord) {
-    constexpr size_t add_sorted_descs_threshold = 4;
-
-    if (batch.size() <= add_sorted_descs_threshold) {
-        // For small batches it's more efficient to insert one by one
-        // NOTE: Calling vec.reserve() here degrades performance
-        auto &vec = this->descs;
-        for (auto &d : batch) {
-            auto itr = std::upper_bound(vec.begin(), vec.end(), d);
-            vec.insert(itr, std::move(d));
-        }
-        assert(std::is_sorted(vec.begin(), vec.end()));
+    if (batch.size() == 1) {
+        // For a single element it's more efficient to insert directly
+        addDesc(std::move(batch[0]));
         return;
     }
 
