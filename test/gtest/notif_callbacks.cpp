@@ -16,6 +16,7 @@
  */
 
 #include "nixl.h"
+#include "backend/notif_callbacks.h"
 #include "gtest/gtest.h"
 
 #include <chrono>
@@ -98,14 +99,37 @@ const nixl_notif_callback_t dummy_callback([](std::string &&, std::string &&) {}
 } // namespace
 
 TEST(NotifCallbacks, AddCallbackFailures) {
-    nixlNotifCallbacks cbs;
-    EXPECT_THROW(cbs.addCallback("", dummy_callback), std::runtime_error);
-    EXPECT_THROW(cbs.addCallback("foo", nixl_notif_callback_t()), std::runtime_error);
-    cbs.addCallback("xyz", dummy_callback);
-    EXPECT_THROW(cbs.addCallback("x", dummy_callback), std::runtime_error);
-    EXPECT_THROW(cbs.addCallback("xy", dummy_callback), std::runtime_error);
-    EXPECT_THROW(cbs.addCallback("xyz", dummy_callback), std::runtime_error);
-    EXPECT_THROW(cbs.addCallback("xyzx", dummy_callback), std::runtime_error);
+    {
+        std::map<std::string, nixl_notif_callback_t> cbs;
+        cbs.try_emplace("foo", nixl_notif_callback_t());
+        EXPECT_EQ(cbs.size(), 1);
+        nixlNotifCallbacks ncbs;
+        EXPECT_THROW(ncbs.assign(cbs), std::runtime_error);
+    }
+    {
+        std::map<std::string, nixl_notif_callback_t> cbs;
+        cbs.try_emplace("xyz", dummy_callback);
+        cbs.try_emplace("x", dummy_callback);
+        EXPECT_EQ(cbs.size(), 2);
+        nixlNotifCallbacks ncbs;
+        EXPECT_THROW(ncbs.assign(cbs), std::runtime_error);
+    }
+    {
+        std::map<std::string, nixl_notif_callback_t> cbs;
+        cbs.try_emplace("xyz", dummy_callback);
+        cbs.try_emplace("xy", dummy_callback);
+        EXPECT_EQ(cbs.size(), 2);
+        nixlNotifCallbacks ncbs;
+        EXPECT_THROW(ncbs.assign(cbs), std::runtime_error);
+    }
+    {
+        std::map<std::string, nixl_notif_callback_t> cbs;
+        cbs.try_emplace("xyz", dummy_callback);
+        cbs.try_emplace("xyzx", dummy_callback);
+        EXPECT_EQ(cbs.size(), 2);
+        nixlNotifCallbacks ncbs;
+        EXPECT_THROW(ncbs.assign(cbs), std::runtime_error);
+    }
 }
 
 TEST(NotifCallbacks, DefaultWithProgressThread) {
@@ -113,7 +137,7 @@ TEST(NotifCallbacks, DefaultWithProgressThread) {
 
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    cfg.notifCallbacks.setDefaultCallback([&](std::string &&remote, std::string &&message) {
+    cfg.notifCallbacks.try_emplace("", [&](std::string &&remote, std::string &&message) {
         EXPECT_EQ(remote, name1);
         EXPECT_EQ(message, message1);
         promise.set_value(true);
@@ -131,14 +155,14 @@ TEST(NotifCallbacks, PrefixBinarySearchWithProgressThread) {
 
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    cfg.notifCallbacks.addCallback(prefix1, [&](std::string &&remote, std::string &&message) {
+    cfg.notifCallbacks.try_emplace(prefix1, [&](std::string &&remote, std::string &&message) {
         EXPECT_EQ(remote, name1);
         EXPECT_EQ(message, message1);
         promise.set_value(true);
     });
-    cfg.notifCallbacks.addCallback(
+    cfg.notifCallbacks.try_emplace(
         "aaaaa", [](std::string &&remote, std::string &&message) { ADD_FAILURE(); });
-    cfg.notifCallbacks.addCallback(
+    cfg.notifCallbacks.try_emplace(
         "zzzzz", [](std::string &&remote, std::string &&message) { ADD_FAILURE(); });
 
     agentPair agents(cfg);
@@ -153,14 +177,14 @@ TEST(NotifCallbacks, PrefixLinearScanWithProgressThread) {
 
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    cfg.notifCallbacks.addCallback(
+    cfg.notifCallbacks.try_emplace(
         "aaa", [](std::string &&remote, std::string &&message) { ADD_FAILURE(); });
-    cfg.notifCallbacks.addCallback(prefix1, [&](std::string &&remote, std::string &&message) {
+    cfg.notifCallbacks.try_emplace(prefix1, [&](std::string &&remote, std::string &&message) {
         EXPECT_EQ(remote, name1);
         EXPECT_EQ(message, message1);
         promise.set_value(true);
     });
-    cfg.notifCallbacks.addCallback(
+    cfg.notifCallbacks.try_emplace(
         "zzzzzzz", [](std::string &&remote, std::string &&message) { ADD_FAILURE(); });
 
     agentPair agents(cfg);

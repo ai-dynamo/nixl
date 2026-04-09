@@ -20,12 +20,13 @@
 #include <algorithm>
 #include <cstring>
 #include <functional>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
-using nixl_notif_callback_t = std::function<void(std::string &&, std::string &&)>;
+#include "nixl_types.h"
 
 struct nixlNotifCallback {
     nixlNotifCallback(const std::string &prefix, const nixl_notif_callback_t &callback)
@@ -45,6 +46,18 @@ operator<(const nixlNotifCallback &l, const nixlNotifCallback &r) noexcept {
 // while preparing the instance in a nixlAgentConfig; the backends should keep a const
 // copy that is safe for concurrent read-only access.
 
+// Prefixes are matched against the start of a received notification,
+// there is no delimiter.
+// When registering multiple callbacks with prefixes, these prefixes
+// must not be prefixes of each other.
+// The expected primary use case of all prefixes having the same length
+// is optimized better (logarithmic) than the generic case (linear).
+// If use cases with a large set of registered prefixes arise things
+// can be optimized further.
+
+// The default callback is invoked when no callback with a matching
+// prefix was registered.
+
 class nixlNotifCallbacks {
 public:
     nixlNotifCallbacks() = default;
@@ -59,42 +72,28 @@ public:
         return bool(default_);
     }
 
-    // Notification callbacks are called on the thread that received the notif,
-    // usually the progress thread. Any non-trivial tasks MUST be handed off to
-    // a separate thread by the callback. In particular callbacks SHOULD NOT call
-    // functions on any NIXL agent, and MUST NOT call functions on the agent that
-    // received the notif for which they were called.
+    void
+    assign(const std::map<std::string, nixl_notif_callback_t> &cbs) {
+        for (const auto &[prefix, callback] : cbs) {
+            if (prefix.empty()) {
+                setDefaultCallback(callback);
+                continue;
+            }
 
-    // The default callback is invoked when no callback with a matching
-    // prefix was registered.
+            checkNewCallback(prefix, callback);
+            callbacks_.emplace_back(prefix, callback);
+
+            if (callbacks_.size() == 1) {
+                commonPrefixSize_ = prefix.size();
+            } else if (commonPrefixSize_ != prefix.size()) {
+                commonPrefixSize_ = 0;
+            }
+        }
+    }
 
     void
     setDefaultCallback(const nixl_notif_callback_t &callback) {
         default_ = callback;
-    }
-
-    // Prefixes are matched against the start of a received notification,
-    // there is no delimiter.
-    // When registering multiple callbacks with prefixes, these prefixes
-    // must not be prefixes of each other.
-    // The expected primary use case of all prefixes having the same length
-    // is optimized better (logarithmic) than the generic case (linear).
-    // If use cases with a large set of registered prefixes arise things
-    // can be optimized further.
-
-    void
-    addCallback(const std::string &prefix, const nixl_notif_callback_t &callback) {
-        checkNewCallback(prefix, callback);
-
-        callbacks_.emplace_back(prefix, callback);
-
-        if (callbacks_.size() == 1) {
-            commonPrefixSize_ = prefix.size();
-        } else if ((commonPrefixSize_ > 0) && (commonPrefixSize_ == prefix.size())) {
-            std::sort(callbacks_.begin(), callbacks_.end());
-        } else {
-            commonPrefixSize_ = 0;
-        }
     }
 
     void

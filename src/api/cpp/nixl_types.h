@@ -14,10 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _NIXL_TYPES_H
-#define _NIXL_TYPES_H
+#ifndef NIXL_SRC_API_CPP_NIXL_TYPES_H
+#define NIXL_SRC_API_CPP_NIXL_TYPES_H
+
 #include <vector>
 #include <string>
+#include <functional>
 #include <unordered_map>
 #include <optional>
 #include <chrono>
@@ -303,5 +305,18 @@ using nixl_xfer_telem_t = nixlXferTelemetry;
  * @brief A constant for an invalid agent name.
  */
 extern const std::string nixl_null_agent;
+
+/**
+ * @brief The type of user-supplied notification callbacks.
+ *
+ *        The first string is the name of the remote agent.
+ *        The second string is the received notification.
+ *        Notification callbacks are called on the thread that received the notif,
+ *        usually the progress thread. Any non-trivial tasks MUST be handed off to
+ *        a separate thread by the callback. In particular callbacks SHOULD NOT call
+ *        functions on any NIXL agent, and MUST NOT call functions on the agent that
+ *        received the notif for which they were called.
+ */
+using nixl_notif_callback_t = std::function<void(std::string &&, std::string &&)>;
 
 #endif

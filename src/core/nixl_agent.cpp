@@ -329,7 +329,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.pthrDelay = data->config_.pthrDelay;
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
-    init_params.notifCallbacks = data->config_.notifCallbacks;
+    init_params.notifCallbacks.assign(data->config_.notifCallbacks);
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
@@ -361,7 +361,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
             return NIXL_ERR_BACKEND;
         }
 
-        if (data->config_.notifCallbacks.hasAnyCallback() && !backend->supportsNotifCallback()) {
+        if (!data->config_.notifCallbacks.empty() && !backend->supportsNotifCallback()) {
             NIXL_ERROR_FUNC << "backend '" << type << "' does not support notification callbacks";
             return NIXL_ERR_BACKEND;
         }

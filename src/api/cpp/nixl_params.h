@@ -17,12 +17,12 @@
 #ifndef NIXL_SRC_API_CPP_NIXL_PARAMS_H
 #define NIXL_SRC_API_CPP_NIXL_PARAMS_H
 
+#include <map>
 #include <string>
 #include <chrono>
 #include <cstdint>
 
 #include "nixl_types.h"
-#include "backend/notif_callbacks.h"
 
 /**
  * @struct nixlAgentConfig
@@ -73,10 +73,12 @@ struct nixlAgentConfig {
 
     /**
      * @var Callback functions to be called on received notifs.
-     *      Callbacks added for a prefix are called when a received notif's
-     *      message data begins with the prefix.
+     *      The map keys are prefixes, when a received notification
+     *      begins with a prefix the corresponding function will be
+     *      called. Not all backends support notification callbacks.
+     *      The empty prefix can be used to set a default handler.
      */
-    nixlNotifCallbacks notifCallbacks;
+    std::map<std::string, nixl_notif_callback_t> notifCallbacks;
 
     /**
      * @brief  Default constructor.
