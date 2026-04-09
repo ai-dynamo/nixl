@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _TELEMETRY_DOCA_EXPORTER_H
-#define _TELEMETRY_DOCA_EXPORTER_H
+#ifndef NIXL_SRC_PLUGINS_TELEMETRY_DOCA_EXPORTER_H
+#define NIXL_SRC_PLUGINS_TELEMETRY_DOCA_EXPORTER_H
 
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
@@ -62,4 +62,4 @@ private:
     registerGauge(const nixlTelemetryEvent &event, const char *label_values[]);
 };
 
-#endif // _TELEMETRY_DOCA_EXPORTER_H
+#endif // NIXL_SRC_PLUGINS_TELEMETRY_DOCA_EXPORTER_H
