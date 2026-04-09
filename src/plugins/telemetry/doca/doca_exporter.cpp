@@ -20,6 +20,7 @@
 
 #include <doca_error.h>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 const uint16_t docaPrometheusExporterDefaultPort = 9091;
@@ -78,8 +79,7 @@ nixlTelemetryDocaExporter::nixlTelemetryDocaExporter(
 
     nixl_status_t status = initializeDoca(init_params);
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to initialize DOCA Telemetry exporter";
-        return;
+        throw std::runtime_error("Failed to initialize DOCA Telemetry exporter");
     }
 
     initialized_ = true;
@@ -92,11 +92,14 @@ nixlTelemetryDocaExporter::initializeDoca(const nixlTelemetryExporterInitParams 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
-    std::lock_guard<std::mutex> lock(s_ctx_mutex_);
+    const std::lock_guard<std::mutex> lock(s_ctx_mutex_);
     ctx_ = s_ctx_weak_.lock();
     if (!ctx_) {
         auto new_ctx = std::make_shared<DocaSharedContext>();
 
+        // DOCA reads its HTTP bind address from this env var. setenv is not
+        // thread-safe per POSIX, but s_ctx_mutex_ serialises all callers and
+        // this runs only once during first-agent init (before heavy threading).
         setenv("PROMETHEUS_ENDPOINT", bind_address_.c_str(), 1);
 
         result = doca_telemetry_exporter_schema_init("nixl_telemetry", &new_ctx->schema);

@@ -16,7 +16,8 @@
 doca_found = false
 doca_base_path = '/opt/mellanox/doca'
 doca_inc_path = doca_base_path / 'include'
-doca_lib_path = doca_base_path / 'lib/x86_64-linux-gnu'
+doca_arch = host_machine.cpu_family() + '-linux-gnu'
+doca_lib_path = doca_base_path / 'lib' / doca_arch
 
 if cpp.has_header('doca_telemetry_exporter.h', args: '-I' + doca_inc_path)
     doca_dep = declare_dependency(

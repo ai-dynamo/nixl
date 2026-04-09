@@ -79,7 +79,7 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 
 ### Metric labels
 
-Each telemetry metrics is provided with the following labels:
+Each telemetry metric is provided with the following labels:
 - Telemetry Category
 - Hostname where the agent runs
-- Agent name (as custom provided during initialization, can be deprecated in the next versions)
+- Agent name (as provided during initialization, may be deprecated in future versions)
