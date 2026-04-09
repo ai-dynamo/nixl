@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _TELEMETRY_PROMETHEUS_EXPORTER_H
-#define _TELEMETRY_PROMETHEUS_EXPORTER_H
+#ifndef NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H
+#define NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H
 
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
@@ -90,4 +90,4 @@ private:
     registerGauge(const std::string &name, const std::string &help, const std::string &category);
 };
 
-#endif // _TELEMETRY_PROMETHEUS_EXPORTER_H
+#endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H

@@ -22,6 +22,7 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <stdexcept>
 #include <thread>
 #include <chrono>
 
@@ -72,8 +73,8 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     std::lock_guard<std::mutex> lock(s_mutex_);
 
     if (!s_agent_names_.insert(agent_name_).second) {
-        NIXL_WARN << "Prometheus exporter: duplicate agent name '" << agent_name_
-                  << "'; metrics may be shared and cleanup may be unsafe";
+        throw std::runtime_error("Prometheus exporter: duplicate agent name '" + agent_name_ +
+                                 "'; each agent must have a unique name");
     }
 
     exposer_ = s_exposer_weak_.lock();
