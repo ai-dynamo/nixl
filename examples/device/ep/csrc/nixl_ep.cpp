@@ -316,9 +316,6 @@ void Buffer::destroy() {
         local_ht_barrier_counter = nullptr;
         warn_cuda(cudaFree(last_ht_barrier_counter), "free last ht barrier counter");
         last_ht_barrier_counter = nullptr;
-    }
-
-    if (!low_latency_mode) {
         warn_cuda(cudaFreeHost(const_cast<int*>(moe_recv_counter)), "free moe receive counter");
         moe_recv_counter = nullptr;
         warn_cuda(cudaFreeHost(const_cast<int*>(moe_recv_expert_counter)), "free moe receive expert counter");
