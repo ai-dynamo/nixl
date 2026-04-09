@@ -154,11 +154,11 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 
     const auto telemetry_enabled = nixl::config::getValueOptional<bool>(TELEMETRY_ENABLED_VAR);
 
-    const bool env_on = telemetry_enabled && *telemetry_enabled;
-    const bool config_wants = config.captureTelemetry;
+    const bool telemetry_enabled_env = telemetry_enabled && *telemetry_enabled;
+    const bool telemetry_enabled_config = config.captureTelemetry;
 
-    if (env_on || config_wants) {
-        if (telemetry_enabled && !*telemetry_enabled && config_wants) {
+    if (telemetry_enabled_env || telemetry_enabled_config) {
+        if (telemetry_enabled && !*telemetry_enabled && telemetry_enabled_config) {
             NIXL_WARN << "NIXL telemetry is enabled through config, "
                          "ignoring the NIXL_TELEMETRY_ENABLE environment variable";
         }
