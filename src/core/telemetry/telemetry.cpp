@@ -203,31 +203,36 @@ nixlTelemetry::updateRxBytes(uint64_t rx_bytes) {
 
 void
 nixlTelemetry::updateTxRequestsNum(uint32_t tx_requests_num) {
-    updateData("agent_tx_requests_num", nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+    updateData("agent_tx_requests_num",
+               nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
                tx_requests_num);
 }
 
 void
 nixlTelemetry::updateRxRequestsNum(uint32_t rx_requests_num) {
-    updateData("agent_rx_requests_num", nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+    updateData("agent_rx_requests_num",
+               nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
                rx_requests_num);
 }
 
 void
 nixlTelemetry::updateErrorCount(nixl_status_t error_type) {
-    updateData("agent_error", nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR,
+    updateData("agent_error",
+               nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR,
                static_cast<uint64_t>(error_type));
 }
 
 void
 nixlTelemetry::updateMemoryRegistered(uint64_t memory_registered) {
-    updateData("agent_memory_registered", nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY,
+    updateData("agent_memory_registered",
+               nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY,
                memory_registered);
 }
 
 void
 nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
-    updateData("agent_memory_deregistered", nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY,
+    updateData("agent_memory_deregistered",
+               nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY,
                memory_deregistered);
 }
 
@@ -246,11 +251,14 @@ nixlTelemetry::addTransferComplete(std::chrono::microseconds post_time,
     auto &arr = eventBuffers_[buf];
 
     arr[id] = nixlTelemetryEvent(nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-                                "agent_xfer_post_time", static_cast<uint64_t>(post_time.count()));
+                                 "agent_xfer_post_time",
+                                 static_cast<uint64_t>(post_time.count()));
     arr[id + 1] = nixlTelemetryEvent(nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-                                     "agent_xfer_time", static_cast<uint64_t>(xfer_time.count()));
+                                     "agent_xfer_time",
+                                     static_cast<uint64_t>(xfer_time.count()));
     arr[id + 2] = nixlTelemetryEvent(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-                                     is_write ? "agent_tx_bytes" : "agent_rx_bytes", bytes);
+                                     is_write ? "agent_tx_bytes" : "agent_rx_bytes",
+                                     bytes);
     arr[id + 3] = nixlTelemetryEvent(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
                                      is_write ? "agent_tx_requests_num" : "agent_rx_requests_num",
                                      1);
