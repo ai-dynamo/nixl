@@ -87,17 +87,6 @@ getExporterName() {
     return defaultTelemetryPlugin;
 }
 
-void
-fillTelemetryEventSlot(nixlTelemetryEvent &slot,
-                       nixl_telemetry_category_t category,
-                       const char *event_name,
-                       uint64_t value) noexcept {
-    slot.category_ = category;
-    strncpy(slot.eventName_, event_name, MAX_EVENT_NAME_LEN - 1);
-    slot.eventName_[MAX_EVENT_NAME_LEN - 1] = '\0';
-    slot.value_ = value;
-}
-
 } // namespace
 
 void
@@ -133,8 +122,8 @@ nixlTelemetry::initializeTelemetry() {
     NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << *exporter_name;
 
     maxEventsBuffered_ = buffer_size;
-    eventBuffers_[0].resize(maxEventsBuffered_);
-    eventBuffers_[1].resize(maxEventsBuffered_);
+    eventBuffers_[0] = std::make_unique<nixlTelemetryEvent[]>(maxEventsBuffered_);
+    eventBuffers_[1] = std::make_unique<nixlTelemetryEvent[]>(maxEventsBuffered_);
     writeIdx_.store(0);
     writeBufIndex_.store(0);
 
@@ -153,11 +142,14 @@ bool
 nixlTelemetry::writeEventHelper() {
 
     // Block producers by setting writeIdx_=max so they get id>=max and skip.
-    const int w = writeBufIndex_.load();
     const size_t num_events_raw = writeIdx_.exchange(maxEventsBuffered_);
-    writeBufIndex_.store(1 - w);
+    const int w = writeBufIndex_.fetch_xor(1);
     writeIdx_.store(0);
     const size_t num_events = std::min(num_events_raw, maxEventsBuffered_);
+
+    if (overflowed_.exchange(false, std::memory_order_relaxed)) {
+        NIXL_WARN << "Telemetry events were dropped due to buffer overflow";
+    }
 
     for (size_t i = 0; i < num_events; ++i) {
         exporter_->exportEvent(eventBuffers_[w][i]);
@@ -190,11 +182,12 @@ nixlTelemetry::updateData(const std::string &event_name,
 
     const size_t id = writeIdx_.fetch_add(1);
     if (id >= maxEventsBuffered_) {
+        overflowed_.store(true, std::memory_order_relaxed);
         return;
     }
 
-    fillTelemetryEventSlot(eventBuffers_[writeBufIndex_.load()][id], category, event_name.c_str(),
-                           value);
+    eventBuffers_[writeBufIndex_.load()][id] =
+        nixlTelemetryEvent(category, event_name.c_str(), value);
 }
 
 // The next 4 methods might be removed, as addTransferComplete covers them.
@@ -238,31 +231,6 @@ nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
                memory_deregistered);
 }
 
-// addXferTime and addPostTime might be removed, as addTransferComplete covers them.
-void
-nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
-    const char *bytes_name = is_write ? "agent_tx_bytes" : "agent_rx_bytes";
-    const char *requests_name = is_write ? "agent_tx_requests_num" : "agent_rx_requests_num";
-
-    const size_t id_base = writeIdx_.fetch_add(3);
-    if (id_base + 2 >= maxEventsBuffered_) {
-        return;
-    }
-    auto &arr = eventBuffers_[writeBufIndex_.load()];
-    fillTelemetryEventSlot(arr[id_base], nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-                           "agent_xfer_time", static_cast<uint64_t>(xfer_time.count()));
-    fillTelemetryEventSlot(arr[id_base + 1], nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-                           bytes_name, bytes);
-    fillTelemetryEventSlot(arr[id_base + 2], nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-                           requests_name, 1);
-}
-
-void
-nixlTelemetry::addPostTime(std::chrono::microseconds post_time) {
-    updateData("agent_xfer_post_time", nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-               post_time.count());
-}
-
 void
 nixlTelemetry::addTransferComplete(std::chrono::microseconds post_time,
                                    std::chrono::microseconds xfer_time,
@@ -270,20 +238,22 @@ nixlTelemetry::addTransferComplete(std::chrono::microseconds post_time,
                                    uint64_t bytes) {
     const size_t id = writeIdx_.fetch_add(4);
     if (id + 4 > maxEventsBuffered_) {
+        overflowed_.store(true, std::memory_order_relaxed);
         return;
     }
 
     const int buf = writeBufIndex_.load(std::memory_order_acquire);
     auto &arr = eventBuffers_[buf];
 
-    fillTelemetryEventSlot(arr[id], nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-                           "agent_xfer_post_time", static_cast<uint64_t>(post_time.count()));
-    fillTelemetryEventSlot(arr[id + 1], nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-                           "agent_xfer_time", static_cast<uint64_t>(xfer_time.count()));
-    fillTelemetryEventSlot(arr[id + 2], nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-                           is_write ? "agent_tx_bytes" : "agent_rx_bytes", bytes);
-    fillTelemetryEventSlot(arr[id + 3], nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-                           is_write ? "agent_tx_requests_num" : "agent_rx_requests_num", 1);
+    arr[id] = nixlTelemetryEvent(nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
+                                "agent_xfer_post_time", static_cast<uint64_t>(post_time.count()));
+    arr[id + 1] = nixlTelemetryEvent(nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
+                                     "agent_xfer_time", static_cast<uint64_t>(xfer_time.count()));
+    arr[id + 2] = nixlTelemetryEvent(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+                                     is_write ? "agent_tx_bytes" : "agent_rx_bytes", bytes);
+    arr[id + 3] = nixlTelemetryEvent(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+                                     is_write ? "agent_tx_requests_num" : "agent_rx_requests_num",
+                                     1);
 }
 
 std::string
