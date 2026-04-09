@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 # Constants from telemetry_event.h
 TELEMETRY_VERSION = 2
+MAX_EVENT_NAME_LEN = 32
 
 # NIXL telemetry categories
 NIXL_TELEMETRY_MEMORY = 0
@@ -45,18 +46,6 @@ NIXL_TELEMETRY_PERFORMANCE = 5
 NIXL_TELEMETRY_SYSTEM = 6
 NIXL_TELEMETRY_CUSTOM = 7
 NIXL_TELEMETRY_MAX = 8
-
-# NIXL telemetry event names (nixl_telemetry_event_name_t)
-AGENT_TX_BYTES = 0
-AGENT_RX_BYTES = 1
-AGENT_TX_REQUESTS_NUM = 2
-AGENT_RX_REQUESTS_NUM = 3
-AGENT_MEMORY_REGISTERED = 4
-AGENT_MEMORY_DEREGISTERED = 5
-AGENT_XFER_TIME = 6
-AGENT_XFER_POST_TIME = 7
-AGENT_ERROR = 8
-AGENT_BACKEND = 9
 
 # Global flag for graceful shutdown
 running = True
@@ -76,8 +65,7 @@ class NixlTelemetryEvent(ctypes.Structure):
     _pack_ = 1
     _fields_ = [
         ("category", ctypes.c_int),
-        ("event_name", ctypes.c_uint8),
-        ("_padding", ctypes.c_char * 3),
+        ("event_name", ctypes.c_char * MAX_EVENT_NAME_LEN),
         ("value", ctypes.c_uint64),
     ]
 
@@ -235,20 +223,10 @@ def get_telemetry_category_string(category):
 
 
 def get_telemetry_event_name_string(event_name):
-    """Get string representation of telemetry event name enum"""
-    event_name_strings = {
-        AGENT_TX_BYTES: "agent_tx_bytes",
-        AGENT_RX_BYTES: "agent_rx_bytes",
-        AGENT_TX_REQUESTS_NUM: "agent_tx_requests_num",
-        AGENT_RX_REQUESTS_NUM: "agent_rx_requests_num",
-        AGENT_MEMORY_REGISTERED: "agent_memory_registered",
-        AGENT_MEMORY_DEREGISTERED: "agent_memory_deregistered",
-        AGENT_XFER_TIME: "agent_xfer_time",
-        AGENT_XFER_POST_TIME: "agent_xfer_post_time",
-        AGENT_ERROR: "agent_error",
-        AGENT_BACKEND: "agent_backend",
-    }
-    return event_name_strings.get(event_name, f"unknown_event_{event_name}")
+    """Get string representation of telemetry event name"""
+    if isinstance(event_name, bytes):
+        return event_name.decode("utf-8", errors="replace").rstrip("\x00")
+    return str(event_name)
 
 
 def print_telemetry_event(event):

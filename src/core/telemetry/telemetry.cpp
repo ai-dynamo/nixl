@@ -90,10 +90,11 @@ getExporterName() {
 void
 fillTelemetryEventSlot(nixlTelemetryEvent &slot,
                        nixl_telemetry_category_t category,
-                       nixl_telemetry_event_name_t event_name,
+                       const char *event_name,
                        uint64_t value) noexcept {
     slot.category_ = category;
-    slot.eventName_ = event_name;
+    strncpy(slot.eventName_, event_name, MAX_EVENT_NAME_LEN - 1);
+    slot.eventName_[MAX_EVENT_NAME_LEN - 1] = '\0';
     slot.value_ = value;
 }
 
@@ -183,7 +184,7 @@ nixlTelemetry::registerPeriodicTask(periodicTask &task) {
 }
 
 void
-nixlTelemetry::updateData(nixl_telemetry_event_name_t event_name,
+nixlTelemetry::updateData(const std::string &event_name,
                           nixl_telemetry_category_t category,
                           uint64_t value) {
 
@@ -192,86 +193,73 @@ nixlTelemetry::updateData(nixl_telemetry_event_name_t event_name,
         return;
     }
 
-    fillTelemetryEventSlot(eventBuffers_[writeBufIndex_.load()][id], category, event_name, value);
+    fillTelemetryEventSlot(eventBuffers_[writeBufIndex_.load()][id], category, event_name.c_str(),
+                           value);
 }
 
 // The next 4 methods might be removed, as addTransferComplete covers them.
 void
 nixlTelemetry::updateTxBytes(uint64_t tx_bytes) {
-    updateData(nixl_telemetry_event_name_t::AGENT_TX_BYTES,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-               tx_bytes);
+    updateData("agent_tx_bytes", nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, tx_bytes);
 }
 
 void
 nixlTelemetry::updateRxBytes(uint64_t rx_bytes) {
-    updateData(nixl_telemetry_event_name_t::AGENT_RX_BYTES,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-               rx_bytes);
+    updateData("agent_rx_bytes", nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, rx_bytes);
 }
 
 void
 nixlTelemetry::updateTxRequestsNum(uint32_t tx_requests_num) {
-    updateData(nixl_telemetry_event_name_t::AGENT_TX_REQUESTS_NUM,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+    updateData("agent_tx_requests_num", nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
                tx_requests_num);
 }
 
 void
 nixlTelemetry::updateRxRequestsNum(uint32_t rx_requests_num) {
-    updateData(nixl_telemetry_event_name_t::AGENT_RX_REQUESTS_NUM,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+    updateData("agent_rx_requests_num", nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
                rx_requests_num);
 }
 
 void
 nixlTelemetry::updateErrorCount(nixl_status_t error_type) {
-    updateData(nixl_telemetry_event_name_t::AGENT_ERROR,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR,
+    updateData("agent_error", nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR,
                static_cast<uint64_t>(error_type));
 }
 
 void
 nixlTelemetry::updateMemoryRegistered(uint64_t memory_registered) {
-    updateData(nixl_telemetry_event_name_t::AGENT_MEMORY_REGISTERED,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY,
+    updateData("agent_memory_registered", nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY,
                memory_registered);
 }
 
 void
 nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
-    updateData(nixl_telemetry_event_name_t::AGENT_MEMORY_DEREGISTERED,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY,
+    updateData("agent_memory_deregistered", nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY,
                memory_deregistered);
 }
 
 // addXferTime and addPostTime might be removed, as addTransferComplete covers them.
 void
 nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
-    const auto bytes_name = is_write ? nixl_telemetry_event_name_t::AGENT_TX_BYTES :
-                                       nixl_telemetry_event_name_t::AGENT_RX_BYTES;
-    const auto requests_name = is_write ? nixl_telemetry_event_name_t::AGENT_TX_REQUESTS_NUM :
-                                          nixl_telemetry_event_name_t::AGENT_RX_REQUESTS_NUM;
+    const char *bytes_name = is_write ? "agent_tx_bytes" : "agent_rx_bytes";
+    const char *requests_name = is_write ? "agent_tx_requests_num" : "agent_rx_requests_num";
 
     const size_t id_base = writeIdx_.fetch_add(3);
     if (id_base + 2 >= maxEventsBuffered_) {
         return;
     }
-    auto *arr = eventBuffers_[writeBufIndex_.load()];
-    fillTelemetryEventSlot(arr[id_base],
-                           nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-                           nixl_telemetry_event_name_t::AGENT_XFER_TIME,
-                           static_cast<uint64_t>(xfer_time.count()));
-    fillTelemetryEventSlot(
-        arr[id_base + 1], nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_name, bytes);
-    fillTelemetryEventSlot(
-        arr[id_base + 2], nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, requests_name, 1);
+    auto &arr = eventBuffers_[writeBufIndex_.load()];
+    fillTelemetryEventSlot(arr[id_base], nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
+                           "agent_xfer_time", static_cast<uint64_t>(xfer_time.count()));
+    fillTelemetryEventSlot(arr[id_base + 1], nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+                           bytes_name, bytes);
+    fillTelemetryEventSlot(arr[id_base + 2], nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+                           requests_name, 1);
 }
 
 void
 nixlTelemetry::addPostTime(std::chrono::microseconds post_time) {
-    updateData(nixl_telemetry_event_name_t::AGENT_XFER_POST_TIME,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
+    updateData("agent_xfer_post_time", nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
                post_time.count());
 }
 
@@ -288,24 +276,14 @@ nixlTelemetry::addTransferComplete(std::chrono::microseconds post_time,
     const int buf = writeBufIndex_.load(std::memory_order_acquire);
     auto &arr = eventBuffers_[buf];
 
-    fillTelemetryEventSlot(arr[id],
-                           nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-                           nixl_telemetry_event_name_t::AGENT_XFER_POST_TIME,
-                           static_cast<uint64_t>(post_time.count()));
-    fillTelemetryEventSlot(arr[id + 1],
-                           nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-                           nixl_telemetry_event_name_t::AGENT_XFER_TIME,
-                           static_cast<uint64_t>(xfer_time.count()));
-    fillTelemetryEventSlot(arr[id + 2],
-                           nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-                           is_write ? nixl_telemetry_event_name_t::AGENT_TX_BYTES :
-                                      nixl_telemetry_event_name_t::AGENT_RX_BYTES,
-                           bytes);
-    fillTelemetryEventSlot(arr[id + 3],
-                           nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-                           is_write ? nixl_telemetry_event_name_t::AGENT_TX_REQUESTS_NUM :
-                                      nixl_telemetry_event_name_t::AGENT_RX_REQUESTS_NUM,
-                           1);
+    fillTelemetryEventSlot(arr[id], nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
+                           "agent_xfer_post_time", static_cast<uint64_t>(post_time.count()));
+    fillTelemetryEventSlot(arr[id + 1], nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
+                           "agent_xfer_time", static_cast<uint64_t>(xfer_time.count()));
+    fillTelemetryEventSlot(arr[id + 2], nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+                           is_write ? "agent_tx_bytes" : "agent_rx_bytes", bytes);
+    fillTelemetryEventSlot(arr[id + 3], nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+                           is_write ? "agent_tx_requests_num" : "agent_rx_requests_num", 1);
 }
 
 std::string

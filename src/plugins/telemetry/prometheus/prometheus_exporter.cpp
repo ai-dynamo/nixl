@@ -124,7 +124,7 @@ nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
 nixl_status_t
 nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
     try {
-        const std::string event_name = nixlEnumStrings::telemetryEventNameStr(event.eventName_);
+        const std::string event_name(event.eventName_);
 
         switch (event.category_) {
         case nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER:
