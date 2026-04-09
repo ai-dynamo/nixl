@@ -1,4 +1,18 @@
 #!/bin/bash -xe
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 set -o pipefail
 
@@ -13,6 +27,7 @@ Options:
 --slurm_job_id                SLURM job ID
 --slurm_nodes                 Number of SLURM nodes
 --slurm_head_node             SLURM head node (optional, uses SLURM_HEAD_NODE env if not set)
+--slurm_head_user             SSH user for SLURM head node (optional, used with dlcluster)
 --container_name              Container name (optional, uses "nixl-\${BUILD_NUMBER}" if not set)
 EOF
 exit 1
@@ -41,6 +56,9 @@ while getopts ":h-:" optchar; do
                 slurm_head_node=*)
                     slurm_head_node=${OPTARG#*=}
                     ;;
+                slurm_head_user=*)
+                    slurm_head_user=${OPTARG#*=}
+                    ;;
                 container_name=*)
                     container_name=${OPTARG#*=}
                     ;;
@@ -63,6 +81,7 @@ docker_image=${docker_image:-${DOCKER_IMAGE_NAME}}
 slurm_job_id=${slurm_job_id:-${SLURM_JOB_ID}}
 slurm_nodes=${slurm_nodes:-${SLURM_NODES}}
 slurm_head_node=${slurm_head_node:-${SLURM_HEAD_NODE}}
+slurm_head_user=${slurm_head_user:-${SLURM_HEAD_USER}}
 container_name=${container_name:-"nixl-${BUILD_NUMBER}"}
 
 # Validate required parameters
@@ -78,7 +97,7 @@ SLURM_CMD=(
     "--mpi=pmix"
     "--container-writable"
     "--container-name=${container_name}"
-    "--container-image=${docker_image}"
+    "--container-image='${docker_image}'"
     "${test_script_path}"
     "${nixl_install_dir}"
 )
@@ -101,8 +120,16 @@ case "${slurm_head_node}" in
         echo "INFO: Using scctl client to connect and execute SLURM command"
         scctl --raw-errors client connect -- "${SLURM_CMD[@]}"
         ;;
+    dlcluster*)
+        echo "INFO: Using SSH to connect to ${slurm_head_node} and execute SLURM command"
+        # Construct SSH target with optional user
+        ssh_target="${slurm_head_node}"
+        [ -n "${slurm_head_user}" ] && ssh_target="${slurm_head_user}@${slurm_head_node}"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${ssh_target}" "${SLURM_CMD[*]}"
+        ;;
     *)
         echo "ERROR: Invalid SLURM_HEAD_NODE value: ${slurm_head_node}"
+        echo "Supported values: scctl, dlcluster, dlcluster.nvidia.com"
         exit 1
         ;;
 esac
