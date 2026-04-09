@@ -19,8 +19,10 @@
 #include "common/nixl_log.h"
 
 #include <doca_error.h>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <unistd.h>
 
 namespace {
 const uint16_t docaPrometheusExporterDefaultPort = 9091;

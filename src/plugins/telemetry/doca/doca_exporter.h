@@ -26,11 +26,15 @@
 #include <memory>
 #include <mutex>
 
-// Process-wide shared DOCA context. DOCA only supports one metrics context per
-// process, so all agents share this. Thread safety of metrics_add_counter /
-// metrics_add_gauge on a shared source is assumed based on DTE's design for
-// multi-label concurrent usage. If DTE is found to not be thread-safe here,
-// add a mutex around registerCounter / registerGauge calls.
+/**
+ * @brief Process-wide shared DOCA context
+ *
+ * DOCA only supports one metrics context per process, so all agents share
+ * this context. Thread safety of metrics_add_counter / metrics_add_gauge on
+ * a shared source is assumed based on DTE's design for multi-label concurrent
+ * usage. If DTE is found to not be thread-safe, add a mutex around
+ * registerCounter / registerGauge calls.
+ */
 struct DocaSharedContext {
     doca_telemetry_exporter_schema *schema = nullptr;
     doca_telemetry_exporter_source *source = nullptr;
