@@ -26,7 +26,6 @@
 #include "obj_backend.h"
 #include "obj_executor.h"
 #include "object/engine_utils.h"
-#include "s3_accel/dell/rdma_interface.h"
 
 namespace gtest::obj {
 /**
@@ -129,66 +128,6 @@ public:
     hasExecutor() const {
         return executor_ != nullptr;
     }
-
-protected:
-    // Make pendingCallbacks_ accessible to derived classes
-    std::vector<std::function<void()>> &
-    getPendingCallbacks() {
-        return pendingCallbacks_;
-    }
-
-    // Make simulateSuccess_ accessible to derived classes
-    bool
-    getSimulateSuccess() const {
-        return simulateSuccess_;
-    }
-};
-
-// Dell-specific mock S3 client with RDMA support
-class mockDellS3Client : public mockS3Client, public iDellS3RdmaClient {
-public:
-    mockDellS3Client() = default;
-
-    mockDellS3Client([[maybe_unused]] nixl_b_params_t *custom_params,
-                     std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr)
-        : mockS3Client(custom_params, executor) {}
-
-    // Dell-specific RDMA methods
-    void
-    putObjectRdmaAsync(std::string_view key,
-                       uintptr_t data_ptr,
-                       size_t data_len,
-                       size_t offset,
-                       std::string_view rdma_desc,
-                       put_object_callback_t callback) {
-        if (rdma_desc.empty()) {
-            getPendingCallbacks().push_back([callback]() { callback(false); });
-        } else {
-            getPendingCallbacks().push_back([callback, this]() { callback(getSimulateSuccess()); });
-        }
-    }
-
-    void
-    getObjectRdmaAsync(std::string_view key,
-                       uintptr_t data_ptr,
-                       size_t data_len,
-                       size_t offset,
-                       std::string_view rdma_desc,
-                       get_object_callback_t callback) {
-        if (rdma_desc.empty()) {
-            getPendingCallbacks().push_back([callback]() { callback(false); });
-        } else {
-            getPendingCallbacks().push_back([callback, data_ptr, data_len, offset, this]() {
-                if (getSimulateSuccess() && data_ptr && data_len > 0) {
-                    char *buffer = reinterpret_cast<char *>(data_ptr);
-                    for (size_t i = 0; i < data_len; ++i) {
-                        buffer[i] = static_cast<char>('A' + ((i + offset) % 26));
-                    }
-                }
-                callback(getSimulateSuccess());
-            });
-        }
-    }
 };
 
 // Base test fixture with common test helper methods
@@ -209,12 +148,11 @@ protected:
         initParams_.pthrDelay = 0;
         initParams_.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
 
-        // Use appropriate mock client based on configuration
-        if (isDellOBSRequested(&customParams_)) {
-            mockS3Client_ = std::make_shared<mockDellS3Client>();
-        } else {
-            mockS3Client_ = std::make_shared<mockS3Client>();
-        }
+        // All engine types (Standard, CRT, Accel, Dell) use the same mock.
+        // The Dell engine accepts an injected iS3Client just like the others;
+        // its RDMA-specific behavior lives in awsS3DellObsClient which the
+        // mock replaces entirely for unit tests.
+        mockS3Client_ = std::make_shared<mockS3Client>();
         objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockS3Client_);
     }
 
