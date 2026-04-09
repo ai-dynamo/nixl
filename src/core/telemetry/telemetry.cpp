@@ -178,7 +178,6 @@ void
 nixlTelemetry::updateData(const std::string &event_name,
                           nixl_telemetry_category_t category,
                           uint64_t value) {
-
     const size_t id = writeIdx_.fetch_add(1);
     if (id >= maxEventsBuffered_) {
         overflowed_.store(true, std::memory_order_relaxed);
