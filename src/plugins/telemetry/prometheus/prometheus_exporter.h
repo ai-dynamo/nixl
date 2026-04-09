@@ -24,6 +24,7 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 
 #include <prometheus/registry.h>
@@ -57,6 +58,8 @@ private:
     static std::mutex s_mutex_;
     static std::weak_ptr<prometheus::Exposer> s_exposer_weak_;
     static std::weak_ptr<prometheus::Registry> s_registry_weak_;
+    static std::string s_bind_address_;
+    static std::unordered_set<std::string> s_agent_names_;
 
     const std::string agent_name_;
     const std::string hostname_;

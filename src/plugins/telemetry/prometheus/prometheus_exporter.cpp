@@ -51,6 +51,8 @@ getHostname() {
 std::mutex nixlTelemetryPrometheusExporter::s_mutex_;
 std::weak_ptr<prometheus::Exposer> nixlTelemetryPrometheusExporter::s_exposer_weak_;
 std::weak_ptr<prometheus::Registry> nixlTelemetryPrometheusExporter::s_registry_weak_;
+std::string nixlTelemetryPrometheusExporter::s_bind_address_;
+std::unordered_set<std::string> nixlTelemetryPrometheusExporter::s_agent_names_;
 
 nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     const nixlTelemetryExporterInitParams &init_params)
@@ -69,6 +71,11 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
 
     std::lock_guard<std::mutex> lock(s_mutex_);
 
+    if (!s_agent_names_.insert(agent_name_).second) {
+        NIXL_WARN << "Prometheus exporter: duplicate agent name '" << agent_name_
+                  << "'; metrics may be shared and cleanup may be unsafe";
+    }
+
     exposer_ = s_exposer_weak_.lock();
     registry_ = s_registry_weak_.lock();
 
@@ -78,8 +85,15 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
         exposer_->RegisterCollectable(registry_);
         s_exposer_weak_ = exposer_;
         s_registry_weak_ = registry_;
+        s_bind_address_ = bind_address_;
         NIXL_INFO << "Prometheus exporter initialized on " << bind_address_;
     } else {
+        if (s_bind_address_ != bind_address_) {
+            NIXL_WARN << "Prometheus exporter for agent '" << agent_name_ << "' requested "
+                      << bind_address_ << " but shared server is already bound to "
+                      << s_bind_address_ << "; reusing existing server";
+        }
+        bind_address_ = s_bind_address_;
         NIXL_INFO << "Prometheus exporter for agent '" << agent_name_
                   << "' sharing existing server on " << bind_address_;
     }
@@ -94,6 +108,10 @@ nixlTelemetryPrometheusExporter::~nixlTelemetryPrometheusExporter() {
     }
     for (auto &[name, entry] : gauges_) {
         entry.family->Remove(entry.metric);
+    }
+    s_agent_names_.erase(agent_name_);
+    if (s_agent_names_.empty()) {
+        s_bind_address_.clear();
     }
 }
 
