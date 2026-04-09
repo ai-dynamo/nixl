@@ -171,7 +171,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
         } else if (!telemetry_enabled_env && telemetry_enabled_config) {
             NIXL_DEBUG << "Capturing NIXL telemetry based on config";
         }
-    } else if (telemetry_enabled && !*telemetry_enabled) {
+    } else {
         NIXL_DEBUG << "NIXL telemetry is disabled";
     }
 }
