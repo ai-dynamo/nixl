@@ -168,7 +168,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
             NIXL_WARN << "Telemetry was requested but no exporter is configured "
                          "(set NIXL_TELEMETRY_EXPORTER or NIXL_TELEMETRY_DIR); "
                          "per-transfer telemetry and error export are disabled.";
-        } else if (!env_on && config_wants) {
+        } else if (!telemetry_enabled_env && telemetry_enabled_config) {
             NIXL_DEBUG << "Capturing NIXL telemetry based on config";
         }
     } else if (telemetry_enabled && !*telemetry_enabled) {
