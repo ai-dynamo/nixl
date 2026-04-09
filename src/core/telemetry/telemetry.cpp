@@ -140,7 +140,6 @@ nixlTelemetry::initializeTelemetry() {
 
 bool
 nixlTelemetry::writeEventHelper() {
-
     // Block producers by setting writeIdx_=max so they get id>=max and skip.
     const size_t num_events_raw = writeIdx_.exchange(maxEventsBuffered_);
     const int w = writeBufIndex_.fetch_xor(1);
