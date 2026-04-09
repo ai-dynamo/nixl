@@ -27,5 +27,4 @@ nixl_telemetry_plugin_init() {
 }
 
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT void
-nixl_telemetry_plugin_fini() {
-}
+nixl_telemetry_plugin_fini() {}
