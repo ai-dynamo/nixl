@@ -55,6 +55,16 @@ public:
     exportEvent(const nixlTelemetryEvent &event) override;
 
 private:
+    struct CounterEntry {
+        prometheus::Family<prometheus::Counter> *family;
+        prometheus::Counter *metric;
+    };
+
+    struct GaugeEntry {
+        prometheus::Family<prometheus::Gauge> *family;
+        prometheus::Gauge *metric;
+    };
+
     static std::mutex s_mutex_;
     static std::weak_ptr<prometheus::Exposer> s_exposer_weak_;
     static std::weak_ptr<prometheus::Registry> s_registry_weak_;
@@ -66,16 +76,6 @@ private:
     std::shared_ptr<prometheus::Exposer> exposer_;
     std::shared_ptr<prometheus::Registry> registry_;
     std::string bind_address_;
-
-    struct CounterEntry {
-        prometheus::Family<prometheus::Counter> *family;
-        prometheus::Counter *metric;
-    };
-
-    struct GaugeEntry {
-        prometheus::Family<prometheus::Gauge> *family;
-        prometheus::Gauge *metric;
-    };
 
     std::unordered_map<std::string, CounterEntry> counters_;
     std::unordered_map<std::string, GaugeEntry> gauges_;
