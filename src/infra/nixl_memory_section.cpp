@@ -436,8 +436,7 @@ nixlRemoteSection::loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEng
 
 void
 nixlRemoteSection::remLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine &backend) {
-
-    nixl_mem_t nixl_mem = mem_elms.getType();
+    const nixl_mem_t nixl_mem = mem_elms.getType();
     const section_key_t sec_key = std::make_pair(nixl_mem, &backend);
     auto it = sectionMap.find(sec_key);
     if (it == sectionMap.end()) {
@@ -447,7 +446,7 @@ nixlRemoteSection::remLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEng
     nixlSecDescList &target = it->second;
 
     for (auto &elm : mem_elms) {
-        int index = target.getIndex(elm);
+        const int index = target.getIndex(elm);
         if (index >= 0) {
             backend.unloadMD(target[index].metadataP);
             target.remDesc(index);

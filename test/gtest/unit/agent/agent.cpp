@@ -238,11 +238,11 @@ namespace agent {
         using time_span = std::chrono::nanoseconds;
 
         nixl_opt_args_t extra_params;
-        nixl_reg_dlist_t reg_dlist(DRAM_SEG);
         nixl_b_params_t params;
         nixlBackendH *backend;
 
         EXPECT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+        extra_params.backends.push_back(backend);
 
         std::vector<std::unique_ptr<blob>> pool;
         pool.reserve(kPoolSize);
@@ -254,17 +254,13 @@ namespace agent {
         auto run_batch = [&](int rounds = 1) {
             for (int r = 0; r < rounds; ++r) {
                 for (auto &bp : pool) {
-                    reg_dlist.clear();
-                    extra_params.backends.clear();
+                    nixl_reg_dlist_t reg_dlist{DRAM_SEG};
                     reg_dlist.addDesc(bp->getDesc());
-                    extra_params.backends.push_back(backend);
                     EXPECT_EQ(agent_->registerMem(reg_dlist, &extra_params), NIXL_SUCCESS);
                 }
                 for (auto &bp : pool) {
-                    reg_dlist.clear();
-                    extra_params.backends.clear();
+                    nixl_reg_dlist_t reg_dlist{DRAM_SEG};
                     reg_dlist.addDesc(bp->getDesc());
-                    extra_params.backends.push_back(backend);
                     EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
                 }
             }
