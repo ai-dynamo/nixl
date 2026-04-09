@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,11 @@
 #include <memory>
 #include <mutex>
 
+// Process-wide shared DOCA context. DOCA only supports one metrics context per
+// process, so all agents share this. Thread safety of metrics_add_counter /
+// metrics_add_gauge on a shared source is assumed based on DTE's design for
+// multi-label concurrent usage. If DTE is found to not be thread-safe here,
+// add a mutex around registerCounter / registerGauge calls.
 struct DocaSharedContext {
     doca_telemetry_exporter_schema *schema = nullptr;
     doca_telemetry_exporter_source *source = nullptr;

@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +49,8 @@ Default address is public, but you can configure to expose prometheus endpoint o
 export NIXL_TELEMETRY_DOCA_PROMETHEUS_LOCAL="y"
 # May also use "yes" or "1"
 ```
+
+When multiple agents run in the same process, the first agent to initialize creates the DOCA server and its port/address settings take effect. Subsequent agents share that endpoint and are distinguished by the `agent_name` label.
 
 You can alter where to look for plug-in .so files
 NOTE: the same var is used for backend plug-ins search
