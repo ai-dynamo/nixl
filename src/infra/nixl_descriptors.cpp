@@ -15,10 +15,11 @@
  * limitations under the License.
  */
 #include <algorithm>
-#include <functional>
+#include <cassert>
+#include <cstddef>
+#include <iterator>
 #include <stdexcept>
 #include <iostream>
-#include "nixl.h"
 #include "nixl_descriptors.h"
 #include "mem_section.h"
 #include "backend/backend_aux.h"
@@ -353,30 +354,101 @@ void
 nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
     auto &vec = this->descs;
     auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
-    if (itr == vec.end())
-        vec.push_back(desc);
-    else
-        vec.insert(itr, desc);
+    vec.insert(itr, desc);
 }
 
-bool
-nixlSecDescList::verifySorted() const {
-    const auto &vec = this->descs;
-    int size = (int)vec.size();
-    if (size <= 1) return (size == 1);
-    for (int i = 0; i < size - 1; ++i) {
-        if (vec[i + 1] < vec[i]) return false;
-    }
-    return true;
+void
+nixlSecDescList::addDesc(nixlSectionDesc &&desc) {
+    auto &vec = this->descs;
+    auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
+    vec.insert(itr, std::move(desc));
 }
+
+namespace {
+void
+appendAll(std::vector<nixlSectionDesc> &dst, std::vector<nixlSectionDesc> &src) {
+    dst.reserve(dst.size() + src.size());
+    for (auto &d : src) {
+        dst.emplace_back(std::move(d));
+    }
+}
+} // namespace
+
+void
+nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
+    auto &vec = this->descs;
+    if (vec.empty()) {
+        vec = std::move(batch);
+        return;
+    }
+
+    // Check if the batch comes after the existing elements
+    if (!(batch.front() < vec.back())) {
+        appendAll(vec, batch);
+        return;
+    }
+
+    // Check if the batch comes before the existing elements
+    if (!(vec.front() < batch.back())) {
+        appendAll(batch, vec);
+        vec = std::move(batch);
+        return;
+    }
+
+    // Merge the batch into the existing vector in-place in reverse order to reduce copies
+    const size_t old_size = vec.size();
+    const size_t batch_size = batch.size();
+    const size_t new_size = old_size + batch_size;
+
+    vec.resize(new_size);
+
+    auto dst = vec.rbegin();
+    auto a = std::make_reverse_iterator(vec.begin() + old_size);
+    auto a_end = vec.rend();
+    auto b = batch.rbegin();
+    auto b_end = batch.rend();
+
+    while (a != a_end && b != b_end) {
+        auto &src = (*b < *a) ? a : b;
+        *dst++ = std::move(*src++);
+    }
+    while (b != b_end) {
+        *dst++ = std::move(*b++);
+    }
+}
+
+void
+nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, order ord) {
+    if (batch.empty()) return;
+
+    if (batch.size() == 1) {
+        // It's more efficient to insert a single element directly
+        addDesc(std::move(batch[0]));
+        return;
+    }
+
+    if (ord == order::SORTED) {
+        assert(std::is_sorted(batch.begin(), batch.end()));
+    } else {
+        std::sort(batch.begin(), batch.end());
+    }
+
+    addSortedDescs(std::move(batch));
+}
+
+void
+nixlSecDescList::addDescs(nixlSecDescList &&other) {
+    assert(type == other.type);
+    addDescs(std::move(other.descs), order::SORTED);
+}
+
 
 int
 nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
     auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
-    if (itr == this->descs.end()) return NIXL_ERR_NOT_FOUND;
-    if (static_cast<const nixlBasicDesc &>(*itr) == query)
-        return static_cast<int>(itr - this->descs.begin());
-    return NIXL_ERR_NOT_FOUND;
+    if (itr == this->descs.end() || static_cast<const nixlBasicDesc &>(*itr) != query)
+        return NIXL_ERR_NOT_FOUND;
+    return static_cast<int>(itr - this->descs.begin());
 }
 
 int
