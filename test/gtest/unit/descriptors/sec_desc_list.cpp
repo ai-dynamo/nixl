@@ -30,12 +30,7 @@ protected:
     static constexpr size_t defaultLen = 64;
 
     static nixlSectionDesc
-    makeDescAddr(uintptr_t addr) {
-        return nixlSectionDesc(addr, defaultLen, defaultDevId);
-    }
-
-    static nixlSectionDesc
-    makeDescDevIdAddr(uint64_t dev_id, uintptr_t addr) {
+    makeDesc(uintptr_t addr, uint64_t dev_id = defaultDevId) {
         return nixlSectionDesc(addr, defaultLen, dev_id);
     }
 
@@ -50,7 +45,7 @@ protected:
         std::vector<nixlSectionDesc> batch;
         batch.reserve(addrs.size());
         for (auto a : addrs) {
-            batch.push_back(makeDescAddr(a));
+            batch.push_back(makeDesc(a));
         }
         list.addDescs(std::move(batch));
         assertSorted(list);
@@ -63,24 +58,27 @@ protected:
     }
 
     static void
-    expectAddrs(const nixlSecDescList &list, const std::vector<uintptr_t> &addrs) {
-        ASSERT_EQ(list.descCount(), static_cast<int>(addrs.size()));
+    expectAddrs(const nixlSecDescList &list, const std::vector<uintptr_t> &expected) {
+        ASSERT_EQ(list.descCount(), static_cast<int>(expected.size()));
         ASSERT_TRUE(std::is_sorted(list.begin(), list.end()));
 
-        for (size_t i = 0; i < addrs.size(); ++i) {
-            EXPECT_EQ(list[i].addr, addrs[i]) << "mismatch at index " << i;
+        for (size_t i = 0; i < expected.size(); ++i) {
+            EXPECT_EQ(list[i].addr, expected[i]) << "mismatch at index " << i;
+            EXPECT_EQ(list[i].devId, defaultDevId) << "devId mismatch at index " << i;
+            EXPECT_EQ(list[i].len, defaultLen) << "len mismatch at index " << i;
         }
     }
 
     static void
-    expectDevIdsAddrs(const nixlSecDescList &list,
+    expectAddrsDevIds(const nixlSecDescList &list,
                       const std::vector<std::pair<uint64_t, uintptr_t>> &expected) {
         ASSERT_EQ(list.descCount(), static_cast<int>(expected.size()));
         ASSERT_TRUE(std::is_sorted(list.begin(), list.end()));
 
         for (size_t i = 0; i < expected.size(); ++i) {
-            EXPECT_EQ(list[i].devId, expected[i].first) << "devId mismatch at index " << i;
-            EXPECT_EQ(list[i].addr, expected[i].second) << "addr mismatch at index " << i;
+            EXPECT_EQ(list[i].addr, expected[i].first) << "addr mismatch at index " << i;
+            EXPECT_EQ(list[i].devId, expected[i].second) << "devId mismatch at index " << i;
+            EXPECT_EQ(list[i].len, defaultLen) << "len mismatch at index " << i;
         }
     }
 };
@@ -100,31 +98,31 @@ TEST_F(secDescListTest, EmptyBatchOnNonEmptyList) {
 TEST_F(secDescListTest, SingleElementBatch) {
     auto list = makeListAddrs({20, 40});
 
-    list.addDescs({makeDescAddr(10)});
+    list.addDescs({makeDesc(10)});
     expectAddrs(list, {10, 20, 40});
 
-    list.addDescs({makeDescAddr(30)});
+    list.addDescs({makeDesc(30)});
     expectAddrs(list, {10, 20, 30, 40});
 
-    list.addDescs({makeDescAddr(50)});
+    list.addDescs({makeDesc(50)});
     expectAddrs(list, {10, 20, 30, 40, 50});
 }
 
 TEST_F(secDescListTest, AllAfterAppend) {
     auto list = makeListAddrs({10, 20});
-    list.addDescs({makeDescAddr(30), makeDescAddr(40)});
+    list.addDescs({makeDesc(30), makeDesc(40)});
     expectAddrs(list, {10, 20, 30, 40});
 }
 
 TEST_F(secDescListTest, AllBeforePrepend) {
     auto list = makeListAddrs({30, 40});
-    list.addDescs({makeDescAddr(10), makeDescAddr(20)});
+    list.addDescs({makeDesc(10), makeDesc(20)});
     expectAddrs(list, {10, 20, 30, 40});
 }
 
 TEST_F(secDescListTest, InterleavedMerge) {
     auto list = makeListAddrs({10, 30, 50});
-    list.addDescs({makeDescAddr(20), makeDescAddr(40)});
+    list.addDescs({makeDesc(20), makeDesc(40)});
     expectAddrs(list, {10, 20, 30, 40, 50});
 }
 
@@ -135,16 +133,15 @@ TEST_F(secDescListTest, UnsortedInput) {
 
 TEST_F(secDescListTest, SortedInput) {
     auto list = makeList();
-    list.addDescs({makeDescAddr(10), makeDescAddr(20), makeDescAddr(30)},
-                  nixlSecDescList::order::SORTED);
+    list.addDescs({makeDesc(10), makeDesc(20), makeDesc(30)}, nixlSecDescList::order::SORTED);
     expectAddrs(list, {10, 20, 30});
 }
 
 TEST_F(secDescListTest, SortedHintWithUnsortedInputDies) {
     auto list = makeList();
-    EXPECT_DEBUG_DEATH(list.addDescs({makeDescAddr(30), makeDescAddr(10), makeDescAddr(20)},
-                                     nixlSecDescList::order::SORTED),
-                       "");
+    EXPECT_DEBUG_DEATH(
+        list.addDescs({makeDesc(30), makeDesc(10), makeDesc(20)}, nixlSecDescList::order::SORTED),
+        "");
 }
 
 TEST_F(secDescListTest, OtherListOverload) {
@@ -157,7 +154,7 @@ TEST_F(secDescListTest, OtherListOverload) {
 
 TEST_F(secDescListTest, DuplicateDescriptors) {
     auto list = makeListAddrs({10, 20});
-    list.addDescs({makeDescAddr(10), makeDescAddr(20)});
+    list.addDescs({makeDesc(10), makeDesc(20)});
     expectAddrs(list, {10, 10, 20, 20});
 }
 
@@ -166,27 +163,24 @@ TEST_F(secDescListTest, MultipleDevIds) {
 
     // empty batch
     list.addDescs({});
-    expectDevIdsAddrs(list, {});
+    expectAddrsDevIds(list, {});
 
     // single element
-    list.addDesc(makeDescDevIdAddr(1, 50));
-    expectDevIdsAddrs(list, {{1, 50}});
+    list.addDesc(makeDesc(50, 1));
+    expectAddrsDevIds(list, {{50, 1}});
 
     // all after existing
-    list.addDescs({makeDescDevIdAddr(1, 100), makeDescDevIdAddr(2, 10)});
-    expectDevIdsAddrs(list, {{1, 50}, {1, 100}, {2, 10}});
+    list.addDescs({makeDesc(100, 1), makeDesc(10, 2)});
+    expectAddrsDevIds(list, {{50, 1}, {100, 1}, {10, 2}});
 
     // all before existing
-    list.addDescs({makeDescDevIdAddr(1, 10), makeDescDevIdAddr(0, 50)});
-    expectDevIdsAddrs(list, {{0, 50}, {1, 10}, {1, 50}, {1, 100}, {2, 10}});
+    list.addDescs({makeDesc(10, 1), makeDesc(50, 0)});
+    expectAddrsDevIds(list, {{50, 0}, {10, 1}, {50, 1}, {100, 1}, {10, 2}});
 
     // interleaved
-    list.addDescs({makeDescDevIdAddr(0, 10),
-                   makeDescDevIdAddr(1, 75),
-                   makeDescDevIdAddr(1, 200),
-                   makeDescDevIdAddr(2, 20)});
-    expectDevIdsAddrs(
-        list, {{0, 10}, {0, 50}, {1, 10}, {1, 50}, {1, 75}, {1, 100}, {1, 200}, {2, 10}, {2, 20}});
+    list.addDescs({makeDesc(10, 0), makeDesc(75, 1), makeDesc(200, 1), makeDesc(20, 2)});
+    expectAddrsDevIds(
+        list, {{10, 0}, {50, 0}, {10, 1}, {50, 1}, {75, 1}, {100, 1}, {200, 1}, {10, 2}, {20, 2}});
 }
 
 TEST_F(secDescListTest, AddLargeBatches) {
@@ -202,7 +196,7 @@ TEST_F(secDescListTest, AddLargeBatches) {
         std::vector<nixlSectionDesc> batch;
         batch.reserve(batch_size);
         for (int j = 0; j < batch_size; ++j) {
-            batch.push_back(makeDescAddr(dist(rng)));
+            batch.push_back(makeDesc(dist(rng)));
         }
 
         list.addDescs(std::move(batch));
