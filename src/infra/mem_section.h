@@ -169,6 +169,8 @@ class nixlRemoteSection : public nixlMemSection {
         // When adding self as a remote agent for local operations
         nixl_status_t
         loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEngine *backend);
+        void
+        removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine &backend);
         ~nixlRemoteSection();
 };
 

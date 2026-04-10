@@ -508,10 +508,18 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     }
 
     // Doing best effort, and returning err if any
-    for (auto & backend : backend_set) {
+    for (auto &backend : backend_set) {
+        if (backend->supportsLocal()) {
+            const auto it = data->remoteSections_.find(data->name_);
+            if (it != data->remoteSections_.end()) {
+                it->second.removeLocalData(descs, *backend);
+            }
+        }
+
         const nixl_status_t ret = data->localSection_.remDescList(descs, backend);
-        if (ret != NIXL_SUCCESS)
+        if (ret != NIXL_SUCCESS) {
             bad_ret = ret;
+        }
     }
     if (bad_ret == NIXL_SUCCESS) {
         if (data->telemetry_) {
