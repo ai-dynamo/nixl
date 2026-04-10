@@ -121,6 +121,8 @@ private:
     size_t num_connected_rails_; // Number of successfully connected rails
     std::string initiator_addr_; // Local endpoint address
     std::string remote_addr_; // Remote endpoint address
+    uint64_t remote_notif_addr_; // Remote notification buffer address (for WRITE)
+    uint64_t remote_notif_key_; // Remote notification buffer rkey (for WRITE)
 public:
     friend class nixlLibfabricEngine;
     friend class nixlLibfabricRail;

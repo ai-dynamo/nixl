@@ -851,6 +851,8 @@ nixl_status_t
 nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
                                              nixlLibfabricReq *req,
                                              fi_addr_t dest_addr,
+                                             uint64_t remote_notif_addr,
+                                             uint64_t remote_notif_key,
                                              uint16_t agent_idx,
                                              std::function<void()> completion_callback) {
     // Validation - use rail 0 for notifications
@@ -875,8 +877,6 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     }
     size_t rail_id = 0; // Use rail 0 for notifications
     uint32_t xfer_id = req->xfer_id;
-    // For control messages, use SEQ_ID 0 since they don't need sequence tracking
-    // TODO: Add sequencing for connection establishment workflow.
     uint64_t imm_data = NIXL_MAKE_IMM_DATA(msg_type_value, agent_idx, xfer_id, 0);
 
     // Set completion callback if provided
@@ -885,17 +885,33 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
         NIXL_DEBUG << "Set completion callback for control message request " << req->xfer_id;
     }
 
-    NIXL_DEBUG << "Sending control message type " << msg_type_value << " agent_idx=" << agent_idx
-               << " XFER_ID=" << xfer_id << " imm_data=" << imm_data << " on rail " << rail_id;
+    // Compute remote slot address from xfer_id
+    uint32_t slot_idx = xfer_id % NIXL_LIBFABRIC_NOTIF_NUM_SLOTS;
+    uint64_t remote_slot_addr =
+        remote_notif_addr + ((uint64_t)slot_idx * NIXL_LIBFABRIC_NOTIF_SLOT_SIZE);
+
+    NIXL_DEBUG << "Sending control message via WRITE type " << msg_type_value
+               << " agent_idx=" << agent_idx << " XFER_ID=" << xfer_id << " slot=" << slot_idx
+               << " remote_addr=" << remote_slot_addr << " on rail " << rail_id;
 
     // Mark rail 0 as active so its CQ gets progressed
     markRailActive(rail_id);
 
-    // Use rail 0 for notifications
-    nixl_status_t status = rails_[rail_id]->postSend(imm_data, dest_addr, req);
+    // Get local MR descriptor for the control request buffer
+    void *local_desc = fi_mr_desc(req->mr);
+
+    // Use RDMA WRITE with immediate data instead of SEND
+    nixl_status_t status = rails_[rail_id]->postWrite(req->buffer,
+                                                      req->buffer_size,
+                                                      local_desc,
+                                                      imm_data,
+                                                      dest_addr,
+                                                      remote_slot_addr,
+                                                      remote_notif_key,
+                                                      req);
 
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to send control message type " << static_cast<int>(msg_type)
+        NIXL_ERROR << "Failed to WRITE control message type " << static_cast<int>(msg_type)
                    << " on rail " << rail_id;
         // Release the pre-allocated control request back to pool on failure
         rails_[rail_id]->releaseRequest(req);
@@ -911,7 +927,7 @@ nixlLibfabricRailManager::progressActiveRails() {
     // Copy active rails under lock to avoid iterator invalidation
     {
         std::lock_guard<std::mutex> lock(active_rails_mutex_);
-        // Always progress rail 0 for notifications (SEND/RECV)
+        // Always progress rail 0 for notifications
         rails_to_process.insert(0);
         rails_to_process.insert(active_rails_.begin(), active_rails_.end());
     }
@@ -1027,6 +1043,13 @@ nixlLibfabricRailManager::serializeConnectionInfo(const std::string &user_prefix
     std::string data_prefix = user_prefix + "_data_ep_";
 
     serializeRailEndpoints(ser_des, data_prefix);
+
+    // Add notification buffer metadata from rail 0
+    if (!rails_.empty()) {
+        ser_des.addStr("notif_buf_addr", std::to_string(rails_[0]->getNotifRecvBufferAddr()));
+        ser_des.addStr("notif_buf_key", std::to_string(rails_[0]->getNotifRecvKey()));
+    }
+
     str = ser_des.exportStr();
     NIXL_DEBUG << "Connection info serialized with prefix " << user_prefix
                << ", size=" << str.length();
@@ -1048,6 +1071,24 @@ nixlLibfabricRailManager::deserializeConnectionInfo(
     if (data_status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to deserialize rail endpoints with prefix: " << data_prefix;
         return data_status;
+    }
+
+    // Read notification buffer metadata (appended after rail endpoints)
+    remote_notif_addr_cache_ = 0;
+    remote_notif_key_cache_ = 0;
+    try {
+        std::string addr_str = ser_des.getStr("notif_buf_addr");
+        std::string key_str = ser_des.getStr("notif_buf_key");
+        if (!addr_str.empty() && !key_str.empty()) {
+            remote_notif_addr_cache_ = std::stoull(addr_str);
+            remote_notif_key_cache_ = std::stoull(key_str);
+            NIXL_DEBUG << "Deserialized remote notif buffer addr=" << remote_notif_addr_cache_
+                       << " key=" << remote_notif_key_cache_;
+        }
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Failed to parse remote notification buffer metadata: " << e.what();
+        return NIXL_ERR_BACKEND;
     }
 
     NIXL_DEBUG << "Connection info deserialized with prefix " << user_prefix << ": "
