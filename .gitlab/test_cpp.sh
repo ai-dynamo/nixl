@@ -76,6 +76,7 @@ start_etcd_server "/nixl/cpp_ci"
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
+./bin/configuration
 ./bin/desc_example
 ./bin/agent_example
 ./bin/nixl_example
