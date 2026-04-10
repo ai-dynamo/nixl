@@ -364,6 +364,16 @@ nixlSecDescList::addDesc(nixlSectionDesc &&desc) {
     vec.insert(itr, std::move(desc));
 }
 
+namespace {
+void
+appendAll(std::vector<nixlSectionDesc> &dst, std::vector<nixlSectionDesc> &src) {
+    dst.reserve(dst.size() + src.size());
+    for (auto &d : src) {
+        dst.emplace_back(std::move(d));
+    }
+}
+} // namespace
+
 void
 nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
     auto &vec = this->descs;
@@ -372,30 +382,24 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
         return;
     }
 
-    const size_t old_size = vec.size();
-    const size_t batch_size = batch.size();
-    const size_t new_size = old_size + batch_size;
-
     // Check if the batch comes after the existing elements
     if (!(batch.front() < vec.back())) {
-        vec.reserve(new_size);
-        for (auto &d : batch) {
-            vec.emplace_back(std::move(d));
-        }
+        appendAll(vec, batch);
         return;
     }
 
     // Check if the batch comes before the existing elements
     if (!(vec.front() < batch.back())) {
-        batch.reserve(new_size);
-        for (auto &d : vec) {
-            batch.emplace_back(std::move(d));
-        }
+        appendAll(batch, vec);
         vec = std::move(batch);
         return;
     }
 
     // Merge the batch into the existing vector in-place in reverse order to reduce copies
+    const size_t old_size = vec.size();
+    const size_t batch_size = batch.size();
+    const size_t new_size = old_size + batch_size;
+
     vec.resize(new_size);
 
     auto dst = vec.rbegin();
