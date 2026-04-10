@@ -512,7 +512,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
         if (backend->supportsLocal()) {
             const auto it = data->remoteSections_.find(data->name_);
             if (it != data->remoteSections_.end()) {
-                it->second.remLocalData(descs, *backend);
+                it->second.removeLocalData(descs, *backend);
             }
         }
 

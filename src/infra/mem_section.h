@@ -170,7 +170,7 @@ class nixlRemoteSection : public nixlMemSection {
         nixl_status_t
         loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEngine *backend);
         void
-        remLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine &backend);
+        removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine &backend);
         ~nixlRemoteSection();
 };
 

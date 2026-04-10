@@ -245,9 +245,9 @@ namespace agent {
         extra_params.backends.push_back(backend);
 
         std::vector<std::unique_ptr<blob>> pool;
-        pool.reserve(kPoolSize);
-        for (size_t i = 0; i < kPoolSize; ++i) {
-            pool.push_back(std::make_unique<blob>());
+        pool.resize(kPoolSize);
+        for (auto &p : pool) {
+            p = std::make_unique<blob>();
         }
 
         // Each round: registerMem once per pool entry, then deregisterMem once per entry.
