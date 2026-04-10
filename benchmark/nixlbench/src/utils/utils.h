@@ -65,7 +65,7 @@
 
 // Runtime types
 #define XFERBENCH_RT_ETCD "ETCD"
-constexpr inline std::string_view xferbench_rt_asio = "ASIO";
+#define XFERBENCH_RT_ASIO "ASIO"
 
 // Backend types
 #define XFERBENCH_BACKEND_UCX "UCX"

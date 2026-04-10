@@ -132,6 +132,19 @@ NB_ARG_UINT32(asio_port,
               12345,
               "Port for direct socket communication for 2 instances with ASIO runtime");
 
+namespace {
+bool validateAsioPort(const char *flagname, std::uint32_t value) {
+    if (value <= 65535) {
+        return true;
+    }
+    std::cerr << "Invalid value for --" << flagname << ": " << value
+              << " (must be <= 65535)" << std::endl;
+    return false;
+}
+} // namespace
+
+DEFINE_validator(asio_port, &validateAsioPort);
+
 // POSIX options - only used when backend is POSIX
 NB_ARG_STRING(
     posix_api_type,
@@ -483,7 +496,7 @@ xferBenchConfig::loadParams(void) {
                 std::cout << "Using default ETCD endpoint for non-storage backend: "
                           << etcd_endpoints << std::endl;
             }
-        } else if (runtime_type == xferbench_rt_asio) {
+        } else if (runtime_type == XFERBENCH_RT_ASIO) {
             std::cout << "Using address " << asio_address << " port " << asio_port
                       << " for ASIO runtime" << std::endl;
         }
@@ -590,7 +603,7 @@ xferBenchConfig::printConfig() {
         } else {
             printOption("ETCD Endpoint ", etcd_endpoints);
         }
-    } else if (runtime_type == xferbench_rt_asio) {
+    } else if (runtime_type == XFERBENCH_RT_ASIO) {
         printOption("ASIO Address (--asio_address) ", asio_address);
         printOption("ASIO Port (--asio_port) ", std::to_string(asio_port));
     }

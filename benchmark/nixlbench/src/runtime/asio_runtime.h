@@ -84,8 +84,7 @@ public:
     }
 
     int
-    broadcastInt(int *buffer, size_t count, int root_rank) override {
-        assert(count <= (1 << 28));
+    broadcastInt(int *buffer, std::size_t count, int root_rank) override {
         if (getRank() == root_rank) {
             postSend(asio_msg_type_t::INTEGER_ARRAY, buffer, count * sizeof(int));
         } else {
@@ -101,16 +100,14 @@ public:
     }
 
     int
-    sendChar(char *buffer, size_t count, int dest_rank) override {
-        assert(count <= (1 << 30));
+    sendChar(char *buffer, std::size_t count, int dest_rank) override {
         assert(1 - getRank() == dest_rank);
         postSend(asio_msg_type_t::STRING, buffer, count);
         return 0;
     }
 
     int
-    recvChar(char *buffer, size_t count, int src_rank) override {
-        assert(count <= (1 << 30));
+    recvChar(char *buffer, std::size_t count, int src_rank) override {
         assert(1 - getRank() == src_rank);
         recvWait(asio_msg_type_t::STRING, [&](const std::string &data) {
             // Replicate std::min from ETCD runtime.
@@ -204,9 +201,14 @@ private:
         try {
             result->bind(endpoint_);
         }
-        catch (const std::exception &) {
-            std::cout << "ASIO runtime bind() failed -- using connect() instead" << std::endl;
-            return {}; // Use connect() instead of listen() and accept() on bind error.
+        catch (const asio::system_error &e) {
+            if (e.code() != asio::error::address_in_use) {
+                throw;
+            }
+
+            std::cout << "ASIO runtime bind() address in use -- using connect() instead"
+                      << std::endl;
+            return {};
         }
 
         result->listen();
@@ -215,7 +217,11 @@ private:
 
     void
     postSend(const asio_msg_type_t type, const void *data, const std::size_t size) {
-        const std::size_t head = size | (size_t(type) << 56);
+        if (size > 0x00ffffff) {
+            throw std::runtime_error("Runtime message size " + std::to_string(size) + " exceeds 16MB-1 limit");
+        }
+
+        const std::uint32_t head = size | (std::uint32_t(type) << 24);
         const std::string buffer =
             std::string(reinterpret_cast<const char *>(&head), sizeof(head)) +
             std::string(reinterpret_cast<const char *>(data), size);
@@ -262,9 +268,9 @@ private:
                              if (ec.value()) {
                                  throw std::runtime_error("ASIO Read head failed: " + ec.message());
                              }
-                             temp_.type = asio_msg_type_t(head_ >> 56);
+                             temp_.type = asio_msg_type_t(head_ >> 24);
                              temp_.data.clear();
-                             temp_.data.resize(head_ & 0x1ffffffffull);
+                             temp_.data.resize(head_ & 0x00ffffff);
                              recvData();
                          });
     }
@@ -299,14 +305,17 @@ private:
         // the list is expected to be very small and not checked frequently.
 
         if (!cond_.wait_for(lock, std::chrono::seconds(15), [&]() {
-                for (auto it = incoming_.begin(); it != incoming_.end(); ++it) {
-                    if ((it->type == type) && f(it->data)) {
-                        incoming_.erase(it);
-                        return true;
-                    }
+            if (exception_) {
+                return true;
+            }
+            for (auto it = incoming_.begin(); it != incoming_.end(); ++it) {
+                if ((it->type == type) && f(it->data)) {
+                    incoming_.erase(it);
+                    return true;
                 }
-                return false;
-            })) {
+            }
+            return false;
+        })) {
             throw std::runtime_error("ASIO Receive timeout");
         }
 
@@ -324,7 +333,7 @@ private:
     std::list<xferBenchAsioIncoming> incoming_;
     std::exception_ptr exception_;
 
-    size_t head_;
+    std::uint32_t head_;
     xferBenchAsioIncoming temp_;
     std::list<std::string> outgoing_;
     asio::io_context context_;

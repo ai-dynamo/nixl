@@ -106,12 +106,15 @@ createRT(int *terminate) {
     }
 #endif
 
-    if ((total == 2) && (xferBenchConfig::runtime_type == xferbench_rt_asio)) {
+    if (xferBenchConfig::runtime_type == XFERBENCH_RT_ASIO) {
+        if (total != 2) {
+            std::cerr << "Invalid total " << total << " for ASIO runtime -- supports only 2"
+                      << std::endl;
+        }
         return new xferBenchAsioRT(xferBenchConfig::asio_address, xferBenchConfig::asio_port);
     }
 
-    std::cerr << "Invalid runtime: " << xferBenchConfig::runtime_type << " for total number "
-              << total << " -- only ETCD runtime supports more than 2" << std::endl;
+    std::cerr << "Invalid runtime: " << xferBenchConfig::runtime_type << std::endl;
     exit(EXIT_FAILURE);
 }
 
@@ -140,7 +143,7 @@ xferBenchWorker::xferBenchWorker() {
 
     int rank = rt->getRank();
 
-    // For storage backends without ETCD, always act as initiator
+    // For storage backends without ETCD endpoints always act as initiator
     if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty() &&
         (xferBenchConfig::runtime_type == XFERBENCH_RT_ETCD)) {
         name = "initiator";
