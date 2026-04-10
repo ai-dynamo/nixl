@@ -649,6 +649,7 @@ def main():
     failed = []
     for i, p in enumerate(ctx.processes):
         p.join()
+        # Ignore expected fault-tolerance SIGTERM exits.
         if p.exitcode not in (0, -signal.SIGTERM):
             failed.append((i, p.exitcode))
     if failed:
