@@ -859,13 +859,14 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
 
     uc->warnAboutHardwareSupportMismatch();
 
+    nixlSerDes ser_des;
     for (size_t i = 0; i < num_workers; i++) {
         uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
+        ser_des.addStr("workerAddr_" + std::to_string(i), uws.back()->epAddr());
     }
 
-    auto &uw = uws.front();
-    workerAddr = uw->epAddr();
-    uw->regAmCallback(NOTIF_STR, notifAmCb, this);
+    workerAddr = ser_des.exportStr();
+    uws.front()->regAmCallback(NOTIF_STR, notifAmCb, this);
 }
 
 nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
@@ -923,18 +924,30 @@ nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
 nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent,
                                                  const std::string &remote_conn_info)
 {
-    size_t size = remote_conn_info.size();
-    std::vector<char> addr(size);
-
     if(remoteConnMap.count(remote_agent)) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixlSerDes::_stringToBytes(addr.data(), remote_conn_info, size);
+    nixlSerDes ser_des;
+    if (ser_des.importStr(remote_conn_info) != NIXL_SUCCESS) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     std::shared_ptr<nixlUcxConnection> conn = std::make_shared<nixlUcxConnection>();
     bool error = false;
-    for (auto &uw: uws) {
-        auto result = uw->connect(addr.data(), size);
+    for (size_t i = 0; i < uws.size(); ++i) {
+        std::string tag = "workerAddr_" + std::to_string(i);
+        std::string addr_str = ser_des.getStr(tag);
+        if (addr_str.empty()) {
+            error = true;
+            break;
+        }
+
+        size_t size = addr_str.size();
+        std::vector<char> addr(size);
+        nixlSerDes::_stringToBytes(addr.data(), addr_str, size);
+
+        auto result = uws[i]->connect(addr.data(), size);
         if (!result.ok()) {
             error = true;
             break;
