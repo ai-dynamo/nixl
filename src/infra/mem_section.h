@@ -79,6 +79,9 @@ public:
     addDesc(const nixlSectionDesc &desc) override;
 
     void
+    addDesc(nixlSectionDesc &&desc);
+
+    void
     addDescs(std::vector<nixlSectionDesc> batch, order ord = order::UNSORTED);
 
     void

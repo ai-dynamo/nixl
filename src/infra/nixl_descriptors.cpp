@@ -358,6 +358,13 @@ nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
 }
 
 void
+nixlSecDescList::addDesc(nixlSectionDesc &&desc) {
+    auto &vec = this->descs;
+    auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
+    vec.insert(itr, std::move(desc));
+}
+
+void
 nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
     auto &vec = this->descs;
     if (vec.empty()) {
@@ -412,7 +419,7 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, order ord) {
 
     if (batch.size() == 1) {
         // It's more efficient to insert a single element directly
-        addDesc(batch[0]);
+        addDesc(std::move(batch[0]));
         return;
     }
 

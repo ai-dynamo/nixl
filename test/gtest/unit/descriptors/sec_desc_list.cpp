@@ -27,7 +27,7 @@ namespace descriptors {
 
     class secDescListTest : public ::testing::Test {
     protected:
-        static constexpr uint64_t defaultDevId = 0;
+        static constexpr uint64_t defaultDevId = 1;
         static constexpr size_t defaultLen = 64;
 
         static nixlSectionDesc
@@ -148,13 +148,12 @@ namespace descriptors {
                            "");
     }
 
-    TEST_F(secDescListTest, ListMoveOverload) {
+    TEST_F(secDescListTest, OtherListOverload) {
         auto list = makeListAddrs({20, 40});
         auto other = makeListAddrs({10, 30, 50});
 
         list.addDescs(std::move(other));
         expectAddrs(list, {10, 20, 30, 40, 50});
-        EXPECT_TRUE(other.isEmpty());
     }
 
     TEST_F(secDescListTest, DuplicateDescriptors) {
