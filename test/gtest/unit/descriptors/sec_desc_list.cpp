@@ -30,8 +30,8 @@ protected:
     static constexpr size_t defaultLen = 64;
 
     static nixlSectionDesc
-    makeDesc(uintptr_t addr, uint64_t dev_id = defaultDevId) {
-        return nixlSectionDesc(addr, defaultLen, dev_id);
+    makeDesc(uintptr_t addr, uint64_t dev_id = defaultDevId, size_t len = defaultLen) {
+        return nixlSectionDesc(addr, len, dev_id);
     }
 
     nixlSecDescList
@@ -40,7 +40,7 @@ protected:
     }
 
     nixlSecDescList
-    makeListAddrs(std::initializer_list<uintptr_t> addrs) {
+    makeList(std::initializer_list<uintptr_t> addrs) {
         auto list = makeList();
         std::vector<nixlSectionDesc> batch;
         batch.reserve(addrs.size());
@@ -90,13 +90,13 @@ TEST_F(secDescListTest, EmptyBatchOnEmptyList) {
 }
 
 TEST_F(secDescListTest, EmptyBatchOnNonEmptyList) {
-    auto list = makeListAddrs({100, 200});
+    auto list = makeList({100, 200});
     list.addDescs({});
     expectAddrs(list, {100, 200});
 }
 
 TEST_F(secDescListTest, SingleElementBatch) {
-    auto list = makeListAddrs({20, 40});
+    auto list = makeList({20, 40});
 
     list.addDescs({makeDesc(10)});
     expectAddrs(list, {10, 20, 40});
@@ -109,25 +109,25 @@ TEST_F(secDescListTest, SingleElementBatch) {
 }
 
 TEST_F(secDescListTest, AllAfterAppend) {
-    auto list = makeListAddrs({10, 20});
+    auto list = makeList({10, 20});
     list.addDescs({makeDesc(30), makeDesc(40)});
     expectAddrs(list, {10, 20, 30, 40});
 }
 
 TEST_F(secDescListTest, AllBeforePrepend) {
-    auto list = makeListAddrs({30, 40});
+    auto list = makeList({30, 40});
     list.addDescs({makeDesc(10), makeDesc(20)});
     expectAddrs(list, {10, 20, 30, 40});
 }
 
 TEST_F(secDescListTest, InterleavedMerge) {
-    auto list = makeListAddrs({10, 30, 50});
+    auto list = makeList({10, 30, 50});
     list.addDescs({makeDesc(20), makeDesc(40)});
     expectAddrs(list, {10, 20, 30, 40, 50});
 }
 
 TEST_F(secDescListTest, UnsortedInput) {
-    auto list = makeListAddrs({40, 10, 30, 20});
+    auto list = makeList({40, 10, 30, 20});
     expectAddrs(list, {10, 20, 30, 40});
 }
 
@@ -145,15 +145,15 @@ TEST_F(secDescListTest, SortedHintWithUnsortedInputDies) {
 }
 
 TEST_F(secDescListTest, OtherListOverload) {
-    auto list = makeListAddrs({20, 40});
-    auto other = makeListAddrs({10, 30, 50});
+    auto list = makeList({20, 40});
+    auto other = makeList({10, 30, 50});
 
     list.addDescs(std::move(other));
     expectAddrs(list, {10, 20, 30, 40, 50});
 }
 
 TEST_F(secDescListTest, DuplicateDescriptors) {
-    auto list = makeListAddrs({10, 20});
+    auto list = makeList({10, 20});
     list.addDescs({makeDesc(10), makeDesc(20)});
     expectAddrs(list, {10, 10, 20, 20});
 }
@@ -190,13 +190,15 @@ TEST_F(secDescListTest, AddLargeBatches) {
     auto list = makeList();
 
     std::mt19937 rng(42);
-    std::uniform_int_distribution<uintptr_t> dist(1, 1000000);
+    std::uniform_int_distribution<uintptr_t> addr_dist(1, 1000000);
+    std::uniform_int_distribution<uint64_t> dev_dist(0, 8);
+    std::uniform_int_distribution<size_t> len_dist(1, 64);
 
     for (int i = 0; i < num_batches; ++i) {
         std::vector<nixlSectionDesc> batch;
         batch.reserve(batch_size);
         for (int j = 0; j < batch_size; ++j) {
-            batch.push_back(makeDesc(dist(rng)));
+            batch.push_back(makeDesc(addr_dist(rng), dev_dist(rng), len_dist(rng)));
         }
 
         list.addDescs(std::move(batch));
