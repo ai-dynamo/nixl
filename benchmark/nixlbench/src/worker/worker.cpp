@@ -16,6 +16,7 @@
  */
 
 #include "worker.h"
+#include "runtime/asio_runtime.h"
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/utils.h"
 
@@ -68,23 +69,32 @@ public:
     }
 };
 
-static xferBenchRT *createRT(int *terminate) {
+namespace {
+
+[[nodiscard]] int
+determineTotal() {
+    int total = 2;
+    if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
+        total = xferBenchConfig::num_initiator_dev + xferBenchConfig::num_target_dev;
+    }
+    if (xferBenchConfig::isStorageBackend()) {
+        total = 1;
+    }
+    return total;
+}
+
+xferBenchRT *
+createRT(int *terminate) {
     // For storage backends without ETCD endpoints, use null runtime
     if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
         std::cout << "Using null runtime for storage backend without ETCD" << std::endl;
         return new xferBenchNullRT();
     }
 
+    const int total = determineTotal();
+
 #if HAVE_ETCD
     if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
-        int total = 2;
-        if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
-            total = xferBenchConfig::num_initiator_dev +
-                xferBenchConfig::num_target_dev;
-        }
-        if (xferBenchConfig::isStorageBackend()) {
-            total = 1;
-        }
         xferBenchEtcdRT *etcd_rt = new xferBenchEtcdRT(
             xferBenchConfig::benchmark_group, xferBenchConfig::etcd_endpoints, total, terminate);
         if (etcd_rt->setup() != 0) {
@@ -96,16 +106,22 @@ static xferBenchRT *createRT(int *terminate) {
     }
 #endif
 
+    if (xferBenchConfig::runtime_type == XFERBENCH_RT_ASIO) {
+        if (total != 2) {
+            std::cerr << "Invalid total " << total << " for ASIO runtime -- supports only 2"
+                      << std::endl;
+        }
+        return new xferBenchAsioRT(xferBenchConfig::asio_address, xferBenchConfig::asio_port);
+    }
+
     std::cerr << "Invalid runtime: " << xferBenchConfig::runtime_type << std::endl;
     exit(EXIT_FAILURE);
 }
 
-int xferBenchWorker::synchronize() {
-    // For storage backends without ETCD, no synchronization needed
-    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
-        return 0;
-    }
+} // namespace
 
+int
+xferBenchWorker::synchronize() {
     if (rt->barrier("sync") != 0) {
         std::cerr << "Failed to synchronize" << std::endl;
         // assuming this is a fatal error, continue benchmarking after synchronization failure does
@@ -127,8 +143,9 @@ xferBenchWorker::xferBenchWorker() {
 
     int rank = rt->getRank();
 
-    // For storage backends without ETCD, always act as initiator
-    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
+    // For storage backends without ETCD endpoints always act as initiator
+    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty() &&
+        (xferBenchConfig::runtime_type == XFERBENCH_RT_ETCD)) {
         name = "initiator";
     } else if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
         if (rank >= 0 && rank < xferBenchConfig::num_initiator_dev) {

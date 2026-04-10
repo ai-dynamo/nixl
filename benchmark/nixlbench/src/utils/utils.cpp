@@ -41,6 +41,7 @@
 // Define command line parameters
 #define NB_ARG_STRING(param_name, def_val, help_text) DEFINE_string(param_name, def_val, help_text)
 #define NB_ARG_BOOL(param_name, def_val, help_text) DEFINE_bool(param_name, def_val, help_text)
+#define NB_ARG_UINT32(param_name, def_val, help_text) DEFINE_uint32(param_name, def_val, help_text)
 #define NB_ARG_UINT64(param_name, def_val, help_text) DEFINE_uint64(param_name, def_val, help_text)
 #define NB_ARG_INT32(param_name, def_val, help_text) DEFINE_int32(param_name, def_val, help_text)
 
@@ -53,7 +54,9 @@ NB_ARG_STRING(
     benchmark_group,
     "default",
     "Name of benchmark group. Use different names to run multiple benchmarks in parallel");
-NB_ARG_STRING(runtime_type, XFERBENCH_RT_ETCD, "Runtime type to use for communication [ETCD]");
+NB_ARG_STRING(runtime_type,
+              XFERBENCH_RT_ETCD,
+              "Runtime type to use for communication [ETCD, ASIO]");
 NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
@@ -119,6 +122,29 @@ NB_ARG_STRING(device_list,
 NB_ARG_STRING(etcd_endpoints,
               "",
               "ETCD server endpoints for communication (optional for storage backends)");
+
+NB_ARG_STRING(asio_address,
+              "127.0.0.1",
+              "Address for direct socket communication for 2 instances with ASIO runtime");
+
+// Should be UINT16 but that's not available
+NB_ARG_UINT32(asio_port,
+              12345,
+              "Port for direct socket communication for 2 instances with ASIO runtime");
+
+namespace {
+bool
+validateAsioPort(const char *flagname, std::uint32_t value) {
+    if (value <= 65535) {
+        return true;
+    }
+    std::cerr << "Invalid value for --" << flagname << ": " << value << " (must be <= 65535)"
+              << std::endl;
+    return false;
+}
+} // namespace
+
+DEFINE_validator(asio_port, &validateAsioPort);
 
 // POSIX options - only used when backend is POSIX
 NB_ARG_STRING(
@@ -228,6 +254,8 @@ size_t xferBenchConfig::progress_threads = 0;
 bool xferBenchConfig::enable_vmm = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
+std::string xferBenchConfig::asio_address = "127.0.0.1";
+std::uint16_t xferBenchConfig::asio_port = 12345;
 std::string xferBenchConfig::benchmark_group = "default";
 int xferBenchConfig::gds_batch_pool_size = 0;
 int xferBenchConfig::gds_batch_limit = 0;
@@ -446,6 +474,8 @@ xferBenchConfig::loadParams(void) {
     warmup_iter = NB_ARG(warmup_iter);
     num_threads = NB_ARG(num_threads);
     etcd_endpoints = NB_ARG(etcd_endpoints);
+    asio_address = NB_ARG(asio_address);
+    asio_port = NB_ARG(asio_port);
     filepath = NB_ARG(filepath);
     filenames = NB_ARG(filenames);
     num_files = NB_ARG(num_files);
@@ -458,12 +488,19 @@ xferBenchConfig::loadParams(void) {
         recreate_xfer = true;
     }
 
-    // Validate ETCD configuration
-    if (!isStorageBackend() && etcd_endpoints.empty()) {
-        // For non-storage backends, set default ETCD endpoint
-        etcd_endpoints = "http://localhost:2379";
-        std::cout << "Using default ETCD endpoint for non-storage backend: " << etcd_endpoints
-                  << std::endl;
+    // Validate runtime configuration
+    if (!isStorageBackend()) {
+        if (runtime_type == XFERBENCH_RT_ETCD) {
+            if (etcd_endpoints.empty()) {
+                // For non-storage backends, set default ETCD endpoint
+                etcd_endpoints = "http://localhost:2379";
+                std::cout << "Using default ETCD endpoint for non-storage backend: "
+                          << etcd_endpoints << std::endl;
+            }
+        } else if (runtime_type == XFERBENCH_RT_ASIO) {
+            std::cout << "Using address " << asio_address << " port " << asio_port
+                      << " for ASIO runtime" << std::endl;
+        }
     }
 
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
@@ -560,13 +597,16 @@ xferBenchConfig::printConfig() {
     printSeparator('*');
     std::cout << "NIXLBench Configuration" << std::endl;
     printSeparator('*');
-    printOption("Runtime (--runtime_type=[etcd])", runtime_type);
+    printOption("Runtime (--runtime_type=[ETCD,ASIO])", runtime_type);
     if (runtime_type == XFERBENCH_RT_ETCD) {
         if (etcd_endpoints.empty()) {
             printOption("ETCD Endpoint ", "disabled (storage backend)");
         } else {
             printOption("ETCD Endpoint ", etcd_endpoints);
         }
+    } else if (runtime_type == XFERBENCH_RT_ASIO) {
+        printOption("ASIO Address (--asio_address) ", asio_address);
+        printOption("ASIO Port (--asio_port) ", std::to_string(asio_port));
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
