@@ -195,6 +195,7 @@ public:
      * @param dest_addrs Destination addresses for each rail
      * @param agent_idx Remote agent index for immediate data
      * @param xfer_id Transfer ID for tracking
+     * @param device_id Device index for tracing
      * @param completion_callback Callback for completion notification
      * @param submitted_count_out Number of requests successfully submitted
      * @return NIXL_SUCCESS on success, error code on failure

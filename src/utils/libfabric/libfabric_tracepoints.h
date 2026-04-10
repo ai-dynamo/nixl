@@ -160,6 +160,7 @@ LTTNG_UST_TRACEPOINT_EVENT(
                                 lttng_ust_field_integer(uint16_t, xfer_id, xfer_id)
                                     lttng_ust_field_integer(size_t, length, length)))
 
+/* Recv completion: notification/control message received on target side */
 LTTNG_UST_TRACEPOINT_EVENT(
     nixl_libfabric,
     recv_completion,
@@ -186,7 +187,6 @@ LTTNG_UST_TRACEPOINT_EVENT(
 
 #define NIXL_TP_OP_WRITE 0
 #define NIXL_TP_OP_READ 1
-#define NIXL_TP_OP_SEND 2
 
 #define NIXL_TRACE_TRANSFER_BEGIN(dev, op, sz, nr, stripe, xid) \
     lttng_ust_tracepoint(nixl_libfabric, transfer_begin, dev, op, sz, nr, stripe, xid)

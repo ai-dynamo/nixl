@@ -869,15 +869,15 @@ nixlLibfabricRail::processLocalTransferCompletion(struct fi_cq_data_entry *comp,
     // Find the request from context to access the completion callback
     nixlLibfabricReq *req = findRequestFromContext(comp->op_context);
     if (req && req->in_use) { // Only process if request is still valid and in use
+        NIXL_TRACE_LOCAL_TRANSFER_COMPLETION(
+            req->device_id,
+            rail_id,
+            req->operation_type == nixlLibfabricReq::WRITE ? NIXL_TP_OP_WRITE : NIXL_TP_OP_READ,
+            req->xfer_id);
         // Call completion callback if it exists
         if (req->completion_callback) {
             NIXL_TRACE << "Calling completion callback for " << operation_type << " request "
                        << req->xfer_id;
-            NIXL_TRACE_LOCAL_TRANSFER_COMPLETION(
-                req->device_id,
-                rail_id,
-                req->operation_type == nixlLibfabricReq::WRITE ? NIXL_TP_OP_WRITE : NIXL_TP_OP_READ,
-                req->xfer_id);
             req->completion_callback();
             NIXL_TRACE << "Completion callback completed for " << operation_type;
         }
@@ -906,7 +906,7 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
     // Decode the immediate data format
     uint64_t msg_type = NIXL_GET_MSG_TYPE_FROM_IMM(comp->data);
     uint16_t agent_idx = NIXL_GET_AGENT_INDEX_FROM_IMM(comp->data);
-    uint32_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(comp->data);
+    uint16_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(comp->data);
     NIXL_TRACE_RECV_COMPLETION(rail_id, agent_idx, xfer_id, comp->len);
     NIXL_TRACE << "Received control message type " << msg_type << " agent_idx=" << agent_idx
                << " XFER_ID=" << xfer_id << " imm_data=" << std::hex << comp->data << std::dec;
@@ -961,7 +961,7 @@ nixlLibfabricRail::processRemoteWriteCompletion(struct fi_cq_data_entry *comp) c
     // Decode the immediate data format
     uint64_t msg_type = NIXL_GET_MSG_TYPE_FROM_IMM(comp->data);
     uint16_t agent_idx = NIXL_GET_AGENT_INDEX_FROM_IMM(comp->data);
-    uint32_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(comp->data);
+    uint16_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(comp->data);
     NIXL_TRACE_REMOTE_WRITE_COMPLETION(rail_id, agent_idx, xfer_id, comp->len);
 
     // For remote write completions, we don't need to post a new receive
