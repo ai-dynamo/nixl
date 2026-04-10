@@ -87,7 +87,7 @@ public:
     // Shadow the parent's non-const operator[] to return a const ref,
     // this prevents mutation of descriptor fields after insertion
     const nixlSectionDesc &
-    operator[](size_t index) noexcept {
+    operator[](size_t index) {
         return descs[index];
     }
 

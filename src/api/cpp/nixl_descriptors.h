@@ -329,12 +329,12 @@ public:
     }
 
     const T &
-    operator[](size_t index) const noexcept {
+    operator[](size_t index) const {
         return descs[index];
     }
 
     T &
-    operator[](size_t index) noexcept {
+    operator[](size_t index) {
         return descs[index];
     }
 
