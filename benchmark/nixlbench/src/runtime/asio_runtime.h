@@ -218,7 +218,8 @@ private:
     void
     postSend(const asio_msg_type_t type, const void *data, const std::size_t size) {
         if (size > 0x00ffffff) {
-            throw std::runtime_error("Runtime message size " + std::to_string(size) + " exceeds 16MB-1 limit");
+            throw std::runtime_error("Runtime message size " + std::to_string(size) +
+                                     " exceeds 16MB-1 limit");
         }
 
         const std::uint32_t head = size | (std::uint32_t(type) << 24);
@@ -305,17 +306,17 @@ private:
         // the list is expected to be very small and not checked frequently.
 
         if (!cond_.wait_for(lock, std::chrono::seconds(15), [&]() {
-            if (exception_) {
-                return true;
-            }
-            for (auto it = incoming_.begin(); it != incoming_.end(); ++it) {
-                if ((it->type == type) && f(it->data)) {
-                    incoming_.erase(it);
+                if (exception_) {
                     return true;
                 }
-            }
-            return false;
-        })) {
+                for (auto it = incoming_.begin(); it != incoming_.end(); ++it) {
+                    if ((it->type == type) && f(it->data)) {
+                        incoming_.erase(it);
+                        return true;
+                    }
+                }
+                return false;
+            })) {
             throw std::runtime_error("ASIO Receive timeout");
         }
 

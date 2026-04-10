@@ -133,12 +133,13 @@ NB_ARG_UINT32(asio_port,
               "Port for direct socket communication for 2 instances with ASIO runtime");
 
 namespace {
-bool validateAsioPort(const char *flagname, std::uint32_t value) {
+bool
+validateAsioPort(const char *flagname, std::uint32_t value) {
     if (value <= 65535) {
         return true;
     }
-    std::cerr << "Invalid value for --" << flagname << ": " << value
-              << " (must be <= 65535)" << std::endl;
+    std::cerr << "Invalid value for --" << flagname << ": " << value << " (must be <= 65535)"
+              << std::endl;
     return false;
 }
 } // namespace
