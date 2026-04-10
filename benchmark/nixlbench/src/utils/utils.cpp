@@ -1115,7 +1115,8 @@ xferBenchUtils::printStats(bool is_target,
 
     total_data_transferred = ((block_size * batch_size) * num_iter); // In Bytes
     avg_latency = (total_duration / (num_iter * batch_size)); // In microsec
-    if (IS_PAIRWISE_AND_MG() || (IS_PAIRWISE_AND_SG() && xferBenchConfig::num_initiator_dev > 1)) {
+    if (IS_PAIRWISE_AND_MG() ||
+        (IS_PAIRWISE_AND_SG() && xferBenchConfig::num_initiator_dev > 1 && rt->getSize() == 1)) {
         total_data_transferred *= xferBenchConfig::num_initiator_dev; // In Bytes
         avg_latency /= xferBenchConfig::num_initiator_dev; // In microsec
     }
