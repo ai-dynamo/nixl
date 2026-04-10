@@ -186,14 +186,24 @@ nixl_status_t
 nixlUcclEngine::getPublicData(const nixlBackendMD *meta, std::string &str) const {
     nixlUcclBackendMD *priv = (nixlUcclBackendMD *)meta;
 
-    // Export fifo_item as hex string.
-    // The fifo_item is used to perform one-sided operation
+    // Export fifo_item as hex string (FIFO_SIZE * 2 hex chars).
     str.clear();
-    str.reserve(FIFO_SIZE * 2);
+    str.reserve(FIFO_SIZE * 2 + 2 + IPC_INFO_SIZE * 2);
     for (int i = 0; i < FIFO_SIZE; i++) {
         char hex[3];
         snprintf(hex, sizeof(hex), "%02x", static_cast<unsigned char>(priv->fifo_item[i]));
         str += hex;
+    }
+
+    // Append IPC info: "01" + hex(ipc_info) if has_ipc, else "00".
+    // This enables cross-process local (IPC) transfers.
+    str += (priv->has_ipc ? "01" : "00");
+    if (priv->has_ipc) {
+        for (int i = 0; i < IPC_INFO_SIZE; i++) {
+            char hex[3];
+            snprintf(hex, sizeof(hex), "%02x", static_cast<unsigned char>(priv->ipc_info[i]));
+            str += hex;
+        }
     }
 
     return NIXL_SUCCESS;
@@ -238,7 +248,7 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
     NIXL_DEBUG << "Connecting to " << ip_addr.get() << ":" << port << "?gpu=" << gpu_index
                << std::endl;
-    conn = uccl_engine_connect(engine_, ip_addr.get(), gpu_index, port);
+    conn = uccl_engine_connect(engine_, ip_addr.get(), gpu_index, port, false);
     if (!conn) {
         NIXL_ERROR << "Failed to connect to remote agent " << remote_agent;
         return NIXL_ERR_BACKEND;
@@ -255,7 +265,61 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
 nixl_status_t
 nixlUcclEngine::connect(const std::string &remote_agent) {
-    // Unused
+    // We cannot establish the local (IPC) connection now because the UCCL engine
+    // is lazily initialized on first register_memory (which sets local_gpu_idx and
+    // creates the shm inbox rings).  Record the agent name; the actual connection
+    // is established after memory registration
+    std::lock_guard<std::mutex> lock(conn_mutex_);
+    pending_local_agent_ = remote_agent;
+    NIXL_DEBUG << "Deferred local connect for agent " << remote_agent;
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcclEngine::prepareLocalConn() const {
+    // Must be called after register_memory so the UCCL engine is initialized.
+    std::string agent_name;
+    {
+        std::lock_guard<std::mutex> lock(conn_mutex_);
+        if (pending_local_agent_.empty()) {
+            return NIXL_SUCCESS;
+        }
+        if (connected_agents_.count(pending_local_agent_)) {
+            pending_local_agent_.clear();
+            return NIXL_SUCCESS;
+        }
+        agent_name = pending_local_agent_;
+    }
+
+    std::string conn_info;
+    if (getConnInfo(conn_info) != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to get own conn info for local connect";
+        return NIXL_ERR_BACKEND;
+    }
+
+    std::unique_ptr<char[]> ip_addr;
+    int port = 0;
+    int gpu_index = 0;
+    if (!parseConnectionString(conn_info, ip_addr, port, gpu_index)) {
+        return NIXL_ERR_BACKEND;
+    }
+
+    uccl_conn_t *conn = uccl_engine_connect(engine_,
+                                            ip_addr.get(),
+                                            gpu_index,
+                                            port,
+                                            /*same_process=*/true);
+    if (!conn) {
+        NIXL_ERROR << "Failed to establish local connection for agent " << agent_name;
+        return NIXL_ERR_BACKEND;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(conn_mutex_);
+        NIXL_DEBUG << "Same-process local connection established for agent " << agent_name;
+        connected_agents_[agent_name] = reinterpret_cast<uint64_t>(conn);
+        pending_local_agent_.clear();
+    }
     return NIXL_SUCCESS;
 }
 
@@ -320,10 +384,21 @@ nixlUcclEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_ERR_BACKEND;
     }
 
+    // Retrieve pre-computed IPC info for GPU buffers (used by cross-process local transfers)
+    bool has_ipc = false;
+    uccl_engine_get_ipc_info(engine_, mem.addr, priv->ipc_info, &has_ipc);
+    priv->has_ipc = has_ipc;
+
     out = priv;
     mem_reg_info_[mem.addr] = priv;
     NIXL_DEBUG << "Registering memory: " << std::hex << mem.addr << " Device: " << mem.devId
                << " ref_cnt: " << priv->ref_cnt << " mr_id: " << priv->mr_id;
+
+    // Prepare the deferred local connection if there are pending agents.
+    nixl_status_t conn_status = prepareLocalConn();
+    if (conn_status != NIXL_SUCCESS) {
+        NIXL_WARN << "Deferred local connection failed";
+    }
 
     return NIXL_SUCCESS;
 }
@@ -350,11 +425,15 @@ nixlUcclEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
     NIXL_DEBUG << "UCCL Load Local MD: " << std::hex << input_md->addr
                << "Meta Info:" << input_md->mr_id;
 
-    nixlUcclBackendMD *output_md = (nixlUcclBackendMD *)output;
-    output_md->addr = (void *)input_md->addr;
+    output = new nixlUcclBackendMD(true);
+    nixlUcclBackendMD *output_md = static_cast<nixlUcclBackendMD *>(output);
+    output_md->addr = input_md->addr;
     output_md->length = input_md->length;
     output_md->ref_cnt = 1;
-    output_md->mr_id = reinterpret_cast<uint64_t>(input_md->mr_id);
+    output_md->mr_id = input_md->mr_id;
+    memcpy(output_md->fifo_item, input_md->fifo_item, FIFO_SIZE);
+    memcpy(output_md->ipc_info, input_md->ipc_info, IPC_INFO_SIZE);
+    output_md->has_ipc = input_md->has_ipc;
 
     return NIXL_SUCCESS;
 }
@@ -373,20 +452,48 @@ nixlUcclEngine::loadRemoteMD(const nixlBlobDesc &input,
     output_md->length = input.len;
     output_md->ref_cnt = 1;
 
-    // Decode fifo_item from hex string
+    // Decode fifo_item and optional IPC info from hex string.
     const std::string &hex_str = input.metaInfo;
+    size_t min_len = FIFO_SIZE * 2; // 128 chars for fifo_item
 
-    if (hex_str.length() == FIFO_SIZE * 2) {
-        for (int i = 0; i < FIFO_SIZE; i++) {
-            std::string byte_str = hex_str.substr(i * 2, 2);
-            output_md->fifo_item[i] = static_cast<char>(strtoul(byte_str.c_str(), NULL, 16));
-        }
-    } else {
-        NIXL_ERROR << "Invalid fifo_item hex string length: " << hex_str.length() << " (expected "
-                   << FIFO_SIZE * 2 << ")";
+    if (hex_str.length() < min_len) {
+        NIXL_ERROR << "Invalid metaInfo hex string length: " << hex_str.length()
+                   << " (expected at least " << min_len << ")";
         delete output_md;
         output = nullptr;
         return NIXL_ERR_INVALID_PARAM;
+    }
+
+    // Decode fifo_item (first FIFO_SIZE*2 hex chars)
+    for (int i = 0; i < FIFO_SIZE; i++) {
+        std::string byte_str = hex_str.substr(i * 2, 2);
+        output_md->fifo_item[i] = static_cast<char>(strtoul(byte_str.c_str(), NULL, 16));
+    }
+
+    // Decode IPC info (appended after fifo_item)
+    size_t pos = min_len;
+    if (hex_str.length() >= pos + 2) {
+        std::string ipc_flag = hex_str.substr(pos, 2);
+        pos += 2;
+        if (ipc_flag == "01") {
+            if (hex_str.length() < pos + IPC_INFO_SIZE * 2) {
+                NIXL_ERROR << "IPC flag set but payload truncated: got " << (hex_str.length() - pos)
+                           << " hex chars, expected " << (IPC_INFO_SIZE * 2);
+                delete output_md;
+                output = nullptr;
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            for (int i = 0; i < IPC_INFO_SIZE; i++) {
+                std::string byte_str = hex_str.substr(pos + i * 2, 2);
+                output_md->ipc_info[i] = static_cast<char>(strtoul(byte_str.c_str(), NULL, 16));
+            }
+            output_md->has_ipc = true;
+        } else if (ipc_flag != "00") {
+            NIXL_ERROR << "Unknown IPC flag in metaInfo: " << ipc_flag;
+            delete output_md;
+            output = nullptr;
+            return NIXL_ERR_INVALID_PARAM;
+        }
     }
 
     return NIXL_SUCCESS;
@@ -442,6 +549,14 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     uccl_handle->fifo_items.resize(lcnt);
 
+    // Check if this is a local connection (same-process or cross-process on same node)
+    bool is_local_conn = uccl_engine_conn_is_local(conn);
+    bool is_same_process = (remote_agent == local_agent_name_);
+
+    if (is_local_conn) {
+        uccl_handle->ipc_infos.resize(lcnt);
+    }
+
     std::lock_guard<std::mutex> lock(mem_mutex_);
     for (size_t i = 0; i < lcnt; i++) {
         lmd = (nixlUcclBackendMD *)local[i].metadataP;
@@ -460,6 +575,22 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
         deserialize_fifo_item(rmd->fifo_item, &uccl_handle->fifo_items[i]);
 
         uccl_engine_update_fifo(uccl_handle->fifo_items[i], remote_addr, rsize);
+
+        // For local connections: prepare IPC info from remote MD
+        // - has_ipc (GPU memory): works for both same-process and cross-process
+        // - !has_ipc (DRAM): only works for same-process (direct_addr)
+        //   Cross-process DRAM falls back to RDMA
+        if (is_local_conn) {
+            if (rmd->has_ipc) {
+                uccl_handle->ipc_infos[i].assign(rmd->ipc_info, rmd->ipc_info + IPC_INFO_SIZE);
+                uccl_engine_update_ipc_info(
+                    uccl_handle->ipc_infos[i].data(), remote_addr, (uintptr_t)rmd->addr, rsize);
+                uccl_handle->use_ipc = true;
+            } else if (is_same_process) {
+                uccl_handle->ipc_infos[i].assign(IPC_INFO_SIZE, 0);
+                uccl_handle->use_ipc = true;
+            }
+        }
     }
 
     return NIXL_SUCCESS;
@@ -538,15 +669,25 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     uint64_t transfer_id = 0;
     uccl_handle = static_cast<nixlUcclReqH *>(handle);
 
+    // Build optional IPC info pointers for cross-process local transfers
+    std::vector<char *> ipc_ptrs;
+    if (uccl_handle->use_ipc) {
+        ipc_ptrs.resize(lcnt);
+        for (size_t i = 0; i < lcnt; i++) {
+            ipc_ptrs[i] = uccl_handle->ipc_infos[i].data();
+        }
+        NIXL_DEBUG << "Using IPC for transfer";
+    }
+
     switch (operation) {
     case NIXL_READ: {
         result = uccl_engine_read_vector(
-            conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
+            conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id, ipc_ptrs);
         break;
     }
     case NIXL_WRITE: {
         result = uccl_engine_write_vector(
-            conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
+            conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id, ipc_ptrs);
         break;
     }
     default:
