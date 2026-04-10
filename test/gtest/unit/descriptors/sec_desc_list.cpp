@@ -183,9 +183,8 @@ TEST_F(secDescListTest, MultipleDevIds) {
         list, {{10, 0}, {50, 0}, {10, 1}, {50, 1}, {75, 1}, {100, 1}, {200, 1}, {10, 2}, {20, 2}});
 }
 
-TEST_F(secDescListTest, AddLargeBatches) {
-    constexpr int num_batches = 16;
-    constexpr int batch_size = 128;
+TEST_F(secDescListTest, AddRandomBatches) {
+    constexpr size_t total_elements = 4096;
 
     auto list = makeList();
 
@@ -193,17 +192,23 @@ TEST_F(secDescListTest, AddLargeBatches) {
     std::uniform_int_distribution<uintptr_t> addr_dist(1, 1000000);
     std::uniform_int_distribution<uint64_t> dev_dist(0, 8);
     std::uniform_int_distribution<size_t> len_dist(1, 64);
+    std::uniform_int_distribution<size_t> batch_dist(1, 256);
 
-    for (int i = 0; i < num_batches; ++i) {
+    size_t num_added = 0;
+    while (num_added < total_elements) {
+        size_t batch_size = std::min(batch_dist(rng), total_elements - num_added);
+
         std::vector<nixlSectionDesc> batch;
         batch.reserve(batch_size);
-        for (int j = 0; j < batch_size; ++j) {
+        for (size_t j = 0; j < batch_size; ++j) {
             batch.push_back(makeDesc(addr_dist(rng), dev_dist(rng), len_dist(rng)));
         }
 
         list.addDescs(std::move(batch));
+
+        num_added += batch_size;
+        ASSERT_EQ(list.descCount(), num_added);
         assertSorted(list);
-        ASSERT_EQ(list.descCount(), (i + 1) * batch_size);
     }
 }
 
