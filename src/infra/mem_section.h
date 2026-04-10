@@ -84,9 +84,10 @@ public:
     void
     addDescs(nixlSecDescList &&other);
 
-    // Returns const ref to prevent mutation of descriptor fields after insertion
+    // Shadow the parent's non-const operator[] to return a const ref,
+    // this prevents mutation of descriptor fields after insertion
     const nixlSectionDesc &
-    operator[](size_t index) {
+    operator[](size_t index) noexcept {
         return descs[index];
     }
 
