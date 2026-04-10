@@ -82,6 +82,8 @@ NB_ARG_INT32(num_iter, 1000, "Max iterations");
 NB_ARG_BOOL(recreate_xfer,
             false,
             "Recreate xfer each iteration (default: false for all backends, true for GUSLI)");
+NB_ARG_BOOL(reregister_mem, false, "Register and deregister memory on every iteration");
+NB_ARG_INT32(batch_queue_depth, 1, "Number of transfer requests in flight simultaneously");
 NB_ARG_INT32(large_blk_iter_ftr,
              16,
              "factor to reduce test iteration when testing large block size(>1MB)");
@@ -96,6 +98,7 @@ NB_ARG_INT32(num_target_dev, 1, "Number of device in target process");
 NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 NB_ARG_UINT64(progress_threads, 0, "Number of progress threads");
 NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
+NB_ARG_BOOL(use_hugepages, false, "Allocate data buffers using hugepages (2MB pages)");
 
 // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
 NB_ARG_STRING(filepath, "", "File path for storage operations");
@@ -226,6 +229,7 @@ int xferBenchConfig::num_threads = 0;
 bool xferBenchConfig::enable_pt = false;
 size_t xferBenchConfig::progress_threads = 0;
 bool xferBenchConfig::enable_vmm = false;
+bool xferBenchConfig::use_hugepages = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::benchmark_group = "default";
@@ -242,6 +246,8 @@ int xferBenchConfig::posix_kernel_queue_size = 0;
 std::string xferBenchConfig::filepath = "";
 std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
+bool xferBenchConfig::reregister_mem = false;
+int xferBenchConfig::batch_queue_depth = 1;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
 std::string xferBenchConfig::obj_secret_key = "";
@@ -452,6 +458,15 @@ xferBenchConfig::loadParams(void) {
     posix_api_type = NB_ARG(posix_api_type);
     storage_enable_direct = NB_ARG(storage_enable_direct);
     recreate_xfer = NB_ARG(recreate_xfer);
+    reregister_mem = NB_ARG(reregister_mem);
+    batch_queue_depth = NB_ARG(batch_queue_depth);
+    use_hugepages = NB_ARG(use_hugepages);
+    if (use_hugepages && (total_buffer_size % HUGEPAGE_SIZE) != 0) {
+        size_t aligned = ((total_buffer_size + HUGEPAGE_SIZE - 1) / HUGEPAGE_SIZE) * HUGEPAGE_SIZE;
+        std::cout << "Rounding total_buffer_size from " << total_buffer_size << " to " << aligned
+                  << " for 2MB hugepage alignment." << std::endl;
+        total_buffer_size = aligned;
+    }
     if (!recreate_xfer && XFERBENCH_BACKEND_GUSLI == backend) {
         std::cout << "GUSLI backend requires per-iteration request creation due to library bug."
                   << " Setting recreate_xfer to true." << std::endl;

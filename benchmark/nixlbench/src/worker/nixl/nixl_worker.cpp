@@ -33,11 +33,17 @@
 #include <utility>
 #include <sys/time.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <utils/serdes/serdes.h>
 #include <omp.h>
 
 #define ROUND_UP(value, granularity) \
     ((((value) + (granularity) - 1) / (granularity)) * (granularity))
+
+// MAP_HUGE_2MB may not be defined on all systems, define it if needed
+#ifndef MAP_HUGE_2MB
+#define MAP_HUGE_2MB (21 << 26) // 2MB hugepage size encoding
+#endif
 
 #define CHECK_NIXL_ERROR(result, message)                                                       \
     do {                                                                                        \
@@ -357,6 +363,25 @@ iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list, nixl_xfer_dlis
     }
 }
 
+// Helper function to free memory allocated with allocateXferMemory
+static void
+freeXferMemory(void *addr, size_t size) {
+    if (!addr) {
+        return;
+    }
+
+    if (xferBenchConfig::use_hugepages) {
+        // Round up to hugepage size for munmap
+        size_t hugepage_aligned_size = ((size + HUGEPAGE_SIZE - 1) / HUGEPAGE_SIZE) * HUGEPAGE_SIZE;
+        if (munmap(addr, hugepage_aligned_size) != 0) {
+            std::cerr << "Warning: Failed to unmap hugepage memory: " << strerror(errno)
+                      << std::endl;
+        }
+    } else {
+        free(addr);
+    }
+}
+
 static bool
 allocateXferMemory(size_t buffer_size, void **addr) {
     if (!addr) {
@@ -372,6 +397,53 @@ allocateXferMemory(size_t buffer_size, void **addr) {
         return false;
     }
 
+    // Try hugepage allocation if enabled
+    if (xferBenchConfig::use_hugepages) {
+        // Round up buffer size to hugepage size
+        size_t hugepage_aligned_size =
+            ((buffer_size + HUGEPAGE_SIZE - 1) / HUGEPAGE_SIZE) * HUGEPAGE_SIZE;
+
+        void *hugepage_addr = mmap(nullptr,
+                                   hugepage_aligned_size,
+                                   PROT_READ | PROT_WRITE,
+                                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_HUGE_2MB,
+                                   -1,
+                                   0);
+
+        if (hugepage_addr != MAP_FAILED) {
+            // Verify alignment: mmap with MAP_HUGETLB should return 2MB-aligned addresses
+            const uintptr_t addr_val = reinterpret_cast<uintptr_t>(hugepage_addr);
+            if (addr_val % HUGEPAGE_SIZE != 0) {
+                std::cerr << "Warning: Hugepage address is not 2MB-aligned: 0x" << std::hex
+                          << addr_val << std::dec << " (offset: " << (addr_val % HUGEPAGE_SIZE)
+                          << ")" << std::endl;
+            }
+
+            *addr = hugepage_addr;
+            // Initialize the entire allocated region, not just buffer_size
+            // This ensures the full hugepage is valid for DMA operations
+            memset(*addr, 0, hugepage_aligned_size);
+
+            // Log alignment info for debugging
+            std::cout << "Allocated hugepage buffer: addr=0x" << std::hex << addr_val << std::dec
+                      << ", requested_size=" << buffer_size
+                      << ", allocated_size=" << hugepage_aligned_size
+                      << ", 2MB-aligned=" << (addr_val % HUGEPAGE_SIZE == 0 ? "yes" : "no")
+                      << std::endl;
+
+            return true;
+        }
+
+        // Hugepage allocation failed - fail if user explicitly requested hugepages
+        std::cerr << "Error: Hugepage allocation failed (" << strerror(errno) << ")" << std::endl;
+        std::cerr << "Hugepages may not be available. Check /proc/sys/vm/nr_hugepages and ensure"
+                  << std::endl;
+        std::cerr << "sufficient hugepages are configured, or run without --use_hugepages"
+                  << std::endl;
+        return false;
+    }
+
+    // Regular page-aligned allocation
     int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
     if (rc != 0 || !*addr) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of page-aligned DRAM memory"
@@ -619,20 +691,22 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
     size_t offset = start_offset;
     char *write_ptr = static_cast<char *>(buf);
-    while (buffer_size > 0) {
-        ssize_t rc = pwrite(fd, write_ptr, buffer_size, offset);
+    size_t remaining = buffer_size;
+    while (remaining > 0) {
+        ssize_t rc = pwrite(fd, write_ptr, remaining, offset);
         if (rc < 0) {
             std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
                       << std::endl;
+            freeXferMemory(buf, buffer_size);
             return std::nullopt;
         }
 
-        buffer_size -= rc;
+        remaining -= rc;
         offset += rc;
         write_ptr += rc;
     }
 
-    free(buf);
+    freeXferMemory(buf, buffer_size);
 
     if (end_offset > fstate.file_size) fstate.file_size = end_offset;
 
@@ -646,7 +720,7 @@ xferBenchNixlWorker::initBasicDescObj(size_t buffer_size, int mem_dev_id, std::s
 
 void
 xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
-    free((void *)iov.addr);
+    freeXferMemory((void *)iov.addr, iov.len);
 }
 
 #if HAVE_CUDA
@@ -1231,6 +1305,50 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
     iovListToNixlXferDlist(remote_iov, remote_desc);
 }
 
+// Register local and remote memory with the agent.
+static nixl_status_t
+registerIterationMem(nixlAgent *agent,
+                     const std::vector<xferBenchIOV> &local_iov,
+                     const std::vector<xferBenchIOV> &remote_iov,
+                     nixlBackendH *backend_engine) {
+    nixl_opt_args_t reg_args;
+    reg_args.backends.push_back(backend_engine);
+
+    nixl_reg_dlist_t local_reg(GET_SEG_TYPE(true));
+    iovListToNixlRegDlist(local_iov, local_reg);
+    nixl_status_t rc = agent->registerMem(local_reg, &reg_args);
+    if (rc != NIXL_SUCCESS) return rc;
+
+    nixl_reg_dlist_t remote_reg(GET_SEG_TYPE(false));
+    iovListToNixlRegDlist(remote_iov, remote_reg);
+    rc = agent->registerMem(remote_reg, &reg_args);
+    if (rc != NIXL_SUCCESS) return rc;
+
+    return NIXL_SUCCESS;
+}
+
+// Deregister local and remote memory from the agent.
+static nixl_status_t
+deregisterIterationMem(nixlAgent *agent,
+                       const std::vector<xferBenchIOV> &local_iov,
+                       const std::vector<xferBenchIOV> &remote_iov,
+                       nixlBackendH *backend_engine) {
+    nixl_opt_args_t reg_args;
+    reg_args.backends.push_back(backend_engine);
+
+    nixl_reg_dlist_t local_reg(GET_SEG_TYPE(true));
+    iovListToNixlRegDlist(local_iov, local_reg);
+    nixl_status_t rc = agent->deregisterMem(local_reg, &reg_args);
+    if (rc != NIXL_SUCCESS) return rc;
+
+    nixl_reg_dlist_t remote_reg(GET_SEG_TYPE(false));
+    iovListToNixlRegDlist(remote_iov, remote_reg);
+    rc = agent->deregisterMem(remote_reg, &reg_args);
+    if (rc != NIXL_SUCCESS) return rc;
+
+    return NIXL_SUCCESS;
+}
+
 // Execute transfers with configurable request lifecycle behavior
 // recreate_per_iteration: true for GUSLI (bug workaround), false for standard backends
 static int
@@ -1243,9 +1361,13 @@ execTransferIterations(nixlAgent *agent,
                        const int num_iter,
                        xferBenchTimer &timer,
                        xferBenchStats &thread_stats,
-                       const bool recreate_per_iteration) {
+                       const bool recreate_per_iteration,
+                       const std::vector<xferBenchIOV> &local_iov,
+                       const std::vector<xferBenchIOV> &remote_iov,
+                       nixlBackendH *backend_engine) {
     nixlXferReqH *req = nullptr;
     nixlTime::us_t total_prepare_duration = 0;
+    const bool reregister = xferBenchConfig::reregister_mem;
 
     // Create request once if not recreating per iteration
     if (!recreate_per_iteration) {
@@ -1262,8 +1384,16 @@ execTransferIterations(nixlAgent *agent,
     // Execute transfer iterations
     // Branch prediction hint: most backends don't recreate per iteration
     if (__builtin_expect(recreate_per_iteration, 0)) {
-        // GUSLI path: Create/execute/release per iteration
         for (int i = 0; i < num_iter; ++i) {
+            if (reregister) {
+                nixl_status_t reg_rc =
+                    registerIterationMem(agent, local_iov, remote_iov, backend_engine);
+                if (__builtin_expect(reg_rc != NIXL_SUCCESS, 0)) {
+                    std::cerr << "registerMem failed during iteration" << std::endl;
+                    return -1;
+                }
+            }
+
             nixl_status_t create_rc =
                 agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
             if (__builtin_expect(create_rc != NIXL_SUCCESS, 0)) {
@@ -1286,6 +1416,15 @@ execTransferIterations(nixlAgent *agent,
             if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL releaseXferReq failed" << std::endl;
                 return -1;
+            }
+
+            if (reregister) {
+                nixl_status_t dereg_rc =
+                    deregisterIterationMem(agent, local_iov, remote_iov, backend_engine);
+                if (__builtin_expect(dereg_rc != NIXL_SUCCESS, 0)) {
+                    std::cerr << "deregisterMem failed during iteration" << std::endl;
+                    return -1;
+                }
             }
         }
         // Average prepare duration across iterations
@@ -1315,7 +1454,184 @@ execTransferIterations(nixlAgent *agent,
 }
 
 static int
+execTransferPipelined(nixlAgent *agent,
+                      nixlBackendH *backend_engine,
+                      const nixl_xfer_op_t op,
+                      const std::string &target,
+                      nixl_opt_args_t &params,
+                      const int num_iter,
+                      xferBenchTimer &timer,
+                      xferBenchStats &thread_stats,
+                      const std::vector<xferBenchIOV> &local_iov,
+                      const std::vector<xferBenchIOV> &remote_iov) {
+    const int depth = std::min(xferBenchConfig::batch_queue_depth, num_iter);
+    const bool recreate = xferBenchConfig::recreate_xfer || xferBenchConfig::reregister_mem ||
+        (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
+    const bool reregister = xferBenchConfig::reregister_mem;
+
+    if (local_iov.size() % depth != 0) {
+        std::cerr << "Error: descriptor count (" << local_iov.size()
+                  << ") is not evenly divisible by pipeline depth (" << depth << ")" << std::endl;
+        return -1;
+    }
+    const size_t entries_per_slot = local_iov.size() / depth;
+
+    struct slot_state {
+        std::vector<xferBenchIOV> local_iov;
+        std::vector<xferBenchIOV> remote_iov;
+        nixlXferReqH *req = nullptr;
+        bool in_flight = false;
+    };
+
+    std::vector<slot_state> slots(depth);
+
+    for (int s = 0; s < depth; s++) {
+        auto lb = local_iov.begin() + s * entries_per_slot;
+        auto rb = remote_iov.begin() + s * entries_per_slot;
+        slots[s].local_iov.assign(lb, lb + entries_per_slot);
+        slots[s].remote_iov.assign(rb, rb + entries_per_slot);
+    }
+
+    int issued = 0;
+    int completed = 0;
+
+    auto build_descs = [](const std::vector<xferBenchIOV> &li,
+                          const std::vector<xferBenchIOV> &ri,
+                          nixl_xfer_dlist_t &ld,
+                          nixl_xfer_dlist_t &rd) {
+        ld = nixl_xfer_dlist_t(GET_SEG_TYPE(true));
+        rd = nixl_xfer_dlist_t(GET_SEG_TYPE(false));
+        prepareTransferDescriptors(ld, rd, li, ri);
+    };
+
+    auto cleanup_all = [&]() {
+        for (int j = 0; j < depth; j++) {
+            if (slots[j].req) {
+                if (reregister && slots[j].in_flight)
+                    deregisterIterationMem(
+                        agent, slots[j].local_iov, slots[j].remote_iov, backend_engine);
+                agent->releaseXferReq(slots[j].req);
+                slots[j].req = nullptr;
+            }
+        }
+    };
+
+    for (int s = 0; s < depth; s++) {
+        if (reregister) {
+            nixl_status_t rc = registerIterationMem(
+                agent, slots[s].local_iov, slots[s].remote_iov, backend_engine);
+            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                std::cerr << "registerMem failed for slot " << s << std::endl;
+                cleanup_all();
+                return -1;
+            }
+        }
+
+        nixl_xfer_dlist_t ld(GET_SEG_TYPE(true));
+        nixl_xfer_dlist_t rd(GET_SEG_TYPE(false));
+        build_descs(slots[s].local_iov, slots[s].remote_iov, ld, rd);
+
+        nixl_status_t rc = agent->createXferReq(op, ld, rd, target, slots[s].req, &params);
+        if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+            std::cerr << "createXferReq failed for slot " << s << ": "
+                      << nixlEnumStrings::statusStr(rc) << std::endl;
+            cleanup_all();
+            return -1;
+        }
+
+        nixl_status_t post_rc = agent->postXferReq(slots[s].req);
+        if (__builtin_expect(post_rc != NIXL_SUCCESS && post_rc != NIXL_IN_PROG, 0)) {
+            std::cerr << "postXferReq failed for slot " << s << ": "
+                      << nixlEnumStrings::statusStr(post_rc) << std::endl;
+            cleanup_all();
+            return -1;
+        }
+        slots[s].in_flight = true;
+        issued++;
+    }
+    thread_stats.prepare_duration.add(timer.lap());
+
+    while (completed < num_iter) {
+        for (int s = 0; s < depth; s++) {
+            if (!slots[s].in_flight) continue;
+
+            nixl_status_t rc = agent->getXferStatus(slots[s].req);
+            if (rc == NIXL_IN_PROG) continue;
+
+            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                std::cerr << "Transfer failed on slot " << s << ": "
+                          << nixlEnumStrings::statusStr(rc) << std::endl;
+                cleanup_all();
+                return -1;
+            }
+
+            completed++;
+            thread_stats.transfer_duration.add(timer.lap());
+            slots[s].in_flight = false;
+
+            if (issued >= num_iter) continue;
+
+            if (recreate) {
+                agent->releaseXferReq(slots[s].req);
+                slots[s].req = nullptr;
+
+                if (reregister) {
+                    nixl_status_t dereg_rc = deregisterIterationMem(
+                        agent, slots[s].local_iov, slots[s].remote_iov, backend_engine);
+                    if (__builtin_expect(dereg_rc != NIXL_SUCCESS, 0)) {
+                        std::cerr << "deregisterMem failed on slot " << s << std::endl;
+                        cleanup_all();
+                        return -1;
+                    }
+                    nixl_status_t reg_rc = registerIterationMem(
+                        agent, slots[s].local_iov, slots[s].remote_iov, backend_engine);
+                    if (__builtin_expect(reg_rc != NIXL_SUCCESS, 0)) {
+                        std::cerr << "registerMem failed on slot " << s << std::endl;
+                        cleanup_all();
+                        return -1;
+                    }
+                }
+
+                nixl_xfer_dlist_t ld(GET_SEG_TYPE(true));
+                nixl_xfer_dlist_t rd(GET_SEG_TYPE(false));
+                build_descs(slots[s].local_iov, slots[s].remote_iov, ld, rd);
+
+                rc = agent->createXferReq(op, ld, rd, target, slots[s].req, &params);
+                if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                    std::cerr << "createXferReq failed on resubmit: "
+                              << nixlEnumStrings::statusStr(rc) << std::endl;
+                    cleanup_all();
+                    return -1;
+                }
+            }
+
+            nixl_status_t post_rc = agent->postXferReq(slots[s].req);
+            if (__builtin_expect(post_rc != NIXL_SUCCESS && post_rc != NIXL_IN_PROG, 0)) {
+                std::cerr << "postXferReq failed on resubmit for slot " << s << ": "
+                          << nixlEnumStrings::statusStr(post_rc) << std::endl;
+                cleanup_all();
+                return -1;
+            }
+            slots[s].in_flight = true;
+            issued++;
+        }
+    }
+
+    for (int s = 0; s < depth; s++) {
+        if (slots[s].req) {
+            if (reregister)
+                deregisterIterationMem(
+                    agent, slots[s].local_iov, slots[s].remote_iov, backend_engine);
+            agent->releaseXferReq(slots[s].req);
+        }
+    }
+
+    return 0;
+}
+
+static int
 execTransfer(nixlAgent *agent,
+             nixlBackendH *backend_engine,
              const std::vector<std::vector<xferBenchIOV>> &local_iovs,
              const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
              const nixl_xfer_op_t op,
@@ -1335,11 +1651,6 @@ execTransfer(nixlAgent *agent,
         const auto &local_iov = local_iovs[tid];
         const auto &remote_iov = remote_iovs[tid];
 
-        // Prepare transfer descriptors
-        nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
-        nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
-        prepareTransferDescriptors(local_desc, remote_desc, local_iov, remote_iov);
-
         // Setup transfer parameters
         nixl_opt_args_t params;
         std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
@@ -1348,16 +1659,38 @@ execTransfer(nixlAgent *agent,
         }
 
         // Execute transfers
-        const int result = execTransferIterations(agent,
-                                                  op,
-                                                  local_desc,
-                                                  remote_desc,
-                                                  target,
-                                                  params,
-                                                  num_iter,
-                                                  timer,
-                                                  thread_stats,
-                                                  xferBenchConfig::recreate_xfer);
+        int result;
+        if (xferBenchConfig::batch_queue_depth > 1) {
+            result = execTransferPipelined(agent,
+                                           backend_engine,
+                                           op,
+                                           target,
+                                           params,
+                                           num_iter,
+                                           timer,
+                                           thread_stats,
+                                           local_iov,
+                                           remote_iov);
+        } else {
+            nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
+            nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
+            prepareTransferDescriptors(local_desc, remote_desc, local_iov, remote_iov);
+            const bool recreate_per_iteration =
+                xferBenchConfig::recreate_xfer || xferBenchConfig::reregister_mem;
+            result = execTransferIterations(agent,
+                                            op,
+                                            local_desc,
+                                            remote_desc,
+                                            target,
+                                            params,
+                                            num_iter,
+                                            timer,
+                                            thread_stats,
+                                            recreate_per_iteration,
+                                            local_iov,
+                                            remote_iov,
+                                            backend_engine);
+        }
 
         if (__builtin_expect(result != 0, 0)) {
             ret = result;
@@ -1381,7 +1714,6 @@ xferBenchNixlWorker::transfer(size_t block_size,
     xferBenchStats stats;
     int ret = 0;
     nixl_xfer_op_t xfer_op = XFERBENCH_OP_READ == xferBenchConfig::op_type ? NIXL_READ : NIXL_WRITE;
-    // int completion_flag = 1;
 
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
@@ -1390,8 +1722,14 @@ xferBenchNixlWorker::transfer(size_t block_size,
     }
 
     if (skip > 0) {
-        ret = execTransfer(
-            agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, stats);
+        ret = execTransfer(agent,
+                           backend_engine,
+                           local_iovs,
+                           remote_iovs,
+                           xfer_op,
+                           skip,
+                           xferBenchConfig::num_threads,
+                           stats);
         if (ret < 0) {
             return std::variant<xferBenchStats, int>(ret);
         }
@@ -1402,8 +1740,14 @@ xferBenchNixlWorker::transfer(size_t block_size,
 
     stats.clear();
 
-    ret = execTransfer(
-        agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats);
+    ret = execTransfer(agent,
+                       backend_engine,
+                       local_iovs,
+                       remote_iovs,
+                       xfer_op,
+                       num_iter,
+                       xferBenchConfig::num_threads,
+                       stats);
     if (ret < 0) {
         return std::variant<xferBenchStats, int>(ret);
     }
