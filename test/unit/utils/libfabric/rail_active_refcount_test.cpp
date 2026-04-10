@@ -232,6 +232,40 @@ testRegisterDeregisterRefcount(nixlLibfabricRailManager &mgr) {
     return 0;
 }
 
+static int
+fi_mr_close_fail(struct fid * /*fid*/) {
+    return -FI_EIO;
+}
+
+static int
+testDeregisterFailureKeepsRailActive(nixlLibfabricRailManager &mgr) {
+    NIXL_INFO << "  testDeregisterFailureKeepsRailActive";
+
+    char buf[4096] = {};
+    std::vector<struct fid_mr *> mr_list;
+    std::vector<uint64_t> key_list;
+    std::vector<size_t> selected_rails;
+
+    nixl_status_t st =
+        mgr.registerMemory(buf, sizeof(buf), DRAM_SEG, 0, "", mr_list, key_list, selected_rails);
+    TEST_ASSERT(st == NIXL_SUCCESS, "registerMemory succeeded");
+    TEST_ASSERT(mgr.getActiveRailCount() == NUM_FAKE_RAILS, "all rails active after register");
+
+    // Make fi_close fail so deregisterMemory fails
+    fi_mr_self_ops_stub.close = fi_mr_close_fail;
+    st = mgr.deregisterMemory(selected_rails, mr_list);
+    fi_mr_self_ops_stub.close = fi_mr_close_stub;
+
+    TEST_ASSERT(st != NIXL_SUCCESS, "deregisterMemory should fail");
+    TEST_ASSERT(mgr.getActiveRailCount() == NUM_FAKE_RAILS,
+                "all rails still active after failed deregister");
+
+    // Clean up: successful deregister to reset state
+    st = mgr.deregisterMemory(selected_rails, mr_list);
+    mgr.clearActiveRails();
+    return 0;
+}
+
 int
 main() {
     NIXL_INFO << "=== Rail Active Refcount Test ===";
@@ -249,6 +283,7 @@ main() {
     if ((res = testClearActiveRails(mgr)) != 0) return res;
     if ((res = testMultipleRailsIndependent(mgr)) != 0) return res;
     if ((res = testRegisterDeregisterRefcount(mgr)) != 0) return res;
+    if ((res = testDeregisterFailureKeepsRailActive(mgr)) != 0) return res;
 
     NIXL_INFO << "=== All rail active refcount tests PASSED ===";
     return 0;
