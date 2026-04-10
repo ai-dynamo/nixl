@@ -106,6 +106,8 @@ struct BinaryNotificationHeader {
     uint16_t notif_seq_id; // Fragment index (0, 1, 2...)
     uint16_t notif_seq_len; // Total number of fragments
     uint32_t payload_length; // Message bytes of this fragment
+    uint8_t sender_agent_idx; // Sender's agent index (for multi-sender disambiguation)
+    uint8_t reserved_; // Padding for alignment
 } __attribute__((packed));
 
 /**

@@ -297,6 +297,16 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
 
     NIXL_DEBUG << "Initializing Libfabric Backend";
 
+    // Compute compact sender ID from agent UUID for cross-process uniqueness.
+    // Each NIXL agent has a unique UUID name. XOR-fold all bytes to 8 bits.
+    // With only 2-3 senders per receiver (PP ranks), collision probability is <1%.
+    {
+        uint8_t id = 0;
+        for (char c : localAgent) id ^= static_cast<uint8_t>(c);
+        my_sender_id_ = id;
+        NIXL_INFO << "Agent " << localAgent << " sender_id=" << static_cast<int>(my_sender_id_);
+    }
+
     // this is required for loading rail selection policy by configuration
     if (rail_manager.init(getCustomParams()) != NIXL_SUCCESS) {
         throw std::runtime_error("Failed to initialize the rail manager");
@@ -361,7 +371,8 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
             rail_manager.getRail(rail_id).setXferIdCallback([this](uint64_t imm_data) {
                 // Extract XFER_ID from immediate data
                 uint16_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(imm_data);
-                addReceivedXferId(xfer_id);
+                uint8_t agent_idx = NIXL_GET_AGENT_INDEX_FROM_IMM(imm_data);
+                addReceivedXferId(agent_idx, xfer_id);
             });
             NIXL_DEBUG << "Set XFER_ID callback for rail " << rail_id;
         }
@@ -1068,7 +1079,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             remote_md->rail_remote_key_list_,
             remote_md->remote_selected_endpoints_,
             conn_it->second->rail_remote_addr_list_,
-            conn_it->second->agent_index_,
+            my_sender_id_,
             backend_handle->post_xfer_id,
             [backend_handle]() {
                 backend_handle->increment_completed_requests();
@@ -1238,6 +1249,8 @@ nixlLibfabricEngine::fragmentNotificationMessage(
         // Set header fields
         BinaryNotificationHeader header;
         header.notif_xfer_id = 0; // Will be set later in notifSendPriv
+        header.sender_agent_idx = 0; // Will be set later in notifSendPriv
+        header.reserved_ = 0;
         header.notif_seq_id = static_cast<uint16_t>(frag_idx);
         header.notif_seq_len = static_cast<uint16_t>(num_fragments);
 
@@ -1303,6 +1316,7 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
         // Update header fields for this notification
         BinaryNotificationHeader header = binary_notification.getHeader();
         header.notif_xfer_id = notif_xfer_id;
+        header.sender_agent_idx = my_sender_id_;
         binary_notification.setHeader(header);
 
         // Update first fragment header with expected_completions (only for fragment 0)
@@ -1338,7 +1352,7 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
             nixlLibfabricRailManager::ControlMessageType::NOTIFICATION,
             control_request,
             connection->rail_remote_addr_list_[rail_id][0],
-            connection->agent_index_);
+            my_sender_id_);
 
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "postControlMessage failed on rail " << rail_id << " for fragment "
@@ -1451,6 +1465,7 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
     uint16_t notif_xfer_id = header.notif_xfer_id;
     uint16_t notif_seq_id = header.notif_seq_id;
     uint16_t notif_seq_len = header.notif_seq_len;
+    uint8_t sender_agent_idx = header.sender_agent_idx;
 
     // Get payload chunk (combined agent_name + message chunk for all fragments)
     const std::string &payload_chunk = binary_notif.getPayload();
@@ -1475,7 +1490,8 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
 
         // Use try_emplace to construct in-place - eliminates extra copy
-        auto [it, inserted] = pending_notifications_.try_emplace(notif_xfer_id, notif_xfer_id);
+        PendingNotifKey key{sender_agent_idx, notif_xfer_id};
+        auto [it, inserted] = pending_notifications_.try_emplace(key, notif_xfer_id);
 
         if (inserted) {
             NIXL_DEBUG << "Created pending notification" << " notif_xfer_id=" << notif_xfer_id
@@ -1529,14 +1545,15 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
  *****************************************/
 
 void
-nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id) {
+nixlLibfabricEngine::addReceivedXferId(uint8_t agent_idx, uint16_t xfer_id) {
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
 
         // Use try_emplace to construct in-place - eliminates extra copy
         // First parameter: map key for lookup
         // Second parameter: constructor argument for PendingNotification
-        auto [it, inserted] = pending_notifications_.try_emplace(xfer_id, xfer_id);
+        PendingNotifKey key{agent_idx, xfer_id};
+        auto [it, inserted] = pending_notifications_.try_emplace(key, xfer_id);
 
         if (inserted) {
             // Set placeholder values for write-arrived-first case

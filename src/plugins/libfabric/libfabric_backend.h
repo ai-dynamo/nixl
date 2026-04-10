@@ -176,6 +176,10 @@ private:
     // Store user's original progress thread preference
     bool progress_thread_enabled_;
 
+    // Compact sender ID derived from agent UUID, used in notifications and IMM data
+    // to uniquely identify this engine across processes (e.g., different PP ranks).
+    uint8_t my_sender_id_;
+
     // Progress thread delay in microseconds
     std::chrono::microseconds progress_thread_delay_;
 
@@ -220,6 +224,26 @@ private:
     std::mutex receiver_tracking_mutex_;
     std::unordered_set<uint32_t> received_remote_writes_; // All received XFER_IDs (global)
 
+    // Compound key for pending notifications: (sender_agent_idx, notif_xfer_id)
+    // This disambiguates notifications from different senders (e.g., PP ranks)
+    // that may have the same notif_xfer_id due to independent counters.
+    struct PendingNotifKey {
+        uint8_t sender_agent_idx;
+        uint16_t notif_xfer_id;
+
+        bool operator==(const PendingNotifKey &other) const {
+            return sender_agent_idx == other.sender_agent_idx &&
+                   notif_xfer_id == other.notif_xfer_id;
+        }
+    };
+
+    struct PendingNotifKeyHash {
+        size_t operator()(const PendingNotifKey &k) const {
+            return std::hash<uint32_t>()(
+                (static_cast<uint32_t>(k.sender_agent_idx) << 16) | k.notif_xfer_id);
+        }
+    };
+
     // Notification Queuing
     struct PendingNotification {
         std::string remote_agent;
@@ -244,7 +268,7 @@ private:
     };
 
     // O(1) lookup with postXferID key
-    std::unordered_map<uint16_t, PendingNotification> pending_notifications_;
+    std::unordered_map<PendingNotifKey, PendingNotification, PendingNotifKeyHash> pending_notifications_;
 
     // Connection management helpers
     nixl_status_t
@@ -583,7 +607,7 @@ public:
      * @param[in] xfer_id 16-bit transfer ID that was received
      */
     void
-    addReceivedXferId(uint16_t xfer_id);
+    addReceivedXferId(uint8_t agent_idx, uint16_t xfer_id);
 
     // Notification Queuing Helper Methods
     /**
