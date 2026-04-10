@@ -34,6 +34,7 @@
 #include <filesystem>
 #include <gflags/gflags.h>
 
+#include <cassert>
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
 #include "utils/utils.h"
