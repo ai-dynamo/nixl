@@ -67,6 +67,8 @@ def handle_sigterm(
     if buffer is not None and buffer.runtime is not None:
         buffer.destroy()  # to invalidate local MD
         del buffer
+
+    # Continue with default signal handler
     signal.signal(signum, signal.SIG_DFL)
     os.kill(os.getpid(), signum)
 
