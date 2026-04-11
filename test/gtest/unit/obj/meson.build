@@ -13,10 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+obj_test_sources = ['obj.cpp']
+
+if cuobj_dep.found()
+    obj_test_sources += ['obj_cuobj.cpp']
+endif
+
 obj_unit_test_dep = declare_dependency(
-    sources: [
-        'obj.cpp',
-    ],
+    sources: obj_test_sources,
     include_directories: [
         nixl_inc_dirs, utils_inc_dirs,
         '../../../../src/plugins/obj',
