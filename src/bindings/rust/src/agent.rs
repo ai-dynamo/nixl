@@ -312,6 +312,58 @@ impl Agent {
         })
     }
 
+    /// Registers multiple memory descriptors with the agent in a single batch.
+    pub fn register_memories(
+        &self,
+        descs: &RegDescList,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<(), NixlError> {
+        tracing::trace!(
+            desc_count = descs.desc_count().unwrap_or(0),
+            "Registering memory batch"
+        );
+
+        let status = unsafe {
+            nixl_capi_register_mem(
+                self.inner.write().unwrap().handle.as_ptr(),
+                descs.handle(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Deregisters multiple memory descriptors from the agent in a single batch.
+    pub fn deregister_memories(
+        &self,
+        descs: &RegDescList,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<(), NixlError> {
+        tracing::trace!(
+            desc_count = descs.desc_count().unwrap_or(0),
+            "Deregistering memory batch"
+        );
+
+        let status = unsafe {
+            nixl_capi_deregister_mem(
+                self.inner.write().unwrap().handle.as_ptr(),
+                descs.handle(),
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
     /// Query information about memory/storage
     ///
     /// # Arguments
