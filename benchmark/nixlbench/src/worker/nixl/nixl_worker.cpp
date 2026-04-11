@@ -283,10 +283,14 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
             backend_params["config_file"] = xferBenchConfig::gusli_config_file;
         }
 
+        backend_params["try_use_uring"] = xferBenchConfig::gusli_try_use_uring ? "true" : "false";
+
         std::cout << "GUSLI backend initialized:" << std::endl;
         std::cout << "  Client name: " << xferBenchConfig::gusli_client_name << std::endl;
         std::cout << "  Max simultaneous requests: "
                   << xferBenchConfig::gusli_max_simultaneous_requests << std::endl;
+        std::cout << "  Try use uring: "
+                  << (xferBenchConfig::gusli_try_use_uring ? "true" : "false") << std::endl;
         std::cout << "  Direct I/O: Enabled (required)" << std::endl;
         std::cout << "  Configured devices: " << gusli_devices.size() << std::endl;
         for (const auto &dev : gusli_devices) {
