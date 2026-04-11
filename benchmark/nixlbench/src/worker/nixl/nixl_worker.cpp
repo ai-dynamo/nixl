@@ -92,8 +92,8 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     return config.str();
 }
 
-xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices)
-    : xferBenchWorker(argc, argv) {
+xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
+    : xferBenchWorker() {
     seg_type = GET_SEG_TYPE(isInitiator());
 
     int rank;
@@ -109,7 +109,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     rank = rt->getRank();
 
-    nixlAgentConfig dev_meta(enable_pt, false, 0, sync_mode);
+    nixlAgentConfig dev_meta;
+    dev_meta.useProgThread = enable_pt;
+    dev_meta.syncMode = sync_mode;
 
     agent = new nixlAgent(name, dev_meta);
 
@@ -194,6 +196,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         }
         std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
                   << std::endl;
+        backend_params["ios_pool_size"] = std::to_string(xferBenchConfig::posix_ios_pool_size);
+        backend_params["kernel_queue_size"] =
+            std::to_string(xferBenchConfig::posix_kernel_queue_size);
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO)) {
         std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device "
                   << xferBenchConfig::gpunetio_device_list << " OOB interface "
@@ -296,6 +301,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         // Using default param values for AZURE_BLOB backend
         backend_params["account_url"] = xferBenchConfig::azure_blob_account_url;
         backend_params["container_name"] = xferBenchConfig::azure_blob_container_name;
+        backend_params["connection_string"] = xferBenchConfig::azure_blob_connection_string;
         std::cout << "AZURE_BLOB backend" << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
@@ -307,6 +313,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
+    delete rt;
+    rt = nullptr;
+
     if (agent) {
         delete agent;
         agent = nullptr;
@@ -1129,7 +1138,9 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 }
             }
             res.push_back(remote_iov_list);
-            file_offset += block_size;
+            if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+                file_offset += block_size;
+            }
         }
     } else {
         for (const auto &local_iov : local_iovs) {
@@ -1333,13 +1344,10 @@ execTransfer(nixlAgent *agent,
         nixl_opt_args_t params;
         std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
         if (!xferBenchConfig::isStorageBackend()) {
-            params.notifMsg = "0xBEEF";
-            params.hasNotif = true;
+            params.notif = "0xBEEF";
         }
 
         // Execute transfers
-        // GUSLI requires per-iteration request creation due to library bug
-        const bool recreate_per_iteration = (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
         const int result = execTransferIterations(agent,
                                                   op,
                                                   local_desc,
@@ -1349,7 +1357,7 @@ execTransfer(nixlAgent *agent,
                                                   num_iter,
                                                   timer,
                                                   thread_stats,
-                                                  recreate_per_iteration);
+                                                  xferBenchConfig::recreate_xfer);
 
         if (__builtin_expect(result != 0, 0)) {
             ret = result;

@@ -31,7 +31,6 @@
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
-#include "common/str_tools.h"
 
 // Local includes
 #include "common/nixl_time.h"
@@ -187,23 +186,6 @@ public:
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
-    nixl_status_t
-    createGpuXferReq(const nixlBackendReqH &req_hndl,
-                     const nixl_meta_dlist_t &local_descs,
-                     const nixl_meta_dlist_t &remote_descs,
-                     nixlGpuXferReqH &gpu_req_hndl) const override;
-
-    void
-    releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const override;
-
-    nixl_status_t
-    getGpuSignalSize(size_t &signal_size) const override;
-
-    nixl_status_t
-    prepGpuSignal(const nixlBackendMD &meta,
-                  void *signal,
-                  const nixl_opt_b_args_t *opt_args = nullptr) const override;
-
     int
     progress();
 
@@ -315,16 +297,13 @@ private:
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
 
-    mutable std::optional<size_t> gpuSignalSize_;
-
     const bool progressThreadEnabled_;
 
     /* Notifications */
     notif_list_t notifMainList;
 
     // Map of agent name to saved nixlUcxConnection info
-    std::unordered_map<std::string, ucx_connection_ptr_t, std::hash<std::string>, strEqual>
-        remoteConnMap;
+    std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
 };
 
 class nixlUcxThread;

@@ -17,12 +17,12 @@
 
 #include "plugin_manager.h"
 #include "nixl.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 #include <dlfcn.h>
 #include <filesystem>
 #include <dirent.h>
 #include <unistd.h>  // For access() and F_OK
-#include <cstdlib>  // For getenv
 #include <fstream>
 #include <string>
 #include <map>
@@ -239,8 +239,11 @@ loadPluginList(const std::string &filename) {
 
 std::shared_ptr<const nixlPluginHandle>
 nixlPluginManager::loadPluginFromPath(const std::string &plugin_path, nixlPluginLoaderFunc loader) {
-    // Open the plugin file
-    void* handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    // Open the plugin file with RTLD_NODELETE to prevent glibc from physically unloading
+    // the library on dlclose. This is required because plugins link dynamically against Abseil,
+    // which uses thread_local and static initialization that are unsafe to unload dynamically
+    // and trigger glibc bugs on older versions (e.g. Ubuntu 22.04 / glibc 2.35).
+    void *handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
     if (!handle) {
         NIXL_INFO << "Failed to load plugin from " << plugin_path << ": " << dlerror();
         return nullptr;
@@ -269,13 +272,13 @@ nixlPluginManager::loadPluginsFromList(const std::string &filename) {
 }
 
 namespace {
-static std::string
+std::string
 getPluginDir() {
     // Environment variable takes precedence
-    const char *plugin_dir = getenv("NIXL_PLUGIN_DIR");
-    if (plugin_dir) {
-        return plugin_dir;
+    if (const auto plugin_dir = nixl::config::getValueOptional<std::string>("NIXL_PLUGIN_DIR")) {
+        return *plugin_dir;
     }
+
     // By default, use the plugin directory relative to the binary
     Dl_info info;
     int ok = dladdr(reinterpret_cast<void *>(&getPluginDir), &info);

@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __MEM_SECTION_H
-#define __MEM_SECTION_H
+#ifndef NIXL_SRC_INFRA_MEM_SECTION_H
+#define NIXL_SRC_INFRA_MEM_SECTION_H
 
 #include <vector>
 #include <unordered_map>
@@ -23,13 +23,22 @@
 #include <array>
 #include <string>
 #include <set>
+#include <cassert>
+
 #include "nixl_descriptors.h"
 #include "nixl.h"
 #include "backend/backend_engine.h"
 
 using section_key_t = std::pair<nixl_mem_t, nixlBackendEngine*>;
 using backend_set_t = std::set<nixlBackendEngine*>;
-using backend_map_t = std::unordered_map<nixl_backend_t, nixlBackendEngine*>;
+
+struct nixlEngineDeleter {
+    void
+    operator()(nixlBackendEngine *) const noexcept;
+};
+
+using backend_ptr_t = std::unique_ptr<nixlBackendEngine, nixlEngineDeleter>;
+using backend_map_t = std::unordered_map<nixl_backend_t, backend_ptr_t>;
 
 /**
  * @brief Section descriptor for nixl
@@ -71,7 +80,10 @@ public:
     verifySorted() const;
 
     nixlSectionDesc &
-    operator[](unsigned int index) override;
+    operator[](size_t index) {
+        assert(verifySorted());
+        return descs[index];
+    }
 
     int
     getIndex(const nixlBasicDesc &query) const override;
@@ -89,17 +101,25 @@ public:
 };
 
 using nixl_sec_dlist_t = nixlSecDescList;
-using section_map_t = std::map<section_key_t, nixl_sec_dlist_t*>;
+using section_map_t = std::map<section_key_t, nixlSecDescList>;
 
 class nixlMemSection {
     protected:
         std::array<backend_set_t, FILE_SEG+1>         memToBackend;
         section_map_t                                 sectionMap;
 
-    public:
-        nixlMemSection () {};
+        ~nixlMemSection() = default;
 
-        backend_set_t* queryBackends (const nixl_mem_t &mem);
+        [[nodiscard]] nixlSecDescList &
+        emplace(nixl_mem_t nixl_mem, nixlBackendEngine *backend);
+
+    public:
+        nixlMemSection() = default;
+
+        backend_set_t *
+        queryBackends(nixl_mem_t mem) noexcept;
+        const backend_set_t *
+        queryBackends(nixl_mem_t mem) const noexcept;
 
         nixl_status_t populate (const nixl_xfer_dlist_t &query,
                                 nixlBackendEngine* backend,
@@ -109,16 +129,15 @@ class nixlMemSection {
         addElement(const nixlRemoteDesc &query,
                    nixlBackendEngine *backend,
                    nixl_remote_meta_dlist_t &resp) const;
-
-        virtual ~nixlMemSection () = 0; // Making the class abstract
 };
 
 
 class nixlLocalSection : public nixlMemSection {
     public:
-        nixl_status_t addDescList (const nixl_reg_dlist_t &mem_elms,
-                                   nixlBackendEngine* backend,
-                                   nixl_sec_dlist_t &remote_self);
+        nixl_status_t
+        addDescList(const nixl_reg_dlist_t &mem_elms,
+                    nixlBackendEngine *backend,
+                    nixlSecDescList &remote_self);
 
         // Each nixlBasicDesc should be same as original registration region
         nixl_status_t remDescList (const nixl_reg_dlist_t &mem_elms,
@@ -142,14 +161,14 @@ class nixlRemoteSection : public nixlMemSection {
                            const nixl_reg_dlist_t &mem_elms,
                            nixlBackendEngine *backend);
     public:
-        nixlRemoteSection (const std::string &agent_name);
+        explicit nixlRemoteSection(std::string agent_name) noexcept;
 
         nixl_status_t loadRemoteData (nixlSerDes* deserializer,
                                       backend_map_t &backendToEngineMap);
 
         // When adding self as a remote agent for local operations
-        nixl_status_t loadLocalData (const nixl_sec_dlist_t& mem_elms,
-                                     nixlBackendEngine* backend);
+        nixl_status_t
+        loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEngine *backend);
         ~nixlRemoteSection();
 };
 

@@ -26,6 +26,7 @@
 #include <stdexcept>
 #include <cstdlib>
 #include <absl/strings/str_format.h>
+#include "common/configuration.h"
 #include "nixl_types.h"
 
 namespace {
@@ -38,11 +39,8 @@ getAccountUrl(nixl_b_params_t *custom_params) {
             return account_it->second;
         }
     }
-    const char *env_account = std::getenv("AZURE_STORAGE_ACCOUNT_URL");
-    if (env_account && env_account[0] != '\0') return std::string(env_account);
-    throw std::runtime_error(
-        "Account URL not found. Please provide 'account_url' in custom_params or "
-        "set AZURE_STORAGE_ACCOUNT_URL environment variable");
+
+    return nixl::config::getValueDefaulted("AZURE_STORAGE_ACCOUNT_URL", std::string());
 }
 
 std::string
@@ -54,11 +52,20 @@ getContainerName(nixl_b_params_t *custom_params) {
         }
     }
 
-    const char *env_container = std::getenv("AZURE_STORAGE_CONTAINER_NAME");
-    if (env_container && env_container[0] != '\0') return std::string(env_container);
-    throw std::runtime_error(
-        "Container name not found. Please provide 'container_name' in custom_params or "
-        "set AZURE_STORAGE_CONTAINER_NAME environment variable");
+    return nixl::config::getNonEmptyString("AZURE_STORAGE_CONTAINER_NAME");
+}
+
+std::string
+getConnectionString(nixl_b_params_t *custom_params) {
+    if (custom_params) {
+        auto conn_it = custom_params->find("connection_string");
+        if (conn_it != custom_params->end() && !conn_it->second.empty()) {
+            return conn_it->second;
+        }
+    }
+    const char *env_conn = std::getenv("AZURE_STORAGE_CONNECTION_STRING");
+    if (env_conn && env_conn[0] != '\0') return std::string(env_conn);
+    return "";
 }
 
 std::string
@@ -69,9 +76,9 @@ getCaBundle(nixl_b_params_t *custom_params) {
             return ca_bundle_it->second;
         }
     }
-    const char *env_ca_bundle = std::getenv("AZURE_CA_BUNDLE");
-    if (env_ca_bundle && env_ca_bundle[0] != '\0') return std::string(env_ca_bundle);
-    return ""; // Return empty string if not provided, which means use default CA bundle
+
+    // Return empty string if not provided, which means use default CA bundle
+    return nixl::config::getValueDefaulted<std::string>("AZURE_CA_BUNDLE", "");
 }
 
 } // namespace
@@ -81,6 +88,7 @@ azureBlobClient::azureBlobClient(nixl_b_params_t *custom_params,
     executor_ = executor;
     std::string accountUrl = ::getAccountUrl(custom_params);
     std::string containerName = ::getContainerName(custom_params);
+    std::string connectionString = ::getConnectionString(custom_params);
     Azure::Storage::Blobs::BlobClientOptions options;
     options.Telemetry.ApplicationId = "azpartner-nixl/0.1.0";
 
@@ -92,8 +100,23 @@ azureBlobClient::azureBlobClient(nixl_b_params_t *custom_params,
             std::make_shared<Azure::Core::Http::CurlTransport>(curlOptions);
     }
 
-    auto blobServiceClient = std::make_unique<Azure::Storage::Blobs::BlobServiceClient>(
-        accountUrl, std::make_shared<Azure::Identity::DefaultAzureCredential>(), options);
+    std::unique_ptr<Azure::Storage::Blobs::BlobServiceClient> blobServiceClient;
+    if (!connectionString.empty()) {
+        blobServiceClient = std::make_unique<Azure::Storage::Blobs::BlobServiceClient>(
+            Azure::Storage::Blobs::BlobServiceClient::CreateFromConnectionString(connectionString,
+                                                                                 options));
+    } else if (!accountUrl.empty()) {
+        blobServiceClient = std::make_unique<Azure::Storage::Blobs::BlobServiceClient>(
+            accountUrl, std::make_shared<Azure::Identity::DefaultAzureCredential>(), options);
+    } else {
+        throw std::runtime_error(
+            "Account URL not found. Please provide 'account_url' in custom_params or "
+            "set AZURE_STORAGE_ACCOUNT_URL environment variable. If you are trying "
+            "to connect to Azurite for local testing, you can alternatively provide "
+            "a connection string via 'connection_string' in custom_params or "
+            "AZURE_STORAGE_CONNECTION_STRING environment variable.");
+    }
+
     blobContainerClient_ = std::make_unique<Azure::Storage::Blobs::BlobContainerClient>(
         blobServiceClient->GetBlobContainerClient(containerName));
 }

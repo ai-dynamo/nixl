@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@
 #include <cstring>
 #include <algorithm>
 
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
@@ -37,11 +38,10 @@ constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 constexpr const char *defaultTelemetryPlugin = "BUFFER";
 
-nixlTelemetry::nixlTelemetry(const std::string &agent_name, backend_map_t &backend_map)
+nixlTelemetry::nixlTelemetry(const std::string &agent_name)
     : pool_(1),
       writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false),
-      agentName_(agent_name),
-      backendMap_(backend_map) {
+      agentName_(agent_name) {
     if (agent_name.empty()) {
         throw std::invalid_argument("Expected non-empty agent name in nixl telemetry create");
     }
@@ -66,49 +66,63 @@ nixlTelemetry::~nixlTelemetry() {
     }
 }
 
+namespace {
+[[nodiscard]] std::optional<std::string>
+getExporterName() {
+    if (const auto name = nixl::config::getValueOptional<std::string>(telemetryExporterVar)) {
+        if (!name->empty()) {
+            return name;
+        }
+        NIXL_DEBUG << "Ignoring empty " << telemetryExporterVar << " environment variable";
+    }
+
+    if (!nixl::config::checkExistence(telemetryDirVar)) {
+        NIXL_DEBUG << telemetryDirVar
+                   << " is not set, NIXL telemetry is enabled without any exporter";
+        return std::nullopt;
+    }
+
+    NIXL_INFO << "No telemetry exporter was specified, using default: " << defaultTelemetryPlugin;
+
+    return defaultTelemetryPlugin;
+}
+
+} // namespace
+
 void
 nixlTelemetry::initializeTelemetry() {
-    auto buffer_size = std::getenv(TELEMETRY_BUFFER_SIZE_VAR) ?
-        std::stoul(std::getenv(TELEMETRY_BUFFER_SIZE_VAR)) :
-        DEFAULT_TELEMETRY_BUFFER_SIZE;
+    const auto buffer_size = nixl::config::getValueDefaulted<size_t>(TELEMETRY_BUFFER_SIZE_VAR,
+                                                                     DEFAULT_TELEMETRY_BUFFER_SIZE);
 
     if (buffer_size == 0) {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");
     }
 
-    const char *exporter_name = std::getenv(telemetryExporterVar);
+    const std::optional<std::string> exporter_name = getExporterName();
 
     if (!exporter_name) {
-        NIXL_INFO << "No telemetry exporter was specified, using default: "
-                  << defaultTelemetryPlugin;
-        exporter_name = defaultTelemetryPlugin;
-        if (!std::getenv(telemetryDirVar)) {
-            NIXL_DEBUG << telemetryDirVar
-                       << " is not set, NIXL telemetry is enabled without any exporter";
-            return;
-        }
+        return;
     }
 
     auto &plugin_manager = nixlPluginManager::getInstance();
     std::shared_ptr<const nixlTelemetryPluginHandle> plugin_handle =
-        plugin_manager.loadTelemetryPlugin(exporter_name);
+        plugin_manager.loadTelemetryPlugin(*exporter_name);
 
     if (plugin_handle == nullptr) {
-        throw std::runtime_error("Failed to load telemetry plugin: " + std::string(exporter_name));
+        throw std::runtime_error("Failed to load telemetry plugin: " + *exporter_name);
     }
 
     const nixlTelemetryExporterInitParams init_params{agentName_, buffer_size};
     exporter_ = plugin_handle->createExporter(init_params);
     if (!exporter_) {
-        NIXL_ERROR << "Failed to create telemetry exporter: " << exporter_name;
+        NIXL_ERROR << "Failed to create telemetry exporter: " << *exporter_name;
         return;
     }
 
-    NIXL_DEBUG << "NIXL telemetry is enabled with " << exporter_name << "exporter";
+    NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << *exporter_name;
 
-    auto run_interval = std::getenv(TELEMETRY_RUN_INTERVAL_VAR) ?
-        std::chrono::milliseconds(std::stoul(std::getenv(TELEMETRY_RUN_INTERVAL_VAR))) :
-        DEFAULT_TELEMETRY_RUN_INTERVAL;
+    const auto run_interval =
+        nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
 
     // Update write task interval and start it
     writeTask_.callback_ = [this]() { return writeEventHelper(); };
@@ -126,29 +140,12 @@ nixlTelemetry::writeEventHelper() {
         std::lock_guard<std::mutex> lock(mutex_);
         events_.swap(next_queue);
     }
+
     for (auto &event : next_queue) {
         // if full, ignore
         exporter_->exportEvent(event);
     }
-    // collect all events and sort them by timestamp
-    std::vector<nixlTelemetryEvent> all_events;
-    for (auto &backend : backendMap_) {
-        auto backend_events = backend.second->getTelemetryEvents();
-        for (auto &event : backend_events) {
-            // don't trust enum value coming from backend,
-            // as it might be different from the one in agent
-            event.category_ = nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND;
-            all_events.push_back(event);
-        }
-    }
-    std::sort(all_events.begin(),
-              all_events.end(),
-              [](const nixlTelemetryEvent &a, const nixlTelemetryEvent &b) {
-                  return a.timestampUs_ < b.timestampUs_;
-              });
-    for (auto &event : all_events) {
-        exporter_->exportEvent(event);
-    }
+
     return true;
 }
 
@@ -230,28 +227,22 @@ nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
 
 void
 nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
-    std::string bytes_name;
-    std::string requests_name;
+    const char *bytes_name = is_write ? "agent_tx_bytes" : "agent_rx_bytes";
+    const char *requests_name = is_write ? "agent_tx_requests_num" : "agent_rx_requests_num";
 
-    if (is_write) {
-        bytes_name = "agent_tx_bytes";
-        requests_name = "agent_tx_requests_num";
-    } else {
-        bytes_name = "agent_rx_bytes";
-        requests_name = "agent_rx_requests_num";
-    }
-    auto time = std::chrono::duration_cast<std::chrono::microseconds>(
-                    std::chrono::system_clock::now().time_since_epoch())
-                    .count();
-    std::lock_guard<std::mutex> lock(mutex_);
+    const auto time = std::chrono::duration_cast<std::chrono::microseconds>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count();
+
+    const std::lock_guard lock(mutex_);
     events_.emplace_back(time,
                          nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
                          "agent_xfer_time",
                          xfer_time.count());
     events_.emplace_back(
-        time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_name.c_str(), bytes);
+        time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_name, bytes);
     events_.emplace_back(
-        time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, requests_name.c_str(), 1);
+        time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, requests_name, 1);
 }
 
 void

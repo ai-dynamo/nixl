@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '0.10.0',
+project('nixl', 'CPP', version: '1.0.1',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -113,7 +113,47 @@ if get_option('buildtype') == 'release'
   abseil_flags = cpp.get_supported_arguments('-Wno-error=maybe-uninitialized', '-Wno-maybe-uninitialized')
   add_global_arguments(abseil_flags, language: 'cpp')
 endif
-abseil_proj = subproject('abseil-cpp')
+
+# Search for Abseil dependencies in the system first
+absl_base_dep = dependency('absl_base', required: false)
+absl_log_dep = dependency('absl_log', required: false)
+absl_log_initialize_dep = dependency('absl_log_initialize', required: false)
+absl_flat_hash_map_dep = dependency('absl_flat_hash_map', required: false)
+absl_status_dep = dependency('absl_status', required: false)
+absl_statusor_dep = dependency('absl_statusor', required: false)
+absl_strings_dep = dependency('absl_strings', required: false)
+absl_synchronization_dep = dependency('absl_synchronization', required: false)
+absl_time_dep = dependency('absl_time', required: false)
+
+if absl_base_dep.found() and not absl_log_dep.found()
+  error('Your Abseil version is too old: found absl_base but missing support for absl_log. ' +
+        'Cannot fallback to subproject because that would result in a mix of Abseil versions at runtime. ' +
+        'Please install a recent Abseil from source on your system and remove old libabsl & libabsl-dev packages.')
+endif
+
+if not (absl_log_dep.found() and
+        absl_log_initialize_dep.found() and
+        absl_flat_hash_map_dep.found() and
+        absl_status_dep.found() and
+        absl_statusor_dep.found() and
+        absl_strings_dep.found() and
+        absl_synchronization_dep.found() and
+        absl_time_dep.found())
+  message('System Abseil missing required components; using subproject fallback')
+  abseil_proj = subproject('abseil-cpp')
+  absl_log_dep = abseil_proj.get_variable('absl_log_dep')
+  absl_log_initialize_dep = absl_log_dep
+  absl_flat_hash_map_dep = abseil_proj.get_variable('absl_container_dep')
+  absl_status_dep = abseil_proj.get_variable('absl_status_dep')
+  absl_statusor_dep = absl_status_dep
+  absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
+  absl_synchronization_dep = abseil_proj.get_variable('absl_synchronization_dep')
+  absl_time_dep = abseil_proj.get_variable('absl_time_dep')
+  summary({'Abseil source': 'subproject'}, section: 'Dependencies')
+else
+  message('Using system Abseil dependencies')
+  summary({'Abseil source': 'system'}, section: 'Dependencies')
+endif
 taskflow_proj = dependency('taskflow', fallback: ['taskflow', 'taskflow_dep'])
 
 cuda_inc_path = get_option('cudapath_inc')
@@ -272,27 +312,13 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
             int main() { return 0; }
         ''', dependencies : [ucx_dep, doca_gpunetio_dep], args: nvcc_flags)
 
-    have_host_side = cpp.compiles('''
-            #include <ucp/api/ucp_version.h>
-            #include <ucp/api/device/ucp_host.h>
-            #include <ucs/sys/compiler_def.h>
-            int main() {
-                UCS_STATIC_ASSERT(UCP_VERSION(UCP_API_MAJOR, UCP_API_MINOR) >= UCP_VERSION(1, 21));
-                return 0;
-            }
-        ''', dependencies: ucx_dep, name: 'UCX Device API (host-side, version >= 1.21)')
+    have_host_side = cpp.has_function('ucp_device_remote_mem_list_create',
+        prefix: '#include <ucp/api/device/ucp_host.h>',
+        dependencies: ucx_dep)
 
     if have_gpu_side and have_host_side
         ucx_gpu_device_api_available = true
         add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API', language: ['cpp', 'cuda'])
-    endif
-
-    have_host_side_v2 = cpp.has_function('ucp_device_remote_mem_list_create', dependencies: ucx_dep)
-    if have_gpu_side and have_host_side_v2
-        ucx_gpu_device_api_v2_available = true
-        add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API_V2', language: ['cpp', 'cuda'])
-    else
-        ucx_gpu_device_api_v2_available = false
     endif
 
     summary({
@@ -301,8 +327,6 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     'Host-side compile'     : have_host_side,
     'nvcc available'        : nvcc_prog.found(),
     'DOCA GPUNETIO found'   : doca_gpunetio_dep.found(),
-    'UCX GPU Device API V2' : ucx_gpu_device_api_v2_available,
-    'Host-side compile V2'  : have_host_side_v2,
   }, section: 'UCX GPU Device API', bool_yn: true)
 endif
 
@@ -347,7 +371,10 @@ subdir('src')
 if get_option('build_tests') and get_option('buildtype') != 'release'
   subdir('test')
 endif
-if get_option('build_examples')
+
+# nixl_ep currently lives under examples/device/ep. Build that subtree when
+# either full examples are requested or nixl_ep is explicitly requested.
+if get_option('build_examples') or get_option('build_nixl_ep')
     subdir('examples')
 endif
 

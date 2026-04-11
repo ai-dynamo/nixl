@@ -26,12 +26,6 @@
 
 #include <nixl_types.h>
 
-extern "C" {
-#ifdef HAVE_UCX_GPU_DEVICE_API
-#include <ucp/api/device/ucp_host.h>
-#endif
-}
-
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
@@ -456,7 +450,10 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     config.modify("MAX_RMA_RAILS", "2");
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
     config.modify("RCACHE_MAX_UNRELEASED", "1024");
-    config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_device_channels));
+
+    if (ucpVersion_ >= UCP_VERSION(1, 21)) {
+        config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_device_channels));
+    }
 
     if (ucpVersion_ >= UCP_VERSION(1, 19)) {
         config.modify("MAX_COMPONENT_MDS", "32");
@@ -592,8 +589,11 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
         }
 
         if (attr.mem_type == UCS_MEMORY_TYPE_HOST) {
-            NIXL_WARN << "memory is detected as host, check that UCX is configured"
-                         " with CUDA support";
+            NIXL_ERROR << "VRAM memory is detected as host by UCX. "
+                          "UCX is likely not configured with CUDA support. "
+                          "VRAM registration cannot proceed.";
+            ucp_mem_unmap(ctx, mem.memh);
+            return -1;
         }
     }
 
@@ -620,32 +620,6 @@ nixlUcxContext::memDereg(nixlUcxMem &mem) {
     ucp_mem_unmap(ctx, mem.memh);
 }
 
-#ifndef HAVE_UCX_GPU_DEVICE_API
-namespace {
-constexpr std::string_view ucxGpuDeviceApiUnsupported{
-    "UCX was not compiled with GPU device API support"};
-}
-#endif
-
-size_t
-nixlUcxContext::getGpuSignalSize() const {
-#ifdef HAVE_UCX_GPU_DEVICE_API
-    ucp_context_attr_t attr;
-    attr.field_mask = UCP_ATTR_FIELD_DEVICE_COUNTER_SIZE;
-    ucs_status_t query_status = ucp_context_query(ctx, &attr);
-
-    if (query_status != UCS_OK) {
-        throw std::runtime_error(
-            std::string("Failed to query UCX context for device counter size: ") +
-            ucs_status_string(query_status));
-    }
-
-    return attr.device_counter_size;
-#else
-    throw std::runtime_error(std::string(ucxGpuDeviceApiUnsupported));
-#endif
-}
-
 void
 nixlUcxContext::warnAboutHardwareSupportMismatch() const {
     ucp_context_attr_t attr = {
@@ -658,11 +632,7 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
         return;
     }
 
-    const nixl::hwInfo hw_info;
-
-    NIXL_DEBUG << "hwInfo { "
-               << "numNvidiaGpus=" << hw_info.numNvidiaGpus << ", "
-               << "numIbDevices=" << hw_info.numIbDevices << " }";
+    const auto &hw_info = nixl::hwInfo::instance();
 
     if (hw_info.numNvidiaGpus > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_CUDA)) {
         NIXL_WARN << hw_info.numNvidiaGpus
@@ -670,8 +640,8 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
                   << "GPU memory is not supported.";
     }
 
-    if (ucpVersion_ >= UCP_VERSION(1, 21)) {
-        // `UCS_MEMORY_TYPE_RDMA` is included in `memory_types` only from UCX 1.21
+    if (ucpVersion_ >= UCP_VERSION(1, 22)) {
+        // `UCS_MEMORY_TYPE_RDMA` to be checked explicitly only from UCX 1.22
         if (hw_info.numIbDevices > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_RDMA)) {
             NIXL_WARN << hw_info.numIbDevices
                       << " IB device(s) were detected, but accelerated IB support was not found! "
@@ -748,27 +718,4 @@ nixlUcxWorker::getEfd() const {
         throw std::runtime_error(err_str);
     }
     return fd;
-}
-
-void
-nixlUcxWorker::prepGpuSignal([[maybe_unused]] const nixlUcxMem &mem,
-                             [[maybe_unused]] void *signal) const {
-#ifdef HAVE_UCX_GPU_DEVICE_API
-    if (!signal) {
-        throw std::invalid_argument("Signal pointer cannot be null");
-    }
-
-    ucp_device_counter_params_t params;
-    params.field_mask = UCP_DEVICE_COUNTER_PARAMS_FIELD_MEMH;
-    params.memh = mem.memh;
-
-    ucs_status_t status = ucp_device_counter_init(worker.get(), &params, signal);
-
-    if (status != UCS_OK) {
-        throw std::runtime_error(std::string("Failed to initialize GPU signal: ") +
-                                 ucs_status_string(status));
-    }
-#else
-    throw std::runtime_error(std::string(ucxGpuDeviceApiUnsupported));
-#endif
 }
