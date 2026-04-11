@@ -376,6 +376,9 @@ export UCX_TLS=^cuda_ipc
 if [ -n "$PRE_INSTALLED_NIXL_ENV" ]; then
     echo "PRE_INSTALLED_NIXL_ENV is set, skipping compilation"
 else
+    if $HAS_GPU ; then
+        EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
+    fi
     # shellcheck disable=SC2086
     meson setup ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
