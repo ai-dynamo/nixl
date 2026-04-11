@@ -97,6 +97,10 @@ nixlMooncakeEngine::getSupportedMems() const {
 
 // Through parent destructor the unregister will be called.
 nixlMooncakeEngine::~nixlMooncakeEngine() {
+    // Close all open remote segments before destroying the engine.
+    for (auto &[agent, info] : connected_agents_) {
+        closeSegment(engine_, info.segment_id);
+    }
     destroyTransferEngine(engine_);
 }
 
@@ -114,10 +118,22 @@ nixlMooncakeEngine::connect(const std::string &remote_agent) {
     return NIXL_SUCCESS;
 }
 
-// TODO We purposely set this function as empty.
-// Will be changed to follow NIXL's paradigm after refactoring Mooncake Transfer Engine.
 nixl_status_t
 nixlMooncakeEngine::disconnect(const std::string &remote_agent) {
+    segment_id_t segment_id;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        auto it = connected_agents_.find(remote_agent);
+        if (it == connected_agents_.end()) {
+            return NIXL_SUCCESS;
+        }
+        segment_id = it->second.segment_id;
+        // Erase under the lock so concurrent postXfer/genNotif calls will see
+        // the agent as gone and return NIXL_ERR_INVALID_PARAM before using
+        // the segment handle.
+        connected_agents_.erase(it);
+    }
+    closeSegment(engine_, segment_id);
     return NIXL_SUCCESS;
 }
 
@@ -299,13 +315,24 @@ nixl_status_t
 nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
     bool has_failed = false;
+    bool has_pending = false;
     for (size_t index = 0; index < priv->request_count; ++index) {
         transfer_status_t status;
         int rc = getTransferStatus(engine_, priv->batch_id, index, &status);
-        if (rc || status.status == STATUS_FAILED)
+        // STATUS_CANCELED: set when the underlying RDMA endpoint is reset or
+        //   destroyed (e.g. remote disconnect, link error). Terminal, no retry.
+        // STATUS_TIMEOUT:  set by the worker thread when a slice exceeds the
+        //   configured timeout (default 10 s). The endpoint is then disabled,
+        //   making retries futile. Terminal, no retry.
+        if (rc || status.status == STATUS_FAILED || status.status == STATUS_CANCELED ||
+            status.status == STATUS_TIMEOUT) {
             has_failed = true;
-        else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING)
-            return NIXL_IN_PROG;
+        } else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING) {
+            has_pending = true;
+        }
+    }
+    if (has_pending) {
+        return NIXL_IN_PROG;
     }
     if (!has_failed) {
         // Each batch_id has the batch size, and cannot process more requests
