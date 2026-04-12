@@ -565,16 +565,22 @@ def worker(torch_rank: int, args: argparse.Namespace):
             kineto=args.kineto,
             fault_tolerance_test=kill_rank,
         )
-        # Query mask buffer to detect any unexpected rank failures and clean them up
+        # Query mask buffer to detect rank failures and clean them up
         buffer.query_mask_buffer(mask_status)
         newly_failed_ranks = set()
         for r in range(current_num_ranks):
             if mask_status[r].item() != 0 and r in remote_ranks:
                 newly_failed_ranks.add(r)
 
+        # Reject failures not marked for kill in the plan.
+        unexpected_failures = newly_failed_ranks - set(ranks_to_kill)
+        assert (
+            not unexpected_failures
+        ), f"rank {global_rank}, local_rank={local_rank} phase {plan.get_phase()}: unexpected failures {unexpected_failures}"
+
         if len(newly_failed_ranks) > 0:
             print(
-                f"global_rank={global_rank}, local_rank={local_rank} -> detected unexpected rank failures: {newly_failed_ranks}, cleaning up...",
+                f"global_rank={global_rank}, local_rank={local_rank} -> detected expected rank failures: {newly_failed_ranks}, cleaning up...",
                 flush=True,
             )
             remote_ranks.difference_update(newly_failed_ranks)
@@ -649,15 +655,24 @@ def main():
         start_method="spawn",
     )
     failed = []
+    sigterm_count = 0
     for i, p in enumerate(ctx.processes):
         p.join()
-        # Ignore expected fault-tolerance SIGTERM exits.
-        if p.exitcode not in (0, -signal.SIGTERM):
+        if p.exitcode == -signal.SIGTERM:
+            sigterm_count += 1
+        elif p.exitcode != 0:
             failed.append((i, p.exitcode))
     if failed:
         raise RuntimeError(
             f"Worker processes failed: {', '.join(f'worker {i} (exit code {code})' for i, code in failed)}"
         )
+
+    # Verify that exactly the expected number of ranks were killed via SIGTERM.
+    plan = Plan(args.plan, rank=0)
+    expected_kills = plan.get_total_killed_ranks()
+    assert (
+        sigterm_count == expected_kills
+    ), f"Expected {expected_kills} SIGTERM kills, got {sigterm_count}"
 
 
 if __name__ == "__main__":
