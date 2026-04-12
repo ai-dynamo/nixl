@@ -28,11 +28,16 @@
 
 namespace {
 bool
-isValidPrepXferParams(const nixl_xfer_op_t &operation,
+isValidPrepXferParams(const nixl_xfer_op_t operation,
                       const nixl_meta_dlist_t &local,
                       const nixl_meta_dlist_t &remote,
                       const std::string &remote_agent,
                       const std::string &local_agent) {
+    if ((operation != NIXL_READ) && (operation != NIXL_WRITE)) {
+        NIXL_ERROR << "Error: Invalid operation for POSIX backend: " << int(operation);
+        return false;
+    }
+
     if (remote_agent != local_agent) {
         NIXL_ERROR << absl::StrFormat(
             "Error: Remote agent must match the requesting agent (%s). Got %s",

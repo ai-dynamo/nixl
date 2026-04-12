@@ -25,6 +25,7 @@
 
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "common/util.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 #include "util.h"
@@ -226,9 +227,9 @@ nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
 }
 
 void
-nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
-    const char *bytes_name = is_write ? "agent_tx_bytes" : "agent_rx_bytes";
-    const char *requests_name = is_write ? "agent_tx_requests_num" : "agent_rx_requests_num";
+nixlTelemetry::addXferTime(const std::chrono::microseconds xfer_time, const nixl_xfer_op_t operation, const uint64_t bytes) {
+    const char *bytes_name = weAreSource(operation) ? "agent_tx_bytes" : "agent_rx_bytes";
+    const char *requests_name = weAreSource(operation) ? "agent_tx_requests_num" : "agent_rx_requests_num";
 
     const auto time = std::chrono::duration_cast<std::chrono::microseconds>(
                           std::chrono::system_clock::now().time_since_epoch())

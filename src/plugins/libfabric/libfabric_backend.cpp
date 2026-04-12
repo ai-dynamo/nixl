@@ -1016,7 +1016,17 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     NIXL_DEBUG << "Processing " << desc_count
                << " descriptors using optimized single-pass approach";
 
-    op_type = (operation == NIXL_WRITE) ? nixlLibfabricReq::WRITE : nixlLibfabricReq::READ;
+    switch (operation) {
+    case NIXL_READ:
+        op_type = nixlLibfabricReq::READ;
+        break;
+    case NIXL_WRITE:
+        op_type = nixlLibfabricReq::WRITE;
+        break;
+    default:
+        NIXL_ERROR << "Invalid operation for libfabric backend: " << int(operation);
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
     // Set initial submit request count to maximum possible requests for this xfer.
     size_t max_possible_requests = desc_count * rail_manager.getNumRails();

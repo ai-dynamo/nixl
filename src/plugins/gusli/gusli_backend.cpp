@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,9 +75,12 @@ public:
 };
 
 nixl_status_t
-verifyRequestParams(const nixl_xfer_op_t &op,
+verifyRequestParams(const nixl_xfer_op_t op,
                     const nixl_meta_dlist_t &local,
                     const nixl_meta_dlist_t &remote) {
+    if ((op != NIXL_READ) && (op != NIXL_WRITE)) {
+        __LOG_RETERR(NIXL_ERR_INVALID_PARAM, "Operation must be NIXL_READ or NIXL_WRITE, got %d", int(op));
+    }
     if (local.getType() != DRAM_SEG)
         __LOG_RETERR(
             NIXL_ERR_INVALID_PARAM, "Local memory type must be DRAM_SEG, got %d", local.getType());
