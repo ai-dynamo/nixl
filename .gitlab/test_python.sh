@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash -xe
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -16,9 +16,6 @@
 
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../.ci/scripts/common.sh"
-
-set -e
-set -x
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1

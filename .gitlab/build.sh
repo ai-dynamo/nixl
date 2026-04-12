@@ -38,7 +38,7 @@ GRPC_TAG=${GRPC_TAG:-v1.73.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
-UCCL_COMMIT_SHA="2de728f1a27ea3f3b66059baf838f940e243ebc6"
+UCCL_COMMIT_SHA="4ca420138aa7161c6bfd76ebda51ba4c07173c6d"
 AZURITE_VER="3.35.0"
 TMPDIR=$(mktemp -d)
 
@@ -111,6 +111,7 @@ else
                                  pkg-config \
                                  protobuf-compiler-grpc \
                                  pybind11-dev \
+                                 nanobind-dev \
                                  etcd-server \
                                  net-tools \
                                  iproute2 \
@@ -137,7 +138,8 @@ else
         click tabulate auditwheel tomlkit \
         pytest pytest-timeout zmq \
         mpmath typing-extensions sympy numpy \
-        networkx MarkupSafe fsspec filelock jinja2 torch
+        networkx MarkupSafe fsspec filelock jinja2 torch \
+        nanobind
 
     # Add DOCA repository and install packages
     ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
