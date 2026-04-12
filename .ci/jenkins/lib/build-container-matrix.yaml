@@ -60,6 +60,7 @@ pipeline_start:
 steps:
   - name: Prepare
     containerSelector: "{name: 'podman'}"
+    credentialsId: 'svc-nixl-new-artifactory-token'
     run: |
       # Setup podman and dependencies
       set -x
@@ -67,6 +68,9 @@ steps:
       podman system reset -f || true
       podman info
       ln -sfT $(type -p podman) /usr/bin/docker
+      # Login to Artifactory
+      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+
       yum install -y gettext
 
   - name: Build NIXLBench
@@ -146,7 +150,6 @@ steps:
 
   - name: Push
     containerSelector: "{name: 'podman'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
     run: |
       source version-info
       ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY_URL}/${BUILD_TARGET}"
@@ -156,9 +159,6 @@ steps:
       IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${UCX_VERSION};arch=${arch};"
       IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
       IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
-
-      # Login to Artifactory
-      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
 
       # Function to tag, push, and set properties
       tag_push_set_properties() {
