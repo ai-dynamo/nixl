@@ -17,10 +17,8 @@
 #ifndef NIXL_SRC_CORE_TELEMETRY_TELEMETRY_H
 #define NIXL_SRC_CORE_TELEMETRY_TELEMETRY_H
 
-#include "common/cyclic_buffer.h"
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
-#include "mem_section.h"
 #include "nixl_types.h"
 
 #include <string>
@@ -84,13 +82,15 @@ private:
     bool
     writeEventHelper();
     std::unique_ptr<nixlTelemetryExporter> exporter_;
-    std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
-    // Lock-free double buffer: producers write to eventBuffers_[writeBufferIndex_],
-    // consumer swaps writeBufferIndex_ and drains the inactive buffer.
+    // Lock-free double buffer.  writeState_ packs the buffer selector
+    // (bit 63) and write index (bits 0-62) into one atomic so that
+    // producers obtain both from a single fetch_add — no buf/index race.
+    static constexpr size_t BUF_BIT = size_t(1) << 63;
+    static constexpr size_t IDX_MASK = BUF_BIT - 1;
     std::unique_ptr<nixlTelemetryEvent[]> eventBuffers_[2];
     size_t eventBufferSize_{0};
-    std::atomic<size_t> writeIndex_{0};
-    std::atomic<unsigned> writeBufferIndex_{0};
+    std::atomic<size_t> writeState_{0};
+    size_t nextBufBit_{BUF_BIT};
     asio::thread_pool pool_;
     periodicTask writeTask_;
     std::string agentName_;

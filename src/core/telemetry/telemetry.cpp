@@ -60,9 +60,8 @@ nixlTelemetry::~nixlTelemetry() {
         // continue anyway since it's not critical
     }
 
-    if (buffer_) {
+    if (eventBuffers_[0]) {
         writeEventHelper();
-        buffer_.reset();
     }
 }
 
@@ -124,8 +123,7 @@ nixlTelemetry::initializeTelemetry() {
     eventBufferSize_ = buffer_size;
     eventBuffers_[0] = std::make_unique<nixlTelemetryEvent[]>(eventBufferSize_);
     eventBuffers_[1] = std::make_unique<nixlTelemetryEvent[]>(eventBufferSize_);
-    writeIndex_.store(0);
-    writeBufferIndex_.store(0);
+    writeState_.store(0);
 
     const auto run_interval =
         nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
@@ -140,20 +138,23 @@ nixlTelemetry::initializeTelemetry() {
 
 bool
 nixlTelemetry::writeEventHelper() {
-    // Disable new writes: setting writeIndex_=max causes them to see id>=max and skip.
-    const size_t num_events_raw = writeIndex_.exchange(eventBufferSize_);
-    const unsigned w = writeBufferIndex_.fetch_xor(1);
-    writeIndex_.store(0);
-    const size_t num_events = std::min(num_events_raw, eventBufferSize_);
+    // Single exchange: swap to the other buffer and reset index to 0.
+    const size_t old = writeState_.exchange(nextBufBit_);
+    const unsigned buf = (old & BUF_BIT) ? 1 : 0;
+    const size_t numRaw = old & IDX_MASK;
+    const size_t numEvents = std::min(numRaw, eventBufferSize_);
 
-    if (num_events_raw > eventBufferSize_) {
+    if (numRaw > eventBufferSize_) {
         NIXL_WARN << "Telemetry events were dropped due to buffer overflow";
     }
 
-    for (size_t i = 0; i < num_events; ++i) {
-        exporter_->exportEvent(eventBuffers_[w][i]);
+    for (size_t i = 0; i < numEvents; ++i) {
+        if (eventBuffers_[buf][i].eventName_[0] == '\0') continue;
+        exporter_->exportEvent(eventBuffers_[buf][i]);
+        eventBuffers_[buf][i].eventName_[0] = '\0';
     }
 
+    nextBufBit_ ^= BUF_BIT;
     return true;
 }
 
@@ -178,13 +179,12 @@ void
 nixlTelemetry::updateData(const std::string &event_name,
                           nixl_telemetry_category_t category,
                           uint64_t value) {
-    const size_t id = writeIndex_.fetch_add(1);
-    if (id >= eventBufferSize_) {
-        return;
-    }
+    const size_t old = writeState_.fetch_add(1);
+    const unsigned buf = (old & BUF_BIT) ? 1 : 0;
+    const size_t id = old & IDX_MASK;
+    if (id >= eventBufferSize_) return;
 
-    eventBuffers_[writeBufferIndex_.load()][id] =
-        nixlTelemetryEvent(category, event_name.c_str(), value);
+    eventBuffers_[buf][id] = nixlTelemetryEvent(category, event_name.c_str(), value);
 }
 
 // The next 4 methods might be removed, as addTransferComplete covers them.
@@ -238,14 +238,12 @@ nixlTelemetry::addTransferComplete(std::chrono::microseconds post_time,
                                    std::chrono::microseconds xfer_time,
                                    bool is_write,
                                    uint64_t bytes) {
-    const size_t id = writeIndex_.fetch_add(4);
-    if (id + 4 > eventBufferSize_) {
-        return;
-    }
+    const size_t old = writeState_.fetch_add(4);
+    const unsigned buf = (old & BUF_BIT) ? 1 : 0;
+    const size_t id = old & IDX_MASK;
+    if (id + 4 > eventBufferSize_) return;
 
-    const unsigned buf = writeBufferIndex_.load(std::memory_order_acquire);
     auto &arr = eventBuffers_[buf];
-
     arr[id] = nixlTelemetryEvent(nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
                                  "agent_xfer_post_time",
                                  static_cast<uint64_t>(post_time.count()));
