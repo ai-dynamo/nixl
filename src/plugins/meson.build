@@ -29,6 +29,10 @@ if enabled_plugins.get('OBJ')
     subdir('obj')
 endif
 
+if enabled_plugins.get('MOCKKV')
+    subdir('mockkv')
+endif
+
 if enabled_plugins.get('AZURE_BLOB')
     subdir('azure_blob')
 endif
