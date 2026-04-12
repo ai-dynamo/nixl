@@ -79,7 +79,8 @@ verifyRequestParams(const nixl_xfer_op_t op,
                     const nixl_meta_dlist_t &local,
                     const nixl_meta_dlist_t &remote) {
     if ((op != NIXL_READ) && (op != NIXL_WRITE)) {
-        __LOG_RETERR(NIXL_ERR_INVALID_PARAM, "Operation must be NIXL_READ or NIXL_WRITE, got %d", int(op));
+        __LOG_RETERR(
+            NIXL_ERR_INVALID_PARAM, "Operation must be NIXL_READ or NIXL_WRITE, got %d", int(op));
     }
     if (local.getType() != DRAM_SEG)
         __LOG_RETERR(

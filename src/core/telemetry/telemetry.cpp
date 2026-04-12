@@ -227,9 +227,12 @@ nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
 }
 
 void
-nixlTelemetry::addXferTime(const std::chrono::microseconds xfer_time, const nixl_xfer_op_t operation, const uint64_t bytes) {
+nixlTelemetry::addXferTime(const std::chrono::microseconds xfer_time,
+                           const nixl_xfer_op_t operation,
+                           const uint64_t bytes) {
     const char *bytes_name = weAreSource(operation) ? "agent_tx_bytes" : "agent_rx_bytes";
-    const char *requests_name = weAreSource(operation) ? "agent_tx_requests_num" : "agent_rx_requests_num";
+    const char *requests_name =
+        weAreSource(operation) ? "agent_tx_requests_num" : "agent_rx_requests_num";
 
     const auto time = std::chrono::duration_cast<std::chrono::microseconds>(
                           std::chrono::system_clock::now().time_since_epoch())
