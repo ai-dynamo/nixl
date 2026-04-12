@@ -47,6 +47,8 @@ if cuobj_dep.found()
         's3_accel/dell/client.h',
         's3_accel/dell/engine_impl.cpp',
         's3_accel/dell/engine_impl.h',
+        's3_accel/dell/cuobj_token_manager.cpp',
+        's3_accel/dell/cuobj_token_manager.h',
     ]
     plugin_deps += [ cuobj_dep ]
 else
