@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +15,7 @@
 
 import importlib
 import sys
+from typing import TYPE_CHECKING
 
 # Try packages in order
 candidates = ["nixl_cu13", "nixl_cu12"]
@@ -34,7 +35,7 @@ if _pkg is None:
 submodules = ["_api", "_bindings", "_utils", "logging"]
 for sub_name in submodules:
     # Import submodule from actual wheel
-    module = importlib.import_module(f"{pkg}.{sub_name}")
+    module = importlib.import_module(f"{_pkg.__name__}.{sub_name}")
     # Make it accessible as nixl._api, nixl._utils, nixl.logging
     sys.modules[f"nixl.{sub_name}"] = module
     # Also add the submodule itself to the nixl namespace
@@ -44,3 +45,10 @@ for sub_name in submodules:
     for attr in dir(module):
         if not attr.startswith("_"):
             setattr(sys.modules[__name__], attr, getattr(module, attr))
+
+if TYPE_CHECKING:
+    from nixl import logging  # noqa: F401
+    from nixl._api import (  # type: ignore[attr-defined]  # noqa: F401
+        nixl_agent,
+        nixl_agent_config,
+    )
