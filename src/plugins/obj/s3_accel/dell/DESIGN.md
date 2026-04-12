@@ -19,7 +19,7 @@ calls that invoke `CUObjIOOps` callbacks.  The callbacks are expected
 to perform the **entire server round-trip** and return the byte count
 transferred.  Our callbacks do neither: they copy `infop->desc_str`
 into a context struct, return `0`, and the actual S3 request happens
-later in `postXfer`.  This works but misuses the API contract.
+later in `postXfer`. 
 
 Pattern B's `cuMemObjGetRDMAToken()` is designed exactly for our use
 case: generate a token, use it in your own HTTP request, free it when
