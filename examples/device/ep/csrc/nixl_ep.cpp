@@ -1348,7 +1348,7 @@ void Buffer::_nixl_agent_init() {
     EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->sync_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
     EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->sync_count_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
 
-    if (!low_latency_mode && local_ht_barrier_counter) {
+    if (local_ht_barrier_counter) {
         nixl_agent_info->ht_barrier_reg_descs.addDesc(
             nixlBlobDesc((uintptr_t)(local_ht_barrier_counter), sizeof(uint64_t), get_local_device_id(), ""));
         EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->ht_barrier_reg_descs) == NIXL_SUCCESS);
