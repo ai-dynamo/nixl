@@ -98,6 +98,8 @@ nixlTelemetry::initializeTelemetry() {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");
     }
 
+    maxBufferedEvents_ = buffer_size;
+
     const std::optional<std::string> exporter_name = getExporterName();
 
     if (!exporter_name) {
@@ -172,6 +174,9 @@ nixlTelemetry::updateData(const std::string &event_name,
                           uint64_t value) {
     // agent can be multi-threaded
     std::lock_guard<std::mutex> lock(mutex_);
+    if (events_.size() >= maxBufferedEvents_) {
+        return;
+    }
     events_.emplace_back(std::chrono::duration_cast<std::chrono::microseconds>(
                              std::chrono::system_clock::now().time_since_epoch())
                              .count(),
@@ -235,6 +240,9 @@ nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, u
                           .count();
 
     const std::lock_guard lock(mutex_);
+    if (events_.size() + 3 > maxBufferedEvents_) {
+        return;
+    }
     events_.emplace_back(time,
                          nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
                          "agent_xfer_time",
