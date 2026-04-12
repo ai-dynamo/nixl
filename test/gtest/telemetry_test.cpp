@@ -138,13 +138,14 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_NO_THROW(telemetry.updateErrorCount(nixl_status_t::NIXL_ERR_BACKEND));
     EXPECT_NO_THROW(telemetry.updateMemoryRegistered(1024));
     EXPECT_NO_THROW(telemetry.updateMemoryDeregistered(1024));
-    EXPECT_NO_THROW(telemetry.addXferTime(std::chrono::microseconds(100), true, 2000));
+    EXPECT_NO_THROW(telemetry.addTransferComplete(
+        std::chrono::microseconds(50), std::chrono::microseconds(100), true, 2000));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     auto path = testDir_.string() + "/" + testFile_;
     auto buffer =
         std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
-    EXPECT_EQ(buffer->size(), 10);
+    EXPECT_EQ(buffer->size(), 11);
     EXPECT_EQ(buffer->version(), TELEMETRY_VERSION);
     EXPECT_EQ(buffer->capacity(), capacity_);
     EXPECT_EQ(buffer->empty(), false);
@@ -163,15 +164,17 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_STREQ(event.eventName_, "agent_rx_requests_num");
     EXPECT_EQ(event.value_, 1);
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_,
-                 nixlEnumStrings::statusStr(nixl_status_t::NIXL_ERR_BACKEND).c_str());
-    EXPECT_EQ(event.value_, 1);
+    EXPECT_STREQ(event.eventName_, "agent_error");
+    EXPECT_EQ(event.value_, static_cast<uint64_t>(nixl_status_t::NIXL_ERR_BACKEND));
     buffer->pop(event);
     EXPECT_STREQ(event.eventName_, "agent_memory_registered");
     EXPECT_EQ(event.value_, 1024);
     buffer->pop(event);
     EXPECT_STREQ(event.eventName_, "agent_memory_deregistered");
     EXPECT_EQ(event.value_, 1024);
+    buffer->pop(event);
+    EXPECT_STREQ(event.eventName_, "agent_xfer_post_time");
+    EXPECT_EQ(event.value_, 50);
     buffer->pop(event);
     EXPECT_STREQ(event.eventName_, "agent_xfer_time");
     EXPECT_EQ(event.value_, 100);
@@ -186,12 +189,11 @@ TEST_F(telemetryTest, TransferBytesTracking) {
 
 TEST_F(telemetryTest, TelemetryEventStructure) {
     nixlTelemetryEvent event1(
-        1234567890, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, "test_event", 42);
+        nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, "agent_tx_bytes", 42);
 
-    EXPECT_EQ(event1.timestampUs_, 1234567890);
     EXPECT_EQ(event1.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
     EXPECT_EQ(event1.value_, 42);
-    EXPECT_STREQ(event1.eventName_, "test_event");
+    EXPECT_STREQ(event1.eventName_, "agent_tx_bytes");
 }
 
 TEST_F(telemetryTest, ShortRunInterval) {
@@ -338,12 +340,12 @@ TEST_F(telemetryTest, TelemetryAgentEventsTwo) {
     // Wait for the telemetry to be written
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    // Verify that both agent and backend events are written
+    // Verify that only agent events are written (no backend events)
     auto path = testDir_.string() + "/" + testFile_;
     auto buffer =
         std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
 
-    EXPECT_EQ(buffer->size(), 2); // 2 agent events
+    EXPECT_EQ(buffer->size(), 2);
 
     nixlTelemetryEvent event;
     buffer->pop(event);
@@ -351,8 +353,8 @@ TEST_F(telemetryTest, TelemetryAgentEventsTwo) {
     EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
 
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_,
-                 nixlEnumStrings::statusStr(nixl_status_t::NIXL_ERR_BACKEND).c_str());
+    EXPECT_STREQ(event.eventName_, "agent_error");
+    EXPECT_EQ(event.value_, static_cast<uint64_t>(nixl_status_t::NIXL_ERR_BACKEND));
     EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR);
 
     envHelper_.popVar();

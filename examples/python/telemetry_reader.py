@@ -23,7 +23,6 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime
 
 # Set up logging
 logging.basicConfig(
@@ -34,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants from telemetry_event.h
-TELEMETRY_VERSION = 1
+TELEMETRY_VERSION = 2
 MAX_EVENT_NAME_LEN = 32
 
 # NIXL telemetry categories
@@ -65,10 +64,8 @@ class NixlTelemetryEvent(ctypes.Structure):
 
     _pack_ = 1
     _fields_ = [
-        ("timestamp_us", ctypes.c_uint64),
         ("category", ctypes.c_int),
         ("event_name", ctypes.c_char * MAX_EVENT_NAME_LEN),
-        ("_padding", ctypes.c_uint32),
         ("value", ctypes.c_uint64),
     ]
 
@@ -197,13 +194,6 @@ class SharedRingBuffer:
             os.close(self.file_fd)
 
 
-def format_timestamp(timestamp_us):
-    """Format timestamp in microseconds to readable format"""
-    dt = datetime.fromtimestamp(timestamp_us / 1_000_000)
-    microseconds = timestamp_us % 1_000_000
-    return f"{dt.strftime('%Y-%m-%d %H:%M:%S')}.{microseconds:06d}"
-
-
 def format_bytes(bytes_val):
     """Format bytes to human readable format"""
     units = ["B", "KB", "MB", "GB", "TB"]
@@ -232,13 +222,18 @@ def get_telemetry_category_string(category):
     return category_strings.get(category, f"UNKNOWN_CATEGORY_{category}")
 
 
+def get_telemetry_event_name_string(event_name):
+    """Get string representation of telemetry event name"""
+    if isinstance(event_name, bytes):
+        return event_name.decode("utf-8", errors="replace").rstrip("\x00")
+    return str(event_name)
+
+
 def print_telemetry_event(event):
     """Print telemetry event in a formatted way"""
     logger.info("\n=== NIXL Telemetry Event ===")
-    logger.info("Timestamp: %s", format_timestamp(event.timestamp_us))
 
-    # Decode event name
-    event_name = event.event_name.decode("utf-8").rstrip("\x00")
+    event_name = get_telemetry_event_name_string(event.event_name)
     category_str = get_telemetry_category_string(event.category)
 
     logger.info("Category: %s", category_str)

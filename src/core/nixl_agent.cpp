@@ -118,8 +118,8 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
     }
 
     if (telemetry_pub && (stat_status != NIXL_TELEMETRY_POST)) {
-        telemetry_pub->addPostTime(telemetry.postDuration);
-        telemetry_pub->addXferTime(duration, backendOp == NIXL_WRITE, telemetry.totalBytes);
+        telemetry_pub->addTransferComplete(
+            telemetry.postDuration, duration, backendOp == NIXL_WRITE, telemetry.totalBytes);
     }
 
     NIXL_TRACE << "[NIXL TELEMETRY]: From backend " << engine->getType()
@@ -154,20 +154,25 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 
     const auto telemetry_enabled = nixl::config::getValueOptional<bool>(TELEMETRY_ENABLED_VAR);
 
-    if (telemetry_enabled) {
-        if (*telemetry_enabled) {
-            telemetryEnabled = true;
-            telemetry_ = std::make_unique<nixlTelemetry>(name);
-        } else if (config.captureTelemetry) {
-            telemetryEnabled = true;
+    const bool telemetry_enabled_env = telemetry_enabled && *telemetry_enabled;
+    const bool telemetry_enabled_config = config.captureTelemetry;
+
+    if (telemetry_enabled_env || telemetry_enabled_config) {
+        if (telemetry_enabled && !*telemetry_enabled && telemetry_enabled_config) {
             NIXL_WARN << "NIXL telemetry is enabled through config, "
                          "ignoring the NIXL_TELEMETRY_ENABLE environment variable";
-        } else {
-            NIXL_DEBUG << "NIXL telemetry is disabled";
         }
-    } else if (config.captureTelemetry) {
-        telemetryEnabled = true;
-        NIXL_DEBUG << "Capturing NIXL telemetry based on config (without an output file)";
+        telemetry_ = std::make_unique<nixlTelemetry>(name);
+        telemetryEnabled = telemetry_->recording;
+        if (!telemetryEnabled) {
+            NIXL_WARN << "Telemetry was requested but no exporter is configured "
+                         "(set NIXL_TELEMETRY_EXPORTER or NIXL_TELEMETRY_DIR); "
+                         "per-transfer telemetry and error export are disabled.";
+        } else if (!telemetry_enabled_env && telemetry_enabled_config) {
+            NIXL_DEBUG << "Capturing NIXL telemetry based on config";
+        }
+    } else {
+        NIXL_DEBUG << "NIXL telemetry is disabled";
     }
 }
 
@@ -328,7 +333,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.enableProgTh = data->config_.useProgThread;
     init_params.pthrDelay = data->config_.pthrDelay;
     init_params.syncMode = data->config_.syncMode;
-    init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
+    init_params.enableTelemetry_ = data->telemetryEnabled;
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
@@ -471,7 +476,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
 
     if (count > 0) {
         // sum all the sizes of the descriptors using std::accumulate
-        if (data->telemetry_) {
+        if (data->telemetry_ && data->telemetryEnabled) {
             uint64_t total_size = std::accumulate(
                 descs.begin(),
                 descs.end(),
@@ -514,7 +519,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
             bad_ret = ret;
     }
     if (bad_ret == NIXL_SUCCESS) {
-        if (data->telemetry_) {
+        if (data->telemetry_ && data->telemetryEnabled) {
             uint64_t total_size = std::accumulate(
                 descs.begin(),
                 descs.end(),

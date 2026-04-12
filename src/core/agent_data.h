@@ -128,7 +128,7 @@ class nixlAgentData {
 
         void
         addErrorTelemetry(nixl_status_t err_status) {
-            if (telemetry_) {
+            if (telemetry_ && telemetryEnabled) {
                 telemetry_->updateErrorCount(err_status);
             }
         }
