@@ -85,13 +85,12 @@ private:
     writeEventHelper();
     std::unique_ptr<nixlTelemetryExporter> exporter_;
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
-    // Lock-free double buffer: producers write to eventBuffers_[writeBufIndex_],
-    // consumer swaps writeBufIndex_ and drains the inactive buffer.
+    // Lock-free double buffer: producers write to eventBuffers_[writeBufferIndex_],
+    // consumer swaps writeBufferIndex_ and drains the inactive buffer.
     std::unique_ptr<nixlTelemetryEvent[]> eventBuffers_[2];
-    size_t maxEventsBuffered_{0};
-    std::atomic<size_t> writeIdx_{0};
-    std::atomic<int> writeBufIndex_{0};
-    std::atomic<bool> overflowed_{false};
+    size_t eventBufferSize_{0};
+    std::atomic<size_t> writeIndex_{0};
+    std::atomic<unsigned> writeBufferIndex_{0};
     asio::thread_pool pool_;
     periodicTask writeTask_;
     std::string agentName_;
