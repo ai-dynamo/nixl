@@ -548,19 +548,8 @@ __wrap_get_mempolicy(int *mode,
     return 0;
 }
 
-// helper template function for allocating flat type zeroed memory with malloc but keeping new
-// operator semantics of throwing bad_alloc when allocation fails
-template<typename T>
-T *
-malloc_zero() {
-    T *res = (T *)calloc(1, sizeof(T));
-    if (res == nullptr) {
-        std::stringstream ss;
-        ss << "Failed to allocate " << sizeof(T) << " bytes";
-        throw std::runtime_error(ss.str());
-    }
-    return res;
-}
+// shared stub ops for mocking libfabric objects
+#include "libfabric_mock_stubs.h"
 
 // mock fi_getinfo by current topology in use
 extern "C" int
@@ -631,195 +620,6 @@ __wrap_fi_getinfo(uint32_t version,
     return 0; // or FI_SUCCESS
 }
 
-// stubs
-static int
-fi_av_close_stub(struct fid *fid) {
-    free(fid);
-    return 0;
-}
-
-struct fi_ops fi_av_fid_ops_stub{
-    .close = fi_av_close_stub,
-};
-
-static fi_ops_av av_ops_stub = {};
-
-static int
-fi_av_open_stub(struct fid_domain *domain,
-                struct fi_av_attr *attr,
-                struct fid_av **av,
-                void *context) {
-    *av = malloc_zero<fid_av>();
-    (*av)->fid.ops = &fi_av_fid_ops_stub;
-    (*av)->ops = &av_ops_stub;
-    return 0;
-}
-
-static int
-fi_cq_close_stub(struct fid *fid) {
-    free(fid);
-    return 0;
-}
-
-struct fi_ops fi_cq_fid_ops_stub{
-    .close = fi_cq_close_stub,
-};
-
-static fi_ops_cq cq_ops_stub = {};
-
-static int
-fi_cq_open_stub(struct fid_domain *domain,
-                struct fi_cq_attr *attr,
-                struct fid_cq **cq,
-                void *context) {
-    *cq = malloc_zero<fid_cq>();
-    (*cq)->fid.ops = &fi_cq_fid_ops_stub;
-    (*cq)->ops = &cq_ops_stub;
-    return 0;
-}
-
-static int
-fi_ep_setopt_stub(fid_t fid, int level, int optname, const void *optval, size_t optlen) {
-    return 0;
-}
-
-static fi_ops_ep fi_ep_ops_stub = {
-    .setopt = fi_ep_setopt_stub,
-};
-
-static int
-fi_ep_bind_stub(struct fid *fid, struct fid *bfid, uint64_t flags) {
-    return 0;
-}
-
-static int
-fi_ep_control_stub(struct fid *fid, int command, void *arg) {
-    return 0;
-}
-
-static int
-fi_ep_cm_getname_stub(fid_t fid, void *addr, size_t *addrlen) {
-    return 0;
-}
-
-static int
-fi_ep_close_stub(struct fid *fid) {
-    free(fid);
-    return 0;
-}
-
-struct fi_ops fi_ep_fid_ops_stub{
-    .close = fi_ep_close_stub,
-    .bind = fi_ep_bind_stub,
-    .control = fi_ep_control_stub,
-};
-
-struct fi_ops_cm fi_ep_cm_ops_stub{
-    .getname = fi_ep_cm_getname_stub,
-};
-
-static ssize_t
-fi_ep_recvmsg_stub(struct fid_ep *ep, const struct fi_msg *msg, uint64_t flags) {
-    return 0;
-}
-
-static fi_ops_msg fi_ep_msg_ops_stub{
-    .recvmsg = fi_ep_recvmsg_stub,
-};
-
-static int
-fi_endpoint_stub(struct fid_domain *domain,
-                 struct fi_info *info,
-                 struct fid_ep **ep,
-                 void *context) {
-    *ep = malloc_zero<fid_ep>();
-    (*ep)->ops = &fi_ep_ops_stub;
-    (*ep)->fid.ops = &fi_ep_fid_ops_stub;
-    (*ep)->cm = &fi_ep_cm_ops_stub;
-    (*ep)->msg = &fi_ep_msg_ops_stub;
-    return 0;
-}
-
-static fi_ops_domain domain_ops_stub = {.av_open = fi_av_open_stub,
-                                        .cq_open = fi_cq_open_stub,
-                                        .endpoint = fi_endpoint_stub,
-                                        .scalable_ep = nullptr,
-                                        .cntr_open = nullptr,
-                                        .poll_open = nullptr,
-                                        .stx_ctx = nullptr,
-                                        .srx_ctx = nullptr,
-                                        .query_atomic = nullptr,
-                                        .query_collective = nullptr,
-                                        .endpoint2 = nullptr};
-
-static int
-fi_mr_close_stub(struct fid *fid) {
-    free(fid);
-    return 0;
-}
-
-static fi_ops fi_mr_self_ops_stub = {
-    .close = fi_mr_close_stub,
-};
-
-static int
-fi_mr_reg_stub(struct fid *fid,
-               const void *buf,
-               size_t len,
-               uint64_t access,
-               uint64_t offset,
-               uint64_t requested_key,
-               uint64_t flags,
-               struct fid_mr **mr,
-               void *context) {
-    *mr = malloc_zero<fid_mr>();
-    (*mr)->fid.ops = &fi_mr_self_ops_stub;
-    return 0;
-}
-
-static fi_ops_mr fi_mr_ops_stub{
-    .reg = fi_mr_reg_stub,
-};
-
-static int
-fi_domain_close_stub(struct fid *fid) {
-    free(fid);
-    return 0;
-}
-
-struct fi_ops fi_domain_ops_stub{
-    .close = fi_domain_close_stub,
-};
-
-static int
-fi_domain_stub(struct fid_fabric *fabric,
-               struct fi_info *info,
-               struct fid_domain **domain,
-               void *context) {
-    *domain = malloc_zero<fid_domain>();
-    (*domain)->fid.ops = &fi_domain_ops_stub;
-    (*domain)->ops = &domain_ops_stub;
-    (*domain)->mr = &fi_mr_ops_stub;
-    return 0;
-}
-
-static fi_ops_fabric fabric_ops_stub{.domain = fi_domain_stub,
-                                     .passive_ep = nullptr,
-                                     .eq_open = nullptr,
-                                     .wait_open = nullptr,
-                                     .trywait = nullptr,
-                                     .domain2 = nullptr};
-
-static int
-fi_fabric_close_stub(struct fid *fid) {
-    free(fid);
-    return 0;
-}
-
-struct fi_ops fi_fabric_ops_stub{
-    .close = fi_fabric_close_stub,
-};
-
 // mock fi_fabric to get past rail manager constructor
 extern "C" int
 __wrap_fi_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric, void *context) {
@@ -829,9 +629,7 @@ __wrap_fi_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric, void *
         return __real_fi_fabric(attr, fabric, context);
     }
 
-    *fabric = malloc_zero<fid_fabric>();
-    (*fabric)->fid.ops = &fi_fabric_ops_stub;
-    (*fabric)->ops = &fabric_ops_stub;
+    *fabric = mock_fabric_create();
     return 0;
 }
 
