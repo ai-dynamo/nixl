@@ -84,7 +84,7 @@ nixlTelemetryCsvExporter::nixlTelemetryCsvExporter(
     }
 
     // Write CSV header
-    file_ << "timestamp_us,category,event_name,value\n";
+    file_ << "category,event_name,value\n";
     NIXL_INFO << "CSV exporter initialized: " << file_path;
 }
 
@@ -95,8 +95,7 @@ nixlTelemetryCsvExporter::exportEvent(const nixlTelemetryEvent &event) {
     }
 
     try {
-        file_ << event.timestampUs_ << ","
-              << static_cast<int>(event.category_) << ","
+        file_ << static_cast<int>(event.category_) << ","
               << event.eventName_ << ","
               << event.value_ << "\n";
         file_.flush();
