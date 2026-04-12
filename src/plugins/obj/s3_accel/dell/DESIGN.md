@@ -64,6 +64,28 @@ This eliminates the need for custom request handle classes to carry
 descriptors between `prepXfer` and `postXfer`, and allows the Dell
 engine to inherit the parent's entire transfer pipeline unchanged.
 
+## Pool-aware memory registration
+
+NIXL's core calls `backend->registerMem()` once per page.  For a 2 GB
+buffer with 1 MB pages, that is 2,048 calls.  `cuMemObjGetDescriptor()`
+is heavyweight (pins memory, creates NIC Memory Regions), so doing it
+2,048 times takes ~1–2 seconds.
+
+`CuObjTokenManager::registerMemory()` takes an optional `pool_hint`
+parameter.  On the first call, it registers `[ptr, ptr+pool_hint)`
+instead of just `[ptr, ptr+page_size)`.  Subsequent calls check
+`findContainingRegion()` — if the address is already within the
+registered pool, it increments a refcount and returns immediately.
+
+Result: 1 `cuMemObjGetDescriptor` call instead of 2,048.  The
+`pool_hint` is passed from the Dell engine via the `rdma_pool_size`
+backend parameter, which callers (e.g. LMCache) set to their allocator
+buffer size.  Token generation (`cuMemObjGetRDMAToken`) computes the
+pool-relative offset automatically.
+
+Deregistration is refcount-based: `cuMemObjPutDescriptor` fires only
+when the last page within a pool is deregistered.
+
 ## Net result
 
 | Metric | Before | After |
