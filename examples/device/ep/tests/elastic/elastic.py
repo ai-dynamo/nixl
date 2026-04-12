@@ -70,7 +70,7 @@ def handle_sigterm(
 
     # Continue with default signal handler
     signal.signal(signum, signal.SIG_DFL)
-    os.kill(os.getpid(), signum)
+    signal.raise_signal(signum)
 
 
 def self_kill():
