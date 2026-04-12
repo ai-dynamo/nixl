@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -86,6 +86,15 @@ class Plan:
     def get_max_rank(self):
         """Get the maximum participating rank index"""
         return max(max(phase) for phase in self.phases)
+
+    def get_total_killed_ranks(self):
+        """Get total number of unique ranks killed across all phases."""
+        killed = set()
+        for phase in self.phases:
+            for r in phase:
+                if r < 0:
+                    killed.add(abs(r))
+        return len(killed)
 
     def get_min_active_ranks(self):
         """Get the minimum number of active ranks in all phases."""
