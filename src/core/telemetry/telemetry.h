@@ -24,8 +24,6 @@
 #include "nixl_types.h"
 
 #include <string>
-#include <vector>
-#include <mutex>
 #include <memory>
 #include <chrono>
 #include <functional>
@@ -69,9 +67,12 @@ public:
     void
     updateMemoryDeregistered(uint64_t memory_deregistered);
     void
-    addXferTime(std::chrono::microseconds transaction_time, bool is_write, uint64_t bytes);
-    void
-    addPostTime(std::chrono::microseconds post_time);
+    addTransferComplete(std::chrono::microseconds post_time,
+                        std::chrono::microseconds xfer_time,
+                        bool is_write,
+                        uint64_t bytes);
+
+    bool recording{false};
 
 private:
     void
@@ -84,8 +85,13 @@ private:
     writeEventHelper();
     std::unique_ptr<nixlTelemetryExporter> exporter_;
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
-    std::vector<nixlTelemetryEvent> events_;
-    std::mutex mutex_;
+    // Lock-free double buffer: producers write to eventBuffers_[writeBufIndex_],
+    // consumer swaps writeBufIndex_ and drains the inactive buffer.
+    std::unique_ptr<nixlTelemetryEvent[]> eventBuffers_[2];
+    size_t maxEventsBuffered_{0};
+    std::atomic<size_t> writeIdx_{0};
+    std::atomic<int> writeBufIndex_{0};
+    std::atomic<bool> overflowed_{false};
     asio::thread_pool pool_;
     periodicTask writeTask_;
     std::string agentName_;
