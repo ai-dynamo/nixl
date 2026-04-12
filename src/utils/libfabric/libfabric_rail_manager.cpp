@@ -229,8 +229,7 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
         throw std::runtime_error("Failed to create rails for libfabric rail manager");
     }
 
-    NIXL_DEBUG << "Successfully created " << rails_.size()
-               << " rails using provider=" << selected_provider_name;
+    NIXL_INFO << "Created " << rails_.size() << " rails using provider=" << selected_provider_name;
 }
 
 nixlLibfabricRailManager::~nixlLibfabricRailManager() {
@@ -261,7 +260,7 @@ nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
         dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
     } else if (max_rails < topology->getTotalNicCount()) {
         // bandwidth does not exceed total machine capacity, so use NUMA-aware rail selection policy
-        NIXL_TRACE << "Using NUMA-aware rail selection policy for DRAM memory type";
+        NIXL_INFO << "DRAM rail selection policy: numa-aware (max_rails=" << max_rails << ")";
         size_t numa_rail_count = topology->getNumaRailCount(); // NOTE: averaged if non-uniform
         if (max_rails > numa_rail_count) {
             size_t numa_speed = numa_rail_count * nic_speed;
@@ -747,6 +746,9 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
                    << " (mr=" << static_cast<const void *>(mr) << ", key=" << key << ")";
     }
 
+    NIXL_INFO << "Registered memory on " << selected_rails.size() << " rails, mem_type=" << mem_type
+              << " device=" << device_id;
+
     return NIXL_SUCCESS;
 }
 
@@ -777,6 +779,8 @@ nixlLibfabricRailManager::deregisterMemory(const std::vector<size_t> &selected_r
             markRailInactive(rail_idx);
         }
     }
+
+    NIXL_INFO << "Deregistered memory from " << selected_rails.size() << " rails";
 
     return overall_status;
 }
