@@ -151,7 +151,9 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
     std::vector<nixlSectionDesc> local_batch;
     std::vector<nixlSectionDesc> self_batch;
     local_batch.reserve(mem_elms.descCount());
-    if (backend->supportsLocal()) self_batch.reserve(mem_elms.descCount());
+    if (backend->supportsLocal()) {
+        self_batch.reserve(mem_elms.descCount());
+    }
 
     for (const auto &mem : mem_elms) {
         // TODO: For now trusting the user, but there can be a more checks mode
@@ -194,7 +196,9 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
 
     if (ret == NIXL_SUCCESS) {
         target.addDescs(std::move(local_batch));
-        if (backend->supportsLocal()) remote_self.addDescs(std::move(self_batch));
+        if (backend->supportsLocal()) {
+            remote_self.addDescs(std::move(self_batch));
+        }
     } else {
         for (size_t j = 0; j < local_batch.size(); ++j) {
             if (backend->supportsLocal()) {
