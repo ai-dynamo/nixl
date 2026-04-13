@@ -83,8 +83,8 @@ determineTotal() {
     return total;
 }
 
-xferBenchRT *
-createRT(int *terminate) {
+static xferBenchRT *
+createRT(std::atomic<int> *terminate) {
     // For storage backends without ETCD endpoints, use null runtime
     if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
         std::cout << "Using null runtime for storage backend without ETCD" << std::endl;
@@ -124,9 +124,15 @@ int
 xferBenchWorker::synchronize() {
     if (rt->barrier("sync") != 0) {
         std::cerr << "Failed to synchronize" << std::endl;
-        // assuming this is a fatal error, continue benchmarking after synchronization failure does
-        // not make sense
-        exit(EXIT_FAILURE);
+        // Best-effort cleanup of non-leased etcd keys (e.g. the "size" key)
+        // so they don't poison subsequent runs in the same benchmark_group.
+        rt->cleanupForExit();
+        // Use _Exit() instead of exit() to bypass atexit handlers (e.g. gRPC shutdown).
+        // exit() would deadlock with the etcd KeepAlive background thread: gRPC shutdown
+        // waits for open streams to close, but the KeepAlive thread keeps renewing the
+        // lease stream indefinitely. _Exit() kills all threads immediately, which closes
+        // the gRPC stream and lets the lease expire on the etcd server side.
+        std::_Exit(EXIT_FAILURE);
     }
 
     return 0;
@@ -185,7 +191,10 @@ bool xferBenchWorker::isTarget() {
     return ("target" == name);
 }
 
-int xferBenchWorker::terminate = 0;
+static_assert(std::atomic<int>::is_always_lock_free,
+              "xferBenchWorker::terminate must be lock-free for safe use in signal handlers");
+
+std::atomic<int> xferBenchWorker::terminate = 0;
 
 void xferBenchWorker::signalHandler(int signal) {
     static const char msg[] = "Ctrl-C received, exiting...\n";
@@ -194,7 +203,7 @@ void xferBenchWorker::signalHandler(int signal) {
     auto size = write(stdout_fd, msg, sizeof(msg) - 1);
     (void)size;
 
-    if (++terminate > max_count) {
+    if (terminate.fetch_add(1) >= max_count) {
         std::_Exit(EXIT_FAILURE);
     }
 }

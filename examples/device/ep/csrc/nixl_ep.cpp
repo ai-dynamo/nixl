@@ -766,12 +766,22 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
     auto recv_gbl_channel_prefix_matrix = std::optional<torch::Tensor>();
     auto send_rdma_head = std::optional<torch::Tensor>();
     auto send_nvl_head = std::optional<torch::Tensor>();
+    void* recv_src_meta_ptr = nullptr;
+    int* recv_rdma_channel_prefix_matrix_ptr = nullptr;
+    int* recv_gbl_channel_prefix_matrix_ptr = nullptr;
+    int* send_rdma_head_ptr = nullptr;
+    int* send_nvl_head_ptr = nullptr;
     if (not cached_mode) {
         recv_src_meta = torch::empty({num_recv_tokens, ht::get_source_meta_bytes()}, dtype(torch::kByte).device(torch::kCUDA));
         recv_rdma_channel_prefix_matrix = torch::empty({num_rdma_ranks, num_channels}, dtype(torch::kInt32).device(torch::kCUDA));
         recv_gbl_channel_prefix_matrix = torch::empty({num_ranks, num_channels}, dtype(torch::kInt32).device(torch::kCUDA));
         send_rdma_head = torch::empty({num_tokens, num_rdma_ranks}, dtype(torch::kInt32).device(torch::kCUDA));
         send_nvl_head = torch::empty({num_rdma_recv_tokens, NUM_MAX_NVL_PEERS}, dtype(torch::kInt32).device(torch::kCUDA));
+        recv_src_meta_ptr = recv_src_meta->data_ptr();
+        recv_rdma_channel_prefix_matrix_ptr = recv_rdma_channel_prefix_matrix->data_ptr<int>();
+        recv_gbl_channel_prefix_matrix_ptr = recv_gbl_channel_prefix_matrix->data_ptr<int>();
+        send_rdma_head_ptr = send_rdma_head->data_ptr<int>();
+        send_nvl_head_ptr = send_nvl_head->data_ptr<int>();
     }
 
     // Assign pointers
@@ -792,11 +802,11 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
     // Launch data dispatch
     // NOTES: the buffer size checks are moved into the `.cu` file
     ht::dispatch(recv_x.data_ptr(), recv_x_scales_ptr, recv_topk_idx_ptr, recv_topk_weights_ptr,
-                        cached_mode ? nullptr : recv_src_meta->data_ptr(),
+                        recv_src_meta_ptr,
                         x.data_ptr(), x_scales_ptr, topk_idx_ptr, topk_weights_ptr,
-                        cached_mode ? nullptr : send_rdma_head->data_ptr<int>(), cached_mode ? nullptr : send_nvl_head->data_ptr<int>(),
-                        cached_mode ? nullptr : recv_rdma_channel_prefix_matrix->data_ptr<int>(),
-                        cached_mode ? nullptr : recv_gbl_channel_prefix_matrix->data_ptr<int>(),
+                        send_rdma_head_ptr, send_nvl_head_ptr,
+                        recv_rdma_channel_prefix_matrix_ptr,
+                        recv_gbl_channel_prefix_matrix_ptr,
                         rdma_channel_prefix_matrix.data_ptr<int>(), recv_rdma_rank_prefix_sum.data_ptr<int>(),
                         gbl_channel_prefix_matrix.data_ptr<int>(), recv_gbl_rank_prefix_sum.data_ptr<int>(),
                         is_token_in_rank.data_ptr<bool>(),
