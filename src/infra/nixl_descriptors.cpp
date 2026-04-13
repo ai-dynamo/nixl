@@ -19,6 +19,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <iostream>
+
 #include "nixl_descriptors.h"
 #include "mem_section.h"
 #include "backend/backend_aux.h"
@@ -437,8 +438,8 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, order ord) {
 
 void
 nixlSecDescList::addDescs(nixlSecDescList &&other) {
-    NIXL_ASSERT(type == other.type) << "Memory type mismatch: " << nixlEnumStrings::memTypeStr(type)
-                                    << " != " << nixlEnumStrings::memTypeStr(other.type);
+    NIXL_ASSERT(type == other.type) << "Memory type mismatch: " << static_cast<int>(type)
+                                    << " != " << static_cast<int>(other.type);
     addDescs(std::move(other.descs), order::SORTED);
 }
 
