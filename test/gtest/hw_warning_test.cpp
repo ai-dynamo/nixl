@@ -74,11 +74,11 @@ TEST_F(HardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
  * Test that a warning is logged when IB devices are present but UCX
  * RDMA support is not available.
  *
- * Note: This warning only triggers for UCX >= 1.21.
+ * Note: This warning only triggers for UCX >= 1.22.
  */
 TEST_F(HardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
-    if (ucpVersion_ < UCP_VERSION(1, 21)) {
-        GTEST_SKIP() << "UCX version is less than 1.21, skipping test";
+    if (ucpVersion_ < UCP_VERSION(1, 22)) {
+        GTEST_SKIP() << "UCX version is less than 1.22, skipping test";
     }
 
     const auto &hw_info = nixl::hwInfo::instance();
