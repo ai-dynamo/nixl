@@ -182,14 +182,21 @@ LogProblemCounter::Send(const absl::LogEntry &entry) {
         return;
     }
 
+    bool matched = false;
     const std::string msg(entry.text_message());
     {
         const std::lock_guard lock(log_problem_mutex);
         for (auto &[rx, count] : log_problem_ignore) {
             if (std::regex_search(msg, rx)) {
+                matched = true;
                 ++count;
             }
         }
+
+        if (matched) {
+            return;
+        }
+
         ++global_problem_count;
     }
 
