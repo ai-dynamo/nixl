@@ -301,9 +301,10 @@ RUN uv pip install --upgrade 'setuptools>=80.9.0'
 ARG UCX_REF="v1.21.x"
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
-     cd ucx && 			     \
-     git checkout $UCX_REF &&	     \
-     ./autogen.sh && \
+     cd ucx &&                       \
+     git checkout $UCX_REF &&        \
+     git log -1 &&                   \
+     ./autogen.sh &&                 \
      ./contrib/configure-release-mt  \
          --enable-shared             \
          --disable-static            \
@@ -316,7 +317,7 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --without-gdrcopy           \
-         --with-efa  &&              \
+         --with-efa &&               \
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig
