@@ -197,7 +197,7 @@ show_help() {
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--ucx-ref ucx git reference (branch, tag, or sha)]"
-    echo "  [--build-nixl-ep build NIXL with NIXL EP support (uses latest UCX master)]"
+    echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     exit 0
