@@ -302,7 +302,7 @@ ARG UCX_REF="v1.21.x"
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx &&                       \
-     git checkout $UCX_REF &&        \
+     git checkout "${UCX_REF}" &&    \
      git log -1 &&                   \
      ./autogen.sh &&                 \
      ./contrib/configure-release-mt  \
