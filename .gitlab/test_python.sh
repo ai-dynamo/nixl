@@ -77,7 +77,7 @@ if $HAS_GPU ; then
     PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
     timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
         --plan ${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json \
-        --num-processes 4 --num-topk 4
+        --num-processes 4 --num-topk 4 --validate-plan
 fi
 
 echo "==== Running python tests ===="
