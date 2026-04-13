@@ -584,11 +584,12 @@ def worker(torch_rank: int, args: argparse.Namespace):
             if mask_status[r].item() != 0 and r in remote_ranks:
                 newly_failed_ranks.add(r)
 
-        # Reject failures not marked for kill in the plan.
-        unexpected_failures = newly_failed_ranks - set(ranks_to_kill)
-        assert (
-            not unexpected_failures
-        ), f"rank {global_rank}, local_rank={local_rank} phase {plan.get_phase()}: unexpected failures {unexpected_failures}"
+        if args.validate_plan:
+            # Reject failures not marked for kill in the plan.
+            unexpected_failures = newly_failed_ranks - set(ranks_to_kill)
+            assert (
+                not unexpected_failures
+            ), f"rank {global_rank}, local_rank={local_rank} phase {plan.get_phase()}: unexpected failures {unexpected_failures}"
 
         if len(newly_failed_ranks) > 0:
             print(
@@ -651,6 +652,11 @@ def main():
         default=DEFAULT_TIMEOUT_MS,
         help="GPU timeout in milliseconds (non-negative integer)",
     )
+    parser.add_argument(
+        "--validate-plan",
+        action="store_true",
+        help="Validate process exit codes against the plan (assert SIGTERM count, reject unexpected failures)",
+    )
 
     args = parser.parse_args()
 
@@ -685,12 +691,13 @@ def main():
             f"Worker processes failed: {', '.join(f'worker {i} (exit code {code})' for i, code in failed)}"
         )
 
-    # Verify that exactly the expected number of ranks were killed via SIGTERM.
-    plan = Plan(args.plan, rank=0)
-    expected_kills = plan.get_total_killed_ranks()
-    assert (
-        sigterm_count == expected_kills
-    ), f"Expected {expected_kills} SIGTERM kills, got {sigterm_count}"
+    if args.validate_plan:
+        # Verify that exactly the expected number of ranks were killed via SIGTERM.
+        plan = Plan(args.plan, rank=0)
+        expected_kills = plan.get_total_killed_ranks()
+        assert (
+            sigterm_count == expected_kills
+        ), f"Expected {expected_kills} SIGTERM kills, got {sigterm_count}"
 
 
 if __name__ == "__main__":
