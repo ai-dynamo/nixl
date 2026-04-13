@@ -745,19 +745,14 @@ copyVramToHost(void *host_addr, const void *device_addr, size_t len) {
         CHECK_NEURON_ERROR(
             neuronMemcpy(host_addr, (void *)device_addr, len, neuronMemcpyDeviceToHost),
             "nrt_tensor_read failed");
+        return;
     }
 #if HAVE_CUDA
-    else {
-        CHECK_CUDA_ERROR(cudaMemcpy(host_addr, (void *)device_addr, len, cudaMemcpyDeviceToHost),
-                         "cudaMemcpy failed");
-    }
+    CHECK_CUDA_ERROR(cudaMemcpy(host_addr, (void *)device_addr, len, cudaMemcpyDeviceToHost),
+                     "cudaMemcpy failed");
 #else
-    else {
-        std::cerr << "Failure in consistency check: VRAM segment type not "
-                     "supported without CUDA or Neuron"
-                  << std::endl;
-        exit(EXIT_FAILURE);
-    }
+    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+    exit(EXIT_FAILURE);
 #endif
 }
 
