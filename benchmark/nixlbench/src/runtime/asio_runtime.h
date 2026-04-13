@@ -146,6 +146,9 @@ public:
     }
 
 private:
+    static constexpr std::size_t typeShift_ = 24;
+    static constexpr std::uint32_t sizeMask_ = 0x00ffffff;
+
     void
     main() {
         try {
@@ -217,12 +220,12 @@ private:
 
     void
     postSend(const asio_msg_type_t type, const void *data, const std::size_t size) {
-        if (size > 0x00ffffff) {
+        if (size > sizeMask_) {
             throw std::runtime_error("Runtime message size " + std::to_string(size) +
                                      " exceeds 16MB-1 limit");
         }
 
-        const std::uint32_t head = size | (std::uint32_t(type) << 24);
+        const std::uint32_t head = size | (std::uint32_t(type) << typeShift_);
         const std::string buffer =
             std::string(reinterpret_cast<const char *>(&head), sizeof(head)) +
             std::string(reinterpret_cast<const char *>(data), size);
@@ -269,9 +272,9 @@ private:
                              if (ec.value()) {
                                  throw std::runtime_error("ASIO Read head failed: " + ec.message());
                              }
-                             temp_.type = asio_msg_type_t(head_ >> 24);
+                             temp_.type = asio_msg_type_t(head_ >> typeShift_);
                              temp_.data.clear();
-                             temp_.data.resize(head_ & 0x00ffffff);
+                             temp_.data.resize(head_ & sizeMask_);
                              recvData();
                          });
     }
