@@ -73,6 +73,7 @@ struct NixlAgentInfo
     nixl_reg_dlist_t rdma_reg_descs{VRAM_SEG};
     nixl_reg_dlist_t sync_reg_descs{VRAM_SEG};
     nixl_reg_dlist_t sync_count_reg_descs{VRAM_SEG};
+    nixl_reg_dlist_t ht_barrier_reg_descs{VRAM_SEG};
     std::vector<bool> wire_up_done; // [num_peers]
 };
 
@@ -95,7 +96,6 @@ private:
     int *mask_buffer_ptr = nullptr;
     int *sync_buffer_ptr = nullptr;
     int *sync_count_ptr = nullptr;
-    int *local_barrier_cnt_ptr = nullptr;
 
     /* Owning VMM allocations (keep raw ptrs above as aliases) */
     std::unique_ptr<vmm_region> m_rdma_alloc;
