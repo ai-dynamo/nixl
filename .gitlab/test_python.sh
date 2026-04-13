@@ -74,7 +74,7 @@ if $HAS_GPU ; then
     echo "==== Running elastic EP test ===="
     EP_SRC_DIR="examples/device/ep"
     NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
-    export PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}"
+    PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
     timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
         --plan ${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json \
         --num-processes 4 --num-topk 4
