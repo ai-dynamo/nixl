@@ -41,6 +41,17 @@ class xferBenchRT {
 
         // Add a barrier function to synchronize all processes
         virtual int barrier(const std::string& barrier_id) = 0;
+
+        // Check if all peer processes are still alive; returns true by default
+        [[nodiscard]] virtual bool
+        areAllPeersAlive() {
+            return true;
+        }
+
+        // Best-effort cleanup of runtime state (e.g. etcd keys) before a
+        // forced exit that bypasses normal destructors.
+        virtual void
+        cleanupForExit() {}
 };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_RUNTIME_H

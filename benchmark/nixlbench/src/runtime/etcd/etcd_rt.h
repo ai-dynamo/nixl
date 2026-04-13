@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +15,10 @@
  * limitations under the License.
  */
 
-#ifndef _ETCD_RT_H
-#define _ETCD_RT_H
+#ifndef NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_ETCD_ETCD_RT_H
+#define NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_ETCD_ETCD_RT_H
 
+#include <atomic>
 #include <string>
 #include <memory>
 #include <mutex>
@@ -27,9 +28,10 @@
 #include <thread>
 #include "runtime/runtime.h"
 
-// Forward declaration for etcd client
+// Forward declarations for etcd client
 namespace etcd {
 class SyncClient;
+class KeepAlive;
 }
 
 enum xferBenchEtcdMsgType { XFER_BENCH_ETCD_MSG_TYPE_INT = 1, XFER_BENCH_ETCD_MSG_TYPE_CHAR = 2 };
@@ -46,10 +48,15 @@ private:
     std::string benchmark_group;
     std::unique_ptr<etcd::SyncClient> client;
 
+    // Lease-based peer liveness: each rank's key is attached to a lease that
+    // auto-expires if the process dies (including SIGKILL). areAllPeersAlive()
+    // checks whether all peer rank keys are still present in etcd.
+    std::unique_ptr<etcd::KeepAlive> keepalive;
+
     int my_rank; // Rank information
     int global_size;
     uint64_t barrier_gen;
-    int *terminate;
+    std::atomic<int> *terminate;
 
     bool error() const { return terminate != nullptr && *terminate; };
     bool should_retry(int value, int max = 60) const {
@@ -73,7 +80,7 @@ public:
     xferBenchEtcdRT(const std::string &benchmark_group,
                     const std::string &etcd_endpoints,
                     const int size,
-                    int *terminate = nullptr);
+                    std::atomic<int> *terminate = nullptr);
     ~xferBenchEtcdRT();
 
     // Setup function to initialize connection and perform registration
@@ -93,6 +100,14 @@ public:
 
     // Barrier synchronization
     int barrier(const std::string& barrier_id) override;
+
+    // Check if all peer rank keys are still present in etcd
+    bool
+    areAllPeersAlive() override;
+
+    // Cancel keepalive and remove namespace keys before a forced _Exit()
+    void
+    cleanupForExit() override;
 };
 
-#endif // _ETCD_RT_H
+#endif // NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_ETCD_ETCD_RT_H
