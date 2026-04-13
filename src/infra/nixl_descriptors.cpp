@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
 #include <iterator>
 #include <stdexcept>
@@ -428,7 +427,7 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, order ord) {
     }
 
     if (ord == order::SORTED) {
-        assert(std::is_sorted(batch.begin(), batch.end()));
+        NIXL_ASSERT(std::is_sorted(batch.begin(), batch.end()));
     } else {
         std::sort(batch.begin(), batch.end());
     }
@@ -438,7 +437,8 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, order ord) {
 
 void
 nixlSecDescList::addDescs(nixlSecDescList &&other) {
-    assert(type == other.type);
+    NIXL_ASSERT(type == other.type) << "Memory type mismatch: " << nixlEnumStrings::memTypeStr(type)
+                                    << " != " << nixlEnumStrings::memTypeStr(other.type);
     addDescs(std::move(other.descs), order::SORTED);
 }
 
