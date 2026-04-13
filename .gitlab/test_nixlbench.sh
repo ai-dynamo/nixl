@@ -66,9 +66,19 @@ else
     echo "Worker without GPU, skipping VRAM tests"
 fi
 
+get_random_tcp_port() {
+    python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind((\"\", 0))
+print(s.getsockname()[1])
+s.close()
+"
+}
+
 run_nixlbench_two_workers_asio() {
     args="$@"
-    asio_port=$(get_next_tcp_port)
+    asio_port=$(get_random_tcp_port)
     command_line="./bin/nixlbench --runtime_type=ASIO --asio_port=$asio_port $DEFAULT_NB_PARAMS $args"
     parallel --line-buffer --halt now,fail=1 ::: "$command_line" "$command_line"
 }
