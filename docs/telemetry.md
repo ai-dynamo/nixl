@@ -60,7 +60,7 @@ The **Shared Memory Buffer** plug-in, contains the data per transaction event, w
 
 ### Telemetry Details
 
-- Events are recorded after the corresponding operation completes and appear in order.
+- Producers append events under a mutex, consumers read them in **ring insertion order**.
 - Current design allows silent telemetry loss.
 - Current design does not support selective telemetry(e.g per category). All the telemetry events could be either ON or OFF.
 

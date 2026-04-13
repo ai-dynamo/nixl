@@ -121,7 +121,7 @@ using csv_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryCsvExporte
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
 nixl_telemetry_plugin_init() {
     return csv_exporter_plugin_t::create(
-        NIXL_TELEMETRY_PLUGIN_API_VERSION,
+        nixlTelemetryPluginApiVersionV2,
         "csv",      // Plugin name
         "1.0.0"     // Plugin version
     );

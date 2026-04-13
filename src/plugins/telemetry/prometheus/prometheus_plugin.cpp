@@ -26,7 +26,7 @@ using prometheus_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryPro
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
 nixl_telemetry_plugin_init() {
     return prometheus_exporter_plugin_t::create(
-        nixlTelemetryPluginApiVersionV1, "prometheus", "1.0.0");
+        nixlTelemetryPluginApiVersionV2, "prometheus", "1.0.0");
 }
 
 // Plugin cleanup function

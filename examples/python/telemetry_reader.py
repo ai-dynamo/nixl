@@ -88,7 +88,7 @@ class BufferHeader(ctypes.Structure):
 class SharedRingBuffer:
     """Python wrapper for the C++ SharedRingBuffer class"""
 
-    def __init__(self, file_path, version=1):
+    def __init__(self, file_path, version=TELEMETRY_VERSION):
         self.file_path = file_path
         self.version = version
         self.file_fd = -1
@@ -120,11 +120,12 @@ class SharedRingBuffer:
 
         temp_header = BufferHeader.from_buffer(header_mmap)
 
-        if temp_header.version != self.version:
+        actual_version = temp_header.version
+        if actual_version != self.version:
             del temp_header
             header_mmap.close()
             raise RuntimeError(
-                f"Version mismatch: expected {self.version}, got {temp_header.version}"
+                f"Version mismatch: expected {self.version}, got {actual_version}"
             )
 
         self.buffer_size = temp_header.capacity
