@@ -188,7 +188,6 @@ LogProblemCounter::Send(const absl::LogEntry &entry) {
         for (auto &[rx, count] : log_problem_ignore) {
             if (std::regex_search(msg, rx)) {
                 ++count;
-                return;
             }
         }
         ++global_problem_count;
