@@ -4856,22 +4856,17 @@ END OF TERMS AND CONDITIONS
 **License Type(s)**: Apache-2.0 OR LGPL-2.1-or-later OR MIT
 ### License: https://github.com/r-efi/r-efi
 ```
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
+    http://www.apache.org/licenses/LICENSE-2.0
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 ```
 
 ## regex - 1.11.1
@@ -5085,7 +5080,7 @@ limitations under the License.
 ## regex-automata - 0.4.9
 **Repository URL**: https://github.com/rust-lang/regex/tree/master/regex-automata
 **License Type(s)**: Apache-2.0 OR MIT
-### License: https://github.com/rust-lang/regex/tree/master/regex-automata/blob/HEAD/LICENSE-APACHE
+### License: https://github.com/rust-lang/regex/blob/HEAD/LICENSE-APACHE
 ```
                               Apache License
                         Version 2.0, January 2004
@@ -5293,7 +5288,7 @@ limitations under the License.
 ## regex-syntax - 0.8.5
 **Repository URL**: https://github.com/rust-lang/regex/tree/master/regex-syntax
 **License Type(s)**: Apache-2.0 OR MIT
-### License: https://github.com/rust-lang/regex/tree/master/regex-syntax/blob/HEAD/LICENSE-APACHE
+### License: https://github.com/rust-lang/regex/blob/HEAD/LICENSE-APACHE
 ```
                               Apache License
                         Version 2.0, January 2004
@@ -11476,21 +11471,16 @@ limitations under the License.
 **License Type(s)**: Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT
 ### License: https://github.com/bytecodealliance/wit-bindgen/blob/main/LICENSE-APACHE
 ```
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
+    http://www.apache.org/licenses/LICENSE-2.0
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 ```
 
