@@ -60,7 +60,7 @@ The **Shared Memory Buffer** plug-in, contains the data per transaction event, w
 
 ### Telemetry Details
 
-- Events are recorded after the corresponding operation completes. The shared buffer does not attach a per-event timestamp; ordering still reflects enqueue order.
+- Events are recorded after the corresponding operation completes and appear in order.
 - Current design allows silent telemetry loss.
 - Current design does not support selective telemetry(e.g per category). All the telemetry events could be either ON or OFF.
 
