@@ -67,7 +67,10 @@ def handle_sigterm(
     if buffer is not None and buffer.runtime is not None:
         buffer.destroy()  # to invalidate local MD
         del buffer
-    sys.exit(1)
+
+    # Continue with default signal handler
+    signal.signal(signum, signal.SIG_DFL)
+    signal.raise_signal(signum)
 
 
 def self_kill():
@@ -645,11 +648,11 @@ def main():
         daemon=False,
         start_method="spawn",
     )
-
     failed = []
     for i, p in enumerate(ctx.processes):
         p.join()
-        if p.exitcode != 0:
+        # Ignore expected fault-tolerance SIGTERM exits.
+        if p.exitcode not in (0, -signal.SIGTERM):
             failed.append((i, p.exitcode))
     if failed:
         raise RuntimeError(
