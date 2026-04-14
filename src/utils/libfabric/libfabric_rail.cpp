@@ -709,6 +709,28 @@ nixlLibfabricRail::setXferIdCallback(std::function<void(uint32_t)> callback) {
     xferIdCallback = callback;
 }
 
+
+namespace {
+
+// Helper function to handle exponential backoff logging for retry operations
+inline void
+logRetryAttempt(unsigned int attempt,
+                unsigned int &log_threshold,
+                const char *operation_name,
+                uint16_t rail_id) {
+    if (attempt == log_threshold ||
+        (attempt > INT_MAX / 2 && attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0)) {
+        NIXL_INFO << operation_name << " still retrying EAGAIN on rail " << rail_id << " after "
+                  << attempt << " attempts";
+        if (log_threshold <= INT_MAX / 2) {
+            log_threshold *= 2;
+        }
+    }
+}
+
+}  // namespace
+
+
 // Per-rail completion processing - handles one rail's CQ with configurable blocking behavior
 nixl_status_t
 nixlLibfabricRail::progressCompletionQueue() const {
@@ -1038,7 +1060,8 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
 
     // Retry indefinitely until senddata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
-    int attempt = 0;
+    unsigned int attempt = 0;
+    unsigned int log_threshold = NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS;
 
     while (true) {
         // Libfabric fi_senddata call
@@ -1065,14 +1088,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
             // Resource temporarily unavailable - retry indefinitely for all providers
             attempt++;
 
-            // Log every N attempts to avoid log spam
-            if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
-                NIXL_INFO << "fi_senddata still retrying EAGAIN on rail " << rail_id << " after "
-                          << attempt << " attempts";
-            } else {
-                NIXL_TRACE << "fi_senddata returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << attempt << ")";
-            }
+            logRetryAttempt(attempt, log_threshold, "fi_senddata", rail_id);
 
             // Progress completion queue to drain pending completions before retry
             if (!progress_thread_enabled_) {
@@ -1120,7 +1136,8 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
 
     // Retry indefinitely until writedata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
-    int attempt = 0;
+    unsigned int attempt = 0;
+    unsigned int log_threshold = NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS;
 
     while (true) {
         // Libfabric fi_writedata call
@@ -1149,14 +1166,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
             // Resource temporarily unavailable - retry indefinitely for all providers
             attempt++;
 
-            // Log every N attempts to avoid log spam
-            if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
-                NIXL_INFO << "fi_writedata still retrying EAGAIN on rail " << rail_id << " after "
-                          << attempt << " attempts";
-            } else {
-                NIXL_TRACE << "fi_writedata returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << attempt << ")";
-            }
+            logRetryAttempt(attempt, log_threshold, "fi_writedata", rail_id);
 
             // Progress completion queue to drain pending completions before retry
             if (!progress_thread_enabled_) {
@@ -1203,7 +1213,8 @@ nixlLibfabricRail::postRead(void *local_buffer,
 
     // Retry indefinitely until readdata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
-    int attempt = 0;
+    unsigned int attempt = 0;
+    unsigned int log_threshold = NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS;
 
     while (true) {
         // Libfabric fi_read call
@@ -1231,14 +1242,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
             // Resource temporarily unavailable - retry indefinitely for all providers
             attempt++;
 
-            // Log every N attempts to avoid log spam
-            if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
-                NIXL_INFO << "fi_read still retrying EAGAIN on rail " << rail_id << " after "
-                          << attempt << " attempts";
-            } else {
-                NIXL_TRACE << "fi_read returned EAGAIN on rail " << rail_id
-                           << ", retrying (attempt " << attempt << ")";
-            }
+            logRetryAttempt(attempt, log_threshold, "fi_read", rail_id);
 
             // Progress completion queue to drain pending completions before retry
             if (!progress_thread_enabled_) {
