@@ -205,8 +205,7 @@ private:
             result->bind(endpoint_);
         }
         catch (...) {
-            std::cout << "ASIO runtime bind() error -- using connect() instead"
-                      << std::endl;
+            std::cout << "ASIO runtime bind() error -- using connect() instead" << std::endl;
             return {};
         }
 
