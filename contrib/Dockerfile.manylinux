@@ -20,7 +20,6 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
 ARG DEFAULT_PYTHON_VERSION="3.14"
 ARG ARCH="x86_64"
-ARG UCX_REF="v1.21.x"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
@@ -258,28 +257,6 @@ RUN cd /workspace && \
     rpm -Uvh gdrcopy-*.el8.$ARCH.rpm && \
     rpm -Uvh gdrcopy-devel-*.el8.noarch.rpm
 
-RUN cd /usr/local/src && \
-     git clone https://github.com/openucx/ucx.git && \
-     cd ucx && 			     \
-     git checkout $UCX_REF &&	     \
-     ./autogen.sh && \
-     ./contrib/configure-release-mt  \
-         --enable-shared             \
-         --disable-static            \
-         --disable-doxygen-doc       \
-         --enable-experimental-api   \
-         --enable-optimizations      \
-         --enable-cma                \
-         --enable-devel-headers      \
-         --with-cuda=/usr/local/cuda \
-         --with-verbs                \
-         --with-dm                   \
-         --without-gdrcopy           \
-         --with-efa  &&              \
-     make -j &&                      \
-     make -j install-strip &&        \
-     ldconfig
-
 # Build libfabric from source
 RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
@@ -317,9 +294,33 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click setuptools tabulate auditwheel tomlkit
 # Install PyTorch
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
-    uv pip install torch torchvision torchaudio
+    uv pip install 'torch==2.11.*'
 # Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
+
+ARG UCX_REF="v1.21.x"
+RUN cd /usr/local/src && \
+     git clone https://github.com/openucx/ucx.git && \
+     cd ucx &&                       \
+     git checkout "${UCX_REF}" &&    \
+     git log -1 &&                   \
+     ./autogen.sh &&                 \
+     ./contrib/configure-release-mt  \
+         --enable-shared             \
+         --disable-static            \
+         --disable-doxygen-doc       \
+         --enable-experimental-api   \
+         --enable-optimizations      \
+         --enable-cma                \
+         --enable-devel-headers      \
+         --with-cuda=/usr/local/cuda \
+         --with-verbs                \
+         --with-dm                   \
+         --without-gdrcopy           \
+         --with-efa &&               \
+     make -j &&                      \
+     make -j install-strip &&        \
+     ldconfig
 
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
@@ -372,5 +373,3 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
 RUN if [ "$(echo $CUDA_VERSION | cut -d. -f1)" = "12" ]; then \
       cp build/src/bindings/python/nixl-meta/nixl*.whl dist/; \
     fi
-
-RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl build/src/bindings/python/nixl-meta/nixl*.whl
