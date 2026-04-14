@@ -307,16 +307,22 @@ using nixl_xfer_telem_t = nixlXferTelemetry;
 extern const std::string nixl_null_agent;
 
 /**
+ * @brief The arguments passed to notification callbacks.
+ */
+struct nixlNotifCallbackArgs {
+    std::string remoteAgent;
+    std::string notifMessage;
+};
+
+/**
  * @brief The type of user-supplied notification callbacks.
  *
- *        The first string is the name of the remote agent.
- *        The second string is the received notification.
  *        Notification callbacks are called on the thread that received the notif,
  *        usually the progress thread. Any non-trivial tasks MUST be handed off to
  *        a separate thread by the callback. In particular callbacks SHOULD NOT call
  *        functions on any NIXL agent, and MUST NOT call functions on the agent that
  *        received the notif for which they were called.
  */
-using nixl_notif_callback_t = std::function<void(std::string &&, std::string &&)>;
+using nixl_notif_callback_t = std::function<void(nixlNotifCallbackArgs &&)>;
 
 #endif

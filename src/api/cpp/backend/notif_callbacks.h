@@ -97,12 +97,12 @@ public:
     }
 
     void
-    call(std::string &&remote, std::string &&message) const {
-        const iterator iter = findCallback(message);
+    call(nixlNotifCallbackArgs &&args) const {
+        const iterator iter = findCallback(args.notifMessage);
         if (iter != callbacks_.end()) {
-            iter->callback(std::move(remote), std::move(message));
+            iter->callback(std::move(args));
         } else if (default_) {
-            default_(std::move(remote), std::move(message));
+            default_(std::move(args));
         }
     }
 

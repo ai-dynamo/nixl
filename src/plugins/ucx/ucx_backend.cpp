@@ -1376,8 +1376,8 @@ int nixlUcxEngine::progress() {
 nixlNotifCallbacks
 nixlUcxEngine::setDefaultCallback(nixlNotifCallbacks callbacks) {
     if (!callbacks.hasDefaultCallback()) {
-        callbacks.setDefaultCallback([engine = this](std::string &&remote, std::string &&message) {
-            engine->appendNotif(std::move(remote), std::move(message));
+        callbacks.setDefaultCallback([engine = this](nixlNotifCallbackArgs &&args) {
+            engine->appendNotif(std::move(args.remoteAgent), std::move(args.notifMessage));
         });
     }
     return callbacks;
@@ -1441,10 +1441,8 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
     ser_des.importStr(ser_str);
-    std::string remote_name = ser_des.getStr("name");
-    std::string msg = ser_des.getStr("msg");
-
-    engine->notifCallbacks_.call(std::move(remote_name), std::move(msg));
+    // List initialization evaluates in order.
+    engine->notifCallbacks_.call({ser_des.getStr("name"), ser_des.getStr("msg")});
     return UCS_OK;
 }
 
