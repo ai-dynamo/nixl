@@ -43,10 +43,14 @@
 #define LF_EP_NAME_MAX_LEN 56
 
 // Request pool configuration constants
-#define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 4096 // SEND/RECV operations (for notifications)
-#define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/READ operations
-#define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192 // For SEND/RECV notifications
+#define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 4096 // WRITE operations (for notifications)
+#define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/READ operations (for data transfers)
+#define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192 // Buffer size for notification serialization
 #define NIXL_LIBFABRIC_RECV_POOL_SIZE 1024 // Number of recv requests to pre-post per rail
+
+// Notification receive buffer for WRITE-based control messages
+#define NIXL_LIBFABRIC_NOTIF_SLOT_SIZE NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE // 8KB per slot
+#define NIXL_LIBFABRIC_NOTIF_NUM_SLOTS 1024 // Ring buffer slots for incoming notifications
 
 // Retry configuration constants
 #define NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS 100 // Log every N attempts to avoid spam
