@@ -63,11 +63,6 @@ public:
     nixlNotifCallbacks() = default;
 
     [[nodiscard]] bool
-    hasAnyCallback() const noexcept {
-        return bool(default_) || !callbacks_.empty();
-    }
-
-    [[nodiscard]] bool
     hasDefaultCallback() const noexcept {
         return bool(default_);
     }

@@ -34,6 +34,8 @@ struct testAgent {
 
     void
     createBackend() {
+        nixl_mem_list_t memories;
+        nixl_b_params_t params;
         {
             const auto status = agent.getPluginParams(ucx, memories, params);
             EXPECT_EQ(status, NIXL_SUCCESS);
@@ -62,8 +64,6 @@ struct testAgent {
 
     nixlAgent agent;
     nixlBackendH *backend = nullptr;
-    nixl_mem_list_t memories;
-    nixl_b_params_t params;
 };
 
 struct agentPair {
@@ -95,6 +95,10 @@ const std::string prefix1 = "notif";
 const std::string message1 = prefix1 + "ication_message_1";
 
 const nixl_notif_callback_t dummy_callback([](nixlNotifCallbackArgs &&) {});
+
+using namespace std::chrono_literals;
+
+const auto future_wait_time = 5'000ms;
 
 } // namespace
 
@@ -146,7 +150,7 @@ TEST(NotifCallbacks, DefaultWithProgressThread) {
     agentPair agents(cfg);
     agents.genNotif(message1);
     const auto future = promise.get_future();
-    EXPECT_EQ(future.wait_for(std::chrono::milliseconds(5000)), std::future_status::ready);
+    EXPECT_EQ(future.wait_for(future_wait_time), std::future_status::ready);
     EXPECT_TRUE(agents.getNotifs().empty());
 }
 
@@ -166,7 +170,7 @@ TEST(NotifCallbacks, PrefixBinarySearchWithProgressThread) {
     agentPair agents(cfg);
     agents.genNotif(message1);
     const auto future = promise.get_future();
-    EXPECT_EQ(future.wait_for(std::chrono::milliseconds(5000)), std::future_status::ready);
+    EXPECT_EQ(future.wait_for(future_wait_time), std::future_status::ready);
     EXPECT_TRUE(agents.getNotifs().empty());
 }
 
@@ -186,6 +190,6 @@ TEST(NotifCallbacks, PrefixLinearScanWithProgressThread) {
     agentPair agents(cfg);
     agents.genNotif(message1);
     const auto future = promise.get_future();
-    EXPECT_EQ(future.wait_for(std::chrono::milliseconds(5000)), std::future_status::ready);
+    EXPECT_EQ(future.wait_for(future_wait_time), std::future_status::ready);
     EXPECT_TRUE(agents.getNotifs().empty());
 }
