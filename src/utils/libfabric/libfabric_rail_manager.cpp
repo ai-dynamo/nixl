@@ -758,7 +758,10 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
             for (size_t j = 0; j < i; ++j) {
                 const size_t cleanup_idx = selected_rails[j];
                 if (mr_list_out[cleanup_idx]) {
-                    rails_[cleanup_idx]->deregisterMemory(mr_list_out[cleanup_idx]);
+                    if (rails_[cleanup_idx]->deregisterMemory(mr_list_out[cleanup_idx]) ==
+                        NIXL_SUCCESS) {
+                        decRailActive(cleanup_idx);
+                    }
                     mr_list_out[cleanup_idx] = nullptr;
                 }
             }
@@ -776,7 +779,10 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
             for (size_t j = 0; j < i; ++j) {
                 const size_t cleanup_idx = selected_rails[j];
                 if (mr_list_out[cleanup_idx]) {
-                    rails_[cleanup_idx]->deregisterMemory(mr_list_out[cleanup_idx]);
+                    if (rails_[cleanup_idx]->deregisterMemory(mr_list_out[cleanup_idx]) ==
+                        NIXL_SUCCESS) {
+                        decRailActive(cleanup_idx);
+                    }
                     mr_list_out[cleanup_idx] = nullptr;
                 }
             }
@@ -787,7 +793,7 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         key_list_out[rail_idx] = key;
 
         // Mark rail as active for progress tracking optimization
-        markRailActive(rail_idx);
+        incRailActive(rail_idx);
 
         NIXL_DEBUG << "Registered memory on rail " << rail_idx
                    << " (mr=" << static_cast<const void *>(mr) << ", key=" << key << ")";
@@ -816,11 +822,12 @@ nixlLibfabricRailManager::deregisterMemory(const std::vector<size_t> &selected_r
 
         if (mr_list[rail_idx]) {
             nixl_status_t status = rails_[rail_idx]->deregisterMemory(mr_list[rail_idx]);
-            if (status != NIXL_SUCCESS) {
+            if (status == NIXL_SUCCESS) {
+                decRailActive(rail_idx);
+            } else {
                 NIXL_ERROR << "Failed to deregister memory on rail " << rail_idx;
                 overall_status = status;
             }
-            markRailInactive(rail_idx);
         }
     }
 
@@ -934,9 +941,6 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     NIXL_DEBUG << "Sending control message type " << msg_type_value << " agent_idx=" << agent_idx
                << " XFER_ID=" << xfer_id << " imm_data=" << imm_data << " on rail " << rail_id;
 
-    // Mark rail 0 as active so its CQ gets progressed
-    markRailActive(rail_id);
-
     // Use rail 0 for notifications
     nixl_status_t status = rails_[rail_id]->postSend(imm_data, dest_addr, req);
 
@@ -959,7 +963,9 @@ nixlLibfabricRailManager::progressActiveRails() {
         std::lock_guard<std::mutex> lock(active_rails_mutex_);
         // Always progress rail 0 for notifications (SEND/RECV)
         rails_to_process.insert(0);
-        rails_to_process.insert(active_rails_.begin(), active_rails_.end());
+        for (const auto &[rail_id, refcount] : active_rails_) {
+            rails_to_process.insert(rail_id);
+        }
     }
 
     // Process rails without holding the lock
@@ -1177,30 +1183,35 @@ nixlLibfabricRailManager::deserializeRailEndpoints(
 }
 
 void
-nixlLibfabricRailManager::markRailActive(size_t rail_id) {
+nixlLibfabricRailManager::incRailActive(size_t rail_id) {
     if (rail_id >= rails_.size()) {
-        NIXL_ERROR << "Invalid rail ID for markRailActive: " << rail_id;
+        NIXL_ERROR << "Invalid rail ID for incRailActive: " << rail_id;
         return;
     }
 
     std::lock_guard<std::mutex> lock(active_rails_mutex_);
-    bool was_inserted = active_rails_.insert(rail_id).second;
-
-    if (was_inserted) {
-        NIXL_DEBUG << "Marked rail " << rail_id
-                   << " as active (total active: " << active_rails_.size() << ")";
-    } else {
-        NIXL_TRACE << "Rail " << rail_id << " was already active";
-    }
+    active_rails_[rail_id]++;
+    NIXL_DEBUG << "incRailActive rail " << rail_id << " (refcount: " << active_rails_[rail_id]
+               << ", total active: " << active_rails_.size() << ")";
 }
 
 void
-nixlLibfabricRailManager::markRailInactive(size_t rail_id) {
+nixlLibfabricRailManager::decRailActive(size_t rail_id) {
     std::lock_guard<std::mutex> lock(active_rails_mutex_);
-    size_t erased = active_rails_.erase(rail_id);
-    if (erased > 0) {
-        NIXL_DEBUG << "Marked rail " << rail_id
-                   << " as inactive (total active: " << active_rails_.size() << ")";
+    auto it = active_rails_.find(rail_id);
+    if (it != active_rails_.end()) {
+        // The reference count is always non-zero under normal situation.
+        // Here is a defensive check, assuming a bug somewhere else set it to zero.
+        if (it->second > 0) {
+            it->second--;
+        }
+        if (it->second == 0) {
+            active_rails_.erase(it);
+            NIXL_DEBUG << "decRailActive rail " << rail_id
+                       << " now inactive (total active: " << active_rails_.size() << ")";
+        } else {
+            NIXL_DEBUG << "decRailActive rail " << rail_id << " (refcount: " << it->second << ")";
+        }
     } else {
         NIXL_TRACE << "Rail " << rail_id << " was not in active set";
     }

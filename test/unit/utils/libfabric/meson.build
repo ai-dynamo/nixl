@@ -45,4 +45,21 @@ if get_option('buildtype') != 'release'
     # install topology test files
     install_subdir('topo', strip_directory : true, install_dir : get_option('bindir'))
 
+    rail_active_refcount_test_link_args = [
+        '-Wl,--wrap=fi_getinfo',
+        '-Wl,--wrap=numa_max_node',
+        '-Wl,--wrap=numa_num_configured_nodes',
+        '-Wl,--wrap=fi_fabric' ]
+
+    rail_active_refcount_test_bin = executable('rail_active_refcount_test',
+               'rail_active_refcount_test.cpp',
+               dependencies: libfabric_utils_dep,
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               link_with: libfabric_utils_lib,
+               cpp_args: libfabric_test_cpp_args,
+               link_args: rail_active_refcount_test_link_args,
+               install: true)
+
+    test('rail_active_refcount_test', rail_active_refcount_test_bin)
+
 endif

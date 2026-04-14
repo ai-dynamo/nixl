@@ -253,13 +253,13 @@ public:
     validateAllRailsInitialized();
 
     // Active Rail Management APIs
-    /** Mark rail as active for progress tracking optimization */
+    /** Increment active reference count on a rail */
     void
-    markRailActive(size_t rail_id);
+    incRailActive(size_t rail_id);
 
-    /** Mark rail as inactive for progress tracking optimization */
+    /** Decrement active reference count on a rail; rail becomes inactive when count reaches zero */
     void
-    markRailInactive(size_t rail_id);
+    decRailActive(size_t rail_id);
 
     /** Clear all active rail markings */
     void
@@ -351,8 +351,8 @@ private:
     // EFA device to rail mapping
     std::unordered_map<std::string, size_t> efa_device_to_rail_map;
 
-    // Active Rail Tracking System
-    std::unordered_set<size_t> active_rails_;
+    // active rails with reference counting (always positive)
+    std::unordered_map<size_t, size_t> active_rails_;
     mutable std::mutex active_rails_mutex_;
 
     // rail selection policy for DRAM memory type
