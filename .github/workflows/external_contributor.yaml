@@ -26,7 +26,32 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
+      - name: Check for verified NVIDIA email
+        id: check_email
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_MEMBERSHIP_READ_TOKEN }}
+          script: |
+            const login = context.payload.pull_request.user.login;
+            try {
+              const result = await github.graphql(`
+                query($login: String!) {
+                  user(login: $login) {
+                    organizationVerifiedDomainEmails(login: "ai-dynamo")
+                  }
+                }
+              `, { login });
+
+              const emails = result.user?.organizationVerifiedDomainEmails || [];
+              const hasNvidiaEmail = emails.length > 0;
+              core.setOutput('has_nvidia_email', hasNvidiaEmail.toString());
+              core.info(`User ${login} has NVIDIA verified email: ${hasNvidiaEmail}`);
+            } catch (error) {
+              core.warning(`Failed to check NVIDIA email for ${login}: ${error.message}`);
+              core.setOutput('has_nvidia_email', 'false');
+            }
       - name: Reminder to run full CI on PR
+        if: steps.check_email.outputs.has_nvidia_email == 'false'
         uses: actions/github-script@v7
         env:
           REPOSITORY: ${{ github.repository }}
@@ -45,6 +70,7 @@ jobs:
                 '🚀'
             })
       - name: Adding Label to PR
+        if: steps.check_email.outputs.has_nvidia_email == 'false'
         uses: actions/github-script@v7
         env:
           REPOSITORY: ${{ github.repository }}
