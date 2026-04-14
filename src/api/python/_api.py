@@ -242,6 +242,7 @@ class nixl_agent:
             "OBJ": nixlBind.OBJ_SEG,
             "cpu": nixlBind.DRAM_SEG,
             "cuda": nixlBind.VRAM_SEG,
+            "xpu": nixlBind.VRAM_SEG,
         }
         self.nixl_ops = {
             "WRITE": nixlBind.NIXL_WRITE,
@@ -952,7 +953,13 @@ class nixl_agent:
                 new_descs = None
         elif isinstance(descs, torch.Tensor):
             if descs.is_contiguous():
-                mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
+                dev_str = str(descs.device)
+                if dev_str.startswith("cuda"):
+                    mem_type = "cuda"
+                elif dev_str.startswith("xpu"):
+                    mem_type = "xpu"
+                else:
+                    mem_type = "cpu"
                 base_addr = descs.data_ptr()
                 region_len = descs.numel() * descs.element_size()
                 gpu_id = descs.get_device()
@@ -980,7 +987,13 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
-            mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
+            dev_str = str(tensor_type)
+            if dev_str.startswith("cuda"):
+                mem_type = "cuda"
+            elif dev_str.startswith("xpu"):
+                mem_type = "xpu"
+            else:
+                mem_type = "cpu"
             new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], dlist)
         else:
             new_descs = None
@@ -1035,7 +1048,13 @@ class nixl_agent:
                 new_descs = None
         elif isinstance(descs, torch.Tensor):
             if descs.is_contiguous():
-                mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
+                dev_str = str(descs.device)
+                if dev_str.startswith("cuda"):
+                    mem_type = "cuda"
+                elif dev_str.startswith("xpu"):
+                    mem_type = "xpu"
+                else:
+                    mem_type = "cpu"
                 base_addr = descs.data_ptr()
                 region_len = descs.numel() * descs.element_size()
                 gpu_id = descs.get_device()
@@ -1063,7 +1082,13 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
-            mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
+            dev_str = str(tensor_type)
+            if dev_str.startswith("cuda"):
+                mem_type = "cuda"
+            elif dev_str.startswith("xpu"):
+                mem_type = "xpu"
+            else:
+                mem_type = "cpu"
             new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], dlist)
         else:
             new_descs = None
