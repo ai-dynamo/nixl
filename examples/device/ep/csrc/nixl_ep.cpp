@@ -110,10 +110,8 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     num_rdma_ranks = std::max(1, num_ranks / NUM_MAX_NVL_PEERS), num_nvl_ranks = std::min(num_ranks, NUM_MAX_NVL_PEERS);
 
     // Get device info
-    cudaDeviceProp device_prop = {};
-    CUDA_CHECK(cudaGetDeviceProperties(&device_prop, device_id));
-    num_device_sms = device_prop.multiProcessorCount;
-    device_clock_rate_khz = device_prop.clockRate;
+    CUDA_CHECK(cudaDeviceGetAttribute(&num_device_sms, cudaDevAttrMultiProcessorCount, device_id));
+    CUDA_CHECK(cudaDeviceGetAttribute(&device_clock_rate_khz, cudaDevAttrClockRate, device_id));
     EP_HOST_ASSERT(device_clock_rate_khz > 0);
     timeout_cycles = milliseconds_to_cycles(timeout_ms, device_clock_rate_khz);
     int denom_sms = std::max(1, num_device_sms / 2);
