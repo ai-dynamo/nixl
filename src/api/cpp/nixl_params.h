@@ -77,6 +77,10 @@ struct nixlAgentConfig {
      *      begins with a prefix the corresponding function will be
      *      called. Not all backends support notification callbacks.
      *      The empty prefix can be used to set a default handler.
+     *      If no default handler is set the notifications that do
+     *      not match any prefix will be available via getNotifs().
+     *      It is an error to create an Agent with any callbacks
+     *      and instantiate a backend that does not support them.
      */
     std::map<std::string, nixl_notif_callback_t> notifCallbacks;
 
