@@ -20,17 +20,11 @@
 
 import torch
 
-_torch_base_version = torch.__version__.split("+", 1)[0]
-if not (_torch_base_version == "2.11" or _torch_base_version.startswith("2.11.")):
-    raise RuntimeError(
-        f"Unsupported torch version '{torch.__version__}'. "
-        "NIXL EP requires torch 2.11.*."
-    )
-
 from . import nixl_ep_cpp as _nixl_ep_cpp
 from .buffer import Buffer
 from .utils import EventOverlap
 
 topk_idx_t = getattr(_nixl_ep_cpp, "topk_idx_t", torch.int64)
+Config = _nixl_ep_cpp.Config
 
-__all__ = ["Buffer", "EventOverlap"]
+__all__ = ["Buffer", "EventOverlap", "Config"]
