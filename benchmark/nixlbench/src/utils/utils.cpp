@@ -221,6 +221,7 @@ NB_ARG_STRING(gusli_device_security,
               "If empty or fewer than devices, uses 'sec=0x3' as default. "
               "For GUSLI backend, use device_list in format 'id:type:path' where type is F (file) "
               "or K (kernel device).");
+NB_ARG_BOOL(use_device_api, false, "Enable NIXL Device API.");
 
 
 #undef NB_ARG_INT32
@@ -294,6 +295,7 @@ int xferBenchConfig::gusli_max_simultaneous_requests = 0;
 std::string xferBenchConfig::gusli_config_file = "";
 std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
+bool xferBenchConfig::use_device_api = false;
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -579,6 +581,32 @@ xferBenchConfig::loadParams(void) {
         return -1;
     }
 
+
+    use_device_api = NB_ARG(use_device_api);
+    if (use_device_api) {
+#if HAVE_CUDA
+        if (worker_type != XFERBENCH_WORKER_NIXL
+            || backend != XFERBENCH_BACKEND_UCX
+            || op_type != XFERBENCH_OP_WRITE
+            || initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM
+            || target_seg_type != XFERBENCH_SEG_TYPE_VRAM
+            || !enable_pt
+        ) {
+            std::cout << "Invalid configuration for NIXL Device API, reset to false" << std::endl;
+            use_device_api = false;
+        } else {
+            std::cout << "NIXL Device API is enabled, --num-threads used as GPU kernel block thread count with value 1 - 1024" << std::endl;
+            if (num_threads < 1 || num_threads > 1024) {
+                std::cout << "Invalid value for --num-threads, reset --num-threads to 1" << std::endl;
+                num_threads = 1;
+            }
+        }
+#else
+        std::cout << "NIXL Device API is not supported without CUDA" << std::endl;
+        use_device_api = false;
+#endif
+    }
+
     return 0;
 #undef NB_ARG
 }
@@ -691,6 +719,10 @@ xferBenchConfig::printConfig() {
                         gpunetio_device_list);
             printOption("OOB network interface name for control path (--oob_list=ifface)",
                         gpunetio_oob_list);
+        }
+
+        if (backend == XFERBENCH_BACKEND_UCX) {
+            printOption("Use Device API (--use_device_api=[0,1])", std::to_string(use_device_api));
         }
     }
     printOption("Initiator seg type (--initiator_seg_type=[DRAM,VRAM])", initiator_seg_type);

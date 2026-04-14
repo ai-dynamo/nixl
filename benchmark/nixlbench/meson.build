@@ -154,10 +154,15 @@ if cuda_fabric_available
     add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
 endif
 
+if cuda_available
+    add_languages('cuda', native: false)
+endif
+
 # Subprojects
 subdir('src/utils')
 subdir('src/runtime')
 subdir('src/worker')
+subdir('src/kernels')
 
 # Configure header file
 configure_file(
@@ -178,7 +183,7 @@ if etcd_available
     deps += [etcd_dep]
 endif
 if cuda_available
-    deps += [cuda_dep]
+    deps += [cuda_dep, nixlbench_kernels_dep]
 endif
 if nvshmem_available
     deps += [nvshmem_lib]
@@ -215,6 +220,9 @@ if nvshmem_available
     nvcc_args += ['-L' + meson.current_build_dir() + '/src/runtime']
     nvcc_args += ['-L' + meson.current_build_dir() + '/src/worker']
     nvcc_args += ['-lnixl', '-lnixl_build', '-lserdes', '-lcuda', '-lcudart', '-lnvshmem']
+    if cuda_available
+        nvcc_args += ['-L' + meson.current_build_dir() + '/src/kernels', '-lnixlbench_kernels']
+    endif
     nvcc_args += args
     nvcc_cmd_files = [
                  meson.current_build_dir() + '/src/utils/libutils.a.p/utils.cpp.o',
@@ -240,7 +248,8 @@ if nvshmem_available
         build_by_default: true,
         install: true,
         install_dir: get_option('bindir'),
-        depends: [nixlbench_runtimes, utils_lib, worker_libs])
+        depends: [nixlbench_runtimes, utils_lib, worker_libs] +
+            (cuda_available ? [nixlbench_kernels_lib] : []))
 else
     executable('nixlbench', 'src/main.cpp',
                 include_directories: inc_dir,
