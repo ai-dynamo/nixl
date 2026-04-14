@@ -119,6 +119,17 @@
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
                 ], propagate: false, wait: true
+            }}, 'wheel': {{
+                // Build wheels + VLM images (CPU), then GPU sanity test
+                build job: 'nixl-ci-build-wheel', parameters: [
+                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
+                    string(name: 'githubData', value: VARIABLE_FROM_POST)
+                ], propagate: true, wait: true
+
+                build job: 'nixl-ci-vlm-test', parameters: [
+                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
+                    string(name: 'githubData', value: VARIABLE_FROM_POST)
+                ], propagate: false, wait: true
             }}
 
             githubHelper.updateCommitStatus(blueOceanUrl, "NIXL CI ended", GitHubCommitState.SUCCESS)
@@ -354,6 +365,128 @@
               parent-credentials: true
       script-path: "{jjb_jenkinsfile}"
 
+# PR check: build Dockerfile.manylinux wheels and verify they work in vLLM/SGLang.
+# Validates that PRs don't break the release pipeline (which uses the same Dockerfile).
+- job-template:
+    name: "{jjb_proj}-build-wheel"
+    project-type: pipeline
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 30
+          num-to-keep: 30
+      - inject:
+          keep-system-variables: true
+          properties-content: |
+            jjb_proj={jjb_proj}-build-wheel
+            conf_file=.ci/jenkins/lib/build-wheel-matrix.yaml
+    description: >
+      <b>NixL Wheel Build PR Check</b><br/>
+      • Builds Dockerfile.manylinux for CUDA 12 &amp; 13 (same as release pipeline)<br/>
+      • Extracts wheels and verifies NixL installs in vLLM/SGLang images<br/>
+      <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
+    concurrent: true
+    sandbox: true
+    parameters:
+      - string:
+          name: "sha1"
+          default: "{jjb_branch}"
+          description: "Commit to be checked, usually set by PR"
+      - string:
+          name: "githubData"
+          default: ""
+          description: "Variables from post"
+      - string:
+          name: "conf_file"
+          default: ".ci/jenkins/lib/build-wheel-matrix.yaml"
+          description: "Job config file"
+      - bool:
+          name: "build_dockers"
+          default: false
+          description: "Force rebuild docker containers"
+      - string:
+          name: "DEBUG"
+          default: 0
+          description: "Enable debug prints and traces, valid values are 0-9"
+    pipeline-scm:
+      scm:
+        - git:
+            url: "{jjb_git}"
+            credentials-id: "svc-nixl-ssh_key"
+            branches: ['$sha1']
+            shallow-clone: false
+            do-not-fetch-tags: false
+            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*"
+            browser: githubweb
+            browser-url: "{jjb_git}"
+            submodule:
+              disable: false
+              recursive: true
+              tracking: true
+              parent-credentials: true
+      script-path: "{jjb_jenkinsfile}"
+
+# GPU sanity tests for vLLM/SGLang images produced by build-wheel.
+# Runs after build-wheel completes; images are already in Harbor.
+- job-template:
+    name: "{jjb_proj}-vlm-test"
+    project-type: pipeline
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 14
+          num-to-keep: 1000
+      - inject:
+          keep-system-variables: true
+          properties-content: |
+            jjb_proj={jjb_proj}-vlm-test
+            conf_file=.ci/jenkins/lib/vlm-test-matrix.yaml
+    description: >
+      <b>NixL VLM GPU Sanity Tests</b><br/>
+      • Pulls vLLM/SGLang images (built by build-wheel) from Harbor<br/>
+      • Runs NixL GPU sanity check on SLURM GPU nodes<br/>
+      <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
+    concurrent: true
+    sandbox: true
+    parameters:
+      - string:
+          name: "sha1"
+          default: "{jjb_branch}"
+          description: "Commit to be checked, usually set by PR"
+      - string:
+          name: "githubData"
+          default: ""
+          description: "Variables from post"
+      - string:
+          name: "conf_file"
+          default: ".ci/jenkins/lib/vlm-test-matrix.yaml"
+          description: "Job config file"
+      - bool:
+          name: "build_dockers"
+          default: false
+          description: "Force rebuild docker containers"
+      - string:
+          name: "DEBUG"
+          default: 0
+          description: "Enable debug prints and traces, valid values are 0-9"
+    pipeline-scm:
+      scm:
+        - git:
+            url: "{jjb_git}"
+            credentials-id: "svc-nixl-ssh_key"
+            branches: ['$sha1']
+            shallow-clone: false
+            do-not-fetch-tags: false
+            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*"
+            browser: githubweb
+            browser-url: "{jjb_git}"
+            submodule:
+              disable: false
+              recursive: true
+              tracking: true
+              parent-credentials: true
+      script-path: "{jjb_jenkinsfile}"
+
 # Project definition that instantiates the job templates
 # This section defines the actual jobs that will be created
 - project:
@@ -364,7 +497,9 @@
     jjb_branch: 'main'            # Default branch
     jjb_gh_url: 'https://github.com/ai-dynamo/nixl'  # GitHub web URL
     jobs:
-        - "{jjb_proj}-dispatcher"  # Create dispatcher job
-        - "{jjb_proj}-non-gpu"       # Create non-gpu job
-        - "{jjb_proj}-build-container"  # Create container builder job
-        - "{jjb_proj}-gpu"        # Create gpu job
+        - "{jjb_proj}-dispatcher"      # Create dispatcher job
+        - "{jjb_proj}-non-gpu"         # Create non-gpu job
+        - "{jjb_proj}-build-container" # Create container builder job
+        - "{jjb_proj}-gpu"             # Create gpu job
+        - "{jjb_proj}-build-wheel"     # Create wheel build PR check
+        - "{jjb_proj}-vlm-test"        # Create VLM GPU sanity test

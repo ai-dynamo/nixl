@@ -86,6 +86,7 @@ nixl_ep_cpp_args = [
     '-Wno-sign-compare',
     '-Wno-reorder',
     '-Wno-attributes',
+    '-Wno-maybe-uninitialized',
 ]
 
 nixl_ep_cuda_args = [

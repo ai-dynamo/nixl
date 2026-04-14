@@ -1,0 +1,149 @@
+# PR check: build Dockerfile.manylinux and verify wheels are produced.
+#
+# This validates that changes don't break the release pipeline, which uses
+# the same Dockerfile.manylinux on a separate GitLab CI infrastructure.
+#
+# Steps:
+#   1. Build Dockerfile.manylinux for CUDA 12 and 13 (the actual release build)
+#   2. Extract wheels from the images
+#   3. Build vLLM/SGLang images with those wheels
+#   4. Inject test script and push to Harbor for GPU testing by vlm-test job
+
+---
+job: nixl-ci-build-wheel
+
+failFast: false
+timeout_minutes: 240
+
+registry_host: harbor.mellanox.com
+registry_auth: nixl_harbor_credentials
+registry_path: /nixl
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: '{memory: 32Gi, cpu: 16000m}'
+  requests: '{memory: 16Gi, cpu: 16000m}'
+  privileged: true
+
+runs_on_dockers:
+  - { name: "podman", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+
+credentials:
+  - {credentialsId: 'nixl_harbor_credentials', usernameVariable: 'HARBOR_USER', passwordVariable: 'HARBOR_PASS'}
+
+matrix:
+  axes:
+    arch:
+      - x86_64
+
+env:
+  NPROC: 16
+  WHL_PYTHON_VERSIONS: "3.10,3.11,3.12,3.13"
+  DIST_DIR: $WORKSPACE/wheels
+  HARBOR_REGISTRY: nbu-harbor.gtm.nvidia.com
+  CU12_BASE_IMAGE_TAG: "12.8-devel-manylinux--25.03"
+  CU13_BASE_IMAGE_TAG: "13.0-devel-manylinux--25.09"
+
+empty_volumes:
+  - {mountPath: /var/lib/containers/storage, memory: false}
+
+steps:
+  - name: Prepare
+    containerSelector: "{name: 'podman'}"
+    run: |
+      set -ex
+      rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
+      podman system reset -f || true
+      podman info
+      ln -sfT $(type -p podman) /usr/bin/docker
+      echo "$HARBOR_PASS" | docker login "${HARBOR_REGISTRY}" -u "$HARBOR_USER" --password-stdin
+      echo "$HARBOR_PASS" | docker login "${registry_host}" -u "$HARBOR_USER" --password-stdin
+
+  - name: Build CUDA 12 Wheels
+    containerSelector: "{name: 'podman'}"
+    run: |
+      set -ex
+      export NPROC=${NPROC}
+      ./contrib/build-container.sh \
+        --base-image "${HARBOR_REGISTRY}/nixl/${arch}/cuda" \
+        --base-image-tag "${CU12_BASE_IMAGE_TAG}" \
+        --wheel-base manylinux_2_28 \
+        --python-versions "${WHL_PYTHON_VERSIONS}" \
+        --tag nixl-wheels-cu12 \
+        --arch ${arch} \
+        --no-cache \
+        --dockerfile contrib/Dockerfile.manylinux
+
+  - name: Build CUDA 13 Wheels
+    containerSelector: "{name: 'podman'}"
+    run: |
+      set -ex
+      export NPROC=${NPROC}
+      ./contrib/build-container.sh \
+        --base-image "${HARBOR_REGISTRY}/nixl/${arch}/cuda" \
+        --base-image-tag "${CU13_BASE_IMAGE_TAG}" \
+        --wheel-base manylinux_2_28 \
+        --python-versions "${WHL_PYTHON_VERSIONS}" \
+        --tag nixl-wheels-cu13 \
+        --arch ${arch} \
+        --no-cache \
+        --dockerfile contrib/Dockerfile.manylinux
+
+  - name: Extract Wheels
+    containerSelector: "{name: 'podman'}"
+    run: |
+      set -ex
+      mkdir -p ${DIST_DIR}
+
+      for cuda_ver in cu12 cu13; do
+        cid=$(docker create nixl-wheels-${cuda_ver})
+        docker cp ${cid}:/workspace/nixl/dist/. ${DIST_DIR}/
+        docker rm ${cid}
+      done
+
+      echo "=== Extracted wheels ==="
+      ls -lah ${DIST_DIR}/
+      echo "=== Wheel count: $(ls ${DIST_DIR}/*.whl | wc -l) ==="
+
+  - name: Build and Push vLLM Image
+    containerSelector: "{name: 'podman'}"
+    credentialsId: "nixl_harbor_credentials"
+    run: |
+      set -ex
+      VLLM_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-vllm-test:${BUILD_NUMBER}
+
+      docker build --platform linux/${arch} \
+        -f contrib/Dockerfile.vllm \
+        -t ${VLLM_IMAGE} \
+        ${DIST_DIR}
+
+      cid=$(docker create ${VLLM_IMAGE})
+      docker cp .gitlab/test_vllm.sh ${cid}:/workspace/test_vllm.sh
+      docker commit ${cid} ${VLLM_IMAGE}
+      docker rm ${cid}
+
+      docker push --creds ${HARBOR_USER}:${HARBOR_PASS} ${VLLM_IMAGE}
+      echo "Pushed: ${VLLM_IMAGE}"
+
+  - name: Build and Push SGLang Image
+    containerSelector: "{name: 'podman'}"
+    credentialsId: "nixl_harbor_credentials"
+    run: |
+      set -ex
+      SGLANG_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-sglang-test:${BUILD_NUMBER}
+
+      docker build --platform linux/${arch} \
+        -f contrib/Dockerfile.sglang \
+        -t ${SGLANG_IMAGE} \
+        ${DIST_DIR}
+
+      cid=$(docker create ${SGLANG_IMAGE})
+      docker cp .gitlab/test_vllm.sh ${cid}:/workspace/test_vllm.sh
+      docker commit ${cid} ${SGLANG_IMAGE}
+      docker rm ${cid}
+
+      docker push --creds ${HARBOR_USER}:${HARBOR_PASS} ${SGLANG_IMAGE}
+      echo "Pushed: ${SGLANG_IMAGE}"
+
+taskName: 'wheel/${arch}'

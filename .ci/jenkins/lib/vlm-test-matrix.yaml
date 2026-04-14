@@ -1,0 +1,114 @@
+# GPU sanity tests for vLLM/SGLang images built by the build-wheel job.
+#
+# Images are already in Harbor (pushed by build-wheel-matrix.yaml).
+# This job just allocates a SLURM GPU node and runs test_vllm.sh inside them.
+
+---
+job: nixl-ci-vlm-test
+
+failFast: false
+timeout_minutes: 120
+
+registry_host: harbor.mellanox.com
+registry_auth: nixl_harbor_credentials
+registry_path: /nixl
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: "{memory: 8Gi, cpu: 4000m}"
+  requests: "{memory: 4Gi, cpu: 2000m}"
+  privileged: true
+
+credentials:
+  - {credentialsId: 'nixl_harbor_credentials', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+  - {credentialsId: 'svc-nixl-scctl', usernameVariable: 'SERVICE_USER_USERNAME', passwordVariable: 'SERVICE_USER_PASSWORD'}
+
+env:
+  SLURM_NODES: 1
+  SLURM_PARTITION: mizu
+  SLURM_HEAD_NODE: scctl
+  SLURM_GRES: gpu:1
+  SLURM_MEM: 32G
+  SLURM_MINCPUS: 8
+  SLURM_JOB_TIMEOUT: '00:30:00'
+  SLURM_IMMEDIATE_TIMEOUT: "3600"
+  STORAGE_DRIVER: overlay
+  NIXL_INSTALL_DIR: /opt/nixl
+  CI_IMAGE_TAG: "20260402-1"
+
+empty_volumes:
+  - {mountPath: /var/lib/containers/storage, memory: false}
+
+pvc_volumes:
+  - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
+
+runs_on_dockers:
+  - {
+     file: '.ci/dockerfiles/Dockerfile.build_helper',
+     name: 'build_helper',
+     tag: "${CI_IMAGE_TAG}",
+     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+    }
+
+matrix:
+  axes:
+    arch:
+      - x86_64
+    framework:
+      - sglang
+      - vllm
+
+taskName: "vlm-test/${framework}/${arch}/${axis_index}"
+
+steps:
+  - name: Allocate Environment
+    containerSelector: "{name: 'build_helper'}"
+    credentialsId: "svc-nixl-scctl"
+    parallel: false
+    run: |
+      .ci/scripts/run_slurm_allocation.sh --slurm_partition=${SLURM_PARTITION} \
+      --slurm_nodes=${SLURM_NODES} \
+      --slurm_head_node=${SLURM_HEAD_NODE} \
+      --slurm_job_timeout=${SLURM_JOB_TIMEOUT} \
+      --slurm_gres=${SLURM_GRES} \
+      --slurm_mem=${SLURM_MEM} \
+      --slurm_mincpus=${SLURM_MINCPUS} \
+      --slurm_job_name=nixl-vlm-${framework}-${BUILD_NUMBER} \
+      --slurm_job_id_file=/mnt/pvc/job_id_vlm_${framework}_${BUILD_NUMBER}.txt
+
+  - name: Run VLM Sanity Test
+    containerSelector: "{name: 'build_helper'}"
+    timeout: 20
+    parallel: false
+    run: |
+      set -x
+      .ci/scripts/run_tests_slurm.sh --test_script_path="/workspace/test_vllm.sh" \
+        --nixl_install_dir="/opt/nixl" \
+        --container_name=nixl-vlm-${framework}-${BUILD_NUMBER} \
+        --slurm_job_id=$(cat /mnt/pvc/job_id_vlm_${framework}_${BUILD_NUMBER}.txt) \
+        --docker_image="${registry_host}#nixl/pr/${arch}/nixl-${framework}-test:${BUILD_NUMBER}"
+
+pipeline_stop:
+  containerSelector:
+    - "{name: 'build_helper'}"
+  credentialsId: "svc-nixl-scctl"
+  parallel: false
+  run: |
+    set -x
+    shopt -s nullglob
+    job_files=(/mnt/pvc/job_id_vlm_*_${BUILD_NUMBER}.txt)
+    shopt -u nullglob
+
+    if [ ${#job_files[@]} -eq 0 ]; then
+      echo "WARNING: No VLM job ID files found"
+      exit 0
+    fi
+
+    for job_file in "${job_files[@]}"; do
+      if [ -f "${job_file}" ]; then
+        echo "INFO: Stopping allocation from ${job_file}"
+        .ci/scripts/stop_slurm_allocation.sh --slurm_job_id_file="${job_file}"
+        rm -f "${job_file}"
+      fi
+    done
