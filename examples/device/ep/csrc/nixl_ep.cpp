@@ -24,7 +24,6 @@
 #include <ATen/cuda/CUDADataType.h>
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -59,10 +58,10 @@ static void sleep_ms(int milliseconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
 }
 
-static uint64_t milliseconds_to_cycles(double milliseconds, int device_clock_rate_khz) {
+static uint64_t milliseconds_to_cycles(int milliseconds, int device_clock_rate_khz) {
+    EP_HOST_ASSERT(milliseconds >= 0);
     EP_HOST_ASSERT(device_clock_rate_khz > 0);
-    const auto timeout_cycles = static_cast<long double>(milliseconds) * static_cast<long double>(device_clock_rate_khz);
-    return static_cast<uint64_t>(std::ceil(timeout_cycles));
+    return static_cast<uint64_t>(milliseconds) * static_cast<uint64_t>(device_clock_rate_khz);
 }
 
 void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes)
@@ -75,7 +74,7 @@ void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int6
     }
 }
 
-Buffer::Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, double timeout_ms):
+Buffer::Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms):
         low_latency_mode(low_latency_mode),
         timeout_ms(timeout_ms),
         rank(rank), num_ranks(1),
@@ -1438,7 +1437,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("current_stream_wait", &nixl_ep::EventHandle::current_stream_wait);
 
     pybind11::class_<nixl_ep::Buffer>(m, "Buffer")
-        .def(pybind11::init<int, bool, bool, double>())
+        .def(pybind11::init<int, bool, bool, int>())
         .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers)
         .def("barrier", &nixl_ep::Buffer::barrier)
         .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles) {

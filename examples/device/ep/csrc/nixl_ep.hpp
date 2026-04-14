@@ -83,7 +83,7 @@ struct Buffer {
 private:
     int buffer_idx = 0; // Double buffering index
     bool low_latency_mode = false;
-    double timeout_ms = 30000.0;
+    int timeout_ms = 30000;
 
     // NVLink Buffer
     int64_t num_nvl_bytes;
@@ -170,7 +170,7 @@ private:
     void _ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles);
 
 public:
-    Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, double timeout_ms);
+    Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms);
 
     void update_memory_buffers(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes = 0);
 

@@ -642,7 +642,7 @@ def main():
     parser.add_argument(
         "--timeout-ms",
         type=non_negative_int,
-        default=int(DEFAULT_TIMEOUT_MS),
+        default=DEFAULT_TIMEOUT_MS,
         help="GPU timeout in milliseconds (non-negative integer)",
     )
 

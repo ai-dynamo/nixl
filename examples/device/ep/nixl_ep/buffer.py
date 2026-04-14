@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     import mpi4py  # noqa: F401
 
 
-DEFAULT_TIMEOUT_MS = 30_000.0
+DEFAULT_TIMEOUT_MS = 30_000
 
 
 class Buffer:
@@ -62,7 +62,7 @@ class Buffer:
         group: Optional[dist.ProcessGroup] = None,
         comm: Optional["mpi4py.MPI.Comm"] = None,
         tcp_store_group: Optional[dist.TCPStore] = None,
-        timeout_ms: float = DEFAULT_TIMEOUT_MS,
+        timeout_ms: int = DEFAULT_TIMEOUT_MS,
     ) -> None:
         """
         Initialize the nixl communication buffer.
