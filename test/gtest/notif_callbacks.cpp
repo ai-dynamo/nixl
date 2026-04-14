@@ -160,10 +160,8 @@ TEST(NotifCallbacks, PrefixBinarySearchWithProgressThread) {
         EXPECT_EQ(args.notifMessage, message1);
         promise.set_value(true);
     });
-    cfg.notifCallbacks.try_emplace(
-        "aaaaa", [](nixlNotifCallbackArgs &&) { ADD_FAILURE(); });
-    cfg.notifCallbacks.try_emplace(
-        "zzzzz", [](nixlNotifCallbackArgs &&) { ADD_FAILURE(); });
+    cfg.notifCallbacks.try_emplace("aaaaa", [](nixlNotifCallbackArgs &&) { ADD_FAILURE(); });
+    cfg.notifCallbacks.try_emplace("zzzzz", [](nixlNotifCallbackArgs &&) { ADD_FAILURE(); });
 
     agentPair agents(cfg);
     agents.genNotif(message1);
@@ -177,15 +175,13 @@ TEST(NotifCallbacks, PrefixLinearScanWithProgressThread) {
 
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    cfg.notifCallbacks.try_emplace(
-        "aaa", [](nixlNotifCallbackArgs &&) { ADD_FAILURE(); });
+    cfg.notifCallbacks.try_emplace("aaa", [](nixlNotifCallbackArgs &&) { ADD_FAILURE(); });
     cfg.notifCallbacks.try_emplace(prefix1, [&](nixlNotifCallbackArgs &&args) {
         EXPECT_EQ(args.remoteAgent, name1);
         EXPECT_EQ(args.notifMessage, message1);
         promise.set_value(true);
     });
-    cfg.notifCallbacks.try_emplace(
-        "zzzzzzz", [](nixlNotifCallbackArgs &&) { ADD_FAILURE(); });
+    cfg.notifCallbacks.try_emplace("zzzzzzz", [](nixlNotifCallbackArgs &&) { ADD_FAILURE(); });
 
     agentPair agents(cfg);
     agents.genNotif(message1);
