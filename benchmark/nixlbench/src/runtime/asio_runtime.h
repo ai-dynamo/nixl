@@ -204,13 +204,8 @@ private:
         try {
             result->bind(endpoint_);
         }
-        catch (const asio::system_error &e) {
-            if (e.code() != asio::error::address_in_use) {
-                std::cout << "ASIO runtime bind() error -- " << e.code() << std::endl;
-                throw;
-            }
-
-            std::cout << "ASIO runtime bind() address in use -- using connect() instead"
+        catch (...) {
+            std::cout << "ASIO runtime bind() error -- using connect() instead"
                       << std::endl;
             return {};
         }
