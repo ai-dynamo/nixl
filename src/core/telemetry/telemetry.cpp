@@ -92,10 +92,10 @@ getExporterName() {
 
 void
 nixlTelemetry::initializeTelemetry() {
-    const auto buffer_size = nixl::config::getValueDefaulted<size_t>(TELEMETRY_BUFFER_SIZE_VAR,
-                                                                     DEFAULT_TELEMETRY_BUFFER_SIZE);
+    maxBufferedEvents_ = nixl::config::getValueDefaulted<size_t>(TELEMETRY_BUFFER_SIZE_VAR,
+                                                                 DEFAULT_TELEMETRY_BUFFER_SIZE);
 
-    if (buffer_size == 0) {
+    if (maxBufferedEvents_ == 0) {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");
     }
 
@@ -113,7 +113,7 @@ nixlTelemetry::initializeTelemetry() {
         throw std::runtime_error("Failed to load telemetry plugin: " + *exporter_name);
     }
 
-    const nixlTelemetryExporterInitParams init_params{agentName_, buffer_size};
+    const nixlTelemetryExporterInitParams init_params{agentName_, maxBufferedEvents_};
     exporter_ = plugin_handle->createExporter(init_params);
     if (!exporter_) {
         NIXL_ERROR << "Failed to create telemetry exporter: " << *exporter_name;
@@ -135,8 +135,7 @@ nixlTelemetry::initializeTelemetry() {
 bool
 nixlTelemetry::writeEventHelper() {
     std::vector<nixlTelemetryEvent> next_queue;
-    // assume next buffer will be the same size as the current one
-    next_queue.reserve(exporter_->getMaxEventsBuffered());
+    next_queue.reserve(maxBufferedEvents_);
     {
         std::lock_guard<std::mutex> lock(mutex_);
         events_.swap(next_queue);
@@ -173,6 +172,9 @@ nixlTelemetry::updateData(const std::string &event_name,
                           uint64_t value) {
     // agent can be multi-threaded
     std::lock_guard<std::mutex> lock(mutex_);
+    if (events_.size() >= maxBufferedEvents_) {
+        return;
+    }
     events_.emplace_back(std::chrono::duration_cast<std::chrono::microseconds>(
                              std::chrono::system_clock::now().time_since_epoch())
                              .count(),
@@ -239,6 +241,9 @@ nixlTelemetry::addXferTime(const std::chrono::microseconds xfer_time,
                           .count();
 
     const std::lock_guard lock(mutex_);
+    if (events_.size() + 3 > maxBufferedEvents_) {
+        return;
+    }
     events_.emplace_back(time,
                          nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
                          "agent_xfer_time",

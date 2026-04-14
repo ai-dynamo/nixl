@@ -87,6 +87,7 @@ private:
     std::unique_ptr<nixlTelemetryExporter> exporter_;
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
     std::vector<nixlTelemetryEvent> events_;
+    size_t maxBufferedEvents_;
     std::mutex mutex_;
     asio::thread_pool pool_;
     periodicTask writeTask_;
