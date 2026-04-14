@@ -451,6 +451,21 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
     config.modify("RCACHE_MAX_UNRELEASED", "1024");
 
+    if (ucpVersion_ <= UCP_VERSION(1, 13)) {
+        throw std::runtime_error("UCX version 1.13 or older is not supported by NIXL. "
+                                 "Please upgrade to UCX 1.14 or newer.");
+    }
+
+    if (ucpVersion_ <= UCP_VERSION(1, 17)) {
+        NIXL_WARN << "UCX version is 1.17 or older: cuda_ipc transport is not supported, "
+                  << "NVLink will not be available.";
+    }
+
+    if (ucpVersion_ <= UCP_VERSION(1, 18)) {
+        NIXL_WARN << "UCX version is 1.18 or older: gdr_copy has known bugs, "
+                  << "multi-GPU support is not available, and EFA is not supported.";
+    }
+
     if (ucpVersion_ >= UCP_VERSION(1, 21)) {
         config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_device_channels));
     }
