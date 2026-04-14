@@ -360,7 +360,10 @@ private:
 
     // get rail count limit for DRAM memory type, either computed or from user
     bool
-    getDramRailLimit(const nixl_b_params_t &custom_params, size_t &max_bw, size_t &max_rails);
+    getDramRailLimit(const nixl_b_params_t &custom_params,
+                     size_t &max_bw,
+                     size_t &max_rails,
+                     size_t &recommended_rails);
 
     // Internal rail selection method
     std::vector<size_t>

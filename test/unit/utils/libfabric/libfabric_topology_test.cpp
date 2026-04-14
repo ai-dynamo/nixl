@@ -182,6 +182,24 @@ static TopologyInfo topologies[] = {
      .numa_capacity = 32, // topmost switch on g6 report link speed 32 GB/s
      .numa_rail_count = 1, // should default to all rails, which is 1
      .test_scenarios = {{false, 0}, {true, 50}, {true, 100}, {true, 200}},
+     .rail_partition = {{{0}}, {{0}}}}, // pretending single switch in each node, both using rail 0
+
+    //
+    // C-series
+    //
+
+    // c5.18xl instance type (EFA connected directly to host bridge, no PCIe switch involved)
+    {.enable = true,
+     .instance_type = "c5n.18xl",
+     .topo_file = "c5n.18xl-topo.xml",
+     .numa_node_count = 0, // no NIC is attached to NUMA node, the only NIC is attached to machine
+     .nic_count = 1,
+     .nic_line_speed = 0, // neither fi-info nor hwloc report speed for the NIC
+     .nic_upstream_link_speed = 0, // c5 reports upstream link speed 0
+     .switch_count = 0, // no bridge/switch spec other than host bridge with link speed 0
+     .numa_capacity = 0, // topmost switch/bridge on c5 report link speed 0
+     .numa_rail_count = 1, // should default to all rails, which is 1
+     .test_scenarios = {{false, 0}, {true, 50}, {true, 100}, {true, 200}},
      .rail_partition = {{{0}}, {{0}}}} // pretending single switch in each node, both using rail 0
 
     // end of list
@@ -1153,7 +1171,9 @@ validateRailSelection(const std::vector<size_t> &selected_rails,
     size_t bandwidth = override_bandwidth ?
         bandwidth_limit :
         curr_topology->numa_rail_count * curr_topology->nic_line_speed;
-    size_t expected_rail_count = bandwidth / curr_topology->nic_line_speed;
+    // on C series the nic line speed is reported as zero, so be careful here
+    size_t expected_rail_count =
+        curr_topology->nic_line_speed ? bandwidth / curr_topology->nic_line_speed : 1;
     expected_rail_count = std::max(1ul, expected_rail_count);
     expected_rail_count = std::min(curr_topology->nic_count, expected_rail_count);
     if (curr_topology->numa_capacity == 0) {

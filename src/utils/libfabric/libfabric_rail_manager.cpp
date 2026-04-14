@@ -253,13 +253,25 @@ nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
     // get bandwidth/rail limit from user or compute it, then select policy
     size_t max_bw = 0;
     size_t max_rails = 0;
+    size_t recommended_rails = 0;
     size_t nic_speed = topology->getAvgNicBandwidth();
-    if (!getDramRailLimit(custom_params, max_bw, max_rails) || max_rails == 0) {
+    if (!getDramRailLimit(custom_params, max_bw, max_rails, recommended_rails) || max_rails == 0) {
         // had some error in deducing rail count, so just use default policy
         NIXL_WARN << "Using default (all) rail selection policy for DRAM memory type due to "
                      "previous errors";
         dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
-    } else if (max_rails < topology->getTotalNicCount()) {
+    } else if (topology->getAllDevices().size() == 1) {
+        // system has only 1 EFA, so use default policy (don't issue warning)
+        dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
+    }
+    // NOTE: from this point onward we regard only rails that are attached to a PCIe switch because
+    // these are the only ones that matter for avoiding PCIe congestion (the instance types we deal
+    // with have either all rails connected to PCIe switches, or have only one EFA that is either
+    // not attached to a NUMA node, as in C-series, or not attached to a PCIe switch, as in
+    // G-series), so we test rail count against topology->getTotalNicCount() (which represents the
+    // total number of "usable" rails, i.e. that are attached to a PCIe switch) and not against
+    // topology->getAllDevices().size()
+    else if (max_rails < topology->getTotalNicCount()) {
         // bandwidth does not exceed total machine capacity, so use NUMA-aware rail selection policy
         NIXL_TRACE << "Using NUMA-aware rail selection policy for DRAM memory type";
         size_t numa_rail_count = topology->getNumaRailCount(); // NOTE: averaged if non-uniform
@@ -268,7 +280,18 @@ nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
             NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
                       << " Gbps) exceeds single NUMA node capacity of " << numa_speed
                       << " Gbps, and will spill over to other NUMA nodes";
+        } else if (max_rails > recommended_rails) {
+            // configured rail count does not spill over to other nodes, but still exceeds PCIe
+            // switch capacity, and is expected to cause congestion, so warn user
+            size_t recommended_bw = recommended_rails * nic_speed;
+            NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
+                      << " Gbps), which results in " << max_rails
+                      << " rails, exceeds the congestion-free recommendation of " << recommended_bw
+                      << " Gbps (" << recommended_rails
+                      << " rails per NUMA node), and is expected to cause PCIe congestion";
         }
+        NIXL_TRACE << "Using " << max_rails
+                   << " rails in NUMA-aware rail selection policy for DRAM_SEG";
         dram_rail_selection_policy_ =
             std::make_unique<nixlLibfabricNumaRailSelectionPolicy>(max_rails);
     } else {
@@ -524,10 +547,29 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 bool
 nixlLibfabricRailManager::getDramRailLimit(const nixl_b_params_t &custom_params,
                                            size_t &max_bw,
-                                           size_t &max_rails) {
-    // first make sure there are any EFA devices
-    if (topology->getTotalNicCount() == 0) {
+                                           size_t &max_rails,
+                                           size_t &recommended_rails) {
+    // trivial case: no EFA devices
+    if (topology->getAllDevices().empty()) {
+        max_rails = 0;
         NIXL_WARN << "Could not find EFA devices, rail selection for DRAM memory type aborted";
+        // this is unexpected, we except to find at least one EFA
+        return false;
+    }
+
+    // trivial case: only one EFA device
+    if (topology->getAllDevices().size() == 1) {
+        max_rails = 1;
+        NIXL_INFO << "NUMA-aware rail selection disabled when system has only one EFA device";
+        // this could happen (e.g. C-series instance types)
+        return true;
+    }
+
+    // first make sure there are any usable EFA devices
+    if (topology->getTotalNicCount() == 0) {
+        NIXL_WARN
+            << "Could not find EFA devices connected to any PCIe switch, NUMA-aware rail selection "
+               "for DRAM memory type aborted";
         return false;
     }
 
@@ -545,7 +587,20 @@ nixlLibfabricRailManager::getDramRailLimit(const nixl_b_params_t &custom_params,
         return false;
     }
 
-    // now compute rail limit based on bandwidth limit
+    // compute recommended number of rails and corresponding bandwidth limit
+    size_t recommended_bw = topology->getAvgNumaNodeBandwidth();
+    if (recommended_bw == 0) {
+        NIXL_WARN << "Could not deduce average bandwidth limit per NUMA node, NUMA-aware rail "
+                     "selection for DRAM type aborted";
+        return false;
+    }
+    // NOTE: when rail limit is computed, we divide switch capacity by NIC upstream link
+    recommended_rails = recommended_bw / nic_upstream_speed;
+    NIXL_TRACE << "Computed (average) NUMA node combined PCIe switch bandwidth limit is "
+               << recommended_bw << " Gbps";
+    NIXL_TRACE << "Computed (average) rails per NUMA node is " << recommended_rails;
+
+    // now compute rail limit based on configured or computed bandwidth limit
     max_rails = 0;
     max_bw = 0;
 
@@ -559,17 +614,8 @@ nixlLibfabricRailManager::getDramRailLimit(const nixl_b_params_t &custom_params,
         // bandwidth limit could not be obtained from user (either user did not specify, or
         // configuration was malformed) so compute bandwidth limit from topology, and then deduce
         // rail count
-        max_bw = topology->getAvgNumaNodeBandwidth();
-        if (max_bw == 0) {
-            NIXL_WARN << "Could not deduce average bandwidth limit per NUMA node, NUMA-aware rail "
-                         "selection for DRAM type aborted";
-            return false;
-        }
-        // NOTE: when rail limit is computed, we divide switch capacity by NIC upstream link
-        max_rails = max_bw / nic_upstream_speed;
-        NIXL_TRACE << "Computed (average) NUMA node combined PCIe switch bandwidth limit is "
-                   << max_bw << " Gbps";
-        NIXL_TRACE << "Computed (average) rails per NUMA node is " << max_rails;
+        max_rails = recommended_rails;
+        max_bw = recommended_bw;
     } else {
         // print warning if bandwidth limit provided by user is less than the speed of a single NIC
         if (max_bw < nic_speed) {
