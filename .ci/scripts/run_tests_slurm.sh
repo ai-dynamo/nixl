@@ -90,6 +90,7 @@ container_name=${container_name:-"nixl-${BUILD_NUMBER}"}
 : ${test_script_path:?Missing --test_script_path}
 
 # Build SLURM command using bash arrays (professional approach)
+# Wrap in bash -c so shell interprets env var assignments (e.g. HAS_GPU=false cmd)
 SLURM_CMD=(
     "srun"
     "--jobid=${slurm_job_id}"
@@ -98,8 +99,8 @@ SLURM_CMD=(
     "--container-writable"
     "--container-name=${container_name}"
     "--container-image='${docker_image}'"
-    "${test_script_path}"
-    "${nixl_install_dir}"
+    "bash" "-c"
+    "'${test_script_path} ${nixl_install_dir}'"
 )
 
 echo "INFO: Executing test script: ${test_script_path}"

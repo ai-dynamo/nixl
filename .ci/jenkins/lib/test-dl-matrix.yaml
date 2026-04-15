@@ -49,7 +49,7 @@ env:
   SLURM_JOB_TIMEOUT: '01:30:00'
   TEST_TIMEOUT: 50
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260226-2"
+  CI_IMAGE_TAG: "20260414-2"
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
@@ -62,13 +62,13 @@ volumes:
 
 # Docker images for DL testing
 runs_on_dockers:
-  #- {
-  #   file: '.ci/dockerfiles/Dockerfile.base',
-  #   name: 'nixl-ci-dl-gpu-base-25.10-cuda13.0-ubuntu24.04',
-  #   tag: "${CI_IMAGE_TAG}",
-  #   arch: "aarch64",
-  #   build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
-  #  }
+  - {
+     file: '.ci/dockerfiles/Dockerfile.base',
+     name: 'nixl-ci-dl-gpu-base-25.10-cuda13.0-ubuntu24.04',
+     tag: "${CI_IMAGE_TAG}",
+     arch: "aarch64",
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+    }
 
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
@@ -162,7 +162,7 @@ steps:
     parallel: false
     run: |
       set -x
-      sudo -E -u svc-nixl .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_nixlbench.sh" \
+      sudo -E -u svc-nixl .ci/scripts/run_tests_slurm.sh --test_script_path="HAS_GPU=false .gitlab/test_nixlbench.sh" \
         --container_name=nixl-dl-${ucx_version}-${BUILD_NUMBER} \
         --slurm_job_id=$(cat /mnt/pvc/dl_job_id_${ucx_version}_${BUILD_NUMBER}.txt) \
         --docker_image="${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"

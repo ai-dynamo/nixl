@@ -119,13 +119,13 @@
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
                 ], propagate: false, wait: true
-            }}/*, 'dl-gpu': {{
+            }}, 'dl-gpu': {{
                 def jobName = 'nixl-ci-dl-gpu'
                 build job: jobName, parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
                 ], propagate: false, wait: true
-            }}*/
+            }}
 
             githubHelper.updateCommitStatus(blueOceanUrl, "NIXL CI ended", GitHubCommitState.SUCCESS)
         }} catch(Exception ex) {{
