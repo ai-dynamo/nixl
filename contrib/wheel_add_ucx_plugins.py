@@ -163,19 +163,20 @@ def get_lib_deps(lib_path):
 def copytree(src, dst):
     """
     Copy a tree of files from @src directory to @dst directory.
-    Deduplicates **shared-library** files (``.so``) that share the same inode
+    Deduplicates shared-library files (``.so``) that share the same inode
     (symlinks/hardlinks to the same underlying file).  For each group of
-    duplicate names only the shortest name is kept (typically the unversioned
-    ``.so`` name).  This prevents the dynamic linker from treating what used
-    to be symlinks as separate libraries, which would cause components to be
+    duplicate names only the real (non-symlink) file is kept -- typically the
+    fully-versioned name such as ``libuct_ib.so.0.0.0``.  This prevents the
+    dynamic linker from treating what used to be symlinks as separate
+    libraries (different inodes), which would cause components to be
     initialised multiple times.  Non-``.so`` files are always copied as-is.
 
     Returns:
         Tuple of (copied_files, dedup_map):
         - copied_files: list of absolute destination paths that were copied.
         - dedup_map: dict mapping removed filenames to the kept filename,
-          e.g. ``{"libuct_ib.so.0": "libuct_ib.so",
-                  "libuct_ib.so.0.0.0": "libuct_ib.so"}``.
+          e.g. ``{"libuct_ib.so": "libuct_ib.so.0.0.0",
+                  "libuct_ib.so.0": "libuct_ib.so.0.0.0"}``.
     """
     copied_files = []
     dedup_map = {}
@@ -205,7 +206,12 @@ def copytree(src, dst):
             inode_groups.setdefault(key, []).append(file)
 
         for _key, group in inode_groups.items():
-            group.sort(key=len)
+            # Prefer the real (non-symlink) file; among equals keep the
+            # longest name (the fully-versioned .so.X.Y.Z form that UCX's
+            # module loader dlopens).
+            group.sort(
+                key=lambda f: (os.path.islink(os.path.join(root, f)), -len(f))
+            )
             kept = group[0]
             real_src = os.path.realpath(os.path.join(root, kept))
             dst_file = os.path.join(dst_dir, kept)
@@ -299,8 +305,9 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
                     ):
                         raise RuntimeError(f"Library {libname} not loaded by {fpath}")
 
-    # Replace inter-plugin DT_NEEDED entries that reference removed versioned
-    # symlinks (e.g. libuct_ib.so.0) with the kept base name (e.g. libuct_ib.so).
+    # Replace inter-plugin DT_NEEDED entries that reference removed symlink
+    # names (e.g. libuct_ib.so.0) with the kept real file name
+    # (e.g. libuct_ib.so.0.0.0).
     if dedup_map:
         for fname in copied_files:
             if os.path.isfile(fname) and ".so" in fname:
