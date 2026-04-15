@@ -54,13 +54,19 @@ public:
 
 private:
     struct CounterEntry {
-        prometheus::Family<prometheus::Counter> *family;
-        prometheus::Counter *metric;
+        prometheus::Family<prometheus::Counter> *family = nullptr;
+        prometheus::Counter *metric = nullptr;
+        ~CounterEntry() {
+            if (family && metric) family->Remove(metric);
+        }
     };
 
     struct GaugeEntry {
-        prometheus::Family<prometheus::Gauge> *family;
-        prometheus::Gauge *metric;
+        prometheus::Family<prometheus::Gauge> *family = nullptr;
+        prometheus::Gauge *metric = nullptr;
+        ~GaugeEntry() {
+            if (family && metric) family->Remove(metric);
+        }
     };
 
     const std::string agent_name_;

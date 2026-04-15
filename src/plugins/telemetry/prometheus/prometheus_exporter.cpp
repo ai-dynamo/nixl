@@ -107,12 +107,8 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
 
 nixlTelemetryPrometheusExporter::~nixlTelemetryPrometheusExporter() {
     const std::lock_guard lock(s_mutex);
-    for (auto &[name, entry] : counters_) {
-        entry.family->Remove(entry.metric);
-    }
-    for (auto &[name, entry] : gauges_) {
-        entry.family->Remove(entry.metric);
-    }
+    counters_.clear();
+    gauges_.clear();
     s_agent_names.erase(agent_name_);
     exposer_.reset();
     registry_.reset();
