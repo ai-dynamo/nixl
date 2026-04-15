@@ -22,9 +22,11 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <chrono>
+#include <unordered_set>
 
 namespace {
 const uint16_t prometheusExporterDefaultPort = 9090;
@@ -47,13 +49,12 @@ getHostname() {
     }
     return "unknown";
 }
-} // namespace
 
-std::mutex nixlTelemetryPrometheusExporter::s_mutex_;
-std::weak_ptr<prometheus::Exposer> nixlTelemetryPrometheusExporter::s_exposer_weak_;
-std::weak_ptr<prometheus::Registry> nixlTelemetryPrometheusExporter::s_registry_weak_;
-std::string nixlTelemetryPrometheusExporter::s_bind_address_;
-std::unordered_set<std::string> nixlTelemetryPrometheusExporter::s_agent_names_;
+std::mutex s_mutex;
+std::weak_ptr<prometheus::Exposer> s_exposer_weak;
+std::weak_ptr<prometheus::Registry> s_registry_weak;
+std::unordered_set<std::string> s_agent_names;
+} // namespace
 
 nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     const nixlTelemetryExporterInitParams &init_params)
@@ -64,56 +65,57 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     const uint16_t port =
         nixl::config::getValueDefaulted(prometheusPortVar, prometheusExporterDefaultPort);
 
+    std::string bind_address;
     if (local) {
-        bind_address_ = prometheusExporterLocalAddress + ":" + std::to_string(port);
+        bind_address = prometheusExporterLocalAddress + ":" + std::to_string(port);
     } else {
-        bind_address_ = prometheusExporterPublicAddress + ":" + std::to_string(port);
+        bind_address = prometheusExporterPublicAddress + ":" + std::to_string(port);
     }
 
-    std::lock_guard<std::mutex> lock(s_mutex_);
+    const std::lock_guard lock(s_mutex);
 
-    if (!s_agent_names_.insert(agent_name_).second) {
+    if (!s_agent_names.insert(agent_name_).second) {
         throw std::runtime_error("Prometheus exporter: duplicate agent name '" + agent_name_ +
                                  "'; each agent must have a unique name");
     }
 
-    exposer_ = s_exposer_weak_.lock();
-    registry_ = s_registry_weak_.lock();
+    try {
+        exposer_ = s_exposer_weak.lock();
+        registry_ = s_registry_weak.lock();
 
-    if (!exposer_) {
-        registry_ = std::make_shared<prometheus::Registry>();
-        exposer_ = std::make_shared<prometheus::Exposer>(bind_address_);
-        exposer_->RegisterCollectable(registry_);
-        s_exposer_weak_ = exposer_;
-        s_registry_weak_ = registry_;
-        s_bind_address_ = bind_address_;
-        NIXL_INFO << "Prometheus exporter initialized on " << bind_address_;
-    } else {
-        if (s_bind_address_ != bind_address_) {
-            NIXL_WARN << "Prometheus exporter for agent '" << agent_name_ << "' requested "
-                      << bind_address_ << " but shared server is already bound to "
-                      << s_bind_address_ << "; reusing existing server";
+        if (!exposer_ || !registry_) {
+            registry_.reset();
+            exposer_.reset();
+            registry_ = std::make_shared<prometheus::Registry>();
+            exposer_ = std::make_shared<prometheus::Exposer>(bind_address);
+            exposer_->RegisterCollectable(registry_);
+            s_exposer_weak = exposer_;
+            s_registry_weak = registry_;
+            NIXL_INFO << "Prometheus exporter initialized on " << bind_address;
+        } else {
+            NIXL_INFO << "Prometheus exporter for agent '" << agent_name_
+                      << "' sharing existing server";
         }
-        bind_address_ = s_bind_address_;
-        NIXL_INFO << "Prometheus exporter for agent '" << agent_name_
-                  << "' sharing existing server on " << bind_address_;
-    }
 
-    initializeMetrics();
+        initializeMetrics();
+    }
+    catch (...) {
+        s_agent_names.erase(agent_name_);
+        throw;
+    }
 }
 
 nixlTelemetryPrometheusExporter::~nixlTelemetryPrometheusExporter() {
-    std::lock_guard<std::mutex> lock(s_mutex_);
+    const std::lock_guard lock(s_mutex);
     for (auto &[name, entry] : counters_) {
         entry.family->Remove(entry.metric);
     }
     for (auto &[name, entry] : gauges_) {
         entry.family->Remove(entry.metric);
     }
-    s_agent_names_.erase(agent_name_);
-    if (s_agent_names_.empty()) {
-        s_bind_address_.clear();
-    }
+    s_agent_names.erase(agent_name_);
+    exposer_.reset();
+    registry_.reset();
 }
 
 // To make access cheaper we are creating static metrics with the labels already set
