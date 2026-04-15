@@ -296,6 +296,7 @@ std::string xferBenchConfig::gusli_config_file = "";
 std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
 bool xferBenchConfig::use_device_api = false;
+int xferBenchConfig::device_kernel_block_thread_count = 1;
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -506,6 +507,34 @@ xferBenchConfig::loadParams(void) {
         }
     }
 
+    // nixlbench to support device API
+    use_device_api = NB_ARG(use_device_api);
+    if (use_device_api) {
+#if HAVE_CUDA
+        if (worker_type != XFERBENCH_WORKER_NIXL
+            || backend != XFERBENCH_BACKEND_UCX
+            || op_type != XFERBENCH_OP_WRITE
+            || initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM
+            || target_seg_type != XFERBENCH_SEG_TYPE_VRAM
+            || !enable_pt
+        ) {
+            std::cout << "Invalid configuration for NIXL Device API, reset to false" << std::endl;
+            use_device_api = false;
+        } else {
+            std::cout << "NIXL Device API is enabled, --num-threads used as GPU kernel block thread count with value 1 - 1024" << std::endl;
+            if (num_threads < 1 || num_threads > 1024) {
+                std::cout << "Invalid value for --num-threads, reset --num-threads to 1" << std::endl;
+                num_threads = 1;
+            }
+            device_kernel_block_thread_count = num_threads;
+            num_threads = 1;
+        }
+#else
+        std::cout << "NIXL Device API is not supported without CUDA" << std::endl;
+        use_device_api = false;
+#endif
+    }
+
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
         if (!((XFERBENCH_SEG_TYPE_VRAM == initiator_seg_type) &&
               (XFERBENCH_SEG_TYPE_VRAM == target_seg_type) && (1 == num_threads) &&
@@ -579,32 +608,6 @@ xferBenchConfig::loadParams(void) {
                   << ", next such value is "
                   << total_buffer_size + partition - (total_buffer_size % partition) << std::endl;
         return -1;
-    }
-
-
-    use_device_api = NB_ARG(use_device_api);
-    if (use_device_api) {
-#if HAVE_CUDA
-        if (worker_type != XFERBENCH_WORKER_NIXL
-            || backend != XFERBENCH_BACKEND_UCX
-            || op_type != XFERBENCH_OP_WRITE
-            || initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM
-            || target_seg_type != XFERBENCH_SEG_TYPE_VRAM
-            || !enable_pt
-        ) {
-            std::cout << "Invalid configuration for NIXL Device API, reset to false" << std::endl;
-            use_device_api = false;
-        } else {
-            std::cout << "NIXL Device API is enabled, --num-threads used as GPU kernel block thread count with value 1 - 1024" << std::endl;
-            if (num_threads < 1 || num_threads > 1024) {
-                std::cout << "Invalid value for --num-threads, reset --num-threads to 1" << std::endl;
-                num_threads = 1;
-            }
-        }
-#else
-        std::cout << "NIXL Device API is not supported without CUDA" << std::endl;
-        use_device_api = false;
-#endif
     }
 
     return 0;
@@ -742,7 +745,7 @@ xferBenchConfig::printConfig() {
     printOption("Warmup iter (--warmup_iter=N)", std::to_string(warmup_iter));
     printOption("Large block iter factor (--large_blk_iter_ftr=N)",
                 std::to_string(large_blk_iter_ftr));
-    printOption("Num threads (--num_threads=N)", std::to_string(num_threads));
+    printOption("Num threads (--num_threads=N)", use_device_api ? std::to_string(device_kernel_block_thread_count) : std::to_string(num_threads));
     printSeparator('-');
     std::cout << std::endl;
 }

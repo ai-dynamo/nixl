@@ -1551,8 +1551,8 @@ execDeviceTransfer(nixlMemViewH local_mvh,
                    xferBenchStats &stats) {
     stats.clear();
 
-    if (num_threads < 1) {
-        std::cerr << "execDeviceTransfer: num_threads must be >= 1" << std::endl;
+    if (num_threads < 1 || num_threads > 1024) {
+        std::cerr << "execDeviceTransfer: num_threads must be >= 1 and <= 1024" << std::endl;
         return -1;
     }
 
@@ -1639,20 +1639,8 @@ std::variant<xferBenchStats, int>
 xferBenchNixlWorker::transfer(size_t block_size,
                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
                               const std::vector<std::vector<xferBenchIOV>> &remote_iovs) {
-    int num_iter = 0;
-    int skip = 0;
-#if HAVE_CUDA
-    if (xferBenchConfig::use_device_api) {
-        num_iter = xferBenchConfig::num_iter;
-        skip = xferBenchConfig::warmup_iter;
-    } else {
-        num_iter = xferBenchConfig::num_iter / xferBenchConfig::num_threads;
-        skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
-    }
-#else
-    num_iter = xferBenchConfig::num_iter / xferBenchConfig::num_threads;
-    skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
-#endif
+    int num_iter = xferBenchConfig::num_iter / xferBenchConfig::num_threads;
+    int skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
     xferBenchStats stats;
     int ret = 0;
     nixl_xfer_op_t xfer_op = XFERBENCH_OP_READ == xferBenchConfig::op_type ? NIXL_READ : NIXL_WRITE;
@@ -1674,7 +1662,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                 remote_mvh,
                 signal_remote_completion,
                 skip,
-                xferBenchConfig::num_threads,
+                xferBenchConfig::device_kernel_block_thread_count,
                 num_regions,
                 block_size,
                 stats);
@@ -1717,7 +1705,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
             remote_mvh,
             signal_remote_completion,
             num_iter,
-            xferBenchConfig::num_threads,
+            xferBenchConfig::device_kernel_block_thread_count,
             num_regions,
             block_size,
             stats);
