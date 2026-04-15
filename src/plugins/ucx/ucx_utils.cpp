@@ -147,7 +147,7 @@ ucx_vram_memtype_hint_from_string(std::string_view s) {
 
     std::stringstream err_msg;
     err_msg << "Invalid VRAM memtype hint mode: " << s
-        << ". Matching is case-sensitive; use exact values. Valid values are: <";
+            << ". Matching is case-sensitive; use exact values. Valid values are: <";
     for (size_t i = 0; i < hint_modes.size(); ++i) {
         err_msg << ucx_vram_memtype_hint_to_string(hint_modes[i]);
         if (i < hint_modes.size() - 1) {
