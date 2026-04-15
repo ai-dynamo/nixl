@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import pickle
 from typing import Optional, Union
 
@@ -937,10 +938,8 @@ class nixl_agent:
         # can add check for DLPack input
 
         descs_len = None
-        try:
+        with contextlib.suppress(TypeError):
             descs_len = len(descs)
-        except TypeError:
-            pass
 
         if isinstance(descs, nixlBind.nixlXferDList):
             return descs
@@ -1035,10 +1034,8 @@ class nixl_agent:
         # can add check for DLPack input
 
         descs_len = None
-        try:
+        with contextlib.suppress(TypeError):
             descs_len = len(descs)
-        except TypeError:
-            pass
 
         if isinstance(descs, nixlBind.nixlRegDList):
             return descs
