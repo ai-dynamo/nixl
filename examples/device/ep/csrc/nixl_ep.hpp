@@ -83,7 +83,7 @@ struct Buffer {
 private:
     int buffer_idx = 0; // Double buffering index
     bool low_latency_mode = false;
-    int timeout_ms = 30000;
+    uint64_t timeout_ms = 30000;
 
     // NVLink Buffer
     int64_t num_nvl_bytes;
@@ -108,7 +108,6 @@ private:
     // Device info and communication
     int device_id;
     int num_device_sms;
-    int device_clock_rate_khz = 0;
     uint64_t timeout_cycles = 0;
     int rank, rdma_rank, nvl_rank;
     int num_ranks, num_rdma_ranks, num_nvl_ranks;

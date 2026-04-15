@@ -54,15 +54,18 @@
 
 namespace nixl_ep {
 
-static void sleep_ms(int milliseconds) {
+namespace {
+
+void sleep_ms(int milliseconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
 }
 
-static uint64_t milliseconds_to_cycles(int milliseconds, int device_clock_rate_khz) {
-    EP_HOST_ASSERT(milliseconds >= 0);
+uint64_t milliseconds_to_cycles(uint64_t milliseconds, int device_clock_rate_khz) {
     EP_HOST_ASSERT(device_clock_rate_khz > 0);
-    return static_cast<uint64_t>(milliseconds) * static_cast<uint64_t>(device_clock_rate_khz);
+    return milliseconds * static_cast<uint64_t>(device_clock_rate_khz);
 }
+
+} // namespace
 
 void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes)
 {
@@ -76,7 +79,10 @@ void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int6
 
 Buffer::Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms):
         low_latency_mode(low_latency_mode),
-        timeout_ms(timeout_ms),
+        timeout_ms([timeout_ms] {
+            EP_HOST_ASSERT(timeout_ms >= 0);
+            return static_cast<uint64_t>(timeout_ms);
+        }()),
         rank(rank), num_ranks(1),
         explicitly_destroy(explicitly_destroy),
         comm_stream(at::cuda::getStreamFromPool(true)) {}
@@ -109,9 +115,9 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     num_rdma_ranks = std::max(1, num_ranks / NUM_MAX_NVL_PEERS), num_nvl_ranks = std::min(num_ranks, NUM_MAX_NVL_PEERS);
 
     // Get device info
+    int device_clock_rate_khz = 0;
     CUDA_CHECK(cudaDeviceGetAttribute(&num_device_sms, cudaDevAttrMultiProcessorCount, device_id));
     CUDA_CHECK(cudaDeviceGetAttribute(&device_clock_rate_khz, cudaDevAttrClockRate, device_id));
-    EP_HOST_ASSERT(device_clock_rate_khz > 0);
     timeout_cycles = milliseconds_to_cycles(timeout_ms, device_clock_rate_khz);
     int denom_sms = std::max(1, num_device_sms / 2);
     auto per_channel_bytes = ceil_div<int64_t>(num_rdma_bytes, denom_sms);
