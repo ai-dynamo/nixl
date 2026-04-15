@@ -29,10 +29,9 @@
  * @brief Process-wide shared DOCA context
  *
  * DOCA only supports one metrics context per process, so all agents share
- * this context. Thread safety of metrics_add_counter / metrics_add_gauge on
- * a shared source is assumed based on DTE's design for multi-label concurrent
- * usage. If DTE is found to not be thread-safe, add a mutex around
- * registerCounter / registerGauge calls.
+ * this context. The underlying CLX Metrics API is not thread-safe, so all
+ * metric recording calls (metrics_add_counter / metrics_add_gauge) are
+ * serialised by a dedicated mutex in the .cpp file.
  */
 struct DocaSharedContext {
     doca_telemetry_exporter_schema *schema = nullptr;

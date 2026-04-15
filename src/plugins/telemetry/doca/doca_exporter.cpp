@@ -50,6 +50,7 @@ getHostname() {
 
 std::mutex g_ctx_mutex;
 std::weak_ptr<DocaSharedContext> g_ctx_weak;
+std::mutex g_metrics_mutex;
 } // namespace
 
 DocaSharedContext::~DocaSharedContext() {
@@ -209,6 +210,7 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
     }
 
     try {
+        const std::lock_guard lock(g_metrics_mutex);
         switch (event.category_) {
         case nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER: {
             const char *label_values[] = {docaExporterTransferCategory, agent_name_.c_str()};
