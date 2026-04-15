@@ -35,13 +35,13 @@ namespace nixl_ep {
 namespace intranode {
 
 template <int kNumRanks>
-__global__ void barrier(int** barrier_signal_ptrs, int rank) {
-    barrier_block<kNumRanks>(barrier_signal_ptrs, rank);
+__global__ void barrier(int** barrier_signal_ptrs, int rank, uint64_t timeout_cycles) {
+    barrier_block<kNumRanks>(barrier_signal_ptrs, rank, timeout_cycles);
 }
 
-void barrier(int** barrier_signal_ptrs, int rank, int num_nvl_ranks, cudaStream_t stream) {
+void barrier(int** barrier_signal_ptrs, int rank, int num_nvl_ranks, uint64_t timeout_cycles, cudaStream_t stream) {
 #define BARRIER_LAUNCH_CASE(ranks)                                  \
-    LAUNCH_KERNEL(&cfg, barrier<ranks>, barrier_signal_ptrs, rank); \
+    LAUNCH_KERNEL(&cfg, barrier<ranks>, barrier_signal_ptrs, rank, timeout_cycles); \
     break
 
     SETUP_LAUNCH_CONFIG(1, 32, stream);

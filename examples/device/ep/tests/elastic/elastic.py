@@ -32,6 +32,7 @@ import nixl_ep
 import rank_server
 import store_group
 import torch
+from nixl_ep.buffer import DEFAULT_TIMEOUT_MS
 from plan import Plan
 
 # Add tests directory to path to import test utils
@@ -47,6 +48,16 @@ from utils import (  # noqa: E402
 
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
+
+
+def non_negative_int(value: str) -> int:
+    try:
+        int_value = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a non-negative integer") from exc
+    if int_value < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return int_value
 
 
 def handle_sigterm(
@@ -494,6 +505,7 @@ def worker(torch_rank: int, args: argparse.Namespace):
         disable_ll_nvlink=args.disable_ll_nvlink,
         explicitly_destroy=True,
         tcp_store_group=tcp_store,
+        timeout_ms=args.timeout_ms,
     )
     buffer.update_memory_buffers(
         num_ranks=max_num_ranks,
@@ -626,6 +638,12 @@ def main():
         "--disable-ll-nvlink",
         action="store_true",
         help="Disable NVLink communication for low-latency kernels",
+    )
+    parser.add_argument(
+        "--timeout-ms",
+        type=non_negative_int,
+        default=DEFAULT_TIMEOUT_MS,
+        help="GPU timeout in milliseconds (non-negative integer)",
     )
 
     args = parser.parse_args()

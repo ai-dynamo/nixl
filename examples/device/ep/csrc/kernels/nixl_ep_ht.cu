@@ -156,6 +156,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
                                 void** buffer_ptrs,
                                 int** barrier_signal_ptrs,
                                 int rank,
+                                uint64_t timeout_cycles,
                                 nixl_ep::gpu_nixl_ctx nixl_ctx) {
     auto sm_id = static_cast<int>(blockIdx.x);
     auto thread_id = static_cast<int>(threadIdx.x), warp_id = thread_id / 32, lane_id = get_lane_id();
@@ -177,7 +178,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
             if (lane_id == 0)
                 nixl_barrier_wait(nixl_ctx, num_channels);
         }
-        barrier_block<NUM_MAX_NVL_PEERS, true>(barrier_signal_ptrs, nvl_rank);
+        barrier_block<NUM_MAX_NVL_PEERS, true>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
 
         // Send numbers of tokens per rank/expert to RDMA ranks
         auto rdma_buffer_ptr_int = static_cast<int*>(rdma_buffer_ptr);
@@ -288,7 +289,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
             for (int i = 0; i < num_nvl_experts; ++i)
                 nvl_send_num_tokens_per_expert.buffer(nvl_rank)[i] = nvl_reduced_num_tokens_per_expert[thread_id * num_nvl_experts + i];
         }
-        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank);
+        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
 
         // Reduce the number of tokens per rank/expert
         EP_DEVICE_ASSERT(num_nvl_experts <= num_threads);
@@ -319,7 +320,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
             if (lane_id == 0)
                 nixl_barrier_wait(nixl_ctx, num_channels);
         }
-        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank);
+        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
     } else {
         // Calculate meta data
         int dst_rdma_rank = sm_id - 1;
@@ -402,6 +403,7 @@ void notify_dispatch(const int* num_tokens_per_rank,
                      cudaStream_t stream,
                      int64_t num_rdma_bytes,
                      int64_t num_nvl_bytes,
+                     uint64_t timeout_cycles,
                      bool low_latency_mode,
                      nixl_ep::gpu_nixl_ctx nixl_ctx) {
 #define NOTIFY_DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                                    \
@@ -433,6 +435,7 @@ void notify_dispatch(const int* num_tokens_per_rank,
                       buffer_ptrs,                                                                                                     \
                       barrier_signal_ptrs,                                                                                             \
                       rank,                                                                                                            \
+                      timeout_cycles,                                                                                                  \
                       nixl_ctx);                                                                                                       \
     }                                                                                                                                  \
     break
@@ -508,6 +511,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
              int num_max_nvl_chunked_recv_tokens,
              int rank,
              int num_ranks,
+             uint64_t timeout_cycles,
              nixl_ep::gpu_nixl_ctx nixl_ctx) {
     enum class WarpRole { kRDMASender, kRDMASenderCoordinator, kRDMAAndNVLForwarder, kForwarderCoordinator, kNVLReceivers };
 
@@ -676,7 +680,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 cached_rdma_channel_head = static_cast<int>(ld_volatile_global(rdma_channel_head.buffer(lane_id)));
 
                 // Timeout check
-                if (clock64() - start_time >= NUM_TIMEOUT_CYCLES) {
+                if (clock64() - start_time >= timeout_cycles) {
                     printf("NixlEP dispatch RDMA sender timeout, channel: %d, RDMA: %d, nvl: %d, dst RDMA lane: %d, head: %d, tail: %d\n",
                            channel_id,
                            rdma_rank,
@@ -807,7 +811,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         auto start_time = clock64();
         while (__any_sync(0xffffffff, num_tokens_to_send > 0)) {
             // Timeout check
-            if (clock64() - start_time > NUM_TIMEOUT_CYCLES and lane_id < kNumRDMARanks) {
+            if (clock64() - start_time > timeout_cycles and lane_id < kNumRDMARanks) {
                 printf("NixlEP RDMA sender coordinator timeout, channel: %d, IB: %d, nvl %d, dst IB: %d, tail: %d, remaining: %d\n",
                        channel_id,
                        rdma_rank,
@@ -913,7 +917,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 }
 
                 // Timeout check
-                if (clock64() - start_time > NUM_TIMEOUT_CYCLES) {
+                if (clock64() - start_time > timeout_cycles) {
                     printf(
                         "NixlEP dispatch forwarder timeout (RDMA meta), channel: %d, RDMA: %d, nvl: %d, src RDMA lane: %d, dst NVL: %d, meta: %d, %d, %d, %d\n",
                         channel_id,
@@ -952,7 +956,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 cached_nvl_channel_head = __shfl_sync(0xffffffffu, ld_volatile_global(nvl_channel_head.buffer()), 0);
 
                 // Timeout check
-                if (elect_one_sync() and clock64() - start_time > NUM_TIMEOUT_CYCLES) {
+                if (elect_one_sync() and clock64() - start_time > timeout_cycles) {
                     printf(
                         "NixlEP dispatch forwarder timeout (NVL check), channel: %d, RDMA: %d, nvl: %d, dst NVL: %d, head: %d, tail: %d\n",
                         channel_id,
@@ -981,7 +985,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 }
 
                 // Timeout check
-                if (clock64() - start_time > NUM_TIMEOUT_CYCLES and lane_id < kNumRDMARanks) {
+                if (clock64() - start_time > timeout_cycles and lane_id < kNumRDMARanks) {
                     printf(
                         "NixlEP dispatch forwarder timeout (RDMA check), channel: %d, RDMA: %d, nvl: %d, dst NVL: %d, src RDMA lane: %d, "
                         "head: %d, tail: %d, expected: %d\n",
@@ -1128,7 +1132,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             }
 
             // Timeout check
-            if (clock64() - start_time > NUM_TIMEOUT_CYCLES) {
+            if (clock64() - start_time > timeout_cycles) {
                 printf(
                     "NixlEP dispatch NVL receiver timeout, channel: %d, RDMA: %d, nvl: %d, src RDMA: %d, src nvl: %d, start: %d, end: %d\n",
                     channel_id,
@@ -1159,7 +1163,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 cached_channel_tail_idx = __shfl_sync(0xffffffff, ld_acquire_sys_global(nvl_channel_tail.buffer()), 0);
 
                 // Timeout check
-                if (elect_one_sync() and clock64() - start_time > NUM_TIMEOUT_CYCLES) {
+                if (elect_one_sync() and clock64() - start_time > timeout_cycles) {
                     printf("NixlEP dispatch NVL receiver timeout, channel: %d, RDMA: %d, nvl: %d, src NVL: %d, head: %d, tail: %d\n",
                            channel_id,
                            rdma_rank,
@@ -1278,6 +1282,7 @@ void dispatch(void* recv_x,
               bool is_cached_dispatch,
               cudaStream_t stream,
               int num_channels,
+              uint64_t timeout_cycles,
               bool low_latency_mode,
               gpu_nixl_ctx nixl_ctx) {
     constexpr int kNumDispatchRDMASenderWarps = 7;
@@ -1330,6 +1335,7 @@ void dispatch(void* recv_x,
                       num_max_nvl_chunked_recv_tokens,                                                                         \
                       rank,                                                                                                    \
                       num_ranks,                                                                                               \
+                      timeout_cycles,                                                                                          \
                       nixl_ctx);                                                                                               \
     }                                                                                                                          \
     break
@@ -1358,6 +1364,7 @@ __global__ void cached_notify(const int rdma_clean_offset,
                               int** barrier_signal_ptrs,
                               int rank,
                               int num_ranks,
+                              uint64_t timeout_cycles,
                               bool is_cached_dispatch,
                               gpu_nixl_ctx nixl_ctx) {
     auto sm_id = static_cast<int>(blockIdx.x);
@@ -1382,7 +1389,7 @@ __global__ void cached_notify(const int rdma_clean_offset,
         }
 
         // Barrier for NVL
-        barrier_block<NUM_MAX_NVL_PEERS, true>(barrier_signal_ptrs, nvl_rank);
+        barrier_block<NUM_MAX_NVL_PEERS, true>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
 
         // Clean RDMA buffer
         auto rdma_buffer_ptr_int = static_cast<int*>(rdma_buffer_ptr);
@@ -1403,7 +1410,7 @@ __global__ void cached_notify(const int rdma_clean_offset,
             if (lane_id == 0)
                 nixl_barrier_wait(nixl_ctx, num_channels);
         }
-        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank);
+        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
     } else if (sm_id == 1) {
         if (is_cached_dispatch)
             return;
@@ -1521,6 +1528,7 @@ void cached_notify(int hidden_int4,
                    cudaStream_t stream,
                    int64_t num_rdma_bytes,
                    int64_t num_nvl_bytes,
+                   uint64_t timeout_cycles,
                    bool is_cached_dispatch,
                    bool low_latency_mode,
                    gpu_nixl_ctx nixl_ctx) {
@@ -1569,6 +1577,7 @@ void cached_notify(int hidden_int4,
                   barrier_signal_ptrs,
                   rank,
                   num_ranks,
+                  timeout_cycles,
                   is_cached_dispatch,
                   nixl_ctx);
 }
@@ -1773,6 +1782,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                                                                         int num_max_nvl_chunked_recv_tokens,
                                                                         int rank,
                                                                         int num_ranks,
+                                                                        uint64_t timeout_cycles,
                                                                         gpu_nixl_ctx nixl_ctx) {
     enum class WarpRole { kNVLSender, kNVLAndRDMAForwarder, kRDMAReceiver, kCoordinator };
 
@@ -1883,7 +1893,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                     cached_channel_head_idx = ld_volatile_global(nvl_channel_head.buffer() + lane_id);
 
                 // Timeout check
-                if (clock64() - start_time > NUM_TIMEOUT_CYCLES and lane_id < kNumRDMARanks) {
+                if (clock64() - start_time > timeout_cycles and lane_id < kNumRDMARanks) {
                     printf(
                         "NixlEP combine NVL sender timeout, channel: %d, RDMA: %d, nvl: %d, dst NVL: %d, RDMA lane: %d, head: %d, tail: "
                         "%d, start: %d, end: %d\n",
@@ -2055,7 +2065,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                         break;
 
                     // Timeout check
-                    if (clock64() - start_time > NUM_TIMEOUT_CYCLES) {
+                    if (clock64() - start_time > timeout_cycles) {
                         printf(
                             "NixlEP combine forwarder (RDMA check) timeout, channel: %d, RDMA: %d, nvl: %d, dst RDMA: %d, head: %ld, tail: "
                             "%d, chunked: %d\n",
@@ -2088,7 +2098,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                         cached_nvl_channel_tail_idx = ld_acquire_sys_global(nvl_channel_tail.buffer(lane_id));
 
                         // Timeout check
-                        if (clock64() - start_time > NUM_TIMEOUT_CYCLES and lane_id < NUM_MAX_NVL_PEERS) {
+                        if (clock64() - start_time > timeout_cycles and lane_id < NUM_MAX_NVL_PEERS) {
                             printf(
                                 "NixlEP combine forwarder (NVL check) timeout, channel: %d, RDMA: %d, nvl: %d, src NVL: %d, dst RDMA: %d, "
                                 "tail: %d, waiting: %d, total: %d, sub: %d, large: %d, expected: %d\n",
@@ -2212,7 +2222,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                     cached_channel_tail_idx = static_cast<int>(ld_acquire_sys_global(rdma_channel_tail.buffer(lane_id)));
 
                     // Timeout check
-                    if (clock64() - start_time > NUM_TIMEOUT_CYCLES) {
+                    if (clock64() - start_time > timeout_cycles) {
                         printf(
                             "NixlEP combine RDMA receiver timeout, channel: %d, RDMA: %d, nvl: %d, src RDMA: %d, tail: %d, waiting: %ld, "
                             "expect: %d\n",
@@ -2346,6 +2356,7 @@ void combine(cudaDataType_t type,
              int num_ranks,
              cudaStream_t stream,
              int num_channels,
+             uint64_t timeout_cycles,
              bool low_latency_mode,
              gpu_nixl_ctx nixl_ctx) {
     constexpr int kNumCombineForwarderWarps = 24;
@@ -2396,6 +2407,7 @@ void combine(cudaDataType_t type,
                       num_max_nvl_chunked_recv_tokens,                                \
                       rank,                                                           \
                       num_ranks,                                                      \
+                      timeout_cycles,                                                 \
                       nixl_ctx);                                                      \
     }                                                                                 \
     break

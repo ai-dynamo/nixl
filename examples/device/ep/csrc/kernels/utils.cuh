@@ -466,7 +466,7 @@ __forceinline__ __device__ out_dtype_t extract_required_scale_format(float value
 
 template <int kNumRanks, bool kSyncOnly = false>
 __forceinline__ __device__ void
-barrier_block(int** barrier_signal_ptrs, int rank) {
+barrier_block(int** barrier_signal_ptrs, int rank, uint64_t timeout_cycles) {
     auto thread_id = static_cast<int>(threadIdx.x);
 
     // For non-sync-only cases, the memory operations by other threads in the block must be visible to the `sys` scope
@@ -489,7 +489,7 @@ barrier_block(int** barrier_signal_ptrs, int rank) {
         if (__all_sync(0xffffffff, value <= 0))
             break;
 
-        if (clock64() - start_time > NUM_TIMEOUT_CYCLES and thread_id < kNumRanks) {
+        if (clock64() - start_time > timeout_cycles and thread_id < kNumRanks) {
             printf("NixlEP timeout check failed: rank = %d, thread = %d, value = %d)\n", rank, thread_id, value);
             trap();
         }
