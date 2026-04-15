@@ -56,6 +56,7 @@ private:
     struct CounterEntry {
         prometheus::Family<prometheus::Counter> *family = nullptr;
         prometheus::Counter *metric = nullptr;
+
         ~CounterEntry() {
             if (family && metric) family->Remove(metric);
         }
@@ -64,6 +65,7 @@ private:
     struct GaugeEntry {
         prometheus::Family<prometheus::Gauge> *family = nullptr;
         prometheus::Gauge *metric = nullptr;
+
         ~GaugeEntry() {
             if (family && metric) family->Remove(metric);
         }
