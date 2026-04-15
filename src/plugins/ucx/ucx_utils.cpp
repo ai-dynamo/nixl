@@ -597,6 +597,15 @@ nixlUcxContext::resolveMemoryTypeConfig() {
 
     const auto status = ucp_context_query(ctx, &context_attr);
     if (status != UCS_OK) {
+        if (vramMemTypeHintPolicy_ != nixl_ucx_vram_memtype_hint_t::AUTO &&
+            vramMemTypeHintPolicy_ != nixl_ucx_vram_memtype_hint_t::NONE) {
+            throw std::runtime_error(
+                "Failed to query UCX context memory types: " +
+                std::string(ucs_status_string(status)) +
+                ". This query is required for explicit ucx_vram_memtype_hint='" +
+                std::string(ucx_vram_memtype_hint_to_string(vramMemTypeHintPolicy_)) + "'");
+        }
+
         NIXL_WARN << "Failed to query UCX context memory types: " << ucs_status_string(status)
                   << ", VRAM memory type hinting will be disabled";
         return;

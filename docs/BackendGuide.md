@@ -169,7 +169,7 @@ or `get_plugin_params("UCX")` in Python. Two commonly used options are:
 | Option key | Default | Description |
 | ---------- | ------- | ----------- |
 | `ucx_error_handling_mode` | `peer` | UCX endpoint error handling policy. `peer` enables peer failure reporting; `none` disables it. |
-| `ucx_vram_memtype_hint` | `auto` | Controls how NIXL hints UCX memory type during VRAM registration. Supported policies are `auto`, `none`, and explicit accelerator policies (CUDA/CUDA managed/ROCm/ZE device). |
+| `ucx_vram_memtype_hint` | `auto` | Controls how NIXL hints UCX memory type during VRAM registration. Supported values are exactly: `auto`, `none`, `cuda`, `cuda-managed`, `rocm`, `ze-device`. |
 
 Notes:
 
@@ -178,6 +178,7 @@ Notes:
 * Matching for `ucx_vram_memtype_hint` values is case-sensitive.
 * If an explicit VRAM hint is configured but not supported by the current UCX context,
   backend creation fails with an invalid-argument error.
+* If UCX context memory types cannot be queried, explicit hints (`cuda`, `cuda-managed`, `rocm`, `ze-device`) fail backend creation; `auto`/`none` continue without hinting.
 
 ### Make connections (optional):
 

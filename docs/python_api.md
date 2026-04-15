@@ -61,5 +61,6 @@ For `ucx_vram_memtype_hint`:
 
 - `auto` is the recommended default.
 - `none` disables NIXL memory-type hinting and leaves detection to UCX.
-- Explicit accelerator hints are also supported for advanced tuning.
+- Explicit accelerator hints are also supported for advanced tuning: `cuda`, `cuda-managed`, `rocm`, `ze-device`.
 - Values are case-sensitive.
+- If UCX context memory types cannot be queried, explicit hints fail backend creation; `auto` and `none` continue without hinting.

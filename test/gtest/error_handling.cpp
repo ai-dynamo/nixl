@@ -25,6 +25,8 @@ namespace gtest {
 namespace nixl {
     constexpr const char* ucx_err_handling_mode_key  = "ucx_error_handling_mode";
     constexpr const char* ucx_err_handling_mode_peer = "peer";
+    constexpr const char* ucx_vram_memtype_hint_key = "ucx_vram_memtype_hint";
+    constexpr const char* ucx_vram_memtype_hint_auto = "auto";
 
     static nixlBackendH *
     createUcxBackend(nixlAgent &agent,
@@ -44,6 +46,7 @@ namespace nixl {
 
         nixlBackendH* backend_handle = nullptr;
         EXPECT_EQ(ucx_err_handling_mode_peer, params[ucx_err_handling_mode_key]);
+        EXPECT_EQ(ucx_vram_memtype_hint_auto, params[ucx_vram_memtype_hint_key]);
         params["num_workers"] = std::to_string(num_workers);
         params["num_threads"] = std::to_string(num_threads);
         // If threadpool is configured always force split
@@ -433,6 +436,51 @@ TEST_P(TestErrorHandling, XferFailRestore) {
 TEST_P(TestErrorHandling, XferPostThenFail) {
     testXfer<TestType::FAIL_AFTER_POST, NIXL_WRITE>();
     testXfer<TestType::FAIL_AFTER_POST, NIXL_READ>();
+}
+
+TEST(UcxBackendParams, ExposesVramMemtypeHintDefault) {
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
+    nixlAgent agent("ucx_param_defaults", cfg);
+
+    std::vector<nixl_backend_t> plugins;
+    ASSERT_EQ(NIXL_SUCCESS, agent.getAvailPlugins(plugins));
+    auto it = std::find(plugins.begin(), plugins.end(), "UCX");
+    if (it == plugins.end()) {
+        GTEST_SKIP() << "UCX plugin not available";
+    }
+
+    nixl_mem_list_t mems;
+    nixl_b_params_t params;
+    ASSERT_EQ(NIXL_SUCCESS, agent.getPluginParams(*it, mems, params));
+    ASSERT_TRUE(params.find(nixl::ucx_vram_memtype_hint_key) != params.end());
+    EXPECT_EQ(nixl::ucx_vram_memtype_hint_auto, params[nixl::ucx_vram_memtype_hint_key]);
+}
+
+TEST(UcxBackendParams, RejectsCaseMismatchedVramHint) {
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
+    nixlAgent agent("ucx_param_invalid_case", cfg);
+
+    std::vector<nixl_backend_t> plugins;
+    ASSERT_EQ(NIXL_SUCCESS, agent.getAvailPlugins(plugins));
+    auto it = std::find(plugins.begin(), plugins.end(), "UCX");
+    if (it == plugins.end()) {
+        GTEST_SKIP() << "UCX plugin not available";
+    }
+
+    nixl_mem_list_t mems;
+    nixl_b_params_t params;
+    ASSERT_EQ(NIXL_SUCCESS, agent.getPluginParams(*it, mems, params));
+    params[nixl::ucx_vram_memtype_hint_key] = "CUDA";
+
+    const LogIgnoreGuard lig_expected_engine_failure(
+        "Failed to create engine: Invalid VRAM memtype hint mode: .*");
+    const LogIgnoreGuard lig_expected_backend_failure(
+        "backend (creation failed|initialization error) for 'UCX'");
+    nixlBackendH *backend = nullptr;
+    EXPECT_NE(NIXL_SUCCESS, agent.createBackend(*it, params, backend));
+    EXPECT_EQ(nullptr, backend);
 }
 
 INSTANTIATE_TEST_SUITE_P(ucx, TestErrorHandling, testing::Values(std::make_tuple("UCX", 1, 0)));
