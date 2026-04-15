@@ -123,6 +123,8 @@ nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
 
 nixl_status_t
 nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
+    // TODO(C++20): use std::string_view for lookup keys and transparent hash/equal_to
+    // on counters_/gauges_ to avoid allocating a std::string per event when feasible.
     try {
         const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
 
