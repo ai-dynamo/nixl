@@ -936,25 +936,22 @@ class nixl_agent:
     ) -> nixlBind.nixlXferDList:
         # can add check for DLPack input
 
+        descs_len = None
+        try:
+            descs_len = len(descs)
+        except TypeError:
+            pass
+
         if isinstance(descs, nixlBind.nixlXferDList):
             return descs
         elif isinstance(descs, nixlBind.nixlRegDList):
             logger.error("RegList type detected for transfer, please use XferList")
             new_descs = None
-        elif hasattr(descs, "__len__") and len(descs) == 0:
-            logger.error("Please provide a non-empty descriptor list")
-            new_descs = None
-        elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 3:
-                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
-            elif mem_type is None:
-                logger.error("Please specify a mem type if not using Tensors")
-                new_descs = None
-            else:
-                logger.error("3-tuple list needed for transfer")
-                new_descs = None
         elif isinstance(descs, np.ndarray):
-            if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
+            if descs.size == 0:
+                logger.error("Please provide a non-empty descriptor list")
+                new_descs = None
+            elif mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
                 new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
             elif mem_type is None:
                 logger.error("Please specify a mem type if not using Tensors")
@@ -965,7 +962,10 @@ class nixl_agent:
                 )
                 new_descs = None
         elif isinstance(descs, torch.Tensor):
-            if descs.is_contiguous():
+            if descs.numel() == 0:
+                logger.error("Please provide a non-empty descriptor list")
+                new_descs = None
+            elif descs.is_contiguous():
                 mem_type = self.get_mem_type_from_device(descs)
                 base_addr = descs.data_ptr()
                 region_len = descs.numel() * descs.element_size()
@@ -977,6 +977,18 @@ class nixl_agent:
                 )
             else:
                 logger.error("Please use a list of contiguous Tensors")
+                new_descs = None
+        elif descs_len == 0:
+            logger.error("Please provide a non-empty descriptor list")
+            new_descs = None
+        elif isinstance(descs[0], tuple):
+            if mem_type is not None and len(descs[0]) == 3:
+                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
+            elif mem_type is None:
+                logger.error("Please specify a mem type if not using Tensors")
+                new_descs = None
+            else:
+                logger.error("3-tuple list needed for transfer")
                 new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
@@ -1022,25 +1034,22 @@ class nixl_agent:
     ) -> nixlBind.nixlRegDList:
         # can add check for DLPack input
 
+        descs_len = None
+        try:
+            descs_len = len(descs)
+        except TypeError:
+            pass
+
         if isinstance(descs, nixlBind.nixlRegDList):
             return descs
         elif isinstance(descs, nixlBind.nixlXferDList):
             logger.error("XferList type detected for registration, please use RegList")
             new_descs = None
-        elif hasattr(descs, "__len__") and len(descs) == 0:
-            logger.error("Please provide a non-empty descriptor list")
-            new_descs = None
-        elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 4:
-                new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
-            elif mem_type is None:
-                logger.error("Please specify a mem type if not using Tensors")
-                new_descs = None
-            else:
-                logger.error("4-tuple list needed for registration")
-                new_descs = None
         elif isinstance(descs, np.ndarray):
-            if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
+            if descs.size == 0:
+                logger.error("Please provide a non-empty descriptor list")
+                new_descs = None
+            elif mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
                 new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
             elif mem_type is None:
                 logger.error("Please specify a mem type if not using Tensors")
@@ -1051,7 +1060,10 @@ class nixl_agent:
                 )
                 new_descs = None
         elif isinstance(descs, torch.Tensor):
-            if descs.is_contiguous():
+            if descs.numel() == 0:
+                logger.error("Please provide a non-empty descriptor list")
+                new_descs = None
+            elif descs.is_contiguous():
                 mem_type = self.get_mem_type_from_device(descs)
                 base_addr = descs.data_ptr()
                 region_len = descs.numel() * descs.element_size()
@@ -1063,6 +1075,18 @@ class nixl_agent:
                 )
             else:
                 logger.error("Please use a list of contiguous Tensors")
+                new_descs = None
+        elif descs_len == 0:
+            logger.error("Please provide a non-empty descriptor list")
+            new_descs = None
+        elif isinstance(descs[0], tuple):
+            if mem_type is not None and len(descs[0]) == 4:
+                new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
+            elif mem_type is None:
+                logger.error("Please specify a mem type if not using Tensors")
+                new_descs = None
+            else:
+                logger.error("4-tuple list needed for registration")
                 new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
             tensor_type = descs[0].device
