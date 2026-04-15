@@ -467,7 +467,7 @@ makeMtType(const bool prog_thread, const nixl_thread_sync_t sync_mode) noexcept 
 [[nodiscard]] std::string_view
 ucx_memory_type_to_string(const ucs_memory_type_t mem_type) {
     const auto mem_type_index = static_cast<unsigned>(mem_type);
-    if (mem_type_index > static_cast<unsigned>(UCS_MEMORY_TYPE_LAST)) {
+    if (mem_type_index >= static_cast<unsigned>(UCS_MEMORY_TYPE_LAST)) {
         return "invalid";
     }
 

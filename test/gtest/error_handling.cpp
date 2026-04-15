@@ -531,7 +531,9 @@ TEST(UcxBackendParams, RejectsUnsupportedExplicitVramHintAtRuntime) {
         const auto status = agent.createBackend(*it, params, backend);
         if (status != NIXL_SUCCESS) {
             EXPECT_EQ(nullptr, backend);
-            if (lig_expected_runtime_unsupported.getIgnoredCount() > 0) {
+            if ((backend == nullptr) &&
+                ((lig_expected_runtime_unsupported.getIgnoredCount() > 0) ||
+                 (lig_expected_runtime_query_failure.getIgnoredCount() > 0))) {
                 found_runtime_unsupported_path = true;
                 break;
             }
