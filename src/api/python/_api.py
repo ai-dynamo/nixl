@@ -943,7 +943,7 @@ class nixl_agent:
 
         if isinstance(descs, nixlBind.nixlXferDList):
             return descs
-        elif isinstance(descs, nixlBind.nixlRegDList):
+        if isinstance(descs, nixlBind.nixlRegDList):
             logger.error("RegList type detected for transfer, please use XferList")
             new_descs = None
         elif isinstance(descs, np.ndarray):
@@ -979,6 +979,9 @@ class nixl_agent:
                 new_descs = None
         elif descs_len == 0:
             logger.error("Please provide a non-empty descriptor list")
+            new_descs = None
+        elif not isinstance(descs, (list, tuple)):
+            logger.error("descs must be a list or tuple")
             new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 3:
@@ -1039,7 +1042,7 @@ class nixl_agent:
 
         if isinstance(descs, nixlBind.nixlRegDList):
             return descs
-        elif isinstance(descs, nixlBind.nixlXferDList):
+        if isinstance(descs, nixlBind.nixlXferDList):
             logger.error("XferList type detected for registration, please use RegList")
             new_descs = None
         elif isinstance(descs, np.ndarray):
@@ -1075,6 +1078,9 @@ class nixl_agent:
                 new_descs = None
         elif descs_len == 0:
             logger.error("Please provide a non-empty descriptor list")
+            new_descs = None
+        elif not isinstance(descs, (list, tuple)):
+            logger.error("descs must be a list or tuple")
             new_descs = None
         elif isinstance(descs[0], tuple):
             if mem_type is not None and len(descs[0]) == 4:
