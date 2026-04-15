@@ -1,4 +1,4 @@
-#!/bin/bash -xe
+#!/bin/bash
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -32,13 +32,8 @@ if [ -n "$CI_CONCURRENT_ID" ]; then
 # Jenkins CI
 elif [ -n "$EXECUTOR_NUMBER" ]; then
     nixl_concurrent_id=$EXECUTOR_NUMBER
-# SLURM CI - use array task ID if available, otherwise use job ID modulo
-elif [ -n "$SLURM_ARRAY_TASK_ID" ]; then
-    nixl_concurrent_id=$((SLURM_ARRAY_TASK_ID % $(((max_port_number - min_port_number) / tcp_port_range))))
-elif [ -n "$SLURM_JOB_ID" ]; then
-    nixl_concurrent_id=$((SLURM_JOB_ID % $(((max_port_number - min_port_number) / tcp_port_range))))
 else
-    # Fallback to random number if no CI environment variables are set
+    # Fallback to random number if both CI_CONCURRENT_ID and EXECUTOR_NUMBER are not set
     nixl_concurrent_id=$((RANDOM % $(((max_port_number - min_port_number) / tcp_port_range))))
 fi
 
