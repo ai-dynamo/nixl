@@ -471,10 +471,6 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     )
 
     # Initialize NIXL buffer with group (for IPC handles) and TCPStore (for NIXL metadata)
-    print(
-        f"pid: {os.getpid()}, rank: {rank}, num_ranks: {num_ranks}, initializing buffer",
-        flush=True,
-    )
     buffer = nixl_ep.Buffer(
         rank=rank,
         low_latency_mode=False,
