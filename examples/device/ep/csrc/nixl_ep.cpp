@@ -774,7 +774,9 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
 
     // Allocate new tensors
     auto recv_x = torch::empty({num_recv_tokens, hidden}, x.options());
-    std::optional<torch::Tensor> recv_topk_idx = std::nullopt, recv_topk_weights = std::nullopt, recv_x_scales = std::nullopt;
+    std::optional<torch::Tensor> recv_topk_idx = std::nullopt;
+    std::optional<torch::Tensor> recv_topk_weights = std::nullopt;
+    std::optional<torch::Tensor> recv_x_scales = std::nullopt;
     std::optional<torch::Tensor> recv_src_meta = std::nullopt;
     auto recv_rdma_channel_prefix_matrix = std::optional<torch::Tensor>();
     auto recv_gbl_channel_prefix_matrix = std::optional<torch::Tensor>();
