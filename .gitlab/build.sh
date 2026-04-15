@@ -101,7 +101,6 @@ else
                                  libprotobuf-dev \
                                  libcpprest-dev \
                                  libaio-dev \
-                                 libasio-dev \
                                  liburing-dev \
                                  libelf-dev \
                                  libgflags-dev \
