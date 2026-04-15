@@ -852,8 +852,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     if (vram_memtype_hint_it == custom_params->end()) {
         vram_memtype_hint_policy = nixl_ucx_vram_memtype_hint_t::AUTO;
     } else {
-        vram_memtype_hint_policy =
-            ucx_vram_memtype_hint_from_string(vram_memtype_hint_it->second);
+        vram_memtype_hint_policy = ucx_vram_memtype_hint_from_string(vram_memtype_hint_it->second);
     }
 
     const auto engine_config_it = custom_params->find("engine_config");

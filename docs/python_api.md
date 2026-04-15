@@ -63,4 +63,4 @@ For `ucx_vram_memtype_hint`:
 - `none` disables NIXL memory-type hinting and leaves detection to UCX.
 - Explicit accelerator hints are also supported for advanced tuning: `cuda`, `cuda-managed`, `rocm`, `ze-device`.
 - Values are case-sensitive.
-- If UCX context memory types cannot be queried, explicit hints fail backend creation; `auto` and `none` continue without hinting.
+- Explicit hints fail backend creation when UCX context memory types cannot be queried, or when the queried UCX context does not advertise the requested memtype (for example, `cuda`/`rocm`/`ze-device` selected but not supported by the current UCX context). `auto` and `none` continue without hinting.
