@@ -174,12 +174,7 @@ nixlTelemetry::updateData(const std::string &event_name,
     if (events_.size() >= maxBufferedEvents_) {
         return;
     }
-    events_.emplace_back(std::chrono::duration_cast<std::chrono::microseconds>(
-                             std::chrono::system_clock::now().time_since_epoch())
-                             .count(),
-                         category,
-                         event_name,
-                         value);
+    events_.emplace_back(category, event_name, value);
 }
 
 // The next 4 methods might be removed, as addXferTime covers them.
@@ -232,22 +227,15 @@ nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, u
     const char *bytes_name = is_write ? "agent_tx_bytes" : "agent_rx_bytes";
     const char *requests_name = is_write ? "agent_tx_requests_num" : "agent_rx_requests_num";
 
-    const auto time = std::chrono::duration_cast<std::chrono::microseconds>(
-                          std::chrono::system_clock::now().time_since_epoch())
-                          .count();
-
     const std::lock_guard lock(mutex_);
     if (events_.size() + 3 > maxBufferedEvents_) {
         return;
     }
-    events_.emplace_back(time,
-                         nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
+    events_.emplace_back(nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
                          "agent_xfer_time",
                          xfer_time.count());
-    events_.emplace_back(
-        time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_name, bytes);
-    events_.emplace_back(
-        time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, requests_name, 1);
+    events_.emplace_back(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_name, bytes);
+    events_.emplace_back(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, requests_name, 1);
 }
 
 void
