@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,7 @@ using prometheus_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryPro
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
 nixl_telemetry_plugin_init() {
     return prometheus_exporter_plugin_t::create(
-        nixlTelemetryPluginApiVersionV1, "prometheus", "1.0.0");
+        nixl_telemetry_plugin_api_version::V2, "prometheus", "1.0.0");
 }
 
 // Plugin cleanup function
