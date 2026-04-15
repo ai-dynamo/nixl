@@ -66,9 +66,8 @@ class nixlBackendEngine {
             if (!enableTelemetry_) return;
             if (telemetryEvents_.size() >= MAX_TELEMETRY_QUEUE_SIZE) return;
             std::lock_guard<std::mutex> lock(telemetryEventsMutex_);
-            telemetryEvents_.emplace_back(nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND,
-                                          event_type,
-                                          value);
+            telemetryEvents_.emplace_back(
+                nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND, event_type, value);
         }
 
     public:
