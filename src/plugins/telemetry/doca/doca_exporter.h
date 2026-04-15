@@ -22,9 +22,8 @@
 #include "nixl_types.h"
 
 #include <doca_telemetry_exporter.h>
-#include <string>
 #include <memory>
-#include <mutex>
+#include <string>
 
 /**
  * @brief Process-wide shared DOCA context
@@ -39,30 +38,29 @@ struct DocaSharedContext {
     doca_telemetry_exporter_schema *schema = nullptr;
     doca_telemetry_exporter_source *source = nullptr;
     doca_telemetry_exporter_label_set_id_t label_set_id = 0;
+    bool source_started = false;
+    bool metrics_context_created = false;
     ~DocaSharedContext();
 };
 
 class nixlTelemetryDocaExporter : public nixlTelemetryExporter {
 public:
     explicit nixlTelemetryDocaExporter(const nixlTelemetryExporterInitParams &init_params);
+    ~nixlTelemetryDocaExporter() override;
 
     nixl_status_t
     exportEvent(const nixlTelemetryEvent &event) override;
 
 private:
-    static std::mutex s_ctx_mutex_;
-    static std::weak_ptr<DocaSharedContext> s_ctx_weak_;
-
     const bool local_ = false;
     const uint16_t port_;
     bool initialized_ = false;
     const std::string agent_name_;
     const std::string hostname_;
     std::shared_ptr<DocaSharedContext> ctx_;
-    std::string bind_address_;
 
     nixl_status_t
-    initializeDoca(const nixlTelemetryExporterInitParams &params);
+    initializeDoca(const std::string &bind_address);
 
     doca_error_t
     registerCounter(const nixlTelemetryEvent &event, const char *label_values[]);

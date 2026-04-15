@@ -21,6 +21,7 @@
 #include <doca_error.h>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 #include <unistd.h>
 
@@ -46,14 +47,19 @@ getHostname() {
     }
     return "unknown";
 }
+
+std::mutex g_ctx_mutex;
+std::weak_ptr<DocaSharedContext> g_ctx_weak;
 } // namespace
 
 DocaSharedContext::~DocaSharedContext() {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     if (source) {
-        doca_telemetry_exporter_source_flush(source);
-        doca_telemetry_exporter_metrics_destroy_context(source);
+        if (source_started)
+            doca_telemetry_exporter_source_flush(source);
+        if (metrics_context_created)
+            doca_telemetry_exporter_metrics_destroy_context(source);
         doca_telemetry_exporter_source_destroy(source);
     }
     if (schema) {
@@ -61,9 +67,6 @@ DocaSharedContext::~DocaSharedContext() {
     }
 #pragma GCC diagnostic pop
 }
-
-std::mutex nixlTelemetryDocaExporter::s_ctx_mutex_;
-std::weak_ptr<DocaSharedContext> nixlTelemetryDocaExporter::s_ctx_weak_;
 
 nixlTelemetryDocaExporter::nixlTelemetryDocaExporter(
     const nixlTelemetryExporterInitParams &init_params)
@@ -73,13 +76,10 @@ nixlTelemetryDocaExporter::nixlTelemetryDocaExporter(
                                             docaPrometheusExporterDefaultPort)),
       agent_name_(init_params.agentName),
       hostname_(getHostname()) {
-    if (local_) {
-        bind_address_ = docaExporterLocalAddress + ":" + std::to_string(port_);
-    } else {
-        bind_address_ = docaExporterPublicAddress + ":" + std::to_string(port_);
-    }
+    std::string bind_address = (local_ ? docaExporterLocalAddress : docaExporterPublicAddress) +
+                               ":" + std::to_string(port_);
 
-    nixl_status_t status = initializeDoca(init_params);
+    nixl_status_t status = initializeDoca(bind_address);
     if (status != NIXL_SUCCESS) {
         throw std::runtime_error("Failed to initialize DOCA Telemetry exporter");
     }
@@ -87,22 +87,27 @@ nixlTelemetryDocaExporter::nixlTelemetryDocaExporter(
     initialized_ = true;
 }
 
+nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
+    const std::lock_guard lock(g_ctx_mutex);
+    ctx_.reset();
+}
+
 nixl_status_t
-nixlTelemetryDocaExporter::initializeDoca(const nixlTelemetryExporterInitParams &params) {
+nixlTelemetryDocaExporter::initializeDoca(const std::string &bind_address) {
     doca_error_t result;
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
-    const std::lock_guard<std::mutex> lock(s_ctx_mutex_);
-    ctx_ = s_ctx_weak_.lock();
+    const std::lock_guard lock(g_ctx_mutex);
+    ctx_ = g_ctx_weak.lock();
     if (!ctx_) {
         auto new_ctx = std::make_shared<DocaSharedContext>();
 
         // DOCA reads its HTTP bind address from this env var. setenv is not
-        // thread-safe per POSIX, but s_ctx_mutex_ serialises all callers and
+        // thread-safe per POSIX, but g_ctx_mutex serialises all callers and
         // this runs only once during first-agent init (before heavy threading).
-        setenv("PROMETHEUS_ENDPOINT", bind_address_.c_str(), 1);
+        setenv("PROMETHEUS_ENDPOINT", bind_address.c_str(), 1);
 
         result = doca_telemetry_exporter_schema_init("nixl_telemetry", &new_ctx->schema);
         if (result != DOCA_SUCCESS) {
@@ -130,12 +135,14 @@ nixlTelemetryDocaExporter::initializeDoca(const nixlTelemetryExporterInitParams 
             NIXL_ERROR << "Failed to start DOCA source: " << result;
             return NIXL_ERR_UNKNOWN;
         }
+        new_ctx->source_started = true;
 
         result = doca_telemetry_exporter_metrics_create_context(new_ctx->source);
         if (result != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to create DOCA metrics context: " << result;
             return NIXL_ERR_UNKNOWN;
         }
+        new_ctx->metrics_context_created = true;
 
         result = doca_telemetry_exporter_metrics_add_constant_label(
             new_ctx->source, "hostname", hostname_.c_str());
@@ -155,11 +162,11 @@ nixlTelemetryDocaExporter::initializeDoca(const nixlTelemetryExporterInitParams 
         doca_telemetry_exporter_metrics_set_flush_interval_ms(new_ctx->source, 1000);
 
         ctx_ = new_ctx;
-        s_ctx_weak_ = ctx_;
-        NIXL_INFO << "DOCA Telemetry exporter initialized on " << bind_address_;
+        g_ctx_weak = ctx_;
+        NIXL_INFO << "DOCA Telemetry exporter initialized on " << bind_address;
     } else {
         NIXL_INFO << "DOCA Telemetry exporter for agent '" << agent_name_
-                  << "' sharing existing server on " << bind_address_;
+                  << "' sharing existing server on " << bind_address;
     }
 
 #pragma GCC diagnostic pop
