@@ -16,40 +16,48 @@
  */
 
 #include "obj_backend.h"
+#include "obj_engine_registry.h"
 #include "engine_utils.h"
+#include "common/nixl_log.h"
 #include "s3/engine_impl.h"
 #include "s3_crt/engine_impl.h"
-#if defined HAVE_CUOBJ_CLIENT
-#include "s3_accel/engine_impl.h"
-#include "s3_accel/dell/engine_impl.h"
-#endif
 #include <memory>
 
 // -----------------------------------------------------------------------------
 // Obj Engine Implementation
 // -----------------------------------------------------------------------------
 
-// TODO: Consider a registration pattern as more vendor engines are added.
+namespace {
+
+std::string
+getAccelType(const nixl_b_params_t *custom_params) {
+    if (!custom_params) return "";
+    auto it = custom_params->find("type");
+    return (it != custom_params->end()) ? it->second : "";
+}
+
+template<typename... Args>
+std::unique_ptr<nixlObjEngineImpl>
+createAccelEngine(const nixl_b_params_t *custom_params, Args &&...args) {
+    try {
+        return objAccelEngineRegistry::instance().create(getAccelType(custom_params),
+                                                         std::forward<Args>(args)...);
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Failed to create accelerated engine: " << e.what();
+        throw;
+    }
+}
+
+} // namespace
+
 std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params) {
-    if (isDellOBSRequested(init_params->customParams)) {
-#if defined HAVE_CUOBJ_CLIENT
-        return std::make_unique<S3DellObsObjEngineImpl>(init_params);
-#else
-        throw std::runtime_error("Dell ObjectScale Engine support not available!");
-#endif
-    }
-    if (isAcceleratedRequested(init_params->customParams)) {
-#if defined HAVE_CUOBJ_CLIENT
-        return std::make_unique<S3AccelObjEngineImpl>(init_params);
-#else
-        throw std::runtime_error("Accelerated Engine support not available!");
-#endif
-    }
+    if (isAcceleratedRequested(init_params->customParams))
+        return createAccelEngine(init_params->customParams, init_params);
 
-    if (getCrtMinLimit(init_params->customParams) > 0) {
+    if (getCrtMinLimit(init_params->customParams) > 0)
         return std::make_unique<S3CrtObjEngineImpl>(init_params);
-    }
 
     return std::make_unique<DefaultObjEngineImpl>(init_params);
 }
@@ -58,24 +66,12 @@ std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params,
                     std::shared_ptr<iS3Client> s3_client,
                     std::shared_ptr<iS3Client> s3_client_crt) {
-    if (isDellOBSRequested(init_params->customParams)) {
-#if defined HAVE_CUOBJ_CLIENT
-        return std::make_unique<S3DellObsObjEngineImpl>(init_params, s3_client);
-#else
-        throw std::runtime_error("Dell ObjectScale Engine support not available!");
-#endif
-    }
-    if (isAcceleratedRequested(init_params->customParams)) {
-#if defined HAVE_CUOBJ_CLIENT
-        return std::make_unique<S3AccelObjEngineImpl>(init_params, s3_client);
-#else
-        throw std::runtime_error("Accelerated Engine support not available!");
-#endif
-    }
+    if (isAcceleratedRequested(init_params->customParams))
+        return createAccelEngine(
+            init_params->customParams, init_params, std::move(s3_client), std::move(s3_client_crt));
 
-    if (getCrtMinLimit(init_params->customParams) > 0) {
+    if (getCrtMinLimit(init_params->customParams) > 0)
         return std::make_unique<S3CrtObjEngineImpl>(init_params, s3_client, s3_client_crt);
-    }
 
     return std::make_unique<DefaultObjEngineImpl>(init_params, s3_client, s3_client_crt);
 }
