@@ -510,15 +510,10 @@ xferBenchConfig::loadParams(void) {
     // nixlbench to support device API
     use_device_api = NB_ARG(use_device_api);
     if (use_device_api) {
-#if HAVE_CUDA
-        if (worker_type != XFERBENCH_WORKER_NIXL
-            || backend != XFERBENCH_BACKEND_UCX
-            || op_type != XFERBENCH_OP_WRITE
-            || initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM
-            || target_seg_type != XFERBENCH_SEG_TYPE_VRAM
-            || !enable_pt
-        ) {
-            std::cout << "Invalid configuration for NIXL Device API, reset to false" << std::endl;
+        std::string device_api_reason;
+        if (!isDeviceAPISupported(&device_api_reason)) {
+            std::cout << "Invalid configuration for NIXL Device API: " << device_api_reason
+                      << ", reset to false" << std::endl;
             use_device_api = false;
         } else {
             std::cout << "NIXL Device API is enabled, --num-threads used as GPU kernel block thread count with value 1 - 1024" << std::endl;
@@ -529,10 +524,6 @@ xferBenchConfig::loadParams(void) {
             device_kernel_block_thread_count = num_threads;
             num_threads = 1;
         }
-#else
-        std::cout << "NIXL Device API is not supported without CUDA" << std::endl;
-        use_device_api = false;
-#endif
     }
 
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
@@ -793,6 +784,61 @@ xferBenchConfig::isObjStorageBackend() {
     return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
 };
+
+bool
+xferBenchConfig::isDeviceAPISupported(std::string *reason) {
+#if HAVE_CUDA
+    if (xferBenchConfig::worker_type != XFERBENCH_WORKER_NIXL) {
+        if (reason) {
+            *reason = "worker_type must be nixl";
+        }
+        return false;
+    }
+    if (xferBenchConfig::backend != XFERBENCH_BACKEND_UCX) {
+        if (reason) {
+            *reason = "backend must be UCX";
+        }
+        return false;
+    }
+    if (xferBenchConfig::op_type != XFERBENCH_OP_WRITE) {
+        if (reason) {
+            *reason = "op_type must be WRITE";
+        }
+        return false;
+    }
+    if (xferBenchConfig::initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM ||
+        xferBenchConfig::target_seg_type != XFERBENCH_SEG_TYPE_VRAM) {
+        if (reason) {
+            *reason = "initiator_seg_type and target_seg_type must be VRAM";
+        }
+        return false;
+    }
+    if (!xferBenchConfig::enable_pt) {
+        if (reason) {
+            *reason = "--enable_pt must be set";
+        }
+        return false;
+    }
+    if (xferBenchConfig::mode != XFERBENCH_MODE_SG) {
+        if (reason) {
+            *reason = "mode must be SG";
+        }
+        return false;
+    }
+    if (xferBenchConfig::scheme != XFERBENCH_SCHEME_PAIRWISE) {
+        if (reason) {
+            *reason = "scheme must be pairwise";
+        }
+        return false;
+    }
+    return true;
+#else
+    if (reason) {
+        *reason = "CUDA is not available in this build";
+    }
+    return false;
+#endif
+}
 
 /**********
  * xferBench Utils
