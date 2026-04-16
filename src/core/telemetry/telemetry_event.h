@@ -45,7 +45,7 @@ enum class nixl_telemetry_category_t {
 
 /**
  * @enum nixl_telemetry_event_type_t
- * @brief Enumerates all known telemetry event types, avoiding per-event string copies.
+ * @brief Enumerates all known telemetry event types.
  */
 enum class nixl_telemetry_event_type_t : uint8_t {
     AGENT_TX_BYTES = 0,
