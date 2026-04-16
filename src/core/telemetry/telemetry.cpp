@@ -248,7 +248,7 @@ void
 nixlTelemetry::addPostTime(std::chrono::microseconds post_time) {
     updateData(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
                nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-               post_time.count());
+               static_cast<uint64_t>(post_time.count()));
 }
 
 std::string
