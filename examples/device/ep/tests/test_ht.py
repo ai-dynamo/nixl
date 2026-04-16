@@ -29,20 +29,66 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "elastic"))
 import nixl_ep  # noqa: E402
 import store_group  # noqa: E402
 import torch  # noqa: E402
-import torch.distributed as dist  # noqa: E402
 
 from utils import (  # noqa: E402
     bench,
     bench_kineto,
     calc_diff,
     create_grouped_scores,
-    init_dist,
     inplace_unique,
     per_token_cast_back,
     per_token_cast_to_fp8,
 )
 
+
+def store_barrier(store, world_size, tag):
+    """Barrier using TCPStore add/get."""
+    key = f"bar/{tag}"
+    store.add(key, 1)
+    while int(store.get(key)) < world_size:
+        time.sleep(0.001)
+
+
+def store_all_reduce_sum(store, rank, world_size, tensor, tag):
+    """All-reduce (sum) via TCPStore. Returns reduced tensor on all ranks."""
+    key = f"red/{tag}"
+    store.set(f"{key}/{rank}", tensor.cpu().numpy().tobytes())
+    store_barrier(store, world_size, f"{key}")
+    result = torch.zeros_like(tensor)
+    for r in range(world_size):
+        data = bytes(store.get(f"{key}/{r}"))
+        result += (
+            torch.frombuffer(bytearray(data), dtype=tensor.dtype)
+            .reshape(tensor.shape)
+            .to(tensor.device)
+        )
+    return result
+
+
+def store_all_gather_tensor(store, rank, world_size, tensor, tag):
+    """All-gather a 1D tensor via TCPStore. Returns list of tensors from all ranks."""
+    key = f"gat/{tag}"
+    store.set(f"{key}/{rank}", tensor.cpu().numpy().tobytes())
+    store_barrier(store, world_size, f"{key}")
+    results = []
+    for r in range(world_size):
+        data = bytes(store.get(f"{key}/{r}"))
+        results.append(
+            torch.frombuffer(bytearray(data), dtype=tensor.dtype)
+            .reshape(tensor.shape)
+            .to(tensor.device)
+        )
+    return results
+
+
 TCP_STORE_PORT = 9999
+_barrier_counter = 0
+
+
+def next_barrier_tag():
+    global _barrier_counter
+    _barrier_counter += 1
+    return str(_barrier_counter)
 
 
 # noinspection PyShadowingNames
@@ -55,7 +101,7 @@ def test_main(
     num_nodes: int,
     rank: int,
     buffer: nixl_ep.Buffer,
-    group: dist.ProcessGroup,
+    store,
 ):
     # Settings
     num_tokens, hidden = args.num_tokens, args.hidden
@@ -114,8 +160,9 @@ def test_main(
     num_tokens_per_expert = torch.zeros((num_experts,), dtype=torch.int, device="cuda")
     for i in range(num_experts):
         num_tokens_per_expert[i] = (topk_idx == i).sum()
-    gbl_num_tokens_per_expert = num_tokens_per_expert.clone()
-    dist.all_reduce(gbl_num_tokens_per_expert, group=group)
+    gbl_num_tokens_per_expert = store_all_reduce_sum(
+        store, rank, num_ranks, num_tokens_per_expert, "expert"
+    )
 
     # Rank layout meta
     num_tokens_per_rank = torch.empty((num_ranks,), dtype=torch.int, device="cuda")
@@ -136,8 +183,9 @@ def test_main(
         num_tokens_per_rdma_rank[i] = (rdma_rank_idx == i).sum()
     token_idx_in_rank = token_idx_in_rank.T.contiguous().to(torch.int)
     is_token_in_rank = token_idx_in_rank >= 0
-    gbl_num_tokens_per_rank = num_tokens_per_rank.clone()
-    dist.all_reduce(gbl_num_tokens_per_rank, group=group)
+    gbl_num_tokens_per_rank = store_all_reduce_sum(
+        store, rank, num_ranks, num_tokens_per_rank, "rank"
+    )
 
     (
         ref_num_tokens_per_rank,
@@ -154,7 +202,7 @@ def test_main(
     if local_rank == 0:
         print(f"[layout] Kernel performance: {t * 1000:.3f} ms", flush=True)
         print("", flush=True)
-    group.barrier()
+    store_barrier(store, num_ranks, next_barrier_tag())
     time.sleep(1)
 
     # Config
@@ -329,10 +377,10 @@ def test_main(
                     combine_bf16_rdma_recv_bytes = dispatch_bf16_rdma_send_bytes
 
                     # Sync all ranks before printing passed
-                    group.barrier()
+                    store_barrier(store, num_ranks, next_barrier_tag())
                     if local_rank == 0:
                         print(" passed", flush=True)
-                    group.barrier()
+                    store_barrier(store, num_ranks, next_barrier_tag())
     if local_rank == 0:
         print("", flush=True)
 
@@ -386,12 +434,8 @@ def test_main(
         if isinstance(current_x, tuple):
             # Gather FP8 the best config from rank 0
             best_dispatch_results = torch.tensor([best_results[0], best_results[1], best_results[2]], dtype=torch.int32, device="cuda")  # type: ignore[index]
-            all_best_fp8_results_list = [
-                torch.zeros_like(best_dispatch_results)
-                for _ in range(torch.distributed.get_world_size())
-            ]
-            dist.all_gather(
-                all_best_fp8_results_list, best_dispatch_results, group=group
+            all_best_fp8_results_list = store_all_gather_tensor(
+                store, rank, num_ranks, best_dispatch_results, "fp8_tune"
             )
             best_dispatch_results = all_best_fp8_results_list[0].tolist()
     dispatch_config = nixl_ep.Config(best_dispatch_results[0], best_dispatch_results[1], nvl_buffer_size, best_dispatch_results[2], rdma_buffer_size)  # type: ignore[index]
@@ -441,16 +485,17 @@ def test_main(
 
 # noinspection PyUnboundLocalVariable,PyShadowingNames
 def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
-    # Pin each process to a distinct GPU so NCCL does not see duplicate devices.
-    # Use local_rank so NCCL gets correct device_id; avoid CUDA_VISIBLE_DEVICES
+    # Pin each process to a distinct GPU; avoid CUDA_VISIBLE_DEVICES
     # so that UCX/DOCA can see all GPUs for GPU-initiated RDMA when needed.
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
     torch.cuda.set_device(local_rank % 8)
 
     num_nodes = int(os.getenv("WORLD_SIZE", 1))
+    node_rank = int(os.getenv("RANK", 0))
+    rank = node_rank * num_local_ranks + local_rank
+    num_ranks = num_nodes * num_local_ranks
 
-    rank, num_ranks, group = init_dist(local_rank, num_local_ranks)
     print(
         f"pid: {os.getpid()}, rank: {rank}, num_ranks: {num_ranks} ,local_rank: {local_rank}",
         flush=True,
@@ -464,13 +509,15 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     )
 
     # Create TCPStore client for NIXL metadata exchange
-    tcp_server = args.tcp_server if args.tcp_server else os.getenv("MASTER_ADDR", "127.0.0.1")
+    tcp_server = (
+        args.tcp_server if args.tcp_server else os.getenv("MASTER_ADDR", "127.0.0.1")
+    )
     tcp_store = store_group.create_client_store(
         master_addr=tcp_server,
         port=TCP_STORE_PORT,
     )
 
-    # Initialize NIXL buffer with group (for IPC handles) and TCPStore (for NIXL metadata)
+    # Initialize NIXL buffer with TCPStore (for both NIXL metadata and IPC handle exchange)
     print(
         f"pid: {os.getpid()}, rank: {rank}, num_ranks: {num_ranks}, initializing buffer",
         flush=True,
@@ -479,7 +526,6 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         rank=rank,
         low_latency_mode=False,
         explicitly_destroy=True,
-        group=group,
         tcp_store_group=tcp_store,
     )
     buffer.update_memory_buffers(
@@ -503,15 +549,14 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
             num_nodes,
             rank,
             buffer,
-            group,
+            tcp_store,
         )
         if local_rank == 0:
             print("", flush=True)
 
-    # Destroy the buffer runtime and communication group
+    # Destroy the buffer runtime
     buffer.destroy()
-    dist.barrier()
-    dist.destroy_process_group()
+    store_barrier(tcp_store, num_ranks, "shutdown")
 
 
 def run_server():
