@@ -26,3 +26,9 @@ p2p_socket = executable('p2p_test',
             dependencies: [nixl_dep, nixl_infra, stream_interface] + cuda_dependencies,
             include_directories: [nixl_inc_dirs, utils_inc_dirs],
             install: true)
+
+configuration = executable('configuration',
+            'configuration.cpp',
+            dependencies: [nixl_dep, nixl_infra, nixl_common_dep],
+            include_directories: [nixl_inc_dirs, utils_inc_dirs],
+            install:true)
