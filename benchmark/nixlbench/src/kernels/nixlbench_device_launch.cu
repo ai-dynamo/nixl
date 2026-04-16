@@ -34,7 +34,7 @@ nixlbenchPutLevel(nixlbenchDeviceXferParams params,
         nixlPut<Level>(src, dst, params.regionSize, 0, 0, &xfer_status);
     if (status != NIXL_IN_PROG) {
         printf(
-            "[nixlbenchPutKernel] nixlPut did not return NIXL_IN_PROG: "
+            "[nixlbenchPutLevel] nixlPut did not return NIXL_IN_PROG: "
             "region=%zu threadIdx.x=%u blockIdx.x=%u blockDim.x=%u status=%d\n",
             region_idx,
             threadIdx.x,
@@ -50,7 +50,7 @@ nixlbenchPutLevel(nixlbenchDeviceXferParams params,
 
     if (status != NIXL_SUCCESS) {
         printf(
-            "[nixlbenchPutKernel] transfer did not complete: region=%zu "
+            "[nixlbenchPutLevel] transfer did not complete: region=%zu "
             "threadIdx.x=%u blockIdx.x=%u blockDim.x=%u final_status=%d\n",
             region_idx,
             threadIdx.x,
@@ -77,7 +77,7 @@ nixlbenchSignalCounter(nixlbenchDeviceXferParams params,
     nixl_status_t status = nixlAtomicAdd<Level>(value, counter, 0, 0, &xfer_status);
     if (status != NIXL_IN_PROG) {
         printf(
-            "[nixlbenchPutKernel] nixlAtomicAdd(%s) did not return NIXL_IN_PROG: status=%d\n",
+            "[nixlbenchSignalCounter] nixlAtomicAdd(%s) did not return NIXL_IN_PROG: status=%d\n",
             counter_name,
             static_cast<int>(status));
         return false;
@@ -87,7 +87,7 @@ nixlbenchSignalCounter(nixlbenchDeviceXferParams params,
     } while (status == NIXL_IN_PROG);
     if (status != NIXL_SUCCESS) {
         printf(
-            "[nixlbenchPutKernel] nixlAtomicAdd(%s) did not complete: final_status=%d\n",
+            "[nixlbenchSignalCounter] nixlAtomicAdd(%s) did not complete: final_status=%d\n",
             counter_name,
             static_cast<int>(status));
         return false;
@@ -109,22 +109,21 @@ nixlbenchSignalError(nixlbenchDeviceXferParams params) {
 }
 
 /**
- * If blockDim.x < warpSize: THREAD-level nixlPut; each thread uses regions
+ * If blockDim.x <= warpSize: THREAD-level nixlPut; each thread uses regions
  * region_idx = threadIdx.x, threadIdx.x + blockDim.x, ...
- * Else: WARP-level nixlPut; lane 0 of each warp strides by num_warps.
+ * Else: WARP-level nixlPut; each warp strides by num_warps and all lanes in a warp participate.
  * After all puts complete, thread 0 increments done counter by 1. If any put fails, thread 0
  * increments error counter by 1.
  */
 __global__ void
 nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
     __shared__ unsigned put_fail_count;
-    __shared__ nixlGpuXferStatusH xfer_statuses[nixlbench_max_warps];
     if (threadIdx.x == 0) {
         put_fail_count = 0;
     }
     __syncthreads();
 
-    const bool use_thread_level = blockDim.x < static_cast<unsigned>(warpSize);
+    const bool use_thread_level = blockDim.x <= static_cast<unsigned>(warpSize);
 
     if (use_thread_level) {
         nixlGpuXferStatusH xfer_status{};
@@ -141,28 +140,34 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
         const unsigned warp_id = threadIdx.x / warpSize;
         const unsigned num_warps = (blockDim.x + warpSize - 1) / warpSize;
 
-        if (lane == 0) {
-            if (warp_id >= num_warps || warp_id >= nixlbench_max_warps) {
-                printf(
-                    "[nixlbenchPutKernel] warp_id out of range: "
-                    "warp_id=%u num_warps=%u max_warps=%u "
-                    "threadIdx.x=%u blockDim.x=%u\n",
-                    warp_id,
-                    num_warps,
-                    nixlbench_max_warps,
-                    threadIdx.x,
-                    blockDim.x);
+        if (warp_id >= num_warps || warp_id >= nixlbench_max_warps) {
+            printf(
+                "[nixlbenchPutKernel] warp_id out of range: "
+                "warp_id=%u num_warps=%u max_warps=%u "
+                "threadIdx.x=%u blockDim.x=%u\n",
+                warp_id,
+                num_warps,
+                nixlbench_max_warps,
+                threadIdx.x,
+                blockDim.x);
+            if (lane == 0) {
                 atomicAdd(&put_fail_count, 1u);
-            } else {
-                nixlGpuXferStatusH &xfer_status = xfer_statuses[warp_id];
-                for (size_t region_idx = warp_id; region_idx < params.numRegions;
-                     region_idx += num_warps) {
-                    if (!nixlbenchPutLevel<nixl_gpu_level_t::WARP>(
-                            params, region_idx, xfer_status)) {
-                        atomicAdd(&put_fail_count, 1u);
-                        break;
-                    }
+            }
+        } else {
+            nixlGpuXferStatusH xfer_status{};
+            // Per-lane local failure bit; the warp-level call is collective, so we reduce later.
+            bool put_failed = false;
+            for (size_t region_idx = warp_id; region_idx < params.numRegions;
+                 region_idx += num_warps) {
+                if (!nixlbenchPutLevel<nixl_gpu_level_t::WARP>(
+                        params, region_idx, xfer_status)) {
+                    put_failed = true;
+                    break;
                 }
+            }
+            // Report one failure count per warp (not per lane) to avoid redundant atomics.
+            if (__any_sync(__activemask(), put_failed) && lane == 0) {
+                atomicAdd(&put_fail_count, 1u);
             }
         }
     }
@@ -171,31 +176,16 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
 
     if (threadIdx.x == 0) {
         if (put_fail_count > 0) {
-            if (use_thread_level) {
-                if (!nixlbenchSignalError<nixl_gpu_level_t::THREAD>(params)) {
-                    printf("[nixlbenchPutKernel] error nixlAtomicAdd (THREAD) failed\n");
-                }
-            } else {
-                if (!nixlbenchSignalError<nixl_gpu_level_t::WARP>(params)) {
-                    printf("[nixlbenchPutKernel] error nixlAtomicAdd (WARP) failed\n");
-                }
+            if (!nixlbenchSignalError<nixl_gpu_level_t::THREAD>(params)) {
+                printf("[nixlbenchPutKernel] error nixlAtomicAdd failed\n");
             }
             return;
         }
 
-        if (use_thread_level) {
-            if (!nixlbenchSignalCompletion<nixl_gpu_level_t::THREAD>(params)) {
-                printf("[nixlbenchPutKernel] completion nixlAtomicAdd (THREAD) failed\n");
-                if (!nixlbenchSignalError<nixl_gpu_level_t::THREAD>(params)) {
-                    printf("[nixlbenchPutKernel] error nixlAtomicAdd (THREAD) failed\n");
-                }
-            }
-        } else {
-            if (!nixlbenchSignalCompletion<nixl_gpu_level_t::WARP>(params)) {
-                printf("[nixlbenchPutKernel] completion nixlAtomicAdd (WARP) failed\n");
-                if (!nixlbenchSignalError<nixl_gpu_level_t::WARP>(params)) {
-                    printf("[nixlbenchPutKernel] error nixlAtomicAdd (WARP) failed\n");
-                }
+        if (!nixlbenchSignalCompletion<nixl_gpu_level_t::THREAD>(params)) {
+            printf("[nixlbenchPutKernel] completion nixlAtomicAdd failed\n");
+            if (!nixlbenchSignalError<nixl_gpu_level_t::THREAD>(params)) {
+                printf("[nixlbenchPutKernel] error nixlAtomicAdd failed\n");
             }
         }
     }

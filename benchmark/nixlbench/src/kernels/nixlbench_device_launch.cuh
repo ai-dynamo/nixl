@@ -40,12 +40,14 @@ struct nixlbenchDeviceXferParams {
 /**
  * @brief Launches @ref nixlbenchPutKernel with a 1-D block of @a block_threads threads.
  *
- * If @a block_threads is less than the GPU warp size (32), @c nixl_gpu_level_t::THREAD is used;
- * otherwise @c nixl_gpu_level_t::WARP is used (lane 0 per warp strides over regions). Typical
+ * If @a block_threads is less than or equal to the GPU warp size (32),
+ * @c nixl_gpu_level_t::THREAD is used;
+ * otherwise @c nixl_gpu_level_t::WARP is used (each warp strides over regions and all lanes in
+ * the warp participate in each device API call). Typical
  * @a block_threads matches nixlbench @c --num_threads.
  *
  * Requires UCX with GPU device API (gpu/ucx/nixl_device.cuh). @a block_threads must be in
- * [1, 1024] (CUDA block limit; at most 32 warps for shared status slots).
+ * [1, 1024] (CUDA block limit).
  *
  * On failure, logs to stderr. Synchronizes @a stream (or the device if null) so device printf
  * output from the kernel is flushed before returning.
