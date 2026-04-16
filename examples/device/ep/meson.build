@@ -136,15 +136,20 @@ nixl_ep_install_rpath = join_paths(get_option('prefix'), get_option('libdir'))
 nixl_ep_install_rpath += ':' + join_paths(get_option('prefix'), get_option('libdir'), 'plugins')
 nixl_ep_install_rpath += ':' + torch_lib_dir
 
+nixl_ep_build_deps = [
+    nixl_dep,
+    pybind_dep,
+    cuda_dep,
+    torch_dep,
+] + ucx_build_deps
+if doca_gpunetio_dep.found()
+    nixl_ep_build_deps += [doca_gpunetio_dep]
+endif
+
 nixl_ep_ext = py.extension_module('nixl_ep_cpp',
     nixl_ep_sources,
     subdir: 'nixl_ep',
-    dependencies: [
-        nixl_dep,
-        pybind_dep,
-        cuda_dep,
-        torch_dep,
-    ] + ucx_build_deps,
+    dependencies: nixl_ep_build_deps,
     include_directories: nixl_ep_inc_dirs,
     cpp_args: nixl_ep_cpp_args,
     cuda_args: nixl_ep_cuda_args,

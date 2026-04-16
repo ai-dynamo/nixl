@@ -79,10 +79,13 @@ if $HAS_GPU ; then
         local plan_file=$1
         local extra_flags=${2:-}
         echo "---- elastic: plan=$(basename "$plan_file") flags=[$extra_flags] ----"
-        PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
-        timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
-            --plan "$plan_file" \
-            --num-processes 4 --num-topk 4 --validate-plan $extra_flags
+        (
+            unset NIXL_ETCD_ENDPOINTS NIXL_ETCD_PEER_URLS NIXL_ETCD_NAMESPACE
+            PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
+            timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
+                --plan "$plan_file" \
+                --num-processes 4 --num-topk 4 --validate-plan $extra_flags
+        )
     }
 
     # NVLink (default)
