@@ -185,10 +185,8 @@ TEST_F(telemetryTest, TransferBytesTracking) {
 }
 
 TEST_F(telemetryTest, TelemetryEventStructure) {
-    nixlTelemetryEvent event1(
-        1234567890, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, "test_event", 42);
+    nixlTelemetryEvent event1(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, "test_event", 42);
 
-    EXPECT_EQ(event1.timestampUs_, 1234567890);
     EXPECT_EQ(event1.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
     EXPECT_EQ(event1.value_, 42);
     EXPECT_STREQ(event1.eventName_, "test_event");

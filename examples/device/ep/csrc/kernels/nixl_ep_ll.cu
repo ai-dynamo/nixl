@@ -32,20 +32,16 @@ namespace cg = cooperative_groups;
 
 namespace nixl_ep {
 
-namespace ep_kernels {
+__device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst_rank) {
+    if (dst_rank == ctx.rank) return (void*) dst_ptr;
 
-__device__ inline uint64_t gpu_nixl_ctx::offset_get(uint64_t ptr) {
-    return ptr - reinterpret_cast<uint64_t>(rdma_buffer_ptr);
-}
-
-__device__ inline void* gpu_nixl_ctx::p2p_ptr_get(uint64_t dst_ptr, int dst_rank) {
-    if (dst_rank == rank) return (void*) dst_ptr;
-
-    void *remote_ptr = nixlGetPtr(remote_mvh, dst_rank);
+    void *remote_ptr = nixlGetPtr(ctx.remote_mvh, dst_rank);
     if (remote_ptr == nullptr) return nullptr;
 
-    return (void*) ((uint64_t) remote_ptr + offset_get(dst_ptr));
+    return (void*) ((uint64_t) remote_ptr + ctx.offset_get(dst_ptr));
 }
+
+namespace ep_kernels {
 
 template<bool use_warp_sync = false>
 __forceinline__ __device__ bool is_rank_masked(int* mask_buffer_ptr, int rank) {
@@ -78,7 +74,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
          int num_tokens, int num_max_dispatch_tokens_per_rank,
          int num_topk, int num_experts, int rank, int num_ranks,
          int num_warp_groups, int num_warps_per_group,
-         bool round_scale, int phases, ep_kernels::gpu_nixl_ctx nixl_ctx) {
+         bool round_scale, uint64_t timeout_cycles, int phases, nixl_ep::gpu_nixl_ctx nixl_ctx) {
     const auto sm_id = static_cast<int>(blockIdx.x);
     const auto thread_id = static_cast<int>(threadIdx.x);
     const auto warp_id = thread_id / 32, lane_id = get_lane_id();
@@ -187,8 +183,8 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
                                      dst_expert_local_idx * num_ranks * num_max_dispatch_tokens_per_rank * num_bytes_per_msg +
                                      rank * num_max_dispatch_tokens_per_rank * num_bytes_per_msg +
                                      slot_idx * num_bytes_per_msg;
-                void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
                 if (not is_rank_masked<true>(mask_buffer_ptr, dst_rank)) {
+                    void* dst_p2p_ptr = p2p_ptr_get(nixl_ctx, dst_ptr, dst_rank);
                     if (dst_p2p_ptr == 0) {
                         nixlMemViewElem src_mdesc{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(src_ptr)};
                         nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
@@ -256,8 +252,8 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
         // Wait local sends issued and send expert counts
         while (ld_acquire_global(atomic_finish_counter_per_expert + responsible_expert_idx) != FINISHED_SUM_TAG * 2);
         auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_count + dst_expert_local_idx * num_ranks + rank);
-        void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
+            void* dst_p2p_ptr = p2p_ptr_get(nixl_ctx, dst_ptr, dst_rank);
             if (dst_p2p_ptr == 0) {
                 nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, static_cast<size_t>(dst_rank), nixl_ctx.offset_get(dst_ptr)};
                 EP_DEVICE_ASSERT(nixlAtomicAdd(num_tokens_sent + 1, dst_mdesc, dst_expert_local_idx) == NIXL_IN_PROG);
@@ -312,7 +308,7 @@ DISPATCH_RECV:
             if (not is_rank_masked(mask_buffer_ptr, src_rank)) {
                 while ((num_recv_tokens = ld_acquire_sys_global(rdma_recv_count + local_expert_idx * num_ranks + src_rank)) ==
                            0                                                               // data not arrived
-                       && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES  // not timeout
+                       && (wait_recv_cost = clock64() - start_time) <= timeout_cycles       // not timeout
                 )
                     ;
             }
@@ -320,7 +316,7 @@ DISPATCH_RECV:
             if (num_recv_tokens == 0)
                 num_recv_tokens = 1;
             // Mask rank if timeout
-            if (wait_recv_cost > NUM_TIMEOUT_CYCLES) {
+            if (wait_recv_cost > timeout_cycles) {
                 printf("Warning: NIXL-EP timeout for dispatch receive, rank %d, local_expert_idx %d, src_rank %d\n",
                        rank,
                        local_expert_idx,
@@ -399,8 +395,9 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               int num_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
               int num_topk, int num_experts, int rank, int num_ranks,
               bool use_fp8, bool round_scale, bool use_ue8m0,
+              uint64_t timeout_cycles,
               void* workspace, int num_device_sms,
-              cudaStream_t stream, int phases, ep_kernels::gpu_nixl_ctx nixl_ctx) {
+              cudaStream_t stream, int phases, nixl_ep::gpu_nixl_ctx nixl_ctx) {
     constexpr int kNumMaxTopK = 11;
     const int num_warp_groups = ceil_div(num_experts, num_device_sms);
     const int num_warps_per_group = 32 / num_warp_groups;
@@ -440,7 +437,7 @@ LAUNCH_KERNEL(&cfg, dispatch_func, \
               num_tokens, num_max_dispatch_tokens_per_rank, \
               num_topk, num_experts, rank, num_ranks, \
               num_warp_groups, num_warps_per_group, \
-              round_scale, phases, nixl_ctx); } break
+              round_scale, timeout_cycles, phases, nixl_ctx); } break
 
     SETUP_LAUNCH_CONFIG(num_sms, num_warps * 32, stream);
     SWITCH_HIDDEN(DISPATCH_LAUNCH_CASE);
@@ -620,7 +617,7 @@ combine(void* combined_x,
         int num_max_dispatch_tokens_per_rank,
         int num_experts, int rank, int num_ranks,
         int num_warp_groups, int num_warps_per_group,
-        int phases, bool zero_copy, ep_kernels::gpu_nixl_ctx nixl_ctx) {
+        uint64_t timeout_cycles, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx nixl_ctx) {
     const auto sm_id = __shfl_sync(0xffffffff, static_cast<int>(blockIdx.x), 0);
     const auto num_sms = __shfl_sync(0xffffffff, static_cast<int>(gridDim.x), 0);
     const auto thread_id = static_cast<int>(threadIdx.x);
@@ -726,7 +723,7 @@ combine(void* combined_x,
                 const auto buf_ptr = reinterpret_cast<int64_t>(rdma_send_x_vec_row);
                 const auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_x) +
                     (global_expert_idx * num_max_dispatch_tokens_per_rank + src_idx) * num_bytes_per_slot;
-                void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
+                void* dst_p2p_ptr = p2p_ptr_get(nixl_ctx, dst_ptr, dst_rank);
                 int num_send_bytes = hidden * sizeof(nv_bfloat16);
 
                 if (not zero_copy or dst_p2p_ptr != 0) {
@@ -805,8 +802,8 @@ combine(void* combined_x,
         if (sub_warp_id == 1 and lane_id == 0) {
             while (ld_acquire_global(atomic_clean_flag) == 0);
             auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_flag + global_expert_idx);
-            void* dst_p2p_ptr = nixl_ctx.p2p_ptr_get(dst_ptr, dst_rank);
             if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
+                void* dst_p2p_ptr = p2p_ptr_get(nixl_ctx, dst_ptr, dst_rank);
                 if (dst_p2p_ptr == 0) {
                     nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
                     EP_DEVICE_ASSERT(nixlAtomicAdd(1, dst_mdesc, local_expert_idx) == NIXL_IN_PROG);
@@ -840,12 +837,12 @@ COMBINE_RECV:
             uint64_t wait_recv_cost = 0;
             if (not is_rank_masked(mask_buffer_ptr, src_rank)) {
                 while (ld_acquire_sys_global(rdma_recv_flag + responsible_expert_idx) == 0  // recv not ready
-                       && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES   // not timeout
+                       && (wait_recv_cost = clock64() - start_time) <= timeout_cycles        // not timeout
                 )
                     ;
             }
             // Mask rank if timeout
-            if (wait_recv_cost > NUM_TIMEOUT_CYCLES) {
+            if (wait_recv_cost > timeout_cycles) {
                 printf("Warning: NIXL-EP timeout for combine receive, rank %d, local_expert_idx %d, src_rank %d\n",
                        rank,
                        responsible_expert_idx % num_local_experts,
@@ -1011,9 +1008,9 @@ void combine(void* combined_x,
              uint64_t* next_clean, int num_next_clean_int,
              int num_combined_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
              int num_topk, int num_experts, int rank, int num_ranks,
-             bool use_logfmt,
+             bool use_logfmt, uint64_t timeout_cycles,
              void* workspace, int num_device_sms,
-             cudaStream_t stream, int phases, bool zero_copy, ep_kernels::gpu_nixl_ctx nixl_ctx) {
+             cudaStream_t stream, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx nixl_ctx) {
     constexpr int kNumMaxTopk = 11;
     const int num_warp_groups = ceil_div(num_experts, num_device_sms);
     const int num_warps_per_group = 32 / num_warp_groups;
@@ -1065,7 +1062,7 @@ LAUNCH_KERNEL(&cfg, combine_func, \
               num_max_dispatch_tokens_per_rank, \
               num_experts, rank, num_ranks, \
               num_warp_groups, num_warps_per_group, \
-              phases, zero_copy, nixl_ctx); } break
+              timeout_cycles, phases, zero_copy, nixl_ctx); } break
 
     SETUP_LAUNCH_CONFIG(num_sms, num_warps * 32, stream);
     SWITCH_HIDDEN(COMBINE_LAUNCH_CASE);
@@ -1124,7 +1121,7 @@ void clean_mask_buffer(int* mask_buffer_ptr, int num_ranks, cudaStream_t stream)
 }
 
 template <int kNumThreads>
-__forceinline__ __device__ void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, int thread_id) {
+__forceinline__ __device__ void barrier(nixl_ep::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, int thread_id, uint64_t timeout_cycles) {
     EP_DEVICE_ASSERT(kNumThreads >= nixl_ctx.max_num_ranks);
 
     if (thread_id < nixl_ctx.max_num_ranks && thread_id != nixl_ctx.rank) {
@@ -1139,9 +1136,9 @@ __forceinline__ __device__ void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* 
             auto start_time = clock64();
             uint64_t wait_recv_cost = 0;
             while (ld_acquire_sys_global(nixl_ctx.sync_buffer_ptr + dst_rank) != expected_cnt
-                   && (wait_recv_cost = clock64() - start_time) <= NUM_TIMEOUT_CYCLES);
+                   && (wait_recv_cost = clock64() - start_time) <= timeout_cycles);
 
-            if (wait_recv_cost > NUM_TIMEOUT_CYCLES) {
+            if (wait_recv_cost > timeout_cycles) {
                 printf("Warning: NixlEP timeout for barrier, rank %d, thread %d, dst_rank %d, expected value %d, actual value %d\n",
                        nixl_ctx.rank, thread_id, dst_rank, expected_cnt, ld_acquire_global(nixl_ctx.sync_buffer_ptr + dst_rank));
                 if (mask_buffer_ptr == nullptr)
@@ -1154,15 +1151,15 @@ __forceinline__ __device__ void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* 
 }
 
 template <int kNumThreads>
-__global__ void barrier_kernel(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr) {
+__global__ void barrier_kernel(nixl_ep::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, uint64_t timeout_cycles) {
     const auto thread_id = static_cast<int>(threadIdx.x);
-    barrier<kNumThreads>(nixl_ctx, mask_buffer_ptr, thread_id);
+    barrier<kNumThreads>(nixl_ctx, mask_buffer_ptr, thread_id, timeout_cycles);
 }
 
-void barrier(ep_kernels::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, cudaStream_t stream) {
+void barrier(nixl_ep::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, uint64_t timeout_cycles, cudaStream_t stream) {
     constexpr int kNumThreads = 32;
     SETUP_LAUNCH_CONFIG(1, kNumThreads, stream);
-    LAUNCH_KERNEL(&cfg, barrier_kernel<kNumThreads>, nixl_ctx, mask_buffer_ptr);
+    LAUNCH_KERNEL(&cfg, barrier_kernel<kNumThreads>, nixl_ctx, mask_buffer_ptr, timeout_cycles);
 }
 } // namespace ep_kernels
 
