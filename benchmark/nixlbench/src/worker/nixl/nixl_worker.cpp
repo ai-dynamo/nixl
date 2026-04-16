@@ -973,9 +973,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
             for (auto &iov : iov_list) {
                 if (isInitiator()) {
-                    memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
+                    memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, iov.len);
                 } else if (isTarget()) {
-                    memset((void *)iov.addr, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+                    memset((void *)iov.addr, XFERBENCH_TARGET_BUFFER_ELEMENT, iov.len);
                 }
             }
         }
@@ -990,34 +990,15 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
 
 
     opt_args.backends.push_back(backend_engine);
-    for (auto &iov_list : iov_lists) {
-        nixl_reg_dlist_t desc_list(seg_type);
-        iovListToNixlRegDlist(iov_list, desc_list);
-        CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
-
-        for (auto &iov : iov_list) {
-            switch (seg_type) {
-            case DRAM_SEG:
-                cleanupBasicDescDram(iov);
-                break;
-            case VRAM_SEG:
-                cleanupBasicDescVram(iov);
-                break;
-            default:
-                std::cerr << "Unsupported mem type: " << seg_type << std::endl;
-                exit(EXIT_FAILURE);
-            }
-        }
-    }
 
     if (xferBenchConfig::isObjStorageBackend()) {
         for (auto &iov_list : remote_iovs) {
-            for (auto &iov : iov_list) {
-                cleanupBasicDescObj(iov);
-            }
             nixl_reg_dlist_t desc_list(OBJ_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+            for (auto &iov : iov_list) {
+                cleanupBasicDescObj(iov);
+            }
         }
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
         for (auto &iov_list : remote_iovs) {
@@ -1036,6 +1017,26 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             nixl_reg_dlist_t desc_list(FILE_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+        }
+    }
+
+    for (auto &iov_list : iov_lists) {
+        nixl_reg_dlist_t desc_list(seg_type);
+        iovListToNixlRegDlist(iov_list, desc_list);
+        CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+
+        for (auto &iov : iov_list) {
+            switch (seg_type) {
+            case DRAM_SEG:
+                cleanupBasicDescDram(iov);
+                break;
+            case VRAM_SEG:
+                cleanupBasicDescVram(iov);
+                break;
+            default:
+                std::cerr << "Unsupported mem type: " << seg_type << std::endl;
+                exit(EXIT_FAILURE);
+            }
         }
     }
 }
