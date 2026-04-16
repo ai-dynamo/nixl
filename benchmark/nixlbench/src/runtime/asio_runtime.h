@@ -203,13 +203,13 @@ private:
 
         try {
             result->bind(endpoint_);
+            result->listen();
         }
         catch (...) {
-            std::cout << "ASIO runtime bind() error -- using connect() instead" << std::endl;
+            std::cout << "ASIO runtime bind/listen error -- using connect() instead" << std::endl;
             return {};
         }
 
-        result->listen();
         return result;
     }
 
