@@ -65,7 +65,7 @@ std::string
 telemetryCategoryStr(const nixl_telemetry_category_t &category);
 
 [[nodiscard]] constexpr std::string_view
-telemetryEventTypeStr(nixl_telemetry_event_type_t name) noexcept {
+telemetryEventTypeStr(nixl_telemetry_event_type_t type) noexcept {
     switch (name) {
     case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
         return "agent_tx_bytes";
