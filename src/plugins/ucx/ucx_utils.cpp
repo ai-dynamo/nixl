@@ -582,7 +582,13 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
                                  std::string(ucs_status_string(status)));
     }
 
-    resolveMemoryTypeConfig();
+    try {
+        resolveMemoryTypeConfig();
+    }
+    catch (...) {
+        ucp_cleanup(ctx);
+        throw;
+    }
 }
 
 nixlUcxContext::~nixlUcxContext() {

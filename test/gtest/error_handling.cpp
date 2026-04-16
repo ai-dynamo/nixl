@@ -499,7 +499,7 @@ TEST(UcxBackendParams, RejectsUnsupportedExplicitVramHintAtRuntime) {
     nixl::setUcxPluginDir(env);
 
     constexpr const char *explicit_hints[] = {"cuda", "cuda-managed", "rocm", "ze-device"};
-    bool found_runtime_unsupported_path = false;
+    bool found_expected_runtime_failure = false;
 
     for (const auto *hint : explicit_hints) {
         nixlAgentConfig cfg;
@@ -520,8 +520,7 @@ TEST(UcxBackendParams, RejectsUnsupportedExplicitVramHintAtRuntime) {
 
         const LogIgnoreGuard lig_expected_runtime_unsupported(
             "Failed to create engine: Configured VRAM memtype hint '.*' is not supported by "
-            "current "
-            "UCX context");
+            "current UCX context");
         const LogIgnoreGuard lig_expected_runtime_query_failure(
             "Failed to create engine: Failed to query UCX context memory types: .*");
         const LogIgnoreGuard lig_expected_backend_failure(
@@ -529,20 +528,29 @@ TEST(UcxBackendParams, RejectsUnsupportedExplicitVramHintAtRuntime) {
 
         nixlBackendH *backend = nullptr;
         const auto status = agent.createBackend(*it, params, backend);
-        if (status != NIXL_SUCCESS) {
-            EXPECT_EQ(nullptr, backend);
-            if ((backend == nullptr) &&
-                ((lig_expected_runtime_unsupported.getIgnoredCount() > 0) ||
-                 (lig_expected_runtime_query_failure.getIgnoredCount() > 0))) {
-                found_runtime_unsupported_path = true;
-                break;
-            }
+        if (status == NIXL_SUCCESS) {
+            ASSERT_NE(nullptr, backend) << "Successful createBackend returned null handle";
+            // Loop-local agent owns backend and cleans it up on iteration exit.
+            continue;
         }
+
+        const bool saw_runtime_unsupported = lig_expected_runtime_unsupported.getIgnoredCount() > 0;
+        const bool saw_runtime_query_failure =
+            lig_expected_runtime_query_failure.getIgnoredCount() > 0;
+        ASSERT_EQ(nullptr, backend)
+            << "createBackend() failed for hint '" << hint << "' but returned a non-null backend";
+        ASSERT_TRUE(saw_runtime_unsupported || saw_runtime_query_failure)
+            << "createBackend() failed for hint '" << hint
+            << "' without expected runtime failure path. " << "backend=" << backend
+            << ", saw_unsupported=" << saw_runtime_unsupported
+            << ", saw_query_failure=" << saw_runtime_query_failure;
+        found_expected_runtime_failure = true;
+        break;
     }
 
-    if (!found_runtime_unsupported_path) {
+    if (!found_expected_runtime_failure) {
         GTEST_SKIP()
-            << "No explicit hint exercised the unsupported-memtype runtime path on this system";
+            << "No explicit hint exercised an expected runtime failure path on this system";
     }
 }
 
