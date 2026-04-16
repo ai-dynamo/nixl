@@ -213,6 +213,8 @@ public:
     isStorageBackend();
     static bool
     isObjStorageBackend();
+    static bool
+    isDeviceAPISupported(std::string *reason = nullptr);
 
 protected:
     static int
