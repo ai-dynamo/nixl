@@ -69,6 +69,8 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 | `req_checksum` | Request checksum validation (`required`/`supported`) | - | No |
 | `ca_bundle` | path to a custom certificate bundle | - | No |
 | `crtMinLimit` | Minimum object size (bytes) to use S3 CRT client for high-performance transfers | Disabled**** | No |
+| `accelerated` | Enable S3 Accelerated engine (`true`/`false`) | `false` | No |
+| `type` | Accelerated engine type (`dell`, etc.) | - | No |
 
 \* If `access_key` and `secret_key` are not provided, the AWS SDK will attempt to use default credential providers (IAM roles, environment variables, credential files, etc.)
 
@@ -306,6 +308,7 @@ The architecture separates concerns into:
 - `nixlObjEngine` is the public interface that clients use
 - `nixlObjEngineImpl` is the abstract base class for all engine implementations
 - Concrete implementations inherit from `nixlObjEngineImpl` (or its subclasses) and override specific methods
+- Accelerated engines self-register into `objAccelEngineRegistry` via static `objAccelEngineRegistrar`
 - The public interface remains stable while implementations can evolve independently
 
 #### Supported Memory Types
@@ -327,24 +330,10 @@ Each engine implementation defines its own supported memory segment types via `g
 >
 > The S3 Accelerated path (`s3_accel`) and any vendor implementations under it require the `cuobjclient-13.1` library. When adding new extensions to `s3_accel`:
 >
-> 1. **Protect includes** with `#if defined HAVE_CUOBJ_CLIENT`:
->    ```cpp
->    #if defined HAVE_CUOBJ_CLIENT
->    #include "s3_accel/engine_impl.h"
->    #include "s3_accel/vendor_name/engine_impl.h"
->    #endif
->    ```
 >
-> 2. **Protect instantiation code** in factory functions:
->    ```cpp
->    #if defined HAVE_CUOBJ_CLIENT
->    if (isAcceleratedRequested(init_params->customParams)) {
->        return std::make_unique<S3AccelObjEngineImpl>(init_params);
->    }
->    #endif
->    ```
+> Vendor engines self-register via `objAccelEngineRegistrar`
 >
-> 3. **Add sources conditionally** in `meson.build`:
+> 1. **Add sources conditionally** in `meson.build`:
 >    ```python
 >    if cuobj_dep.found()
 >        obj_sources += [
@@ -353,6 +342,8 @@ Each engine implementation defines its own supported memory segment types via `g
 >        ]
 >    endif
 >    ```
+>
+> 2. **Guard cuobjclient-specific code** within your engine with `#if defined(HAVE_CUOBJ_CLIENT)`
 >
 > This ensures the plugin builds correctly both with and without the `cuobjclient` library available.
 
@@ -444,53 +435,51 @@ VendorObjEngineImpl::registerMem(const nixlBlobDesc &mem,
 }
 ```
 
-#### 3. Add Selection Logic
+#### 3. Self-Register the Engine
 
-Add a helper function in `engine_utils.h` (located at `src/utils/object/engine_utils.h`):
+The plugin uses an **engine registry** pattern: vendor engines register themselves
+at load time via a static `objAccelEngineRegistrar`.
 
-```cpp
-inline bool
-isVendorRequested(nixl_b_params_t *custom_params) {
-    if (!isAcceleratedRequested(custom_params)) return false;
-    auto type_it = custom_params->find("type");
-    return type_it != custom_params->end() && type_it->second == "vendor_name";
-}
-```
+Add a static registrar in your `engine_impl.cpp`.
+The registrar takes **two factory lambdas**:
 
-Update `obj_backend.cpp` to include your engine in the factory function with proper conditional compilation:
+- **`create`**: The production path. The engine constructs its own real S3 client internally from `init_params`.
+- **`createWithClients`**: The test path. A caller (typically a unit test) injects a mock/fake `iS3Client`, so the engine can be tested without a real S3 endpoint.
+
+Both lambdas must be provided. They correspond to the two constructor variants your engine class should expose (see step 2 above).
 
 ```cpp
-#if defined HAVE_CUOBJ_CLIENT
-#include "s3_accel/engine_impl.h"
-#include "s3_accel/vendor_name/engine_impl.h"
-#endif
+#include "obj_engine_registry.h"
 
-std::unique_ptr<nixlObjEngineImpl>
-createObjEngineImpl(const nixlBackendInitParams *init_params) {
-#if defined HAVE_CUOBJ_CLIENT
-    // Check for vendor-specific engine first
-    if (isVendorRequested(init_params->customParams)) {
-        return std::make_unique<VendorObjEngineImpl>(init_params);
-    }
+namespace {
 
-    // Check for S3 Accelerated engine
-    if (isAcceleratedRequested(init_params->customParams)) {
-        return std::make_unique<S3AccelObjEngineImpl>(init_params);
-    }
-#endif
+// Self-register "vendor_name" engine into the accelerated engine registry.
+// The factory in obj_backend.cpp will find it via objAccelEngineRegistry::create().
+objAccelEngineRegistrar reg_vendor(
+    "vendor_name",
+    // Production factory: engine creates its own S3 client
+    [](const nixlBackendInitParams *p) -> std::unique_ptr<nixlObjEngineImpl> {
+        return std::make_unique<VendorObjEngineImpl>(p);
+    },
+    // Test factory: caller injects a mock/fake S3 client (s3_crt is unused by accel engines)
+    [](const nixlBackendInitParams *p,
+       std::shared_ptr<iS3Client> s3,
+       std::shared_ptr<iS3Client> s3_crt) -> std::unique_ptr<nixlObjEngineImpl> {
+        return std::make_unique<VendorObjEngineImpl>(p, s3);
+    });
 
-    // Check for S3 CRT engine
-    size_t crt_min_limit = getCrtMinLimit(init_params->customParams);
-    if (crt_min_limit > 0) {
-        return std::make_unique<S3CrtObjEngineImpl>(init_params);
-    }
-
-    // Default to standard S3 engine
-    return std::make_unique<DefaultObjEngineImpl>(init_params);
-}
+} // namespace
 ```
 
-**Note**: Don't forget to also update the second overload of `createObjEngineImpl` that takes client pointers as parameters with the same conditional compilation guards.
+The `"vendor_name"` string must match the `type` backend parameter value that users pass at runtime (see [Usage](#5-usage) below).
+The factory function in `obj_backend.cpp` already delegates to the registry when `accelerated=true`:
+
+```cpp
+// obj_backend.cpp — no vendor-specific code needed
+if (isAcceleratedRequested(init_params->customParams))
+    return objAccelEngineRegistry::instance().create(
+        getAccelType(init_params->customParams), init_params);
+```
 
 #### 4. Update Build Configuration
 
