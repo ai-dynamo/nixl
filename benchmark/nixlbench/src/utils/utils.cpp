@@ -224,6 +224,7 @@ NB_ARG_STRING(gusli_device_security,
 
 
 #undef NB_ARG_INT32
+#undef NB_ARG_UINT32
 #undef NB_ARG_UINT64
 #undef NB_ARG_BOOL
 #undef NB_ARG_STRING

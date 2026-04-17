@@ -110,6 +110,7 @@ createRT(std::atomic<int> *terminate) {
         if (total != 2) {
             std::cerr << "Invalid total " << total << " for ASIO runtime -- supports only 2"
                       << std::endl;
+            exit(EXIT_FAILURE);
         }
         return new xferBenchAsioRT(xferBenchConfig::asio_address, xferBenchConfig::asio_port);
     }
