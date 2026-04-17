@@ -98,8 +98,8 @@ nixlMooncakeEngine::getSupportedMems() const {
 // Through parent destructor the unregister will be called.
 nixlMooncakeEngine::~nixlMooncakeEngine() {
     // Close all open remote segments before destroying the engine.
-    for (auto &[agent, info] : connected_agents_) {
-        closeSegment(engine_, info.segment_id);
+    for (const auto &[agent, info] : connected_agents_) {
+        (void)closeSegment(engine_, info.segment_id);
     }
     destroyTransferEngine(engine_);
 }
@@ -123,7 +123,7 @@ nixlMooncakeEngine::disconnect(const std::string &remote_agent) {
     segment_id_t segment_id;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        auto it = connected_agents_.find(remote_agent);
+        const auto it = connected_agents_.find(remote_agent);
         if (it == connected_agents_.end()) {
             return NIXL_SUCCESS;
         }
@@ -133,7 +133,7 @@ nixlMooncakeEngine::disconnect(const std::string &remote_agent) {
         // the segment handle.
         connected_agents_.erase(it);
     }
-    closeSegment(engine_, segment_id);
+    (void)closeSegment(engine_, segment_id);
     return NIXL_SUCCESS;
 }
 
@@ -325,10 +325,14 @@ nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
         //   configured timeout (default 10 s). The endpoint is then disabled,
         //   making retries futile. Terminal, no retry.
         if (rc || status.status == STATUS_FAILED || status.status == STATUS_CANCELED ||
-            status.status == STATUS_TIMEOUT) {
+            status.status == STATUS_TIMEOUT || status.status == STATUS_INVALID) {
             has_failed = true;
         } else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING) {
             has_pending = true;
+        } else if (status.status != STATUS_COMPLETED) {
+            // Catch any unrecognised status values defensively.
+            NIXL_WARN << "checkXfer: unexpected transfer status " << status.status;
+            has_failed = true;
         }
     }
     if (has_pending) {
