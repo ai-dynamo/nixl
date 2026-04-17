@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_UTILS_UCX_UCX_ENUMS_H
-#define NIXL_SRC_UTILS_UCX_UCX_ENUMS_H
+#ifndef NIXL_SRC_PLUGINS_UCX_UCX_ENUMS_H
+#define NIXL_SRC_PLUGINS_UCX_UCX_ENUMS_H
 
 #include <ostream>
 #include <string_view>
@@ -25,7 +25,7 @@
 
 #include "nixl_types.h"
 
-constexpr inline std::string_view nixl_ucx_invalid = "INVALID";
+inline constexpr std::string_view nixl_ucx_invalid = "INVALID";
 
 enum class nixl_ucx_mt_t { SINGLE, CTX, WORKER };
 
