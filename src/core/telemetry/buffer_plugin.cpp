@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,5 +24,6 @@ using buffer_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryBufferE
 
 nixlTelemetryPlugin *
 createStaticBUFFERPlugin() {
-    return buffer_exporter_plugin_t::create(nixlTelemetryPluginApiVersionV1, "buffer", "1.0.0");
+    return buffer_exporter_plugin_t::create(
+        nixl_telemetry_plugin_api_version::V2, "buffer", "1.0.0");
 }

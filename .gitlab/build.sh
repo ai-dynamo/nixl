@@ -282,13 +282,15 @@ else
 
     ( \
       cd ${TMPDIR} && \
-      git clone --depth 1 https://github.com/kvcache-ai/Mooncake.git && \
+      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}" && \
+      echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
+      git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
-      cmake .. -DBUILD_SHARED_LIBS=ON && \
-      make -j4 && \
-      $SUDO make install && \
+      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
+      ninja && \
+      $SUDO ninja install && \
       $SUDO ldconfig && \
       cd .. && \
       rm -rf Mooncake
