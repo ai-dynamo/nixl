@@ -30,6 +30,8 @@ if enabled_plugins.get('LIBBLKIO') and has_libblkio_plugin
     subdir('plugins/libblkio')
     unit_test_deps += [libblkio_unit_test_dep]
 endif
+subdir('descriptors')
+unit_test_deps += [descriptors_unit_test_dep]
 
 cpp = meson.get_compiler('cpp')
 azure_storage_blobs = cpp.find_library('azure-storage-blobs', required: false)
