@@ -99,7 +99,10 @@ nixlMooncakeEngine::getSupportedMems() const {
 nixlMooncakeEngine::~nixlMooncakeEngine() {
     // Close all open remote segments before destroying the engine.
     for (const auto &[agent, info] : connected_agents_) {
-        (void)closeSegment(engine_, info.segment_id);
+        if (closeSegment(engine_, info.segment_id)) {
+            NIXL_WARN << "~nixlMooncakeEngine: failed to close segment " << info.segment_id
+                      << " for agent " << agent;
+        }
     }
     destroyTransferEngine(engine_);
 }
@@ -133,7 +136,9 @@ nixlMooncakeEngine::disconnect(const std::string &remote_agent) {
         // the segment handle.
         connected_agents_.erase(it);
     }
-    (void)closeSegment(engine_, segment_id);
+    if (closeSegment(engine_, segment_id)) {
+        return NIXL_ERR_BACKEND;
+    }
     return NIXL_SUCCESS;
 }
 
