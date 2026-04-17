@@ -27,11 +27,7 @@
 
 constexpr inline std::string_view nixl_ucx_invalid = "INVALID";
 
-enum class nixl_ucx_mt_t {
-    SINGLE,
-    CTX,
-    WORKER
-};
+enum class nixl_ucx_mt_t { SINGLE, CTX, WORKER };
 
 [[nodiscard]] constexpr std::string_view
 toStringView(const nixl_ucx_mt_t t) noexcept {
@@ -46,12 +42,7 @@ toStringView(const nixl_ucx_mt_t t) noexcept {
     return nixl_ucx_invalid;
 }
 
-enum class nixl_ucx_ep_state_t {
-    NULL_,
-    CONNECTED,
-    FAILED,
-    DISCONNECTED
-};
+enum class nixl_ucx_ep_state_t { NULL_, CONNECTED, FAILED, DISCONNECTED };
 
 [[nodiscard]] constexpr std::string_view
 toStringView(const nixl_ucx_ep_state_t t) noexcept {
@@ -68,9 +59,7 @@ toStringView(const nixl_ucx_ep_state_t t) noexcept {
     return nixl_ucx_invalid;
 }
 
-enum class nixl_ucx_cb_op_t {
-    NOTIF_STR
-};
+enum class nixl_ucx_cb_op_t { NOTIF_STR };
 
 [[nodiscard]] constexpr std::string_view
 toStringView(const nixl_ucx_cb_op_t t) noexcept {
@@ -90,7 +79,7 @@ toInteger(const Enum e) noexcept {
 
 template<typename Enum>
 inline void
-toStream(std::ostream& os, const Enum t) {
+toStream(std::ostream &os, const Enum t) {
     static_assert(std::is_enum_v<Enum>);
 
     const auto view = toStringView(t);
