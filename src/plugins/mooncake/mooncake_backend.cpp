@@ -157,6 +157,15 @@ nixlMooncakeEngine::loadRemoteConnInfo(const std::string &remote_agent,
     std::lock_guard<std::mutex> lock(mutex_);
     auto segment_id = openSegment(engine_, remote_conn_info.c_str());
     if (segment_id < 0) return NIXL_ERR_BACKEND;
+    // Close the previous segment if this agent was already connected,
+    // so we don't leak the old handle on reconnect.
+    auto it = connected_agents_.find(remote_agent);
+    if (it != connected_agents_.end()) {
+        if (closeSegment(engine_, it->second.segment_id)) {
+            NIXL_WARN << "loadRemoteConnInfo: failed to close old segment " << it->second.segment_id
+                      << " for agent " << remote_agent;
+        }
+    }
     connected_agents_[remote_agent].segment_id = segment_id;
     return NIXL_SUCCESS;
 }
