@@ -231,54 +231,60 @@ int main(int argc, char *argv[])
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
-    while ((opt = getopt_long(argc, argv, "dvn:s:p:b:m:t:Dh", long_options, NULL)) != -1) {
-        switch (opt) {
-        case 'd':
-            use_dram = true;
-            break;
-        case 'v':
-            use_vram = true;
-            break;
-        case 'n':
-            num_transfers =
-                static_cast<unsigned int>(parsePositiveSize(optarg, "Number of Transfers", false));
-            break;
-        case 's':
-            transfer_size = parsePositiveSize(optarg, "Transfer Size", true);
-            break;
-        case 'p':
-            pool_size =
-                static_cast<unsigned int>(parsePositiveSize(optarg, "GDS Batch Pool Size", false));
-            break;
-        case 'b':
-            batch_limit =
-                static_cast<unsigned int>(parsePositiveSize(optarg, "GDS Batch Limit", false));
-            if (batch_limit > 128) {
-                std::cerr << "Error: Batch limit must be between 1 and 128\n";
+    try {
+        while ((opt = getopt_long(argc, argv, "dvn:s:p:b:m:t:Dh", long_options, NULL)) != -1) {
+            switch (opt) {
+            case 'd':
+                use_dram = true;
+                break;
+            case 'v':
+                use_vram = true;
+                break;
+            case 'n':
+                num_transfers = static_cast<unsigned int>(
+                    parsePositiveSize(optarg, "Number of Transfers", false));
+                break;
+            case 's':
+                transfer_size = parsePositiveSize(optarg, "Transfer Size", true);
+                break;
+            case 'p':
+                pool_size = static_cast<unsigned int>(
+                    parsePositiveSize(optarg, "GDS Batch Pool Size", false));
+                break;
+            case 'b':
+                batch_limit =
+                    static_cast<unsigned int>(parsePositiveSize(optarg, "GDS Batch Limit", false));
+                if (batch_limit > 128) {
+                    std::cerr << "Error: Batch limit must be between 1 and 128\n";
+                    return 1;
+                }
+                break;
+            case 'm':
+                max_request_size = parsePositiveSize(optarg, "Max Request Size", true);
+                if (max_request_size > 16 * 1024 * 1024) {
+                    std::cerr << "Error: Max request size cannot be greater than 16M\n";
+                    return 1;
+                }
+                break;
+            case 't':
+                iterations = static_cast<unsigned int>(
+                    parsePositiveSize(optarg, "Number of Iterations", false));
+                break;
+            case 'D':
+                use_direct = true;
+                break;
+            case 'h':
+                print_usage(argv[0]);
+                return 0;
+            default:
+                print_usage(argv[0]);
                 return 1;
             }
-            break;
-        case 'm':
-            max_request_size = parsePositiveSize(optarg, "Max Request Size", true);
-            if (max_request_size > 16 * 1024 * 1024) {
-                std::cerr << "Error: Max request size cannot be greater than 16M\n";
-                return 1;
-            }
-            break;
-        case 't':
-            iterations =
-                static_cast<unsigned int>(parsePositiveSize(optarg, "Number of Iterations", false));
-            break;
-        case 'D':
-            use_direct = true;
-            break;
-        case 'h':
-            print_usage(argv[0]);
-            return 0;
-        default:
-            print_usage(argv[0]);
-            return 1;
         }
+    }
+    catch (const std::invalid_argument &e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
     }
 
     // Check if directory path is provided

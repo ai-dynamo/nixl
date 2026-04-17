@@ -232,53 +232,58 @@ main (int argc, char *argv[]) {
                                            {"num-transfers", required_argument, 0, 'n'},
                                            {"size", required_argument, 0, 's'},
                                            {"num-gpus", required_argument, 0, 'G'},
-                                           {"max-req-size", required_argument, 0, 'm'},
                                            {"num-threads", required_argument, 0, 'N'},
                                            {"iterations", required_argument, 0, 't'},
                                            {"direct", no_argument, 0, 'D'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
-    while ((opt = getopt_long(argc, argv, "dvn:s:t:G:DhN:", long_options, NULL)) != -1) {
-        switch (opt) {
-        case 'd':
-            use_dram = true;
-            break;
-        case 'v':
-            use_vram = true;
-            break;
-        case 'n':
-            num_transfers =
-                static_cast<unsigned int>(parsePositiveSize(optarg, "Number of Transfers", false));
-            break;
-        case 's':
-            transfer_size = parsePositiveSize(optarg, "Transfer Size", true);
-            if (transfer_size == 0) {
-                std::cerr << "Error: Invalid transfer size format\n";
+    try {
+        while ((opt = getopt_long(argc, argv, "dvn:s:t:G:DhN:", long_options, NULL)) != -1) {
+            switch (opt) {
+            case 'd':
+                use_dram = true;
+                break;
+            case 'v':
+                use_vram = true;
+                break;
+            case 'n':
+                num_transfers = static_cast<unsigned int>(
+                    parsePositiveSize(optarg, "Number of Transfers", false));
+                break;
+            case 's':
+                transfer_size = parsePositiveSize(optarg, "Transfer Size", true);
+                if (transfer_size == 0) {
+                    std::cerr << "Error: Invalid transfer size format\n";
+                    return 1;
+                }
+                break;
+            case 'N':
+                num_threads = parsePositiveSize(optarg, "threads", false);
+                break;
+            case 't':
+                iterations = static_cast<unsigned int>(
+                    parsePositiveSize(optarg, "Number of iterations", false));
+                break;
+            case 'G':
+                num_gpus =
+                    static_cast<unsigned int>(parsePositiveSize(optarg, "Number of GPUs", false));
+                break;
+            case 'D':
+                use_direct = true;
+                break;
+            case 'h':
+                print_usage(argv[0]);
+                return 0;
+            default:
+                print_usage(argv[0]);
                 return 1;
             }
-            break;
-        case 'N':
-            num_threads = parsePositiveSize(optarg, "threads", false);
-            break;
-        case 't':
-            iterations =
-                static_cast<unsigned int>(parsePositiveSize(optarg, "Number of iterations", false));
-            break;
-        case 'G':
-            num_gpus =
-                static_cast<unsigned int>(parsePositiveSize(optarg, "Number of GPUs", false));
-            break;
-        case 'D':
-            use_direct = true;
-            break;
-        case 'h':
-            print_usage(argv[0]);
-            return 0;
-        default:
-            print_usage(argv[0]);
-            return 1;
         }
+    }
+    catch (const std::invalid_argument &e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
     }
 
     // Check if directory path is provided
