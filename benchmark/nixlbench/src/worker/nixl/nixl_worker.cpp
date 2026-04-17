@@ -1002,12 +1002,12 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
         }
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
         for (auto &iov_list : remote_iovs) {
-            for (auto &iov : iov_list) {
-                cleanupBasicDescBlk(iov);
-            }
             nixl_reg_dlist_t desc_list(BLK_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+            for (auto &iov : iov_list) {
+                cleanupBasicDescBlk(iov);
+            }
         }
     } else if (xferBenchConfig::isStorageBackend()) {
         for (auto &iov_list : remote_iovs) {
