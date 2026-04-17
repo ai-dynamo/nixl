@@ -267,7 +267,7 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
-    int segment_id;
+    segment_id_t segment_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto agent = connected_agents_.find(remote_agent);
@@ -372,7 +372,7 @@ nixlMooncakeEngine::getNotifs(notif_list_t &notif_list) {
 
 nixl_status_t
 nixlMooncakeEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
-    int segment_id;
+    segment_id_t segment_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto agent = connected_agents_.find(remote_agent);
