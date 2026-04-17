@@ -287,9 +287,12 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     size_t request_count = local.descCount();
-    transfer_request_t *request = new transfer_request_t[request_count];
+    // Validate lengths before allocating so an early return cannot leak.
     for (size_t index = 0; index < request_count; ++index) {
         if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
+    }
+    transfer_request_t *request = new transfer_request_t[request_count];
+    for (size_t index = 0; index < request_count; ++index) {
         request[index].opcode = (operation == NIXL_READ) ? OPCODE_READ : OPCODE_WRITE;
         request[index].source = (void *)local[index].addr;
         request[index].target_offset = remote[index].addr;
