@@ -161,6 +161,25 @@ When user asks for a specific backend for its name, alongside a list of paramete
 
 In this step, if the plugin supports talking to remote agents, the required connection data for other agents to talk to it is acquired through **getConnInfo** in SB API. And/or if it supports within node transfers, a **connection** call to itself is called, as some backends might require that.
 
+#### UCX backend options (common)
+
+The UCX plugin exposes initialization options through `getPluginParams("UCX", ...)` in C++
+or `get_plugin_params("UCX")` in Python. Two commonly used options are:
+
+| Option key | Default | Description |
+| ---------- | ------- | ----------- |
+| `ucx_error_handling_mode` | `peer` | UCX endpoint error handling policy. `peer` enables peer failure reporting; `none` disables it. |
+| `ucx_vram_memtype_hint` | `auto` | Controls how NIXL hints UCX memory type during VRAM registration. Supported values are exactly: `auto`, `none`, `cuda`, `cuda-managed`, `rocm`, `ze-device`. |
+
+Notes:
+
+* `ucx_error_handling_mode` and `ucx_vram_memtype_hint` are independent options. You do not need to set one to use the other.
+* `ucx_vram_memtype_hint=auto` is the recommended default for general use.
+* Matching for `ucx_vram_memtype_hint` values is case-sensitive.
+* If an explicit VRAM hint is configured but not supported by the current UCX context,
+  backend creation fails with an invalid-argument error.
+* If UCX context memory types cannot be queried, explicit hints (`cuda`, `cuda-managed`, `rocm`, `ze-device`) fail backend creation; `auto`/`none` continue without hinting.
+
 ### Make connections (optional):
 
 When a connection is requested to an remote agent, which is possible if the remote agent’s metadata is already loaded, the local Agent would look for common backend plugins between itself and the remote agent, and for each of them initiate a connect by using the **connect** API in SB API of such backends.

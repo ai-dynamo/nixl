@@ -846,6 +846,15 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
         err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
     }
 
+    nixl_ucx_vram_memtype_hint_t vram_memtype_hint_policy;
+    const auto vram_memtype_hint_it =
+        custom_params->find(std::string(nixl_ucx_vram_memtype_hint_param_name));
+    if (vram_memtype_hint_it == custom_params->end()) {
+        vram_memtype_hint_policy = nixl_ucx_vram_memtype_hint_t::AUTO;
+    } else {
+        vram_memtype_hint_policy = ucx_vram_memtype_hint_from_string(vram_memtype_hint_it->second);
+    }
+
     const auto engine_config_it = custom_params->find("engine_config");
     const auto engine_config =
         (engine_config_it != custom_params->end()) ? engine_config_it->second : "";
@@ -855,7 +864,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
                                           num_workers,
                                           init_params.syncMode,
                                           num_device_channels,
-                                          engine_config);
+                                          engine_config,
+                                          vram_memtype_hint_policy);
 
     uc->warnAboutHardwareSupportMismatch();
 

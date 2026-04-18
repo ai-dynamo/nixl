@@ -18,6 +18,7 @@
 #include "ucx_utils.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <exception>
 #include <stdexcept>
@@ -38,6 +39,8 @@ get_ucx_backend_common_options() {
 
     params.emplace(nixl_ucx_err_handling_param_name,
                    ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_PEER));
+    params.emplace(nixl_ucx_vram_memtype_hint_param_name,
+                   ucx_vram_memtype_hint_to_string(nixl_ucx_vram_memtype_hint_t::AUTO));
     return params;
 }
 
@@ -99,6 +102,56 @@ ucx_err_mode_from_string(std::string_view s) {
         }
     }
 
+    err_msg << ">";
+    throw std::invalid_argument(err_msg.str());
+}
+
+[[nodiscard]] std::string_view
+ucx_vram_memtype_hint_to_string(nixl_ucx_vram_memtype_hint_t t) {
+    switch (t) {
+    case nixl_ucx_vram_memtype_hint_t::AUTO:
+        return "auto";
+    case nixl_ucx_vram_memtype_hint_t::NONE:
+        return "none";
+    case nixl_ucx_vram_memtype_hint_t::CUDA:
+        return ucs_memory_type_names[UCS_MEMORY_TYPE_CUDA];
+    case nixl_ucx_vram_memtype_hint_t::CUDA_MANAGED:
+        return ucs_memory_type_names[UCS_MEMORY_TYPE_CUDA_MANAGED];
+    case nixl_ucx_vram_memtype_hint_t::ROCM:
+        return ucs_memory_type_names[UCS_MEMORY_TYPE_ROCM];
+    case nixl_ucx_vram_memtype_hint_t::ZE_DEVICE:
+        return ucs_memory_type_names[UCS_MEMORY_TYPE_ZE_DEVICE];
+    }
+    throw std::invalid_argument(std::to_string(enumToInteger(t)));
+}
+
+[[nodiscard]] nixl_ucx_vram_memtype_hint_t
+ucx_vram_memtype_hint_from_string(std::string_view s) {
+    constexpr std::array<nixl_ucx_vram_memtype_hint_t, 6> hint_modes = {
+        nixl_ucx_vram_memtype_hint_t::AUTO,
+        nixl_ucx_vram_memtype_hint_t::NONE,
+        nixl_ucx_vram_memtype_hint_t::CUDA,
+        nixl_ucx_vram_memtype_hint_t::CUDA_MANAGED,
+        nixl_ucx_vram_memtype_hint_t::ROCM,
+        nixl_ucx_vram_memtype_hint_t::ZE_DEVICE,
+    };
+
+    for (const auto hint_mode : hint_modes) {
+        const auto mode_name = ucx_vram_memtype_hint_to_string(hint_mode);
+        if (mode_name == s) {
+            return hint_mode;
+        }
+    }
+
+    std::stringstream err_msg;
+    err_msg << "Invalid VRAM memtype hint mode: " << s
+            << ". Matching is case-sensitive; use exact values. Valid values are: <";
+    for (size_t i = 0; i < hint_modes.size(); ++i) {
+        err_msg << ucx_vram_memtype_hint_to_string(hint_modes[i]);
+        if (i < hint_modes.size() - 1) {
+            err_msg << "|";
+        }
+    }
     err_msg << ">";
     throw std::invalid_argument(err_msg.str());
 }
@@ -409,6 +462,53 @@ makeMtType(const bool prog_thread, const nixl_thread_sync_t sync_mode) noexcept 
         nixl_ucx_mt_t::SINGLE;
 }
 
+[[nodiscard]] std::string_view
+ucx_memory_type_to_string(const ucs_memory_type_t mem_type) {
+    const auto mem_type_index = static_cast<unsigned>(mem_type);
+    if (mem_type_index >= static_cast<unsigned>(UCS_MEMORY_TYPE_LAST)) {
+        return "invalid";
+    }
+
+    return ucs_memory_type_names[mem_type_index];
+}
+
+[[nodiscard]] std::optional<ucs_memory_type_t>
+ucx_auto_detect_vram_hint(const uint64_t memory_types_mask) {
+    // AUTO is intentionally conservative: only auto-hint ZE on ZE-only accelerator stacks.
+    // CUDA is left to UCX auto-detection by default because it is reliable with shared
+    // primary context, and mixed accelerator environments are treated as ambiguous.
+    const bool has_ze = UCS_BIT_GET(memory_types_mask, UCS_MEMORY_TYPE_ZE_DEVICE);
+    const bool has_cuda = UCS_BIT_GET(memory_types_mask, UCS_MEMORY_TYPE_CUDA) ||
+        UCS_BIT_GET(memory_types_mask, UCS_MEMORY_TYPE_CUDA_MANAGED);
+    const bool has_rocm = UCS_BIT_GET(memory_types_mask, UCS_MEMORY_TYPE_ROCM);
+
+    if (has_ze && !has_cuda && !has_rocm) {
+        return UCS_MEMORY_TYPE_ZE_DEVICE;
+    }
+
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<ucs_memory_type_t>
+ucx_policy_to_mem_type(const nixl_ucx_vram_memtype_hint_t policy) {
+    switch (policy) {
+    case nixl_ucx_vram_memtype_hint_t::AUTO:
+    case nixl_ucx_vram_memtype_hint_t::NONE:
+        return std::nullopt;
+    case nixl_ucx_vram_memtype_hint_t::CUDA:
+        return UCS_MEMORY_TYPE_CUDA;
+    case nixl_ucx_vram_memtype_hint_t::CUDA_MANAGED:
+        return UCS_MEMORY_TYPE_CUDA_MANAGED;
+    case nixl_ucx_vram_memtype_hint_t::ROCM:
+        return UCS_MEMORY_TYPE_ROCM;
+    case nixl_ucx_vram_memtype_hint_t::ZE_DEVICE:
+        return UCS_MEMORY_TYPE_ZE_DEVICE;
+    }
+
+    NIXL_FATAL << "Invalid VRAM memtype hint mode: " << enumToInteger(policy);
+    std::terminate();
+}
+
 } // namespace
 
 nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
@@ -416,9 +516,11 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
                                unsigned long num_workers,
                                nixl_thread_sync_t sync_mode,
                                size_t num_device_channels,
-                               const std::string &engine_config)
+                               const std::string &engine_config,
+                               nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy)
     : mtType_(makeMtType(prog_thread, sync_mode)),
-      ucpVersion_(makeUcpVersion()) {
+      ucpVersion_(makeUcpVersion()),
+      vramMemTypeHintPolicy_(vram_mem_type_hint_policy) {
 
     ucp_params_t ucp_params;
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED;
@@ -477,10 +579,75 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         throw std::runtime_error("Failed to create UCX context: " +
                                  std::string(ucs_status_string(status)));
     }
+
+    try {
+        resolveMemoryTypeConfig();
+    }
+    catch (...) {
+        ucp_cleanup(ctx);
+        throw;
+    }
 }
 
 nixlUcxContext::~nixlUcxContext() {
     ucp_cleanup(ctx);
+}
+
+void
+nixlUcxContext::resolveMemoryTypeConfig() {
+    ucp_context_attr_t context_attr = {
+        .field_mask = UCP_ATTR_FIELD_MEMORY_TYPES,
+    };
+
+    const auto status = ucp_context_query(ctx, &context_attr);
+    if (status != UCS_OK) {
+        if (vramMemTypeHintPolicy_ != nixl_ucx_vram_memtype_hint_t::AUTO &&
+            vramMemTypeHintPolicy_ != nixl_ucx_vram_memtype_hint_t::NONE) {
+            throw std::runtime_error(
+                "Failed to query UCX context memory types: " +
+                std::string(ucs_status_string(status)) +
+                ". This query is required for explicit ucx_vram_memtype_hint='" +
+                std::string(ucx_vram_memtype_hint_to_string(vramMemTypeHintPolicy_)) + "'");
+        }
+
+        NIXL_WARN << "Failed to query UCX context memory types: " << ucs_status_string(status)
+                  << ", VRAM memory type hinting will be disabled";
+        return;
+    }
+
+    supportedMemoryTypesMask_ = context_attr.memory_types;
+
+    if (vramMemTypeHintPolicy_ == nixl_ucx_vram_memtype_hint_t::AUTO) {
+        vramMemTypeHint_ = ucx_auto_detect_vram_hint(supportedMemoryTypesMask_);
+        if (vramMemTypeHint_.has_value()) {
+            NIXL_INFO << "VRAM memtype hint mode is auto, selected "
+                      << ucx_memory_type_to_string(*vramMemTypeHint_) << " based on UCX context";
+        } else {
+            NIXL_DEBUG << "VRAM memtype hint mode is auto, no unambiguous accelerator memory type"
+                          " found; UCX auto-detection will be used";
+        }
+        return;
+    }
+
+    if (vramMemTypeHintPolicy_ == nixl_ucx_vram_memtype_hint_t::NONE) {
+        NIXL_DEBUG << "VRAM memtype hint mode is none, UCX auto-detection will be used";
+        return;
+    }
+
+    const auto configured_hint = ucx_policy_to_mem_type(vramMemTypeHintPolicy_);
+    NIXL_ASSERT(configured_hint.has_value());
+
+    if (!UCS_BIT_GET(supportedMemoryTypesMask_, *configured_hint)) {
+        throw std::invalid_argument(
+            "Configured VRAM memtype hint '" +
+            std::string(ucx_vram_memtype_hint_to_string(vramMemTypeHintPolicy_)) +
+            "' is not supported by current UCX context");
+    }
+
+    vramMemTypeHint_ = configured_hint;
+    NIXL_INFO << "VRAM memtype hint mode is "
+              << ucx_vram_memtype_hint_to_string(vramMemTypeHintPolicy_) << ", using "
+              << ucx_memory_type_to_string(*vramMemTypeHint_);
 }
 
 namespace {
@@ -570,6 +737,13 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
         .length = mem.size,
     };
 
+    if (nixl_mem_type == nixl_mem_t::VRAM_SEG && vramMemTypeHint_.has_value()) {
+        mem_params.field_mask |= UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE;
+        mem_params.memory_type = *vramMemTypeHint_;
+        NIXL_DEBUG << "memReg: hinting " << ucx_memory_type_to_string(mem_params.memory_type)
+                   << " for VRAM_SEG";
+    }
+
     ucs_status_t status = ucp_mem_map(ctx, &mem_params, &mem.memh);
     if (status != UCS_OK) {
         NIXL_ERROR << "Failed to ucp_mem_map: " << ucs_status_string(status);
@@ -588,7 +762,7 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
 
         if (attr.mem_type == UCS_MEMORY_TYPE_HOST) {
             NIXL_ERROR << "VRAM memory is detected as host by UCX. "
-                          "UCX is likely not configured with CUDA support. "
+                          "UCX memory type detection/configuration is likely mismatched. "
                           "VRAM registration cannot proceed.";
             ucp_mem_unmap(ctx, mem.memh);
             return -1;
