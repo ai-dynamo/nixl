@@ -79,12 +79,18 @@
 #define XFERBENCH_BACKEND_OBJ "OBJ"
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
+#define XFERBENCH_BACKEND_LIBBLKIO "LIBBLKIO"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
 #define XFERBENCH_POSIX_API_URING "URING"
 #define XFERBENCH_POSIX_API_POSIXAIO "POSIXAIO"
+
+// LIBBLKIO API types
+#define XFERBENCH_LIBBLKIO_API_IO_URING "IO_URING"
+#define XFERBENCH_LIBBLKIO_API_VHOST_USER "VHOST_USER"
+#define XFERBENCH_LIBBLKIO_API_VHOST_VDPA "VHOST_VDPA"
 
 // OBJ S3 scheme types
 #define XFERBENCH_OBJ_SCHEME_HTTP "http"
@@ -167,6 +173,8 @@ public:
     static std::string posix_api_type;
     static int posix_ios_pool_size;
     static int posix_kernel_queue_size;
+    static std::string libblkio_api_type;
+    static bool libblkio_io_polling;
     static bool storage_enable_direct;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
@@ -226,6 +234,12 @@ struct GusliDeviceConfig {
     size_t dev_offset;
 };
 
+// LIBBLKIO device config similar to GUSLI
+struct LibblkioDeviceConfig {
+    int device_id;
+    std::string device_path;
+};
+
 // Parser for GUSLI device list: "id:type:path,id:type:path,..." and byte-based device offset list
 // security_list: comma-separated security flags; num_devices: expected device count (validation)
 std::vector<GusliDeviceConfig>
@@ -233,6 +247,11 @@ parseGusliDeviceList(const std::string &device_list,
                      const std::string &security_list,
                      const std::string &dev_offset_list,
                      int num_devices);
+
+// Parser for LIBBLKIO device list: "id:B:path,id:B:path,..."
+// num_devices: expected device count (validation)
+std::vector<LibblkioDeviceConfig>
+parseLibblkioDeviceList(const std::string &device_list, int num_devices);
 
 // Timer class for measuring durations at high resolution
 class xferBenchTimer {
