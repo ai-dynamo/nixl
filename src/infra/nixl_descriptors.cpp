@@ -446,8 +446,10 @@ nixlSecDescList::addDescs(nixlSecDescList &&other) {
 
 int
 nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
-    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
-    if (itr == this->descs.end() || static_cast<const nixlBasicDesc &>(*itr) != query)
+    const nixlBasicDesc adjusted_query = normalizeSecDesc(query, this->getType());
+
+    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), adjusted_query);
+    if (itr == this->descs.end() || static_cast<const nixlBasicDesc &>(*itr) != adjusted_query)
         return NIXL_ERR_NOT_FOUND;
     return static_cast<int>(itr - this->descs.begin());
 }
