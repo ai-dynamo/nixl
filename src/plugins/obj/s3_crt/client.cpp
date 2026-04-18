@@ -69,6 +69,8 @@ awsS3CrtClient::putObjectAsync(std::string_view key,
                                size_t offset,
                                put_object_callback_t callback) {
     if (offset != 0) {
+        NIXL_ERROR << "putObjectAsync (CRT): non-zero offset not supported (offset=" << offset
+                   << ")";
         callback(false);
         return;
     }
