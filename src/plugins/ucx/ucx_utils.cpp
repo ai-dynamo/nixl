@@ -443,7 +443,6 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         config.modifyAlways("NET_DEVICES", devs_str.c_str());
     }
 
-    config.modify("ADDRESS_VERSION", "v2");
     config.modify("RNDV_THRESH", "inf");
     config.modify("MAX_RMA_RAILS", "2");
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
@@ -453,9 +452,15 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_device_channels));
     }
 
-    if (ucpVersion_ >= UCP_VERSION(1, 19)) {
-        config.modify("MAX_COMPONENT_MDS", "32");
-    } else {
+    const auto &hw_info = nixl::hwInfo::instance();
+    if (hw_info.numIbDevices == 0 && hw_info.numEfaDevices != 0) {
+        config.modify("ADDRESS_VERSION", "v2");
+        if (ucpVersion_ >= UCP_VERSION(1, 19)) {
+            config.modify("MAX_COMPONENT_MDS", "32");
+        }
+    }
+
+    if (ucpVersion_ < UCP_VERSION(1, 19)) {
         NIXL_WARN << "UCX version is less than 1.19, CUDA support is limited, "
                   << "including the lack of support for multi-GPU within a single process.";
     }
