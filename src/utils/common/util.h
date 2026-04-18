@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,11 +14,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef UTIL_H
-#define UTIL_H
+#ifndef NIXL_SRC_UTILS_COMMON_UTIL_H
+#define NIXL_SRC_UTILS_COMMON_UTIL_H
+
+#include "nixl_types.h"
 
 #define CONCAT(a, b) CONCAT_0(a, b)
 #define CONCAT_0(a, b) a ## b
 #define UNIQUE_NAME(name) CONCAT(name, __COUNTER__)
 
-#endif /* UTIL_H */
+[[nodiscard]] constexpr bool
+weAreSource(const nixl_xfer_op_t operation) noexcept {
+    switch (operation) {
+    case NIXL_READ:
+        return false;
+    case NIXL_WRITE:
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] constexpr bool
+weAreTarget(const nixl_xfer_op_t operation) noexcept {
+    switch (operation) {
+    case NIXL_READ:
+        return true;
+    case NIXL_WRITE:
+        return false;
+    }
+    return false;
+}
+
+#endif

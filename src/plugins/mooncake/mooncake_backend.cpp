@@ -250,6 +250,10 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                              const std::string &remote_agent,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
+    if ((operation != NIXL_READ) && (operation != NIXL_WRITE)) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     auto priv = (nixlMooncakeBackendReqH *)handle;
     int segment_id;
     {

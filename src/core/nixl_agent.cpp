@@ -19,6 +19,7 @@
 #include <chrono>
 #include <iostream>
 #include <numeric>
+#include <type_traits>
 
 #include "nixl.h"
 #include "serdes/serdes.h"
@@ -40,17 +41,19 @@ static const std::vector<std::vector<std::string>> illegal_plugin_combinations =
 
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
-    static std::array<std::string, FILE_SEG+1> nixl_mem_str = {
-           "DRAM_SEG", "VRAM_SEG", "BLK_SEG", "OBJ_SEG", "FILE_SEG"};
-    if (mem<DRAM_SEG || mem>FILE_SEG)
-        return "BAD_SEG";
+    static const std::array<std::string, FILE_SEG + 1> nixl_mem_str = {
+        "DRAM_SEG", "VRAM_SEG", "BLK_SEG", "OBJ_SEG", "FILE_SEG"};
+    if ((mem < DRAM_SEG) || (mem > FILE_SEG)) {
+        return std::to_string(std::underlying_type_t<nixl_mem_t>(mem));
+    }
     return nixl_mem_str[mem];
 }
 
 std::string nixlEnumStrings::xferOpStr (const nixl_xfer_op_t &op) {
-    static std::array<std::string, 2> nixl_op_str = {"READ", "WRITE"};
-    if (op<NIXL_READ || op>NIXL_WRITE)
-        return "BAD_OP";
+    static const std::array<std::string, 2> nixl_op_str = {"READ", "WRITE"};
+    if ((op < NIXL_READ) || (op > NIXL_WRITE)) {
+        return std::to_string(std::underlying_type_t<nixl_xfer_op_t>(op));
+    }
     return nixl_op_str[op];
 
 }
@@ -91,14 +94,14 @@ nixlEngineDeleter::operator()(nixlBackendEngine *engine) const noexcept {
 }
 
 nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
-                           const nixl_xfer_op_t backend_op,
+                           const nixl_xfer_op_t operation,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
                            const size_t desc_count)
     : initiatorDescs(std::make_unique<nixl_meta_dlist_t>(local_type, desc_count)),
       targetDescs(std::make_unique<nixl_meta_dlist_t>(remote_type, desc_count)),
       remoteAgent(remote_agent),
-      backendOp(backend_op) {}
+      backendOp(operation) {}
 
 void
 nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
@@ -119,7 +122,7 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
 
     if (telemetry_pub && (stat_status != NIXL_TELEMETRY_POST)) {
         telemetry_pub->addPostTime(telemetry.postDuration);
-        telemetry_pub->addXferTime(duration, backendOp == NIXL_WRITE, telemetry.totalBytes);
+        telemetry_pub->addXferTime(duration, backendOp, telemetry.totalBytes);
     }
 
     NIXL_TRACE << "[NIXL TELEMETRY]: From backend " << engine->getType()

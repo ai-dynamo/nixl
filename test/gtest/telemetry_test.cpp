@@ -138,7 +138,7 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_NO_THROW(telemetry.updateErrorCount(nixl_status_t::NIXL_ERR_BACKEND));
     EXPECT_NO_THROW(telemetry.updateMemoryRegistered(1024));
     EXPECT_NO_THROW(telemetry.updateMemoryDeregistered(1024));
-    EXPECT_NO_THROW(telemetry.addXferTime(std::chrono::microseconds(100), true, 2000));
+    EXPECT_NO_THROW(telemetry.addXferTime(std::chrono::microseconds(100), NIXL_WRITE, 2000));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     auto path = testDir_.string() + "/" + testFile_;

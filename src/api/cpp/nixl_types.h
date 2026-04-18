@@ -14,8 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _NIXL_TYPES_H
-#define _NIXL_TYPES_H
+#ifndef NIXL_SRC_API_CPP_NIXL_TYPES_H
+#define NIXL_SRC_API_CPP_NIXL_TYPES_H
+
 #include <vector>
 #include <string>
 #include <unordered_map>
