@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@ from ._api import (
     nixl_agent_config,
     nixl_backend_handle,
     nixl_prepped_dlist_handle,
+    nixl_thread_sync_t,
     nixl_xfer_handle,
 )
 
@@ -30,5 +31,6 @@ __all__ = [
     "nixl_agent_config",
     "nixl_backend_handle",
     "nixl_prepped_dlist_handle",
+    "nixl_thread_sync_t",
     "nixl_xfer_handle",
 ]
