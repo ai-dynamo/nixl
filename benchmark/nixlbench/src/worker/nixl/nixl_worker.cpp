@@ -1495,12 +1495,6 @@ xferBenchNixlWorker::poll(size_t block_size) {
 
 int
 xferBenchNixlWorker::synchronizeStart() {
-    // For storage backends without ETCD, no synchronization needed
-    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
-        std::cout << "Single instance storage backend - no synchronization needed" << std::endl;
-        return 0;
-    }
-
     if (IS_PAIRWISE_AND_SG()) {
         std::cout << "Waiting for all processes to start... (expecting " << rt->getSize()
                   << " total: " << xferBenchConfig::num_initiator_dev << " initiators and "
@@ -1509,6 +1503,7 @@ xferBenchNixlWorker::synchronizeStart() {
         std::cout << "Waiting for all processes to start... (expecting " << rt->getSize()
                   << " total" << std::endl;
     }
+
     if (rt) {
         int ret = rt->barrier("start_barrier");
         if (ret != 0) {
