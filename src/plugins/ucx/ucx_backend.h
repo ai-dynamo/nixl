@@ -18,6 +18,7 @@
 #define NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_H
 
 #include <vector>
+#include <map>
 #include <cstring>
 #include <iostream>
 #include <thread>
@@ -56,22 +57,22 @@ using ucx_connection_ptr_t = std::shared_ptr<nixlUcxConnection>;
 
 // A private metadata has to implement get, and has all the metadata
 class nixlUcxPrivateMetadata : public nixlBackendMD {
-    private:
-        nixlUcxMem mem;
-        nixl_blob_t rkeyStr;
+private:
+    std::shared_ptr<nixlUcxMem> mem;
+    nixl_blob_t rkeyStr;
 
-    public:
-        nixlUcxPrivateMetadata() : nixlBackendMD(true) {
-        }
+public:
+    nixlUcxPrivateMetadata() : nixlBackendMD(true) {}
 
-        [[nodiscard]] const std::string& get() const noexcept {
-            return rkeyStr;
-        }
+    [[nodiscard]] const std::string &
+    get() const noexcept {
+        return rkeyStr;
+    }
 
-        [[nodiscard]] const nixlUcxMem &
-        getMem() const noexcept {
-            return mem;
-        }
+    [[nodiscard]] const nixlUcxMem &
+    getMem() const noexcept {
+        return *mem;
+    }
 
     friend class nixlUcxEngine;
 };
@@ -303,6 +304,17 @@ private:
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
+
+    // Range-aware memory registration cache.
+    // Maps base address to a shared registration covering [base, base+size).
+    // When a new descriptor falls entirely within an existing range, the
+    // registration is reused instead of calling ucp_mem_map again.
+    struct RegRange {
+        std::shared_ptr<nixlUcxMem> mem;
+        nixl_blob_t rkeyStr;
+    };
+
+    std::map<uintptr_t, RegRange> regRangeCache;
 };
 
 class nixlUcxThread;
