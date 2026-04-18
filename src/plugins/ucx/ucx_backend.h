@@ -37,8 +37,7 @@
 #include "mem_list.h"
 #include "rkey.h"
 #include "ucx_utils.h"
-
-enum ucx_cb_op_t { NOTIF_STR };
+#include "ucx_enums.h"
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:

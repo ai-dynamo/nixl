@@ -22,7 +22,8 @@ ucx_backend_sources = ['config.cpp',
                        'rkey.cpp',
                        'ucx_backend.cpp',
                        'ucx_plugin.cpp',
-                       'ucx_utils.cpp']
+                       'ucx_utils.cpp',
+                       'ucx_enums.cpp']
 
 ucx_backend_dependencies = [asio_dep,
                             cuda_dep,
