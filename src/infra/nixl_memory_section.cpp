@@ -228,13 +228,21 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
     // First check if the mem_elms are present in the list,
     // don't deregister anything in case any is missing.
     for (auto & elm : mem_elms) {
-        int index = target.getIndex(elm);
+        nixlBasicDesc query = elm;
+        if (((nixl_mem == BLK_SEG) || (nixl_mem == OBJ_SEG) || (nixl_mem == FILE_SEG)) &&
+            (query.len == 0))
+            query.len = SIZE_MAX;
+        int index = target.getIndex(query);
         if (index < 0)
             return NIXL_ERR_NOT_FOUND;
     }
 
     for (auto & elm : mem_elms) {
-        int index = target.getIndex(elm);
+        nixlBasicDesc query = elm;
+        if (((nixl_mem == BLK_SEG) || (nixl_mem == OBJ_SEG) || (nixl_mem == FILE_SEG)) &&
+            (query.len == 0))
+            query.len = SIZE_MAX;
+        int index = target.getIndex(query);
         // Already checked, elm should always be found. Can add a check in debug mode.
         backend->deregisterMem(target[index].metadataP);
         target.remDesc(index);
