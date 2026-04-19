@@ -24,5 +24,5 @@ obj_unit_test_dep = declare_dependency(
     dependencies: [
         obj_backend_interface,
         dependency('asio', required: true),
-    ],
+    ] + (cuobj_dep.found() ? [cuobj_dep] : []),
 )
