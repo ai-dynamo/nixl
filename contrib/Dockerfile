@@ -143,14 +143,14 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
 
 RUN git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
-     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+     make -j${NPROC:-$(nproc)} all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
      cd ..
 
 RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
     mkdir build && cd build && \
     AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
-    cmake --build . --target azure-storage-blobs azure-identity && \
+    cmake --build . --parallel ${NPROC:-$(nproc)} --target azure-storage-blobs azure-identity && \
     cmake --install sdk/core && \
     cmake --install sdk/storage/azure-storage-common && \
     cmake --install sdk/storage/azure-storage-blobs && \
@@ -277,7 +277,7 @@ RUN rm -rf build && \
     fi && \
     meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
     cd build && \
-    ninja && \
+    ninja -j${NPROC:-$(nproc)} && \
     ninja install
 
 RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
