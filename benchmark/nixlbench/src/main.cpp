@@ -120,7 +120,7 @@ static int processBatchSizes(xferBenchWorker &worker,
                 return EXIT_FAILURE;
             }
 
-#if HAVE_CUDA
+#if HAVE_UCX_DEVICE_KERNEL
             if (xferBenchConfig::use_device_api) {
                 if (auto *nixl_worker = dynamic_cast<xferBenchNixlWorker *>(&worker)) {
                     nixl_worker->prepareGPULocalView(local_trans_lists);
@@ -131,7 +131,7 @@ static int processBatchSizes(xferBenchWorker &worker,
             worker.exchangeIOV(local_trans_lists, block_size);
             worker.poll(block_size);
 
-#if HAVE_CUDA
+#if HAVE_UCX_DEVICE_KERNEL
             if (xferBenchConfig::use_device_api) {
                 if (auto *nixl_worker = dynamic_cast<xferBenchNixlWorker *>(&worker)) {
                     nixl_worker->releaseGPULocalView();
@@ -151,7 +151,7 @@ static int processBatchSizes(xferBenchWorker &worker,
             std::vector<std::vector<xferBenchIOV>> remote_trans_lists(
                 worker.exchangeIOV(local_trans_lists, block_size));
 
-#if HAVE_CUDA
+#if HAVE_UCX_DEVICE_KERNEL
             if (xferBenchConfig::use_device_api) {
                 if (auto *nixl_worker = dynamic_cast<xferBenchNixlWorker *>(&worker)) {
                     nixl_worker->prepareGPULocalView(local_trans_lists);
@@ -162,7 +162,7 @@ static int processBatchSizes(xferBenchWorker &worker,
 #endif
             auto result = worker.transfer(block_size, local_trans_lists, remote_trans_lists);
 
-#if HAVE_CUDA
+#if HAVE_UCX_DEVICE_KERNEL
             if (xferBenchConfig::use_device_api) {
                 if (auto *nixl_worker = dynamic_cast<xferBenchNixlWorker *>(&worker)) {
                     nixl_worker->releaseGPURemoteView();
