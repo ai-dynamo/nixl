@@ -443,6 +443,32 @@ nixlSecDescList::addDescs(nixlSecDescList &&other) {
     addDescs(std::move(other.descs), order::SORTED);
 }
 
+void
+nixlSecDescList::remDescs(std::vector<int> indices, order ord) {
+    if (indices.empty()) return;
+
+    if (ord == order::SORTED) {
+        NIXL_ASSERT(std::is_sorted(indices.begin(), indices.end()));
+    } else {
+        std::sort(indices.begin(), indices.end());
+    }
+
+    auto &vec = this->descs;
+    size_t ri = 0;
+    size_t write = 0;
+    for (size_t read = 0; read < vec.size(); ++read) {
+        if (ri < indices.size() && static_cast<int>(read) == indices[ri]) {
+            ++ri;
+        } else {
+            if (write != read) {
+                vec[write] = std::move(vec[read]);
+            }
+            ++write;
+        }
+    }
+    vec.resize(write);
+}
+
 
 int
 nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
