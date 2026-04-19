@@ -54,6 +54,8 @@ class nixlUcxConnection : public nixlBackendConnMD {
 
 using ucx_connection_ptr_t = std::shared_ptr<nixlUcxConnection>;
 
+class nixlUcxBackendH;
+
 // A private metadata has to implement get, and has all the metadata
 class nixlUcxPrivateMetadata : public nixlBackendMD {
     private:
@@ -74,6 +76,7 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
         }
 
     friend class nixlUcxEngine;
+    friend class nixlUcxThreadPoolEngine;
 };
 
 // A public metadata has to implement put, and only has the remote metadata
@@ -173,6 +176,14 @@ public:
                      const nixl_opt_args_t *opt_args = nullptr) const override;
 
     nixl_status_t
+    postPreparedSgl(nixlUcxBackendH *int_handle, const std::string &remote_agent) const;
+
+    [[nodiscard]] nixl_status_t
+    postXferSgl(nixlUcxBackendH *int_handle,
+                const std::string &remote_agent,
+                const nixl_opt_b_args_t *opt_args) const;
+
+    nixl_status_t
     postXfer(const nixl_xfer_op_t &operation,
              const nixl_meta_dlist_t &local,
              const nixl_meta_dlist_t &remote,
@@ -228,6 +239,11 @@ protected:
         return uws.size();
     }
 
+    [[nodiscard]] bool
+    isSglApiEnabled() const noexcept {
+        return sglApiEnabled_;
+    }
+
     void
     getNotifsImpl(notif_list_t &notif_list);
 
@@ -243,8 +259,19 @@ protected:
                   size_t start_idx,
                   size_t end_idx) const;
 
-    nixlUcxEngine(const nixlBackendInitParams &init_params);
+    ucx_connection_ptr_t
+    getConnection(const std::string &remote_agent) const;
 
+    nixl_status_t
+    prepareSglForRange(const nixl_xfer_op_t &operation,
+                       const nixl_meta_dlist_t &local,
+                       const nixl_meta_dlist_t &remote,
+                       size_t worker_id,
+                       size_t start_idx,
+                       size_t end_idx,
+                       nixlUcxSgl &sgl_handle) const;
+
+    nixlUcxEngine(const nixlBackendInitParams &init_params);
 private:
     // Memory management helpers
     nixl_status_t
@@ -265,23 +292,20 @@ private:
                   const std::unique_ptr<nixlUcxEp> &ep,
                   nixlUcxReq *req = nullptr) const;
 
-    ucx_connection_ptr_t
-    getConnection(const std::string &remote_agent) const;
-
-    struct batchResult {
+    struct sglResult {
         nixl_status_t status;
         size_t size;
         nixlUcxReq req;
     };
 
-    static batchResult
-    sendXferRangeBatch(nixlUcxEp &ep,
-                       nixl_xfer_op_t operation,
-                       const nixl_meta_dlist_t &local,
-                       const nixl_meta_dlist_t &remote,
-                       size_t worker_id,
-                       size_t start_idx,
-                       size_t end_idx);
+    static sglResult
+    sendXferRangeSgl(nixlUcxEp &ep,
+                     nixl_xfer_op_t operation,
+                     const nixl_meta_dlist_t &local,
+                     const nixl_meta_dlist_t &remote,
+                     size_t worker_id,
+                     size_t start_idx,
+                     size_t end_idx);
 
     /**
      * Get the worker ID from the optional arguments.
@@ -297,6 +321,11 @@ private:
     mutable std::atomic<size_t> sharedWorkerIndex_;
 
     const bool progressThreadEnabled_;
+
+    // Runtime gate for the SGL fast path, set from NIXL_UCX_ENABLE_SGL_API.
+    // TODO: replace with a compile-time #ifdef once the UCX SGL API is
+    //       fully supported and meson detection is in place.
+    const bool sglApiEnabled_;
 
     /* Notifications */
     notif_list_t notifMainList;
@@ -331,6 +360,8 @@ private:
 namespace asio {
 class io_context;
 }
+
+class nixlUcxChunkBackendH;
 
 class nixlUcxThreadPoolEngine : public nixlUcxEngine {
 public:
@@ -367,6 +398,16 @@ protected:
                   size_t end_idx) const override;
 
 private:
+    nixl_status_t
+    postSglForChunk(const nixl_xfer_op_t &operation,
+                    const nixl_meta_dlist_t &local,
+                    const nixl_meta_dlist_t &remote,
+                    const std::string &remote_agent,
+                    nixlUcxChunkBackendH *chunk_handle,
+                    size_t worker_id,
+                    size_t start_idx,
+                    size_t end_idx) const;
+
     std::unique_ptr<asio::io_context> io_;
     std::unique_ptr<nixlUcxThread> sharedThread_;
     std::vector<std::unique_ptr<nixlUcxThread>> dedicatedThreads_;

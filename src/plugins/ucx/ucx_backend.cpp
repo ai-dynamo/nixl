@@ -30,6 +30,8 @@
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include <asio.hpp>
+
+#include "common/configuration.h"
 namespace {
     void moveNotifList(notif_list_t &src, notif_list_t &tgt)
     {
@@ -62,6 +64,8 @@ private:
     };
     std::optional<Notif> notif;
 
+    nixlUcxSgl sgl_handle_;
+
     nixl_status_t
     checkConnection(nixl_status_t status = NIXL_SUCCESS) const {
         NIXL_ASSERT(!connections_.empty());
@@ -78,6 +82,21 @@ public:
     nixlUcxBackendH(nixlUcxWorker *worker, size_t worker_id)
         : worker(worker),
           worker_id(worker_id) {}
+
+    void
+    setPreparedSgl(nixlUcxSgl handle) {
+        sgl_handle_ = std::move(handle);
+    }
+
+    nixlUcxSglDesc *
+    getSglHandle() const {
+        return sgl_handle_.get();
+    }
+
+    void
+    releaseSgl() {
+        sgl_handle_.reset();
+    }
 
     auto &
     notification() {
@@ -475,6 +494,9 @@ struct nixlUcxBackendSharedState {
 void
 nixlUcxChunkBackendH::complete(nixl_status_t status) {
     NIXL_ASSERT(sharedState_.get() != nullptr);
+
+    releaseSgl();
+
     if (status != NIXL_SUCCESS) {
         nixlUcxBackendH::release();
         sharedState_->status.store(status);
@@ -698,6 +720,59 @@ nixlUcxThreadPoolEngine::~nixlUcxThreadPoolEngine() {
 }
 
 nixl_status_t
+nixlUcxThreadPoolEngine::postSglForChunk(const nixl_xfer_op_t &operation,
+                                         const nixl_meta_dlist_t &local,
+                                         const nixl_meta_dlist_t &remote,
+                                         const std::string &remote_agent,
+                                         nixlUcxChunkBackendH *chunk_handle,
+                                         size_t worker_id,
+                                         size_t start_idx,
+                                         size_t end_idx) const {
+    ucx_connection_ptr_t conn = getConnection(remote_agent);
+    if (!conn) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    auto &ep = conn->getEp(worker_id);
+    chunk_handle->reserve(3);
+
+    nixlUcxSgl sgl;
+    nixl_status_t ret = prepareSglForRange(operation,
+                                           local,
+                                           remote,
+                                           worker_id,
+                                           start_idx,
+                                           end_idx,
+                                           sgl);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
+
+    nixlUcxReq sgl_req = nullptr;
+    ret = ep->postSgl(sgl.get(), sgl_req);
+    if (ret < NIXL_SUCCESS) {
+        return ret;
+    }
+
+    chunk_handle->setPreparedSgl(std::move(sgl));
+
+    ret = chunk_handle->append(ret, sgl_req, conn);
+    if (ret != NIXL_SUCCESS) {
+        chunk_handle->releaseSgl();
+        return ret;
+    }
+
+    nixlUcxReq flush_req;
+    nixl_status_t flush_ret = ep->flushEp(flush_req);
+    ret = chunk_handle->append(flush_ret, flush_req, conn);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
 nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
                                   const nixl_meta_dlist_t &local,
                                   const nixl_meta_dlist_t &remote,
@@ -755,8 +830,22 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
             size_t start_idx = i * chunk_size;
             size_t end_idx = std::min(start_idx + chunk_size, (size_t)local.descCount());
-            nixl_status_t ret = nixlUcxEngine::sendXferRange(
-                operation, local, remote, remote_agent, chunk_handle, start_idx, end_idx);
+
+            nixl_status_t ret;
+            if (isSglApiEnabled() && operation == NIXL_WRITE) {
+                ret = postSglForChunk(operation,
+                                      local,
+                                      remote,
+                                      remote_agent,
+                                      chunk_handle,
+                                      thread->getWorkerId(),
+                                      start_idx,
+                                      end_idx);
+            } else {
+                ret = nixlUcxEngine::sendXferRange(
+                    operation, local, remote, remote_agent, chunk_handle, start_idx, end_idx);
+            }
+
             if (ret != NIXL_SUCCESS) {
                 status.store(ret);
                 chunk_handle->complete(ret);
@@ -821,7 +910,9 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     : nixlBackendEngine(&init_params),
       sharedWorkerIndex_(1),
-      progressThreadEnabled_(init_params.enableProgTh) {
+      progressThreadEnabled_(init_params.enableProgTh),
+      sglApiEnabled_(
+          nixl::config::getValueDefaulted<bool>("NIXL_UCX_ENABLE_SGL_API", false)) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
@@ -1091,6 +1182,35 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const n
     }
 }
 
+nixl_status_t
+nixlUcxEngine::prepareSglForRange(const nixl_xfer_op_t &operation,
+                                  const nixl_meta_dlist_t &local,
+                                  const nixl_meta_dlist_t &remote,
+                                  size_t worker_id,
+                                  size_t start_idx,
+                                  size_t end_idx,
+                                  nixlUcxSgl &sgl_handle) const {
+    size_t sgl_size = end_idx - start_idx;
+
+    auto sgl = std::make_unique<nixlUcxSglDesc>();
+    sgl->resize(sgl_size);
+
+    for (size_t i = start_idx; i < end_idx; i++) {
+        size_t idx = i - start_idx;
+        auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
+        auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
+
+        sgl->localVas[idx] = (void *)local[i].addr;
+        sgl->remoteVas[idx] = static_cast<uint64_t>(remote[i].addr);
+        sgl->lengths[idx] = local[i].len;
+        sgl->memhs[idx] = lmd->mem.getMemh();
+        sgl->rkeys[idx] = rmd->getRkey(worker_id).get();
+    }
+
+    sgl_handle = std::move(sgl);
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
@@ -1108,6 +1228,35 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
     auto *ucx_handle = new nixlUcxBackendH(getWorker(worker_id).get(), worker_id);
 
     handle = ucx_handle;
+
+    if (isSglApiEnabled() && operation == NIXL_WRITE) {
+        ucx_connection_ptr_t conn = getConnection(remote_agent);
+        if (!conn) {
+            NIXL_ERROR << "No connection found for remote agent: " << remote_agent;
+            delete ucx_handle;
+            handle = nullptr;
+            return NIXL_ERR_NOT_FOUND;
+        }
+
+        size_t lcnt = local.descCount();
+
+        nixlUcxSgl sgl;
+        nixl_status_t sgl_status = prepareSglForRange(operation,
+                                                      local,
+                                                      remote,
+                                                      worker_id,
+                                                      0,
+                                                      lcnt,
+                                                      sgl);
+
+        if (sgl_status != NIXL_SUCCESS) {
+            delete ucx_handle;
+            handle = nullptr;
+            return sgl_status;
+        }
+
+        ucx_handle->setPreparedSgl(std::move(sgl));
+    }
 
     return NIXL_SUCCESS;
 }
@@ -1168,15 +1317,15 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
     return NIXL_SUCCESS;
 }
 
-nixlUcxEngine::batchResult
-nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
-                                  nixl_xfer_op_t operation,
-                                  const nixl_meta_dlist_t &local,
-                                  const nixl_meta_dlist_t &remote,
-                                  size_t worker_id,
-                                  size_t start_idx,
-                                  size_t end_idx) {
-    batchResult result = {NIXL_SUCCESS, 0, nullptr};
+nixlUcxEngine::sglResult
+nixlUcxEngine::sendXferRangeSgl(nixlUcxEp &ep,
+                                nixl_xfer_op_t operation,
+                                const nixl_meta_dlist_t &local,
+                                const nixl_meta_dlist_t &remote,
+                                size_t worker_id,
+                                size_t start_idx,
+                                size_t end_idx) {
+    sglResult result = {NIXL_SUCCESS, 0, nullptr};
 
     for (size_t i = start_idx; i < end_idx; ++i) {
         void *laddr = (void *)local[i].addr;
@@ -1238,11 +1387,15 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
      * one flush request, and one notification request */
     intHandle->reserve(3);
 
+    if (operation == NIXL_WRITE && intHandle->getSglHandle() != nullptr) {
+        return postPreparedSgl(intHandle, remote_agent);
+    }
+
     for (size_t i = start_idx; i < end_idx;) {
         /* Send requests to a single EP */
         auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
         auto &ep = rmd->conn->getEp(workerId);
-        auto result = sendXferRangeBatch(*ep, operation, local, remote, workerId, i, end_idx);
+        auto result = sendXferRangeSgl(*ep, operation, local, remote, workerId, i, end_idx);
 
         /* Append a single pending request for the entire EP batch */
         ret = intHandle->append(result.status, result.req, rmd->conn);
@@ -1271,6 +1424,76 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
+nixlUcxEngine::postPreparedSgl(nixlUcxBackendH *int_handle,
+                               const std::string &remote_agent) const {
+    ucx_connection_ptr_t conn = getConnection(remote_agent);
+    if (!conn) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    size_t worker_id = int_handle->getWorkerId();
+    auto &ep = conn->getEp(worker_id);
+    nixlUcxSglDesc *sgl = int_handle->getSglHandle();
+
+    NIXL_ASSERT(sgl != nullptr);
+
+    int_handle->reserve(3);
+
+    nixlUcxReq sgl_req = nullptr;
+    nixl_status_t ret = ep->postSgl(sgl, sgl_req);
+
+    if (ret < NIXL_SUCCESS) {
+        return ret;
+    }
+
+    ret = int_handle->append(ret, sgl_req, conn);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
+
+    nixlUcxReq flush_req;
+    ret = ep->flushEp(flush_req);
+    if (int_handle->append(ret, flush_req, conn) != NIXL_SUCCESS) {
+        return ret;
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::postXferSgl(nixlUcxBackendH *int_handle,
+                           const std::string &remote_agent,
+                           const nixl_opt_b_args_t *opt_args) const {
+    nixl_status_t ret = postPreparedSgl(int_handle, remote_agent);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
+
+    ret = int_handle->status();
+    if (opt_args && opt_args->hasNotif) {
+        if (ret == NIXL_SUCCESS) {
+            ucx_connection_ptr_t conn = getConnection(remote_agent);
+            if (!conn) {
+                return NIXL_ERR_NOT_FOUND;
+            }
+            nixlUcxReq notif_req;
+            ret = notifSendPriv(remote_agent,
+                                opt_args->notifMsg,
+                                conn->getEp(int_handle->getWorkerId()),
+                                &notif_req);
+            if (int_handle->append(ret, notif_req, conn) != NIXL_SUCCESS) {
+                return ret;
+            }
+            ret = int_handle->status();
+        } else if (ret == NIXL_IN_PROG) {
+            int_handle->notification().emplace(remote_agent, opt_args->notifMsg);
+        }
+    }
+
+    return ret;
+}
+
+nixl_status_t
 nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
                         const nixl_meta_dlist_t &local,
                         const nixl_meta_dlist_t &remote,
@@ -1289,6 +1512,10 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
+
+    if (operation == NIXL_WRITE && int_handle->getSglHandle() != nullptr) {
+        return postXferSgl(int_handle, remote_agent, opt_args);
+    }
 
     ret = sendXferRange(operation, local, remote, remote_agent, handle, 0, lcnt);
     if (ret != NIXL_SUCCESS) {
@@ -1352,6 +1579,9 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+
+    intHandle->releaseSgl();
+
     nixl_status_t status = intHandle->release();
 
     /* TODO: return to a pool instead. */

@@ -77,6 +77,48 @@ nixl_b_params_get(const nixl_b_params_t *custom_params, const std::string &key, 
 
 using nixlUcxReq = void *;
 
+struct nixlUcxSglDesc {
+    std::vector<void *> localVas;
+    std::vector<uint64_t> remoteVas;
+    std::vector<size_t> lengths;
+    std::vector<ucp_mem_h> memhs;
+    std::vector<ucp_rkey_h> rkeys;
+
+    void
+    resize(size_t n) {
+        localVas.resize(n);
+        remoteVas.resize(n);
+        lengths.resize(n);
+        memhs.resize(n);
+        rkeys.resize(n);
+    }
+
+    ucp_dt_local_sgl_t
+    toLocalSgl() const {
+        ucp_dt_local_sgl_t v = {};
+        v.field_mask = UCP_DT_LOCAL_SGL_FIELD_BUFFERS |
+                       UCP_DT_LOCAL_SGL_FIELD_LENGTHS |
+                       UCP_DT_LOCAL_SGL_FIELD_MEMHS;
+        v.buffers = localVas.data();
+        v.lengths = lengths.data();
+        v.memhs = memhs.data();
+        return v;
+    }
+
+    ucp_dt_remote_sgl_t
+    toRemoteSgl() const {
+        ucp_dt_remote_sgl_t v = {};
+        v.field_mask = UCP_DT_REMOTE_SGL_FIELD_REMOTE_ADDRS |
+                       UCP_DT_REMOTE_SGL_FIELD_LENGTHS |
+                       UCP_DT_REMOTE_SGL_FIELD_RKEYS;
+        v.remote_addrs = remoteVas.data();
+        v.lengths = lengths.data();
+        v.rkeys = rkeys.data();
+        return v;
+    }
+};
+using nixlUcxSgl = std::unique_ptr<nixlUcxSglDesc>;
+
 namespace nixl::ucx {
 class rkey;
 }
@@ -165,6 +207,9 @@ public:
                  nixl_cost_t &method);
     nixl_status_t
     flushEp(nixlUcxReq &req);
+
+    [[nodiscard]] nixl_status_t
+    postSgl(const nixlUcxSglDesc *sgl, nixlUcxReq &req);
 
     [[nodiscard]] ucp_ep_h
     getEp() const noexcept {
