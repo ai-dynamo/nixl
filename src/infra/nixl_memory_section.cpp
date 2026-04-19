@@ -227,18 +227,20 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
 
     // First check if the mem_elms are present in the list,
     // don't deregister anything in case any is missing.
-    for (auto & elm : mem_elms) {
+    std::vector<int> indices;
+    indices.reserve(mem_elms.descCount());
+    for (auto &elm : mem_elms) {
         int index = target.getIndex(elm);
         if (index < 0)
             return NIXL_ERR_NOT_FOUND;
+        indices.push_back(index);
     }
 
-    for (auto & elm : mem_elms) {
-        int index = target.getIndex(elm);
-        // Already checked, elm should always be found. Can add a check in debug mode.
-        backend->deregisterMem(target[index].metadataP);
-        target.remDesc(index);
-    }
+    for (int idx : indices)
+        backend->deregisterMem(target[idx].metadataP);
+
+    std::sort(indices.begin(), indices.end());
+    target.remDescs(std::move(indices));
 
     if (target.isEmpty()) {
         sectionMap.erase(sec_key); // Invalidates target.
@@ -450,13 +452,18 @@ nixlRemoteSection::removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackend
 
     nixlSecDescList &target = it->second;
 
+    std::vector<int> indices;
+    indices.reserve(mem_elms.descCount());
     for (auto &elm : mem_elms) {
         const int index = target.getIndex(elm);
-        if (index >= 0) {
-            backend.unloadMD(target[index].metadataP);
-            target.remDesc(index);
-        }
+        if (index >= 0) indices.push_back(index);
     }
+
+    for (int idx : indices)
+        backend.unloadMD(target[idx].metadataP);
+
+    std::sort(indices.begin(), indices.end());
+    target.remDescs(std::move(indices));
 
     if (target.isEmpty()) {
         sectionMap.erase(it);
