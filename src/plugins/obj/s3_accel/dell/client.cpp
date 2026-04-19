@@ -49,7 +49,7 @@ awsS3DellObsClient::putObjectAsync(std::string_view key,
     std::string token;
     try {
         token = tokenMgr_->generatePutToken(
-            reinterpret_cast<void *>(data_ptr), data_len, 0);
+            reinterpret_cast<void *>(data_ptr), data_len);
     } catch (const std::exception &e) {
         NIXL_ERROR << "putObjectAsync: RDMA token generation failed: " << e.what();
         callback(false);
@@ -114,7 +114,7 @@ awsS3DellObsClient::getObjectAsync(std::string_view key,
     std::string token;
     try {
         token = tokenMgr_->generateGetToken(
-            reinterpret_cast<void *>(data_ptr), data_len, offset);
+            reinterpret_cast<void *>(data_ptr), data_len);
     } catch (const std::exception &e) {
         NIXL_ERROR << "getObjectAsync: RDMA token generation failed: " << e.what();
         callback(false);

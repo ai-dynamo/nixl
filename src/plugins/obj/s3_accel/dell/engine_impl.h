@@ -31,10 +31,6 @@ public:
      * Construct the Dell engine.
      * Creates a CuObjTokenManager and an awsS3DellObsClient.
      *
-     * If the optional backend parameter "rdma_pool_size" is set, the first
-     * DRAM/VRAM registration will be expanded to cover the entire pool,
-     * so that subsequent page-sized registrations are instant no-ops.
-     *
      * @param init_params  Backend initialisation parameters.
      */
     explicit S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params);
@@ -66,8 +62,7 @@ public:
      *
      * - OBJ_SEG: delegated to the parent (devId → object key mapping).
      * - DRAM_SEG / VRAM_SEG: registered with cuObject via the token manager.
-     *   The token manager de-duplicates: if the address falls within an
-     *   already-registered pool region, the call is a refcount increment.
+     *   Each page is registered individually at its exact address and size.
      *
      * @param mem       Memory blob descriptor (addr, len, devId, metaInfo).
      * @param nixl_mem  Memory type.
@@ -106,14 +101,6 @@ protected:
 private:
     std::shared_ptr<iS3Client> s3Client_;
     std::shared_ptr<CuObjTokenManager> tokenMgr_;
-
-    /**
-     * Optional pool size hint read from the "rdma_pool_size" backend parameter.
-     * When non-zero, the first DRAM/VRAM registerMem is expanded to cover
-     * [addr, addr+rdmaPoolSize_) so that all subsequent pages within the
-     * same contiguous buffer are de-duplicated by the token manager.
-     */
-    size_t rdmaPoolSize_ = 0;
 };
 
 #endif // NIXL_OBJ_PLUGIN_S3_DELL_ENGINE_IMPL_H

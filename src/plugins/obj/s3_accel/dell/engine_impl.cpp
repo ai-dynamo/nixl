@@ -32,26 +32,8 @@ public:
 
     nixl_mem_t memType;   ///< DRAM_SEG or VRAM_SEG.
     uintptr_t  addr;      ///< Start address (for deregisterMemory).
-    size_t     len;       ///< Length in bytes (for deregisterMemory).
+    size_t     len;       ///< Length in bytes.
 };
-
-/**
- * Parse the optional "rdma_pool_size" backend parameter.
- * Returns 0 if the parameter is absent or invalid.
- */
-static size_t
-parseRdmaPoolSize(nixl_b_params_t *custom_params) {
-    if (!custom_params) return 0;
-    auto it = custom_params->find("rdma_pool_size");
-    if (it == custom_params->end()) return 0;
-    try {
-        return std::stoull(it->second);
-    } catch (const std::exception &e) {
-        NIXL_WARN << "Invalid rdma_pool_size value: " << it->second
-                  << " — ignoring (" << e.what() << ")";
-        return 0;
-    }
-}
 
 } // namespace
 
@@ -62,8 +44,6 @@ parseRdmaPoolSize(nixl_b_params_t *custom_params) {
 S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(
         const nixlBackendInitParams *init_params)
     : S3AccelObjEngineImpl(init_params) {
-    rdmaPoolSize_ = parseRdmaPoolSize(init_params->customParams);
-
     // Create the token manager (Pattern B — no callbacks).
     tokenMgr_ = std::make_shared<CuObjTokenManager>(CUOBJ_PROTO_RDMA_DC_V1);
     if (!tokenMgr_->isConnected()) {
@@ -74,18 +54,13 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(
     // Create the Dell RDMA client that uses the token manager.
     s3Client_ = std::make_shared<awsS3DellObsClient>(
         init_params->customParams, tokenMgr_, executor_);
-    NIXL_INFO << "Dell ObjectScale engine initialized (Pattern B)"
-              << (rdmaPoolSize_ > 0
-                  ? ", rdma_pool_size=" + std::to_string(rdmaPoolSize_)
-                  : "");
+    NIXL_INFO << "Dell ObjectScale engine initialized (Pattern B)";
 }
 
 S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(
         const nixlBackendInitParams *init_params,
         std::shared_ptr<iS3Client> s3_client)
     : S3AccelObjEngineImpl(init_params, s3_client) {
-    rdmaPoolSize_ = parseRdmaPoolSize(init_params->customParams);
-
     // Use the injected client if provided (testing), otherwise create one.
     if (s3_client) {
         s3Client_ = s3_client;
@@ -133,10 +108,10 @@ S3DellObsObjEngineImpl::registerMem(const nixlBlobDesc &mem,
         return NIXL_ERR_BACKEND;
     }
 
-    // Use rdmaPoolSize_ as a hint so the token manager registers the entire
-    // pool on the first call, and subsequent pages are instant refcount bumps.
+    // Register this page at its exact address and size (1:1 mapping).
+    // Registration happens at init time, not on the hot path.
     cuObjErr_t rc = tokenMgr_->registerMemory(
-        reinterpret_cast<void *>(mem.addr), mem.len, rdmaPoolSize_);
+        reinterpret_cast<void *>(mem.addr), mem.len);
     if (rc != CU_OBJ_SUCCESS) {
         NIXL_ERROR << "cuObject memory registration failed for addr=0x"
                    << std::hex << mem.addr << " len=" << std::dec << mem.len;
@@ -167,11 +142,11 @@ S3DellObsObjEngineImpl::deregisterMem(nixlBackendMD *meta) {
         return S3AccelObjEngineImpl::deregisterMem(meta);
     }
 
-    // DRAM/VRAM: deregister from cuObject (refcount-based in the token manager).
+    // DRAM/VRAM: deregister from cuObject.
     nixl_status_t result = NIXL_SUCCESS;
     if (tokenMgr_) {
         cuObjErr_t rc = tokenMgr_->deregisterMemory(
-            reinterpret_cast<void *>(dell_md->addr), dell_md->len);
+            reinterpret_cast<void *>(dell_md->addr));
         if (rc != CU_OBJ_SUCCESS) {
             NIXL_ERROR << "cuObject deregistration failed for addr=0x"
                        << std::hex << dell_md->addr;

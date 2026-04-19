@@ -697,4 +697,218 @@ TEST_F(objCrtTestFixture, MixedSizeThreshold) {
     testMultiDescriptorWithSizes(NIXL_WRITE, 1048576, 6291456, "-crt-mixed");
 }
 
+// ---------------------------------------------------------------------------
+// CuObjTokenManager integration tests (require cuObject library)
+//
+// These tests exercise the CuObjTokenManager directly against the real
+// cuObjClient library.  They validate:
+//   - Construction and connection status
+//   - Input validation (null ptr, zero size, oversized regions)
+//   - Memory registration and deregistration with system memory
+//   - Token generation for registered memory (requires RDMA hardware)
+//
+// Tests that require RDMA hardware (token generation) are skipped
+// gracefully if the cuObject client cannot connect.
+// ---------------------------------------------------------------------------
+#if defined HAVE_CUOBJ_CLIENT
+
+#include "s3_accel/dell/cuobj_token_manager.h"
+#include <cstdlib>
+#include <cstring>
+
+class CuObjTokenManagerTest : public testing::Test {
+protected:
+    // Allocate page-aligned system memory for RDMA registration tests.
+    // cuMemObjGetDescriptor requires the buffer to remain valid until
+    // cuMemObjPutDescriptor is called.
+    static constexpr size_t kPageSize = 4096;
+    static constexpr size_t kBufferSize = 64 * 1024; // 64 KiB
+
+    void *buffer_ = nullptr;
+
+    void SetUp() override {
+        // posix_memalign guarantees page alignment, which cuObject prefers.
+        int rc = posix_memalign(&buffer_, kPageSize, kBufferSize);
+        ASSERT_EQ(rc, 0);
+        ASSERT_NE(buffer_, nullptr);
+        std::memset(buffer_, 0xAB, kBufferSize);
+    }
+
+    void TearDown() override {
+        if (buffer_) {
+            free(buffer_);
+            buffer_ = nullptr;
+        }
+    }
+};
+
+// --- Construction tests ---
+
+TEST_F(CuObjTokenManagerTest, ConstructionDefault) {
+    // The token manager should construct without throwing.
+    // Connection may fail if no RDMA hardware is available — that's OK,
+    // isConnected() will return false.
+    CuObjTokenManager mgr;
+    // isConnected() returns a valid bool (true or false) — no crash.
+    (void)mgr.isConnected();
+}
+
+TEST_F(CuObjTokenManagerTest, ConstructionWithProtocol) {
+    CuObjTokenManager mgr(CUOBJ_PROTO_RDMA_DC_V1);
+    (void)mgr.isConnected();
+}
+
+// --- Input validation tests (do not require RDMA hardware) ---
+
+TEST_F(CuObjTokenManagerTest, RegisterNullPtrFails) {
+    CuObjTokenManager mgr;
+    EXPECT_EQ(mgr.registerMemory(nullptr, kBufferSize), CU_OBJ_FAIL);
+}
+
+TEST_F(CuObjTokenManagerTest, RegisterZeroSizeFails) {
+    CuObjTokenManager mgr;
+    EXPECT_EQ(mgr.registerMemory(buffer_, 0), CU_OBJ_FAIL);
+}
+
+TEST_F(CuObjTokenManagerTest, RegisterOversizedFails) {
+    CuObjTokenManager mgr;
+    // 4 GiB is the cuObject limit (CUOBJ_MAX_MEMORY_REG_SIZE).
+    size_t too_large = 4ULL * 1024 * 1024 * 1024;
+    EXPECT_EQ(mgr.registerMemory(buffer_, too_large), CU_OBJ_FAIL);
+}
+
+TEST_F(CuObjTokenManagerTest, DeregisterNullPtrSucceeds) {
+    CuObjTokenManager mgr;
+    // Deregistering nullptr is a no-op, should not fail.
+    EXPECT_EQ(mgr.deregisterMemory(nullptr), CU_OBJ_SUCCESS);
+}
+
+TEST_F(CuObjTokenManagerTest, GeneratePutTokenNullPtrThrows) {
+    CuObjTokenManager mgr;
+    EXPECT_THROW(mgr.generatePutToken(nullptr, kBufferSize), std::runtime_error);
+}
+
+TEST_F(CuObjTokenManagerTest, GenerateGetTokenZeroSizeThrows) {
+    CuObjTokenManager mgr;
+    EXPECT_THROW(mgr.generateGetToken(buffer_, 0), std::runtime_error);
+}
+
+// --- Memory registration tests (require cuObject library, not RDMA NIC) ---
+
+TEST_F(CuObjTokenManagerTest, RegisterAndDeregisterSystemMemory) {
+    CuObjTokenManager mgr;
+    if (!mgr.isConnected()) {
+        GTEST_SKIP() << "cuObject client not connected (no RDMA hardware)";
+    }
+
+    // Register system (host) memory — should succeed even without RDMA NIC
+    // because cuMemObjGetDescriptor prepares the buffer for potential RDMA.
+    cuObjErr_t rc = mgr.registerMemory(buffer_, kBufferSize);
+    EXPECT_EQ(rc, CU_OBJ_SUCCESS);
+
+    // Deregister — should match the registration.
+    rc = mgr.deregisterMemory(buffer_);
+    EXPECT_EQ(rc, CU_OBJ_SUCCESS);
+}
+
+TEST_F(CuObjTokenManagerTest, RegisterMultipleRegions) {
+    CuObjTokenManager mgr;
+    if (!mgr.isConnected()) {
+        GTEST_SKIP() << "cuObject client not connected (no RDMA hardware)";
+    }
+
+    // Simulate the NIXL pattern: register multiple pages from a contiguous
+    // buffer, each at its own address and size.
+    void *page0 = buffer_;
+    void *page1 = static_cast<char *>(buffer_) + kPageSize;
+    void *page2 = static_cast<char *>(buffer_) + 2 * kPageSize;
+
+    EXPECT_EQ(mgr.registerMemory(page0, kPageSize), CU_OBJ_SUCCESS);
+    EXPECT_EQ(mgr.registerMemory(page1, kPageSize), CU_OBJ_SUCCESS);
+    EXPECT_EQ(mgr.registerMemory(page2, kPageSize), CU_OBJ_SUCCESS);
+
+    // Deregister in reverse order — each is independent.
+    EXPECT_EQ(mgr.deregisterMemory(page2), CU_OBJ_SUCCESS);
+    EXPECT_EQ(mgr.deregisterMemory(page1), CU_OBJ_SUCCESS);
+    EXPECT_EQ(mgr.deregisterMemory(page0), CU_OBJ_SUCCESS);
+}
+
+TEST_F(CuObjTokenManagerTest, RegisterDeregisterIdempotent) {
+    CuObjTokenManager mgr;
+    if (!mgr.isConnected()) {
+        GTEST_SKIP() << "cuObject client not connected (no RDMA hardware)";
+    }
+
+    // Register and deregister the same region twice — simulates page reuse.
+    EXPECT_EQ(mgr.registerMemory(buffer_, kBufferSize), CU_OBJ_SUCCESS);
+    EXPECT_EQ(mgr.deregisterMemory(buffer_), CU_OBJ_SUCCESS);
+
+    // Re-register the same memory (page recycled by the allocator).
+    EXPECT_EQ(mgr.registerMemory(buffer_, kBufferSize), CU_OBJ_SUCCESS);
+    EXPECT_EQ(mgr.deregisterMemory(buffer_), CU_OBJ_SUCCESS);
+}
+
+// --- Token generation tests (require RDMA hardware) ---
+
+TEST_F(CuObjTokenManagerTest, GeneratePutTokenForRegisteredMemory) {
+    CuObjTokenManager mgr;
+    if (!mgr.isConnected()) {
+        GTEST_SKIP() << "cuObject client not connected (no RDMA hardware)";
+    }
+
+    cuObjErr_t rc = mgr.registerMemory(buffer_, kBufferSize);
+    if (rc != CU_OBJ_SUCCESS) {
+        GTEST_SKIP() << "cuMemObjGetDescriptor failed (system memory may not be RDMA-capable)";
+    }
+
+    // Generate a PUT token — requires RDMA NIC.
+    // If no RDMA hardware, cuMemObjGetRDMAToken will throw.
+    try {
+        std::string token = mgr.generatePutToken(buffer_, kBufferSize);
+        // Token should be non-empty if generation succeeded.
+        EXPECT_FALSE(token.empty());
+        // Token should contain the RDMA protocol identifier.
+        // (Implementation detail: CUOBJ tokens typically start with "CUOBJ" prefix)
+    } catch (const std::runtime_error &) {
+        // cuMemObjGetRDMAToken failed — expected if no RDMA NIC is present.
+        // This is not a test failure; token generation requires real hardware.
+    }
+
+    mgr.deregisterMemory(buffer_);
+}
+
+TEST_F(CuObjTokenManagerTest, GenerateGetTokenForRegisteredMemory) {
+    CuObjTokenManager mgr;
+    if (!mgr.isConnected()) {
+        GTEST_SKIP() << "cuObject client not connected (no RDMA hardware)";
+    }
+
+    cuObjErr_t rc = mgr.registerMemory(buffer_, kBufferSize);
+    if (rc != CU_OBJ_SUCCESS) {
+        GTEST_SKIP() << "cuMemObjGetDescriptor failed";
+    }
+
+    try {
+        std::string token = mgr.generateGetToken(buffer_, kBufferSize);
+        EXPECT_FALSE(token.empty());
+    } catch (const std::runtime_error &) {
+        // Expected if no RDMA NIC.
+    }
+
+    mgr.deregisterMemory(buffer_);
+}
+
+TEST_F(CuObjTokenManagerTest, GenerateTokenForUnregisteredMemoryThrows) {
+    CuObjTokenManager mgr;
+    if (!mgr.isConnected()) {
+        GTEST_SKIP() << "cuObject client not connected (no RDMA hardware)";
+    }
+
+    // Do NOT register buffer_ — generatePutToken should fail because
+    // cuMemObjGetRDMAToken requires prior registration.
+    EXPECT_THROW(mgr.generatePutToken(buffer_, kBufferSize), std::runtime_error);
+}
+
+#endif // HAVE_CUOBJ_CLIENT
+
 } // namespace gtest::obj

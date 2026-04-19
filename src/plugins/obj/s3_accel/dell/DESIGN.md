@@ -19,7 +19,7 @@ calls that invoke `CUObjIOOps` callbacks.  The callbacks are expected
 to perform the **entire server round-trip** and return the byte count
 transferred.  Our callbacks do neither: they copy `infop->desc_str`
 into a context struct, return `0`, and the actual S3 request happens
-later in `postXfer`. 
+later in `postXfer`.
 
 Pattern B's `cuMemObjGetRDMAToken()` is designed exactly for our use
 case: generate a token, use it in your own HTTP request, free it when
@@ -45,7 +45,7 @@ postXfer:  inherited from parent → calls putObjectAsync/getObjectAsync
 
 | File | What | Why needed |
 |------|------|------------|
-| **cuobj_token_manager.h/.cpp** (NEW) | RAII wrapper: `registerMemory`, `deregisterMemory`, `generatePutToken`, `generateGetToken` | Replaces `CUObjIOOps` callbacks, `rdma_ctx_t`, `objectGet/objectPut` statics, and `obs_ops` global. Pool-aware registration with refcounting so per-page `registerMem` calls from NIXL core map to one `cuMemObjGetDescriptor`. |
+| **cuobj_token_manager.h/.cpp** (NEW) | RAII wrapper: `registerMemory`, `deregisterMemory`, `generatePutToken`, `generateGetToken` | Replaces `CUObjIOOps` callbacks, `rdma_ctx_t`, `objectGet/objectPut` statics, and `obs_ops` global. Simple 1:1 mapping: each `registerMemory` = one `cuMemObjGetDescriptor`, each `deregisterMemory` = one `cuMemObjPutDescriptor`. |
 | **client.h/.cpp** (REWRITE) | Overrides standard `putObjectAsync`/`getObjectAsync` with RDMA token injection | Replaces `iDellS3RdmaClient` separate interface and its `putObjectRdmaAsync`/`getObjectRdmaAsync`. Eliminates the `dynamic_cast` in `postXfer`. The Dell client now fulfills the standard `iS3Client` contract — the parent's `postXfer` calls it without knowing RDMA is involved. |
 | **engine_impl.h/.cpp** (SIMPLIFY) | Only overrides `registerMem`, `deregisterMem`, `getSupportedMems`, `getClient` | Removes `prepXfer`, `postXfer`, `checkXfer`, `releaseReqH` overrides (inherited from `DefaultObjEngineImpl`). Removes 5 helper classes: `obsObjTransferRequestH`, `nixlObsObjBackendReqH`, `nixlObsObjMetadata`, `rdma_ctx_t`, `isValidPrepXferParams` duplicate. |
 | **rdma_interface.h** (DELETE) | Removes `iDellS3RdmaClient` interface | No longer needed — Dell client implements the standard `iS3Client` interface. |
@@ -64,27 +64,21 @@ This eliminates the need for custom request handle classes to carry
 descriptors between `prepXfer` and `postXfer`, and allows the Dell
 engine to inherit the parent's entire transfer pipeline unchanged.
 
-## Pool-aware memory registration
+Note: `cuMemObjGetRDMAToken` is a lightweight token generation call
+(not a synchronous I/O operation like `cuObjPut`/`cuObjGet`), so the
+per-transfer cost should be comparable or lower.  Benchmarking is
+planned to verify this.
 
-NIXL's core calls `backend->registerMem()` once per page.  For a 2 GB
-buffer with 1 MB pages, that is 2,048 calls.  `cuMemObjGetDescriptor()`
-is heavyweight (pins memory, creates NIC Memory Regions), so doing it
-2,048 times takes ~1–2 seconds.
+## Memory registration: 1:1 per page
 
-`CuObjTokenManager::registerMemory()` takes an optional `pool_hint`
-parameter.  On the first call, it registers `[ptr, ptr+pool_hint)`
-instead of just `[ptr, ptr+page_size)`.  Subsequent calls check
-`findContainingRegion()` — if the address is already within the
-registered pool, it increments a refcount and returns immediately.
+Each `registerMem(DRAM/VRAM)` call maps to exactly one
+`cuMemObjGetDescriptor(page_addr, page_size)`.  Each `deregisterMem`
+maps to exactly one `cuMemObjPutDescriptor(page_addr)`.
 
-Result: 1 `cuMemObjGetDescriptor` call instead of 2,048.  The
-`pool_hint` is passed from the Dell engine via the `rdma_pool_size`
-backend parameter, which callers (e.g. LMCache) set to their allocator
-buffer size.  Token generation (`cuMemObjGetRDMAToken`) computes the
-pool-relative offset automatically.
-
-Deregistration is refcount-based: `cuMemObjPutDescriptor` fires only
-when the last page within a pool is deregistered.
+Registration happens at application init time (not on the transfer
+hot path), so per-page registration cost is acceptable.  Token
+generation uses `buffer_offset=0` because each page is registered
+at its exact address — no pool-relative offset computation needed.
 
 ## Net result
 
