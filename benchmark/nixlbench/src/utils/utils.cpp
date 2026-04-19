@@ -513,7 +513,7 @@ xferBenchConfig::loadParams(void) {
         std::string device_api_reason;
         if (!isDeviceAPISupported(&device_api_reason)) {
             std::cout << "Invalid configuration for NIXL Device API: " << device_api_reason
-                      << ", reset to false" << std::endl;
+                      << ". Reset use_device_api to false" << std::endl;
             use_device_api = false;
         } else {
             std::cout << "NIXL Device API is enabled, --num-threads used as GPU kernel block thread count with value 1 - 1024" << std::endl;
@@ -788,6 +788,14 @@ xferBenchConfig::isObjStorageBackend() {
 bool
 xferBenchConfig::isDeviceAPISupported(std::string *reason) {
 #if HAVE_CUDA
+#if !HAVE_UCX_DEVICE_KERNEL
+    if (reason) {
+        *reason =
+            "UCX device kernel support is not enabled in this build. "
+            "Set -Ducx_device_include_path=<path>";
+    }
+    return false;
+#endif
     if (xferBenchConfig::worker_type != XFERBENCH_WORKER_NIXL) {
         if (reason) {
             *reason = "worker_type must be nixl";

@@ -20,7 +20,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstring>
-#if HAVE_CUDA
+#if HAVE_UCX_DEVICE_KERNEL
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include "kernels/nixlbench_device_launch.cuh"
@@ -331,10 +331,8 @@ xferBenchNixlWorker::~xferBenchNixlWorker() {
     rt = nullptr;
 
     if (agent) {
-#if HAVE_CUDA
         releaseGPURemoteView();
         releaseGPULocalView();
-#endif
         delete agent;
         agent = nullptr;
     }
@@ -1529,7 +1527,7 @@ execTransfer(nixlAgent *agent,
     return ret;
 }
 
-#if HAVE_CUDA
+#if HAVE_UCX_DEVICE_KERNEL
 // Descriptor count after the same flattening as prepareGPULocalView.
 static size_t
 countFlattenedRegions(const std::vector<std::vector<xferBenchIOV>> &local_iovs) {
@@ -1636,7 +1634,7 @@ resetDeviceCounters(const xferBenchIOV &counter_iov) {
                      "Failed to reset completion counters in VRAM");
 }
 
-#endif  // HAVE_CUDA
+#endif  // HAVE_UCX_DEVICE_KERNEL
 std::variant<xferBenchStats, int>
 xferBenchNixlWorker::transfer(size_t block_size,
                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
@@ -1660,7 +1658,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
     }
 
     if (skip > 0) {
-#if HAVE_CUDA
+#if HAVE_UCX_DEVICE_KERNEL
         if (xferBenchConfig::use_device_api) {
             size_t num_regions = countFlattenedRegions(remote_iovs);
             const bool signal_remote_completion =
@@ -1703,7 +1701,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
 
     stats.clear();
 
-#if HAVE_CUDA
+#if HAVE_UCX_DEVICE_KERNEL
     if (xferBenchConfig::use_device_api) {
         size_t num_regions = countFlattenedRegions(remote_iovs);
         const bool signal_remote_completion =
@@ -1777,7 +1775,7 @@ xferBenchNixlWorker::poll(size_t block_size) {
         }
     };
 
-#if HAVE_CUDA
+#if HAVE_UCX_DEVICE_KERNEL
     const bool use_device_completion_counter =
         xferBenchConfig::use_device_api &&
         completion_counter_iov.has_value();
