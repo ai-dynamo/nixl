@@ -45,29 +45,19 @@ nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 
-start_etcd_server "/nixl/nixlbench_ci"
-
 echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}
 
 DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 16384 --max_block_size 16384 --start_batch_size 4 --max_batch_size 4"
 
-run_nixlbench_noetcd() {
+run_nixlbench_one_worker() {
     args="$@"
     ./bin/nixlbench $DEFAULT_NB_PARAMS $args
 }
 
-run_nixlbench_one_worker() {
-    args="$@"
-    run_nixlbench_noetcd $args
-}
-
-run_nixlbench_two_workers() {
-    args="$@"
-    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
-    command_line="./bin/nixlbench --etcd-endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group $benchmark_group $args"
-    parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 3 ; $command_line"
-}
+for op_type in READ WRITE; do
+    run_nixlbench_one_worker --backend POSIX --op_type $op_type --check_consistency
+done
 
 if $HAS_GPU ; then
     seg_types="VRAM DRAM"
@@ -76,23 +66,63 @@ else
     echo "Worker without GPU, skipping VRAM tests"
 fi
 
+get_random_tcp_port() {
+    python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind((\"\", 0))
+print(s.getsockname()[1])
+s.close()
+"
+}
+
+run_nixlbench_two_workers_asio() {
+    args="$@"
+    asio_port=$(get_random_tcp_port)
+    command_line="./bin/nixlbench --runtime_type=ASIO --asio_port=$asio_port $DEFAULT_NB_PARAMS $args"
+    parallel --line-buffer --halt now,fail=1 ::: "$command_line" "$command_line"
+}
+
 for op_type in READ WRITE; do
     for initiator in $seg_types; do
         for target in $seg_types; do
-            run_nixlbench_two_workers --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+            run_nixlbench_two_workers_asio --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
         done
     done
-done
-
-for op_type in READ WRITE; do
-    run_nixlbench_one_worker --backend POSIX --op_type $op_type --check_consistency
 done
 
 if $HAS_GPU ; then
     for op_type in READ WRITE; do
         for initiator in $seg_types; do
             for target in $seg_types; do
-                run_nixlbench_two_workers --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+                run_nixlbench_two_workers_asio --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+            done
+        done
+    done
+fi
+
+run_nixlbench_two_workers_etcd() {
+    args="$@"
+    benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
+    command_line="./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group $benchmark_group $args"
+    parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 4 ; $command_line"
+}
+
+start_etcd_server "/nixl/nixlbench_ci"
+
+for op_type in READ WRITE; do
+    for initiator in $seg_types; do
+        for target in $seg_types; do
+            run_nixlbench_two_workers_etcd --backend UCX --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+        done
+    done
+done
+
+if $HAS_GPU ; then
+    for op_type in READ WRITE; do
+        for initiator in $seg_types; do
+            for target in $seg_types; do
+                run_nixlbench_two_workers_etcd --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
             done
         done
     done
