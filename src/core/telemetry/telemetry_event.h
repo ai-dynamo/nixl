@@ -99,9 +99,11 @@ nixlTelemetryEventTypeForStatus(nixl_status_t s) noexcept {
         return nixl_telemetry_event_type_t::AGENT_ERR_CANCELED;
     case NIXL_ERR_NO_TELEMETRY:
         return nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY;
-    default:
+    case NIXL_SUCCESS:
+    case NIXL_IN_PROG:
         return std::nullopt;
     }
+    return std::nullopt;
 }
 
 namespace nixlEnumStrings {
@@ -110,7 +112,7 @@ telemetryCategoryStr(const nixl_telemetry_category_t &category);
 
 [[nodiscard]] constexpr std::string_view
 telemetryEventTypeStr(nixl_telemetry_event_type_t type) noexcept {
-    switch (name) {
+    switch (type) {
     case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
         return "agent_tx_bytes";
     case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
