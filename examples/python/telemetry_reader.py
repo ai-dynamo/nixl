@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 # Constants from telemetry_event.h
 TELEMETRY_VERSION = 2
-MAX_EVENT_NAME_LEN = 32
 
 # NIXL telemetry categories
 NIXL_TELEMETRY_MEMORY = 0
@@ -46,6 +45,29 @@ NIXL_TELEMETRY_PERFORMANCE = 5
 NIXL_TELEMETRY_SYSTEM = 6
 NIXL_TELEMETRY_CUSTOM = 7
 NIXL_TELEMETRY_MAX = 8
+
+# NIXL telemetry event types (nixl_telemetry_event_type_t)
+AGENT_TX_BYTES = 0
+AGENT_RX_BYTES = 1
+AGENT_TX_REQUESTS_NUM = 2
+AGENT_RX_REQUESTS_NUM = 3
+AGENT_MEMORY_REGISTERED = 4
+AGENT_MEMORY_DEREGISTERED = 5
+AGENT_XFER_TIME = 6
+AGENT_XFER_POST_TIME = 7
+AGENT_ERR_NOT_POSTED = 8
+AGENT_ERR_INVALID_PARAM = 9
+AGENT_ERR_BACKEND = 10
+AGENT_ERR_NOT_FOUND = 11
+AGENT_ERR_MISMATCH = 12
+AGENT_ERR_NOT_ALLOWED = 13
+AGENT_ERR_REPOST_ACTIVE = 14
+AGENT_ERR_UNKNOWN = 15
+AGENT_ERR_NOT_SUPPORTED = 16
+AGENT_ERR_REMOTE_DISCONNECT = 17
+AGENT_ERR_CANCELED = 18
+AGENT_ERR_NO_TELEMETRY = 19
+AGENT_BACKEND = 20
 
 # Global flag for graceful shutdown
 running = True
@@ -65,8 +87,8 @@ class NixlTelemetryEvent(ctypes.Structure):
     _pack_ = 1
     _fields_ = [
         ("category", ctypes.c_int),
-        ("event_name", ctypes.c_char * MAX_EVENT_NAME_LEN),
-        ("_padding", ctypes.c_uint32),
+        ("event_type", ctypes.c_uint8),
+        ("_padding", ctypes.c_char * 3),
         ("value", ctypes.c_uint64),
     ]
 
@@ -209,27 +231,57 @@ def format_bytes(bytes_val):
     return f"{value:.2f} {units[unit_index]}"
 
 
+_CATEGORY_STRINGS = {
+    NIXL_TELEMETRY_MEMORY: "MEMORY",
+    NIXL_TELEMETRY_TRANSFER: "TRANSFER",
+    NIXL_TELEMETRY_CONNECTION: "CONNECTION",
+    NIXL_TELEMETRY_BACKEND: "BACKEND",
+    NIXL_TELEMETRY_ERROR: "ERROR",
+    NIXL_TELEMETRY_PERFORMANCE: "PERFORMANCE",
+    NIXL_TELEMETRY_SYSTEM: "SYSTEM",
+    NIXL_TELEMETRY_CUSTOM: "CUSTOM",
+}
+
+_EVENT_TYPE_STRINGS = {
+    AGENT_TX_BYTES: "agent_tx_bytes",
+    AGENT_RX_BYTES: "agent_rx_bytes",
+    AGENT_TX_REQUESTS_NUM: "agent_tx_requests_num",
+    AGENT_RX_REQUESTS_NUM: "agent_rx_requests_num",
+    AGENT_MEMORY_REGISTERED: "agent_memory_registered",
+    AGENT_MEMORY_DEREGISTERED: "agent_memory_deregistered",
+    AGENT_XFER_TIME: "agent_xfer_time",
+    AGENT_XFER_POST_TIME: "agent_xfer_post_time",
+    AGENT_ERR_NOT_POSTED: "agent_err_not_posted",
+    AGENT_ERR_INVALID_PARAM: "agent_err_invalid_param",
+    AGENT_ERR_BACKEND: "agent_err_backend",
+    AGENT_ERR_NOT_FOUND: "agent_err_not_found",
+    AGENT_ERR_MISMATCH: "agent_err_mismatch",
+    AGENT_ERR_NOT_ALLOWED: "agent_err_not_allowed",
+    AGENT_ERR_REPOST_ACTIVE: "agent_err_repost_active",
+    AGENT_ERR_UNKNOWN: "agent_err_unknown",
+    AGENT_ERR_NOT_SUPPORTED: "agent_err_not_supported",
+    AGENT_ERR_REMOTE_DISCONNECT: "agent_err_remote_disconnect",
+    AGENT_ERR_CANCELED: "agent_err_canceled",
+    AGENT_ERR_NO_TELEMETRY: "agent_err_no_telemetry",
+    AGENT_BACKEND: "agent_backend",
+}
+
+
 def get_telemetry_category_string(category):
     """Get string representation of telemetry category"""
-    category_strings = {
-        NIXL_TELEMETRY_MEMORY: "MEMORY",
-        NIXL_TELEMETRY_TRANSFER: "TRANSFER",
-        NIXL_TELEMETRY_CONNECTION: "CONNECTION",
-        NIXL_TELEMETRY_BACKEND: "BACKEND",
-        NIXL_TELEMETRY_ERROR: "ERROR",
-        NIXL_TELEMETRY_PERFORMANCE: "PERFORMANCE",
-        NIXL_TELEMETRY_SYSTEM: "SYSTEM",
-        NIXL_TELEMETRY_CUSTOM: "CUSTOM",
-    }
-    return category_strings.get(category, f"UNKNOWN_CATEGORY_{category}")
+    return _CATEGORY_STRINGS.get(category, f"UNKNOWN_CATEGORY_{category}")
+
+
+def get_telemetry_event_type_string(event_type):
+    """Get string representation of telemetry event type enum"""
+    return _EVENT_TYPE_STRINGS.get(event_type, f"unknown_event_{event_type}")
 
 
 def print_telemetry_event(event):
     """Print telemetry event in a formatted way"""
     logger.info("\n=== NIXL Telemetry Event ===")
 
-    # Decode event name
-    event_name = event.event_name.decode("utf-8").rstrip("\x00")
+    event_name = get_telemetry_event_type_string(event.event_type)
     category_str = get_telemetry_category_string(event.category)
 
     logger.info("Category: %s", category_str)
