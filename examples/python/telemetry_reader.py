@@ -55,8 +55,19 @@ AGENT_MEMORY_REGISTERED = 4
 AGENT_MEMORY_DEREGISTERED = 5
 AGENT_XFER_TIME = 6
 AGENT_XFER_POST_TIME = 7
-AGENT_ERROR = 8
-AGENT_BACKEND = 9
+AGENT_ERR_NOT_POSTED = 8
+AGENT_ERR_INVALID_PARAM = 9
+AGENT_ERR_BACKEND = 10
+AGENT_ERR_NOT_FOUND = 11
+AGENT_ERR_MISMATCH = 12
+AGENT_ERR_NOT_ALLOWED = 13
+AGENT_ERR_REPOST_ACTIVE = 14
+AGENT_ERR_UNKNOWN = 15
+AGENT_ERR_NOT_SUPPORTED = 16
+AGENT_ERR_REMOTE_DISCONNECT = 17
+AGENT_ERR_CANCELED = 18
+AGENT_ERR_NO_TELEMETRY = 19
+AGENT_BACKEND = 20
 
 # Global flag for graceful shutdown
 running = True
@@ -240,7 +251,18 @@ _EVENT_TYPE_STRINGS = {
     AGENT_MEMORY_DEREGISTERED: "agent_memory_deregistered",
     AGENT_XFER_TIME: "agent_xfer_time",
     AGENT_XFER_POST_TIME: "agent_xfer_post_time",
-    AGENT_ERROR: "agent_error",
+    AGENT_ERR_NOT_POSTED: "agent_err_not_posted",
+    AGENT_ERR_INVALID_PARAM: "agent_err_invalid_param",
+    AGENT_ERR_BACKEND: "agent_err_backend",
+    AGENT_ERR_NOT_FOUND: "agent_err_not_found",
+    AGENT_ERR_MISMATCH: "agent_err_mismatch",
+    AGENT_ERR_NOT_ALLOWED: "agent_err_not_allowed",
+    AGENT_ERR_REPOST_ACTIVE: "agent_err_repost_active",
+    AGENT_ERR_UNKNOWN: "agent_err_unknown",
+    AGENT_ERR_NOT_SUPPORTED: "agent_err_not_supported",
+    AGENT_ERR_REMOTE_DISCONNECT: "agent_err_remote_disconnect",
+    AGENT_ERR_CANCELED: "agent_err_canceled",
+    AGENT_ERR_NO_TELEMETRY: "agent_err_no_telemetry",
     AGENT_BACKEND: "agent_backend",
 }
 

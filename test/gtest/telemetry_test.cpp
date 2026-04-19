@@ -163,8 +163,8 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM);
     EXPECT_EQ(event.value_, 1);
     buffer->pop(event);
-    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_ERROR);
-    EXPECT_EQ(event.value_, static_cast<uint64_t>(nixl_status_t::NIXL_ERR_BACKEND));
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_ERR_BACKEND);
+    EXPECT_EQ(event.value_, 1);
     buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED);
     EXPECT_EQ(event.value_, 1024);
@@ -350,8 +350,7 @@ TEST_F(telemetryTest, TelemetryAgentEventsTwo) {
     EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
 
     buffer->pop(event);
-    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_ERROR);
-    EXPECT_EQ(event.value_, static_cast<uint64_t>(nixl_status_t::NIXL_ERR_BACKEND));
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_ERR_BACKEND);
     EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR);
 
     envHelper_.popVar();

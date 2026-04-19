@@ -207,9 +207,11 @@ nixlTelemetry::updateRxRequestsNum(uint32_t rx_requests_num) {
 
 void
 nixlTelemetry::updateErrorCount(nixl_status_t error_type) {
-    updateData(nixl_telemetry_event_type_t::AGENT_ERROR,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR,
-               static_cast<uint64_t>(error_type));
+    const auto event_type = nixlTelemetryEventTypeForStatus(error_type);
+    if (!event_type) {
+        return;
+    }
+    updateData(*event_type, nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR, 1);
 }
 
 void
