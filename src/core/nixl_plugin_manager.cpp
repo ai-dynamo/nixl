@@ -386,7 +386,6 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
                 auto backend_plugin =
                     std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
                 loaded_backend_plugins_[plugin_name] = backend_plugin;
-                discovered_backend_plugins_.erase(plugin_name);
                 explicit_plugin_paths_.erase(path_it);
                 return backend_plugin;
             }
@@ -410,14 +409,12 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
             auto backend_plugin =
                 std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
             loaded_backend_plugins_[plugin_name] = backend_plugin;
-            discovered_backend_plugins_.erase(plugin_name);
             explicit_plugin_paths_.erase(plugin_name);
             return backend_plugin;
         }
     }
 
     // Failed to load the plugin
-    discovered_backend_plugins_.erase(plugin_name);
     explicit_plugin_paths_.erase(plugin_name);
     NIXL_INFO << "Failed to load plugin '" << plugin_name << "' from any directory";
     return nullptr;
@@ -450,12 +447,10 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
             auto telemetry_plugin =
                 std::dynamic_pointer_cast<const nixlTelemetryPluginHandle>(plugin_handle);
             loaded_telemetry_plugins_[plugin_name] = telemetry_plugin;
-            discovered_telemetry_plugins_.erase(plugin_name);
             return telemetry_plugin;
         }
     }
 
-    discovered_telemetry_plugins_.erase(plugin_name);
     NIXL_INFO << "Failed to load plugin '" << plugin_name << "' from any directory";
     return nullptr;
 }
@@ -606,7 +601,10 @@ nixlPluginManager::getAvailBackendPluginNames() {
         names.push_back(pair.first);
     }
     for (const auto &name : discovered_backend_plugins_) {
-        names.push_back(name);
+        // Skip discovered plugins that are already loaded to avoid duplicates
+        if (loaded_backend_plugins_.find(name) == loaded_backend_plugins_.end()) {
+            names.push_back(name);
+        }
     }
     return names;
 }
