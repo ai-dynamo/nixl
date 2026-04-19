@@ -457,6 +457,11 @@ nixlRemoteSection::removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackend
             target.remDesc(index);
         }
     }
+
+    if (target.isEmpty()) {
+        sectionMap.erase(it);
+        memToBackend[nixl_mem].erase(&backend);
+    }
 }
 
 nixlRemoteSection::~nixlRemoteSection() {
