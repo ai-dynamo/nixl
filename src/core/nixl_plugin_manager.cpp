@@ -531,7 +531,6 @@ nixlPluginManager::unloadBackendPlugin(const nixl_backend_t &plugin_name) {
     lock_guard lg(lock);
 
     loaded_backend_plugins_.erase(plugin_name);
-    discovered_backend_plugins_.insert(plugin_name);
 }
 
 void
@@ -546,7 +545,6 @@ nixlPluginManager::unloadTelemetryPlugin(const nixl_telemetry_plugin_t &plugin_n
     lock_guard lg(lock);
 
     loaded_telemetry_plugins_.erase(plugin_name);
-    discovered_telemetry_plugins_.insert(plugin_name);
 }
 
 std::shared_ptr<const nixlBackendPluginHandle>
@@ -596,6 +594,17 @@ nixlPluginManager::getLoadedBackendPluginNames() {
     for (const auto &pair : loaded_backend_plugins_) {
         names.push_back(pair.first);
     }
+    return names;
+}
+
+std::vector<nixl_backend_t>
+nixlPluginManager::getAvailBackendPluginNames() {
+    lock_guard lg(lock);
+
+    std::vector<nixl_backend_t> names;
+    for (const auto &pair : loaded_backend_plugins_) {
+        names.push_back(pair.first);
+    }
     for (const auto &name : discovered_backend_plugins_) {
         names.push_back(name);
     }
@@ -609,9 +618,6 @@ nixlPluginManager::getLoadedTelemetryPluginNames() {
     std::vector<nixl_telemetry_plugin_t> names;
     for (const auto &pair : loaded_telemetry_plugins_) {
         names.push_back(pair.first);
-    }
-    for (const auto &name : discovered_telemetry_plugins_) {
-        names.push_back(name);
     }
     return names;
 }

@@ -141,6 +141,10 @@ public:
     std::vector<nixl_backend_t>
     getLoadedBackendPluginNames();
 
+    // Get all available backend plugin names (loaded + discovered on disk)
+    std::vector<nixl_backend_t>
+    getAvailBackendPluginNames();
+
     // Get all loaded telemetry plugin names
     std::vector<nixl_telemetry_plugin_t>
     getLoadedTelemetryPluginNames();
