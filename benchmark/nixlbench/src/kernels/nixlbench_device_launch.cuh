@@ -28,13 +28,13 @@
  * no counter atomic is issued.
  */
 struct nixlbenchDeviceXferParams {
-    nixlMemViewH localMvh;   ///< Local memory view from prepMemView
-    nixlMemViewH remoteMvh;  ///< Remote memory view from prepMemView
-    size_t numRegions;       ///< Data region count (puts); completion index when signaling
-    size_t regionSize;       ///< Bytes per region for this transfer pattern
+    nixlMemViewH localMvh; ///< Local memory view from prepMemView
+    nixlMemViewH remoteMvh; ///< Remote memory view from prepMemView
+    size_t numRegions; ///< Data region count (puts); completion index when signaling
+    size_t regionSize; ///< Bytes per region for this transfer pattern
     bool signalRemoteCompletion; ///< If true, counter region exists at index @a numRegions
     size_t completionCounterOffsetBytes; ///< Done counter offset in the counter region
-    size_t errorCounterOffsetBytes;      ///< Error counter offset in the counter region
+    size_t errorCounterOffsetBytes; ///< Error counter offset in the counter region
 };
 
 /**
@@ -59,9 +59,8 @@ struct nixlbenchDeviceXferParams {
  *         NIXL_ERR_BACKEND for CUDA launch or synchronize failures.
  */
 nixl_status_t
-nixlbenchLaunchDevicePut(
-    const nixlbenchDeviceXferParams &params,
-    unsigned block_threads,
-    cudaStream_t stream = nullptr);
+nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params,
+                         unsigned block_threads,
+                         cudaStream_t stream = nullptr);
 
-#endif  // NIXL_BENCHMARK_NIXLBENCH_SRC_KERNELS_NIXLBENCH_DEVICE_LAUNCH_CUH
+#endif // NIXL_BENCHMARK_NIXLBENCH_SRC_KERNELS_NIXLBENCH_DEVICE_LAUNCH_CUH
