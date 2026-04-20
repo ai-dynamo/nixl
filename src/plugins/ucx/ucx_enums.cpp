@@ -19,31 +19,31 @@
 
 #include "common/nixl_log.h"
 
+namespace nixl::ucx {
+
 std::ostream &
-operator<<(std::ostream &os, const nixl_ucx_mt_t t) {
+operator<<(std::ostream &os, const mt_mode_t t) {
     toStream(os, t);
     return os;
 }
 
 std::ostream &
-operator<<(std::ostream &os, const nixl_ucx_ep_state_t t) {
+operator<<(std::ostream &os, const ep_state_t t) {
     toStream(os, t);
     return os;
 }
 
 std::ostream &
-operator<<(std::ostream &os, const nixl_ucx_cb_op_t t) {
+operator<<(std::ostream &os, const am_cb_op_t t) {
     toStream(os, t);
     return os;
 }
 
 nixl_status_t
-ucxStatusToNixlStatus(const ucs_status_t t) {
-    if (__builtin_expect(t == UCS_OK, 1)) {
+ucsToNixlStatus(const ucs_status_t t) {
+    switch (__builtin_expect(t, UCS_OK)) {
+    case UCS_OK:
         return NIXL_SUCCESS;
-    }
-
-    switch (t) {
     case UCS_INPROGRESS:
     case UCS_ERR_BUSY:
         return NIXL_IN_PROG;
@@ -60,3 +60,5 @@ ucxStatusToNixlStatus(const ucs_status_t t) {
         return NIXL_ERR_BACKEND;
     }
 }
+
+} // namespace nixl::ucx

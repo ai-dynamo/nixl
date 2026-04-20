@@ -29,28 +29,26 @@ namespace nixl::ucx {
 
 inline constexpr std::string_view invalid_string = "INVALID";
 
-} // namespace nixl::ucx
-
-enum class nixl_ucx_mt_t {
+enum class mt_mode_t {
     SINGLE,
-    CTX,
+    CONTEXT,
     WORKER,
 };
 
 [[nodiscard]] constexpr std::string_view
-toStringView(const nixl_ucx_mt_t t) noexcept {
+toStringView(const mt_mode_t t) noexcept {
     switch (t) {
-    case nixl_ucx_mt_t::SINGLE:
+    case mt_mode_t::SINGLE:
         return "SINGLE";
-    case nixl_ucx_mt_t::CTX:
-        return "CTX";
-    case nixl_ucx_mt_t::WORKER:
+    case mt_mode_t::CONTEXT:
+        return "CONTEXT";
+    case mt_mode_t::WORKER:
         return "WORKER";
     }
     return nixl::ucx::invalid_string;
 }
 
-enum class nixl_ucx_ep_state_t {
+enum class ep_state_t {
     UNINITIALIZED,
     CONNECTED,
     FAILED,
@@ -58,28 +56,28 @@ enum class nixl_ucx_ep_state_t {
 };
 
 [[nodiscard]] constexpr std::string_view
-toStringView(const nixl_ucx_ep_state_t t) noexcept {
+toStringView(const ep_state_t t) noexcept {
     switch (t) {
-    case nixl_ucx_ep_state_t::UNINITIALIZED:
+    case ep_state_t::UNINITIALIZED:
         return "UNINITIALIZED";
-    case nixl_ucx_ep_state_t::CONNECTED:
+    case ep_state_t::CONNECTED:
         return "CONNECTED";
-    case nixl_ucx_ep_state_t::FAILED:
+    case ep_state_t::FAILED:
         return "FAILED";
-    case nixl_ucx_ep_state_t::DISCONNECTED:
+    case ep_state_t::DISCONNECTED:
         return "DISCONNECTED";
     }
     return nixl::ucx::invalid_string;
 }
 
-enum class nixl_ucx_cb_op_t {
+enum class am_cb_op_t {
     NOTIF_STR,
 };
 
 [[nodiscard]] constexpr std::string_view
-toStringView(const nixl_ucx_cb_op_t t) noexcept {
+toStringView(const am_cb_op_t t) noexcept {
     switch (t) {
-    case nixl_ucx_cb_op_t::NOTIF_STR:
+    case am_cb_op_t::NOTIF_STR:
         return "NOTIF_STR";
     }
     return nixl::ucx::invalid_string;
@@ -107,23 +105,23 @@ toStream(std::ostream &os, const Enum t) {
 }
 
 std::ostream &
-operator<<(std::ostream &os, const nixl_ucx_mt_t t);
+operator<<(std::ostream &os, const mt_mode_t t);
 
 std::ostream &
-operator<<(std::ostream &os, const nixl_ucx_ep_state_t t);
+operator<<(std::ostream &os, const ep_state_t t);
 
 std::ostream &
-operator<<(std::ostream &os, const nixl_ucx_cb_op_t t);
+operator<<(std::ostream &os, const am_cb_op_t t);
 
 [[nodiscard]] constexpr nixl_status_t
-toNixlStatus(const nixl_ucx_ep_state_t t) noexcept {
+toNixlStatus(const ep_state_t t) noexcept {
     switch (t) {
-    case nixl_ucx_ep_state_t::CONNECTED:
+    case ep_state_t::CONNECTED:
         return NIXL_SUCCESS;
-    case nixl_ucx_ep_state_t::FAILED:
+    case ep_state_t::FAILED:
         return NIXL_ERR_REMOTE_DISCONNECT;
-    case nixl_ucx_ep_state_t::UNINITIALIZED:
-    case nixl_ucx_ep_state_t::DISCONNECTED:
+    case ep_state_t::UNINITIALIZED:
+    case ep_state_t::DISCONNECTED:
         return NIXL_ERR_BACKEND;
     }
     return NIXL_ERR_BACKEND;
@@ -133,6 +131,8 @@ toNixlStatus(const nixl_ucx_ep_state_t t) noexcept {
 
 // Prints warning for unexpected values.
 [[nodiscard]] nixl_status_t
-ucxStatusToNixlStatus(const ucs_status_t t);
+ucsToNixlStatus(const ucs_status_t t);
+
+} // namespace nixl::ucx
 
 #endif

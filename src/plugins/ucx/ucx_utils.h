@@ -65,10 +65,10 @@ class nixlUcxMem;
 class nixlUcxEp {
 private:
     ucp_ep_h eph{nullptr};
-    nixl_ucx_ep_state_t state = nixl_ucx_ep_state_t::UNINITIALIZED;
+    nixl::ucx::ep_state_t state = nixl::ucx::ep_state_t::UNINITIALIZED;
 
     void
-    setState(nixl_ucx_ep_state_t new_state);
+    setState(nixl::ucx::ep_state_t new_state);
     nixl_status_t
     closeImpl(ucp_ep_close_flags_t flags);
 
@@ -85,7 +85,7 @@ public:
 
     [[nodiscard]] nixl_status_t
     checkTxState() const noexcept {
-        return toNixlStatus(state);
+        return nixl::ucx::toNixlStatus(state);
     }
 
     nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
@@ -98,7 +98,7 @@ public:
 
     /* Active message handling */
     nixl_status_t
-    sendAm(nixl_ucx_cb_op_t msg_id,
+    sendAm(nixl::ucx::am_cb_op_t msg_id,
            void *hdr,
            size_t hdr_len,
            void *buffer,
@@ -167,7 +167,7 @@ class nixlUcxContext {
 private:
     /* Local UCX stuff */
     ucp_context_h ctx;
-    const nixl_ucx_mt_t mtType_;
+    const nixl::ucx::mt_mode_t mtType_;
     const unsigned ucpVersion_;
 
 public:
@@ -202,7 +202,7 @@ public:
 };
 
 [[nodiscard]] bool
-nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t) noexcept;
+nixlUcxMtLevelIsSupported(const nixl::ucx::mt_mode_t) noexcept;
 
 class nixlUcxWorker {
 public:
@@ -225,7 +225,7 @@ public:
 
     /* Active message handling */
     int
-    regAmCallback(nixl_ucx_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg);
+    regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg);
 
     /* Data access */
     int
