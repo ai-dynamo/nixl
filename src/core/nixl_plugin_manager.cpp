@@ -386,7 +386,6 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
                 auto backend_plugin =
                     std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
                 loaded_backend_plugins_[plugin_name] = backend_plugin;
-                explicit_plugin_paths_.erase(path_it);
                 return backend_plugin;
             }
         }
@@ -409,13 +408,11 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
             auto backend_plugin =
                 std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
             loaded_backend_plugins_[plugin_name] = backend_plugin;
-            explicit_plugin_paths_.erase(plugin_name);
             return backend_plugin;
         }
     }
 
     // Failed to load the plugin
-    explicit_plugin_paths_.erase(plugin_name);
     NIXL_INFO << "Failed to load plugin '" << plugin_name << "' from any directory";
     return nullptr;
 }
