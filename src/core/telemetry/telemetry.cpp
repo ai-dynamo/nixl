@@ -65,8 +65,7 @@ nixlTelemetryEventTypeForStatus(nixl_status_t s) {
         return nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY;
     }
     NIXL_ASSERT_ALWAYS(false) << "nixlTelemetryEventTypeForStatus: unhandled nixl_status_t "
-                              << static_cast<int>(s)
-                              << "; add a case when extending nixl_status_t";
+                              << static_cast<int>(s) << "; add a case when extending nixl_status_t";
 }
 
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
