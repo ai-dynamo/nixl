@@ -252,7 +252,7 @@ nixlPluginManager::loadPluginFromPath(const std::string &plugin_path, nixlPlugin
 }
 
 void
-nixlPluginManager::loadPluginsFromList(const std::string &filename) {
+nixlPluginManager::discoverPluginsFromList(const std::string &filename) {
     auto plugins = loadPluginList(filename);
 
     lock_guard lg(lock);
@@ -266,7 +266,7 @@ nixlPluginManager::loadPluginsFromList(const std::string &filename) {
             if (!path.empty()) {
                 explicit_plugin_paths_[name] = path;
             }
-            NIXL_INFO << "Discovered backend plugin from list: " << name;
+            NIXL_INFO << "Discovered backend plugin from list: " << name << path;
         }
     }
 }
@@ -297,7 +297,7 @@ nixlPluginManager::nixlPluginManager() {
     NIXL_DEBUG << "Loading plugins from file: " << NIXL_USE_PLUGIN_FILE;
     std::string plugin_file = NIXL_USE_PLUGIN_FILE;
     if (std::filesystem::exists(plugin_file)) {
-        loadPluginsFromList(plugin_file);
+        discoverPluginsFromList(plugin_file);
     }
 #endif
 

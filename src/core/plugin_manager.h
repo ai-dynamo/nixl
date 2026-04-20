@@ -111,7 +111,7 @@ public:
     nixlPluginManager& operator=(const nixlPluginManager&) = delete;
 
     void
-    loadPluginsFromList(const std::string &filename);
+    discoverPluginsFromList(const std::string &filename);
 
     // Load a specific backend plugin
     std::shared_ptr<const nixlBackendPluginHandle>
