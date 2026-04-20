@@ -105,7 +105,9 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
 }
 
 xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
-    : xferBenchWorker(), local_mvh(nullptr), remote_mvh(nullptr) {
+    : xferBenchWorker(),
+      local_mvh(nullptr),
+      remote_mvh(nullptr) {
     seg_type = GET_SEG_TYPE(isInitiator());
 
     int rank;
@@ -1031,7 +1033,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             nixl_reg_dlist_t cc_desc(VRAM_SEG);
             iovListToNixlRegDlist(cc_list, cc_desc);
             CHECK_NIXL_ERROR(agent->registerMem(cc_desc, &opt_args),
-                "registerMem failed for completion counter");
+                             "registerMem failed for completion counter");
         }
     }
 
@@ -1053,7 +1055,7 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             nixl_reg_dlist_t cc_desc(VRAM_SEG);
             iovListToNixlRegDlist(cc_list, cc_desc);
             CHECK_NIXL_ERROR(agent->deregisterMem(cc_desc, &opt_args),
-                "deregisterMem failed for completion counter");
+                             "deregisterMem failed for completion counter");
             cleanupBasicDescVram(completion_counter_iov.value());
         }
         completion_counter_iov.reset();
@@ -1613,8 +1615,8 @@ waitForDeviceCompletionCounter(const xferBenchIOV &counter_iov,
     while (true) {
         const xferBenchDeviceCounters counters = readDeviceCounters(counter_iov);
         if (counters.error > 0) {
-            std::cerr << "NIXL Device API " << phase
-                      << " failed: remote error counter is " << counters.error << std::endl;
+            std::cerr << "NIXL Device API " << phase << " failed: remote error counter is "
+                      << counters.error << std::endl;
             return false;
         }
         if (counters.done >= expected_value) {
@@ -1627,12 +1629,11 @@ waitForDeviceCompletionCounter(const xferBenchIOV &counter_iov,
 static void
 resetDeviceCounters(const xferBenchIOV &counter_iov) {
     CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId), "Failed to set completion counter device");
-    CHECK_CUDA_ERROR(cudaMemset(
-                         reinterpret_cast<void *>(counter_iov.addr), 0, kDeviceCounterBytes),
+    CHECK_CUDA_ERROR(cudaMemset(reinterpret_cast<void *>(counter_iov.addr), 0, kDeviceCounterBytes),
                      "Failed to reset completion counters in VRAM");
 }
 
-#endif  // HAVE_UCX_DEVICE_KERNEL
+#endif // HAVE_UCX_DEVICE_KERNEL
 std::variant<xferBenchStats, int>
 xferBenchNixlWorker::transfer(size_t block_size,
                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
@@ -1657,13 +1658,13 @@ xferBenchNixlWorker::transfer(size_t block_size,
             const bool signal_remote_completion =
                 completion_counter_iov.has_value() && remote_mvh != nullptr;
             ret = execDeviceTransfer(local_mvh,
-                remote_mvh,
-                signal_remote_completion,
-                skip,
-                xferBenchConfig::device_kernel_block_thread_count,
-                num_regions,
-                block_size,
-                stats);
+                                     remote_mvh,
+                                     signal_remote_completion,
+                                     skip,
+                                     xferBenchConfig::device_kernel_block_thread_count,
+                                     num_regions,
+                                     block_size,
+                                     stats);
         } else {
             ret = execTransfer(agent,
                                local_iovs,
@@ -1700,13 +1701,13 @@ xferBenchNixlWorker::transfer(size_t block_size,
         const bool signal_remote_completion =
             completion_counter_iov.has_value() && remote_mvh != nullptr;
         ret = execDeviceTransfer(local_mvh,
-            remote_mvh,
-            signal_remote_completion,
-            num_iter,
-            xferBenchConfig::device_kernel_block_thread_count,
-            num_regions,
-            block_size,
-            stats);
+                                 remote_mvh,
+                                 signal_remote_completion,
+                                 num_iter,
+                                 xferBenchConfig::device_kernel_block_thread_count,
+                                 num_regions,
+                                 block_size,
+                                 stats);
     } else {
         ret = execTransfer(agent,
                            local_iovs,
@@ -1770,8 +1771,7 @@ xferBenchNixlWorker::poll(size_t block_size) {
 
 #if HAVE_UCX_DEVICE_KERNEL
     const bool use_device_completion_counter =
-        xferBenchConfig::use_device_api &&
-        completion_counter_iov.has_value();
+        xferBenchConfig::use_device_api && completion_counter_iov.has_value();
     if (use_device_completion_counter) {
         const xferBenchIOV &counter_iov = completion_counter_iov.value();
         if (!waitForDeviceCompletionCounter(counter_iov, static_cast<uint64_t>(skip), "warmup")) {
@@ -1840,8 +1840,7 @@ xferBenchNixlWorker::prepareGPULocalView(
             local_list.addDesc(localDesc);
         }
     }
-    CHECK_NIXL_ERROR(agent->prepMemView(local_list, local_mvh),
-                     "prepMemView on local view failed");
+    CHECK_NIXL_ERROR(agent->prepMemView(local_list, local_mvh), "prepMemView on local view failed");
 }
 
 void

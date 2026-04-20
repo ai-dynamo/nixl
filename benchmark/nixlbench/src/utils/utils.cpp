@@ -516,9 +516,12 @@ xferBenchConfig::loadParams(void) {
                       << ". Reset use_device_api to false" << std::endl;
             use_device_api = false;
         } else {
-            std::cout << "NIXL Device API is enabled, --num-threads used as GPU kernel block thread count with value 1 - 1024" << std::endl;
+            std::cout << "NIXL Device API is enabled, --num-threads used as GPU kernel block "
+                         "thread count with value 1 - 1024"
+                      << std::endl;
             if (num_threads < 1 || num_threads > 1024) {
-                std::cout << "Invalid value for --num-threads, reset --num-threads to 1" << std::endl;
+                std::cout << "Invalid value for --num-threads, reset --num-threads to 1"
+                          << std::endl;
                 num_threads = 1;
             }
             device_kernel_block_thread_count = num_threads;
@@ -736,7 +739,9 @@ xferBenchConfig::printConfig() {
     printOption("Warmup iter (--warmup_iter=N)", std::to_string(warmup_iter));
     printOption("Large block iter factor (--large_blk_iter_ftr=N)",
                 std::to_string(large_blk_iter_ftr));
-    printOption("Num threads (--num_threads=N)", use_device_api ? std::to_string(device_kernel_block_thread_count) : std::to_string(num_threads));
+    printOption("Num threads (--num_threads=N)",
+                use_device_api ? std::to_string(device_kernel_block_thread_count) :
+                                 std::to_string(num_threads));
     printSeparator('-');
     std::cout << std::endl;
 }
@@ -790,9 +795,8 @@ xferBenchConfig::isDeviceAPISupported(std::string *reason) {
 #if HAVE_CUDA
 #if !HAVE_UCX_DEVICE_KERNEL
     if (reason) {
-        *reason =
-            "UCX device kernel support is not enabled in this build. "
-            "Set -Ducx_device_include_path=<path>";
+        *reason = "UCX device kernel support is not enabled in this build. "
+                  "Set -Ducx_device_include_path=<path>";
     }
     return false;
 #endif

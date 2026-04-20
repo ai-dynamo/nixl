@@ -79,11 +79,9 @@ class xferBenchNixlWorker: public xferBenchWorker {
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
 
         void
-        prepareGPULocalView(
-            const std::vector<std::vector<xferBenchIOV>> &local_iov_lists);
+        prepareGPULocalView(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists);
         void
-        prepareGPURemoteView(
-            const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists);
+        prepareGPURemoteView(const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists);
         void
         releaseGPULocalView();
         void
