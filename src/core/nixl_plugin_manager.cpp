@@ -265,8 +265,7 @@ nixlPluginManager::discoverPluginsFromList(const std::string &filename) {
             discovered_backend_plugins_.insert(name);
             if (!path.empty()) {
                 explicit_plugin_paths_[name] = path;
-                NIXL_INFO << "Discovered backend plugin from list: "
-                          << name << " (" << path << ")";
+                NIXL_INFO << "Discovered backend plugin from list: " << name << " (" << path << ")";
             } else {
                 NIXL_INFO << "Discovered backend plugin from list: " << name;
             }
