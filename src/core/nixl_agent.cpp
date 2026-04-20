@@ -133,41 +133,20 @@ nixlDlistH::nixlDlistH(const std::string &remote_agent, descs_t &&descs)
       descs(std::move(descs)) {}
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
-
-namespace {
-
-bool
-detectEtcd() {
-#if HAVE_ETCD
-    return nixl::config::checkExistence("NIXL_ETCD_ENDPOINTS");
-#else
-    return false;
-#endif
-}
-
-// The comm thread (used for etcd or listen-based metadata exchange) shares
-// agent data structures (remoteSections_, remoteBackends_, …) with the caller.
-// SYNC_NONE would leave those accesses unprotected, so upgrade to STRICT.
-nixl_thread_sync_t
-effectiveSyncMode(nixl_thread_sync_t requested, bool needsCommThread) {
-    if (needsCommThread && requested == nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE) {
-        NIXL_INFO << "syncMode upgraded from NONE to STRICT "
-                     "because a communication thread will be started";
-        return nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
-    }
-    return requested;
-}
-
-} // namespace
-
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
     : name_(name),
       config_(config),
-      useEtcd(detectEtcd()),
-      lock(effectiveSyncMode(config.syncMode, useEtcd || config.useListenThread)) {
+      lock(config.syncMode) {
 #if HAVE_ETCD
-    NIXL_DEBUG << "NIXL ETCD is " << (useEtcd ? "enabled" : "disabled");
+    if (nixl::config::checkExistence("NIXL_ETCD_ENDPOINTS")) {
+        useEtcd = true;
+        NIXL_DEBUG << "NIXL ETCD is enabled";
+    } else {
+        useEtcd = false;
+        NIXL_DEBUG << "NIXL ETCD is disabled";
+    }
 #else
+    useEtcd = false;
     NIXL_DEBUG << "NIXL ETCD is excluded";
 #endif
     if (name.empty())

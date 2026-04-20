@@ -65,7 +65,6 @@ class nixlAgentData {
     private:
         const std::string name_;
         const nixlAgentConfig config_;
-        bool useEtcd;
         nixlLock        lock;
         bool telemetryEnabled = false;
         bool efaWarningChecked = false;
@@ -91,6 +90,7 @@ class nixlAgentData {
         std::mutex commLock;
         std::atomic<bool> commThreadStop;
         std::atomic<bool> agentShutdown;
+        bool useEtcd;
         std::exception_ptr commThreadException_;
 
         // The order of the following data members is crucial for destruction.
