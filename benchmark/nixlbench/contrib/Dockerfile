@@ -20,8 +20,14 @@ ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
 ARG UCX="upstream"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 
+ARG MAKE_EFA="false"
+ARG EFA_VERSION="1.48.0"
+
 # --- Stage 1: Common OS setup ---
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS os_setup_stage
+
+ARG MAKE_EFA
+ARG EFA_VERSION
 
 # Re-declare for use in this stage
 ARG ARCH="x86_64"
@@ -50,21 +56,38 @@ RUN apt-get update -y && \
     libhwloc-dev \
     build-essential
 
-# Add DOCA repository and install packages
-RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
-    MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
-    dpkg -i doca-host.deb && \
-    apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+# Add DOCA repository and install packages (skip for EFA builds)
+RUN if [ "${MAKE_EFA}" != "true" ]; then \
+      ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
+      MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
+      wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+      dpkg -i doca-host.deb && \
+      apt-get update && \
+      apt-get upgrade -y && \
+      apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev; \
+    fi
 
 # Force reinstall of RDMA packages from DOCA repository
 # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
 # Upgrade is not sufficient if the version is the same since apt skips the installation.
-RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get -y install \
-    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
-    libnuma-dev librdmacm-dev ibverbs-providers
+RUN if [ "${MAKE_EFA}" != "true" ]; then \
+      DEBIAN_FRONTEND=noninteractive apt-get update && apt-get -y install \
+      --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+      libnuma-dev librdmacm-dev ibverbs-providers; \
+    fi
+
+RUN if [ "${MAKE_EFA}" == "true" ]; then \
+      mkdir -p /tmp/efa && \
+      cd /tmp/efa && \
+      curl --retry 3 --retry-delay 2 -fsSL -o aws-efa-installer-${EFA_VERSION}.tar.gz \
+        https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_VERSION}.tar.gz && \
+      tar -xf aws-efa-installer-${EFA_VERSION}.tar.gz && \
+      cd aws-efa-installer && \
+      ./efa_installer.sh -y --skip-kmod --skip-limit-conf --no-verify && \
+      rm -rf /tmp/efa && \
+      cp /opt/amazon/efa/lib/pkgconfig/libfabric.pc /usr/lib/pkgconfig/libfabric.pc && \
+      ldconfig; \
+    fi
 
 # Install AWS CLI
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "awscliv2.zip" && \
@@ -117,6 +140,7 @@ ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
 ARG BUILD_TYPE="release"
 ARG LIBFABRIC_VERSION="v1.21.0"
+ARG MAKE_EFA
 ARG NPROC
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
@@ -164,25 +188,27 @@ RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules
     ldconfig
 
 # Build libfabric from source
-RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
-    "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
-    tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
-    cd libfabric-* && \
-    ./autogen.sh && \
-    ./configure --prefix=/usr/local \
-                --disable-verbs \
-                --disable-psm3 \
-                --disable-opx \
-                --disable-usnic \
-                --disable-rstream \
-                --enable-efa \
-                --with-cuda=/usr/local/cuda \
-                --enable-cuda-dlopen \
-                --with-gdrcopy \
-                --enable-gdrcopy-dlopen && \
-    make -j${NPROC:-$(nproc)} && \
-    make install && \
-    ldconfig
+RUN if [ "${MAKE_EFA}" != "true" ]; then \
+      wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
+      "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
+      tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
+      cd libfabric-* && \
+      ./autogen.sh && \
+      ./configure --prefix=/usr/local \
+                  --disable-verbs \
+                  --disable-psm3 \
+                  --disable-opx \
+                  --disable-usnic \
+                  --disable-rstream \
+                  --enable-efa \
+                  --with-cuda=/usr/local/cuda \
+                  --enable-cuda-dlopen \
+                  --with-gdrcopy \
+                  --enable-gdrcopy-dlopen && \
+      make -j${NPROC:-$(nproc)} && \
+      make install && \
+      ldconfig; \
+    fi
 
 RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
@@ -255,7 +281,7 @@ WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE $(if [ "$MAKE_EFA" = "true" ]; then echo "-Dlibfabric_path=/opt/amazon/efa"; fi) && \
     cd build && \
     ninja && \
     ninja install
