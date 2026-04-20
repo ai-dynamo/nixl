@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,9 +25,17 @@
 
 #include "nixl_types.h"
 
-inline constexpr std::string_view nixl_ucx_invalid = "INVALID";
+namespace nixl::ucx {
 
-enum class nixl_ucx_mt_t { SINGLE, CTX, WORKER };
+inline constexpr std::string_view invalid_string = "INVALID";
+
+} // namespace nixl::ucx
+
+enum class nixl_ucx_mt_t {
+    SINGLE,
+    CTX,
+    WORKER,
+};
 
 [[nodiscard]] constexpr std::string_view
 toStringView(const nixl_ucx_mt_t t) noexcept {
@@ -39,16 +47,21 @@ toStringView(const nixl_ucx_mt_t t) noexcept {
     case nixl_ucx_mt_t::WORKER:
         return "WORKER";
     }
-    return nixl_ucx_invalid;
+    return nixl::ucx::invalid_string;
 }
 
-enum class nixl_ucx_ep_state_t { NULL_, CONNECTED, FAILED, DISCONNECTED };
+enum class nixl_ucx_ep_state_t {
+    UNINITIALIZED,
+    CONNECTED,
+    FAILED,
+    DISCONNECTED,
+};
 
 [[nodiscard]] constexpr std::string_view
 toStringView(const nixl_ucx_ep_state_t t) noexcept {
     switch (t) {
-    case nixl_ucx_ep_state_t::NULL_:
-        return "NULL";
+    case nixl_ucx_ep_state_t::UNINITIALIZED:
+        return "UNINITIALIZED";
     case nixl_ucx_ep_state_t::CONNECTED:
         return "CONNECTED";
     case nixl_ucx_ep_state_t::FAILED:
@@ -56,10 +69,12 @@ toStringView(const nixl_ucx_ep_state_t t) noexcept {
     case nixl_ucx_ep_state_t::DISCONNECTED:
         return "DISCONNECTED";
     }
-    return nixl_ucx_invalid;
+    return nixl::ucx::invalid_string;
 }
 
-enum class nixl_ucx_cb_op_t { NOTIF_STR };
+enum class nixl_ucx_cb_op_t {
+    NOTIF_STR
+};
 
 [[nodiscard]] constexpr std::string_view
 toStringView(const nixl_ucx_cb_op_t t) noexcept {
@@ -67,7 +82,7 @@ toStringView(const nixl_ucx_cb_op_t t) noexcept {
     case nixl_ucx_cb_op_t::NOTIF_STR:
         return "NOTIF_STR";
     }
-    return nixl_ucx_invalid;
+    return nixl::ucx::invalid_string;
 }
 
 template<typename Enum>
@@ -84,7 +99,7 @@ toStream(std::ostream &os, const Enum t) {
 
     const auto view = toStringView(t);
 
-    if (view != nixl_ucx_invalid) {
+    if (view != nixl::ucx::invalid_string) {
         os << view;
     } else {
         os << toInteger(t);
@@ -107,7 +122,7 @@ toNixlStatus(const nixl_ucx_ep_state_t t) noexcept {
         return NIXL_SUCCESS;
     case nixl_ucx_ep_state_t::FAILED:
         return NIXL_ERR_REMOTE_DISCONNECT;
-    case nixl_ucx_ep_state_t::NULL_:
+    case nixl_ucx_ep_state_t::UNINITIALIZED:
     case nixl_ucx_ep_state_t::DISCONNECTED:
         return NIXL_ERR_BACKEND;
     }

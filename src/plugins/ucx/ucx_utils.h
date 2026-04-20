@@ -65,7 +65,7 @@ class nixlUcxMem;
 class nixlUcxEp {
 private:
     ucp_ep_h eph{nullptr};
-    nixl_ucx_ep_state_t state = nixl_ucx_ep_state_t::NULL_;
+    nixl_ucx_ep_state_t state = nixl_ucx_ep_state_t::UNINITIALIZED;
 
     void
     setState(nixl_ucx_ep_state_t new_state);

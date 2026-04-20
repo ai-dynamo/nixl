@@ -122,7 +122,7 @@ public:
     release() {
         // TODO: Error log: uncompleted requests found! Cancelling ...
         for (nixlUcxReq req : requests_) {
-            nixl_status_t ret = ucxStatusToNixlStatus(ucp_request_check_status(req));
+            const nixl_status_t ret = ucxStatusToNixlStatus(ucp_request_check_status(req));
             if (ret == NIXL_IN_PROG) {
                 // TODO: Need process this properly.
                 // it may not be enough to cancel UCX request
@@ -150,7 +150,7 @@ public:
         /* If last request is incomplete, return NIXL_IN_PROG early without
          * checking other requests */
         nixlUcxReq req = requests_.back();
-        nixl_status_t ret = ucxStatusToNixlStatus(ucp_request_check_status(req));
+        const nixl_status_t ret = ucxStatusToNixlStatus(ucp_request_check_status(req));
         if (ret == NIXL_IN_PROG) {
             return NIXL_IN_PROG;
         } else if (ret != NIXL_SUCCESS) {
@@ -162,7 +162,7 @@ public:
         size_t incomplete_reqs = 0;
         nixl_status_t out_ret = NIXL_SUCCESS;
         for (nixlUcxReq req : requests_) {
-            nixl_status_t ret = ucxStatusToNixlStatus(ucp_request_check_status(req));
+            const nixl_status_t ret = ucxStatusToNixlStatus(ucp_request_check_status(req));
             if (__builtin_expect(ret == NIXL_SUCCESS, 0)) {
                 worker->reqRelease(req);
             } else if (ret == NIXL_IN_PROG) {

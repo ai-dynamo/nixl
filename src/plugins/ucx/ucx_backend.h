@@ -30,14 +30,14 @@
 #include <optional>
 
 #include "nixl.h"
-#include "backend/backend_engine.h"
 
-// Local includes
+#include "backend/backend_engine.h"
 #include "common/nixl_time.h"
+
 #include "mem_list.h"
 #include "rkey.h"
-#include "ucx_utils.h"
 #include "ucx_enums.h"
+#include "ucx_utils.h"
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:

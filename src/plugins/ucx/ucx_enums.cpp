@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
-#include "common/nixl_log.h"
-
 #include "ucx_enums.h"
+
+#include "common/nixl_log.h"
 
 std::ostream &
 operator<<(std::ostream &os, const nixl_ucx_mt_t t) {
@@ -39,7 +39,7 @@ operator<<(std::ostream &os, const nixl_ucx_cb_op_t t) {
 
 nixl_status_t
 ucxStatusToNixlStatus(const ucs_status_t t) {
-    if (t == UCS_OK) {
+    if (__builtin_expect(t == UCS_OK, 1)) {
         return NIXL_SUCCESS;
     }
 
