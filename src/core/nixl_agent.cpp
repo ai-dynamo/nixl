@@ -151,9 +151,9 @@ detectEtcd() {
 nixl_thread_sync_t
 effectiveSyncMode(nixl_thread_sync_t requested, bool needsCommThread) {
     if (needsCommThread && requested == nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE) {
-        NIXL_INFO << "syncMode upgraded from NONE to STRICT "
+        NIXL_INFO << "syncMode upgraded from NONE to RW "
                      "because a communication thread will be started";
-        return nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
+        return nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     }
     return requested;
 }
