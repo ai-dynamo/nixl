@@ -376,7 +376,7 @@ export UCX_TLS=^cuda_ipc
 if [ -n "$PRE_INSTALLED_NIXL_ENV" ]; then
     echo "PRE_INSTALLED_NIXL_ENV is set, skipping compilation"
 else
-    if $HAS_GPU ; then
+    if [ "${BUILD_NIXL_EP}" = "true" ]; then
         EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
     fi
     # shellcheck disable=SC2086

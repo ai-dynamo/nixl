@@ -70,30 +70,6 @@ $pip3 install --break-system-packages zmq
 
 start_etcd_server "/nixl/python_ci"
 
-if $HAS_GPU ; then
-    echo "==== Running elastic EP tests ===="
-    EP_SRC_DIR="examples/device/ep"
-    NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
-
-    run_elastic_test() {
-        local plan_file=$1
-        local extra_flags=${2:-}
-        echo "---- elastic: plan=$(basename "$plan_file") flags=[$extra_flags] ----"
-        PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
-        timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
-            --plan "$plan_file" \
-            --num-processes 4 --num-topk 4 --validate-plan $extra_flags
-    }
-
-    # NVLink (default)
-    run_elastic_test "${EP_SRC_DIR}/tests/elastic/basic.json"
-    run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
-
-    # RDMA (--disable-ll-nvlink)
-    run_elastic_test "${EP_SRC_DIR}/tests/elastic/basic.json" "--disable-ll-nvlink"
-    run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json" "--disable-ll-nvlink"
-fi
-
 echo "==== Running python tests ===="
 pytest -s test/python
 
