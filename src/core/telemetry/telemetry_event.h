@@ -72,39 +72,8 @@ enum class nixl_telemetry_event_type_t : uint8_t {
     AGENT_BACKEND = 20,
 };
 
-[[nodiscard]] inline std::optional<nixl_telemetry_event_type_t>
-nixlTelemetryEventTypeForStatus(nixl_status_t s) noexcept {
-    switch (s) {
-    case NIXL_ERR_NOT_POSTED:
-        return nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED;
-    case NIXL_ERR_INVALID_PARAM:
-        return nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM;
-    case NIXL_ERR_BACKEND:
-        return nixl_telemetry_event_type_t::AGENT_ERR_BACKEND;
-    case NIXL_ERR_NOT_FOUND:
-        return nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND;
-    case NIXL_ERR_MISMATCH:
-        return nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH;
-    case NIXL_ERR_NOT_ALLOWED:
-        return nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED;
-    case NIXL_ERR_REPOST_ACTIVE:
-        return nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE;
-    case NIXL_ERR_UNKNOWN:
-        return nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN;
-    case NIXL_ERR_NOT_SUPPORTED:
-        return nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED;
-    case NIXL_ERR_REMOTE_DISCONNECT:
-        return nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT;
-    case NIXL_ERR_CANCELED:
-        return nixl_telemetry_event_type_t::AGENT_ERR_CANCELED;
-    case NIXL_ERR_NO_TELEMETRY:
-        return nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY;
-    case NIXL_SUCCESS:
-    case NIXL_IN_PROG:
-        return std::nullopt;
-    }
-    return std::nullopt;
-}
+[[nodiscard]] std::optional<nixl_telemetry_event_type_t>
+nixlTelemetryEventTypeForStatus(nixl_status_t s);
 
 namespace nixlEnumStrings {
 std::string
