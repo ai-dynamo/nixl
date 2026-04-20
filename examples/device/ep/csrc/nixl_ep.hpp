@@ -73,6 +73,7 @@ struct NixlAgentInfo
     nixl_reg_dlist_t rdma_reg_descs{VRAM_SEG};
     nixl_reg_dlist_t sync_reg_descs{VRAM_SEG};
     nixl_reg_dlist_t sync_count_reg_descs{VRAM_SEG};
+    nixl_reg_dlist_t ht_barrier_reg_descs{VRAM_SEG};
     std::vector<bool> wire_up_done; // [num_peers]
 };
 
@@ -82,6 +83,7 @@ struct Buffer {
 private:
     int buffer_idx = 0; // Double buffering index
     bool low_latency_mode = false;
+    uint64_t timeout_ms = 30000;
 
     // NVLink Buffer
     int64_t num_nvl_bytes;
@@ -95,7 +97,6 @@ private:
     int *mask_buffer_ptr = nullptr;
     int *sync_buffer_ptr = nullptr;
     int *sync_count_ptr = nullptr;
-    int *local_barrier_cnt_ptr = nullptr;
 
     /* Owning VMM allocations (keep raw ptrs above as aliases) */
     std::unique_ptr<vmm_region> m_rdma_alloc;
@@ -107,6 +108,7 @@ private:
     // Device info and communication
     int device_id;
     int num_device_sms;
+    uint64_t timeout_cycles = 0;
     int rank, rdma_rank, nvl_rank;
     int num_ranks, num_rdma_ranks, num_nvl_ranks;
     std::vector<int> remote_ranks; /* global ranks */
@@ -167,7 +169,7 @@ private:
     void _ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles);
 
 public:
-    Buffer(int rank, bool explicitly_destroy, bool low_latency_mode = true);
+    Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms);
 
     void update_memory_buffers(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes = 0);
 

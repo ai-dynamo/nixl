@@ -59,7 +59,7 @@ public:
     }
 
     inline friend bool operator==(const nixlSectionDesc &lhs, const nixlSectionDesc &rhs) {
-        return (static_cast<nixlMetaDesc>(lhs) == static_cast<nixlMetaDesc>(rhs));
+        return static_cast<const nixlMetaDesc &>(lhs) == static_cast<const nixlMetaDesc &>(rhs);
     }
 
     inline void print(const std::string &suffix) const {
@@ -69,6 +69,8 @@ public:
 
 class nixlSecDescList : public nixlDescList<nixlSectionDesc> {
 public:
+    enum class order : bool { UNSORTED, SORTED };
+
     explicit nixlSecDescList(const nixl_mem_t &type) : nixlDescList<nixlSectionDesc>(type, 0) {}
 
     using nixlDescList<nixlSectionDesc>::operator[]; // bring in const overload
@@ -76,12 +78,19 @@ public:
     void
     addDesc(const nixlSectionDesc &desc) override;
 
-    bool
-    verifySorted() const;
+    void
+    addDesc(nixlSectionDesc &&desc);
 
-    nixlSectionDesc &
+    void
+    addDescs(std::vector<nixlSectionDesc> batch, order ord = order::UNSORTED);
+
+    void
+    addDescs(nixlSecDescList &&other);
+
+    // Shadow the parent's non-const operator[] to return a const ref,
+    // this prevents mutation of descriptor fields after insertion
+    const nixlSectionDesc &
     operator[](size_t index) {
-        assert(verifySorted());
         return descs[index];
     }
 
@@ -98,6 +107,13 @@ public:
     nixlSecDescList(const nixlSecDescList &) = default;
     nixlSecDescList &
     operator=(const nixlSecDescList &) = default;
+    nixlSecDescList(nixlSecDescList &&) = default;
+    nixlSecDescList &
+    operator=(nixlSecDescList &&) = default;
+
+private:
+    void
+    addSortedDescs(std::vector<nixlSectionDesc> batch);
 };
 
 using nixl_sec_dlist_t = nixlSecDescList;
@@ -168,7 +184,7 @@ class nixlRemoteSection : public nixlMemSection {
 
         // When adding self as a remote agent for local operations
         nixl_status_t
-        loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEngine *backend);
+        loadLocalData(nixlSecDescList mem_elms, nixlBackendEngine *backend);
         void
         removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine &backend);
         ~nixlRemoteSection();
