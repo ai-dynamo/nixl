@@ -63,7 +63,8 @@ main() {
     uint64_t buffer;
     int ret, i;
 
-    unsigned check_cb_id = 1, rndv_cb_id = 2;
+    const auto check_cb_id = nixl::ucx::am_cb_op_t(42);
+    const auto rndv_cb_id = nixl::ucx::am_cb_op_t(43);
 
     void *big_buffer = calloc(1, 8192);
     struct sample_header hdr = {0};

@@ -26,36 +26,16 @@ extern "C" {
 
 #include <nixl_types.h>
 
+#include "ucx_enums.h"
+
 #include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
-
-
-enum class nixl_ucx_mt_t { SINGLE, CTX, WORKER };
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
 
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
 // field only from UCX 1.22
 inline constexpr unsigned ucp_version_mem_type_rdma = UCP_VERSION(1, 22);
-
-template<typename Enum>
-[[nodiscard]] constexpr auto
-enumToInteger(const Enum e) noexcept {
-    static_assert(std::is_enum_v<Enum>);
-    return std::underlying_type_t<Enum>(e);
-}
-
-[[nodiscard]] std::string_view constexpr to_string_view(const nixl_ucx_mt_t t) noexcept {
-    switch (t) {
-    case nixl_ucx_mt_t::SINGLE:
-        return "SINGLE";
-    case nixl_ucx_mt_t::CTX:
-        return "CTX";
-    case nixl_ucx_mt_t::WORKER:
-        return "WORKER";
-    }
-    return "INVALID"; // It is not a to_string function's job to validate.
-}
 
 template<typename T>
 [[nodiscard]] T
@@ -83,19 +63,12 @@ class rkey;
 class nixlUcxMem;
 
 class nixlUcxEp {
-    enum nixl_ucx_ep_state_t {
-        NIXL_UCX_EP_STATE_NULL,
-        NIXL_UCX_EP_STATE_CONNECTED,
-        NIXL_UCX_EP_STATE_FAILED,
-        NIXL_UCX_EP_STATE_DISCONNECTED
-    };
-
 private:
     ucp_ep_h eph{nullptr};
-    nixl_ucx_ep_state_t state{NIXL_UCX_EP_STATE_NULL};
+    nixl::ucx::ep_state_t state = nixl::ucx::ep_state_t::UNINITIALIZED;
 
     void
-    setState(nixl_ucx_ep_state_t new_state);
+    setState(nixl::ucx::ep_state_t new_state);
     nixl_status_t
     closeImpl(ucp_ep_close_flags_t flags);
 
@@ -110,18 +83,9 @@ public:
     void
     err_cb(ucp_ep_h ucp_ep, ucs_status_t status);
 
-    nixl_status_t
-    checkTxState() const {
-        switch (state) {
-        case NIXL_UCX_EP_STATE_CONNECTED:
-            return NIXL_SUCCESS;
-        case NIXL_UCX_EP_STATE_FAILED:
-            return NIXL_ERR_REMOTE_DISCONNECT;
-        case NIXL_UCX_EP_STATE_NULL:
-        case NIXL_UCX_EP_STATE_DISCONNECTED:
-        default:
-            return NIXL_ERR_BACKEND;
-        }
+    [[nodiscard]] nixl_status_t
+    checkTxState() const noexcept {
+        return nixl::ucx::toNixlStatus(state);
     }
 
     nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
@@ -134,7 +98,7 @@ public:
 
     /* Active message handling */
     nixl_status_t
-    sendAm(unsigned msg_id,
+    sendAm(nixl::ucx::am_cb_op_t msg_id,
            void *hdr,
            size_t hdr_len,
            void *buffer,
@@ -203,7 +167,7 @@ class nixlUcxContext {
 private:
     /* Local UCX stuff */
     ucp_context_h ctx;
-    const nixl_ucx_mt_t mtType_;
+    const nixl::ucx::mt_mode_t mtType_;
     const unsigned ucpVersion_;
 
 public:
@@ -238,7 +202,7 @@ public:
 };
 
 [[nodiscard]] bool
-nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t) noexcept;
+nixlUcxMtLevelIsSupported(const nixl::ucx::mt_mode_t) noexcept;
 
 class nixlUcxWorker {
 public:
@@ -261,7 +225,7 @@ public:
 
     /* Active message handling */
     int
-    regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, void *arg);
+    regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg);
 
     /* Data access */
     int
@@ -299,9 +263,6 @@ private:
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options();
-
-[[nodiscard]] nixl_status_t
-ucx_status_to_nixl(ucs_status_t status);
 
 [[nodiscard]] std::string_view
 ucx_err_mode_to_string(ucp_err_handling_mode_t t);

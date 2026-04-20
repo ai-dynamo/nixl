@@ -30,15 +30,14 @@
 #include <optional>
 
 #include "nixl.h"
-#include "backend/backend_engine.h"
 
-// Local includes
+#include "backend/backend_engine.h"
 #include "common/nixl_time.h"
+
 #include "mem_list.h"
 #include "rkey.h"
+#include "ucx_enums.h"
 #include "ucx_utils.h"
-
-enum ucx_cb_op_t { NOTIF_STR };
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
