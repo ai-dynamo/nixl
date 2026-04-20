@@ -26,13 +26,16 @@ public:
      * @param l     Length in bytes.
      */
     nixlDellMemMetadata(nixl_mem_t type, uintptr_t a, size_t l)
-        : nixlBackendMD(true), memType(type), addr(a), len(l) {}
+        : nixlBackendMD(true),
+          memType(type),
+          addr(a),
+          len(l) {}
 
     ~nixlDellMemMetadata() = default;
 
-    nixl_mem_t memType;   ///< DRAM_SEG or VRAM_SEG.
-    uintptr_t  addr;      ///< Start address (for deregisterMemory).
-    size_t     len;       ///< Length in bytes.
+    nixl_mem_t memType; ///< DRAM_SEG or VRAM_SEG.
+    uintptr_t addr; ///< Start address (for deregisterMemory).
+    size_t len; ///< Length in bytes.
 };
 
 } // namespace
@@ -41,8 +44,7 @@ public:
 // Constructors
 // ---------------------------------------------------------------------------
 
-S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(
-        const nixlBackendInitParams *init_params)
+S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params)
     : S3AccelObjEngineImpl(init_params) {
     // Create the token manager (Pattern B — no callbacks).
     tokenMgr_ = std::make_shared<CuObjTokenManager>(CUOBJ_PROTO_RDMA_DC_V1);
@@ -52,14 +54,13 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(
     }
 
     // Create the Dell RDMA client that uses the token manager.
-    s3Client_ = std::make_shared<awsS3DellObsClient>(
-        init_params->customParams, tokenMgr_, executor_);
+    s3Client_ =
+        std::make_shared<awsS3DellObsClient>(init_params->customParams, tokenMgr_, executor_);
     NIXL_INFO << "Dell ObjectScale engine initialized (Pattern B)";
 }
 
-S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(
-        const nixlBackendInitParams *init_params,
-        std::shared_ptr<iS3Client> s3_client)
+S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params,
+                                               std::shared_ptr<iS3Client> s3_client)
     : S3AccelObjEngineImpl(init_params, s3_client) {
     // Use the injected client if provided (testing), otherwise create one.
     if (s3_client) {
@@ -70,8 +71,8 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(
             NIXL_ERROR << "CuObjTokenManager failed to connect";
             return;
         }
-        s3Client_ = std::make_shared<awsS3DellObsClient>(
-            init_params->customParams, tokenMgr_, executor_);
+        s3Client_ =
+            std::make_shared<awsS3DellObsClient>(init_params->customParams, tokenMgr_, executor_);
     }
 
     NIXL_INFO << "Dell ObjectScale engine initialized (Pattern B, injected client)";
@@ -110,11 +111,10 @@ S3DellObsObjEngineImpl::registerMem(const nixlBlobDesc &mem,
 
     // Register this page at its exact address and size (1:1 mapping).
     // Registration happens at init time, not on the hot path.
-    cuObjErr_t rc = tokenMgr_->registerMemory(
-        reinterpret_cast<void *>(mem.addr), mem.len);
+    cuObjErr_t rc = tokenMgr_->registerMemory(reinterpret_cast<void *>(mem.addr), mem.len);
     if (rc != CU_OBJ_SUCCESS) {
-        NIXL_ERROR << "cuObject memory registration failed for addr=0x"
-                   << std::hex << mem.addr << " len=" << std::dec << mem.len;
+        NIXL_ERROR << "cuObject memory registration failed for addr=0x" << std::hex << mem.addr
+                   << " len=" << std::dec << mem.len;
         return NIXL_ERR_BACKEND;
     }
 
@@ -145,11 +145,9 @@ S3DellObsObjEngineImpl::deregisterMem(nixlBackendMD *meta) {
     // DRAM/VRAM: deregister from cuObject.
     nixl_status_t result = NIXL_SUCCESS;
     if (tokenMgr_) {
-        cuObjErr_t rc = tokenMgr_->deregisterMemory(
-            reinterpret_cast<void *>(dell_md->addr));
+        cuObjErr_t rc = tokenMgr_->deregisterMemory(reinterpret_cast<void *>(dell_md->addr));
         if (rc != CU_OBJ_SUCCESS) {
-            NIXL_ERROR << "cuObject deregistration failed for addr=0x"
-                       << std::hex << dell_md->addr;
+            NIXL_ERROR << "cuObject deregistration failed for addr=0x" << std::hex << dell_md->addr;
             result = NIXL_ERR_BACKEND;
         }
     }

@@ -46,12 +46,14 @@ public:
 
     /* Non-copyable, non-movable — owns the cuObjClient instance. */
     CuObjTokenManager(const CuObjTokenManager &) = delete;
-    CuObjTokenManager &operator=(const CuObjTokenManager &) = delete;
+    CuObjTokenManager &
+    operator=(const CuObjTokenManager &) = delete;
 
     /**
      * @return true if the cuObjClient is connected and ready for operations.
      */
-    bool isConnected() const;
+    bool
+    isConnected() const;
 
     /**
      * Register a memory region for RDMA.
@@ -61,7 +63,8 @@ public:
      * @param size  Size in bytes.  Must be < 4 GiB (CUOBJ_MAX_MEMORY_REG_SIZE).
      * @return CU_OBJ_SUCCESS on success, CU_OBJ_FAIL on failure.
      */
-    cuObjErr_t registerMemory(void *ptr, size_t size);
+    cuObjErr_t
+    registerMemory(void *ptr, size_t size);
 
     /**
      * Deregister a previously registered memory region.
@@ -70,7 +73,8 @@ public:
      * @param ptr  Start address passed to registerMemory().
      * @return CU_OBJ_SUCCESS on success, CU_OBJ_FAIL on failure.
      */
-    cuObjErr_t deregisterMemory(void *ptr);
+    cuObjErr_t
+    deregisterMemory(void *ptr);
 
     /**
      * Generate an RDMA token for a PUT (upload) operation.
@@ -84,17 +88,20 @@ public:
      * @return RDMA token string for use as an HTTP header value.
      * @throws std::runtime_error on failure.
      */
-    std::string generatePutToken(void *data_ptr, size_t size);
+    std::string
+    generatePutToken(void *data_ptr, size_t size);
 
     /**
      * Generate an RDMA token for a GET (download) operation.
      * Same semantics as generatePutToken but for CUOBJ_GET.
      */
-    std::string generateGetToken(void *data_ptr, size_t size);
+    std::string
+    generateGetToken(void *data_ptr, size_t size);
 
 private:
     /** Common token generation logic. */
-    std::string generateToken(void *data_ptr, size_t size, cuObjOpType_t op);
+    std::string
+    generateToken(void *data_ptr, size_t size, cuObjOpType_t op);
 
     std::unique_ptr<cuObjClient> client_;
 };

@@ -31,9 +31,8 @@ public:
      * @param executor       Optional async executor for the AWS SDK.
      */
     awsS3DellObsClient(nixl_b_params_t *custom_params,
-                        std::shared_ptr<CuObjTokenManager> token_mgr,
-                        std::shared_ptr<Aws::Utils::Threading::Executor>
-                            executor = nullptr);
+                       std::shared_ptr<CuObjTokenManager> token_mgr,
+                       std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr);
 
     virtual ~awsS3DellObsClient() = default;
 

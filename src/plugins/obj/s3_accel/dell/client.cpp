@@ -14,10 +14,9 @@
 // Construction
 // ---------------------------------------------------------------------------
 
-awsS3DellObsClient::awsS3DellObsClient(
-        nixl_b_params_t *custom_params,
-        std::shared_ptr<CuObjTokenManager> token_mgr,
-        std::shared_ptr<Aws::Utils::Threading::Executor> executor)
+awsS3DellObsClient::awsS3DellObsClient(nixl_b_params_t *custom_params,
+                                       std::shared_ptr<CuObjTokenManager> token_mgr,
+                                       std::shared_ptr<Aws::Utils::Threading::Executor> executor)
     : awsS3AccelClient(custom_params, executor),
       tokenMgr_(std::move(token_mgr)) {
     NIXL_DEBUG << "Initialized Dell ObjectScale client (Pattern B)";
@@ -29,10 +28,10 @@ awsS3DellObsClient::awsS3DellObsClient(
 
 void
 awsS3DellObsClient::putObjectAsync(std::string_view key,
-                                    uintptr_t data_ptr,
-                                    size_t data_len,
-                                    size_t offset,
-                                    put_object_callback_t callback) {
+                                   uintptr_t data_ptr,
+                                   size_t data_len,
+                                   size_t offset,
+                                   put_object_callback_t callback) {
     // Dell ObjectScale PUT does not support partial writes with offsets.
     if (data_len == 0) {
         NIXL_ERROR << "putObjectAsync: data_len is 0";
@@ -48,9 +47,9 @@ awsS3DellObsClient::putObjectAsync(std::string_view key,
     // Pattern B: generate RDMA token for the data region.
     std::string token;
     try {
-        token = tokenMgr_->generatePutToken(
-            reinterpret_cast<void *>(data_ptr), data_len);
-    } catch (const std::exception &e) {
+        token = tokenMgr_->generatePutToken(reinterpret_cast<void *>(data_ptr), data_len);
+    }
+    catch (const std::exception &e) {
         NIXL_ERROR << "putObjectAsync: RDMA token generation failed: " << e.what();
         callback(false);
         return;
@@ -64,10 +63,10 @@ awsS3DellObsClient::putObjectAsync(std::string_view key,
     request.SetAdditionalCustomHeaderValue("x-rdma-info", token);
     request.SetContentLength(0);
 
-    NIXL_DEBUG << absl::StrFormat(
-        "putObjectAsync RDMA: key=%s, data_ptr=%p, data_len=%zu",
-        std::string(key).c_str(),
-        reinterpret_cast<void *>(data_ptr), data_len);
+    NIXL_DEBUG << absl::StrFormat("putObjectAsync RDMA: key=%s, data_ptr=%p, data_len=%zu",
+                                  std::string(key).c_str(),
+                                  reinterpret_cast<void *>(data_ptr),
+                                  data_len);
 
     s3Client_->PutObjectAsync(
         request,
@@ -77,11 +76,10 @@ awsS3DellObsClient::putObjectAsync(std::string_view key,
                    const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
             if (!outcome.IsSuccess()) {
                 const auto &error = outcome.GetError();
-                NIXL_ERROR << absl::StrFormat(
-                    "putObjectAsync RDMA failed: %s: %s (HTTP %d)",
-                    error.GetExceptionName().c_str(),
-                    error.GetMessage().c_str(),
-                    static_cast<int>(error.GetResponseCode()));
+                NIXL_ERROR << absl::StrFormat("putObjectAsync RDMA failed: %s: %s (HTTP %d)",
+                                              error.GetExceptionName().c_str(),
+                                              error.GetMessage().c_str(),
+                                              static_cast<int>(error.GetResponseCode()));
             }
             callback(outcome.IsSuccess());
         },
@@ -94,10 +92,10 @@ awsS3DellObsClient::putObjectAsync(std::string_view key,
 
 void
 awsS3DellObsClient::getObjectAsync(std::string_view key,
-                                    uintptr_t data_ptr,
-                                    size_t data_len,
-                                    size_t offset,
-                                    get_object_callback_t callback) {
+                                   uintptr_t data_ptr,
+                                   size_t data_len,
+                                   size_t offset,
+                                   get_object_callback_t callback) {
     if (data_len == 0) {
         NIXL_ERROR << "getObjectAsync: data_len is 0";
         callback(false);
@@ -113,9 +111,9 @@ awsS3DellObsClient::getObjectAsync(std::string_view key,
     // Pattern B: generate RDMA token for the receive buffer.
     std::string token;
     try {
-        token = tokenMgr_->generateGetToken(
-            reinterpret_cast<void *>(data_ptr), data_len);
-    } catch (const std::exception &e) {
+        token = tokenMgr_->generateGetToken(reinterpret_cast<void *>(data_ptr), data_len);
+    }
+    catch (const std::exception &e) {
         NIXL_ERROR << "getObjectAsync: RDMA token generation failed: " << e.what();
         callback(false);
         return;
@@ -126,15 +124,16 @@ awsS3DellObsClient::getObjectAsync(std::string_view key,
     // client's registered memory via RDMA_WRITE.
     Aws::S3::Model::GetObjectRequest request;
     request.WithBucket(bucketName_)
-           .WithKey(Aws::String(key))
-           .WithRange(absl::StrFormat("bytes=%zu-%zu",
-                                      offset, offset + data_len - 1));
+        .WithKey(Aws::String(key))
+        .WithRange(absl::StrFormat("bytes=%zu-%zu", offset, offset + data_len - 1));
     request.SetAdditionalCustomHeaderValue("x-rdma-info", token);
 
     NIXL_DEBUG << absl::StrFormat(
         "getObjectAsync RDMA: key=%s, data_ptr=%p, data_len=%zu, offset=%zu",
         std::string(key).c_str(),
-        reinterpret_cast<void *>(data_ptr), data_len, offset);
+        reinterpret_cast<void *>(data_ptr),
+        data_len,
+        offset);
 
     s3Client_->GetObjectAsync(
         request,
@@ -144,11 +143,10 @@ awsS3DellObsClient::getObjectAsync(std::string_view key,
                    const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
             if (!outcome.IsSuccess()) {
                 const auto &error = outcome.GetError();
-                NIXL_ERROR << absl::StrFormat(
-                    "getObjectAsync RDMA failed: %s: %s (HTTP %d)",
-                    error.GetExceptionName().c_str(),
-                    error.GetMessage().c_str(),
-                    static_cast<int>(error.GetResponseCode()));
+                NIXL_ERROR << absl::StrFormat("getObjectAsync RDMA failed: %s: %s (HTTP %d)",
+                                              error.GetExceptionName().c_str(),
+                                              error.GetMessage().c_str(),
+                                              static_cast<int>(error.GetResponseCode()));
             }
             callback(outcome.IsSuccess());
         },

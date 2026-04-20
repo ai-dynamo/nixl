@@ -70,9 +70,7 @@ public:
      * @return NIXL_SUCCESS, NIXL_ERR_BACKEND, or NIXL_ERR_NOT_SUPPORTED.
      */
     nixl_status_t
-    registerMem(const nixlBlobDesc &mem,
-                const nixl_mem_t &nixl_mem,
-                nixlBackendMD *&out) override;
+    registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
 
     /**
      * Deregister memory from the backend.
@@ -87,9 +85,9 @@ public:
     deregisterMem(nixlBackendMD *meta) override;
 
     // prepXfer   — INHERITED from DefaultObjEngineImpl (validates, creates handle).
-    // postXfer   — INHERITED from DefaultObjEngineImpl (calls client->putObjectAsync/getObjectAsync).
-    // checkXfer  — INHERITED from DefaultObjEngineImpl (polls futures).
-    // releaseReqH — INHERITED from DefaultObjEngineImpl (deletes handle).
+    // postXfer   — INHERITED from DefaultObjEngineImpl (calls
+    // client->putObjectAsync/getObjectAsync). checkXfer  — INHERITED from DefaultObjEngineImpl
+    // (polls futures). releaseReqH — INHERITED from DefaultObjEngineImpl (deletes handle).
 
 protected:
     /**

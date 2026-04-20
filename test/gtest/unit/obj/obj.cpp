@@ -728,7 +728,8 @@ protected:
 
     void *buffer_ = nullptr;
 
-    void SetUp() override {
+    void
+    SetUp() override {
         // posix_memalign guarantees page alignment, which cuObject prefers.
         int rc = posix_memalign(&buffer_, kPageSize, kBufferSize);
         ASSERT_EQ(rc, 0);
@@ -736,7 +737,8 @@ protected:
         std::memset(buffer_, 0xAB, kBufferSize);
     }
 
-    void TearDown() override {
+    void
+    TearDown() override {
         if (buffer_) {
             free(buffer_);
             buffer_ = nullptr;
@@ -879,7 +881,8 @@ TEST_F(CuObjTokenManagerTest, GeneratePutTokenForRegisteredMemory) {
         EXPECT_FALSE(token.empty());
         // Token should contain the RDMA protocol identifier.
         // (Implementation detail: CUOBJ tokens typically start with "CUOBJ" prefix)
-    } catch (const std::runtime_error &) {
+    }
+    catch (const std::runtime_error &) {
         // cuMemObjGetRDMAToken failed — expected if no RDMA NIC is present.
         // This is not a test failure; token generation requires real hardware.
     }
@@ -901,7 +904,8 @@ TEST_F(CuObjTokenManagerTest, GenerateGetTokenForRegisteredMemory) {
     try {
         std::string token = mgr.generateGetToken(buffer_, kBufferSize);
         EXPECT_FALSE(token.empty());
-    } catch (const std::runtime_error &) {
+    }
+    catch (const std::runtime_error &) {
         // Expected if no RDMA NIC.
     }
 

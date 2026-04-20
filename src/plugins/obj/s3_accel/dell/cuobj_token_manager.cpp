@@ -37,27 +37,24 @@ CuObjTokenManager::isConnected() const {
 cuObjErr_t
 CuObjTokenManager::registerMemory(void *ptr, size_t size) {
     if (!ptr || size == 0) {
-        NIXL_ERROR << "registerMemory: invalid arguments (ptr="
-                   << ptr << ", size=" << size << ")";
+        NIXL_ERROR << "registerMemory: invalid arguments (ptr=" << ptr << ", size=" << size << ")";
         return CU_OBJ_FAIL;
     }
 
     if (size >= CUOBJ_MAX_MEMORY_REG_SIZE) {
-        NIXL_ERROR << "registerMemory: size " << size
-                   << " exceeds cuObject limit (" << CUOBJ_MAX_MEMORY_REG_SIZE << ")";
+        NIXL_ERROR << "registerMemory: size " << size << " exceeds cuObject limit ("
+                   << CUOBJ_MAX_MEMORY_REG_SIZE << ")";
         return CU_OBJ_FAIL;
     }
 
     cuObjErr_t rc = client_->cuMemObjGetDescriptor(ptr, size);
     if (rc != CU_OBJ_SUCCESS) {
         NIXL_ERROR << "cuMemObjGetDescriptor failed: ptr=0x" << std::hex
-                   << reinterpret_cast<uintptr_t>(ptr)
-                   << " size=" << std::dec << size;
+                   << reinterpret_cast<uintptr_t>(ptr) << " size=" << std::dec << size;
         return rc;
     }
 
-    NIXL_DEBUG << "registerMemory: ptr=0x" << std::hex
-               << reinterpret_cast<uintptr_t>(ptr)
+    NIXL_DEBUG << "registerMemory: ptr=0x" << std::hex << reinterpret_cast<uintptr_t>(ptr)
                << " size=" << std::dec << size;
     return CU_OBJ_SUCCESS;
 }
@@ -75,8 +72,7 @@ CuObjTokenManager::deregisterMemory(void *ptr) {
         return rc;
     }
 
-    NIXL_DEBUG << "deregisterMemory: ptr=0x" << std::hex
-               << reinterpret_cast<uintptr_t>(ptr);
+    NIXL_DEBUG << "deregisterMemory: ptr=0x" << std::hex << reinterpret_cast<uintptr_t>(ptr);
     return CU_OBJ_SUCCESS;
 }
 
@@ -103,8 +99,7 @@ CuObjTokenManager::generateToken(void *data_ptr, size_t size, cuObjOpType_t op) 
     // Each page is registered at its exact address, so buffer_offset is 0.
     // cuMemObjGetRDMAToken generates a token for [data_ptr, data_ptr+size).
     char *desc_str = nullptr;
-    cuObjErr_t rc = client_->cuMemObjGetRDMAToken(
-        data_ptr, size, 0, op, &desc_str);
+    cuObjErr_t rc = client_->cuMemObjGetRDMAToken(data_ptr, size, 0, op, &desc_str);
     if (rc != CU_OBJ_SUCCESS || !desc_str) {
         throw std::runtime_error("cuMemObjGetRDMAToken failed");
     }

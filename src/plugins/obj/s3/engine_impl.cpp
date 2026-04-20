@@ -37,8 +37,7 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
     // report it in getSupportedMems, e.g. Dell ObjectScale).
     if (local.getType() != DRAM_SEG && local.getType() != VRAM_SEG) {
         NIXL_ERROR << absl::StrFormat(
-            "Error: Local memory type must be DRAM_SEG or VRAM_SEG, got %d",
-            local.getType());
+            "Error: Local memory type must be DRAM_SEG or VRAM_SEG, got %d", local.getType());
         return false;
     }
 
