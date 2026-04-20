@@ -76,7 +76,7 @@ RUN if [ "${MAKE_EFA}" != "true" ]; then \
       libnuma-dev librdmacm-dev ibverbs-providers; \
     fi
 
-RUN if [ "${MAKE_EFA}" == "true" ]; then \
+RUN if [ "${MAKE_EFA}" = "true" ]; then \
       mkdir -p /tmp/efa && \
       cd /tmp/efa && \
       curl --retry 3 --retry-delay 2 -fsSL -o aws-efa-installer-${EFA_VERSION}.tar.gz \
