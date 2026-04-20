@@ -148,7 +148,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 #else
     useEtcd = false;
     NIXL_DEBUG << "NIXL ETCD is excluded";
-#endif
+#endif // HAVE_ETCD
     if (name.empty())
         throw std::invalid_argument("Agent needs a name");
 
