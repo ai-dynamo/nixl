@@ -73,7 +73,7 @@ toStringView(const nixl_ucx_ep_state_t t) noexcept {
 }
 
 enum class nixl_ucx_cb_op_t {
-    NOTIF_STR
+    NOTIF_STR,
 };
 
 [[nodiscard]] constexpr std::string_view
