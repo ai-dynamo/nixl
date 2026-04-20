@@ -32,8 +32,6 @@
 #include "serdes/serdes.h"
 #include "rkey.h"
 
-using namespace std;
-
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
     nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
@@ -645,8 +643,7 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
                   << "GPU memory is not supported.";
     }
 
-    if (ucpVersion_ >= UCP_VERSION(1, 22)) {
-        // `UCS_MEMORY_TYPE_RDMA` to be checked explicitly only from UCX 1.22
+    if (ucpVersion_ >= ucp_version_mem_type_rdma) {
         if (hw_info.numIbDevices > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_RDMA)) {
             NIXL_WARN << hw_info.numIbDevices
                       << " IB device(s) were detected, but accelerated IB support was not found! "
