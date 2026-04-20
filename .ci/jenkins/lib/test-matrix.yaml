@@ -54,6 +54,7 @@ env:
 
 empty_volumes:
   - {mountPath: /root, memory: false}
+  - {mountPath: /var/lib/containers/storage, memory: false}
 
 pvc_volumes:
   - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}

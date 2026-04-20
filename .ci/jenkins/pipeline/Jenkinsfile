@@ -15,6 +15,7 @@
 // It is used to update the commit status and upload logs
 @Library('blossom-github-lib@master')
 @Library('ci-demo')  // External library for matrix build functionality
+@Library('swx-jenkins-lib')  // External library for matrix build functionality
 
 // Initialize the build matrix
 // The matrix class handles the parallel execution of different build configurations
