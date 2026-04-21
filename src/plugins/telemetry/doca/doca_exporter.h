@@ -21,26 +21,10 @@
 #include "telemetry_event.h"
 #include "nixl_types.h"
 
-#include <doca_telemetry_exporter.h>
 #include <memory>
 #include <string>
 
-/**
- * @brief Process-wide shared DOCA context
- *
- * DOCA only supports one metrics context per process, so all agents share
- * this context. The underlying CLX Metrics API is not thread-safe, so all
- * metric recording calls (metrics_add_counter / metrics_add_gauge) are
- * serialised by a dedicated mutex in the .cpp file.
- */
-struct DocaSharedContext {
-    doca_telemetry_exporter_schema *schema = nullptr;
-    doca_telemetry_exporter_source *source = nullptr;
-    doca_telemetry_exporter_label_set_id_t label_set_id = 0;
-    bool source_started = false;
-    bool metrics_context_created = false;
-    ~DocaSharedContext();
-};
+struct DocaSharedContext;
 
 class nixlTelemetryDocaExporter : public nixlTelemetryExporter {
 public:
@@ -53,13 +37,11 @@ public:
 private:
     const bool local_ = false;
     const uint16_t port_;
-    bool initialized_ = false;
     const std::string agent_name_;
     const std::string hostname_;
     std::shared_ptr<DocaSharedContext> ctx_;
 
-    nixl_status_t
-    initializeDoca(const std::string &bind_address);
+    void initializeDoca(const std::string &bind_address);
 
     doca_error_t
     registerCounter(const nixlTelemetryEvent &event, const char *label_values[]);

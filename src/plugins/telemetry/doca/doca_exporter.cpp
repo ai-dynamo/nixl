@@ -18,7 +18,9 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 
+#include <doca_telemetry_exporter.h>
 #include <doca_error.h>
+#include <array>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -38,12 +40,12 @@ const char docaExporterBackendCategory[] = "NIXL_TELEMETRY_BACKEND";
 const std::string docaExporterLocalAddress = "http://127.0.0.1";
 const std::string docaExporterPublicAddress = "http://0.0.0.0";
 
-std::string
+[[nodiscard]] std::string
 getHostname() {
-    char hostname[HOST_NAME_MAX + 1];
-    if (gethostname(hostname, sizeof(hostname)) == 0) {
-        hostname[HOST_NAME_MAX] = '\0';
-        return std::string(hostname);
+    std::array<char, HOST_NAME_MAX + 1> hostname{};
+    if (gethostname(hostname.data(), hostname.size()) == 0) {
+        hostname.back() = '\0';
+        return std::string(hostname.data());
     }
     return "unknown";
 }
@@ -52,6 +54,23 @@ std::mutex g_ctx_mutex;
 std::weak_ptr<DocaSharedContext> g_ctx_weak;
 std::mutex g_metrics_mutex;
 } // namespace
+
+/**
+ * @brief Process-wide shared DOCA context
+ *
+ * DOCA only supports one metrics context per process, so all agents share
+ * this context. The underlying CLX Metrics API is not thread-safe, so all
+ * metric recording calls (metrics_add_counter / metrics_add_gauge) are
+ * serialised by a dedicated mutex (g_metrics_mutex).
+ */
+struct DocaSharedContext {
+    doca_telemetry_exporter_schema *schema = nullptr;
+    doca_telemetry_exporter_source *source = nullptr;
+    doca_telemetry_exporter_label_set_id_t label_set_id = 0;
+    bool source_started = false;
+    bool metrics_context_created = false;
+    ~DocaSharedContext();
+};
 
 DocaSharedContext::~DocaSharedContext() {
 #pragma GCC diagnostic push
@@ -80,12 +99,7 @@ nixlTelemetryDocaExporter::nixlTelemetryDocaExporter(
     std::string bind_address = (local_ ? docaExporterLocalAddress : docaExporterPublicAddress) +
         ":" + std::to_string(port_);
 
-    nixl_status_t status = initializeDoca(bind_address);
-    if (status != NIXL_SUCCESS) {
-        throw std::runtime_error("Failed to initialize DOCA Telemetry exporter");
-    }
-
-    initialized_ = true;
+    initializeDoca(bind_address);
 }
 
 nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
@@ -93,7 +107,7 @@ nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
     ctx_.reset();
 }
 
-nixl_status_t
+void
 nixlTelemetryDocaExporter::initializeDoca(const std::string &bind_address) {
     doca_error_t result;
 
@@ -112,20 +126,17 @@ nixlTelemetryDocaExporter::initializeDoca(const std::string &bind_address) {
 
         result = doca_telemetry_exporter_schema_init("nixl_telemetry", &new_ctx->schema);
         if (result != DOCA_SUCCESS) {
-            NIXL_ERROR << "Failed to initialize DOCA schema: " << result;
-            return NIXL_ERR_UNKNOWN;
+            throw std::runtime_error("Failed to initialize DOCA schema");
         }
 
         result = doca_telemetry_exporter_schema_start(new_ctx->schema);
         if (result != DOCA_SUCCESS) {
-            NIXL_ERROR << "Failed to start DOCA schema: " << result;
-            return NIXL_ERR_UNKNOWN;
+            throw std::runtime_error("Failed to start DOCA schema");
         }
 
         result = doca_telemetry_exporter_source_create(new_ctx->schema, &new_ctx->source);
         if (result != DOCA_SUCCESS) {
-            NIXL_ERROR << "Failed to create DOCA source: " << result;
-            return NIXL_ERR_UNKNOWN;
+            throw std::runtime_error("Failed to create DOCA source");
         }
 
         doca_telemetry_exporter_source_set_id(new_ctx->source, "nixl");
@@ -133,31 +144,27 @@ nixlTelemetryDocaExporter::initializeDoca(const std::string &bind_address) {
 
         result = doca_telemetry_exporter_source_start(new_ctx->source);
         if (result != DOCA_SUCCESS) {
-            NIXL_ERROR << "Failed to start DOCA source: " << result;
-            return NIXL_ERR_UNKNOWN;
+            throw std::runtime_error("Failed to start DOCA source");
         }
         new_ctx->source_started = true;
 
         result = doca_telemetry_exporter_metrics_create_context(new_ctx->source);
         if (result != DOCA_SUCCESS) {
-            NIXL_ERROR << "Failed to create DOCA metrics context: " << result;
-            return NIXL_ERR_UNKNOWN;
+            throw std::runtime_error("Failed to create DOCA metrics context");
         }
         new_ctx->metrics_context_created = true;
 
         result = doca_telemetry_exporter_metrics_add_constant_label(
             new_ctx->source, "hostname", hostname_.c_str());
         if (result != DOCA_SUCCESS) {
-            NIXL_ERROR << "Failed to add constant label: " << result;
-            return NIXL_ERR_UNKNOWN;
+            throw std::runtime_error("Failed to add DOCA constant label");
         }
 
         const char *label_names[] = {"category", "agent_name"};
         result = doca_telemetry_exporter_metrics_add_label_names(
             new_ctx->source, label_names, 2, &new_ctx->label_set_id);
         if (result != DOCA_SUCCESS) {
-            NIXL_ERROR << "Failed to create label set: " << result;
-            return NIXL_ERR_UNKNOWN;
+            throw std::runtime_error("Failed to create DOCA label set");
         }
 
         doca_telemetry_exporter_metrics_set_flush_interval_ms(new_ctx->source, 1000);
@@ -171,8 +178,6 @@ nixlTelemetryDocaExporter::initializeDoca(const std::string &bind_address) {
     }
 
 #pragma GCC diagnostic pop
-
-    return NIXL_SUCCESS;
 }
 
 doca_error_t
@@ -206,10 +211,6 @@ nixlTelemetryDocaExporter::registerGauge(const nixlTelemetryEvent &event,
 nixl_status_t
 nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
     doca_error_t result;
-    if (!initialized_) {
-        NIXL_ERROR << "DOCA exporter not initialized";
-        return NIXL_ERR_UNKNOWN;
-    }
 
     try {
         const std::lock_guard lock(g_metrics_mutex);
