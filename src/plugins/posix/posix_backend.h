@@ -18,10 +18,12 @@
 #ifndef NIXL_SRC_PLUGINS_POSIX_POSIX_BACKEND_H
 #define NIXL_SRC_PLUGINS_POSIX_POSIX_BACKEND_H
 
+#include <exception>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
-#include <absl/strings/str_format.h>
+
 #include "backend/backend_engine.h"
 #include "io_queue.h"
 #include "sync.h"
@@ -151,4 +153,4 @@ public:
     }
 };
 
-#endif // POSIX_BACKEND_H
+#endif
