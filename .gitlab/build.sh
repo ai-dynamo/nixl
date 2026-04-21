@@ -334,6 +334,14 @@ if [ -n "${PRE_INSTALLED_ENV}" ] && [ "${BUILD_NIXL_EP}" = "true" ] && $HAS_GPU 
         $SUDO apt-get -qq update
         $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
     fi
+    # DOCA device headers (.cuh) may be installed to a path nvcc does not search.
+    # Copy them to CUDA include path so nvcc can find doca_gpunetio_dev_verbs_qp.cuh
+    # included transitively via UCX device headers.
+    DOCA_CUH=$(find /usr/include /opt -name "doca_gpunetio_dev_verbs_qp.cuh" 2>/dev/null | head -1)
+    if [ -n "$DOCA_CUH" ] && [ -d "${CUDA_HOME}/include" ]; then
+        $SUDO cp "$(dirname "$DOCA_CUH")"/*.cuh "${CUDA_HOME}/include/" 2>/dev/null || true
+        echo "Copied DOCA device headers from $(dirname "$DOCA_CUH") to ${CUDA_HOME}/include/"
+    fi
 fi
 
 if [ -n "$PRE_INSTALLED_UCX_ENV" ]; then
