@@ -35,14 +35,11 @@ public:
     exportEvent(const nixlTelemetryEvent &event) override;
 
 private:
-    const bool local_ = false;
-    const uint16_t port_;
     const std::string agent_name_;
-    const std::string hostname_;
     std::shared_ptr<DocaSharedContext> ctx_;
 
     void
-    initializeDoca(const std::string &bind_address);
+    initializeDoca(const std::string &bind_address, const std::string &hostname);
 
     doca_error_t
     registerCounter(const nixlTelemetryEvent &event, const char *label_values[]);
