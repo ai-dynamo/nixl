@@ -18,12 +18,10 @@
 #include <unistd.h>
 #include <cerrno>
 #include <cstring>
-#include <fstream>
 #include <stdexcept>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include "common/configuration.h"
 #include "common/nixl_log.h"
 
 nixlMetadataStream::nixlMetadataStream(uint16_t port) noexcept : port(port), socketFd(-1) {
@@ -87,21 +85,11 @@ void nixlMDStreamListener::setupListener() {
         throw std::runtime_error("Failed to bind metadata listener socket");
     }
 
+    const bool os_assigned_port = (port == 0);
     sockaddr_in bound_addr;
     socklen_t addr_len = sizeof(bound_addr);
     if (getsockname(socketFd, reinterpret_cast<sockaddr *>(&bound_addr), &addr_len) == 0) {
         port = ntohs(bound_addr.sin_port);
-
-        const auto port_file =
-            nixl::config::getValueOptional<std::filesystem::path>("NIXL_MD_LISTENER_PORT_FILE");
-        if (port_file) {
-            std::ofstream ofs(*port_file);
-            if (ofs) {
-                ofs << port << std::endl;
-            } else {
-                NIXL_WARN << "Failed to write port to " << *port_file;
-            }
-        }
     } else {
         closeStream();
         throw std::runtime_error(
@@ -114,8 +102,13 @@ void nixlMDStreamListener::setupListener() {
         closeStream();
         throw std::runtime_error("Failed to listen on metadata listener socket");
     }
-    NIXL_DEBUG << "MD listener is listening on port "
-               << port << "...";
+
+    const std::string log_msg = "MD listener is listening on port ";
+    if (os_assigned_port) {
+        NIXL_INFO << log_msg << port;
+    } else {
+        NIXL_DEBUG << log_msg << port;
+    }
 }
 
 int nixlMDStreamListener::acceptClient() {

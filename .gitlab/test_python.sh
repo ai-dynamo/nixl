@@ -94,7 +94,7 @@ python3 partial_md_example.py --etcd
 python3 query_mem_example.py
 
 # Run a two-peers example: starts a target on an OS-assigned port,
-# reads it from a FIFO by setting NIXL_MD_LISTENER_PORT_FILE,
+# reads the port from the target's NIXL_INFO log line on stderr,
 # then launches the initiator against it.
 # Extra arguments are passed as env vars to the initiator.
 # Usage: run_two_peers <script> [ENV=val ...]
@@ -102,21 +102,28 @@ run_two_peers() {
     script=$1
     shift
 
-    local port_fifo port
-    port_fifo=$(mktemp -u)
-    mkfifo "$port_fifo"
-    trap "rm -f '$port_fifo'" EXIT
+    local target_log port
+    target_log=$(mktemp)
+    trap "rm -f '$target_log'" EXIT
 
-    NIXL_MD_LISTENER_PORT_FILE="$port_fifo" \
-        python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 &
+    NIXL_LOG_LEVEL=INFO \
+        python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 \
+        2> >(tee -a "$target_log" >&2) &
     target_pid=$!
 
-    if ! port=$(timeout 30 head -n1 "$port_fifo"); then
+    # Look for the listening port in the target's log
+    port=""
+    for _ in $(seq 30); do
+        port=$(awk '/MD listener is listening on port/ { print $NF; exit }' "$target_log")
+        [ -n "$port" ] && break
+        sleep 1
+    done
+
+    if [ -z "$port" ]; then
         echo "Target (pid=$target_pid) failed to report port within 30s"
         kill "$target_pid" 2>/dev/null
         exit 1
     fi
-    rm -f "$port_fifo"
 
     env "$@" python3 "$script" --mode="initiator" --ip=127.0.0.1 --port="$port"
 }
