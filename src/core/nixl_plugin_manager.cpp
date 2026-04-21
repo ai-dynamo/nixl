@@ -255,7 +255,7 @@ void
 nixlPluginManager::discoverPluginsFromList(const std::string &filename) {
     auto plugins = loadPluginList(filename);
 
-    lock_guard lg(lock);
+    const lock_guard lg(lock);
 
     for (const auto& pair : plugins) {
         const std::string& name = pair.first;
@@ -476,7 +476,7 @@ nixlPluginManager::discoverBackendPlugin(const std::string &filename) {
     if (startsWith(filename, backendPluginPrefix) && endsWith(filename, kPluginSuffix)) {
         std::string plugin_name = extractPluginName(filename, backendPluginPrefix);
 
-        lock_guard lg(lock);
+        const lock_guard lg(lock);
         if (loaded_backend_plugins_.find(plugin_name) == loaded_backend_plugins_.end()) {
             discovered_backend_plugins_.insert(plugin_name);
             NIXL_INFO << "Discovered backend plugin: " << plugin_name;
@@ -588,7 +588,7 @@ nixlPluginManager::getLoadedBackendPluginNames() {
 
 std::vector<nixl_backend_t>
 nixlPluginManager::getAvailBackendPluginNames() {
-    lock_guard lg(lock);
+    const lock_guard lg(lock);
 
     std::vector<nixl_backend_t> names;
     for (const auto &pair : loaded_backend_plugins_) {
