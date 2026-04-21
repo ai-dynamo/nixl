@@ -167,7 +167,6 @@ private:
         loaded_telemetry_plugins_;
     // Plugins discovered on disk but not yet dlopen'd
     std::set<nixl_backend_t> discovered_backend_plugins_;
-    std::set<nixl_telemetry_plugin_t> discovered_telemetry_plugins_;
     // Explicit paths from the plugin list file (name -> .so path)
     std::map<nixl_backend_t, std::string> explicit_plugin_paths_;
     std::vector<std::string> plugin_dirs_;

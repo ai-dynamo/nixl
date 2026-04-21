@@ -488,12 +488,7 @@ void
 nixlPluginManager::discoverTelemetryPlugin(const std::string &filename) {
     if (startsWith(filename, telemetryPluginPrefix) && endsWith(filename, kPluginSuffix)) {
         std::string plugin_name = extractPluginName(filename, telemetryPluginPrefix);
-
-        lock_guard lg(lock);
-        if (loaded_telemetry_plugins_.find(plugin_name) == loaded_telemetry_plugins_.end()) {
-            discovered_telemetry_plugins_.insert(plugin_name);
-            NIXL_INFO << "Discovered telemetry plugin: " << plugin_name;
-        }
+        NIXL_INFO << "Discovered telemetry plugin: " << plugin_name;
     }
 }
 
