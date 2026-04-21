@@ -18,7 +18,6 @@
 #define NIXL_SRC_CORE_TELEMETRY_TELEMETRY_EVENT_H
 
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <string_view>
 
@@ -48,7 +47,7 @@ enum class nixl_telemetry_category_t {
  * @enum nixl_telemetry_event_type_t
  * @brief Enumerates all known telemetry event types.
  */
-enum class nixl_telemetry_event_type_t : uint8_t {
+enum class nixl_telemetry_event_type_t : uint32_t {
     AGENT_TX_BYTES = 0,
     AGENT_RX_BYTES = 1,
     AGENT_TX_REQUESTS_NUM = 2,
@@ -69,10 +68,9 @@ enum class nixl_telemetry_event_type_t : uint8_t {
     AGENT_ERR_REMOTE_DISCONNECT = 17,
     AGENT_ERR_CANCELED = 18,
     AGENT_ERR_NO_TELEMETRY = 19,
-    AGENT_BACKEND = 20,
 };
 
-[[nodiscard]] std::optional<nixl_telemetry_event_type_t>
+[[nodiscard]] nixl_telemetry_event_type_t
 nixlTelemetryEventTypeForStatus(nixl_status_t s);
 
 namespace nixlEnumStrings {
@@ -80,7 +78,7 @@ std::string
 telemetryCategoryStr(const nixl_telemetry_category_t &category);
 
 [[nodiscard]] constexpr std::string_view
-telemetryEventTypeStr(nixl_telemetry_event_type_t type) noexcept {
+telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
     switch (type) {
     case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
         return "agent_tx_bytes";
@@ -122,8 +120,6 @@ telemetryEventTypeStr(nixl_telemetry_event_type_t type) noexcept {
         return "agent_err_canceled";
     case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
         return "agent_err_no_telemetry";
-    case nixl_telemetry_event_type_t::AGENT_BACKEND:
-        return "agent_backend";
     }
     return "unknown_event";
 }

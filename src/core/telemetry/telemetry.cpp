@@ -33,7 +33,7 @@
 using namespace std::chrono_literals;
 namespace fs = std::filesystem;
 
-nixl_telemetry_event_type_t
+[[nodiscard]] nixl_telemetry_event_type_t
 nixlTelemetryEventTypeForStatus(nixl_status_t s) {
     switch (s) {
     case NIXL_ERR_NOT_POSTED:
@@ -242,7 +242,7 @@ nixlTelemetry::updateErrorCount(nixl_status_t error_type) {
     NIXL_ASSERT_ALWAYS(static_cast<int>(error_type) < 0)
         << "nixlTelemetry::updateErrorCount expects a negative nixl_status_t error code";
     const auto event_type = nixlTelemetryEventTypeForStatus(error_type);
-    updateData(*event_type, nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR, 1);
+    updateData(event_type, nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR, 1);
 }
 
 void

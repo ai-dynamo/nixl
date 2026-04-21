@@ -67,7 +67,6 @@ AGENT_ERR_NOT_SUPPORTED = 16
 AGENT_ERR_REMOTE_DISCONNECT = 17
 AGENT_ERR_CANCELED = 18
 AGENT_ERR_NO_TELEMETRY = 19
-AGENT_BACKEND = 20
 
 # Global flag for graceful shutdown
 running = True
@@ -263,7 +262,6 @@ _EVENT_TYPE_STRINGS = {
     AGENT_ERR_REMOTE_DISCONNECT: "agent_err_remote_disconnect",
     AGENT_ERR_CANCELED: "agent_err_canceled",
     AGENT_ERR_NO_TELEMETRY: "agent_err_no_telemetry",
-    AGENT_BACKEND: "agent_backend",
 }
 
 
