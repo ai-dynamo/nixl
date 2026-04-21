@@ -290,13 +290,12 @@ class nixl_agent:
     def get_plugin_mem_types(self, backend: str) -> list[str]:
         if backend not in self.plugin_mem_types:
             self._load_plugin_params(backend)
-        if backend in self.plugin_mem_types:
-            return self.plugin_mem_types[backend]
-        else:
+        if backend not in self.plugin_mem_types:
             logger.warning(
                 "Plugin %s is not available to get its supported mem types.", backend
             )
             return []
+        return self.plugin_mem_types[backend]
 
     """
     @brief Get the initialization parameters of a plugin.
@@ -309,11 +308,10 @@ class nixl_agent:
     def get_plugin_params(self, backend: str) -> dict[str, str]:
         if backend not in self.plugin_b_options:
             self._load_plugin_params(backend)
-        if backend in self.plugin_b_options:
-            return self.plugin_b_options[backend]
-        else:
+        if backend not in self.plugin_b_options:
             logger.warning("Plugin %s is not available to get its parameters.", backend)
             return {}
+        return self.plugin_b_options[backend]
 
     """
     @brief  Get the memory types supported by a backend.
