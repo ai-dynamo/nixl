@@ -39,11 +39,7 @@ UCX_REF=${UCX_REF:-v1.21.x}
 BUILD_NIXL_EP="true"
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
-if [ "$CI" = "true" ]; then
-    BUILD_TYPE="debug"
-else
-    BUILD_TYPE="release"
-fi
+BUILD_TYPE="release"
 
 get_options() {
     while :; do
