@@ -529,6 +529,7 @@ getVramDesc(int devid, size_t buffer_size, bool isInit) {
 #endif
 }
 
+#if HAVE_UCX_DEVICE_KERNEL
 /** Allocate @a nbytes of VRAM on @a devid with all bytes set to zero. */
 static std::optional<xferBenchIOV>
 allocVramValueZero(int devid, size_t nbytes) {
@@ -556,6 +557,7 @@ xferBenchNixlWorker::initCompletionCounterVram() {
 
     return allocVramValueZero(counter_dev, kDeviceCounterBytes);
 }
+#endif
 
 std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {
@@ -1022,7 +1024,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         }
     }
 
-#if HAVE_CUDA
+#if HAVE_UCX_DEVICE_KERNEL
     if (xferBenchConfig::use_device_api && seg_type == VRAM_SEG) {
         completion_counter_iov = initCompletionCounterVram();
         if (completion_counter_iov.has_value()) {
