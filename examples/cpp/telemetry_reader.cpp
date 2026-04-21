@@ -67,7 +67,8 @@ print_telemetry_event(const nixlTelemetryEvent &event) {
     std::cout << "\n=== NIXL Telemetry Event ===" << std::endl;
     std::cout << "Category: " << nixlEnumStrings::telemetryCategoryStr(event.category_)
               << std::endl;
-    std::cout << "Event name: " << event.eventName_ << std::endl;
+    std::cout << "Event name: " << nixlEnumStrings::telemetryEventTypeStr(event.eventType_)
+              << std::endl;
     std::cout << "Value: " << event.value_ << std::endl;
 
     std::cout << "===========================" << std::endl;
