@@ -57,7 +57,9 @@ DocaSharedContext::~DocaSharedContext() {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     if (source) {
-        if (source_started) doca_telemetry_exporter_source_flush(source);
+        if (source_started) {
+            doca_telemetry_exporter_source_flush(source);
+        }
         if (metrics_context_created) doca_telemetry_exporter_metrics_destroy_context(source);
         doca_telemetry_exporter_source_destroy(source);
     }
