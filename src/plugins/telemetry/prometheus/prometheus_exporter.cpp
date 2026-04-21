@@ -22,8 +22,11 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <chrono>
+#include <unordered_set>
 
 namespace {
 const uint16_t prometheusExporterDefaultPort = 9090;
@@ -46,27 +49,69 @@ getHostname() {
     }
     return "unknown";
 }
+
+std::mutex s_mutex;
+std::weak_ptr<prometheus::Exposer> s_exposer_weak;
+std::weak_ptr<prometheus::Registry> s_registry_weak;
+std::unordered_set<std::string> s_agent_names;
 } // namespace
 
 nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
-      local_(nixl::config::getValueDefaulted(prometheusLocalVar, false)),
-      port_(nixl::config::getValueDefaulted(prometheusPortVar, prometheusExporterDefaultPort)),
       agent_name_(init_params.agentName),
-      hostname_(getHostname()),
-      registry_(std::make_shared<prometheus::Registry>()) {
-    if (local_) {
-        bind_address_ = prometheusExporterLocalAddress + ":" + std::to_string(port_);
+      hostname_(getHostname()) {
+    const bool local = nixl::config::getValueDefaulted(prometheusLocalVar, false);
+    const uint16_t port =
+        nixl::config::getValueDefaulted(prometheusPortVar, prometheusExporterDefaultPort);
+
+    std::string bind_address;
+    if (local) {
+        bind_address = prometheusExporterLocalAddress + ":" + std::to_string(port);
     } else {
-        bind_address_ = prometheusExporterPublicAddress + ":" + std::to_string(port_);
+        bind_address = prometheusExporterPublicAddress + ":" + std::to_string(port);
     }
 
-    exposer_ = std::make_unique<prometheus::Exposer>(bind_address_);
-    exposer_->RegisterCollectable(registry_);
+    const std::lock_guard lock(s_mutex);
 
-    initializeMetrics();
-    NIXL_INFO << "Prometheus exporter initialized on " << bind_address_;
+    if (!s_agent_names.insert(agent_name_).second) {
+        throw std::runtime_error("Prometheus exporter: duplicate agent name '" + agent_name_ +
+                                 "'; each agent must have a unique name");
+    }
+
+    try {
+        exposer_ = s_exposer_weak.lock();
+        registry_ = s_registry_weak.lock();
+
+        if (!exposer_ || !registry_) {
+            registry_.reset();
+            exposer_.reset();
+            registry_ = std::make_shared<prometheus::Registry>();
+            exposer_ = std::make_shared<prometheus::Exposer>(bind_address);
+            exposer_->RegisterCollectable(registry_);
+            s_exposer_weak = exposer_;
+            s_registry_weak = registry_;
+            NIXL_INFO << "Prometheus exporter initialized on " << bind_address;
+        } else {
+            NIXL_INFO << "Prometheus exporter for agent '" << agent_name_
+                      << "' sharing existing server";
+        }
+
+        initializeMetrics();
+    }
+    catch (...) {
+        s_agent_names.erase(agent_name_);
+        throw;
+    }
+}
+
+nixlTelemetryPrometheusExporter::~nixlTelemetryPrometheusExporter() {
+    const std::lock_guard lock(s_mutex);
+    counters_.clear();
+    gauges_.clear();
+    s_agent_names.erase(agent_name_);
+    exposer_.reset();
+    registry_.reset();
 }
 
 // To make access cheaper we are creating static metrics with the labels already set
@@ -106,19 +151,20 @@ void
 nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
                                                  const std::string &help,
                                                  const std::string &category) {
-    auto &counter =
-        prometheus::BuildCounter().Name(name + "_total").Help(help).Register(*registry_);
-    counters_[name] = &counter.Add(
-        {{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
+    auto &family = prometheus::BuildCounter().Name(name + "_total").Help(help).Register(*registry_);
+    auto &metric =
+        family.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
+    counters_[name] = {&family, &metric};
 }
 
 void
 nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
                                                const std::string &help,
                                                const std::string &category) {
-    auto &gauge = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
-    gauges_[name] =
-        &gauge.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
+    auto &family = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
+    auto &metric =
+        family.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
+    gauges_[name] = {&family, &metric};
 }
 
 nixl_status_t
@@ -131,19 +177,19 @@ nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
         case nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE: {
             const auto it = counters_.find(event_name);
             if (it != counters_.end()) {
-                it->second->Increment(event.value_);
+                it->second.metric->Increment(event.value_);
             }
             break;
         }
         case nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY: {
             const auto it_cnt = counters_.find(event_name);
             if (it_cnt != counters_.end()) {
-                it_cnt->second->Increment(event.value_);
+                it_cnt->second.metric->Increment(event.value_);
             }
 
             const auto it_gauge = gauges_.find(event_name);
             if (it_gauge != gauges_.end()) {
-                it_gauge->second->Set(static_cast<double>(event.value_));
+                it_gauge->second.metric->Set(static_cast<double>(event.value_));
             }
             break;
         }
