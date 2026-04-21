@@ -78,7 +78,7 @@ resolveVramSegment() {
         _seg_type;                                                                          \
     })
 
-#if HAVE_CUDA
+#if HAVE_UCX_DEVICE_KERNEL
 constexpr size_t kDeviceCounterDoneOffsetBytes = 0;
 constexpr size_t kDeviceCounterErrorOffsetBytes = sizeof(uint64_t);
 constexpr size_t kDeviceCounterBytes = 2 * sizeof(uint64_t);
@@ -1267,7 +1267,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 res.emplace_back(nixlXferDlistToIOVList(remote_desc));
             }
         }
-#if HAVE_CUDA
+#if HAVE_UCX_DEVICE_KERNEL
         if (xferBenchConfig::use_device_api && seg_type == VRAM_SEG) {
             if (isTarget() && completion_counter_iov.has_value()) {
                 nixlSerDes cc_ser;
@@ -1737,8 +1737,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                        xfer_op,
                        num_iter,
                        xferBenchConfig::num_threads,
-                      stats,
-                      &terminate);
+                       stats,
+                       &terminate);
 #endif
 
     if (ret < 0) {
