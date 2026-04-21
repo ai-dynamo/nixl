@@ -245,9 +245,6 @@ nixlTelemetry::updateErrorCount(nixl_status_t error_type) {
     NIXL_ASSERT_ALWAYS(static_cast<int>(error_type) < 0)
         << "nixlTelemetry::updateErrorCount expects a negative nixl_status_t error code";
     const auto event_type = nixlTelemetryEventTypeForStatus(error_type);
-    NIXL_ASSERT_ALWAYS(event_type.has_value())
-        << "nixlTelemetryEventTypeForStatus missing mapping for nixl_status_t "
-        << static_cast<int>(error_type);
     updateData(*event_type, nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR, 1);
 }
 
