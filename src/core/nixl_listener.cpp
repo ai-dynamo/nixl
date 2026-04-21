@@ -459,8 +459,8 @@ void
 nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
 #if HAVE_ETCD
     std::unique_ptr<nixlEtcdClient> etcdClient = nullptr;
-    // useEtcd is set in nixlAgent constructor and is true if NIXL_ETCD_ENDPOINTS is set
-    if(useEtcd) {
+    // useEtcd_ is set in nixlAgent constructor and is true if NIXL_ETCD_ENDPOINTS is set
+    if(useEtcd_) {
         etcdClient = std::make_unique<nixlEtcdClient>(name_, config_.etcdWatchTimeout);
     }
 #endif // HAVE_ETCD
@@ -566,7 +566,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                 // ETCD operations using existing methods
                 case ETCD_SEND:
                 {
-                    if (!useEtcd) {
+                    if (!useEtcd_) {
                         throw std::runtime_error("ETCD is not enabled");
                     }
 
@@ -583,7 +583,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                 }
                 case ETCD_FETCH:
                 {
-                    if (!useEtcd) {
+                    if (!useEtcd_) {
                         throw std::runtime_error("ETCD is not enabled");
                     }
 
@@ -616,7 +616,7 @@ nixlAgentData::commWorkerInternal(nixlAgent *myAgent) {
                 }
                 case ETCD_INVAL:
                 {
-                    if (!useEtcd) {
+                    if (!useEtcd_) {
                         throw std::runtime_error("ETCD is not enabled");
                     }
 
