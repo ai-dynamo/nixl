@@ -155,10 +155,6 @@ if cuda_fabric_available
     add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
 endif
 
-if cuda_available
-    add_languages('cuda', native: false)
-endif
-
 ucx_device_cpp_args = []
 ucx_device_cuda_args = []
 ucx_device_override_options = []
@@ -169,6 +165,7 @@ if ucx_device_include_path != ''
     elif nvshmem_available
         warning('Ignoring -Ducx_device_include_path because NVSHMEM build path is enabled.')
     else
+        add_languages('cuda', native: false)
         build_nixlbench_kernels = true
         ucx_device_cpp_args = ['-I' + ucx_device_include_path]
         ucx_device_cuda_args = [

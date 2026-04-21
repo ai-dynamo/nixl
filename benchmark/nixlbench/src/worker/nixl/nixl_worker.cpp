@@ -17,6 +17,7 @@
 
 #include "worker/nixl/nixl_worker.h"
 #include <algorithm>
+#include <cassert>
 #include <cctype>
 #include <chrono>
 #include <cstring>
@@ -550,11 +551,7 @@ xferBenchNixlWorker::initCompletionCounterVram() {
 
     int counter_dev = 0;
     if (IS_PAIRWISE_AND_SG()) {
-        int devid = rt->getRank();
-        if (isTarget()) {
-            devid -= xferBenchConfig::num_initiator_dev;
-        }
-        counter_dev = devid;
+        counter_dev = rt->getRank() - xferBenchConfig::num_initiator_dev;
     }
 
     return allocVramValueZero(counter_dev, kDeviceCounterBytes);
@@ -1651,10 +1648,24 @@ xferBenchNixlWorker::transfer(size_t block_size,
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
+#if HAVE_UCX_DEVICE_KERNEL
+    size_t num_regions = 0;
+    if (xferBenchConfig::use_device_api) {
+        const size_t local_regions = countFlattenedRegions(local_iovs);
+        const size_t remote_regions = countFlattenedRegions(remote_iovs);
+        assert(local_regions == remote_regions);
+        if (__builtin_expect(local_regions != remote_regions, 0)) {
+            std::cerr << "NIXL Device API requires equal flattened local/remote region counts: "
+                      << "local=" << local_regions << ", remote=" << remote_regions << std::endl;
+            return std::variant<xferBenchStats, int>(-1);
+        }
+        num_regions = remote_regions;
+    }
+
+#endif
     if (skip > 0) {
 #if HAVE_UCX_DEVICE_KERNEL
         if (xferBenchConfig::use_device_api) {
-            size_t num_regions = countFlattenedRegions(remote_iovs);
             const bool signal_remote_completion =
                 completion_counter_iov.has_value() && remote_mvh != nullptr;
             ret = execDeviceTransfer(local_mvh,
@@ -1697,7 +1708,6 @@ xferBenchNixlWorker::transfer(size_t block_size,
 
 #if HAVE_UCX_DEVICE_KERNEL
     if (xferBenchConfig::use_device_api) {
-        size_t num_regions = countFlattenedRegions(remote_iovs);
         const bool signal_remote_completion =
             completion_counter_iov.has_value() && remote_mvh != nullptr;
         ret = execDeviceTransfer(local_mvh,

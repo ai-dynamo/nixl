@@ -520,9 +520,10 @@ xferBenchConfig::loadParams(void) {
                          "thread count with value 1 - 1024"
                       << std::endl;
             if (num_threads < 1 || num_threads > 1024) {
-                std::cout << "Invalid value for --num-threads, reset --num-threads to 1"
+                std::cerr << "Invalid value for --num-threads: " << num_threads
+                          << ". Device API requires a GPU kernel block thread count in [1, 1024]"
                           << std::endl;
-                num_threads = 1;
+                return -1;
             }
             device_kernel_block_thread_count = num_threads;
             num_threads = 1;
