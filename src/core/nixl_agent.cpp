@@ -133,22 +133,44 @@ nixlDlistH::nixlDlistH(const std::string &remote_agent, descs_t &&descs)
       descs(std::move(descs)) {}
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
+
+namespace {
+
+[[nodiscard]] bool
+detectEtcd() {
+#if HAVE_ETCD
+    return nixl::config::checkExistence("NIXL_ETCD_ENDPOINTS");
+#else
+    return false;
+#endif
+}
+
+// The comm thread (used for etcd or listen-based metadata exchange) shares
+// agent data structures (remoteSections_, remoteBackends_, …) with the caller.
+// SYNC_NONE would leave those accesses unprotected, so upgrade to STRICT.
+[[nodiscard]] nixl_thread_sync_t
+effectiveSyncMode(nixl_thread_sync_t requested, bool needs_comm_thread) {
+    if (needs_comm_thread && (requested == nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)) {
+        NIXL_INFO << "syncMode upgraded from NONE to STRICT "
+                     "because a communication thread will be started";
+        return nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
+    }
+    return requested;
+}
+
+} // namespace
+
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
     : name_(name),
       config_(config),
-      lock(config.syncMode) {
+      useEtcd_(detectEtcd()),
+      needsCommThread_(useEtcd_ || config.useListenThread),
+      lock(effectiveSyncMode(config.syncMode, needsCommThread_)) {
 #if HAVE_ETCD
-    if (nixl::config::checkExistence("NIXL_ETCD_ENDPOINTS")) {
-        useEtcd = true;
-        NIXL_DEBUG << "NIXL ETCD is enabled";
-    } else {
-        useEtcd = false;
-        NIXL_DEBUG << "NIXL ETCD is disabled";
-    }
+    NIXL_DEBUG << "NIXL ETCD is " << (useEtcd_ ? "enabled" : "disabled");
 #else
-    useEtcd = false;
     NIXL_DEBUG << "NIXL ETCD is excluded";
-#endif // HAVE_ETCD
+#endif
     if (name.empty())
         throw std::invalid_argument("Agent needs a name");
 
@@ -182,7 +204,7 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
         data->listener->setupListener(); // throws on bind/listen failure
     }
 
-    if (data->useEtcd || cfg.useListenThread) {
+    if (data->needsCommThread_) {
         data->commThreadStop = false;
         data->agentShutdown = false;
         data->commThread = std::thread(&nixlAgentData::commWorker, data.get(), std::ref(*this));
@@ -190,7 +212,7 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
 }
 
 nixlAgent::~nixlAgent() {
-    if (data->useEtcd || data->config_.useListenThread) {
+    if (data->needsCommThread_) {
         data->agentShutdown = true;
         while (!data->commQueue.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -1593,7 +1615,7 @@ nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
 
 #if HAVE_ETCD
     // If no IP is provided, use etcd (now via thread)
-    if (data->useEtcd) {
+    if (data->useEtcd_) {
         data->enqueueCommWork(std::make_tuple(ETCD_SEND, default_metadata_label, 0, std::move(myMD)));
         return NIXL_SUCCESS;
     }
@@ -1624,7 +1646,7 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
 
 #if HAVE_ETCD
     // If no IP is provided, use etcd (now via thread)
-    if (data->useEtcd) {
+    if (data->useEtcd_) {
         if (!extra_params || extra_params->metadataLabel.empty()) {
             NIXL_ERROR_FUNC << "metadata label is required for etcd send of local partial metadata";
             return NIXL_ERR_INVALID_PARAM;
@@ -1651,7 +1673,7 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
 
 #if HAVE_ETCD
     // If no IP is provided, use etcd via thread with watch capability
-    if (data->useEtcd) {
+    if (data->useEtcd_) {
         std::string metadata_label = extra_params && !extra_params->metadataLabel.empty() ?
                                      extra_params->metadataLabel :
                                      default_metadata_label;
@@ -1676,7 +1698,7 @@ nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
 
 #if HAVE_ETCD
     // If no IP is provided, use etcd via thread
-    if (data->useEtcd) {
+    if (data->useEtcd_) {
         data->enqueueCommWork(std::make_tuple(ETCD_INVAL, "", 0, ""));
         return NIXL_SUCCESS;
     }
