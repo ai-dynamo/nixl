@@ -151,45 +151,46 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_EQ(buffer->full(), false);
     nixlTelemetryEvent event;
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "agent_tx_bytes");
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
     EXPECT_EQ(event.value_, 1024);
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "agent_rx_bytes");
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_RX_BYTES);
     EXPECT_EQ(event.value_, 1024);
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "agent_tx_requests_num");
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM);
     EXPECT_EQ(event.value_, 1);
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "agent_rx_requests_num");
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM);
     EXPECT_EQ(event.value_, 1);
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_,
-                 nixlEnumStrings::statusStr(nixl_status_t::NIXL_ERR_BACKEND).c_str());
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_ERR_BACKEND);
     EXPECT_EQ(event.value_, 1);
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "agent_memory_registered");
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED);
     EXPECT_EQ(event.value_, 1024);
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "agent_memory_deregistered");
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED);
     EXPECT_EQ(event.value_, 1024);
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "agent_xfer_time");
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_TIME);
     EXPECT_EQ(event.value_, 100);
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "agent_tx_bytes");
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
     EXPECT_EQ(event.value_, 2000);
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "agent_tx_requests_num");
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM);
     EXPECT_EQ(event.value_, 1);
     envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, TelemetryEventStructure) {
-    nixlTelemetryEvent event1(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, "test_event", 42);
+    nixlTelemetryEvent event1(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+                              nixl_telemetry_event_type_t::AGENT_TX_BYTES,
+                              42);
 
     EXPECT_EQ(event1.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
     EXPECT_EQ(event1.value_, 42);
-    EXPECT_STREQ(event1.eventName_, "test_event");
+    EXPECT_EQ(event1.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
 }
 
 TEST_F(telemetryTest, ShortRunInterval) {
@@ -314,11 +315,11 @@ TEST_F(telemetryTest, TelemetryAgentEventsOne) {
 
     nixlTelemetryEvent event;
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "agent_tx_bytes");
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
     EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
 
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "agent_rx_bytes");
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_RX_BYTES);
     EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
 
     envHelper_.popVar();
@@ -345,12 +346,11 @@ TEST_F(telemetryTest, TelemetryAgentEventsTwo) {
 
     nixlTelemetryEvent event;
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_, "agent_tx_bytes");
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
     EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
 
     buffer->pop(event);
-    EXPECT_STREQ(event.eventName_,
-                 nixlEnumStrings::statusStr(nixl_status_t::NIXL_ERR_BACKEND).c_str());
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_ERR_BACKEND);
     EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR);
 
     envHelper_.popVar();
