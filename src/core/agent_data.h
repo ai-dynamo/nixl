@@ -66,6 +66,7 @@ class nixlAgentData {
         const std::string name_;
         const nixlAgentConfig config_;
         const bool useEtcd;
+        const bool needsCommThread;
         nixlLock        lock;
         bool telemetryEnabled = false;
         bool efaWarningChecked = false;

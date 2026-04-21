@@ -164,7 +164,8 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
     : name_(name),
       config_(config),
       useEtcd(detectEtcd()),
-      lock(effectiveSyncMode(config.syncMode, useEtcd || config.useListenThread)) {
+      needsCommThread(useEtcd || config.useListenThread),
+      lock(effectiveSyncMode(config.syncMode, needsCommThread)) {
 #if HAVE_ETCD
     NIXL_DEBUG << "NIXL ETCD is " << (useEtcd ? "enabled" : "disabled");
 #else
@@ -203,7 +204,7 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
         data->listener->setupListener(); // throws on bind/listen failure
     }
 
-    if (data->useEtcd || cfg.useListenThread) {
+    if (data->needsCommThread) {
         data->commThreadStop = false;
         data->agentShutdown = false;
         data->commThread = std::thread(&nixlAgentData::commWorker, data.get(), std::ref(*this));
@@ -211,7 +212,7 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
 }
 
 nixlAgent::~nixlAgent() {
-    if (data->useEtcd || data->config_.useListenThread) {
+    if (data->needsCommThread) {
         data->agentShutdown = true;
         while (!data->commQueue.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
