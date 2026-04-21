@@ -93,7 +93,8 @@ void nixlMDStreamListener::setupListener() {
     } else {
         closeStream();
         throw std::runtime_error(
-            std::string("Failed to retrieve bound port for metadata listener: ") + strerror(errno));
+            std::string("getsockname() failed to retrieve bound port for metadata listener: ") +
+            strerror(errno));
     }
 
     if (listen(socketFd, 128) < 0) {
