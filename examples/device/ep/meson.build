@@ -92,6 +92,7 @@ nixl_ep_cuda_args = [
     '-DHAVE_CUDA',
     '-DTORCH_EXTENSION_NAME=nixl_ep_cpp',
     '--expt-relaxed-constexpr',  # Allow calling constexpr __host__ functions from __device__ functions
+    '-rdc=false',  # Override global -rdc=true to avoid nvlink register count errors with nixlPut
     '-arch=sm_90',  # Only compile for sm90 (overrides global -gencode flags)
     '--ptxas-options=--register-usage-level=10',  # Allow more register usage (matches setup.py)
     '-Xcompiler', '-Wno-deprecated-declarations',
