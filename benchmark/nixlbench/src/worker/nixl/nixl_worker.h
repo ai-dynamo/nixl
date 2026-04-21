@@ -25,6 +25,7 @@
 #include <vector>
 #include <optional>
 #include <memory>
+#include <functional>
 #include <nixl.h>
 #include <nixl_types.h>
 #include "utils/utils.h"
@@ -98,6 +99,11 @@ class xferBenchNixlWorker: public xferBenchWorker {
 #if HAVE_UCX_DEVICE_KERNEL
         std::optional<xferBenchIOV>
         initCompletionCounterVram();
+        bool
+        waitForDeviceCompletionCounter(const xferBenchIOV &counter_iov,
+                                       uint64_t expected_value,
+                                       const char *phase,
+                                       const std::function<void()> &checkLiveness);
 #endif
         std::optional<xferBenchIOV>
         initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);

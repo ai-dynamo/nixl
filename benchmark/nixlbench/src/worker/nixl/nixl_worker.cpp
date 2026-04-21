@@ -1547,7 +1547,8 @@ execDeviceTransfer(nixlMemViewH local_mvh,
                    const int num_threads,
                    size_t num_regions,
                    size_t region_size,
-                   xferBenchStats &stats) {
+                   xferBenchStats &stats,
+                   const std::atomic<int> *terminate_ptr = nullptr) {
     stats.clear();
 
     if (num_threads < 1 || num_threads > 1024) {
@@ -1570,6 +1571,10 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     xferBenchTimer timer;
 
     for (int i = 0; i < num_iter; ++i) {
+        if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+            stats.total_duration.add(total_timer.lap());
+            return -1;
+        }
         nixl_status_t st =
             nixlbenchLaunchDevicePut(params, static_cast<unsigned>(num_threads), nullptr);
         if (__builtin_expect(st != NIXL_SUCCESS, 0)) {
@@ -1604,25 +1609,34 @@ readDeviceCounters(const xferBenchIOV &counter_iov) {
     return counters;
 }
 
-static bool
-waitForDeviceCompletionCounter(const xferBenchIOV &counter_iov,
-                               uint64_t expected_value,
-                               const char *phase) {
+bool
+xferBenchNixlWorker::waitForDeviceCompletionCounter(const xferBenchIOV &counter_iov,
+                                                    uint64_t expected_value,
+                                                    const char *phase,
+                                                    const std::function<void()> &checkLiveness) {
     if (expected_value == 0) {
         return true;
     }
-    while (true) {
+    while (!signaled()) {
         const xferBenchDeviceCounters counters = readDeviceCounters(counter_iov);
         if (counters.error > 0) {
-            std::cerr << "NIXL Device API " << phase << " failed: remote error counter is "
+            std::cerr << "NIXL Device API: " << phase << " failed: remote error counter is "
                       << counters.error << std::endl;
+            terminate.store(1);
             return false;
         }
         if (counters.done >= expected_value) {
             return true;
         }
+        checkLiveness();
+        if (signaled()) {
+            std::cerr << "NIXL Device API: " << phase
+                      << " wait interrupted by signal/liveness failure" << std::endl;
+            return false;
+        }
         std::this_thread::yield();
     }
+    return false;
 }
 
 static void
@@ -1677,7 +1691,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                      xferBenchConfig::device_kernel_block_thread_count,
                                      num_regions,
                                      block_size,
-                                     stats);
+                                     stats,
+                                     &terminate);
         } else {
             ret = execTransfer(agent,
                                local_iovs,
@@ -1719,7 +1734,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                  xferBenchConfig::device_kernel_block_thread_count,
                                  num_regions,
                                  block_size,
-                                 stats);
+                                 stats,
+                                 &terminate);
     } else {
         ret = execTransfer(agent,
                            local_iovs,
@@ -1786,12 +1802,13 @@ xferBenchNixlWorker::poll(size_t block_size) {
         xferBenchConfig::use_device_api && completion_counter_iov.has_value();
     if (use_device_completion_counter) {
         const xferBenchIOV &counter_iov = completion_counter_iov.value();
-        if (!waitForDeviceCompletionCounter(counter_iov, static_cast<uint64_t>(skip), "warmup")) {
+        if (!waitForDeviceCompletionCounter(
+                counter_iov, static_cast<uint64_t>(skip), "warmup", checkLiveness)) {
             return;
         }
         synchronize();
         if (!waitForDeviceCompletionCounter(
-                counter_iov, static_cast<uint64_t>(total_iter), "transfer")) {
+                counter_iov, static_cast<uint64_t>(total_iter), "transfer", checkLiveness)) {
             return;
         }
         synchronize();

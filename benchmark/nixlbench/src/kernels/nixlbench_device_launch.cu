@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * GPU-side nixlPut after host-side prepMemView (see xferBenchNixlWorker::prepareGPULocalView
@@ -187,9 +187,18 @@ nixl_status_t
 nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params,
                          unsigned block_threads,
                          cudaStream_t stream) {
+    constexpr unsigned kWarpSize = 32;
+
     if (block_threads == 0 || block_threads > 1024u) {
         std::cerr << "nixlbench: nixlbenchLaunchDevicePut: invalid block_threads=" << block_threads
                   << " (must be 1..1024)\n";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (block_threads > kWarpSize && (block_threads % kWarpSize) != 0) {
+        std::cerr << "nixlbench: nixlbenchLaunchDevicePut: block_threads (" << block_threads
+                  << " ) must be <= or a multiple of " << kWarpSize
+                  << " (WARP-level nixlPut requires full warps)\n";
         return NIXL_ERR_INVALID_PARAM;
     }
 
