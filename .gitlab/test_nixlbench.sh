@@ -80,7 +80,7 @@ run_nixlbench_two_workers_asio() {
     args="$@"
     asio_port=$(get_random_tcp_port)
     command_line="./bin/nixlbench --runtime_type=ASIO --asio_port=$asio_port $DEFAULT_NB_PARAMS $args"
-    parallel --line-buffer --halt now,fail=1 ::: "$command_line" "$command_line"
+    parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 4 ; $command_line"
 }
 
 for op_type in READ WRITE; do
