@@ -70,7 +70,7 @@ struct DocaSharedContext {
     bool source_started = false;
     bool metrics_context_created = false;
 
-    DocaSharedContext(const std::string &bind_address, const std::string &hostname);
+    explicit DocaSharedContext(const std::string &bind_address);
     ~DocaSharedContext();
 
     DocaSharedContext(const DocaSharedContext &) = delete;
@@ -78,7 +78,9 @@ struct DocaSharedContext {
     operator=(const DocaSharedContext &) = delete;
 };
 
-DocaSharedContext::DocaSharedContext(const std::string &bind_address, const std::string &hostname) {
+DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
+    const std::string hostname = getHostname();
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
@@ -159,10 +161,10 @@ nixlTelemetryDocaExporter::nixlTelemetryDocaExporter(
     const bool local = nixl::config::getValueDefaulted(docaPrometheusLocalVar, false);
     const uint16_t port =
         nixl::config::getValueDefaulted(docaPrometheusPortVar, docaPrometheusExporterDefaultPort);
-    std::string bind_address =
+    const std::string bind_address =
         (local ? docaExporterLocalAddress : docaExporterPublicAddress) + ":" + std::to_string(port);
 
-    initializeDoca(bind_address, getHostname());
+    initializeDoca(bind_address);
 }
 
 nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
@@ -171,12 +173,11 @@ nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
 }
 
 void
-nixlTelemetryDocaExporter::initializeDoca(const std::string &bind_address,
-                                          const std::string &hostname) {
+nixlTelemetryDocaExporter::initializeDoca(const std::string &bind_address) {
     const std::lock_guard lock(g_ctx_mutex);
     ctx_ = g_ctx_weak.lock();
     if (!ctx_) {
-        ctx_ = std::make_shared<DocaSharedContext>(bind_address, hostname);
+        ctx_ = std::make_shared<DocaSharedContext>(bind_address);
         g_ctx_weak = ctx_;
         NIXL_INFO << "DOCA Telemetry exporter initialized on " << bind_address;
     } else {
@@ -215,14 +216,12 @@ nixlTelemetryDocaExporter::registerGauge(const nixlTelemetryEvent &event,
 
 nixl_status_t
 nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
-    doca_error_t result;
-
     try {
         const std::lock_guard lock(g_metrics_mutex);
         switch (event.category_) {
         case nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER: {
             const char *label_values[] = {docaExporterTransferCategory, agent_name_.c_str()};
-            result = registerCounter(event, label_values);
+            const auto result = registerCounter(event, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add counter: " << result;
                 return NIXL_ERR_UNKNOWN;
@@ -231,7 +230,7 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
         }
         case nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND: {
             const char *label_values[] = {docaExporterBackendCategory, agent_name_.c_str()};
-            result = registerCounter(event, label_values);
+            const auto result = registerCounter(event, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add counter: " << result;
                 return NIXL_ERR_UNKNOWN;
@@ -240,7 +239,7 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
         }
         case nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE: {
             const char *label_values[] = {docaExporterPerformanceCategory, agent_name_.c_str()};
-            result = registerGauge(event, label_values);
+            const auto result = registerGauge(event, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add gauge: " << result;
                 return NIXL_ERR_UNKNOWN;
@@ -249,7 +248,7 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
         }
         case nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY: {
             const char *label_values[] = {docaExporterMemoryCategory, agent_name_.c_str()};
-            result = registerGauge(event, label_values);
+            const auto result = registerGauge(event, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add gauge: " << result;
                 return NIXL_ERR_UNKNOWN;
