@@ -95,8 +95,10 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);
         void
         cleanupBasicDescVram(xferBenchIOV &basic_desc);
+#if HAVE_UCX_DEVICE_KERNEL
         std::optional<xferBenchIOV>
         initCompletionCounterVram();
+#endif
         std::optional<xferBenchIOV>
         initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
         void cleanupBasicDescFile(xferBenchIOV &basic_desc);
