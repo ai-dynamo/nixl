@@ -33,12 +33,9 @@
 using namespace std::chrono_literals;
 namespace fs = std::filesystem;
 
-std::optional<nixl_telemetry_event_type_t>
+nixl_telemetry_event_type_t
 nixlTelemetryEventTypeForStatus(nixl_status_t s) {
     switch (s) {
-    case NIXL_SUCCESS:
-    case NIXL_IN_PROG:
-        return std::nullopt;
     case NIXL_ERR_NOT_POSTED:
         return nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED;
     case NIXL_ERR_INVALID_PARAM:
