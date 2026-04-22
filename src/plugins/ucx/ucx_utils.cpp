@@ -656,9 +656,15 @@ nixlUcxWorker::regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_
  * Data transfer
  * =========================================== */
 
-int
+unsigned
 nixlUcxWorker::progress() {
     return ucp_worker_progress(worker.get());
+}
+
+void
+nixlUcxWorker::progressLoop() {
+    while (progress() != 0)
+        ;
 }
 
 nixl_status_t
