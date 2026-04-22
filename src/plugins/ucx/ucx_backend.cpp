@@ -1353,7 +1353,7 @@ unsigned
 nixlUcxEngine::progress() {
     // TODO: add listen for connection handling if necessary
     unsigned ret = 0;
-    for (auto &uw: uws) {
+    for (auto &uw : uws) {
         ret += uw->progress();
     }
     return ret;
@@ -1435,8 +1435,7 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
 }
 
 nixl_status_t
-nixlUcxEngine::getNotifs(notif_list_t &notif_list)
-{
+nixlUcxEngine::getNotifs(notif_list_t &notif_list) {
     if (!notif_list.empty()) {
         return NIXL_ERR_INVALID_PARAM;
     }
