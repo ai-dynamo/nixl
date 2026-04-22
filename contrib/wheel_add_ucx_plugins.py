@@ -316,11 +316,8 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
                         f"patchelf --replace-needed '{old_name}' '{new_name}' {fname}"
                     )
                     if ret != 0:
-                        logger.warning(
-                            "patchelf --replace-needed %s %s failed on %s",
-                            old_name,
-                            new_name,
-                            fname,
+                        raise RuntimeError(
+                            f"Failed to replace {old_name} with {new_name} in {fname}"
                         )
 
     create_wheel(wheel_path, temp_dir)
