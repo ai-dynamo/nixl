@@ -217,7 +217,7 @@ def copytree(src, dst):
             copied_files.append(dst_file)
             for removed in group[1:]:
                 dedup_map[removed] = kept
-                print(f"Deduplicated symlink: {removed} -> {kept}")
+                logger.info("Deduplicated symlink: %s -> %s", removed, kept)
 
     return copied_files, dedup_map
 
