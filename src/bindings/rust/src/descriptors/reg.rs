@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -210,13 +210,8 @@ impl<'a> RegDescList<'a> {
     pub fn add_storage_desc(&mut self, desc: &'a dyn NixlDescriptor) -> Result<(), NixlError> {
         // Validate memory type matches
         let desc_mem_type = desc.mem_type();
-        let list_mem_type = if self.len()? > 0 {
-            self.get_type()?
-        } else {
-            desc_mem_type
-        };
-
-        if desc_mem_type != list_mem_type && list_mem_type != MemType::Unknown {
+        let list_mem_type = self.get_type()?;
+        if list_mem_type != MemType::Unknown && desc_mem_type != list_mem_type {
             return Err(NixlError::InvalidParam);
         }
 
@@ -246,13 +241,8 @@ impl<'a> RegDescList<'a> {
         metadata: Option<&[u8]>,
     ) -> Result<(), NixlError> {
         let desc_mem_type = desc.mem_type();
-        let list_mem_type = if self.len()? > 0 {
-            self.get_type()?
-        } else {
-            desc_mem_type
-        };
-
-        if desc_mem_type != list_mem_type && list_mem_type != MemType::Unknown {
+        let list_mem_type = self.get_type()?;
+        if list_mem_type != MemType::Unknown && desc_mem_type != list_mem_type {
             return Err(NixlError::InvalidParam);
         }
 

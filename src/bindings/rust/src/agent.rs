@@ -294,22 +294,26 @@ impl Agent {
         opt_args: Option<&OptArgs>,
     ) -> Result<RegistrationHandle, NixlError> {
         let mut reg_dlist = RegDescList::new(descriptor.mem_type())?;
-        unsafe {
+        let status = unsafe {
             reg_dlist.add_storage_desc(descriptor)?;
 
             nixl_capi_register_mem(
                 self.inner.write().unwrap().handle.as_ptr(),
                 reg_dlist.handle(),
                 opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
-            );
+            )
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(RegistrationHandle {
+                agent: Some(self.inner.clone()),
+                ptr: unsafe { descriptor.as_ptr() } as usize,
+                size: descriptor.size(),
+                dev_id: descriptor.device_id(),
+                mem_type: descriptor.mem_type(),
+            }),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
         }
-        Ok(RegistrationHandle {
-            agent: Some(self.inner.clone()),
-            ptr: unsafe { descriptor.as_ptr() } as usize,
-            size: descriptor.size(),
-            dev_id: descriptor.device_id(),
-            mem_type: descriptor.mem_type(),
-        })
     }
 
     /// Registers a memory descriptor with the agent, forwarding metadata from the descriptor.
@@ -327,22 +331,26 @@ impl Agent {
         opt_args: Option<&OptArgs>,
     ) -> Result<RegistrationHandle, NixlError> {
         let mut reg_dlist = RegDescList::new(descriptor.mem_type())?;
-        unsafe {
+        let status = unsafe {
             reg_dlist.add_storage_desc_with_metadata(descriptor)?;
 
             nixl_capi_register_mem(
                 self.inner.write().unwrap().handle.as_ptr(),
                 reg_dlist.handle(),
                 opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
-            );
+            )
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(RegistrationHandle {
+                agent: Some(self.inner.clone()),
+                ptr: unsafe { descriptor.as_ptr() } as usize,
+                size: descriptor.size(),
+                dev_id: descriptor.device_id(),
+                mem_type: descriptor.mem_type(),
+            }),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
         }
-        Ok(RegistrationHandle {
-            agent: Some(self.inner.clone()),
-            ptr: unsafe { descriptor.as_ptr() } as usize,
-            size: descriptor.size(),
-            dev_id: descriptor.device_id(),
-            mem_type: descriptor.mem_type(),
-        })
     }
 
     /// Query information about memory/storage
