@@ -391,13 +391,9 @@ nixlUcxThreadEngine::getNotifs(notif_list_t &notif_list) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    std::size_t size;
-    {
-        const std::lock_guard lock(notifMutex_);
-        notifList_.swap(notif_list);
-        size = notif_list.size();
-    }
-    notifList_.reserve(size);
+    const std::lock_guard lock(notifMutex_);
+    notifList_.swap(notif_list);
+    notifList_.reserve(notif_list.size());
     return NIXL_SUCCESS;
 }
 
@@ -780,13 +776,9 @@ nixlUcxThreadPoolEngine::getNotifs(notif_list_t &notif_list) {
         progressLoop();
     }
 
-    std::size_t size;
-    {
-        const std::lock_guard lock(notifMutex_);
-        notifList_.swap(notif_list);
-        size = notif_list.size();
-    }
-    notifList_.reserve(size);
+    const std::lock_guard lock(notifMutex_);
+    notifList_.swap(notif_list);
+    notifList_.reserve(notif_list.size());
     return NIXL_SUCCESS;
 }
 
