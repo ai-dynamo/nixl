@@ -393,7 +393,6 @@ nixlUcxThreadEngine::getNotifs(notif_list_t &notif_list) {
 
     const std::lock_guard lock(notifMutex_);
     notifList_.swap(notif_list);
-    notifList_.reserve(notif_list.size());
     return NIXL_SUCCESS;
 }
 
@@ -778,7 +777,6 @@ nixlUcxThreadPoolEngine::getNotifs(notif_list_t &notif_list) {
 
     const std::lock_guard lock(notifMutex_);
     notifList_.swap(notif_list);
-    notifList_.reserve(notif_list.size());
     return NIXL_SUCCESS;
 }
 
@@ -1435,7 +1433,6 @@ nixlUcxEngine::getNotifs(notif_list_t &notif_list) {
     progressLoop();
 
     notifList_.swap(notif_list);
-    notifList_.reserve(notif_list.size());
     return NIXL_SUCCESS;
 }
 
