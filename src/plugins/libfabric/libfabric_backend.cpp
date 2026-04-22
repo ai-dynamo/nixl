@@ -1024,8 +1024,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     NIXL_DEBUG << "Processing " << desc_count
                << " descriptors using optimized single-pass approach";
 
-    const nixlLibfabricReq::OpType op_type = (operation == NIXL_READ) ?
-        nixlLibfabricReq::READ : nixlLibfabricReq::WRITE;
+    const nixlLibfabricReq::OpType op_type =
+        (operation == NIXL_READ) ? nixlLibfabricReq::READ : nixlLibfabricReq::WRITE;
 
     // Set initial submit request count to maximum possible requests for this xfer.
     size_t max_possible_requests = desc_count * rail_manager.getNumRails();

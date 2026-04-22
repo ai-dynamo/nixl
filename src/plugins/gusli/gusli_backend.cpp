@@ -20,7 +20,7 @@
 
 #include <absl/strings/str_format.h>
 
-#define __LOG_ERR(format, ...)                                          \
+#define __LOG_ERR(format, ...)                                                                    \
     do {                                                                                          \
         NIXL_ERROR << absl::StrFormat(                                                            \
             "GUSLI: %s() %s[%d]" format, __PRETTY_FUNCTION__, __FILE__, __LINE__, ##__VA_ARGS__); \
