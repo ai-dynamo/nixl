@@ -307,6 +307,16 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["container_name"] = xferBenchConfig::azure_blob_container_name;
         backend_params["connection_string"] = xferBenchConfig::azure_blob_connection_string;
         std::cout << "AZURE_BLOB backend" << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INFINIA)) {
+        // INFINIA backend - configuration via config file
+        if (!xferBenchConfig::infinia_config_file.empty()) {
+            backend_params["config_file"] = xferBenchConfig::infinia_config_file;
+            std::cout << "INFINIA backend with config file: "
+                      << xferBenchConfig::infinia_config_file << std::endl;
+        } else {
+            std::cout << "INFINIA backend (plugin will use environment variables or defaults)" << std::endl;
+            std::cout << "  Tip: Use --infinia_config_file to specify a config file" << std::endl;
+        }
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
