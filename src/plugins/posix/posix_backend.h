@@ -15,13 +15,15 @@
  * limitations under the License.
  */
 
-#ifndef POSIX_BACKEND_H
-#define POSIX_BACKEND_H
+#ifndef NIXL_SRC_PLUGINS_POSIX_POSIX_BACKEND_H
+#define NIXL_SRC_PLUGINS_POSIX_POSIX_BACKEND_H
 
+#include <exception>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
-#include <absl/strings/str_format.h>
+
 #include "backend/backend_engine.h"
 #include "io_queue.h"
 #include "sync.h"
@@ -31,7 +33,6 @@ private:
     const nixl_xfer_op_t &operation; // The transfer operation (read/write)
     const nixl_meta_dlist_t &local; // Local memory descriptor list
     const nixl_meta_dlist_t &remote; // Remote memory descriptor list
-    const nixl_opt_b_args_t *opt_args; // Optional backend-specific arguments
     const int queue_depth_; // Queue depth for async I/O
     int num_confirmed_ios_; // Number of confirmed IOs
     std::unique_ptr<nixlPosixIOQueue> &io_queue_; // Async I/O queue instance
@@ -45,7 +46,6 @@ public:
     nixlPosixBackendReqH(const nixl_xfer_op_t &operation,
                          const nixl_meta_dlist_t &local,
                          const nixl_meta_dlist_t &remote,
-                         const nixl_opt_b_args_t *opt_args,
                          std::unique_ptr<nixlPosixIOQueue> &io_queue);
     ~nixlPosixBackendReqH() {};
 
@@ -153,4 +153,4 @@ public:
     }
 };
 
-#endif // POSIX_BACKEND_H
+#endif

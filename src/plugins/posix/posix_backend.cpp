@@ -157,12 +157,10 @@ logOnPercentStep(unsigned int completed, unsigned int total) {
 nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
                                            const nixl_meta_dlist_t &loc,
                                            const nixl_meta_dlist_t &rem,
-                                           const nixl_opt_b_args_t *args,
                                            std::unique_ptr<nixlPosixIOQueue> &io_queue)
     : operation(op),
       local(loc),
       remote(rem),
-      opt_args(args),
       queue_depth_(loc.descCount()),
       num_confirmed_ios_(queue_depth_),
       io_queue_(io_queue) {
@@ -275,7 +273,7 @@ nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     try {
         auto posix_handle =
-            std::make_unique<nixlPosixBackendReqH>(operation, local, remote, opt_args, io_queue_);
+            std::make_unique<nixlPosixBackendReqH>(operation, local, remote, io_queue_);
         NIXL_LOCK_GUARD(io_queue_lock_);
         nixl_status_t status = posix_handle->prepXfer();
         if (status != NIXL_SUCCESS) {
