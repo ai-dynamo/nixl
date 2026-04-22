@@ -19,6 +19,7 @@
 #include "gds_backend.h"
 #include "gds_utils.h"
 #include "common/nixl_log.h"
+#include "common/util.h"
 #include "file/file_utils.h"
 #include <unordered_map>
 #include <memory>
@@ -179,14 +180,15 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     nixlGdsBackendReqH* gds_handle = new nixlGdsBackendReqH();
     size_t buf_cnt = local.descCount();
     size_t file_cnt = remote.descCount();
 
     // Basic validation
-    if ((buf_cnt != file_cnt) ||
-        ((operation != NIXL_READ) && (operation != NIXL_WRITE))) {
-        NIXL_ERROR << "Error in count or operation selection";
+    if (buf_cnt != file_cnt) {
+        NIXL_ERROR << "Error in count";
         delete gds_handle;
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -304,6 +306,8 @@ nixl_status_t nixlGdsEngine::postXfer(const nixl_xfer_op_t &operation,
                                       nixlBackendReqH* &handle,
                                       const nixl_opt_b_args_t* opt_args) const
 {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     nixlGdsBackendReqH* gds_handle = (nixlGdsBackendReqH*)handle;
 
     // Validate request_list before proceeding

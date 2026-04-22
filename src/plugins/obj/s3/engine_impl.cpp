@@ -7,6 +7,7 @@
 #include "engine_utils.h"
 #include "s3/client.h"
 #include "common/nixl_log.h"
+#include "common/util.h"
 #include <absl/strings/str_format.h>
 #include <algorithm>
 #include <chrono>
@@ -22,10 +23,7 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
                       const nixl_meta_dlist_t &remote,
                       const std::string &remote_agent,
                       const std::string &local_agent) {
-    if (operation != NIXL_WRITE && operation != NIXL_READ) {
-        NIXL_ERROR << absl::StrFormat("Error: Invalid operation type: %d", operation);
-        return false;
-    }
+    NIXL_ASSERT(nixl::isReadWrite(operation));
 
     if (remote_agent != local_agent)
         NIXL_WARN << absl::StrFormat(

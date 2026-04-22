@@ -20,6 +20,7 @@
 #include "serdes/serdes.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "common/util.h"
 
 #include <dlfcn.h>
 #include <limits>
@@ -914,6 +915,8 @@ nixlLibfabricEngine::prepXfer(const nixl_xfer_op_t &operation,
                               const std::string &remote_agent,
                               nixlBackendReqH *&handle,
                               const nixl_opt_b_args_t *opt_args) const {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     NIXL_DEBUG << "Preparing transfer for remote_agent: " << remote_agent;
 
     auto conn_it = connections_.find(remote_agent);
@@ -970,6 +973,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                               nixlBackendReqH *&handle,
                               const nixl_opt_b_args_t *opt_args) const {
 
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     // Validate connection
     auto conn_it = connections_.find(remote_agent);
     if (conn_it == connections_.end() || !conn_it->second) {
@@ -1014,23 +1019,13 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     // Allocate xfer_id once in prepXfer
     backend_handle->post_xfer_id = LibfabricUtils::getNextXferId();
 
-    nixlLibfabricReq::OpType op_type;
     int desc_count = local.descCount();
 
     NIXL_DEBUG << "Processing " << desc_count
                << " descriptors using optimized single-pass approach";
 
-    switch (operation) {
-    case NIXL_READ:
-        op_type = nixlLibfabricReq::READ;
-        break;
-    case NIXL_WRITE:
-        op_type = nixlLibfabricReq::WRITE;
-        break;
-    default:
-        NIXL_ERROR << "Invalid operation for libfabric backend: " << int(operation);
-        return NIXL_ERR_INVALID_PARAM;
-    }
+    const nixlLibfabricReq::OpType op_type = (operation == NIXL_READ) ?
+        nixlLibfabricReq::READ : nixlLibfabricReq::WRITE;
 
     // Set initial submit request count to maximum possible requests for this xfer.
     size_t max_possible_requests = desc_count * rail_manager.getNumRails();

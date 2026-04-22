@@ -260,6 +260,8 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
                                          nixlBackendReqH* &handle,
                                          const nixl_opt_b_args_t* opt_args) const
 {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     nixlHf3fsBackendReqH *hf3fs_handle;
     void                *addr = NULL;
     size_t              size = 0;
@@ -282,15 +284,13 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
         HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM, "Error: No file descriptors");
     }
 
-    if ((buf_cnt != file_cnt) ||
-        ((operation != NIXL_READ) && (operation != NIXL_WRITE)))  {
-        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
-            "Error: Count mismatch or invalid operation selection");
+    if (buf_cnt != file_cnt) {
+        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM, "Error: Count mismatch");
     }
 
     hf3fs_handle = new nixlHf3fsBackendReqH();
 
-    bool is_read = (operation == NIXL_READ);
+    const bool is_read = (operation == NIXL_READ);
 
     auto status = hf3fs_utils->createIOR(&hf3fs_handle->ior, file_cnt, is_read);
     if (status != NIXL_SUCCESS) {
@@ -371,6 +371,8 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
                                          nixlBackendReqH* &handle,
                                          const nixl_opt_b_args_t* opt_args) const
 {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
     nixl_status_t        status;
 

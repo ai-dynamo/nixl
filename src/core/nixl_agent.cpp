@@ -30,6 +30,7 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/operators.h"
+#include "common/util.h"
 #include "common/hw_info.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
@@ -666,6 +667,11 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                         nixlXferReqH* &req_hndl,
                         const nixl_opt_args_t* extra_params) const {
 
+    if (!nixl::isReadWrite(operation)) {
+        NIXL_ERROR << "Operation is not read or write";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     nixl_opt_b_args_t  opt_args;
     nixl_status_t      ret;
     int                desc_count = (int) local_indices.size();
@@ -849,6 +855,12 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlXferReqH* &req_hndl,
                          const nixl_opt_args_t* extra_params) const {
+
+    if (!nixl::isReadWrite(operation)) {
+        NIXL_ERROR << "Operation is not read or write";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     nixl_status_t ret1, ret2;
     nixl_opt_b_args_t opt_args;
     backend_set_t backend_set;
@@ -1022,6 +1034,12 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
 nixl_status_t
 nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                        const nixl_opt_args_t* extra_params) const {
+
+    if (!nixl::isReadWrite(req_hndl->backendOp)) {
+        NIXL_ERROR << "Operation is not read or write";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     nixl_opt_b_args_t opt_args;
 
     opt_args.hasNotif = false;

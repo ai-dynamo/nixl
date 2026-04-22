@@ -23,8 +23,20 @@
 #define CONCAT_0(a, b) a ## b
 #define UNIQUE_NAME(name) CONCAT(name, __COUNTER__)
 
+namespace nixl {
+
 [[nodiscard]] constexpr bool
-weAreSource(const nixl_xfer_op_t operation) noexcept {
+isReadWrite(const nixl_xfer_op_t operation) noexcept {
+    switch (operation) {
+    case NIXL_READ:
+    case NIXL_WRITE:
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] constexpr bool
+localIsSource(const nixl_xfer_op_t operation) noexcept {
     switch (operation) {
     case NIXL_READ:
         return false;
@@ -35,7 +47,7 @@ weAreSource(const nixl_xfer_op_t operation) noexcept {
 }
 
 [[nodiscard]] constexpr bool
-weAreTarget(const nixl_xfer_op_t operation) noexcept {
+localIsTarget(const nixl_xfer_op_t operation) noexcept {
     switch (operation) {
     case NIXL_READ:
         return true;
@@ -44,5 +56,7 @@ weAreTarget(const nixl_xfer_op_t operation) noexcept {
     }
     return false;
 }
+
+} // namespace nixl
 
 #endif

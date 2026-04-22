@@ -18,9 +18,8 @@
 #include "ucx_backend.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
-#include "common/nixl_log.h"
+#include "common/util.h"
 
-#include <exception>
 #include <optional>
 #include <limits>
 #include <future>
@@ -1099,10 +1098,7 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
-    if ((operation != NIXL_WRITE) && (operation != NIXL_READ)) {
-        NIXL_ERROR << "Operation is not read or write";
-        return NIXL_ERR_INVALID_PARAM;
-    }
+    NIXL_ASSERT(nixl::isReadWrite(operation));
 
     if (local.descCount() == 0 || remote.descCount() == 0) {
         NIXL_ERROR << "Local or remote descriptor list is empty";
@@ -1182,12 +1178,9 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
                                   size_t worker_id,
                                   size_t start_idx,
                                   size_t end_idx) {
-    batchResult result = {NIXL_SUCCESS, 0, nullptr};
+    NIXL_ASSERT(nixl::isReadWrite(operation));
 
-    if ((operation != NIXL_READ) && (operation != NIXL_WRITE)) {
-        result.status = NIXL_ERR_INVALID_PARAM;
-        return result;
-    }
+    batchResult result = {NIXL_SUCCESS, 0, nullptr};
 
     for (size_t i = start_idx; i < end_idx; ++i) {
         void *laddr = (void *)local[i].addr;
@@ -1204,18 +1197,10 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
 
         ++result.size;
         nixlUcxReq req;
-        nixl_status_t ret = NIXL_ERR_INVALID_PARAM;
 
-        switch (operation) {
-        case NIXL_READ:
-            ret = ep.read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req);
-            break;
-        case NIXL_WRITE:
-            ret = ep.write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
-            break;
-        default:
-            std::terminate(); // UNREACHABLE
-        }
+        const nixl_status_t ret = (operation == NIXL_READ) ?
+            ep.read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
+            ep.write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
 
         if (ret == NIXL_IN_PROG) {
             if (__builtin_expect(result.req != nullptr, 1)) {
@@ -1250,9 +1235,6 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
     size_t workerId = intHandle->getWorkerId();
     nixl_status_t ret;
 
-    if (operation != NIXL_WRITE && operation != NIXL_READ) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
 
     /* Assuming we have a single EP, we need 3 requests: one pending request,
      * one flush request, and one notification request */
@@ -1297,6 +1279,8 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
                         const std::string &remote_agent,
                         nixlBackendReqH *&handle,
                         const nixl_opt_b_args_t *opt_args) const {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
     nixlUcxBackendH *int_handle = static_cast<nixlUcxBackendH *>(handle);
