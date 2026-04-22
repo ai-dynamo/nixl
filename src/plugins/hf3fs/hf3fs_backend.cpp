@@ -24,6 +24,7 @@
 #include "hf3fs_backend.h"
 #include "hf3fs_log.h"
 #include "common/nixl_log.h"
+#include "common/util.h"
 #include "file/file_utils.h"
 
 #define NUM_CQES 1024
