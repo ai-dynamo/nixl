@@ -33,8 +33,7 @@ std::atomic<bool> disconnect[2];
 std::string conn_info[2];
 
 void
-test_thread(const unsigned id, const bool progress_thread)
-{
+test_thread(const unsigned id, const bool progress_thread) {
     const std::string my_name = "Agent" + std::to_string(id);
     const std::string other = "Agent" + std::to_string(1 - id);
 
@@ -56,19 +55,20 @@ test_thread(const unsigned id, const bool progress_thread)
     ucx->getConnInfo(conn_info[id]);
 
     ready[id].store(true);
-    while(!ready[!id].load());
+    while (!ready[!id].load())
+        ;
 
     const auto ret = ucx->loadRemoteConnInfo(other, conn_info[!id]);
     nixl_exit_on_failure((ret == NIXL_SUCCESS), "Failed to load remote conn info", my_name);
 
     //one-sided connect
-    if(!id) {
+    if (!id) {
         const auto ret = ucx->connect(other);
         nixl_exit_on_failure((ret == NIXL_SUCCESS), "Failed to connect", my_name);
     }
 
     done[id].store(true);
-    while(!done[!id].load()) {
+    while (!done[!id].load()) {
         if (id && !progress_thread) {
             ucx->progress();
         }
@@ -77,13 +77,14 @@ test_thread(const unsigned id, const bool progress_thread)
     std::cout << "Thread passed with id " << id << "\n";
 
     //test one-sided disconnect
-    if(!id) {
+    if (!id) {
         ucx->disconnect(other);
     }
 
     disconnect[id].store(true);
     //wait for other
-    while(!disconnect[!id].load());
+    while (!disconnect[!id].load())
+        ;
 
     if (!progress_thread) {
         ucx->progress();
@@ -115,8 +116,8 @@ test_perform(const unsigned first, const bool progress_thread) {
     std::cout << "Multithread test done\n";
 }
 
-int main()
-{
+int
+main() {
     for (unsigned i = 0; i < 12; ++i) {
         test_perform(i & 1, true);
         test_perform(i & 1, false);
