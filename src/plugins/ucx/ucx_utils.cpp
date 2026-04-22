@@ -348,6 +348,48 @@ nixlUcxEp::flushEp(nixlUcxReq &req) {
     return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
 }
 
+nixl_status_t
+nixlUcxEp::postSgl(const nixlUcxSglDesc *sgl, nixlUcxReq &req) {
+    nixl_status_t status = checkTxState();
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
+    if (sgl == nullptr || sgl->localVas.empty()) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    size_t count = sgl->localVas.size();
+    ucp_dt_local_sgl_t local_sgl = sgl->toLocalSgl();
+    ucp_dt_remote_sgl_t remote_sgl = sgl->toRemoteSgl();
+
+    ucp_request_param_t param = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_DATATYPE |
+                        UCP_OP_ATTR_FIELD_REMOTE_DATATYPE |
+                        UCP_OP_ATTR_FIELD_REMOTE |
+                        UCP_OP_ATTR_FIELD_REMOTE_COUNT,
+        .datatype = ucp_dt_make_sgl(),
+        .remote_datatype = ucp_dt_make_sgl(),
+        .remote = &remote_sgl,
+        .remote_count = count
+    };
+
+    ucs_status_ptr_t request = ucp_put_nbx(eph,
+                                           &local_sgl,
+                                           count,
+                                           UCP_REMOTE_ADDR_INVALID,
+                                           UCP_RKEY_INVALID,
+                                           &param);
+
+    if (UCS_PTR_IS_PTR(request)) {
+        req = request;
+        return NIXL_IN_PROG;
+    }
+
+    req = nullptr;
+    return ucx_status_to_nixl(UCS_PTR_STATUS(request));
+}
+
 bool
 nixlUcxMtLevelIsSupported(const nixl::ucx::mt_mode_t mt_type) noexcept {
     ucp_lib_attr_t attr;
