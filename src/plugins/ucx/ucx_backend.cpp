@@ -1398,6 +1398,7 @@ nixlUcxEngine::getConnection(const std::string &remote_agent) const {
 
 void
 nixlUcxEngine::appendNotif(std::string &&remote_name, std::string &&msg) {
+    // In the "no progress thread" case the lock in nixlAgent is sufficient.
     notifList_.emplace_back(std::move(remote_name), std::move(msg));
 }
 
@@ -1432,6 +1433,7 @@ nixlUcxEngine::getNotifs(notif_list_t &notif_list) {
 
     progressLoop();
 
+    // In the "no progress thread" case the lock in nixlAgent is sufficient.
     notifList_.swap(notif_list);
     return NIXL_SUCCESS;
 }
