@@ -209,9 +209,7 @@ def copytree(src, dst):
             # Prefer the real (non-symlink) file; among equals keep the
             # longest name (the fully-versioned .so.X.Y.Z form that UCX's
             # module loader dlopens).
-            group.sort(
-                key=lambda f: (os.path.islink(os.path.join(root, f)), -len(f))
-            )
+            group.sort(key=lambda f: (os.path.islink(os.path.join(root, f)), -len(f)))
             kept = group[0]
             real_src = os.path.realpath(os.path.join(root, kept))
             dst_file = os.path.join(dst_dir, kept)
