@@ -34,10 +34,10 @@ def _load_cuda_backend() -> str:
         mod_name = f"nixl_cu{cuda_major}"
         try:
             return importlib.import_module(mod_name).__name__
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as e:
             raise ImportError(
                 f"torch reports CUDA {cuda_major} but {pip_name} is not installed"
-            )
+            ) from e
     # CPU-only torch — try whatever backend is installed
     for mod_name in ("nixl_cu13", "nixl_cu12"):
         try:
