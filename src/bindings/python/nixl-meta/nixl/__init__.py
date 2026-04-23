@@ -22,9 +22,7 @@ def _get_torch_cuda_major() -> int | None:
     """Return the CUDA major version that torch was built for, or None."""
     from torch.version import cuda as _torch_cuda_ver
 
-    if _torch_cuda_ver is not None:
-        return int(_torch_cuda_ver.split(".")[0])
-    return None
+        return int(_torch_cuda_ver.split(".")[0]) if _torch_cuda_ver else None
 
 
 def _load_cuda_backend() -> str:
