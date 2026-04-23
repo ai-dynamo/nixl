@@ -79,8 +79,7 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
 class nixlUcxPublicMetadata : public nixlBackendMD {
 public:
     nixlUcxPublicMetadata() = delete;
-    nixlUcxPublicMetadata(const ucx_connection_ptr_t &conn,
-                          std::vector<nixl::ucx::rkey> &&rkeys);
+    nixlUcxPublicMetadata(const ucx_connection_ptr_t &conn, std::vector<nixl::ucx::rkey> &&rkeys);
 
     [[nodiscard]] const nixl::ucx::rkey &
     getRkey(const size_t id) const {

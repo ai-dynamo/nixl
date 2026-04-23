@@ -965,9 +965,7 @@ nixl_status_t nixlUcxEngine::getPublicData (const nixlBackendMD* meta,
 namespace {
 
 [[nodiscard]] std::vector<nixl::ucx::rkey>
-makePublicMetadataRkeys(const ucx_connection_ptr_t &conn,
-                        const size_t count,
-                        const void *buffer) {
+makePublicMetadataRkeys(const ucx_connection_ptr_t &conn, const size_t count, const void *buffer) {
     std::vector<nixl::ucx::rkey> result;
     result.reserve(count);
 
@@ -997,7 +995,8 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
             return NIXL_ERR_NOT_FOUND;
         }
         // nixlSerDes::_stringToBytes() was used to "unpack" blob here.
-        output = new nixlUcxPublicMetadata(search->second, makePublicMetadataRkeys(search->second, uws.size(), blob.data()));
+        output = new nixlUcxPublicMetadata(
+            search->second, makePublicMetadataRkeys(search->second, uws.size(), blob.data()));
         return NIXL_SUCCESS;
     }
     catch (const std::runtime_error &e) {
