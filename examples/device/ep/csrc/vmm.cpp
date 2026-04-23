@@ -139,35 +139,42 @@ vmm_region::vmm_region(size_t size) {
 
     static cuda_alloc_ctx ctx;
 
-    if (!ctx.fabric_supported) {
-        size_ = size;
-        is_cuda_malloc_ = true;
-        if (cuMemAlloc(&ptr_, size) != CUDA_SUCCESS) {
-            throw std::runtime_error("cuMemAlloc fallback failed");
+    if (ctx.fabric_supported) {
+        size_ = nixl_ep::align_up<size_t>(size, ctx.granularity);
+
+        const CUresult mem_create_status = cuMemCreate(&handle_, size_, &ctx.prop, 0);
+        if (mem_create_status != CUDA_SUCCESS) {
+            handle_ = 0;
+            warn_cu_api(
+                mem_create_status,
+                k_vmm_ctx,
+                "cuMemCreate (falling back to cuMemAlloc; e.g. check IMEX service if applicable)");
+            ctx.fabric_supported = false;
+        } else {
+            if (cuMemAddressReserve(&ptr_, size_, 0, 0, 0) != CUDA_SUCCESS) {
+                release();
+                throw std::runtime_error("Failed to reserve CUDA virtual address");
+            }
+
+            if (cuMemMap(ptr_, size_, 0, handle_, 0) != CUDA_SUCCESS) {
+                release();
+                throw std::runtime_error("Failed to map CUDA VMM memory");
+            }
+            vmm_mapped_ = true;
+
+            if (cuMemSetAccess(ptr_, size_, &ctx.access_desc, 1) != CUDA_SUCCESS) {
+                release();
+                throw std::runtime_error("Failed to set CUDA memory access");
+            }
+
+            return;
         }
-        return;
     }
 
-    size_ = nixl_ep::align_up<size_t>(size, ctx.granularity);
-
-    if (cuMemCreate(&handle_, size_, &ctx.prop, 0) != CUDA_SUCCESS) {
-        throw std::runtime_error("Failed to create CUDA VMM allocation");
-    }
-
-    if (cuMemAddressReserve(&ptr_, size_, 0, 0, 0) != CUDA_SUCCESS) {
-        release();
-        throw std::runtime_error("Failed to reserve CUDA virtual address");
-    }
-
-    if (cuMemMap(ptr_, size_, 0, handle_, 0) != CUDA_SUCCESS) {
-        release();
-        throw std::runtime_error("Failed to map CUDA VMM memory");
-    }
-    vmm_mapped_ = true;
-
-    if (cuMemSetAccess(ptr_, size_, &ctx.access_desc, 1) != CUDA_SUCCESS) {
-        release();
-        throw std::runtime_error("Failed to set CUDA memory access");
+    size_ = size;
+    is_cuda_malloc_ = true;
+    if (cuMemAlloc(&ptr_, size) != CUDA_SUCCESS) {
+        throw std::runtime_error("cuMemAlloc fallback failed");
     }
 }
 
