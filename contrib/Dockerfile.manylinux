@@ -335,7 +335,8 @@ RUN rm -rf build && \
     fi && \
     meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE $NIXL_EP_FLAG -Ducx_path=/usr/local \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
-    -Dcudapath_inc="/usr/local/cuda/include" && \
+    -Dcudapath_inc="/usr/local/cuda/include" \
+    -Drelease_wheel=true && \
     cd build && \
     ninja && \
     ninja install

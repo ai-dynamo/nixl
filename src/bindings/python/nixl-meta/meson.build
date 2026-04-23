@@ -20,7 +20,12 @@ build_dir = meson.current_build_dir()
 pyproject_toml = configure_file(
   input: 'pyproject.toml.in',
   output: 'pyproject.toml',
-  configuration: { 'VERSION': meson.project_version() }
+  configuration: {
+    'VERSION': meson.project_version(),
+    'WHEEL_DEPS': get_option('release_wheel') \
+      ? '"nixl-cu12==' + meson.project_version() + '", "nixl-cu13==' + meson.project_version() + '"' \
+      : '"' + cuda_wheel_dir.replace('_', '-') + '==' + meson.project_version() + '"',
+  }
 )
 
 readme_md = fs.copyfile('README.md')
