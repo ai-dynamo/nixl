@@ -80,9 +80,9 @@ class nixlUcxPublicMetadata : public nixlBackendMD {
 public:
     nixlUcxPublicMetadata() : nixlBackendMD(false) {}
 
-    [[nodiscard]] const nixl::ucx::rkey &
-    getRkey(const size_t id) const noexcept {
-        return rkeys_[id];
+    [[nodiscard]] ucp_rkey_h
+    rawRkey(const size_t id) const noexcept {
+        return rkeys_[id].get();
     }
 
     void

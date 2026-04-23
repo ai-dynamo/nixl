@@ -1172,9 +1172,9 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
 
         ++result.size;
         nixlUcxReq req;
-        nixl_status_t ret = operation == NIXL_READ ?
-            ep.read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
-            ep.write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
+        const nixl_status_t ret = operation == NIXL_READ ?
+            ep.read(raddr, rmd->rawRkey(worker_id), laddr, lmd->mem, lsize, req) :
+            ep.write(laddr, lmd->mem, raddr, rmd->rawRkey(worker_id), lsize, req);
 
         if (ret == NIXL_IN_PROG) {
             if (__builtin_expect(result.req != nullptr, 1)) {

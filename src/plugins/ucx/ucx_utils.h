@@ -110,7 +110,7 @@ public:
     /* Data access */
     [[nodiscard]] nixl_status_t
     read(uint64_t raddr,
-         const nixl::ucx::rkey &rkey,
+         const ucp_rkey_h rkey,
          void *laddr,
          nixlUcxMem &mem,
          size_t size,
@@ -119,7 +119,7 @@ public:
     write(void *laddr,
           nixlUcxMem &mem,
           uint64_t raddr,
-          const nixl::ucx::rkey &rkey,
+          const ucp_rkey_h rkey,
           size_t size,
           nixlUcxReq &req);
     nixl_status_t
