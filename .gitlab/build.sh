@@ -334,13 +334,17 @@ if [ -n "${PRE_INSTALLED_ENV}" ] && [ "${BUILD_NIXL_EP}" = "true" ] && $HAS_GPU 
         $SUDO apt-get -qq update
         $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
     fi
-    # DOCA device headers (.cuh) may be installed to a path nvcc does not search.
-    # Copy them to CUDA include path so nvcc can find doca_gpunetio_dev_verbs_qp.cuh
-    # included transitively via UCX device headers.
-    DOCA_CUH=$(find /usr/include /opt -name "doca_gpunetio_dev_verbs_qp.cuh" 2>/dev/null | head -1)
-    if [ -n "$DOCA_CUH" ] && [ -d "${CUDA_HOME}/include" ]; then
-        $SUDO cp "$(dirname "$DOCA_CUH")"/*.cuh "${CUDA_HOME}/include/" 2>/dev/null || true
-        echo "Copied DOCA device headers from $(dirname "$DOCA_CUH") to ${CUDA_HOME}/include/"
+    # DOCA GPUNetIO headers (both .cuh device headers and .h common headers) may be
+    # installed to a path nvcc does not search. The include chain is:
+    #   nixl_device.cuh -> uct_device_impl.h -> gdaki.cuh -> doca_gpunetio_dev_verbs_qp.cuh
+    #   -> doca_gpunetio_dev_verbs_common.cuh -> doca_gpunetio_verbs_def.h
+    # Search for ALL doca_gpunetio* headers (any extension) to avoid missing future additions.
+    if [ -d "${CUDA_HOME}/include" ]; then
+        DOCA_HEADERS=$(find /usr/include /opt -name "doca_gpunetio*" 2>/dev/null)
+        if [ -n "$DOCA_HEADERS" ]; then
+            echo "$DOCA_HEADERS" | xargs -I{} $SUDO cp {} "${CUDA_HOME}/include/" 2>/dev/null || true
+            echo "Copied DOCA GPUNetIO headers to ${CUDA_HOME}/include/"
+        fi
     fi
 fi
 
