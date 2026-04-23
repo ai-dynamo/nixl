@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,12 @@ build_dir = meson.current_build_dir()
 pyproject_toml = configure_file(
   input: 'pyproject.toml.in',
   output: 'pyproject.toml',
-  configuration: { 'VERSION': meson.project_version(), 'WHEEL_DEP': cuda_wheel_dir.replace('_', '-') }
+  configuration: {
+    'VERSION': meson.project_version(),
+    'WHEEL_DEPS': get_option('release_wheel') \
+      ? '"nixl-cu12==' + meson.project_version() + '", "nixl-cu13==' + meson.project_version() + '"' \
+      : '"' + cuda_wheel_dir.replace('_', '-') + '==' + meson.project_version() + '"',
+  }
 )
 
 readme_md = fs.copyfile('README.md')
