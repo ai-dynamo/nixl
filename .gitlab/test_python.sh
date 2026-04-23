@@ -99,26 +99,27 @@ python3 query_mem_example.py
 # Extra arguments are passed as env vars to the initiator.
 # Usage: run_two_peers <script> [ENV=val ...]
 run_two_peers() {
-    script=$1
+    local script=$1
     shift
 
+    local target_log
     target_log=$(mktemp)
     trap "rm -f '$target_log'" EXIT
 
     NIXL_LOG_LEVEL=INFO \
         python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 \
         2> "$target_log" &
-    target_pid=$!
+    local target_pid=$!
 
     # Look for the listening port in the target's log
-    port=""
+    local port=""
     for _ in $(seq 30); do
         port=$(awk '/MD listener is listening on port/ { print $NF; exit }' "$target_log")
-        [ -n "$port" ] && break
+        [[ -n "$port" ]] && break
         sleep 1
     done
 
-    if [ -z "$port" ]; then
+    if [[ -z "$port" ]]; then
         echo "Target (pid=$target_pid) failed to report port within 30s"
         kill "$target_pid" 2>/dev/null
         exit 1
