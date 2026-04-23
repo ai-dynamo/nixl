@@ -218,10 +218,10 @@ TEST(Config, ConvertUnsigned) {
 
 namespace {
 
-const std::string pid = std::to_string(::getpid());
-const std::string bool_name = "bool" + pid;
-const std::string number_name = "number" + pid;
-const std::string string_name = "string" + pid;
+    const std::string pid = std::to_string(::getpid());
+    const std::string bool_name = "bool" + pid;
+    const std::string number_name = "number" + pid;
+    const std::string string_name = "string" + pid;
 
 } // namespace
 
