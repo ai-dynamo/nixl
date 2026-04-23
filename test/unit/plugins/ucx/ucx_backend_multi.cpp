@@ -22,10 +22,6 @@
 #include "ucx_backend.h"
 #include "test_utils.h"
 
-// TODO: Find out what this comment means:
-// Temporarily while fixing CI/CD pipeline
-// #define USE_PTHREAD false
-
 std::atomic<bool> ready[2];
 std::atomic<bool> done[2];
 std::atomic<bool> disconnect[2];
