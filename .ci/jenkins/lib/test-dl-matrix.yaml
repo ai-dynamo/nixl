@@ -49,7 +49,7 @@ env:
   SLURM_JOB_TIMEOUT: '01:30:00'
   TEST_TIMEOUT: 50
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260414-3"
+  CI_IMAGE_TAG: "20260423-1"
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
@@ -104,6 +104,7 @@ steps:
       --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} \
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
+      --build-arg BUILD_NIXL_EP=true \
       --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-base-25.10-cuda13.0-ubuntu24.04:${CI_IMAGE_TAG} \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
@@ -130,6 +131,17 @@ steps:
     run: |
       set -x
       sudo -E -u svc-nixl .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_python.sh" \
+        --container_name=nixl-dl-${ucx_version}-${BUILD_NUMBER} \
+        --slurm_job_id=$(cat /mnt/pvc/dl_job_id_${ucx_version}_${BUILD_NUMBER}.txt) \
+        --docker_image="${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+
+  - name: Run DL EP elastic tests
+    containerSelector: "{name: 'build_helper_dl'}"
+    timeout: "${TEST_TIMEOUT}"
+    parallel: false
+    run: |
+      set -x
+      sudo -E -u svc-nixl .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_ep.sh" \
         --container_name=nixl-dl-${ucx_version}-${BUILD_NUMBER} \
         --slurm_job_id=$(cat /mnt/pvc/dl_job_id_${ucx_version}_${BUILD_NUMBER}.txt) \
         --docker_image="${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
