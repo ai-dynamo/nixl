@@ -30,15 +30,6 @@
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include <asio.hpp>
-namespace {
-    void moveNotifList(notif_list_t &src, notif_list_t &tgt)
-    {
-        if (src.size() > 0) {
-            std::move(src.begin(), src.end(), std::back_inserter(tgt));
-            src.clear();
-        }
-    }
-}
 
 /****************************************
  * Backend request management
@@ -122,7 +113,7 @@ public:
     release() {
         // TODO: Error log: uncompleted requests found! Cancelling ...
         for (nixlUcxReq req : requests_) {
-            nixl_status_t ret = ucx_status_to_nixl(ucp_request_check_status(req));
+            const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
             if (ret == NIXL_IN_PROG) {
                 // TODO: Need process this properly.
                 // it may not be enough to cancel UCX request
@@ -143,14 +134,12 @@ public:
             return NIXL_SUCCESS;
         }
 
-        /* Maximum progress */
-        while (worker->progress())
-            ;
+        worker->progressLoop();
 
         /* If last request is incomplete, return NIXL_IN_PROG early without
          * checking other requests */
         nixlUcxReq req = requests_.back();
-        nixl_status_t ret = ucx_status_to_nixl(ucp_request_check_status(req));
+        const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
         if (ret == NIXL_IN_PROG) {
             return NIXL_IN_PROG;
         } else if (ret != NIXL_SUCCESS) {
@@ -162,7 +151,7 @@ public:
         size_t incomplete_reqs = 0;
         nixl_status_t out_ret = NIXL_SUCCESS;
         for (nixlUcxReq req : requests_) {
-            nixl_status_t ret = ucx_status_to_nixl(ucp_request_check_status(req));
+            const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
             if (__builtin_expect(ret == NIXL_SUCCESS, 0)) {
                 worker->reqRelease(req);
             } else if (ret == NIXL_IN_PROG) {
@@ -341,8 +330,7 @@ protected:
                 pollFds_[i].revents = 0;
                 nixlUcxWorker *worker = getWorkers()[i];
                 do {
-                    while (worker->progress())
-                        ;
+                    worker->progressLoop();
                 } while (worker->arm() == NIXL_IN_PROG);
             }
             timeout = false;
@@ -375,7 +363,7 @@ private:
 
 nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_params)
     : nixlUcxEngine(init_params) {
-    if (!nixlUcxMtLevelIsSupported(nixl_ucx_mt_t::WORKER)) {
+    if (!nixlUcxMtLevelIsSupported(nixl::ucx::mt_mode_t::WORKER)) {
         throw std::invalid_argument("UCX library does not support multi-threading");
     }
 
@@ -392,23 +380,19 @@ nixlUcxThreadEngine::~nixlUcxThreadEngine() {
 }
 
 void
-nixlUcxThreadEngine::appendNotif(std::string remote_name, std::string msg) {
-    if (nixlUcxThread::isProgressThread(this)) {
-        /* Append to the private list to allow batching */
-        const std::lock_guard<std::mutex> lock(notifMtx_);
-        notifPthr_.push_back(std::make_pair(std::move(remote_name), std::move(msg)));
-    } else {
-        nixlUcxEngine::appendNotif(std::move(remote_name), std::move(msg));
-    }
+nixlUcxThreadEngine::appendNotif(std::string &&remote_name, std::string &&msg) {
+    const std::lock_guard lock(notifMutex_);
+    notifList_.emplace_back(std::move(remote_name), std::move(msg));
 }
 
 nixl_status_t
 nixlUcxThreadEngine::getNotifs(notif_list_t &notif_list) {
-    if (!notif_list.empty()) return NIXL_ERR_INVALID_PARAM;
+    if (!notif_list.empty()) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
-    getNotifsImpl(notif_list);
-    const std::lock_guard<std::mutex> lock(notifMtx_);
-    moveNotifList(notifPthr_, notif_list);
+    const std::lock_guard lock(notifMutex_);
+    notifList_.swap(notif_list);
     return NIXL_SUCCESS;
 }
 
@@ -559,8 +543,7 @@ public:
 
     nixl_status_t
     status() override {
-        while (getWorker()->progress())
-            ;
+        getWorker()->progressLoop();
 
         if (sharedState_->pendingReqs.load()) {
             return NIXL_IN_PROG;
@@ -777,26 +760,23 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 }
 
 void
-nixlUcxThreadPoolEngine::appendNotif(std::string remote_name, std::string msg) {
-    if (nixlUcxThread::isProgressThread(this)) {
-        std::lock_guard<std::mutex> lock(notifMutex_);
-        notifThread_.emplace_back(std::move(remote_name), std::move(msg));
-    } else {
-        nixlUcxEngine::appendNotif(std::move(remote_name), std::move(msg));
-    }
+nixlUcxThreadPoolEngine::appendNotif(std::string &&remote_name, std::string &&msg) {
+    const std::lock_guard lock(notifMutex_);
+    notifList_.emplace_back(std::move(remote_name), std::move(msg));
 }
 
 nixl_status_t
 nixlUcxThreadPoolEngine::getNotifs(notif_list_t &notif_list) {
-    if (!notif_list.empty()) return NIXL_ERR_INVALID_PARAM;
-
-    if (!sharedThread_) {
-        progress();
+    if (!notif_list.empty()) {
+        return NIXL_ERR_INVALID_PARAM;
     }
 
-    getNotifsImpl(notif_list);
-    std::lock_guard<std::mutex> lock(notifMutex_);
-    moveNotifList(notifThread_, notif_list);
+    if (!sharedThread_) {
+        progressLoop();
+    }
+
+    const std::lock_guard lock(notifMutex_);
+    notifList_.swap(notif_list);
     return NIXL_SUCCESS;
 }
 
@@ -820,8 +800,7 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     : nixlBackendEngine(&init_params),
-      sharedWorkerIndex_(1),
-      progressThreadEnabled_(init_params.enableProgTh) {
+      sharedWorkerIndex_(1) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
@@ -865,7 +844,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
 
     auto &uw = uws.front();
     workerAddr = uw->epAddr();
-    uw->regAmCallback(NOTIF_STR, notifAmCb, this);
+    uw->regAmCallback(nixl::ucx::am_cb_op_t::NOTIF_STR, notifAmCb, this);
 }
 
 nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
@@ -1360,12 +1339,20 @@ nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
     return status;
 }
 
-int nixlUcxEngine::progress() {
+unsigned
+nixlUcxEngine::progress() {
     // TODO: add listen for connection handling if necessary
-    int ret = 0;
-    for (auto &uw: uws)
+    unsigned ret = 0;
+    for (auto &uw : uws) {
         ret += uw->progress();
+    }
     return ret;
+}
+
+void
+nixlUcxEngine::progressLoop() {
+    while (progress() != 0)
+        ;
 }
 
 /****************************************
@@ -1393,7 +1380,7 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
         }
     };
 
-    return ep->sendAm(NOTIF_STR,
+    return ep->sendAm(nixl::ucx::am_cb_op_t::NOTIF_STR,
                       nullptr,
                       0,
                       (void *)buffer->data(),
@@ -1410,8 +1397,9 @@ nixlUcxEngine::getConnection(const std::string &remote_agent) const {
 }
 
 void
-nixlUcxEngine::appendNotif(std::string remote_name, std::string msg) {
-    notifMainList.emplace_back(std::move(remote_name), std::move(msg));
+nixlUcxEngine::appendNotif(std::string &&remote_name, std::string &&msg) {
+    // In the "no progress thread" case the lock in nixlAgent is sufficient.
+    notifList_.emplace_back(std::move(remote_name), std::move(msg));
 }
 
 ucs_status_t
@@ -1437,18 +1425,16 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     return UCS_OK;
 }
 
-void
-nixlUcxEngine::getNotifsImpl(notif_list_t &notif_list) {
-    moveNotifList(notifMainList, notif_list);
-}
+nixl_status_t
+nixlUcxEngine::getNotifs(notif_list_t &notif_list) {
+    if (!notif_list.empty()) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
-nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list)
-{
-    if (!notif_list.empty()) return NIXL_ERR_INVALID_PARAM;
+    progressLoop();
 
-    while (progress())
-        ;
-    getNotifsImpl(notif_list);
+    // In the "no progress thread" case the lock in nixlAgent is sufficient.
+    notifList_.swap(notif_list);
     return NIXL_SUCCESS;
 }
 
