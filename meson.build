@@ -88,9 +88,14 @@ endif
 
 # Check for liburing
 has_io_uring = false
-io_uring_dep = dependency('liburing', required: false)
+io_uring_dep = dependency('liburing', required: false, fallback: ['liburing', 'uring'])
 if io_uring_dep.found()
-    has_io_uring = cpp.has_function('io_uring_queue_init_params', prefix: '#include <liburing.h>',  dependencies: [io_uring_dep])
+    if io_uring_dep.type_name() == 'internal'
+        # From the liburing subproject wrap — pinned version has io_uring_queue_init_params.
+        has_io_uring = true
+    else
+        has_io_uring = cpp.has_function('io_uring_queue_init_params', prefix: '#include <liburing.h>',  dependencies: [io_uring_dep])
+    endif
 endif
 
 # Check for POSIX aio
