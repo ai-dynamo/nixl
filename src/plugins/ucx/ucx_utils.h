@@ -57,9 +57,6 @@ nixl_b_params_get(const nixl_b_params_t *custom_params, const std::string &key, 
 
 using nixlUcxReq = void *;
 
-namespace nixl::ucx {
-class rkey;
-}
 class nixlUcxMem;
 
 class nixlUcxEp {
@@ -110,7 +107,7 @@ public:
     /* Data access */
     [[nodiscard]] nixl_status_t
     read(uint64_t raddr,
-         const ucp_rkey_h rkey,
+         ucp_rkey_h rkey,
          void *laddr,
          nixlUcxMem &mem,
          size_t size,
@@ -119,7 +116,7 @@ public:
     write(void *laddr,
           nixlUcxMem &mem,
           uint64_t raddr,
-          const ucp_rkey_h rkey,
+          ucp_rkey_h rkey,
           size_t size,
           nixlUcxReq &req);
     nixl_status_t
