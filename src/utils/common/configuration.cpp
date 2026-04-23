@@ -39,12 +39,10 @@ namespace {
     readFile() {
         // First choice, use config file path and name from environment variable if set.
 
-        if (nixl_variable != nullptr) {
-            if (const auto env = internal::getenvOptional(nixl_variable)) {
-                const std::filesystem::path file(std::filesystem::weakly_canonical(*env));
-                NIXL_DEBUG << "Reading nixl config file " << file << " from " << nixl_variable;
-                return readFile(file);
-            }
+        if (const auto env = internal::getenvOptional(nixl_variable)) {
+            const std::filesystem::path file(std::filesystem::weakly_canonical(*env));
+            NIXL_DEBUG << "Reading nixl config file " << file << " from " << nixl_variable;
+            return readFile(file);
         }
 
         // Second choice, use config file in home directory if directory and file exist.

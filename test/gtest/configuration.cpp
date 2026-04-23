@@ -17,6 +17,7 @@
 
 #include "common/configuration.h"
 #include "gtest/gtest.h"
+#include "common.h"
 
 #include <limits>
 #include <stdlib.h>
@@ -213,6 +214,40 @@ TEST(Config, ConvertUnsigned) {
     testUnsigned<std::uint16_t>();
     testUnsigned<std::uint32_t>();
     testUnsigned<std::uint64_t>();
+}
+
+namespace {
+
+const std::string pid = std::to_string(::getpid());
+const std::string bool_name = "bool" + pid;
+const std::string number_name = "number" + pid;
+const std::string string_name = "string" + pid;
+
+} // namespace
+
+TEST(Config, ReadConfigFile) {
+    const auto pid = ::getpid();
+    const auto file = "nixl_test_" + std::to_string(pid) + ".cfg";
+    const auto path = std::filesystem::temp_directory_path() / file;
+    {
+        std::ofstream ofs(path, std::ios::out | std::ios::trunc);
+        ofs << bool_name << " = true\n";
+        ofs << number_name << " = 42\n";
+        ofs << string_name << " = \"hello\"\n";
+    }
+    const gtest::ScopedEnv var("NIXL_CONFIG_FILE", path.native());
+    {
+        const auto value = nixl::config::getValue<bool>(bool_name);
+        EXPECT_TRUE(value);
+    }
+    {
+        const auto value = nixl::config::getValue<unsigned>(number_name);
+        EXPECT_EQ(value, 42);
+    }
+    {
+        const auto value = nixl::config::getValue<std::string>(string_name);
+        EXPECT_EQ(value, "hello");
+    }
 }
 
 } // namespace nixl::config
