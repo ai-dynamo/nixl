@@ -228,8 +228,12 @@ public:
     regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg);
 
     /* Data access */
-    int
+    unsigned
     progress();
+
+    void
+    progressLoop();
+
     [[nodiscard]] nixl_status_t
     test(nixlUcxReq req);
 
