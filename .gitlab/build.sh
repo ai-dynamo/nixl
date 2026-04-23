@@ -141,8 +141,12 @@ else
 
     # Install torch from the CUDA-matched PyTorch index
     cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
+    if [ -z "$cuda_version" ]; then
+        echo "ERROR: unable to determine CUDA version from nvcc" >&2
+        exit 1
+    fi
     $SUDO pip3 --no-cache-dir install --break-system-packages \
-        --extra-index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
+        --index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
 
     # Add DOCA repository and install packages
     ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)

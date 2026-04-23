@@ -39,7 +39,7 @@ For example, if you have a GPU running on a Linux host, container, or VM, you ca
 
 Install with:
 
-```
+```bash
 pip install nixl
 ```
 

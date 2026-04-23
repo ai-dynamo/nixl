@@ -20,32 +20,31 @@ from typing import TYPE_CHECKING
 
 def _get_torch_cuda_major() -> int | None:
     """Return the CUDA major version that torch was built for, or None."""
-    try:
-        from torch.version import cuda as _torch_cuda_ver
+    from torch.version import cuda as _torch_cuda_ver
 
-        if _torch_cuda_ver is not None:
-            return int(_torch_cuda_ver.split(".")[0])
-    except Exception:
-        pass
+    if _torch_cuda_ver is not None:
+        return int(_torch_cuda_ver.split(".")[0])
     return None
 
 
 def _load_cuda_backend() -> str:
     cuda_major = _get_torch_cuda_major()
-    if cuda_major is None:
-        raise ImportError(
-            "Could not detect CUDA version from torch. "
-            "Ensure torch is installed with CUDA support."
-        )
-    pip_name = f"nixl-cu{cuda_major}"
-    mod_name = f"nixl_cu{cuda_major}"
-    try:
-        return importlib.import_module(mod_name).__name__
-    except ModuleNotFoundError:
-        raise ImportError(
-            f"torch reports CUDA {cuda_major} but {pip_name} "
-            f"is not installed. Install it with: pip install {pip_name}"
-        )
+    if cuda_major is not None:
+        pip_name = f"nixl-cu{cuda_major}"
+        mod_name = f"nixl_cu{cuda_major}"
+        try:
+            return importlib.import_module(mod_name).__name__
+        except ModuleNotFoundError:
+            raise ImportError(
+                f"torch reports CUDA {cuda_major} but {pip_name} is not installed"
+            )
+    # CPU-only torch — try whatever backend is installed
+    for mod_name in ("nixl_cu13", "nixl_cu12"):
+        try:
+            return importlib.import_module(mod_name).__name__
+        except ModuleNotFoundError:
+            continue
+    raise ImportError("No NIXL CUDA backend found")
 
 
 _pkg = sys.modules[_load_cuda_backend()]
