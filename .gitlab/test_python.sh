@@ -102,13 +102,12 @@ run_two_peers() {
     script=$1
     shift
 
-    local target_log port
     target_log=$(mktemp)
     trap "rm -f '$target_log'" EXIT
 
     NIXL_LOG_LEVEL=INFO \
         python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 \
-        2> >(tee -a "$target_log" >&2) &
+        2> "$target_log" &
     target_pid=$!
 
     # Look for the listening port in the target's log
