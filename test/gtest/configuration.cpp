@@ -235,7 +235,8 @@ TEST(Config, ReadConfigFile) {
         ofs << number_name << " = 42\n";
         ofs << string_name << " = \"hello\"\n";
     }
-    const gtest::ScopedEnv var("NIXL_CONFIG_FILE", path.native());
+    gtest::ScopedEnv vars;
+    vars.addVar("NIXL_CONFIG_FILE", path.native());
     {
         const auto value = nixl::config::getValue<bool>(bool_name);
         EXPECT_TRUE(value);
