@@ -274,7 +274,7 @@ else
       cd ${TMPDIR} && \
       git clone https://github.com/nvidia/gusli.git && \
       cd gusli && \
-      $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+      $SUDO make -j"$NPROC" all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
       $SUDO ldconfig && \
       cd .. && \
       $SUDO rm -rf gusli
@@ -289,7 +289,7 @@ else
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
       cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
-      ninja && \
+      ninja -j"$NPROC" && \
       $SUDO ninja install && \
       $SUDO ldconfig && \
       cd .. && \
@@ -311,7 +311,7 @@ else
       cd azure-sdk-for-cpp/ && \
       mkdir build && cd build && \
       AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
-      cmake --build . --target azure-storage-blobs azure-identity && \
+      cmake --build . --parallel "$NPROC" --target azure-storage-blobs azure-identity && \
       $SUDO cmake --install sdk/core && \
       $SUDO cmake --install sdk/storage/azure-storage-common && \
       $SUDO cmake --install sdk/storage/azure-storage-blobs && \
