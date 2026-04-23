@@ -47,12 +47,6 @@ if get_option('buildtype') != 'release'
                include_directories: ucx_test_include_directories,
                install: true)
 
-    ucx_am_bin = executable('ucx_am_test',
-               'ucx_am_test.cpp',
-               dependencies: ucx_test_dep,
-               include_directories: ucx_test_include_directories,
-               install: true)
-
     if cuda_dep.found()
         ucx_worker_cuda_bin = executable('ucx_worker_test_cuda',
                        'ucx_worker_test.cpp',
@@ -60,14 +54,6 @@ if get_option('buildtype') != 'release'
                        include_directories: ucx_test_include_directories,
                        cpp_args : '-DUSE_VRAM',
                        install: true)
-
-        ucx_am_cuda_bin = executable('ucx_am_test_cuda',
-                       'ucx_am_test.cpp',
-                       dependencies: ucx_test_dep,
-                       include_directories: ucx_test_include_directories,
-                       cpp_args : '-DUSE_VRAM',
-                       install: true)
-
     endif
 
 endif

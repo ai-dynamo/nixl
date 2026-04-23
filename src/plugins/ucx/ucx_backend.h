@@ -32,14 +32,12 @@
 #include "nixl.h"
 #include "backend/backend_engine.h"
 #include "backend/notif_callbacks.h"
-
-// Local includes
 #include "common/nixl_time.h"
+
 #include "mem_list.h"
 #include "rkey.h"
+#include "ucx_enums.h"
 #include "ucx_utils.h"
-
-enum ucx_cb_op_t { NOTIF_STR };
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
@@ -191,8 +189,11 @@ public:
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
-    int
+    unsigned
     progress();
+
+    void
+    progressLoop();
 
     nixl_status_t
     getNotifs(notif_list_t &notif_list) override;
@@ -234,11 +235,8 @@ protected:
         return uws.size();
     }
 
-    void
-    getNotifsImpl(notif_list_t &notif_list);
-
     virtual void
-    appendNotif(std::string remote_name, std::string msg);
+    appendNotif(std::string &&remote_name, std::string &&msg);
 
     virtual nixl_status_t
     sendXferRange(const nixl_xfer_op_t &operation,
@@ -250,6 +248,8 @@ protected:
                   size_t end_idx) const;
 
     nixlUcxEngine(const nixlBackendInitParams &init_params);
+
+    notif_list_t notifList_;
 
 private:
     // Memory management helpers
@@ -306,10 +306,6 @@ private:
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
 
-    const bool progressThreadEnabled_;
-
-    /* Notifications */
-    notif_list_t notifMainList;
     const nixlNotifCallbacks notifCallbacks_;
 
     // Map of agent name to saved nixlUcxConnection info
@@ -331,12 +327,11 @@ public:
 
 protected:
     void
-    appendNotif(std::string remote_name, std::string msg) override;
+    appendNotif(std::string &&remote_name, std::string &&msg) override;
 
 private:
     std::unique_ptr<nixlUcxThread> thread_;
-    std::mutex notifMtx_;
-    notif_list_t notifPthr_;
+    std::mutex notifMutex_;
 };
 
 namespace asio {
@@ -366,7 +361,7 @@ public:
 
 protected:
     void
-    appendNotif(std::string remote_name, std::string msg) override;
+    appendNotif(std::string &&remote_name, std::string &&msg) override;
 
     nixl_status_t
     sendXferRange(const nixl_xfer_op_t &operation,
@@ -383,7 +378,6 @@ private:
     std::vector<std::unique_ptr<nixlUcxThread>> dedicatedThreads_;
     size_t numSharedWorkers_;
     std::mutex notifMutex_;
-    notif_list_t notifThread_;
     size_t splitBatchSize_;
 };
 
