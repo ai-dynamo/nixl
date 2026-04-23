@@ -16,7 +16,6 @@
  */
 
 #include "worker/nixl/nixl_worker.h"
-#include "runtime/etcd/etcd_rt.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -1405,11 +1404,9 @@ xferBenchNixlWorker::transfer(size_t block_size,
     nixl_xfer_op_t xfer_op = XFERBENCH_OP_READ == xferBenchConfig::op_type ? NIXL_READ : NIXL_WRITE;
     // int completion_flag = 1;
 
-    if (auto *etcd_rt = dynamic_cast<xferBenchEtcdRT *>(rt)) {
-        if (!etcd_rt->checkKeepAlive()) { // also refreshes the lease internally.
-            std::cerr << "nixlbench: keepalive failed before transfer — aborting" << std::endl;
-            return std::variant<xferBenchStats, int>(-1);
-        }
+    if (!rt->checkKeepAlive()) { // also refreshes the lease internally.
+        std::cerr << "nixlbench: keepalive failed before transfer — aborting" << std::endl;
+        return std::variant<xferBenchStats, int>(-1);
     }
 
     // Reduce skip by 10x for large block sizes
