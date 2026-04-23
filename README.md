@@ -54,6 +54,9 @@ For backwards compatibility, `pip install nixl` installs automatically `nixl[cu1
 If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environment, `nixl-cu13` takes precedence.
 
 ## Prerequisites for source build (Linux)
+
+NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
+
 ### Ubuntu:
 
 `$ sudo apt install build-essential cmake pkg-config`
