@@ -24,6 +24,9 @@
 // Forward declarations for special engine types
 class nixlUcxEngine;
 
+// Plugins must be compiled with the same C++ standard and a compatible
+// libstdc++ ABI as the NIXL core library. NIXL core currently requires C++20.
+
 // Define the plugin API version
 #define NIXL_PLUGIN_API_VERSION 1
 
