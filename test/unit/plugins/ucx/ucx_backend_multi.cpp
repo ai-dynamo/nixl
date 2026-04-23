@@ -43,6 +43,7 @@ test_thread(const unsigned id, const bool progress_thread) {
     std::cout << my_name << " Started\n";
 
     const auto ucx = nixlUcxEngine::create(init_params);
+    nixl_exit_on_failure(ucx && !ucx->getInitErr(), "Failed to initialize engine", my_name);
 
     if (!progress_thread) {
         ucx->progress();
