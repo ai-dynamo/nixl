@@ -24,6 +24,7 @@
 
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "common/util.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 #include "util.h"
@@ -264,11 +265,14 @@ nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
 }
 
 void
-nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
-    const auto bytes_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_BYTES :
-                                       nixl_telemetry_event_type_t::AGENT_RX_BYTES;
-    const auto requests_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM :
-                                          nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM;
+nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time,
+                           const nixl_xfer_op_t operation,
+                           const uint64_t bytes) {
+    const bool source = nixl::localIsSource(operation);
+    const auto bytes_type = source ? nixl_telemetry_event_type_t::AGENT_TX_BYTES :
+                                     nixl_telemetry_event_type_t::AGENT_RX_BYTES;
+    const auto requests_type = source ? nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM :
+                                        nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM;
 
     const std::lock_guard lock(mutex_);
     if (events_.size() + 3 > maxBufferedEvents_) {
