@@ -29,7 +29,10 @@ authors = [
   {name = "NIXL Developers", email = "nixl-developers@nvidia.com"}
 ]
 
-dependencies = ["@WHEEL_DEP@==@VERSION@"]
+dependencies = [
+    "nixl-cu12==@VERSION@",
+    "nixl-cu13==@VERSION@",
+]
 
 [project.optional-dependencies]
 cu12 = ["nixl-cu12==@VERSION@"]

@@ -1,11 +1,12 @@
 # nixl
 
-This is a *meta package* that declares optional dependencies on CUDA variants.
+This is a *meta package* that installs both CUDA 12 and CUDA 13 backends.
+At runtime, the correct backend is selected automatically based on the CUDA
+version reported by PyTorch.
 
-Install one of:
 ```bash
-pip install "nixl[cu12]"   # for CUDA 12
-pip install "nixl[cu13]"   # for CUDA 13
+pip install nixl
 ```
 
-If both are installed, the higher version will be used.
+The `nixl[cu12]` and `nixl[cu13]` extras are accepted for backwards
+compatibility but have no additional effect.

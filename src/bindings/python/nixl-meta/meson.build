@@ -20,7 +20,7 @@ build_dir = meson.current_build_dir()
 pyproject_toml = configure_file(
   input: 'pyproject.toml.in',
   output: 'pyproject.toml',
-  configuration: { 'VERSION': meson.project_version(), 'WHEEL_DEP': cuda_wheel_dir.replace('_', '-') }
+  configuration: { 'VERSION': meson.project_version() }
 )
 
 readme_md = fs.copyfile('README.md')
