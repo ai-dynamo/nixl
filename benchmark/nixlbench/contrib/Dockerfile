@@ -35,7 +35,6 @@ RUN apt-get update -y && \
     libgflags-dev \
     libprotobuf-dev \
     libaio-dev \
-    liburing-dev \
     protobuf-compiler-grpc \
     libcpprest-dev \
     etcd-server \
