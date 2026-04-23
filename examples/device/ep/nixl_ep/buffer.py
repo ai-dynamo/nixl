@@ -19,6 +19,7 @@
 # limitations under the License.
 
 import os
+import time
 from contextlib import contextmanager
 from datetime import timedelta
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple, Union
@@ -829,23 +830,32 @@ class Buffer:
             self.tcp_store_group.delete_key(md_key)
 
     def _ht_connect_ranks(self, remote_ranks: List[int]) -> None:
-        if self.group is not None:
-
-            def all_gather_object(obj):
-                object_list = [None] * self.group_size
-                dist.all_gather_object(object_list, obj, self.group)
-                return object_list
-
-        elif self.comm is not None:
-
-            def all_gather_object(obj):
-                return self.comm.allgather(obj)
-
-        else:
-            raise ValueError("Either 'group' or 'comm' must be configured.")
-
         local_ipc_handle = self.runtime.get_local_ipc_handle()
-        ipc_handles = all_gather_object(local_ipc_handle)
+
+        if (
+            self.tcp_store_group is not None
+            and self.group is None
+            and self.comm is None
+        ):
+            ipc_key = f"NIXL_EP_IPC/{self.rank}"
+            self.tcp_store_group.set(ipc_key, local_ipc_handle)
+            self.tcp_store_group.add("nixl_ep_ipc_ready", 1)
+            while int(self.tcp_store_group.get("nixl_ep_ipc_ready")) < self.group_size:
+                time.sleep(0.01)
+            ipc_handles = [
+                bytearray(self.tcp_store_group.get(f"NIXL_EP_IPC/{r}"))
+                for r in range(self.group_size)
+            ]
+        elif self.group is not None:
+            object_list = [None] * self.group_size
+            dist.all_gather_object(object_list, local_ipc_handle, self.group)
+            ipc_handles = object_list
+        elif self.comm is not None:
+            ipc_handles = self.comm.allgather(local_ipc_handle)
+        else:
+            raise ValueError(
+                "Either 'tcp_store_group', 'group', or 'comm' must be configured for HT mode."
+            )
 
         if self.tcp_store_group is not None:
             with self._fetch_remote_metadata_from_tcp_store(remote_ranks) as remote_mds:
