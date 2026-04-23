@@ -60,6 +60,12 @@ run_elastic_test() {
     )
 }
 
+# nixl_ep requires UCX GPU Device API (only in UCX master); skip gracefully if not built
+if ! python3 -c "import sys; sys.path.insert(0, '${NIXL_BUILD_DIR}/${EP_SRC_DIR}'); import nixl_ep_cpp" 2>/dev/null; then
+    echo "nixl_ep not available (requires UCX GPU Device API / UCX master), skipping EP tests"
+    exit 0
+fi
+
 # NVLink (default)
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/basic.json"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"

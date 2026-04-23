@@ -319,35 +319,6 @@ else
     )
 fi # PRE_INSTALLED_ENV end
 
-# When PRE_INSTALLED_ENV skips the full apt bootstrap, DOCA GPUNetIO dev headers
-# are missing. UCX device headers (#include <doca_gpunetio_dev_verbs_qp.cuh>) need
-# them for nixl_ep CUDA compilation.
-if [ -n "${PRE_INSTALLED_ENV}" ] && [ "${BUILD_NIXL_EP}" = "true" ] && $HAS_GPU && [ -d "${CUDA_HOME}" ]; then
-    if ! dpkg-query -W -f='${Status}' libdoca-sdk-gpunetio-dev 2>/dev/null | grep -q "ok installed"; then
-        echo "PRE_INSTALLED_ENV: installing DOCA GPUNetIO dev packages for nixl_ep build"
-        ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
-        MELLANOX_OS="$(. /etc/lsb-release; echo "${DISTRIB_ID}${DISTRIB_RELEASE}" | tr '[:upper:]' '[:lower:]' | tr -d .)"
-        wget --tries=3 --waitretry=5 --no-verbose \
-            "https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb" \
-            -O "${TMPDIR}/doca-host.deb"
-        $SUDO dpkg -i "${TMPDIR}/doca-host.deb" || true
-        $SUDO apt-get -qq update
-        $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
-    fi
-    # DOCA GPUNetIO headers (both .cuh device headers and .h common headers) may be
-    # installed to a path nvcc does not search. The include chain is:
-    #   nixl_device.cuh -> uct_device_impl.h -> gdaki.cuh -> doca_gpunetio_dev_verbs_qp.cuh
-    #   -> doca_gpunetio_dev_verbs_common.cuh -> doca_gpunetio_verbs_def.h
-    # Search for ALL doca_gpunetio* headers (any extension) to avoid missing future additions.
-    if [ -d "${CUDA_HOME}/include" ]; then
-        DOCA_HEADERS=$(find /usr/include /opt -name "doca_gpunetio*" 2>/dev/null)
-        if [ -n "$DOCA_HEADERS" ]; then
-            echo "$DOCA_HEADERS" | xargs -I{} $SUDO cp {} "${CUDA_HOME}/include/" 2>/dev/null || true
-            echo "Copied DOCA GPUNetIO headers to ${CUDA_HOME}/include/"
-        fi
-    fi
-fi
-
 if [ -n "$PRE_INSTALLED_UCX_ENV" ]; then
     echo "PRE_INSTALLED_UCX_ENV is set, skipping UCX compilation"
 else
