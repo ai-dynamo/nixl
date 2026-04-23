@@ -15,6 +15,7 @@
 
 import importlib
 import sys
+import warnings
 from typing import TYPE_CHECKING
 
 
@@ -38,7 +39,12 @@ def _load_cuda_backend() -> str:
             raise ImportError(
                 f"torch reports CUDA {cuda_major} but {pip_name} is not installed"
             ) from e
-    # CPU-only torch — try whatever backend is installed
+    # CPU-only torch — use whatever backend is installed
+    warnings.warn(
+        "torch reports no CUDA version; NIXL is loading an arbitrary CUDA backend. "
+        "If this is unintended, install a CUDA-enabled build of PyTorch.",
+        stacklevel=2,
+    )
     for mod_name in ("nixl_cu13", "nixl_cu12"):
         try:
             return importlib.import_module(mod_name).__name__
