@@ -15,7 +15,7 @@
 
 plugin_gpunetio_deps = [dependency('libibverbs'), dependency('libmlx5'), dependency('doca-common'), dependency('doca-verbs'), dependency('doca-gpunetio')]
 
-gpu_cuda_args = []
+gpu_cuda_args = ['-std=c++20']
 compile_flags = ['-D DOCA_ALLOW_EXPERIMENTAL_API']
 
 if 'GPUNETIO' in static_plugins

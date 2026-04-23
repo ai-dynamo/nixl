@@ -46,7 +46,7 @@ Before contributing, please:
 
 ### Required Tools
 
-- C++17 compatible compiler
+- C++20 compatible compiler (GCC >= 11, Clang >= 14)
 - Meson build system
 - Ninja build tool
 - clang-format
