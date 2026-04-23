@@ -46,7 +46,7 @@ getBindAddress() {
     const uint16_t port =
         nixl::config::getValueDefaulted(docaPrometheusPortVar, docaPrometheusExporterDefaultPort);
     return (local ? docaExporterLocalAddress : docaExporterPublicAddress) + ":" +
-           std::to_string(port);
+        std::to_string(port);
 }
 
 [[nodiscard]] std::string
@@ -83,10 +83,12 @@ struct DocaSharedContext {
     ~DocaSharedContext();
 
     DocaSharedContext(const DocaSharedContext &) = delete;
-    DocaSharedContext &operator=(const DocaSharedContext &) = delete;
+    DocaSharedContext &
+    operator=(const DocaSharedContext &) = delete;
 
 private:
-    void cleanup();
+    void
+    cleanup();
 };
 
 DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
@@ -138,14 +140,15 @@ DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
         }
 
         const char *label_names[] = {"category", "agent_name"};
-        result = doca_telemetry_exporter_metrics_add_label_names(
-            source, label_names, 2, &label_set_id);
+        result =
+            doca_telemetry_exporter_metrics_add_label_names(source, label_names, 2, &label_set_id);
         if (result != DOCA_SUCCESS) {
             throw std::runtime_error("Failed to create DOCA label set");
         }
 
         doca_telemetry_exporter_metrics_set_flush_interval_ms(source, 1000);
-    } catch (...) {
+    }
+    catch (...) {
         cleanup();
         throw;
     }
@@ -157,7 +160,8 @@ DocaSharedContext::~DocaSharedContext() {
     cleanup();
 }
 
-void DocaSharedContext::cleanup() {
+void
+DocaSharedContext::cleanup() {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     if (source) {
