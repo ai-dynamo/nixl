@@ -133,7 +133,7 @@ main() {
 #endif
 
     // Write request
-    ret = ep[0]->write(buffer[0], mem[0], (uint64_t)buffer[1], rkey[0]->get(), buf_size / 2, req);
+    ret = ep[0]->write(buffer[0], mem[0], (uint64_t)buffer[1], *rkey[0], buf_size / 2, req);
     completeRequest(w, std::string("WRITE"), false, ret, req);
 
     // Flush to ensure that all data is in-place
@@ -170,7 +170,7 @@ main() {
 #endif
 
     // Read request
-    ret = ep[0]->read((uint64_t)buffer[1], rkey[0]->get(), buffer[0], mem[0], buf_size, req);
+    ret = ep[0]->read((uint64_t)buffer[1], *rkey[0], buffer[0], mem[0], buf_size, req);
     completeRequest(w, std::string("READ"), false, ret, req);
 
     // Flush to ensure that all data is in-place

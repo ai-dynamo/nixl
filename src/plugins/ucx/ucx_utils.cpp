@@ -30,7 +30,6 @@
 #include "common/nixl_log.h"
 #include "config.h"
 #include "serdes/serdes.h"
-#include "rkey.h"
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
@@ -254,7 +253,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
 
 nixl_status_t
 nixlUcxEp::read(uint64_t raddr,
-                const ucp_rkey_h rkey,
+                const nixl::ucx::rkey &rkey,
                 void *laddr,
                 nixlUcxMem &mem,
                 size_t size,
@@ -269,7 +268,7 @@ nixlUcxEp::read(uint64_t raddr,
         .memh = mem.memh,
     };
 
-    const ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr, rkey, &param);
+    const ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = static_cast<nixlUcxReq>(request);
         return NIXL_IN_PROG;
@@ -282,7 +281,7 @@ nixl_status_t
 nixlUcxEp::write(void *laddr,
                  nixlUcxMem &mem,
                  uint64_t raddr,
-                 const ucp_rkey_h rkey,
+                 const nixl::ucx::rkey &rkey,
                  size_t size,
                  nixlUcxReq &req) {
     nixl_status_t status = checkTxState();
@@ -295,7 +294,7 @@ nixlUcxEp::write(void *laddr,
         .memh = mem.memh,
     };
 
-    const ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rkey, &param);
+    const ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = static_cast<nixlUcxReq>(request);
         return NIXL_IN_PROG;

@@ -26,6 +26,7 @@ extern "C" {
 
 #include <nixl_types.h>
 
+#include "rkey.h"
 #include "ucx_enums.h"
 
 #include "absl/status/statusor.h"
@@ -107,7 +108,7 @@ public:
     /* Data access */
     [[nodiscard]] nixl_status_t
     read(uint64_t raddr,
-         ucp_rkey_h rkey,
+         const nixl::ucx::rkey &rkey,
          void *laddr,
          nixlUcxMem &mem,
          size_t size,
@@ -116,7 +117,7 @@ public:
     write(void *laddr,
           nixlUcxMem &mem,
           uint64_t raddr,
-          ucp_rkey_h rkey,
+          const nixl::ucx::rkey &rkey,
           size_t size,
           nixlUcxReq &req);
     nixl_status_t
