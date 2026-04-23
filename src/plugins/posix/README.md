@@ -32,14 +32,7 @@ sudo dnf install libaio-devel
 ```
 
 
-To enable liburing support you need to install the liburing package:
-
-```bash
-# Ubuntu/Debian
-sudo apt install liburing-dev
-# RHEL/CentOS/Fedora
-sudo dnf install liburing-devel
-```
+liburing support is enabled automatically via the meson wrap under `subprojects/liburing.wrap` (pinned to WrapDB `liburing_2.14-1`). `meson setup` builds it from source when a system `liburing` is not found via pkg-config, so no manual install is required.
 
 To use liburing with POSIX plugin use params["use_uring"] = "true"
 
