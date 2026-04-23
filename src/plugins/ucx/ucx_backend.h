@@ -81,19 +81,19 @@ public:
     nixlUcxPublicMetadata() : nixlBackendMD(false) {}
 
     [[nodiscard]] const nixl::ucx::rkey &
-    getRkey(size_t id) const {
-        return *rkeys_[id];
+    getRkey(const size_t id) const noexcept {
+        return rkeys_[id];
     }
 
     void
     addRkey(const nixlUcxEp &ep, const void *rkey_buffer) {
-        rkeys_.emplace_back(std::make_unique<nixl::ucx::rkey>(ep, rkey_buffer));
+        rkeys_.emplace_back(ep, rkey_buffer);
     }
 
     ucx_connection_ptr_t conn;
 
 private:
-    std::vector<std::unique_ptr<nixl::ucx::rkey>> rkeys_;
+    std::vector<nixl::ucx::rkey> rkeys_;
 };
 
 class nixlUcxEngine : public nixlBackendEngine {
