@@ -41,6 +41,15 @@ const std::string docaExporterLocalAddress = "http://127.0.0.1";
 const std::string docaExporterPublicAddress = "http://0.0.0.0";
 
 [[nodiscard]] std::string
+getBindAddress() {
+    const bool local = nixl::config::getValueDefaulted(docaPrometheusLocalVar, false);
+    const uint16_t port =
+        nixl::config::getValueDefaulted(docaPrometheusPortVar, docaPrometheusExporterDefaultPort);
+    return (local ? docaExporterLocalAddress : docaExporterPublicAddress) + ":" +
+           std::to_string(port);
+}
+
+[[nodiscard]] std::string
 getHostname() {
     std::array<char, HOST_NAME_MAX + 1> hostname{};
     if (gethostname(hostname.data(), hostname.size()) == 0) {
@@ -74,8 +83,10 @@ struct DocaSharedContext {
     ~DocaSharedContext();
 
     DocaSharedContext(const DocaSharedContext &) = delete;
-    DocaSharedContext &
-    operator=(const DocaSharedContext &) = delete;
+    DocaSharedContext &operator=(const DocaSharedContext &) = delete;
+
+private:
+    void cleanup();
 };
 
 DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
@@ -84,59 +95,69 @@ DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
-    // DOCA reads its HTTP bind address from this env var. setenv is not
-    // thread-safe per POSIX, but the caller holds g_ctx_mutex and this runs
-    // only once during first-agent init (before heavy threading).
-    setenv("PROMETHEUS_ENDPOINT", bind_address.c_str(), 1);
+    try {
+        // DOCA reads its HTTP bind address from this env var. setenv is not
+        // thread-safe per POSIX, but the caller holds g_ctx_mutex and this runs
+        // only once during first-agent init (before heavy threading).
+        setenv("PROMETHEUS_ENDPOINT", bind_address.c_str(), 1);
 
-    doca_error_t result = doca_telemetry_exporter_schema_init("nixl_telemetry", &schema);
-    if (result != DOCA_SUCCESS) {
-        throw std::runtime_error("Failed to initialize DOCA schema");
+        doca_error_t result = doca_telemetry_exporter_schema_init("nixl_telemetry", &schema);
+        if (result != DOCA_SUCCESS) {
+            throw std::runtime_error("Failed to initialize DOCA schema");
+        }
+
+        result = doca_telemetry_exporter_schema_start(schema);
+        if (result != DOCA_SUCCESS) {
+            throw std::runtime_error("Failed to start DOCA schema");
+        }
+
+        result = doca_telemetry_exporter_source_create(schema, &source);
+        if (result != DOCA_SUCCESS) {
+            throw std::runtime_error("Failed to create DOCA source");
+        }
+
+        doca_telemetry_exporter_source_set_id(source, "nixl");
+        doca_telemetry_exporter_source_set_tag(source, "nixl");
+
+        result = doca_telemetry_exporter_source_start(source);
+        if (result != DOCA_SUCCESS) {
+            throw std::runtime_error("Failed to start DOCA source");
+        }
+        source_started = true;
+
+        result = doca_telemetry_exporter_metrics_create_context(source);
+        if (result != DOCA_SUCCESS) {
+            throw std::runtime_error("Failed to create DOCA metrics context");
+        }
+        metrics_context_created = true;
+
+        result = doca_telemetry_exporter_metrics_add_constant_label(
+            source, "hostname", hostname.c_str());
+        if (result != DOCA_SUCCESS) {
+            throw std::runtime_error("Failed to add DOCA constant label");
+        }
+
+        const char *label_names[] = {"category", "agent_name"};
+        result = doca_telemetry_exporter_metrics_add_label_names(
+            source, label_names, 2, &label_set_id);
+        if (result != DOCA_SUCCESS) {
+            throw std::runtime_error("Failed to create DOCA label set");
+        }
+
+        doca_telemetry_exporter_metrics_set_flush_interval_ms(source, 1000);
+    } catch (...) {
+        cleanup();
+        throw;
     }
-
-    result = doca_telemetry_exporter_schema_start(schema);
-    if (result != DOCA_SUCCESS) {
-        throw std::runtime_error("Failed to start DOCA schema");
-    }
-
-    result = doca_telemetry_exporter_source_create(schema, &source);
-    if (result != DOCA_SUCCESS) {
-        throw std::runtime_error("Failed to create DOCA source");
-    }
-
-    doca_telemetry_exporter_source_set_id(source, "nixl");
-    doca_telemetry_exporter_source_set_tag(source, "nixl");
-
-    result = doca_telemetry_exporter_source_start(source);
-    if (result != DOCA_SUCCESS) {
-        throw std::runtime_error("Failed to start DOCA source");
-    }
-    source_started = true;
-
-    result = doca_telemetry_exporter_metrics_create_context(source);
-    if (result != DOCA_SUCCESS) {
-        throw std::runtime_error("Failed to create DOCA metrics context");
-    }
-    metrics_context_created = true;
-
-    result =
-        doca_telemetry_exporter_metrics_add_constant_label(source, "hostname", hostname.c_str());
-    if (result != DOCA_SUCCESS) {
-        throw std::runtime_error("Failed to add DOCA constant label");
-    }
-
-    const char *label_names[] = {"category", "agent_name"};
-    result = doca_telemetry_exporter_metrics_add_label_names(source, label_names, 2, &label_set_id);
-    if (result != DOCA_SUCCESS) {
-        throw std::runtime_error("Failed to create DOCA label set");
-    }
-
-    doca_telemetry_exporter_metrics_set_flush_interval_ms(source, 1000);
 
 #pragma GCC diagnostic pop
 }
 
 DocaSharedContext::~DocaSharedContext() {
+    cleanup();
+}
+
+void DocaSharedContext::cleanup() {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     if (source) {
@@ -158,22 +179,8 @@ nixlTelemetryDocaExporter::nixlTelemetryDocaExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
       agent_name_(init_params.agentName) {
-    const bool local = nixl::config::getValueDefaulted(docaPrometheusLocalVar, false);
-    const uint16_t port =
-        nixl::config::getValueDefaulted(docaPrometheusPortVar, docaPrometheusExporterDefaultPort);
-    const std::string bind_address =
-        (local ? docaExporterLocalAddress : docaExporterPublicAddress) + ":" + std::to_string(port);
+    const std::string bind_address = getBindAddress();
 
-    initializeDoca(bind_address);
-}
-
-nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
-    const std::lock_guard lock(g_ctx_mutex);
-    ctx_.reset();
-}
-
-void
-nixlTelemetryDocaExporter::initializeDoca(const std::string &bind_address) {
     const std::lock_guard lock(g_ctx_mutex);
     ctx_ = g_ctx_weak.lock();
     if (!ctx_) {
@@ -184,6 +191,11 @@ nixlTelemetryDocaExporter::initializeDoca(const std::string &bind_address) {
         NIXL_INFO << "DOCA Telemetry exporter for agent '" << agent_name_
                   << "' sharing existing server on " << bind_address;
     }
+}
+
+nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
+    const std::lock_guard lock(g_ctx_mutex);
+    ctx_.reset();
 }
 
 doca_error_t

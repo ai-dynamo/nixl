@@ -38,9 +38,6 @@ private:
     const std::string agent_name_;
     std::shared_ptr<DocaSharedContext> ctx_;
 
-    void
-    initializeDoca(const std::string &bind_address);
-
     doca_error_t
     registerCounter(const nixlTelemetryEvent &event, const char *label_values[]);
 
