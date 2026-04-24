@@ -220,7 +220,7 @@ public:
     /* Connection */
     [[nodiscard]] std::string
     epAddr();
-    absl::StatusOr<std::unique_ptr<nixlUcxEp>>
+    [[nodiscard]] std::unique_ptr<nixlUcxEp>
     connect(void *addr, size_t size);
 
     /* Active message handling */

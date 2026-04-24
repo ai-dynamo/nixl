@@ -524,13 +524,13 @@ nixlUcxWorker::epAddr() {
     return result;
 }
 
-absl::StatusOr<std::unique_ptr<nixlUcxEp>>
+std::unique_ptr<nixlUcxEp>
 nixlUcxWorker::connect(void *addr, std::size_t size) {
     try {
         return std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_);
     }
-    catch (const std::exception &e) {
-        return absl::UnavailableError(e.what());
+    catch (const std::exception &) {
+        return {};
     }
 }
 

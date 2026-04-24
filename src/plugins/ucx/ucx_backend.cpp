@@ -587,7 +587,7 @@ public:
 protected:
     void
     run() override {
-        auto guard = asio::make_work_guard(io_);
+        const auto guard = asio::make_work_guard(io_);
         NIXL_DEBUG << "dedicated " << *this << " running";
 
         while (!io_.stopped()) {
@@ -691,7 +691,7 @@ nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
     size_t num_chunks = (batch_size + chunk_size - 1) / chunk_size;
 
     size_t worker_id = getWorkerId();
-    auto comp_handle = new nixlUcxCompositeBackendReqH(
+    const auto comp_handle = new nixlUcxCompositeBackendReqH(
         getWorker(worker_id).get(), worker_id, chunk_size, num_chunks);
     NIXL_TRACE << "created " << *comp_handle;
     handle = comp_handle;
@@ -706,13 +706,13 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
                                        nixlBackendReqH *handle,
                                        size_t start_idx,
                                        size_t end_idx) const {
-    auto *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     if (!int_handle->isComposite()) {
         return nixlUcxEngine::sendXferRange(
             operation, local, remote, remote_agent, handle, start_idx, end_idx);
     }
 
-    auto *comp_handle = static_cast<nixlUcxCompositeBackendReqH *>(int_handle);
+    const auto comp_handle = static_cast<nixlUcxCompositeBackendReqH *>(int_handle);
     comp_handle->startXfer();
     size_t chunk_size = comp_handle->getChunkSize();
     NIXL_TRACE << "sending " << *comp_handle;
@@ -724,7 +724,7 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     for (size_t i = 0; i < comp_handle->getNumChunks(); i++) {
         io_->post([&, i]() {
-            auto thread = nixlUcxDedicatedThread::getDedicatedThread();
+            nixlUcxDedicatedThread *thread = nixlUcxDedicatedThread::getDedicatedThread();
             NIXL_ASSERT(thread != nullptr);
 
             nixlUcxChunkBackendReqH *chunk_handle =
@@ -883,14 +883,14 @@ nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
 }
 
 nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
-    auto search = remoteConnMap.find(remote_agent);
+    const auto it = remoteConnMap.find(remote_agent);
 
-    if (search == remoteConnMap.end()) {
+    if (it == remoteConnMap.end()) {
         return NIXL_ERR_NOT_FOUND;
     }
 
     // thread safety?
-    remoteConnMap.erase(search);
+    remoteConnMap.erase(it);
     return NIXL_SUCCESS;
 }
 
@@ -906,12 +906,12 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
 
     nixlSerDes::_stringToBytes(addr.data(), remote_conn_info, size);
     std::shared_ptr<nixlUcxConnection> conn = std::make_shared<nixlUcxConnection>();
-    for (auto &uw: uws) {
-        auto result = uw->connect(addr.data(), size);
-        if (!result.ok()) {
+    for (auto &uw : uws) {
+        std::unique_ptr<nixlUcxEp> result = uw->connect(addr.data(), size);
+        if (!result) {
             return NIXL_ERR_BACKEND;
         }
-        conn->eps.push_back(std::move(*result));
+        conn->eps.push_back(std::move(result));
     }
 
     remoteConnMap.insert({remote_agent, conn});
@@ -967,13 +967,13 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
         auto md = std::make_unique<nixlUcxPublicMetadata>();
         size_t size = blob.size();
 
-        auto search = remoteConnMap.find(agent);
+        const auto it = remoteConnMap.find(agent);
 
-        if (search == remoteConnMap.end()) {
+        if (it == remoteConnMap.end()) {
             // TODO: err: remote connection not found
             return NIXL_ERR_NOT_FOUND;
         }
-        md->conn = search->second;
+        md->conn = it->second;
 
         std::vector<char> addr(size);
         nixlSerDes::_stringToBytes(addr.data(), blob, size);
@@ -1024,7 +1024,7 @@ nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
 size_t
 nixlUcxEngine::getWorkerId(const nixl_opt_b_args_t *opt_args) const noexcept {
     if (opt_args) {
-        const auto worker_id = getWorkerIdFromOptArgs(*opt_args);
+        const std::optional<size_t> worker_id = getWorkerIdFromOptArgs(*opt_args);
         if (worker_id) {
             return *worker_id;
         }
@@ -1032,7 +1032,7 @@ nixlUcxEngine::getWorkerId(const nixl_opt_b_args_t *opt_args) const noexcept {
 
     auto it = tlsSharedWorkerMap().find(this);
     if (it == tlsSharedWorkerMap().end()) {
-        size_t index = sharedWorkerIndex_.fetch_add(1) % getSharedWorkersSize();
+        const size_t index = sharedWorkerIndex_.fetch_add(1) % getSharedWorkersSize();
         it = tlsSharedWorkerMap().emplace(this, index).first;
         NIXL_DEBUG << "engine " << this << " bound shared worker " << index << " to thread "
                    << std::this_thread::get_id();
@@ -1077,11 +1077,9 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const auto worker_id = getWorkerId(opt_args);
+    const size_t worker_id = getWorkerId(opt_args);
     /* TODO: try to get from a pool first */
-    auto *ucx_handle = new nixlUcxBackendReqH(getWorker(worker_id).get(), worker_id);
-
-    handle = ucx_handle;
+    handle = new nixlUcxBackendReqH(getWorker(worker_id).get(), worker_id);
 
     return NIXL_SUCCESS;
 }
@@ -1096,7 +1094,7 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
                                                nixl_cost_t &method,
                                                const nixl_opt_args_t* opt_args) const
 {
-    auto *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     const size_t worker_id = int_handle->getWorkerId();
 
     if (local.descCount() != remote.descCount()) {
@@ -1115,11 +1113,11 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
     }
 
     for (int i = 0; i < local.descCount(); i++) {
-        size_t lsize = local[i].len;
-        size_t rsize = remote[i].len;
+        const size_t lsize = local[i].len;
+        const size_t rsize = remote[i].len;
 
-        auto *lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
-        auto *rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
+        const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
+        const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
 
         NIXL_ASSERT(lmd && rmd) << "No metadata found in descriptor lists at index " << i << " during cost estimation";
         NIXL_ASSERT(lsize == rsize) << "Local size (" << lsize << ") != Remote size (" << rsize
@@ -1159,8 +1157,8 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
         uint64_t raddr = static_cast<uint64_t>(remote[i].addr);
         NIXL_ASSERT(lsize == remote[i].len);
 
-        auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
-        auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
+        const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
+        const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
         auto &rmd_ep = rmd->conn->getEp(worker_id);
         if (__builtin_expect(rmd_ep.get() != &ep, 0)) {
             break;
@@ -1201,9 +1199,8 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
                              nixlBackendReqH *handle,
                              size_t start_idx,
                              size_t end_idx) const {
-    auto *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     const size_t worker_id = int_handle->getWorkerId();
-    nixl_status_t ret;
 
     if (operation != NIXL_WRITE && operation != NIXL_READ) {
         return NIXL_ERR_INVALID_PARAM;
@@ -1215,12 +1212,12 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     for (size_t i = start_idx; i < end_idx;) {
         /* Send requests to a single EP */
-        auto *rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
+        const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
         auto &ep = rmd->conn->getEp(worker_id);
-        auto result = sendXferRangeBatch(*ep, operation, local, remote, worker_id, i, end_idx);
+        const batchResult result = sendXferRangeBatch(*ep, operation, local, remote, worker_id, i, end_idx);
 
         /* Append a single pending request for the entire EP batch */
-        ret = int_handle->append(result.status, result.req, rmd->conn);
+        const nixl_status_t ret = int_handle->append(result.status, result.req, rmd->conn);
         if (ret != NIXL_SUCCESS) {
             return ret;
         }
@@ -1236,7 +1233,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
      */
     for (auto &conn : int_handle->getConnections()) {
         nixlUcxReq req;
-        ret = conn->getEp(worker_id)->flushEp(req);
+        const nixl_status_t ret = conn->getEp(worker_id)->flushEp(req);
         if (int_handle->append(ret, req, conn) != NIXL_SUCCESS) {
             return ret;
         }
@@ -1254,7 +1251,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
                         const nixl_opt_b_args_t *opt_args) const {
     const size_t lcnt = local.descCount();
     const size_t rcnt = remote.descCount();
-    auto *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     nixl_status_t ret;
 
     if (lcnt != rcnt) {
@@ -1274,7 +1271,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     if (opt_args && opt_args->hasNotif) {
         if (ret == NIXL_SUCCESS) {
             nixlUcxReq req;
-            auto rmd = (nixlUcxPublicMetadata *)remote[0].metadataP;
+            const auto rmd = (nixlUcxPublicMetadata *)remote[0].metadataP;
             ret = notifSendPriv(remote_agent,
                                 opt_args->notifMsg,
                                 rmd->conn->getEp(int_handle->getWorkerId()),
@@ -1294,7 +1291,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
-    auto *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     auto &notif = int_handle->notif;
     const nixl_status_t handle_status = int_handle->status();
 
@@ -1326,7 +1323,7 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
-    auto *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     int_handle->release();
 
     /* TODO: return to a pool instead. */
@@ -1388,8 +1385,8 @@ nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
 
 ucx_connection_ptr_t
 nixlUcxEngine::getConnection(const std::string &remote_agent) const {
-    auto search = remoteConnMap.find(remote_agent);
-    return (search != remoteConnMap.end()) ? search->second : nullptr;
+    const auto it = remoteConnMap.find(remote_agent);
+    return (it != remoteConnMap.end()) ? it->second : nullptr;
 }
 
 void
@@ -1436,14 +1433,14 @@ nixlUcxEngine::getNotifs(notif_list_t &notif_list) {
 
 nixl_status_t
 nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
-    auto conn = getConnection(remote_agent);
+    const auto conn = getConnection(remote_agent);
     if (!conn) {
         return NIXL_ERR_NOT_FOUND;
     }
 
-    nixl_status_t ret = notifSendPriv(remote_agent, msg, conn->getEp(getWorkerId()));
+    const nixl_status_t ret = notifSendPriv(remote_agent, msg, conn->getEp(getWorkerId()));
     if (ret == NIXL_IN_PROG) {
-        ret = NIXL_SUCCESS;
+        return NIXL_SUCCESS;
     }
     return ret;
 }
