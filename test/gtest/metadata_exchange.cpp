@@ -104,6 +104,10 @@ class MetadataExchangeTestFixture : public testing::Test {
                 dlist.addDesc(buffer.getBlobDesc());
             }
 
+            // Ignore EFA hardware mismatch warning
+            const gtest::LogIgnoreGuard lig_efa_warn(
+                "Amazon EFA\\(s\\) were detected, but the UCX backend was configured");
+
             ASSERT_EQ(agent->registerMem(dlist), NIXL_SUCCESS);
         }
 
@@ -546,8 +550,8 @@ TEST_F(MetadataExchangeTestFixture, LocalNonLocalMDExchange) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
+    nixl_status_t status = NIXL_ERR_NOT_FOUND;
     nixlBackendH *backend;
-    nixl_status_t status;
     std::string backend_name;
     for (const auto& name : std::set<std::string>{"GDS", "POSIX"}) {
         const LogIgnoreGuard lig1("Error initializing GPU Direct Storage driver");
@@ -585,8 +589,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
 
     {
         // Expected due to failure of checkRemoteMd() below?
-        const LogIgnoreGuard lig1(
-            std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/agent_0/metadata"));
+        const LogIgnoreGuard lig1(std::regex("Watch timed out for key: .*/agent_0/metadata"));
         const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
         ASSERT_EQ(dst.agent->fetchRemoteMD(src.name), NIXL_SUCCESS);
@@ -617,7 +620,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
     // Fetch invalid agent name. This should not block the commWorker thread forever
     {
         const LogIgnoreGuard lig1(
-            std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/invalid_agent_name/metadata"));
+            std::regex("Watch timed out for key: .*/invalid_agent_name/metadata"));
         const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
         ASSERT_EQ(dst.agent->fetchRemoteMD("invalid_agent_name"), NIXL_SUCCESS);
@@ -757,8 +760,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
     ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
 
     {
-        const LogIgnoreGuard lig1(
-            std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/agent_0/metadata"));
+        const LogIgnoreGuard lig1(std::regex("Watch timed out for key: .*/agent_0/metadata"));
         const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
         nixl_opt_args_t fetch_args;
@@ -774,8 +776,7 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
 
     // Case 3: Fetch with invalid label (should not block the test)
     {
-        const LogIgnoreGuard lig1(
-            std::regex("Watch timed out for key: /nixl/cpp_ci/[0-9]+/agent_0/invalid_label"));
+        const LogIgnoreGuard lig1(std::regex("Watch timed out for key: .*/agent_0/invalid_label"));
         const LogIgnoreGuard lig2("Failed to fetch metadata from etcd: NIXL_ERR_BACKEND");
 
         nixl_opt_args_t fetch_args;

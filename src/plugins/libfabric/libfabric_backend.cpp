@@ -295,7 +295,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
       rail_manager(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
       runtime_(FI_HMEM_SYSTEM) {
 
-    NIXL_DEBUG << "Initializing Libfabric Backend";
+    NIXL_INFO << "Initializing Libfabric Backend";
 
     // this is required for loading rail selection policy by configuration
     if (rail_manager.init(getCustomParams()) != NIXL_SUCCESS) {
@@ -316,11 +316,11 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         vramInitCtx();
         // CUDA address workaround
         if (nixl::config::checkExistence("NIXL_DISABLE_CUDA_ADDR_WA")) {
-            NIXL_DEBUG << "Disabling CUDA address workaround";
+            NIXL_INFO << "CUDA address workaround: disabled";
             cuda_addr_wa_ = false;
         } else {
             cuda_addr_wa_ = true;
-            NIXL_DEBUG << "CUDA address workaround enabled";
+            NIXL_INFO << "CUDA address workaround: enabled";
         }
     }
 #endif
@@ -332,19 +332,19 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
     if (getInitParam("striping_threshold", threshold_str) == NIXL_SUCCESS) {
         try {
             striping_threshold_ = std::stoull(threshold_str);
-            NIXL_DEBUG << "Using custom striping threshold: " << striping_threshold_ << " bytes";
+            NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes (custom)";
         }
         catch (const std::exception &e) {
             NIXL_WARN << "Invalid striping_threshold value '" << threshold_str
                       << "', using default: " << striping_threshold_ << " bytes";
         }
     } else {
-        NIXL_DEBUG << "Using default striping threshold: " << striping_threshold_ << " bytes";
+        NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes (default)";
     }
 
     // Initialize Rail Manager which will discover the topology and create all rails.
     try {
-        NIXL_DEBUG << "Rail Manager created with " << rail_manager.getNumRails() << " rails";
+        NIXL_INFO << "Rail Manager created with " << rail_manager.getNumRails() << " rails";
 
         // Set up notification callback on rail 0
         size_t notification_rail_id = 0;
@@ -383,13 +383,17 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
                 std::to_string(conn_status));
         }
 
-        NIXL_DEBUG << "Created self-connection for agent: " << localAgent << " on "
-                   << rail_manager.getNumRails() << " rails";
+        NIXL_INFO << "Created self-connection for agent: " << localAgent << " on "
+                  << rail_manager.getNumRails() << " rails";
 
         // Start Progress thread for rail completion processing
         if (progress_thread_enabled_) {
-            NIXL_DEBUG << "Starting Progress thread for rails with delay: "
-                       << progress_thread_delay_.count() << " microseconds";
+            for (size_t i = 0; i < rail_manager.getNumRails(); ++i) {
+                rail_manager.getRail(i).setProgressThreadEnabled(true);
+            }
+
+            NIXL_INFO << "Starting Progress thread for rails with delay: "
+                      << progress_thread_delay_.count() << " microseconds";
             progress_thread_stop_ = false;
             progress_thread_ = std::thread(&nixlLibfabricEngine::progressThread, this);
 
@@ -397,7 +401,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
                 NIXL_ERROR << "Failed to start Progress thread";
                 throw std::runtime_error("Failed to start Progress thread");
             }
-            NIXL_DEBUG << "Progress thread started successfully";
+            NIXL_INFO << "Progress thread started successfully";
         } else {
             NIXL_DEBUG << "Progress thread disabled, using manual progress in checkXfer/getNotifs";
         }
@@ -491,8 +495,8 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
         return conn_status;
     }
 
-    NIXL_DEBUG << "Successfully stored multirail connection for " << remote_agent << " on "
-               << rail_manager.getNumRails() << " rails";
+    NIXL_INFO << "Successfully stored multirail connection for " << remote_agent << " on "
+              << rail_manager.getNumRails() << " rails";
     return NIXL_SUCCESS;
 }
 
@@ -506,8 +510,8 @@ nixlLibfabricEngine::connect(const std::string &remote_agent) {
     // Check if connection is already established
     auto it = connections_.find(remote_agent);
     if (it != connections_.end() && it->second->overall_state_ == ConnectionState::CONNECTED) {
-        NIXL_DEBUG << "Connection already established for " << remote_agent
-                   << ", fi_addr=" << it->second->rail_remote_addr_list_[0][0];
+        NIXL_INFO << "Connection already established for " << remote_agent
+                  << ", fi_addr=" << it->second->rail_remote_addr_list_[0][0];
         return NIXL_SUCCESS;
     }
 
@@ -530,7 +534,7 @@ nixlLibfabricEngine::connect(const std::string &remote_agent) {
         return NIXL_ERR_NOT_FOUND;
     }
 
-    NIXL_DEBUG << "Successfully established connection for " << remote_agent;
+    NIXL_INFO << "Successfully established connection for " << remote_agent;
     return NIXL_SUCCESS;
 }
 
@@ -539,7 +543,7 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
     std::lock_guard<std::mutex> lock(connection_state_mutex_);
     auto it = connections_.find(remote_agent);
     if (it == connections_.end()) {
-        NIXL_ERROR << "Disconnect failed. No metadata connection info for " << remote_agent;
+        NIXL_WARN << "Disconnect failed. No metadata connection info for " << remote_agent;
         return NIXL_ERR_NOT_FOUND;
     }
     // Connection exists - check if already disconnected
@@ -556,7 +560,7 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
 
     // Remove connection from map
     connections_.erase(remote_agent);
-    NIXL_DEBUG << "Connection erased from the connection map for agent: " << remote_agent;
+    NIXL_INFO << "Disconnected from agent: " << remote_agent;
     return NIXL_SUCCESS;
 }
 
@@ -573,7 +577,7 @@ nixlLibfabricEngine::createAgentConnection(
     }
 
     if (data_rail_endpoints.size() != rail_manager.getNumRails()) {
-        NIXL_INFO << "Rail count (local: " << rail_manager.getNumRails()
+        NIXL_WARN << "Rail count mismatch (local: " << rail_manager.getNumRails()
                   << ", remote: " << data_rail_endpoints.size() << ")";
     }
 
@@ -607,8 +611,8 @@ nixlLibfabricEngine::createAgentConnection(
     // Store connection
     connections_[agent_name] = conn;
 
-    NIXL_DEBUG << "Successfully created connection for agent: " << agent_name << " on "
-               << rail_manager.getNumRails() << " rails";
+    NIXL_INFO << "Successfully created connection for agent: " << agent_name << " on "
+              << rail_manager.getNumRails() << " rails";
 
     return NIXL_SUCCESS;
 }
@@ -654,8 +658,8 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
     NIXL_DEBUG << "Agent index: " << it->second->agent_index_;
 
     conn_info->overall_state_ = ConnectionState::CONNECTED;
-    NIXL_DEBUG << "Connection state for agent " << remote_agent << " is now "
-               << conn_info->overall_state_;
+    NIXL_INFO << "Connection state for agent " << remote_agent << " is now "
+              << conn_info->overall_state_;
 
     return NIXL_SUCCESS;
 }
@@ -672,10 +676,14 @@ nixlLibfabricEngine::getSupportedMems() const {
     if (runtime_ == FI_HMEM_CUDA) {
         NIXL_DEBUG << "CUDA runtime detected, adding VRAM support";
         mems.push_back(VRAM_SEG);
-    } else {
-        NIXL_DEBUG << "Non-CUDA runtime, skipping VRAM support";
-    }
+    } else
 #endif
+        if (runtime_ == FI_HMEM_NEURON) {
+        NIXL_DEBUG << "Neuron runtime detected, adding VRAM support";
+        mems.push_back(VRAM_SEG);
+    } else {
+        NIXL_DEBUG << "No accelerator runtime, skipping VRAM support";
+    }
     return mems;
 }
 
@@ -706,23 +714,23 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
             if (cuda_addr_wa_) {
                 bool need_restart;
                 if (vramUpdateCtx((void *)mem.addr, mem.devId, need_restart)) {
-                    NIXL_WARN << "CUDA address workaround failed for device " << mem.devId
-                              << ", disabling workaround for multi-GPU support";
-                    cuda_addr_wa_ = false; // Disable workaround for subsequent registrations
+                    NIXL_INFO << "Multi-GPU detected (device " << mem.devId
+                              << "), using cudaSetDevice fallback";
+                    cuda_addr_wa_ = false;
                 } else if (need_restart) {
-                    // Restart progress thread if needed
                     NIXL_DEBUG << "CUDA context updated, restarting progress thread";
                     vramApplyCtx();
                 }
-            } else {
-                // Set CUDA device context directly for multi-GPU support
+            }
+            // Fallback: set device via runtime API (uses primary context)
+            if (!cuda_addr_wa_) {
                 cudaError_t cuda_ret = cudaSetDevice(mem.devId);
                 if (cuda_ret != cudaSuccess) {
                     NIXL_ERROR << "Failed to set CUDA device " << mem.devId << ": "
                                << cudaGetErrorString(cuda_ret);
                     return NIXL_ERR_NOT_SUPPORTED;
                 }
-                NIXL_DEBUG << "Set CUDA device context to GPU " << mem.devId;
+                NIXL_INFO << "Set CUDA device context to GPU " << mem.devId;
             }
 
             // Query PCI bus ID from memory address (AFTER setting context)
@@ -987,6 +995,20 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     if (!backend_handle) {
         NIXL_ERROR << "Failed to cast handle to nixlLibfabricBackendH";
         return NIXL_ERR_INVALID_PARAM;
+    }
+
+    // Update notification from opt_args on repost
+    if (opt_args && opt_args->hasNotif) {
+        backend_handle->has_notif = true;
+        backend_handle->binary_notifs.clear();
+        fragmentNotificationMessage(opt_args->notifMsg,
+                                    localAgent,
+                                    backend_handle->total_notif_msg_len,
+                                    backend_handle->binary_notifs);
+    } else if (opt_args && !opt_args->hasNotif) {
+        backend_handle->has_notif = false;
+        backend_handle->binary_notifs.clear();
+        backend_handle->total_notif_msg_len = 0;
     }
 
     // Allocate xfer_id once in prepXfer

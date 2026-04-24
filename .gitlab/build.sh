@@ -32,6 +32,9 @@ NIXLBENCH_BUILD_DIR=${NIXLBENCH_BUILD_DIR:-nixlbench_build}
 UCX_VERSION=${UCX_VERSION:-v1.20.x}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
+# Abseil and gRPC versions for consistent toolchain build.
+ABSL_TAG=${ABSL_TAG:-lts_2025_08_14}
+GRPC_TAG=${GRPC_TAG:-v1.73.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
@@ -58,6 +61,13 @@ fi
 
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
+
+export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${LIBFABRIC_INSTALL_DIR}/lib"
+export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
+export PATH="${INSTALL_DIR}/bin:$HOME/.local/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
+export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:${LIBFABRIC_INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH"
+export NIXL_PLUGIN_DIR="${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
+export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 
 if [ -n "$PRE_INSTALLED_ENV" ]; then
     echo "PRE_INSTALLED_ENV is set, skipping package installation"
@@ -88,8 +98,6 @@ else
                                  libpython3-dev \
                                  libboost-all-dev \
                                  libssl-dev \
-                                 libgrpc-dev \
-                                 libgrpc++-dev \
                                  libprotobuf-dev \
                                  libcpprest-dev \
                                  libaio-dev \
@@ -129,7 +137,16 @@ else
         click tabulate auditwheel tomlkit \
         pytest pytest-timeout zmq \
         mpmath typing-extensions sympy numpy \
-        networkx MarkupSafe fsspec filelock jinja2 torch
+        networkx MarkupSafe fsspec filelock jinja2
+
+    # Install torch from the CUDA-matched PyTorch index
+    cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
+    if [ -z "$cuda_version" ]; then
+        echo "ERROR: unable to determine CUDA version from nvcc" >&2
+        exit 1
+    fi
+    $SUDO pip3 --no-cache-dir install --break-system-packages \
+        --index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
 
     # Add DOCA repository and install packages
     ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
@@ -186,10 +203,65 @@ else
 
     ( \
       cd ${TMPDIR} && \
+      git clone https://github.com/abseil/abseil-cpp.git && \
+      cd abseil-cpp && \
+      git fetch --depth 1 origin "${ABSL_TAG}" && \
+      git checkout "${ABSL_TAG}" && \
+      mkdir -p build && cd build && \
+      cmake .. \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=ON \
+          -DABSL_PROPAGATE_CXX_STD=ON \
+          -DABSL_ENABLE_INSTALL=ON && \
+      make -j"$NPROC" && \
+      $SUDO make install && \
+      $SUDO ldconfig && \
+      cd ${TMPDIR} && \
+      rm -rf abseil-cpp \
+    )
+
+    ( \
+      cd ${TMPDIR} && \
+      git clone --recurse-submodules -b "${GRPC_TAG}" --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+      cd grpc && \
+      mkdir -p cmake/build && \
+      cd cmake/build && \
+      cmake ../.. \
+          -DgRPC_INSTALL=ON \
+          -DgRPC_BUILD_TESTS=OFF \
+          -DBUILD_SHARED_LIBS=ON \
+          -DCMAKE_CXX_STANDARD=17 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" \
+          -Dabsl_DIR="${INSTALL_DIR}/lib/cmake/absl" \
+          -DgRPC_SSL_PROVIDER=package \
+          -DgRPC_ABSL_PROVIDER=package \
+          -DgRPC_PROTOBUF_PROVIDER=module \
+          -DgRPC_ZLIB_PROVIDER=package && \
+      make -j"$NPROC" && \
+      $SUDO make install && \
+      $SUDO ldconfig && \
+      cd ${TMPDIR} && \
+      rm -rf grpc \
+    )
+
+    ( \
+      cd ${TMPDIR} && \
       git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
       cd etcd-cpp-apiv3 && \
+      sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
       mkdir build && cd build && \
-      cmake .. && \
+      cmake .. \
+          -DBUILD_ETCD_CORE_ONLY=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DETCD_CMAKE_CXX_STANDARD=17 \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" && \
       make -j"$NPROC" && \
       $SUDO make install && \
       $SUDO ldconfig \
@@ -219,13 +291,15 @@ else
 
     ( \
       cd ${TMPDIR} && \
-      git clone --depth 1 https://github.com/kvcache-ai/Mooncake.git && \
+      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}" && \
+      echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
+      git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
-      cmake .. -DBUILD_SHARED_LIBS=ON && \
-      make -j4 && \
-      $SUDO make install && \
+      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
+      ninja && \
+      $SUDO ninja install && \
       $SUDO ldconfig && \
       cd .. && \
       rm -rf Mooncake
@@ -270,9 +344,10 @@ else
     else
         echo "No NVIDIA GPU(s) detected. Skipping UCCL installation."
     fi
-    curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz -C ${TMPDIR}
+    git clone https://github.com/openucx/ucx.git ${TMPDIR}/ucx
     ( \
-    cd ${TMPDIR}/openucx-ucx* && \
+    cd ${TMPDIR}/ucx && \
+    git checkout "${UCX_VERSION}" && \
     ./autogen.sh && \
     ./contrib/configure-release-mt \
             --prefix="${UCX_INSTALL_DIR}" \
@@ -284,21 +359,15 @@ else
             --enable-devel-headers \
             --with-verbs \
             --with-dm \
+            --without-gdrcopy \
             ${UCX_CUDA_BUILD_ARGS} && \
           make -j"$NPROC" && \
-          make -j install-strip && \
+          $SUDO make -j install-strip && \
           $SUDO ldconfig \
     )
 fi # PRE_INSTALLED_UCX_ENV end
 
 $SUDO rm -rf ${TMPDIR}
-
-export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${LIBFABRIC_INSTALL_DIR}/lib"
-export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
-export PATH="${INSTALL_DIR}/bin:$HOME/.local/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
-export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:${LIBFABRIC_INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH"
-export NIXL_PLUGIN_DIR="${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
-export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 
 # Disabling CUDA IPC not to use NVLINK, as it slows down local
 # UCX transfers and can cause contention with local collectives.

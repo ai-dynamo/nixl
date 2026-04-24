@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef __NIXL_WORKER_H
-#define __NIXL_WORKER_H
+#ifndef NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H
+#define NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H
 
 #include "config.h"
 #include <iostream>
@@ -47,8 +47,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<GusliDeviceConfig> gusli_devices;
 
     public:
-        xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices);
-        ~xferBenchNixlWorker();  // Custom destructor to clean up resources
+        explicit xferBenchNixlWorker(const std::vector<std::string> &devices);
+        ~xferBenchNixlWorker() override;
 
         // Memory management
         std::vector<std::vector<xferBenchIOV>> allocateMemory(int num_threads) override;
@@ -73,11 +73,11 @@ class xferBenchNixlWorker: public xferBenchWorker {
     private:
         std::optional<xferBenchIOV>
         initBasicDescDram(size_t buffer_size, int mem_dev_id);
-        void cleanupBasicDescDram(xferBenchIOV &basic_desc);
-#if HAVE_CUDA
+        void
+        cleanupBasicDescDram(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);
-        void cleanupBasicDescVram(xferBenchIOV &basic_desc);
-#endif
+        void
+        cleanupBasicDescVram(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
         initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
         void cleanupBasicDescFile(xferBenchIOV &basic_desc);
@@ -93,4 +93,4 @@ class xferBenchNixlWorker: public xferBenchWorker {
         ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
 };
 
-#endif // __NIXL_WORKER_H
+#endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H

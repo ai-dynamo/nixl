@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,7 @@
  */
 
 #include "worker.h"
+#include "runtime/asio_runtime.h"
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/utils.h"
 
@@ -68,23 +69,32 @@ public:
     }
 };
 
-static xferBenchRT *createRT(int *terminate) {
+namespace {
+
+[[nodiscard]] int
+determineTotal() {
+    int total = 2;
+    if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
+        total = xferBenchConfig::num_initiator_dev + xferBenchConfig::num_target_dev;
+    }
+    if (xferBenchConfig::isStorageBackend()) {
+        total = 1;
+    }
+    return total;
+}
+
+static xferBenchRT *
+createRT(std::atomic<int> *terminate) {
     // For storage backends without ETCD endpoints, use null runtime
     if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
         std::cout << "Using null runtime for storage backend without ETCD" << std::endl;
         return new xferBenchNullRT();
     }
 
+    const int total = determineTotal();
+
 #if HAVE_ETCD
     if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
-        int total = 2;
-        if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
-            total = xferBenchConfig::num_initiator_dev +
-                xferBenchConfig::num_target_dev;
-        }
-        if (xferBenchConfig::isStorageBackend()) {
-            total = 1;
-        }
         xferBenchEtcdRT *etcd_rt = new xferBenchEtcdRT(
             xferBenchConfig::benchmark_group, xferBenchConfig::etcd_endpoints, total, terminate);
         if (etcd_rt->setup() != 0) {
@@ -96,27 +106,40 @@ static xferBenchRT *createRT(int *terminate) {
     }
 #endif
 
+    if (xferBenchConfig::runtime_type == XFERBENCH_RT_ASIO) {
+        if (total != 2) {
+            std::cerr << "Invalid total " << total << " for ASIO runtime -- supports only 2"
+                      << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        return new xferBenchAsioRT(xferBenchConfig::asio_address, xferBenchConfig::asio_port);
+    }
+
     std::cerr << "Invalid runtime: " << xferBenchConfig::runtime_type << std::endl;
     exit(EXIT_FAILURE);
 }
 
-int xferBenchWorker::synchronize() {
-    // For storage backends without ETCD, no synchronization needed
-    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
-        return 0;
-    }
+} // namespace
 
+int
+xferBenchWorker::synchronize() {
     if (rt->barrier("sync") != 0) {
         std::cerr << "Failed to synchronize" << std::endl;
-        // assuming this is a fatal error, continue benchmarking after synchronization failure does
-        // not make sense
-        exit(EXIT_FAILURE);
+        // Best-effort cleanup of non-leased etcd keys (e.g. the "size" key)
+        // so they don't poison subsequent runs in the same benchmark_group.
+        rt->cleanupForExit();
+        // Use _Exit() instead of exit() to bypass atexit handlers (e.g. gRPC shutdown).
+        // exit() would deadlock with the etcd KeepAlive background thread: gRPC shutdown
+        // waits for open streams to close, but the KeepAlive thread keeps renewing the
+        // lease stream indefinitely. _Exit() kills all threads immediately, which closes
+        // the gRPC stream and lets the lease expire on the etcd server side.
+        std::_Exit(EXIT_FAILURE);
     }
 
     return 0;
 }
 
-xferBenchWorker::xferBenchWorker(int *argc, char ***argv) {
+xferBenchWorker::xferBenchWorker() {
     terminate = 0;
 
     rt = createRT(&terminate);
@@ -127,8 +150,9 @@ xferBenchWorker::xferBenchWorker(int *argc, char ***argv) {
 
     int rank = rt->getRank();
 
-    // For storage backends without ETCD, always act as initiator
-    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
+    // For storage backends without ETCD endpoints always act as initiator
+    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty() &&
+        (xferBenchConfig::runtime_type == XFERBENCH_RT_ETCD)) {
         name = "initiator";
     } else if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
         if (rank >= 0 && rank < xferBenchConfig::num_initiator_dev) {
@@ -168,7 +192,10 @@ bool xferBenchWorker::isTarget() {
     return ("target" == name);
 }
 
-int xferBenchWorker::terminate = 0;
+static_assert(std::atomic<int>::is_always_lock_free,
+              "xferBenchWorker::terminate must be lock-free for safe use in signal handlers");
+
+std::atomic<int> xferBenchWorker::terminate = 0;
 
 void xferBenchWorker::signalHandler(int signal) {
     static const char msg[] = "Ctrl-C received, exiting...\n";
@@ -177,7 +204,7 @@ void xferBenchWorker::signalHandler(int signal) {
     auto size = write(stdout_fd, msg, sizeof(msg) - 1);
     (void)size;
 
-    if (++terminate > max_count) {
+    if (terminate.fetch_add(1) >= max_count) {
         std::_Exit(EXIT_FAILURE);
     }
 }

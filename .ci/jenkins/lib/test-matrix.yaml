@@ -35,7 +35,6 @@ kubernetes:
 
 credentials:
   - {credentialsId: 'nixl_harbor_credentials', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
-  - {credentialsId: 'svc-nixl-scctl', usernameVariable: 'SERVICE_USER_USERNAME', passwordVariable: 'SERVICE_USER_PASSWORD'}
 
 env:
   NIXL_INSTALL_DIR: /opt/nixl
@@ -48,10 +47,13 @@ env:
   SLURM_MINCPUS: 24
   SLURM_JOB_TIMEOUT: '02:20:00'
   SLURM_IMMEDIATE_TIMEOUT: "3600"
+  SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
+  JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260303-1"
+  CI_IMAGE_TAG: "20260423-2"
 
 empty_volumes:
+  - {mountPath: /root, memory: false}
   - {mountPath: /var/lib/containers/storage, memory: false}
 
 pvc_volumes:
@@ -105,85 +107,92 @@ steps:
 
   - name: Allocate Environment
     containerSelector: "{name: 'build_helper'}"
-    credentialsId: "svc-nixl-scctl"
     parallel: false
-    run: |
-      .ci/scripts/run_slurm_allocation.sh --slurm_partition=${SLURM_PARTITION} \
-      --slurm_nodes=${SLURM_NODES} \
-      --slurm_head_node=${SLURM_HEAD_NODE} \
-      --slurm_job_timeout=${SLURM_JOB_TIMEOUT} \
-      --slurm_gres=${SLURM_GRES} \
-      --slurm_mem=${SLURM_MEM} \
-      --slurm_mincpus=${SLURM_MINCPUS} \
-      --slurm_job_name=nixl-${ucx_version}-${BUILD_NUMBER} \
-      --slurm_job_id_file=/mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt
+    shell: action
+    module: slurmCI
+    run: allocation
+    args:
+      partition: "${SLURM_PARTITION}"
+      headNode: "${SLURM_HEAD_NODE}"
+      nodes: "${SLURM_NODES}"
+      jobTimeout: "${SLURM_JOB_TIMEOUT}"
+      immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
+      jobName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      extraArgs: [
+        "--gres=${SLURM_GRES}",
+        "--mincpus=${SLURM_MINCPUS}",
+        "--mem=${SLURM_MEM}"
+      ]
 
   - name: Run CPP tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: 60
+    timeout: 120
     parallel: false
-    run: |
-      set -x
-      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_cpp.sh" \
-        --container_name=nixl-${ucx_version}-${BUILD_NUMBER} \
-        --slurm_job_id=$(cat /mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt) \
-        --docker_image="${registry_host}#nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      testScript: ".gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
 
   - name: Run Python tests
     containerSelector: "{name: 'build_helper'}"
     timeout: 10
     parallel: false
-    run: |
-      set -x
-      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_python.sh" \
-        --container_name=nixl-${ucx_version}-${BUILD_NUMBER} \
-        --slurm_job_id=$(cat /mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt) \
-        --docker_image="${registry_host}#nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      testScript: ".gitlab/test_python.sh ${NIXL_INSTALL_DIR}"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
 
   - name: Run Rust tests
     containerSelector: "{name: 'build_helper'}"
     timeout: 10
     parallel: false
-    run: |
-      set -x
-      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_rust.sh" \
-        --container_name=nixl-${ucx_version}-${BUILD_NUMBER} \
-        --slurm_job_id=$(cat /mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt) \
-        --docker_image="${registry_host}#nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      testScript: ".gitlab/test_rust.sh ${NIXL_INSTALL_DIR}"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
 
   - name: Run Nixlbench tests
     containerSelector: "{name: 'build_helper'}"
     timeout: 50
     parallel: false
-    run: |
-      set -x
-      .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_nixlbench.sh" \
-        --container_name=nixl-${ucx_version}-${BUILD_NUMBER} \
-        --slurm_job_id=$(cat /mnt/pvc/job_id_${ucx_version}_${BUILD_NUMBER}.txt) \
-        --docker_image="${registry_host}#nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      testScript: ".gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
 
 pipeline_stop:
-  containerSelector:
-    - "{name: 'build_helper'}"
-  credentialsId: "svc-nixl-scctl"
+  containerSelector: "{name: 'build_helper'}"
   parallel: false
-  run: |
-    set -x
-    # Find all job_id_*.txt files and stop each allocation
-    shopt -s nullglob
-    job_files=(/mnt/pvc/job_id_*_${BUILD_NUMBER}.txt)
-    shopt -u nullglob
-
-    if [ ${#job_files[@]} -eq 0 ]; then
-      echo "WARNING: No job ID files found in /mnt/pvc/"
-      exit 0
-    fi
-
-    echo "INFO: Found ${#job_files[@]} job ID file(s) to stop"
-    for job_file in "${job_files[@]}"; do
-      if [ -f "${job_file}" ]; then
-        echo "INFO: Stopping allocation from ${job_file}"
-        .ci/scripts/stop_slurm_allocation.sh --slurm_job_id_file="${job_file}"
-        rm -f "${job_file}"
-      fi
-    done
+  shell: action
+  module: slurmCI
+  run: stopAllForBuild
+  args:
+    credentialsId: "${SCCTL_CREDENTIALS_ID}"
+    headNode: "${SLURM_HEAD_NODE}"
+    jobIdDir: "${JOB_ID_FILE_ROOT}"
