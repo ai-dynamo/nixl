@@ -1144,7 +1144,10 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
         use_cuda_addr_wa = cuda_addr_wa_;
         if (use_cuda_addr_wa && cudaCtx_) {
-            cudaCtx_->cudaSetCtx();
+            if (!cudaCtx_->cudaSetCtx()) {
+                NIXL_ERROR << "Failed to set CUDA context before posting descriptors";
+                return NIXL_ERR_BACKEND;
+            }
         }
     }
 #endif
