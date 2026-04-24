@@ -926,31 +926,74 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
 
 /****************************************
  * Memory management
-*****************************************/
-nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
-                                          const nixl_mem_t &nixl_mem,
-                                          nixlBackendMD* &out)
-{
+ *****************************************/
+nixl_status_t
+nixlUcxEngine::registerMem(const nixlBlobDesc &mem,
+                           const nixl_mem_t &nixl_mem,
+                           nixlBackendMD *&out) {
     auto priv = std::make_unique<nixlUcxPrivateMetadata>();
 
+    uintptr_t descAddr = mem.addr;
+    uintptr_t descEnd = descAddr + mem.len;
+
+    // Check if this descriptor falls within an already-registered range.
+    // regRangeCache is ordered by base address; find the last entry whose
+    // base is <= descAddr, then verify the range covers the descriptor.
+    auto it = regRangeCache.upper_bound(descAddr);
+    if (it != regRangeCache.begin()) {
+        --it;
+        uintptr_t rangeBase = it->first;
+        uintptr_t rangeEnd = rangeBase + it->second.mem->getSize();
+        if (descAddr >= rangeBase && descEnd <= rangeEnd) {
+            priv->mem = it->second.mem;
+            priv->rkeyStr = it->second.rkeyStr;
+            out = priv.release();
+            return NIXL_SUCCESS;
+        }
+    }
+
+    // No covering range found; perform a new registration.
+    auto ucxMem = std::make_shared<nixlUcxMem>();
     // TODO: Add nixl_mem check?
-    const int ret = uc->memReg((void*) mem.addr, mem.len, priv->mem, nixl_mem);
+    const int ret = uc->memReg((void *)mem.addr, mem.len, *ucxMem, nixl_mem);
     if (ret) {
         return NIXL_ERR_BACKEND;
     }
-    priv->rkeyStr = uc->packRkey(priv->mem);
+    nixl_blob_t rkeyStr = uc->packRkey(*ucxMem);
 
-    if (priv->rkeyStr.empty()) {
+    if (rkeyStr.empty()) {
+        uc->memDereg(*ucxMem);
         return NIXL_ERR_BACKEND;
     }
+
+    priv->mem = ucxMem;
+    priv->rkeyStr = rkeyStr;
+
+    regRangeCache[descAddr] = RegRange{ucxMem, rkeyStr};
+
     out = priv.release();
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlUcxEngine::deregisterMem (nixlBackendMD* meta)
-{
-    nixlUcxPrivateMetadata *priv = (nixlUcxPrivateMetadata*) meta;
-    uc->memDereg(priv->mem);
+nixl_status_t
+nixlUcxEngine::deregisterMem(nixlBackendMD *meta) {
+    nixlUcxPrivateMetadata *priv = (nixlUcxPrivateMetadata *)meta;
+
+    // Check whether the cache still holds this exact registration.
+    // A cache overwrite (e.g. registering a larger range at the same base)
+    // can replace the cache entry, leaving older descriptors with no cache
+    // reference. We must compare the shared_ptr, not just the base address.
+    const uintptr_t base = (uintptr_t)priv->mem->getBase();
+    auto it = regRangeCache.find(base);
+    const bool cacheOwnsThisMem = it != regRangeCache.end() && it->second.mem == priv->mem;
+    const long useCount = priv->mem.use_count();
+    if ((cacheOwnsThisMem && useCount == 2) || (!cacheOwnsThisMem && useCount == 1)) {
+        if (cacheOwnsThisMem) {
+            regRangeCache.erase(it);
+        }
+        uc->memDereg(*priv->mem);
+    }
+
     delete priv;
     return NIXL_SUCCESS;
 }
@@ -1173,8 +1216,8 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
         ++result.size;
         nixlUcxReq req;
         nixl_status_t ret = operation == NIXL_READ ?
-            ep.read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
-            ep.write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
+            ep.read(raddr, rmd->getRkey(worker_id), laddr, *lmd->mem, lsize, req) :
+            ep.write(laddr, *lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
 
         if (ret == NIXL_IN_PROG) {
             if (__builtin_expect(result.req != nullptr, 1)) {
