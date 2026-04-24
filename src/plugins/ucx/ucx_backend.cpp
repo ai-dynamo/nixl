@@ -1130,7 +1130,8 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
         std::chrono::microseconds msg_duration;
         std::chrono::microseconds msg_err_margin;
         nixl_cost_t msg_method;
-        nixl_status_t ret = rmd->conn->getEp(worker_id)->estimateCost(lsize, msg_duration, msg_err_margin, msg_method);
+        nixl_status_t ret = rmd->conn->getEp(worker_id)->estimateCost(
+            lsize, msg_duration, msg_err_margin, msg_method);
         if (ret != NIXL_SUCCESS) {
             NIXL_ERROR << "Worker failed to estimate cost for segment " << i << " status: " << ret;
             return ret;
