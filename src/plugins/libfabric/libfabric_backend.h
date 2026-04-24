@@ -44,6 +44,7 @@
 
 // Forward declarations
 class nixlLibfabricEngine;
+class nixlLibfabricPostThreadPool;
 
 #ifdef HAVE_CUDA
 /** CUDA context management for libfabric backend */
@@ -185,6 +186,11 @@ private:
     // Configurable striping threshold
     size_t striping_threshold_;
 
+    // Descriptor-posting thread pool configuration
+    size_t post_thread_count_;
+    size_t post_split_batch_size_;
+    std::unique_ptr<nixlLibfabricPostThreadPool> post_thread_pool_;
+
     mutable size_t total_transfer_size_;
 
     // Map of agent name to connection info
@@ -273,6 +279,7 @@ private:
 #ifdef HAVE_CUDA
     // CUDA context management
     std::unique_ptr<nixlLibfabricCudaCtx> cudaCtx_;
+    mutable std::mutex cuda_ctx_mutex_; // Protects cudaCtx_ and cuda_addr_wa_.
     bool cuda_addr_wa_; // CUDA address workaround flag
 #endif
 
@@ -291,6 +298,16 @@ private:
                        void *buffer,
                        std::shared_ptr<nixlLibfabricConnection> conn,
                        nixlBackendMD *&output);
+    nixl_status_t
+    postXferDescriptors(nixlLibfabricReq::OpType op_type,
+                        const nixl_meta_dlist_t &local,
+                        const nixl_meta_dlist_t &remote,
+                        const std::shared_ptr<nixlLibfabricConnection> &conn,
+                        const std::string &remote_agent,
+                        nixlLibfabricBackendH *backend_handle,
+                        int start_idx,
+                        int end_idx,
+                        size_t &submitted_count) const;
 
 #ifdef HAVE_CUDA
     // CUDA context management methods
