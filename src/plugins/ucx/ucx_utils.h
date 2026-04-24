@@ -28,7 +28,6 @@ extern "C" {
 
 #include "ucx_enums.h"
 
-#include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";

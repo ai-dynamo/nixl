@@ -457,7 +457,7 @@ void
 nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
     NIXL_ASSERT(sharedState_.get() != nullptr);
     if (status != NIXL_SUCCESS) {
-        (void)nixlUcxBackendReqH::release();
+        nixlUcxBackendReqH::release();
         sharedState_->status.store(status);
     }
     sharedState_->pendingReqs.fetch_sub(1);
@@ -469,11 +469,11 @@ nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
 nixl_status_t
 nixlUcxChunkBackendReqH::status() {
     // First check if entire request was cancelled or failed
-    nixl_status_t status = sharedState_->status.load();
-    if (status == NIXL_SUCCESS) {
-        status = nixlUcxBackendReqH::status();
+    const nixl_status_t status = sharedState_->status.load();
+    if (status != NIXL_SUCCESS) {
+        return status;
     }
-    return status;
+    return nixlUcxBackendReqH::status();
 }
 
 /*
@@ -544,7 +544,7 @@ public:
             return NIXL_IN_PROG;
         }
 
-        nixl_status_t status = nixlUcxBackendReqH::status();
+        const nixl_status_t status = nixlUcxBackendReqH::status();
         if (status != NIXL_SUCCESS) {
             return status;
         }
@@ -1272,7 +1272,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     if (opt_args && opt_args->hasNotif) {
         if (ret == NIXL_SUCCESS) {
             nixlUcxReq req;
-            const auto rmd = (nixlUcxPublicMetadata *)remote[0].metadataP;
+            const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[0].metadataP);
             ret = notifSendPriv(remote_agent,
                                 opt_args->notifMsg,
                                 rmd->conn->getEp(int_handle->getWorkerId()),
