@@ -19,7 +19,7 @@ Custom telemetry exporter plug-ins can be created according to [src/plugins/tele
 
 Each telemetry event contains:
 - **Category**: Event category for filtering and aggregation
-- **Event Name**: Descriptive name/identifier for the event
+- **Event type**: Descriptive name/identifier for the event
 - **Value**: Numeric value associated with the event
 
 ### Event Categories
