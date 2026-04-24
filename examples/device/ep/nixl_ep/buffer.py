@@ -853,23 +853,26 @@ class Buffer:
         else:
             self.runtime.connect_ranks(remote_ranks, None, ipc_handles)
 
-    def connect_ranks(self, remote_ranks: List[int]) -> None:
+    def connect_ranks(self, remote_ranks: List[int], activate: bool = True) -> None:
         """
         Add connections to remote ranks.
 
         Arguments:
             remote_ranks: List of remote rank IDs to establish connections with.
                          The current rank will be automatically filtered out.
+            activate: in low-latency mode, if False, keep newly connected ranks masked until update_mask_buffer(..., False).
         """
         if self.low_latency_mode:
             if self.tcp_store_group is not None:
                 with self._fetch_remote_metadata_from_tcp_store(
                     remote_ranks
                 ) as remote_mds:
-                    self.runtime.connect_ranks(remote_ranks, remote_mds)
+                    self.runtime.connect_ranks(remote_ranks, remote_mds, activate=activate)
             else:
-                self.runtime.connect_ranks(remote_ranks)
+                self.runtime.connect_ranks(remote_ranks, activate=activate)
         else:
+            if not activate:
+                raise ValueError("connect_ranks(activate=False) is only supported in low-latency mode")
             self._ht_connect_ranks(remote_ranks)
 
     def disconnect_ranks(self, remote_ranks: List[int]) -> None:
