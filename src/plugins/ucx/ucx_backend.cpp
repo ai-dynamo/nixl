@@ -1296,7 +1296,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     nixlUcxBackendReqH *intHandle = (nixlUcxBackendReqH *)handle;
-    auto& notif = intHandle->notif;
+    auto &notif = intHandle->notif;
     nixl_status_t handle_status = intHandle->status();
 
     if ((handle_status != NIXL_SUCCESS) || !notif.has_value()) {
