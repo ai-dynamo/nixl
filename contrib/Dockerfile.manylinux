@@ -23,7 +23,6 @@ ARG ARCH="x86_64"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
-ARG URING_TAG="liburing-2.13"
 ARG BUILD_NIXL_EP="true"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
@@ -165,14 +164,6 @@ RUN mkdir aws_sdk_build && cd aws_sdk_build && \
         -DCURL_INCLUDE_DIR=/usr/local/include \
         -DOPENSSL_USE_STATIC_LIBS=OFF && \
     make -j${NPROC:-$(nproc)} && make install
-
-RUN git clone https://github.com/axboe/liburing.git && \
-     cd liburing && \
-     git checkout $URING_TAG && \
-     ./configure --cc=gcc --cxx=g++ && \
-     make -j library && make liburing.pc && make install && \
-     ldconfig && \
-     cd ..
 
 ENV PKG_CONFIG_PATH=/usr/lib/pkgconfig:$PKG_CONFIG_PATH
 
