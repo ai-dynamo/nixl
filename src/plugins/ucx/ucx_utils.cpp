@@ -31,9 +31,6 @@
 #include "common/nixl_log.h"
 #include "config.h"
 #include "serdes/serdes.h"
-#include "rkey.h"
-
-using namespace std;
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
@@ -44,30 +41,6 @@ get_ucx_backend_common_options() {
     params.emplace(nixl_ucx_vram_memtype_hint_param_name,
                    ucx_vram_memtype_hint_to_string(nixl_ucx_vram_memtype_hint_t::AUTO));
     return params;
-}
-
-nixl_status_t
-ucx_status_to_nixl(ucs_status_t status) {
-    if (status == UCS_OK) {
-        return NIXL_SUCCESS;
-    }
-
-    switch (status) {
-    case UCS_INPROGRESS:
-    case UCS_ERR_BUSY:
-        return NIXL_IN_PROG;
-    case UCS_ERR_NOT_CONNECTED:
-    case UCS_ERR_CONNECTION_RESET:
-    case UCS_ERR_ENDPOINT_TIMEOUT:
-        return NIXL_ERR_REMOTE_DISCONNECT;
-    case UCS_ERR_INVALID_PARAM:
-        return NIXL_ERR_INVALID_PARAM;
-    case UCS_ERR_CANCELED:
-        return NIXL_ERR_CANCELED;
-    default:
-        NIXL_WARN << "Unexpected UCX error: " << ucs_status_string(status);
-        return NIXL_ERR_BACKEND;
-    }
 }
 
 [[nodiscard]] std::string_view
@@ -175,14 +148,14 @@ nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
     NIXL_ASSERT(eph == ucp_ep);
 
     switch (state) {
-    case NIXL_UCX_EP_STATE_NULL:
-    case NIXL_UCX_EP_STATE_FAILED:
+    case nixl::ucx::ep_state_t::UNINITIALIZED:
+    case nixl::ucx::ep_state_t::FAILED:
         // The error was already handled, nothing to do
-    case NIXL_UCX_EP_STATE_DISCONNECTED:
+    case nixl::ucx::ep_state_t::DISCONNECTED:
         // The EP has been disconnected, nothing to do
         return;
-    case NIXL_UCX_EP_STATE_CONNECTED:
-        setState(NIXL_UCX_EP_STATE_FAILED);
+    case nixl::ucx::ep_state_t::CONNECTED:
+        setState(nixl::ucx::ep_state_t::FAILED);
         request = ucp_ep_close_nb(ucp_ep, UCP_EP_CLOSE_MODE_FORCE);
         if (UCS_PTR_IS_PTR(request)) {
             ucp_request_free(request);
@@ -194,7 +167,7 @@ nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
 }
 
 void
-nixlUcxEp::setState(nixl_ucx_ep_state_t new_state) {
+nixlUcxEp::setState(nixl::ucx::ep_state_t new_state) {
     NIXL_ASSERT(new_state != state);
     NIXL_DEBUG << "ep " << eph << ": state " << state << " -> " << new_state;
     state = new_state;
@@ -206,17 +179,17 @@ nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags) {
     ucp_request_param_t req_param = {.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS, .flags = flags};
 
     switch (state) {
-    case NIXL_UCX_EP_STATE_NULL:
-    case NIXL_UCX_EP_STATE_DISCONNECTED:
+    case nixl::ucx::ep_state_t::UNINITIALIZED:
+    case nixl::ucx::ep_state_t::DISCONNECTED:
         // The EP has not been connected, or already disconnected.
         // Nothing to do.
         NIXL_ASSERT(eph == nullptr);
         return NIXL_SUCCESS;
-    case NIXL_UCX_EP_STATE_FAILED:
+    case nixl::ucx::ep_state_t::FAILED:
         // The EP was closed in error callback, just return error.
         eph = nullptr;
         return NIXL_ERR_REMOTE_DISCONNECT;
-    case NIXL_UCX_EP_STATE_CONNECTED:
+    case nixl::ucx::ep_state_t::CONNECTED:
         request = ucp_ep_close_nbx(eph, &req_param);
         if (request == nullptr) {
             eph = nullptr;
@@ -225,7 +198,7 @@ nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags) {
 
         if (UCS_PTR_IS_ERR(request)) {
             eph = nullptr;
-            return ucx_status_to_nixl(UCS_PTR_STATUS(request));
+            return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
         }
 
         ucp_request_free(request);
@@ -247,9 +220,9 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t er
     ep_params.err_handler.arg = static_cast<void *>(this);
     ep_params.address = reinterpret_cast<ucp_address_t *>(addr);
 
-    status = ucx_status_to_nixl(ucp_ep_create(worker, &ep_params, &eph));
+    status = nixl::ucx::ucsToNixlStatus(ucp_ep_create(worker, &ep_params, &eph));
     if (status == NIXL_SUCCESS)
-        setState(NIXL_UCX_EP_STATE_CONNECTED);
+        setState(nixl::ucx::ep_state_t::CONNECTED);
     else
         throw std::runtime_error("failed to create ep");
 }
@@ -286,7 +259,7 @@ nixlUcxEp::sendAmCallback(void *request, ucs_status_t status, void *user_data) {
 }
 
 nixl_status_t
-nixlUcxEp::sendAm(unsigned msg_id,
+nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
                   void *hdr,
                   size_t hdr_len,
                   void *buffer,
@@ -313,7 +286,7 @@ nixlUcxEp::sendAm(unsigned msg_id,
     }
 
     const ucs_status_ptr_t request =
-        ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
+        ucp_am_send_nbx(eph, unsigned(msg_id), hdr, hdr_len, buffer, len, &param);
     if (UCS_PTR_IS_PTR(request)) {
         ctx.release();
         if (req != nullptr) {
@@ -324,7 +297,7 @@ nixlUcxEp::sendAm(unsigned msg_id,
         deleter(nullptr, buffer);
     }
 
-    return ucx_status_to_nixl(UCS_PTR_STATUS(request));
+    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
 }
 
 /* ===========================================
@@ -348,13 +321,13 @@ nixlUcxEp::read(uint64_t raddr,
         .memh = mem.memh,
     };
 
-    ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr, rkey.get(), &param);
+    const ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = static_cast<nixlUcxReq>(request);
         return NIXL_IN_PROG;
     }
 
-    return ucx_status_to_nixl(UCS_PTR_STATUS(request));
+    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
 }
 
 nixl_status_t
@@ -374,13 +347,13 @@ nixlUcxEp::write(void *laddr,
         .memh = mem.memh,
     };
 
-    ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rkey.get(), &param);
+    const ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = static_cast<nixlUcxReq>(request);
         return NIXL_IN_PROG;
     }
 
-    return ucx_status_to_nixl(UCS_PTR_STATUS(request));
+    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
 }
 
 nixl_status_t
@@ -424,23 +397,23 @@ nixlUcxEp::flushEp(nixlUcxReq &req) {
         return NIXL_IN_PROG;
     }
 
-    return ucx_status_to_nixl(UCS_PTR_STATUS(request));
+    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
 }
 
 bool
-nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept {
+nixlUcxMtLevelIsSupported(const nixl::ucx::mt_mode_t mt_type) noexcept {
     ucp_lib_attr_t attr;
     attr.field_mask = UCP_LIB_ATTR_FIELD_MAX_THREAD_LEVEL;
     ucp_lib_query(&attr);
 
     switch (mt_type) {
-    case nixl_ucx_mt_t::SINGLE:
+    case nixl::ucx::mt_mode_t::SINGLE:
         return attr.max_thread_level >= UCS_THREAD_MODE_SERIALIZED;
-    case nixl_ucx_mt_t::CTX:
-    case nixl_ucx_mt_t::WORKER:
+    case nixl::ucx::mt_mode_t::CONTEXT:
+    case nixl::ucx::mt_mode_t::WORKER:
         return attr.max_thread_level >= UCS_THREAD_MODE_MULTI;
     }
-    NIXL_FATAL << "invalid mt type: " << enumToInteger(mt_type);
+    NIXL_FATAL << "invalid mt type: " << toInteger(mt_type);
     std::terminate();
 }
 
@@ -453,15 +426,15 @@ makeUcpVersion() noexcept {
     return UCP_VERSION(major_version, minor_version);
 }
 
-[[nodiscard]] nixl_ucx_mt_t
+[[nodiscard]] nixl::ucx::mt_mode_t
 makeMtType(const bool prog_thread, const nixl_thread_sync_t sync_mode) noexcept {
     // With strict synchronization model nixlAgent serializes access to backends, with more
     // permissive models backends need to account for concurrent access and ensure their internal
     // state is properly protected. Progress thread creates internal concurrency in UCX backend
     // irrespective of nixlAgent synchronization model.
     return (sync_mode == nixl_thread_sync_t::NIXL_THREAD_SYNC_RW || prog_thread) ?
-        nixl_ucx_mt_t::WORKER :
-        nixl_ucx_mt_t::SINGLE;
+        nixl::ucx::mt_mode_t::WORKER :
+        nixl::ucx::mt_mode_t::SINGLE;
 }
 
 [[nodiscard]] std::string_view
@@ -547,7 +520,6 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         config.modifyAlways("NET_DEVICES", devs_str.c_str());
     }
 
-    config.modify("ADDRESS_VERSION", "v2");
     config.modify("RNDV_THRESH", "inf");
     config.modify("MAX_RMA_RAILS", "2");
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
@@ -557,9 +529,15 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_device_channels));
     }
 
-    if (ucpVersion_ >= UCP_VERSION(1, 19)) {
-        config.modify("MAX_COMPONENT_MDS", "32");
-    } else {
+    const auto &hw_info = nixl::hwInfo::instance();
+    if (hw_info.numEfaDevices != 0) {
+        config.modify("ADDRESS_VERSION", "v2");
+        if (ucpVersion_ >= UCP_VERSION(1, 19)) {
+            config.modify("MAX_COMPONENT_MDS", "32");
+        }
+    }
+
+    if (ucpVersion_ < UCP_VERSION(1, 19)) {
         NIXL_WARN << "UCX version is less than 1.19, CUDA support is limited, "
                   << "including the lack of support for multi-GPU within a single process.";
     }
@@ -654,22 +632,22 @@ nixlUcxContext::resolveMemoryTypeConfig() {
 
 namespace {
 [[nodiscard]] ucs_thread_mode_t
-toUcsThreadModeChecked(const nixl_ucx_mt_t t) {
+toUcsThreadModeChecked(const nixl::ucx::mt_mode_t t) {
     switch (t) {
-    case nixl_ucx_mt_t::CTX:
+    case nixl::ucx::mt_mode_t::CONTEXT:
         return UCS_THREAD_MODE_SINGLE;
-    case nixl_ucx_mt_t::SINGLE:
+    case nixl::ucx::mt_mode_t::SINGLE:
         return UCS_THREAD_MODE_SERIALIZED;
-    case nixl_ucx_mt_t::WORKER:
+    case nixl::ucx::mt_mode_t::WORKER:
         return UCS_THREAD_MODE_MULTI;
     }
     NIXL_FATAL << "Invalid UCX worker type: "
-               << static_cast<std::underlying_type_t<nixl_ucx_mt_t>>(t);
+               << static_cast<std::underlying_type_t<nixl::ucx::mt_mode_t>>(t);
     std::terminate();
 }
 
 struct nixlUcpWorkerParams : ucp_worker_params_t {
-    explicit nixlUcpWorkerParams(const nixl_ucx_mt_t t) {
+    explicit nixlUcpWorkerParams(const nixl::ucx::mt_mode_t t) {
         field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
         thread_mode = toUcsThreadModeChecked(t);
     }
@@ -828,13 +806,13 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
  * =========================================== */
 
 int
-nixlUcxWorker::regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, void *arg) {
+nixlUcxWorker::regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg) {
     ucp_am_handler_param_t params = {0};
 
     params.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_CB |
         UCP_AM_HANDLER_PARAM_FIELD_ARG;
 
-    params.id = msg_id;
+    params.id = unsigned(msg_id);
     params.cb = cb;
     params.arg = arg;
 
@@ -851,9 +829,15 @@ nixlUcxWorker::regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, void *a
  * Data transfer
  * =========================================== */
 
-int
+unsigned
 nixlUcxWorker::progress() {
     return ucp_worker_progress(worker.get());
+}
+
+void
+nixlUcxWorker::progressLoop() {
+    while (progress() != 0)
+        ;
 }
 
 nixl_status_t
@@ -862,7 +846,7 @@ nixlUcxWorker::test(nixlUcxReq req) {
         return NIXL_SUCCESS;
     }
     ucp_worker_progress(worker.get());
-    return ucx_status_to_nixl(ucp_request_check_status(req));
+    return nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
 }
 
 void
@@ -877,7 +861,7 @@ nixlUcxWorker::reqCancel(nixlUcxReq req) {
 
 nixl_status_t
 nixlUcxWorker::arm() const noexcept {
-    return ucx_status_to_nixl(ucp_worker_arm(worker.get()));
+    return nixl::ucx::ucsToNixlStatus(ucp_worker_arm(worker.get()));
 }
 
 int
