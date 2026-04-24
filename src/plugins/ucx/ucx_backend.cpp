@@ -1214,7 +1214,8 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
         /* Send requests to a single EP */
         const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
         auto &ep = rmd->conn->getEp(worker_id);
-        const batchResult result = sendXferRangeBatch(*ep, operation, local, remote, worker_id, i, end_idx);
+        const batchResult result =
+            sendXferRangeBatch(*ep, operation, local, remote, worker_id, i, end_idx);
 
         /* Append a single pending request for the entire EP batch */
         const nixl_status_t ret = int_handle->append(result.status, result.req, rmd->conn);
