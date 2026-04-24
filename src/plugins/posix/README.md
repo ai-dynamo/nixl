@@ -31,8 +31,9 @@ sudo apt-get install libaio-dev
 sudo dnf install libaio-devel
 ```
 
-### Liburing
-liburing support is enabled automatically via the meson wrap under `subprojects/liburing.wrap` (pinned to WrapDB `liburing_2.14-1`). `meson setup` builds it from source when a system `liburing` is not found via pkg-config, so no manual install is required.
+### liburing
+
+liburing support is enabled automatically via the Meson wrap under `subprojects/liburing.wrap` (pinned to WrapDB `liburing_2.14-1`). `meson setup` builds it from source when a system `liburing` is not found via pkg-config, so no manual install is required.
 
 To use liburing with POSIX plugin use params["use_uring"] = "true"
 
