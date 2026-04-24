@@ -80,6 +80,7 @@
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
+#define XFERBENCH_BACKEND_INFINIA "INFINIA"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -190,6 +191,7 @@ public:
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
     static std::string azure_blob_connection_string;
+    static std::string infinia_config_file;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;
@@ -211,6 +213,8 @@ public:
     isStorageBackend();
     static bool
     isObjStorageBackend();
+    static bool
+    isExternalObjStorageBackend();
 
 protected:
     static int

@@ -33,7 +33,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 ## Features
 
 - **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
-- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), GUSLI for storage operations
+- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
   - **Many-to-one**: Multiple initiators to single target
@@ -435,7 +435,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --config_file PATH         # Configuraion file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 --etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
