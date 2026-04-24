@@ -347,7 +347,7 @@ void Buffer::destroy() {
 
 void Buffer::barrier() {
     auto compute_stream = at::cuda::getCurrentCUDAStream();
-    ep_kernels::barrier(gpu_ctx, mask_buffer_ptr, timeout_cycles, compute_stream);
+    ep_kernels::barrier(gpu_ctx_ptr, mask_buffer_ptr, timeout_cycles, compute_stream);
 }
 
 void Buffer::_nixl_agents_connect(const std::vector<int>& ranks, const std::vector<nixl_blob_t>& remote_mds) {
@@ -1091,7 +1091,7 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
                                use_fp8, round_scale, use_ue8m0,
                                timeout_cycles,
                                workspace, num_device_sms,
-                               launch_stream, phases, gpu_ctx);
+                               launch_stream, phases, gpu_ctx_ptr);
     };
     launcher(return_recv_hook ? EP_SEND_PHASE : (EP_SEND_PHASE | EP_RECV_PHASE));
 
@@ -1190,7 +1190,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
                               num_topk, num_experts, rank, num_ranks,
                              use_logfmt, timeout_cycles,
                               workspace, num_device_sms,
-                              launch_stream, phases, zero_copy, gpu_ctx);
+                              launch_stream, phases, zero_copy, gpu_ctx_ptr);
     };
     launcher(return_recv_hook ? EP_SEND_PHASE : (EP_SEND_PHASE | EP_RECV_PHASE));
 
@@ -1296,6 +1296,7 @@ void Buffer::_nixl_ep_memory_views_create(void) {
             EP_HOST_ASSERT(nixl_agent_info->agent->prepMemView(ht_barrier_descs, gpu_ctx.ht_barrier_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
         }
     }
+    CUDA_CHECK(cudaMemcpy(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx), cudaMemcpyHostToDevice));
 }
 
 void Buffer::_nixl_ep_memory_views_destroy(void) {
@@ -1320,10 +1321,16 @@ void Buffer::_nixl_ep_init(void) {
         .num_rdma_ranks = num_rdma_ranks,
         .rank = rank,
     };
+    CUDA_CHECK(cudaMalloc(&gpu_ctx_ptr, sizeof(gpu_nixl_ctx)));
+    CUDA_CHECK(cudaMemcpy(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx), cudaMemcpyHostToDevice));
 }
 
 void Buffer::_nixl_ep_destroy(void) {
     _nixl_ep_memory_views_destroy();
+    if (gpu_ctx_ptr != nullptr) {
+        cudaFree(gpu_ctx_ptr);
+        gpu_ctx_ptr = nullptr;
+    }
 }
 
 void Buffer::_nixl_agent_init() {

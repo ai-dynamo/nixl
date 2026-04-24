@@ -150,6 +150,7 @@ private:
     int max_num_ranks;
     int max_experts_per_rank;
     nixl_ep::gpu_nixl_ctx gpu_ctx;
+    nixl_ep::gpu_nixl_ctx* gpu_ctx_ptr = nullptr;
     uint64_t* last_ht_barrier_counter = nullptr;
     uint64_t* local_ht_barrier_counter = nullptr;
 
