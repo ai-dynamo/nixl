@@ -35,12 +35,12 @@
  * Backend request management
 *****************************************/
 
-class nixlUcxBackendH : public nixlBackendReqH {
+class nixlUcxBackendReqH : public nixlBackendReqH {
 private:
     std::set<ucx_connection_ptr_t> connections_;
     std::vector<nixlUcxReq> requests_;
-    nixlUcxWorker *worker;
-    size_t worker_id;
+    nixlUcxWorker *worker_;
+    size_t workerId_;
 
     // Notification to be sent after completion of all requests
     struct Notif {
@@ -51,13 +51,12 @@ private:
             : agent(remote_agent),
               payload(msg) {}
     };
-    std::optional<Notif> notif;
 
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     checkConnection(nixl_status_t status = NIXL_SUCCESS) const {
         NIXL_ASSERT(!connections_.empty());
         for (const auto &conn : connections_) {
-            nixl_status_t conn_status = conn->getEp(worker_id)->checkTxState();
+            nixl_status_t conn_status = conn->getEp(workerId_)->checkTxState();
             if (conn_status != NIXL_SUCCESS) {
                 return conn_status;
             }
@@ -66,14 +65,11 @@ private:
     }
 
 public:
-    nixlUcxBackendH(nixlUcxWorker *worker, size_t worker_id)
-        : worker(worker),
-          worker_id(worker_id) {}
+    std::optional<Notif> notif;
 
-    auto &
-    notification() {
-        return notif;
-    }
+    nixlUcxBackendReqH(nixlUcxWorker *worker, size_t worker_id)
+        : worker_(worker),
+          workerId_(worker_id) {}
 
     void
     reserve(size_t size) {
@@ -81,8 +77,8 @@ public:
         NIXL_ASSERT(connections_.empty());
     }
 
-    nixl_status_t
-    append(nixl_status_t status, nixlUcxReq req, ucx_connection_ptr_t conn) {
+    [[nodiscard]] nixl_status_t
+    append(nixl_status_t status, nixlUcxReq req, const ucx_connection_ptr_t &conn) {
         switch (status) {
         case NIXL_IN_PROG:
             requests_.push_back(req);
@@ -99,13 +95,13 @@ public:
         return NIXL_SUCCESS;
     }
 
-    const std::set<ucx_connection_ptr_t> &
-    getConnections() const {
+    [[nodiscard]] const std::set<ucx_connection_ptr_t> &
+    getConnections() const noexcept {
         return connections_;
     }
 
     virtual bool
-    isComposite() const {
+    isComposite() const noexcept {
         return false;
     }
 
@@ -117,9 +113,9 @@ public:
             if (ret == NIXL_IN_PROG) {
                 // TODO: Need process this properly.
                 // it may not be enough to cancel UCX request
-                worker->reqCancel(req);
+                worker_->reqCancel(req);
             }
-            worker->reqRelease(req);
+            worker_->reqRelease(req);
         }
         requests_.clear();
         connections_.clear();
@@ -134,7 +130,7 @@ public:
             return NIXL_SUCCESS;
         }
 
-        worker->progressLoop();
+        worker_->progressLoop();
 
         /* If last request is incomplete, return NIXL_IN_PROG early without
          * checking other requests */
@@ -153,7 +149,7 @@ public:
         for (nixlUcxReq req : requests_) {
             const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
             if (__builtin_expect(ret == NIXL_SUCCESS, 0)) {
-                worker->reqRelease(req);
+                worker_->reqRelease(req);
             } else if (ret == NIXL_IN_PROG) {
                 if (out_ret == NIXL_SUCCESS) {
                     out_ret = NIXL_IN_PROG;
@@ -174,18 +170,19 @@ public:
 
     void
     setWorker(nixlUcxWorker *worker, size_t worker_id) {
-        NIXL_ASSERT(this->worker == nullptr || worker == nullptr);
-        this->worker = worker;
-        this->worker_id = worker_id;
+        NIXL_ASSERT(worker_ == nullptr || worker == nullptr);
+        worker_ = worker;
+        workerId_ = worker_id;
     }
 
-    nixlUcxWorker *
-    getWorker() const {
-        return worker;
+    [[nodiscard]] nixlUcxWorker *
+    getWorker() const noexcept {
+        return worker_;
     }
 
-    size_t getWorkerId() const {
-        return worker_id;
+    [[nodiscard]] size_t
+    getWorkerId() const noexcept {
+        return workerId_;
     }
 };
 
@@ -408,9 +405,9 @@ struct nixlUcxBackendSharedState;
  * performed by a dedicated worker thread of threadpool. It holds a shared state
  * with the main request to track its completion status and control the lifetime.
  */
-class nixlUcxChunkBackendH : public nixlUcxBackendH {
+class nixlUcxChunkBackendH : public nixlUcxBackendReqH {
 public:
-    nixlUcxChunkBackendH() : nixlUcxBackendH(nullptr, UINT64_MAX) {}
+    nixlUcxChunkBackendH() : nixlUcxBackendReqH(nullptr, UINT64_MAX) {}
 
     void
     startXfer(const std::shared_ptr<nixlUcxBackendSharedState> &shared_state,
@@ -460,7 +457,7 @@ void
 nixlUcxChunkBackendH::complete(nixl_status_t status) {
     NIXL_ASSERT(sharedState_.get() != nullptr);
     if (status != NIXL_SUCCESS) {
-        nixlUcxBackendH::release();
+        nixlUcxBackendReqH::release();
         sharedState_->status.store(status);
     }
     sharedState_->pendingReqs.fetch_sub(1);
@@ -474,7 +471,7 @@ nixlUcxChunkBackendH::status() {
     // First check if entire request was cancelled or failed
     nixl_status_t status = sharedState_->status.load();
     if (status == NIXL_SUCCESS) {
-        status = nixlUcxBackendH::status();
+        status = nixlUcxBackendReqH::status();
     }
     return status;
 }
@@ -485,13 +482,13 @@ nixlUcxChunkBackendH::status() {
  * worker threads of threadpool, with a single request handle, that it returned
  * to the user.
  */
-class nixlUcxCompositeBackendH : public nixlUcxBackendH {
+class nixlUcxCompositeBackendH : public nixlUcxBackendReqH {
 public:
     nixlUcxCompositeBackendH(nixlUcxWorker *worker,
                              size_t worker_id,
                              size_t chunk_size,
                              size_t num_chunks)
-        : nixlUcxBackendH(worker, worker_id),
+        : nixlUcxBackendReqH(worker, worker_id),
           sharedState_(std::make_shared<nixlUcxBackendSharedState>()),
           chunkSize_(chunk_size) {
         sharedState_->chunks.resize(num_chunks);
@@ -522,14 +519,14 @@ public:
     }
 
     bool
-    isComposite() const override {
+    isComposite() const noexcept override {
         return true;
     }
 
     nixl_status_t
     release() override {
         NIXL_TRACE << *this << " releasing";
-        nixl_status_t status = nixlUcxBackendH::release();
+        nixl_status_t status = nixlUcxBackendReqH::release();
         if (sharedState_) {
             // Set failed status to stop progress chunks
             sharedState_->status.store(NIXL_ERR_NOT_FOUND);
@@ -549,7 +546,7 @@ public:
             return NIXL_IN_PROG;
         }
 
-        nixl_status_t status = nixlUcxBackendH::status();
+        nixl_status_t status = nixlUcxBackendReqH::status();
         if (status != NIXL_SUCCESS) {
             return status;
         }
@@ -711,7 +708,7 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
                                        nixlBackendReqH *handle,
                                        size_t start_idx,
                                        size_t end_idx) const {
-    nixlUcxBackendH *int_handle = static_cast<nixlUcxBackendH *>(handle);
+    nixlUcxBackendReqH *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     if (!int_handle->isComposite()) {
         return nixlUcxEngine::sendXferRange(
             operation, local, remote, remote_agent, handle, start_idx, end_idx);
@@ -1084,7 +1081,7 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
 
     const auto worker_id = getWorkerId(opt_args);
     /* TODO: try to get from a pool first */
-    auto *ucx_handle = new nixlUcxBackendH(getWorker(worker_id).get(), worker_id);
+    auto *ucx_handle = new nixlUcxBackendReqH(getWorker(worker_id).get(), worker_id);
 
     handle = ucx_handle;
 
@@ -1101,7 +1098,7 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
                                                nixl_cost_t &method,
                                                const nixl_opt_args_t* opt_args) const
 {
-    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    nixlUcxBackendReqH *intHandle = (nixlUcxBackendReqH *)handle;
     size_t workerId = intHandle->getWorkerId();
 
     if (local.descCount() != remote.descCount()) {
@@ -1205,7 +1202,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
                              nixlBackendReqH *handle,
                              size_t start_idx,
                              size_t end_idx) const {
-    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    nixlUcxBackendReqH *intHandle = (nixlUcxBackendReqH *)handle;
     size_t workerId = intHandle->getWorkerId();
     nixl_status_t ret;
 
@@ -1258,7 +1255,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
                         const nixl_opt_b_args_t *opt_args) const {
     size_t lcnt = local.descCount();
     size_t rcnt = remote.descCount();
-    nixlUcxBackendH *int_handle = static_cast<nixlUcxBackendH *>(handle);
+    nixlUcxBackendReqH *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     nixl_status_t ret;
 
     if (lcnt != rcnt) {
@@ -1289,7 +1286,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 
             ret = int_handle->status();
         } else if (ret == NIXL_IN_PROG) {
-            int_handle->notification().emplace(remote_agent, opt_args->notifMsg);
+            int_handle->notif.emplace(remote_agent, opt_args->notifMsg);
         }
     }
 
@@ -1298,8 +1295,8 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
-    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
-    auto& notif = intHandle->notification();
+    nixlUcxBackendReqH *intHandle = (nixlUcxBackendReqH *)handle;
+    auto& notif = intHandle->notif;
     nixl_status_t handle_status = intHandle->status();
 
     if ((handle_status != NIXL_SUCCESS) || !notif.has_value()) {
@@ -1330,7 +1327,7 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
-    nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
+    nixlUcxBackendReqH *intHandle = (nixlUcxBackendReqH *)handle;
     nixl_status_t status = intHandle->release();
 
     /* TODO: return to a pool instead. */
