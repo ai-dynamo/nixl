@@ -694,8 +694,8 @@ nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
     size_t num_chunks = (batch_size + chunk_size - 1) / chunk_size;
 
     size_t worker_id = getWorkerId();
-    auto comp_handle =
-        new nixlUcxCompositeBackendReqH(getWorker(worker_id).get(), worker_id, chunk_size, num_chunks);
+    auto comp_handle = new nixlUcxCompositeBackendReqH(
+        getWorker(worker_id).get(), worker_id, chunk_size, num_chunks);
     NIXL_TRACE << "created " << *comp_handle;
     handle = comp_handle;
     return NIXL_SUCCESS;
@@ -1121,8 +1121,8 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
         size_t lsize = local[i].len;
         size_t rsize = remote[i].len;
 
-        auto *lmd = static_cast<nixlUcxPrivateMetadata*>(local[i].metadataP);
-        auto *rmd = static_cast<nixlUcxPublicMetadata*>(remote[i].metadataP);
+        auto *lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
+        auto *rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
 
         NIXL_ASSERT(lmd && rmd) << "No metadata found in descriptor lists at index " << i << " during cost estimation";
         NIXL_ASSERT(lsize == rsize) << "Local size (" << lsize << ") != Remote size (" << rsize
