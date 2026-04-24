@@ -113,7 +113,7 @@ public:
         return false;
     }
 
-    [[nodiscard]] virtual nixl_status_t
+    virtual void
     release() {
         // TODO: Error log: uncompleted requests found! Cancelling ...
         for (nixlUcxReq req : requests_) {
@@ -127,7 +127,6 @@ public:
         }
         requests_.clear();
         connections_.clear();
-        return NIXL_SUCCESS;
     }
 
     [[nodiscard]] virtual nixl_status_t
@@ -524,10 +523,10 @@ public:
         return true;
     }
 
-    [[nodiscard]] nixl_status_t
+    void
     release() override {
         NIXL_TRACE << *this << " releasing";
-        const nixl_status_t status = nixlUcxBackendReqH::release();
+        nixlUcxBackendReqH::release();
         if (sharedState_) {
             // Set failed status to stop progress chunks
             sharedState_->status.store(NIXL_ERR_NOT_FOUND);
@@ -535,8 +534,6 @@ public:
             // resets the shared state pointer
             sharedState_.reset();
         }
-
-        return status;
     }
 
     [[nodiscard]] nixl_status_t
@@ -1131,7 +1128,7 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
         std::chrono::microseconds msg_duration;
         std::chrono::microseconds msg_err_margin;
         nixl_cost_t msg_method;
-        nixl_status_t ret = rmd->conn->getEp(worker_id)->estimateCost(
+        const nixl_status_t ret = rmd->conn->getEp(worker_id)->estimateCost(
             lsize, msg_duration, msg_err_margin, msg_method);
         if (ret != NIXL_SUCCESS) {
             NIXL_ERROR << "Worker failed to estimate cost for segment " << i << " status: " << ret;
@@ -1162,8 +1159,8 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
         uint64_t raddr = static_cast<uint64_t>(remote[i].addr);
         NIXL_ASSERT(lsize == remote[i].len);
 
-        auto *lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
-        auto *rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
+        auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
+        auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
         auto &rmd_ep = rmd->conn->getEp(worker_id);
         if (__builtin_expect(rmd_ep.get() != &ep, 0)) {
             break;
@@ -1330,12 +1327,12 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     auto *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
-    const nixl_status_t status = int_handle->release();
+    int_handle->release();
 
     /* TODO: return to a pool instead. */
     delete int_handle;
 
-    return status;
+    return NIXL_SUCCESS;
 }
 
 unsigned
