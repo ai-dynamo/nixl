@@ -127,6 +127,10 @@ class BaseModelArch(ABC):
                 from models.llama3_1 import Llama3_1
 
                 modelc = Llama3_1(**filtered_dict)
+            elif "deepseek_v4" in model_name.lower():
+                from models.deepseek_v4 import DeepSeekV4
+
+                modelc = DeepSeekV4(**filtered_dict)
             elif "deepseek_r1" in model_name.lower():
                 from models.deepseek_r1 import DeepSeekR1
 
