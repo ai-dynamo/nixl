@@ -18,9 +18,8 @@ Custom telemetry exporter plug-ins can be created according to [src/plugins/tele
 ### Event Structure
 
 Each telemetry event contains:
-- **Timestamp**: Microsecond precision timestamp
 - **Category**: Event category for filtering and aggregation
-- **Event Name**: Descriptive name/identifier for the event
+- **Event type**: Descriptive name/identifier for the event
 - **Value**: Numeric value associated with the event
 
 ### Event Categories
@@ -61,7 +60,7 @@ The **Shared Memory Buffer** plug-in, contains the data per transaction event, w
 
 ### Telemetry Details
 
-- Timestamp is done after the operation completion.
+- Producers append events under a mutex, consumers read them in **ring insertion order**.
 - Current design allows silent telemetry loss.
 - Current design does not support selective telemetry(e.g per category). All the telemetry events could be either ON or OFF.
 
@@ -69,19 +68,22 @@ The **Shared Memory Buffer** plug-in, contains the data per transaction event, w
 
 ### Runtime Configuration
 
-Telemetry is controlled by environment variables:
+Telemetry is configured by environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `NIXL_TELEMETRY_ENABLE` | Enable telemetry collection | Disabled |
+| `NIXL_TELEMETRY_ENABLE` | Enable telemetry collection | `false` |
 | `NIXL_TELEMETRY_BUFFER_SIZE` | Number of events in buffer | `4096` |
 | `NIXL_TELEMETRY_RUN_INTERVAL` | Flush interval (ms) | `100` |
+| `NIXL_TELEMETRY_EXPORTER` | Name of the exporter plugin to use | - |
 
-- NIXL_TELEMETRY_ENABLE can be set to y/yes/on/1 to be enabled, and n/no/off/0 (or not set) to be disabled.
+- `NIXL_TELEMETRY_ENABLE` can be set to `y`/`yes`/`on`/`true`/`enable`/`1` to be enabled, and `n`/`no`/`off`/`false`/`disable`/`0` (or not set) to be disabled. Matching is case insensitive.
+- If telemetry is disabled via the config but enabled programmatically then telemetry is captured internally but not exported. This might still incur a performance penalty.
+- If telemetry is enabled via the config but no exporter is set, or the name of the exporter is empty, then behaviour depends on `NIXL_TELEMETRY_DIR` as explained below.
 
 ## Cyclic Buffer
 
-Following sections  applied specifically for configuration and usage of cyclic buffer exporter
+Following sections applied specifically for configuration and usage of cyclic buffer exporter
 
 ### Configuration
 
@@ -89,7 +91,7 @@ Following sections  applied specifically for configuration and usage of cyclic b
 |----------|-------------|---------|
 | `NIXL_TELEMETRY_DIR` | Directory for telemetry files | - |
 
-- If NIXL_TELEMETRY_ENABLE is set to enabled but NIXL_TELEMETRY_DIR is not set, no telemetry file is generated and NIXL_TELEMETRY_RUN_INTERVAL is not used.
+- If telemetry is enabled via `NIXL_TELEMETRY_ENABLE`, but `NIXL_TELEMETRY_DIR` is not set, no telemetry file is generated and `NIXL_TELEMETRY_RUN_INTERVAL` is not used.
 
 ### Telemetry File Format
 
@@ -125,14 +127,12 @@ Both readers produce similar formatted output:
 
 ```
 === NIXL Telemetry Event ===
-Timestamp: 2025-01-15 14:30:25.123456
 Category: TRANSFER
 Event: agent_tx_bytes
 Value: 1048576
 ===========================
 
 === NIXL Telemetry Event ===
-Timestamp: 2025-01-15 14:30:25.124567
 Category: MEMORY
 Event: agent_memory_registered
 Value: 4096

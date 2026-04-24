@@ -18,6 +18,7 @@
 #include "worker/nixl/nixl_worker.h"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #if HAVE_CUDA
 #include <cuda.h>
@@ -47,13 +48,16 @@
         }                                                                                       \
     } while (0)
 
+static nixl_mem_t
+resolveVramSegment() {
 #if HAVE_CUDA
-#define HANDLE_VRAM_SEGMENT(_seg_type) _seg_type = VRAM_SEG;
+    return VRAM_SEG;
 #else
-#define HANDLE_VRAM_SEGMENT(_seg_type)                                        \
-    std::cerr << "VRAM segment type not supported without CUDA" << std::endl; \
+    if (neuronCoreCount() > 0) return VRAM_SEG;
+    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
+}
 
 #define GET_SEG_TYPE(is_initiator)                                                          \
     ({                                                                                      \
@@ -63,7 +67,7 @@
         if (0 == _seg_type_str.compare("DRAM")) {                                           \
             _seg_type = DRAM_SEG;                                                           \
         } else if (0 == _seg_type_str.compare("VRAM")) {                                    \
-            HANDLE_VRAM_SEGMENT(_seg_type);                                                 \
+            _seg_type = resolveVramSegment();                                               \
         } else {                                                                            \
             std::cerr << "Invalid segment type: " << _seg_type_str << std::endl;            \
             exit(EXIT_FAILURE);                                                             \
@@ -92,8 +96,8 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     return config.str();
 }
 
-xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices)
-    : xferBenchWorker(argc, argv) {
+xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
+    : xferBenchWorker() {
     seg_type = GET_SEG_TYPE(isInitiator());
 
     int rank;
@@ -109,7 +113,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 
     rank = rt->getRank();
 
-    nixlAgentConfig dev_meta(enable_pt, false, 0, sync_mode);
+    nixlAgentConfig dev_meta;
+    dev_meta.useProgThread = enable_pt;
+    dev_meta.syncMode = sync_mode;
 
     agent = new nixlAgent(name, dev_meta);
 
@@ -194,6 +200,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         }
         std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
                   << std::endl;
+        backend_params["ios_pool_size"] = std::to_string(xferBenchConfig::posix_ios_pool_size);
+        backend_params["kernel_queue_size"] =
+            std::to_string(xferBenchConfig::posix_kernel_queue_size);
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO)) {
         std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device "
                   << xferBenchConfig::gpunetio_device_list << " OOB interface "
@@ -296,6 +305,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
         // Using default param values for AZURE_BLOB backend
         backend_params["account_url"] = xferBenchConfig::azure_blob_account_url;
         backend_params["container_name"] = xferBenchConfig::azure_blob_container_name;
+        backend_params["connection_string"] = xferBenchConfig::azure_blob_connection_string;
         std::cout << "AZURE_BLOB backend" << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
@@ -307,6 +317,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(int *argc, char ***argv, std::vector<st
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
+    delete rt;
+    rt = nullptr;
+
     if (agent) {
         delete agent;
         agent = nullptr;
@@ -386,6 +399,21 @@ xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, mem_dev_id);
 }
 
+static std::optional<xferBenchIOV>
+getVramDescNeuron(int devid, size_t buffer_size, uint8_t memset_value) {
+    void *addr;
+    CHECK_NEURON_ERROR(neuronMalloc(&addr, buffer_size, devid), "Failed to allocate nrt tensor");
+    CHECK_NEURON_ERROR(neuronMemset(addr, memset_value, buffer_size),
+                       "Failed to set device memory");
+
+    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
+}
+
+static void
+cleanupVramNeuron(xferBenchIOV &iov) {
+    CHECK_NEURON_ERROR(neuronFree((void *)iov.addr), "Failed to free nrt tensor");
+}
+
 #if HAVE_CUDA
 static std::optional<xferBenchIOV>
 getVramDescCuda(int devid, size_t buffer_size, uint8_t memset_value) {
@@ -450,33 +478,42 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value) {
 #endif /* HAVE_CUDA_FABRIC */
 }
 
-static std::optional<xferBenchIOV>
-getVramDescNeuron(int devid, size_t buffer_size, uint8_t memset_value) {
-    void *addr;
-    CHECK_NEURON_ERROR(neuronMalloc(&addr, buffer_size, devid), "Failed to allocate nrt tensor");
-    CHECK_NEURON_ERROR(neuronMemset(addr, memset_value, buffer_size),
-                       "Failed to set device memory");
-
-    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
+static void
+cleanupVramCuda(xferBenchIOV &iov) {
+    CHECK_CUDA_ERROR(cudaSetDevice(iov.devId), "Failed to set device");
+    if (xferBenchConfig::enable_vmm) {
+        CHECK_CUDA_DRIVER_ERROR(cuMemUnmap(iov.addr, iov.len), "Failed to unmap memory");
+        CHECK_CUDA_DRIVER_ERROR(cuMemRelease(iov.handle), "Failed to release memory");
+        CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree(iov.addr, iov.padded_size),
+                                "Failed to free reserved address");
+    } else {
+        CHECK_CUDA_ERROR(cudaFreeAsync((void *)iov.addr, 0), "Failed to deallocate CUDA buffer");
+        CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize stream 0");
+    }
 }
+
+#endif /* HAVE_CUDA */
 
 static std::optional<xferBenchIOV>
 getVramDesc(int devid, size_t buffer_size, bool isInit) {
     uint8_t memset_value =
         isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT : XFERBENCH_TARGET_BUFFER_ELEMENT;
 
-    // Assume no CUDA cores exist if Neuron cores are found.
-    // There are no AWS instance types with both NVIDIA GPUs and Neuron accelerators.
     if (neuronCoreCount() > 0) {
         return getVramDescNeuron(devid, buffer_size, memset_value);
     }
 
+#if HAVE_CUDA
     CHECK_CUDA_ERROR(cudaSetDevice(devid), "Failed to set device");
     if (xferBenchConfig::enable_vmm) {
         return getVramDescCudaVmm(devid, buffer_size, memset_value);
     } else {
         return getVramDescCuda(devid, buffer_size, memset_value);
     }
+#else
+    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+    return std::nullopt;
+#endif
 }
 
 std::optional<xferBenchIOV>
@@ -495,7 +532,6 @@ xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {
 
     return getVramDesc(mem_dev_id, buffer_size, isInitiator());
 }
-#endif /* HAVE_CUDA */
 
 // Helper to open a single file with appropriate flags
 static std::optional<xferFileState>
@@ -609,8 +645,9 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
     memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
 
     size_t offset = start_offset;
+    char *write_ptr = static_cast<char *>(buf);
     while (buffer_size > 0) {
-        ssize_t rc = pwrite(fd, buf, buffer_size, offset);
+        ssize_t rc = pwrite(fd, write_ptr, buffer_size, offset);
         if (rc < 0) {
             std::cerr << "Failed to write to file: " << fd << " with error: " << strerror(errno)
                       << std::endl;
@@ -619,6 +656,7 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
         buffer_size -= rc;
         offset += rc;
+        write_ptr += rc;
     }
 
     free(buf);
@@ -638,37 +676,19 @@ xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
     free((void *)iov.addr);
 }
 
-#if HAVE_CUDA
 void
 xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
-    // Assume no CUDA cores exist if Neuron cores are found.
-    // There are no AWS instance types with both NVIDIA GPUs and Neuron accelerators.
     if (neuronCoreCount() > 0) {
-        CHECK_NEURON_ERROR(neuronFree((void *)iov.addr), "Failed to free nrt tensor");
+        cleanupVramNeuron(iov);
         return;
     }
 
-    CHECK_CUDA_ERROR(cudaSetDevice(iov.devId), "Failed to set device");
-    if (xferBenchConfig::enable_vmm) {
-        CHECK_CUDA_DRIVER_ERROR(cuMemUnmap(iov.addr, iov.len), "Failed to unmap memory");
-        CHECK_CUDA_DRIVER_ERROR(cuMemRelease(iov.handle), "Failed to release memory");
-        CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree(iov.addr, iov.padded_size),
-                                "Failed to free reserved address");
-    } else {
-        /*
-         * CUDA streams allow for concurrent execution of kernels and memory operations. However,
-         * memory management functions like cudaFree are implicitly synchronized with all streams to
-         * guarantee safety. This means cudaFree will wait for all kernels (in any stream) that
-         * might use the memory to finish before actually freeing it.
-         * If the application hangs on cudaFree due to kernels running in other streams, switching
-         * to cudaFreeAsync can allow the host to proceed without waiting for the entire device
-         * synchronization.
-         */
-        CHECK_CUDA_ERROR(cudaFreeAsync((void *)iov.addr, 0), "Failed to deallocate CUDA buffer");
-        CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize stream 0");
-    }
+#if HAVE_CUDA
+    cleanupVramCuda(iov);
+#else
+    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+#endif
 }
-#endif /* HAVE_CUDA */
 
 void
 xferBenchNixlWorker::cleanupBasicDescFile(xferBenchIOV &iov) {
@@ -697,6 +717,77 @@ void
 xferBenchNixlWorker::cleanupBasicDescBlk(xferBenchIOV &iov) {
     // No cleanup needed for block device descriptors
     // The block device backend handles the device lifecycle
+}
+
+bool
+xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size) {
+    int flags = O_RDWR | O_CREAT | O_LARGEFILE;
+    if (xferBenchConfig::storage_enable_direct) flags |= O_DIRECT;
+
+    int fd = open(device.device_path.c_str(), flags, 0744);
+    if (fd < 0) {
+        std::cerr << "Failed to open GUSLI file: " << device.device_path << ": " << strerror(errno)
+                  << std::endl;
+        return false;
+    }
+
+    // Sample one page at the offset GUSLI will read from
+    void *check_buf;
+    bool needs_write = true;
+    if (allocateXferMemory(xferBenchConfig::page_size, &check_buf)) {
+        ssize_t rd = pread(fd, check_buf, xferBenchConfig::page_size, device.dev_offset);
+        if (rd == (ssize_t)xferBenchConfig::page_size) {
+            needs_write = false;
+            uint8_t *bytes = static_cast<uint8_t *>(check_buf);
+            for (ssize_t i = 0; i < rd; i++) {
+                if (bytes[i] != XFERBENCH_TARGET_BUFFER_ELEMENT) {
+                    needs_write = true;
+                    break;
+                }
+            }
+        }
+        free(check_buf);
+    }
+
+    if (needs_write) {
+        std::cout << "Warning: GUSLI file '" << device.device_path << "' at offset "
+                  << device.dev_offset << " does not contain expected pattern (0x" << std::hex
+                  << (int)XFERBENCH_TARGET_BUFFER_ELEMENT << std::dec << "). Overwriting."
+                  << std::endl;
+
+        void *buf;
+        if (!allocateXferMemory(size, &buf)) {
+            close(fd);
+            return false;
+        }
+        memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, size);
+
+        size_t remaining = size;
+        size_t offset = device.dev_offset;
+        char *write_ptr = static_cast<char *>(buf);
+        while (remaining > 0) {
+            ssize_t rc = pwrite(fd, write_ptr, remaining, offset);
+            if (rc < 0) {
+                std::cerr << "Failed to write to " << device.device_path << " at offset " << offset
+                          << ": " << strerror(errno) << std::endl;
+                free(buf);
+                close(fd);
+                return false;
+            }
+            remaining -= rc;
+            offset += rc;
+            write_ptr += rc;
+        }
+        free(buf);
+    } else {
+        std::cout << "GUSLI file '" << device.device_path << "' at offset " << device.dev_offset
+                  << " already contains expected pattern (0x" << std::hex
+                  << (int)XFERBENCH_TARGET_BUFFER_ELEMENT << std::dec
+                  << "). Skipping initialization." << std::endl;
+    }
+
+    close(fd);
+    return true;
 }
 
 std::vector<std::vector<xferBenchIOV>>
@@ -763,17 +854,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
         if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
             for (auto &device : gusli_devices) {
-                if (device.device_type == 'F') {
-                    std::vector<xferFileState> fstate =
-                        createFileFds(getName(), 1, {device.device_path});
-                    if (!initBasicDescFile(
-                            xferBenchConfig::total_buffer_size, fstate[0], device.device_id)) {
-                        std::cerr << "Failed to create file: " << device.device_path << std::endl;
-                        for (auto &f : fstate) {
-                            close(f.fd);
-                        }
-                        exit(EXIT_FAILURE);
-                    }
+                if (device.device_type == 'F' &&
+                    !ensureFileHasConsistencyData(device, buffer_size)) {
+                    exit(EXIT_FAILURE);
                 }
             }
         }
@@ -861,11 +944,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                 basic_desc = initBasicDescDram(buffer_size, mem_dev_id);
                 break;
             }
-#if HAVE_CUDA
             case VRAM_SEG:
                 basic_desc = initBasicDescVram(buffer_size, i);
                 break;
-#endif
             default:
                 std::cerr << "Unsupported mem type: " << seg_type << std::endl;
                 exit(EXIT_FAILURE);
@@ -919,11 +1000,9 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             case DRAM_SEG:
                 cleanupBasicDescDram(iov);
                 break;
-#if HAVE_CUDA
             case VRAM_SEG:
                 cleanupBasicDescVram(iov);
                 break;
-#endif
             default:
                 std::cerr << "Unsupported mem type: " << seg_type << std::endl;
                 exit(EXIT_FAILURE);
@@ -1064,7 +1143,9 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 }
             }
             res.push_back(remote_iov_list);
-            file_offset += block_size;
+            if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+                file_offset += block_size;
+            }
         }
     } else {
         for (const auto &local_iov : local_iovs) {
@@ -1127,10 +1208,14 @@ static inline nixl_status_t
 execSingleTransfer(nixlAgent *agent,
                    nixlXferReqH *req,
                    xferBenchTimer &timer,
-                   xferBenchStats &thread_stats) {
+                   xferBenchStats &thread_stats,
+                   const std::atomic<int> *terminate_ptr = nullptr) {
     nixl_status_t rc = agent->postXferReq(req);
     thread_stats.post_duration.add(timer.lap());
     while (NIXL_IN_PROG == rc) {
+        if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+            break;
+        }
         rc = agent->getXferStatus(req);
     }
     return rc;
@@ -1167,7 +1252,8 @@ execTransferIterations(nixlAgent *agent,
                        const int num_iter,
                        xferBenchTimer &timer,
                        xferBenchStats &thread_stats,
-                       const bool recreate_per_iteration) {
+                       const bool recreate_per_iteration,
+                       const std::atomic<int> *terminate_ptr = nullptr) {
     nixlXferReqH *req = nullptr;
     nixlTime::us_t total_prepare_duration = 0;
 
@@ -1188,6 +1274,10 @@ execTransferIterations(nixlAgent *agent,
     if (__builtin_expect(recreate_per_iteration, 0)) {
         // GUSLI path: Create/execute/release per iteration
         for (int i = 0; i < num_iter; ++i) {
+            // Check for signal (SIGTERM/SIGINT) to allow fast exit on peer death
+            if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+                return -1;
+            }
             nixl_status_t create_rc =
                 agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
             if (__builtin_expect(create_rc != NIXL_SUCCESS, 0)) {
@@ -1197,7 +1287,7 @@ execTransferIterations(nixlAgent *agent,
             }
             total_prepare_duration += timer.lap();
 
-            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
+            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats, terminate_ptr);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
@@ -1217,7 +1307,12 @@ execTransferIterations(nixlAgent *agent,
     } else {
         // Standard path: Single request for all iterations
         for (int i = 0; i < num_iter; ++i) {
-            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
+            // Check for signal (SIGTERM/SIGINT) to allow fast exit on peer death
+            if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+                agent->releaseXferReq(req);
+                return -1;
+            }
+            nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats, terminate_ptr);
 
             if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
                 std::cout << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
@@ -1245,7 +1340,8 @@ execTransfer(nixlAgent *agent,
              const nixl_xfer_op_t op,
              const int num_iter,
              const int num_threads,
-             xferBenchStats &stats) {
+             xferBenchStats &stats,
+             const std::atomic<int> *terminate_ptr = nullptr) {
     int ret = 0;
     stats.clear();
 
@@ -1268,13 +1364,10 @@ execTransfer(nixlAgent *agent,
         nixl_opt_args_t params;
         std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
         if (!xferBenchConfig::isStorageBackend()) {
-            params.notifMsg = "0xBEEF";
-            params.hasNotif = true;
+            params.notif = "0xBEEF";
         }
 
         // Execute transfers
-        // GUSLI requires per-iteration request creation due to library bug
-        const bool recreate_per_iteration = (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend);
         const int result = execTransferIterations(agent,
                                                   op,
                                                   local_desc,
@@ -1284,7 +1377,8 @@ execTransfer(nixlAgent *agent,
                                                   num_iter,
                                                   timer,
                                                   thread_stats,
-                                                  recreate_per_iteration);
+                                                  xferBenchConfig::recreate_xfer,
+                                                  terminate_ptr);
 
         if (__builtin_expect(result != 0, 0)) {
             ret = result;
@@ -1317,8 +1411,14 @@ xferBenchNixlWorker::transfer(size_t block_size,
     }
 
     if (skip > 0) {
-        ret = execTransfer(
-            agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, stats);
+        ret = execTransfer(agent,
+                           local_iovs,
+                           remote_iovs,
+                           xfer_op,
+                           skip,
+                           xferBenchConfig::num_threads,
+                           stats,
+                           &terminate);
         if (ret < 0) {
             return std::variant<xferBenchStats, int>(ret);
         }
@@ -1329,8 +1429,14 @@ xferBenchNixlWorker::transfer(size_t block_size,
 
     stats.clear();
 
-    ret = execTransfer(
-        agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats);
+    ret = execTransfer(agent,
+                       local_iovs,
+                       remote_iovs,
+                       xfer_op,
+                       num_iter,
+                       xferBenchConfig::num_threads,
+                       stats,
+                       &terminate);
     if (ret < 0) {
         return std::variant<xferBenchStats, int>(ret);
     }
@@ -1354,27 +1460,41 @@ xferBenchNixlWorker::poll(size_t block_size) {
     }
     total_iter = skip + num_iter;
 
+    // Periodically check if all peers are still alive via etcd lease keys.
+    // Fires at most once every liveness_check_interval to avoid
+    // saturating etcd with get() calls during tight polling loops.
+    using namespace std::chrono_literals;
+    auto last_liveness_check = std::chrono::steady_clock::now();
+    constexpr auto liveness_check_interval = 5s;
+    auto checkLiveness = [&]() {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_liveness_check >= liveness_check_interval) {
+            last_liveness_check = now;
+            if (rt && !rt->areAllPeersAlive()) {
+                std::cerr << "nixlbench: peer liveness check failed — aborting poll" << std::endl;
+                terminate.store(1);
+            }
+        }
+    };
+
     /* Ensure warmup is done*/
     do {
         status = agent->getNotifs(notifs);
-    } while (status == NIXL_SUCCESS && skip != int(notifs["initiator"].size()));
+        checkLiveness();
+    } while (!signaled() && status == NIXL_SUCCESS && skip != int(notifs["initiator"].size()));
     synchronize();
 
     /* Polling for actual iterations*/
     do {
         status = agent->getNotifs(notifs);
-    } while (status == NIXL_SUCCESS && total_iter != int(notifs["initiator"].size()));
+        checkLiveness();
+    } while (!signaled() && status == NIXL_SUCCESS &&
+             total_iter != int(notifs["initiator"].size()));
     synchronize();
 }
 
 int
 xferBenchNixlWorker::synchronizeStart() {
-    // For storage backends without ETCD, no synchronization needed
-    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
-        std::cout << "Single instance storage backend - no synchronization needed" << std::endl;
-        return 0;
-    }
-
     if (IS_PAIRWISE_AND_SG()) {
         std::cout << "Waiting for all processes to start... (expecting " << rt->getSize()
                   << " total: " << xferBenchConfig::num_initiator_dev << " initiators and "
@@ -1383,6 +1503,7 @@ xferBenchNixlWorker::synchronizeStart() {
         std::cout << "Waiting for all processes to start... (expecting " << rt->getSize()
                   << " total" << std::endl;
     }
+
     if (rt) {
         int ret = rt->barrier("start_barrier");
         if (ret != 0) {

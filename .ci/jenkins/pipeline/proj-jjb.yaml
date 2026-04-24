@@ -40,7 +40,7 @@
               value: $
     description: Do NOT edit this job through the Web GUI !  # Manual edits will be overwritten
     concurrent: true    # Allow multiple builds to run simultaneously
-    sandbox: true      # Run in sandbox mode for security
+    sandbox: false
     parameters:
         - string:
             name: "VARIABLE_FROM_POST"
@@ -54,6 +54,51 @@
         // Authenticate with GitHub using stored credentials
         withCredentials([usernamePassword(credentialsId: 'svc-nixl-github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {{
           githubHelper = GithubHelper.getInstance("${{GIT_PASSWORD}}", VARIABLE_FROM_POST)
+        }}
+
+        // Abort previous dispatcher runs for the same PR and their leaf jobs
+        def currentPrNumber = githubHelper.getPRNumber()?.toString()
+        if (currentPrNumber) {{
+          def slurper = new groovy.json.JsonSlurper()
+          try {{
+            def staleBuilds = Jenkins.instance.getItemByFullName(env.JOB_NAME).builds.findAll {{
+              it.isBuilding() && it.number < currentBuild.number
+            }}.findAll {{ b ->
+              def gd = b.getAction(hudson.model.ParametersAction)?.getParameters()?.find {{ it.name == 'VARIABLE_FROM_POST' }}?.value
+              def otherPr = gd ? slurper.parseText(gd)?.issue?.number?.toString() : null
+              otherPr == currentPrNumber
+            }}
+
+            if (staleBuilds) {{
+              echo "PR #${{currentPrNumber}}: found ${{staleBuilds.size()}} stale dispatcher(s) to abort"
+            }}
+
+            // Collect leaf builds from each stale dispatcher's console log
+            def leafBuilds = []
+            staleBuilds.each {{ b ->
+              b.getLog(1000).each {{ line ->
+                def m = (line =~ /Starting building: (\S+) #(\d+)/)
+                if (m) {{
+                  def child = Jenkins.instance.getItemByFullName(m[0][1])?.getBuildByNumber(m[0][2] as int)
+                  if (child) leafBuilds.add(child)
+                }}
+              }}
+            }}
+
+            // Kill leaf jobs first (unblocks dispatcher), then dispatchers
+            def allTargets = leafBuilds + staleBuilds
+            for (int attempt = 1; attempt <= 3; attempt++) {{
+              def alive = allTargets.findAll {{ it.isBuilding() }}
+              if (!alive) break
+              alive.each {{ target ->
+                echo "${{attempt > 1 ? 'Retry ' + attempt + ': ' : ''}}Killing ${{target.fullDisplayName}}"
+                target.doKill()
+              }}
+              if (attempt < 3) sleep 5
+            }}
+          }} catch(Exception e) {{
+            echo "Could not abort previous builds: ${{e.message}}"
+          }}
         }}
 
         def blueOceanUrl = "${{JENKINS_URL}}blue/organizations/jenkins/${{env.JOB_BASE_NAME}}/detail/${{env.JOB_BASE_NAME}}/${{env.BUILD_NUMBER}}/pipeline/"
@@ -70,6 +115,12 @@
                 ], propagate: false, wait: true
             }}, 'gpu': {{
                 def jobName = 'nixl-ci-gpu'
+                build job: jobName, parameters: [
+                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
+                    string(name: 'githubData', value: VARIABLE_FROM_POST)
+                ], propagate: false, wait: true
+            }}, 'dl-gpu': {{
+                def jobName = 'nixl-ci-dl-gpu'
                 build job: jobName, parameters: [
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
@@ -207,6 +258,68 @@
                     parent-credentials: true
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
+# Template for the DLCluster GPU test job that runs on dlcluster.nvidia.com
+- job-template:
+    name: "{jjb_proj}-dl-gpu"      # Will be expanded to 'nixl-ci-dl-gpu'
+    project-type: pipeline
+    disabled: false
+    properties:
+        # Similar properties as dispatcher job
+        - github:
+            url: "{jjb_gh_url}"
+        - build-discarder:
+            days-to-keep: 14
+            num-to-keep: 1000
+        - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-dl-gpu
+    description: Do NOT edit this job through the Web GUI !
+    concurrent: true
+    sandbox: true
+    # Test job parameters
+    parameters:
+        - string:
+            name: "sha1"
+            default: "{jjb_branch}"    # Default to 'main' branch
+            description: "Commit to be checked, usually set by PR"
+        - string:
+            name: "githubData"
+            default: ""
+            description: "Variables from post"
+        - string:
+            name: "conf_file"
+            default: ".ci/jenkins/lib/test-dl-matrix.yaml"  # DLCluster test matrix configuration
+            description: "Job config file"
+        - bool:
+            name: "build_dockers"
+            default: false
+            description: "Force rebuild docker containers"
+        - string:
+            name: "DEBUG"
+            default: 0
+            description: "Enable debug prints and traces, valid values are 0-9"
+    # SCM configuration for the build job
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                credentials-id: 'svc-nixl-ssh_key'
+                branches: ['$sha1']
+                shallow-clone: false
+                do-not-fetch-tags: false
+                # Configure refspec to handle branches, PRs, and tags
+                refspec: "+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*"
+                browser: githubweb
+                browser-url: "{jjb_git}"
+                # Handle git submodules
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
+
 # Template for NIXL build container job
 # Builds and pushes NIXL and NIXLBench container images for x86_64 and aarch64
 # Supports nightly automatic builds and manual builds via parameters
@@ -228,10 +341,7 @@
       • Builds and pushes x86_64 &amp; aarch64 images with any NIXL/UCX version combination<br/>
       • Choose between <b>nixlbench</b> or <b>nixl</b> build targets<br/>
       • Optional latest tag update via <code>UPDATE_LATEST</code> parameter<br/>
-      • Images pushed to both registries:<br/>
-      &nbsp;&nbsp;- https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/<br/>
-      &nbsp;&nbsp;- https://urm.nvidia.com/sw-nbu-swx-nixl-docker-local/<br/>
-      &nbsp;&nbsp;Use <code>verification/nixlbench/</code> or <code>verification/nixl/</code> based on target<br/>
+      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ <code>verification/nixlbench/</code> or <code>verification/nixl/</code> based on target<br/>
       • You must be part of access-artifactory-nbu-swx-nixl-users DL group in order to work with these images
       <br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
@@ -259,7 +369,7 @@
       - string:
           name: "NIXL_VERSION"
           default: "{jjb_branch}"
-          description: "NIXL version to use (tag like 0.10.0, branch name, or commit hash)"
+          description: "NIXL version to use (tag like 1.1.0, branch name, or commit hash)"
       - string:
           name: "UCX_VERSION"
           default: "v1.20.x"
@@ -326,3 +436,4 @@
         - "{jjb_proj}-non-gpu"       # Create non-gpu job
         - "{jjb_proj}-build-container"  # Create container builder job
         - "{jjb_proj}-gpu"        # Create gpu job
+        - "{jjb_proj}-dl-gpu"   # Create dl-gpu job for dlcluster.nvidia.com

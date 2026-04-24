@@ -174,25 +174,33 @@ struct nixlAgentOptionalArgs {
     std::vector<nixlBackendH*> backends;
 
     /**
-     * @var notifMsg A message to be used in createXferReq / makeXferReq / postXferReq,
-     *               if a notification message is desired
+     * @var notif Optional notification message used in createXferReq / makeXferReq / postXferReq.
+     *            If set, notification is enabled even for empty-string messages.
+     *            This is the preferred field for new API users.
+     */
+    std::optional<nixl_blob_t> notif;
+
+    /**
+     * @var notifMsg Legacy notification payload kept for backward compatibility.
+     *               Deprecated in favor of @ref notif.
      */
     nixl_blob_t notifMsg;
 
     /**
-     * @var hasNotif boolean value to indicate that a notification is provided, or to
-     *      remove notification during a repost. If set to false, notifMsg is not checked.
+     * @var hasNotif Legacy notification flag kept for backward compatibility.
+     *      Deprecated in favor of @ref notif.
      */
     bool hasNotif = false;
 
     /**
-     * @var makeXferReq boolean to skip merging consecutive descriptors, used in makeXferReq.
+     * @var skipDescMerge Legacy flag to skip merging consecutive descriptors.
+     *      Deprecated. Kept for backward compatibility.
      */
     bool skipDescMerge = false;
 
     /**
-     * @var includeConnInfo boolean to include connection information in the metadata,
-     *                      used in getLocalPartialMD.
+     * @var includeConnInfo legacy flag to include connection information in partial metadata.
+     *                      Deprecated, but still supported for backward compatibility.
      */
     bool includeConnInfo = false;
 
@@ -231,15 +239,10 @@ struct nixlAgentOptionalArgs {
 using nixl_opt_args_t = nixlAgentOptionalArgs;
 
 /**
- * @brief A typedef for a nixlGpuXferReqH
- */
-using nixlGpuXferReqH = void *;
-
-/**
- * @brief An alias for a nixlMemoryViewH
+ * @brief An alias for a nixlMemViewH
  *        Represents a memory view handle
  */
-using nixlMemoryViewH = void *;
+using nixlMemViewH = void *;
 
 /**
  * @brief A typedefs for a point in time
@@ -299,6 +302,6 @@ using nixl_xfer_telem_t = nixlXferTelemetry;
 /**
  * @brief A constant for an invalid agent name.
  */
-extern const std::string nixl_invalid_agent;
+extern const std::string nixl_null_agent;
 
 #endif

@@ -453,6 +453,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --max_block_size SIZE      # Maximum block size (default: 64MiB)
 --start_batch_size SIZE    # Starting batch size (default: 1)
 --max_batch_size SIZE      # Maximum batch size (default: 1)
+--recreate_xfer            # Recreate xfer for every iteration
 ```
 
 #### Performance and Threading
@@ -497,6 +498,8 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 **POSIX Backend:**
 ```
 --posix_api_type TYPE      # API type for POSIX operations [AIO, URING, POSIXAIO] (default: AIO)
+--posix_ios_pool_size SIZE # IO pool size for POSIX operations (default: 65536)
+--posix_kernel_queue_size SIZE # Kernel queue size for AIO and URING APIs (default: 256)
 ```
 
 **GPUNETIO Backend:**
@@ -519,8 +522,9 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 
 **AZURE_BLOB Backend:**
 ```
---azure_blob_account_url ACCOUNT_URL        # Account URL for Azure Blob backend
---azure_blob_container_name CONTAINER_NAME  # Container name for Azure Blob backend
+--azure_blob_account_url ACCOUNT_URL              # Account URL for Azure Blob backend
+--azure_blob_container_name CONTAINER_NAME        # Container name for Azure Blob backend
+--azure_blob_connection_string CONNECTION_STRING  # Connection string for Azure Blob backend
 ```
 
 **GUSLI Backend:**
@@ -771,6 +775,40 @@ docker run -it \
    --network host nixlbench:latest \
    bash -c "az login && nixlbench --backend AZURE_BLOB --azure_blob_account_url <account_url> --azure_blob_container_name <container_name>"
 ```
+
+**Running against Azurite:**
+
+To run `nixlbench` against [Azurite](https://learn.microsoft.com/azure/storage/common/storage-use-azurite) for local testing,
+first start the Azurite server:
+```bash
+docker run --rm -p 10000:10000 mcr.microsoft.com/azure-storage/azurite azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+```
+And create an Azure Storage container to use for benchmarking:
+```bash
+# In a separate terminal, create an Azure Storage container in the running azurite instance
+az storage container create \
+  --name <container_name> \
+  --connection-string 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;'
+```
+
+Then run ``nixlbench`` with the following parameters:
+```bash
+./nixlbench --backend AZURE_BLOB \
+   --azure_blob_connection_string 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;' \
+   --azure_blob_container_name <container_name>
+```
+
+When running from the `nixlbench` docker container, you can omit use of the `az login` command prior to running `nixlbench`:
+```bash
+docker run -it \
+   --gpus all \
+   --network host nixlbench:latest \
+   nixlbench \
+   --backend AZURE_BLOB \
+   --azure_blob_connection_string 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;' \
+   --azure_blob_container_name <container_name>
+```
+
 
 **Testing Options:**
 - Test read operations: `--op_type READ`

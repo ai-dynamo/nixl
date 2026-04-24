@@ -62,16 +62,12 @@ class nixlBackendEngine {
         }
 
         void
-        addTelemetryEvent(const std::string &event_name, uint64_t value) {
+        addTelemetryEvent(nixl_telemetry_event_type_t event_type, uint64_t value) {
             if (!enableTelemetry_) return;
             if (telemetryEvents_.size() >= MAX_TELEMETRY_QUEUE_SIZE) return;
             std::lock_guard<std::mutex> lock(telemetryEventsMutex_);
-            telemetryEvents_.emplace_back(std::chrono::duration_cast<std::chrono::microseconds>(
-                                              std::chrono::system_clock::now().time_since_epoch())
-                                              .count(),
-                                          nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND,
-                                          event_name,
-                                          value);
+            telemetryEvents_.emplace_back(
+                nixl_telemetry_category_t::NIXL_TELEMETRY_BACKEND, event_type, value);
         }
 
     public:
@@ -156,52 +152,25 @@ class nixlBackendEngine {
         //Backend aborts the transfer if necessary, and destructs the relevant objects
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 
-        // Create a GPU transfer request to GPU memory for GPU transfer.
-        virtual nixl_status_t
-        createGpuXferReq(const nixlBackendReqH &req_hndl,
-                         const nixl_meta_dlist_t &local_descs,
-                         const nixl_meta_dlist_t &remote_descs,
-                         nixlGpuXferReqH &gpu_req_hndl) const {
-            return NIXL_ERR_NOT_SUPPORTED;
-        }
-
-        // Release a GPU transfer request from GPU memory
-        virtual void
-        releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const {}
-
-        // Get the size required for a GPU signal
-        virtual nixl_status_t
-        getGpuSignalSize(size_t &signal_size) const {
-            return NIXL_ERR_NOT_SUPPORTED;
-        }
-
-        // Initialize a signal for GPU transfer using memory handle from descriptor
-        virtual nixl_status_t
-        prepGpuSignal(const nixlBackendMD &meta,
-                      void *signal,
-                      const nixl_opt_b_args_t *opt_args = nullptr) const {
-            return NIXL_ERR_NOT_SUPPORTED;
-        }
-
         // Prepare a memory view for remote buffers
         virtual nixl_status_t
-        prepMemoryView(const nixl_remote_meta_dlist_t &,
-                       nixlMemoryViewH &,
-                       const nixl_opt_b_args_t * = nullptr) const {
+        prepMemView(const nixl_remote_meta_dlist_t &,
+                    nixlMemViewH &,
+                    const nixl_opt_b_args_t * = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 
         // Prepare a memory view for local buffers
         virtual nixl_status_t
-        prepMemoryView(const nixl_meta_dlist_t &,
-                       nixlMemoryViewH &,
-                       const nixl_opt_b_args_t * = nullptr) const {
+        prepMemView(const nixl_meta_dlist_t &,
+                    nixlMemViewH &,
+                    const nixl_opt_b_args_t * = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 
         // Release memory view handle
         virtual void
-        releaseMemoryView(nixlMemoryViewH mvh) const {}
+        releaseMemView(nixlMemViewH) const {}
 
         // *** Needs to be implemented if supportsRemote() is true *** //
 

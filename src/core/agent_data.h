@@ -14,15 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __AGENT_DATA_H_
-#define __AGENT_DATA_H_
+#ifndef NIXL_SRC_CORE_AGENT_DATA_H
+#define NIXL_SRC_CORE_AGENT_DATA_H
 
-#include "common/str_tools.h"
 #include "mem_section.h"
 #include "telemetry.h"
 #include "stream/metadata_stream.h"
 #include "sync.h"
 
+#include <memory>
 
 #if HAVE_ETCD
 #include <etcd/SyncClient.hpp>
@@ -63,49 +63,45 @@ using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
 
 class nixlAgentData {
     private:
-        std::string     name;
-        nixlAgentConfig config;
+        const std::string name_;
+        const nixlAgentConfig config_;
+        const bool useEtcd_;
+        const bool needsCommThread_;
         nixlLock        lock;
         bool telemetryEnabled = false;
+        bool efaWarningChecked = false;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
 
         // Bookkeeping from backend type and memory type to backend engine
         backend_list_t                         notifEngines;
-        backend_map_t                          backendEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
 
-        // Bookkeping for local connection metadata and user handles per backend
-        std::unordered_map<nixl_backend_t, nixlBackendH*> backendHandles;
-        std::unordered_map<nixl_backend_t, nixl_blob_t>   connMD;
-
-        // Bookkeeping from GPU request handles to backend engines
-        std::unordered_map<nixlGpuXferReqH, nixlBackendEngine *> gpuReqToEngine;
-
         // Bookkeeping from memory view handles to backend engines
-        std::unordered_map<nixlMemoryViewH, nixlBackendEngine &> mvhToEngine;
+        std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
 
-        // Local section, and Remote sections and their available common backends
-        nixlLocalSection*                                        memorySection;
-
-        std::unordered_map<std::string,
-                           std::unordered_map<nixl_backend_t, nixl_blob_t>,
-                           std::hash<std::string>, strEqual>     remoteBackends;
-        std::unordered_map<std::string, nixlRemoteSection*,
-                           std::hash<std::string>, strEqual>     remoteSections;
+        std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
+            remoteBackends_;
 
         // State/methods for listener thread
-        nixlMDStreamListener *listener;
+        std::unique_ptr<nixlMDStreamListener> listener;
         nixl_socket_map_t remoteSockets;
         std::thread commThread;
         std::vector<nixl_comm_req_t> commQueue;
         std::mutex commLock;
         std::atomic<bool> commThreadStop;
         std::atomic<bool> agentShutdown;
-        bool useEtcd;
-        std::unique_ptr<nixlTelemetry> telemetry_;
         std::exception_ptr commThreadException_;
+
+        // The order of the following data members is crucial for destruction.
+        // Bookkeeping for local connection metadata and user handles per backend
+        std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
+        std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
+        backend_map_t backendEngines_;
+        std::unordered_map<std::string, nixlRemoteSection> remoteSections_;
+        std::unique_ptr<nixlTelemetry> telemetry_;
+        nixlLocalSection localSection_;
 
         void
         commWorker(nixlAgent &myAgent) noexcept;
@@ -122,35 +118,57 @@ class nixlAgentData {
         nixl_status_t
         invalidateRemoteData(const std::string &remote_name);
         [[nodiscard]] static backend_set_t
-        getBackends(const nixl_opt_args_t *opt_args, nixlMemSection *section, nixl_mem_t mem_type);
+        getBackends(const nixl_opt_args_t *opt_args,
+                    const nixlMemSection &section,
+                    nixl_mem_t mem_type);
+        void
+        warnAboutEfaHardwareMismatch();
 
     public:
-        nixlAgentData(const std::string &name, const nixlAgentConfig &cfg);
-        ~nixlAgentData();
+        nixlAgentData(const std::string &name, const nixlAgentConfig &config);
 
-        inline void
+        void
         addErrorTelemetry(nixl_status_t err_status) {
-            if (telemetry_) telemetry_->updateErrorCount(err_status);
+            if (telemetry_) {
+                telemetry_->updateErrorCount(err_status);
+            }
         }
 
     friend class nixlAgent;
 };
 
 class nixlBackendEngine;
+
 // This class hides away the nixlBackendEngine from user of the Agent API
 class nixlBackendH {
     private:
         nixlBackendEngine* engine;
 
-        nixlBackendH(nixlBackendEngine* &engine) { this->engine = engine; }
-        ~nixlBackendH () {}
+        explicit nixlBackendH(nixlBackendEngine *engine) noexcept : engine(engine) {}
 
     public:
-        nixl_backend_t getType () const { return engine->getType(); }
+        ~nixlBackendH() = default;
 
-        bool supportsRemote () const { return engine->supportsRemote(); }
-        bool supportsLocal  () const { return engine->supportsLocal (); }
-        bool supportsNotif  () const { return engine->supportsNotif (); }
+        // TODO? engine->getType() returns a const nixl_backend_t&
+        nixl_backend_t
+        getType() const noexcept {
+            return engine->getType();
+        }
+
+        bool
+        supportsRemote() const {
+            return engine->supportsRemote();
+        }
+
+        bool
+        supportsLocal() const {
+            return engine->supportsLocal();
+        }
+
+        bool
+        supportsNotif() const {
+            return engine->supportsNotif();
+        }
 
     friend class nixlAgentData;
     friend class nixlAgent;

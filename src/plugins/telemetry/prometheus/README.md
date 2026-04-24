@@ -55,7 +55,7 @@ Default addres is public, but you configure to expose prometheus endpoint only o
 
 ```bash
 export NIXL_TELEMETRY_PROMETHEUS_LOCAL="y"
-# May also use "yes" or "1"
+# Can be set to `y`/`yes`/`on`/`true`/`enable`/`1` to enable local only, and `n`/`no`/`off`/`false`/`disable`/`0` (or not set) to disable. Matching is case insensitive.
 ```
 
 You can alter where to look for plug-in .so files
@@ -69,19 +69,18 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 
 | Event Name | Category | Counter | Gauge | Histogram |
 |------------|----------|---------|-------|-----------|
-| `agent_memory_registered` | `NIXL_TELEMETRY_MEMORY` | Next version | Yes | No |
-| `agent_memory_deregistered` | `NIXL_TELEMETRY_MEMORY` | Next version | Yes | No |
+| `agent_memory_registered` | `NIXL_TELEMETRY_MEMORY` | Yes | Yes | No |
+| `agent_memory_deregistered` | `NIXL_TELEMETRY_MEMORY` | Yes | Yes | No |
 | `agent_tx_bytes` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
 | `agent_rx_bytes` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
 | `agent_tx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
 | `agent_rx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
-| `agent_xfer_time` | `NIXL_TELEMETRY_PERFORMANCE` | Next Version | Yes, will be removed | No |
-| `agent_xfer_post_time` | `NIXL_TELEMETRY_PERFORMANCE` | Next Version | Yes, will be removed | No |
-| Backend-specific events | `NIXL_TELEMETRY_BACKEND` | - | Yes | Future | No |
-| Error status strings | `NIXL_TELEMETRY_ERROR` | No | No | No |
+| `agent_xfer_time` | `NIXL_TELEMETRY_PERFORMANCE` | Yes | No | No |
+| `agent_xfer_post_time` | `NIXL_TELEMETRY_PERFORMANCE` | Yes | No | No |
+| Error event types (`agent_err_*`) | `NIXL_TELEMETRY_ERROR` | No | No | No |
 
 **Counter, Gauge, Histogram** - as implemented by the Prometheus exporter
-- **Counter**: Instance lifetime count of the related value. Summed over the separate events' values.
+- **Counter**: Instance lifetime count of the related value. Summed over the separate events' values. Counter metrics have suffix '_total'
 - **Gauge**: Shows the value per the last event (transaction). E.g agent_memory_registered represents the memory amount registered by the last operation (and not the total memory registered during instance lifetime). The value is updated per each event (request) and can grow or decrease.
 - **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details.
 

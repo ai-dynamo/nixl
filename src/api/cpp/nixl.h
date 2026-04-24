@@ -18,8 +18,8 @@
  * @file nixl.h (NVIDIA Inference Xfer Library)
  * @brief These are NIXL Core APIs for applications
  */
-#ifndef _NIXL_H
-#define _NIXL_H
+#ifndef NIXL_SRC_API_CPP_NIXL_H
+#define NIXL_SRC_API_CPP_NIXL_H
 
 #include "nixl_types.h"
 #include "nixl_params.h"
@@ -34,7 +34,7 @@
 class nixlAgent {
     private:
         /** @var  data  The members in agent class wrapped into single nixlAgentData member. */
-        std::unique_ptr<nixlAgentData> data;
+        const std::unique_ptr<nixlAgentData> data;
 
     public:
         /*** Initialization and Registering Methods ***/
@@ -185,6 +185,18 @@ class nixlAgent {
                        nixlDlistH* &dlist_hndl,
                        const nixl_opt_args_t* extra_params = nullptr) const;
         /**
+         * @brief  Prepare a local descriptor list for transfer requests.
+         *
+         * @param  descs            The descriptor list to be prepared for transfer requests
+         * @param  dlist_hndl [out] The prepared descriptor list handle for this transfer request
+         * @param  extra_params     Optional additional parameters used in preparing dlist handle
+         * @return nixl_status_t    Error code if call was not successful
+         */
+        nixl_status_t
+        prepXferDlist(const nixl_xfer_dlist_t &descs,
+                      nixlDlistH *&dlist_hndl,
+                      const nixl_opt_args_t *extra_params = nullptr) const;
+        /**
          * @brief  Make a transfer request `req_handl` by selecting indices from already
          *         prepared descriptor list handles. NIXL automatically determines the backend
          *         that can perform the transfer. If a list of backends hints is provided
@@ -321,69 +333,10 @@ class nixlAgent {
         releaseXferReq (nixlXferReqH* req_hndl) const;
 
         /**
-         * @brief  Create a GPU transfer request from a transfer request.
-         *
-         * @param  req_hndl     [in]  Transfer request obtained from makeXferReq/createXferReq
-         * @param  gpu_req_hndl [out] GPU transfer request handle
-         * @return nixl_status_t Error code if call was not successful
-         *
-         * @note   This call may block until the associated connection is established.
-         * @note   Requires progress thread to be enabled (enableProgTh=true) when creating the
-         *         backend.
-         */
-        nixl_status_t
-        createGpuXferReq(const nixlXferReqH &req_hndl, nixlGpuXferReqH &gpu_req_hndl) const;
-
-        /**
-         * @brief  Release transfer request from GPU memory
-         *
-         * @param  gpu_req_hndl  [in] GPU transfer request handle to be released
-         */
-        void
-        releaseGpuXferReq(nixlGpuXferReqH gpu_req_hndl) const;
-
-        /**
-         * @brief  Get the size required for a GPU signal.
-         *
-         * This function returns the size required for allocating memory for a GPU signal.
-         * The returned size should be used to allocate memory that will be registered
-         * and used with @ref prepGpuSignal.
-         *
-         * @param  signal_size   [out] Size required for the GPU signal
-         * @param  extra_params  [in] Extra parameters used in getting the size of the GPU signal.
-         *                            The backend must be specified in extra_params.
-         * @return nixl_status_t Error code if call was not successful
-         */
-        nixl_status_t
-        getGpuSignalSize(size_t &signal_size, const nixl_opt_args_t *extra_params) const;
-
-        /**
-         * @brief  Prepare signals for GPU transfer.
-         *
-         * The caller must allocate and register the signal memory before calling this function.
-         * Use @ref getGpuSignalSize to query the required signal size, allocate
-         * the signal accordingly, and register it using @ref registerMem.
-         *
-         * This function supports multiple signals per descriptor. Each descriptor in the
-         * signal_descs list can contain multiple signals. The function calculates
-         * how many signals fit in each descriptor based on the descriptor length
-         * and the signal size, then prepares each signal within every descriptor.
-         *
-         * @param  signal_descs  [in] Registered descriptor list for the signal memory.
-         *                            Each descriptor can contain multiple signals.
-         * @param  extra_params  [in] Extra parameters used in preparing the GPU signal.
-         *                            The backend must be specified in extra_params.
-         * @return nixl_status_t Error code if call was not successful
-         */
-        nixl_status_t
-        prepGpuSignal(const nixl_reg_dlist_t &signal_descs,
-                      const nixl_opt_args_t *extra_params) const;
-
-        /**
          * @brief  Prepare a memory view handle for remote buffers.
          *
          * Prepare a memory view handle @a mvh for the remote memory buffers described by the
-         * descriptor list @a dlist . The handle can be later used to perform a memory transfer
+         * descriptor list @a dlist. The handle can be later used to perform a memory transfer
          * using @ref nixlPut, @ref nixlAtomicAdd. The preparation should be done on the initiator
          * agent. NIXL automatically determines the backend that can perform the preparation. If a
          * list of backends hints is provided (via extra_params), the selection is limited to the
@@ -395,15 +348,15 @@ class nixlAgent {
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        prepMemoryView(const nixl_remote_dlist_t &dlist,
-                       nixlMemoryViewH &mvh,
-                       const nixl_opt_args_t *extra_params = nullptr) const;
+        prepMemView(const nixl_remote_dlist_t &dlist,
+                    nixlMemViewH &mvh,
+                    const nixl_opt_args_t *extra_params = nullptr) const;
 
         /**
          * @brief  Prepare a memory view handle for local buffers.
          *
          * Prepare a memory view handle @a mvh for the local memory buffers described by the
-         * descriptor list @a dlist . The handle can be later used to perform a memory transfer
+         * descriptor list @a dlist. The handle can be later used to perform a memory transfer
          * using @ref nixlPut. The preparation should be done on the initiator agent. NIXL
          * automatically determines the backend that can perform the preparation. If a list of
          * backends hints is provided (via extra_params), the selection is limited to the specified
@@ -415,9 +368,9 @@ class nixlAgent {
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        prepMemoryView(const nixl_xfer_dlist_t &dlist,
-                       nixlMemoryViewH &mvh,
-                       const nixl_opt_args_t *extra_params = nullptr) const;
+        prepMemView(const nixl_local_dlist_t &dlist,
+                    nixlMemViewH &mvh,
+                    const nixl_opt_args_t *extra_params = nullptr) const;
 
         /**
          * @brief  Release a memory view handle.
@@ -425,7 +378,7 @@ class nixlAgent {
          * @param  mvh           [in] Memory view handle to be released
          */
         void
-        releaseMemoryView(nixlMemoryViewH mvh) const;
+        releaseMemView(nixlMemViewH mvh) const;
 
         /**
          * @brief  Release the prepared descriptor list handle `dlist_hndl`

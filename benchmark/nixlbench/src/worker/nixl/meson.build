@@ -18,7 +18,7 @@ nixl_worker_sources = [
   'nixl_worker.h',
 ]
 
-nixl_worker_deps = [openmp_dep, nixl_lib, nixl_build, nixl_serdes, cxxopts_dep, tomlplusplus_dep]
+nixl_worker_deps = [openmp_dep, nixl_lib, nixl_build, nixl_serdes, tomlplusplus_dep]
 if cuda_available
   nixl_worker_deps += [cuda_dep]
 endif
