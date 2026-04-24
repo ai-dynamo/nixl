@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +35,10 @@ endif
 
 if 'OBJ' in static_plugins
     nixl_lib_deps += [ obj_backend_interface ]
+endif
+
+if 'LIBBLKIO' in static_plugins
+    nixl_lib_deps += [ libblkio_backend_interface ]
 endif
 
 disable_gds_backend = get_option('disable_gds_backend')
