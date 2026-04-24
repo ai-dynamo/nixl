@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -163,21 +163,63 @@ def get_lib_deps(lib_path):
 def copytree(src, dst):
     """
     Copy a tree of files from @src directory to @dst directory.
-    Similar to shutil.copytree, but returns a list of all files copied.
+    Deduplicates shared-library files (``.so``) that share the same inode
+    (symlinks/hardlinks to the same underlying file).  For each group of
+    duplicate names only the real (non-symlink) file is kept -- typically the
+    fully-versioned name such as ``libuct_ib.so.0.0.0``.  This prevents the
+    dynamic linker from treating what used to be symlinks as separate
+    libraries (different inodes), which would cause components to be
+    initialised multiple times.  Non-``.so`` files are always copied as-is.
+
     Returns:
-        List of files copied.
+        Tuple of (copied_files, dedup_map):
+        - copied_files: list of absolute destination paths that were copied.
+        - dedup_map: dict mapping removed filenames to the kept filename,
+          e.g. ``{"libuct_ib.so": "libuct_ib.so.0.0.0",
+                  "libuct_ib.so.0": "libuct_ib.so.0.0.0"}``.
     """
     copied_files = []
+    dedup_map = {}
     for root, dirs, files in os.walk(src):
         rel_path = os.path.relpath(root, src)
         dst_dir = os.path.join(dst, rel_path)
         os.makedirs(dst_dir, exist_ok=True)
+
+        inode_groups = {}
         for file in files:
             src_file = os.path.join(root, file)
-            dst_file = os.path.join(dst_dir, file)
-            shutil.copy2(src_file, dst_file)
+
+            if ".so" not in file:
+                dst_file = os.path.join(dst_dir, file)
+                shutil.copy2(src_file, dst_file)
+                copied_files.append(dst_file)
+                continue
+
+            try:
+                stat_info = os.stat(src_file)
+                key = (stat_info.st_dev, stat_info.st_ino)
+            except OSError:
+                dst_file = os.path.join(dst_dir, file)
+                shutil.copy2(src_file, dst_file)
+                copied_files.append(dst_file)
+                continue
+            inode_groups.setdefault(key, []).append(file)
+
+        for _key, group in inode_groups.items():
+            # Prefer the real (non-symlink) file; among equals keep the
+            # longest name (the fully-versioned .so.X.Y.Z form that UCX's
+            # module loader dlopens).
+            group.sort(key=lambda f: (os.path.islink(os.path.join(root, f)), -len(f)))
+            kept = group[0]
+            real_src = os.path.realpath(os.path.join(root, kept))
+            dst_file = os.path.join(dst_dir, kept)
+            shutil.copy2(real_src, dst_file)
             copied_files.append(dst_file)
-    return copied_files
+            for removed in group[1:]:
+                dedup_map[removed] = kept
+                logger.info("Deduplicated symlink: %s -> %s", removed, kept)
+
+    return copied_files, dedup_map
 
 
 def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
@@ -216,7 +258,7 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
 
     pkg_plugins_dir = os.path.join(pkg_libs_dir, install_dirname)
     logger.debug("Copying plugins from %s to %s", sys_plugins_dir, pkg_plugins_dir)
-    copied_files = copytree(sys_plugins_dir, pkg_plugins_dir)
+    copied_files, dedup_map = copytree(sys_plugins_dir, pkg_plugins_dir)
     if not copied_files:
         raise RuntimeError(f"No plugins found in {sys_plugins_dir}")
 
@@ -260,6 +302,21 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
                         or original_deps[libname] is not None
                     ):
                         raise RuntimeError(f"Library {libname} not loaded by {fpath}")
+
+    # Replace inter-plugin DT_NEEDED entries that reference removed symlink
+    # names (e.g. libuct_ib.so.0) with the kept real file name
+    # (e.g. libuct_ib.so.0.0.0).
+    if dedup_map:
+        for fname in copied_files:
+            if os.path.isfile(fname) and ".so" in fname:
+                for old_name, new_name in dedup_map.items():
+                    ret = os.system(
+                        f"patchelf --replace-needed '{old_name}' '{new_name}' {fname}"
+                    )
+                    if ret != 0:
+                        raise RuntimeError(
+                            f"Failed to replace {old_name} with {new_name} in {fname}"
+                        )
 
     create_wheel(wheel_path, temp_dir)
     shutil.rmtree(temp_dir)
