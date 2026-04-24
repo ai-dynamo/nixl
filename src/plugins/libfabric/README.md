@@ -102,11 +102,11 @@ used for DRAM_SEG memory type
 
 The following table summarizes briefly the plugin's runtime configuration:
 
-| Name | Effect | Environment Variable | Values | Examples | Notes |
+| Name | Effect | Configuration Source | Values | Examples | Notes |
 |--|--|--|--|--|--|
-| max_bw_per_dram_seg | Controls the bandwidth limit on DRAM_SEG memory type buffers per NUMA node |NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG | integer | 100, 200 | Units are Gbps (Gigabits per second), auto-computed by PCIe topology, normally does not require user override |
-| num_threads | Enables a thread pool for parallel descriptor posting in postXfer | none | integer | 4, 8 | Default 0 keeps the serial posting path |
-| split_batch_size | Minimum descriptor count before postXfer uses the posting thread pool | none | integer | 1024, 4096 | Only applies when num_threads is greater than 0 |
+| max_bw_per_dram_seg | Controls the bandwidth limit on DRAM_SEG memory type buffers per NUMA node | Backend init param or `NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG` environment variable | integer | 100, 200 | Units are Gbps (Gigabits per second), auto-computed by PCIe topology, normally does not require user override |
+| num_threads | Enables a thread pool for parallel descriptor posting in postXfer | Backend init param | integer | 4, 8 | Default 0 keeps the serial posting path |
+| split_batch_size | Minimum descriptor count before postXfer uses the posting thread pool | Backend init param | integer | 1024, 4096 | Only applies when num_threads is greater than 0 |
 
 ## API Reference
 
