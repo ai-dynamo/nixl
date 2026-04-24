@@ -18,9 +18,8 @@ Custom telemetry exporter plug-ins can be created according to [src/plugins/tele
 ### Event Structure
 
 Each telemetry event contains:
-- **Timestamp**: Microsecond precision timestamp
 - **Category**: Event category for filtering and aggregation
-- **Event Name**: Descriptive name/identifier for the event
+- **Event type**: Descriptive name/identifier for the event
 - **Value**: Numeric value associated with the event
 
 ### Event Categories
@@ -61,7 +60,7 @@ The **Shared Memory Buffer** plug-in, contains the data per transaction event, w
 
 ### Telemetry Details
 
-- Timestamp is done after the operation completion.
+- Producers append events under a mutex, consumers read them in **ring insertion order**.
 - Current design allows silent telemetry loss.
 - Current design does not support selective telemetry(e.g per category). All the telemetry events could be either ON or OFF.
 
@@ -128,14 +127,12 @@ Both readers produce similar formatted output:
 
 ```
 === NIXL Telemetry Event ===
-Timestamp: 2025-01-15 14:30:25.123456
 Category: TRANSFER
 Event: agent_tx_bytes
 Value: 1048576
 ===========================
 
 === NIXL Telemetry Event ===
-Timestamp: 2025-01-15 14:30:25.124567
 Category: MEMORY
 Event: agent_memory_registered
 Value: 4096
