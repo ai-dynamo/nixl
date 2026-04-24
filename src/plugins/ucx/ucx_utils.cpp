@@ -30,7 +30,6 @@
 #include "common/nixl_log.h"
 #include "config.h"
 #include "serdes/serdes.h"
-#include "rkey.h"
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
@@ -269,7 +268,7 @@ nixlUcxEp::read(uint64_t raddr,
         .memh = mem.memh,
     };
 
-    ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr, rkey.get(), &param);
+    const ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = static_cast<nixlUcxReq>(request);
         return NIXL_IN_PROG;
@@ -295,7 +294,7 @@ nixlUcxEp::write(void *laddr,
         .memh = mem.memh,
     };
 
-    ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rkey.get(), &param);
+    const ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = static_cast<nixlUcxReq>(request);
         return NIXL_IN_PROG;

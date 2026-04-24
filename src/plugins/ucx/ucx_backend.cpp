@@ -957,33 +957,41 @@ nixl_status_t nixlUcxEngine::getPublicData (const nixlBackendMD* meta,
     return NIXL_SUCCESS;
 }
 
+namespace {
 
-// To be cleaned up
+[[nodiscard]] std::vector<nixl::ucx::rkey>
+makePublicMetadataRkeys(const ucx_connection_ptr_t &conn, const size_t count, const void *buffer) {
+    std::vector<nixl::ucx::rkey> result;
+    result.reserve(count);
+
+    for (size_t i = 0; i < count; ++i) {
+        result.emplace_back(*conn->getEp(i), buffer);
+    }
+    return result;
+}
+
+} // namespace
+
+nixlUcxPublicMetadata::nixlUcxPublicMetadata(const ucx_connection_ptr_t &conn,
+                                             std::vector<nixl::ucx::rkey> &&rkeys)
+    : nixlBackendMD(false),
+      conn(conn),
+      rkeys_(std::move(rkeys)) {}
+
 nixl_status_t
 nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
                                  const std::string &agent,
                                  nixlBackendMD* &output) {
     try {
-        auto md = std::make_unique<nixlUcxPublicMetadata>();
-        size_t size = blob.size();
-
         const auto it = remoteConnMap.find(agent);
 
         if (it == remoteConnMap.end()) {
             // TODO: err: remote connection not found
             return NIXL_ERR_NOT_FOUND;
         }
-        md->conn = it->second;
-
-        std::vector<char> addr(size);
-        nixlSerDes::_stringToBytes(addr.data(), blob, size);
-
-        for (size_t wid = 0; wid < uws.size(); wid++) {
-            md->addRkey(*md->conn->getEp(wid), addr.data());
-        }
-
-        output = (nixlBackendMD *)md.release();
-
+        // nixlSerDes::_stringToBytes() was used to "unpack" blob here.
+        output = new nixlUcxPublicMetadata(
+            it->second, makePublicMetadataRkeys(search->second, uws.size(), blob.data()));
         return NIXL_SUCCESS;
     }
     catch (const std::runtime_error &e) {
