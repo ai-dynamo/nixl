@@ -30,6 +30,7 @@ fs = import('fs')
 cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
+ucx_device_include_path = get_option('ucx_device_include_path')
 # ETCD
 etcd_inc_path = get_option('etcd_inc_path')
 etcd_lib_path = get_option('etcd_lib_path')
@@ -154,10 +155,34 @@ if cuda_fabric_available
     add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
 endif
 
+ucx_device_cpp_args = []
+ucx_device_cuda_args = []
+ucx_device_override_options = []
+build_nixlbench_kernels = false
+if ucx_device_include_path != ''
+    if not cuda_available
+        warning('Ignoring -Ducx_device_include_path because CUDA is unavailable.')
+    elif nvshmem_available
+        warning('Ignoring -Ducx_device_include_path because NVSHMEM build path is enabled.')
+    else
+        add_languages('cuda', native: false)
+        build_nixlbench_kernels = true
+        ucx_device_cpp_args = ['-I' + ucx_device_include_path]
+        ucx_device_cuda_args = [
+            '-I' + ucx_device_include_path,
+            '-gencode=arch=compute_80,code=sm_80',
+            '-gencode=arch=compute_90,code=sm_90',
+        ]
+        ucx_device_override_options = ['optimization=0']
+        add_project_arguments(ucx_device_cpp_args, language: 'cpp')
+    endif
+endif
+
 # Subprojects
 subdir('src/utils')
 subdir('src/runtime')
 subdir('src/worker')
+subdir('src/kernels')
 
 # Configure header file
 configure_file(
@@ -167,6 +192,7 @@ configure_file(
         'HAVE_NVSHMEM': nvshmem_available ? '1' : '0',
         'HAVE_CUDA': cuda_available ? '1' : '0',
         'HAVE_CUDA_FABRIC': cuda_fabric_available ? '1' : '0',
+        'HAVE_UCX_DEVICE_KERNEL': build_nixlbench_kernels ? '1' : '0',
     },
     install: true,
     install_dir: get_option('includedir') / 'nixlbench'
@@ -179,6 +205,9 @@ if etcd_available
 endif
 if cuda_available
     deps += [cuda_dep]
+endif
+if build_nixlbench_kernels
+    deps += [nixlbench_kernels_dep]
 endif
 if nvshmem_available
     deps += [nvshmem_lib]
@@ -215,6 +244,9 @@ if nvshmem_available
     nvcc_args += ['-L' + meson.current_build_dir() + '/src/runtime']
     nvcc_args += ['-L' + meson.current_build_dir() + '/src/worker']
     nvcc_args += ['-lnixl', '-lnixl_build', '-lserdes', '-lcuda', '-lcudart', '-lnvshmem']
+    if build_nixlbench_kernels
+        nvcc_args += ['-L' + meson.current_build_dir() + '/src/kernels', '-lnixlbench_kernels']
+    endif
     nvcc_args += args
     nvcc_cmd_files = [
                  meson.current_build_dir() + '/src/utils/libutils.a.p/utils.cpp.o',
@@ -240,7 +272,8 @@ if nvshmem_available
         build_by_default: true,
         install: true,
         install_dir: get_option('bindir'),
-        depends: [nixlbench_runtimes, utils_lib, worker_libs])
+        depends: [nixlbench_runtimes, utils_lib, worker_libs] +
+            (build_nixlbench_kernels ? [nixlbench_kernels_lib] : []))
 else
     executable('nixlbench', 'src/main.cpp',
                 include_directories: inc_dir,

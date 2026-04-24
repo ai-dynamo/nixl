@@ -196,6 +196,8 @@ public:
     static std::string gusli_config_file;
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
+    static bool use_device_api;
+    static int device_kernel_block_thread_count;
 
     static int
     parseConfig(int argc, char *argv[]);
@@ -211,6 +213,8 @@ public:
     isStorageBackend();
     static bool
     isObjStorageBackend();
+    static bool
+    isDeviceAPISupported(std::string *reason = nullptr);
 
 protected:
     static int

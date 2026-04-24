@@ -221,6 +221,7 @@ NB_ARG_STRING(gusli_device_security,
               "If empty or fewer than devices, uses 'sec=0x3' as default. "
               "For GUSLI backend, use device_list in format 'id:type:path' where type is F (file) "
               "or K (kernel device).");
+NB_ARG_BOOL(use_device_api, false, "Enable NIXL Device API.");
 
 
 #undef NB_ARG_INT32
@@ -294,6 +295,8 @@ int xferBenchConfig::gusli_max_simultaneous_requests = 0;
 std::string xferBenchConfig::gusli_config_file = "";
 std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
+bool xferBenchConfig::use_device_api = false;
+int xferBenchConfig::device_kernel_block_thread_count = 1;
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -504,6 +507,29 @@ xferBenchConfig::loadParams(void) {
         }
     }
 
+    // nixlbench to support device API
+    use_device_api = NB_ARG(use_device_api);
+    if (use_device_api) {
+        std::string device_api_reason;
+        if (!isDeviceAPISupported(&device_api_reason)) {
+            std::cout << "Invalid configuration for NIXL Device API: " << device_api_reason
+                      << ". Reset use_device_api to false" << std::endl;
+            use_device_api = false;
+        } else {
+            std::cout << "NIXL Device API is enabled, --num-threads used as GPU kernel block "
+                         "thread count with value 1 - 1024"
+                      << std::endl;
+            if (num_threads < 1 || num_threads > 1024) {
+                std::cerr << "Invalid value for --num-threads: " << num_threads
+                          << ". Device API requires a GPU kernel block thread count in [1, 1024]"
+                          << std::endl;
+                return -1;
+            }
+            device_kernel_block_thread_count = num_threads;
+            num_threads = 1;
+        }
+    }
+
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
         if (!((XFERBENCH_SEG_TYPE_VRAM == initiator_seg_type) &&
               (XFERBENCH_SEG_TYPE_VRAM == target_seg_type) && (1 == num_threads) &&
@@ -692,6 +718,10 @@ xferBenchConfig::printConfig() {
             printOption("OOB network interface name for control path (--oob_list=ifface)",
                         gpunetio_oob_list);
         }
+
+        if (backend == XFERBENCH_BACKEND_UCX) {
+            printOption("Use Device API (--use_device_api=[0,1])", std::to_string(use_device_api));
+        }
     }
     printOption("Initiator seg type (--initiator_seg_type=[DRAM,VRAM])", initiator_seg_type);
     printOption("Target seg type (--target_seg_type=[DRAM,VRAM])", target_seg_type);
@@ -710,7 +740,9 @@ xferBenchConfig::printConfig() {
     printOption("Warmup iter (--warmup_iter=N)", std::to_string(warmup_iter));
     printOption("Large block iter factor (--large_blk_iter_ftr=N)",
                 std::to_string(large_blk_iter_ftr));
-    printOption("Num threads (--num_threads=N)", std::to_string(num_threads));
+    printOption("Num threads (--num_threads=N)",
+                use_device_api ? std::to_string(device_kernel_block_thread_count) :
+                                 std::to_string(num_threads));
     printSeparator('-');
     std::cout << std::endl;
 }
@@ -758,6 +790,68 @@ xferBenchConfig::isObjStorageBackend() {
     return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
 };
+
+bool
+xferBenchConfig::isDeviceAPISupported(std::string *reason) {
+#if HAVE_CUDA
+#if !HAVE_UCX_DEVICE_KERNEL
+    if (reason) {
+        *reason = "UCX device kernel support is not enabled in this build. "
+                  "Set -Ducx_device_include_path=<path>";
+    }
+    return false;
+#endif
+    if (xferBenchConfig::worker_type != XFERBENCH_WORKER_NIXL) {
+        if (reason) {
+            *reason = "worker_type must be nixl";
+        }
+        return false;
+    }
+    if (xferBenchConfig::backend != XFERBENCH_BACKEND_UCX) {
+        if (reason) {
+            *reason = "backend must be UCX";
+        }
+        return false;
+    }
+    if (xferBenchConfig::op_type != XFERBENCH_OP_WRITE) {
+        if (reason) {
+            *reason = "op_type must be WRITE";
+        }
+        return false;
+    }
+    if (xferBenchConfig::initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM ||
+        xferBenchConfig::target_seg_type != XFERBENCH_SEG_TYPE_VRAM) {
+        if (reason) {
+            *reason = "initiator_seg_type and target_seg_type must be VRAM";
+        }
+        return false;
+    }
+    if (!xferBenchConfig::enable_pt) {
+        if (reason) {
+            *reason = "--enable_pt must be set";
+        }
+        return false;
+    }
+    if (xferBenchConfig::mode != XFERBENCH_MODE_SG) {
+        if (reason) {
+            *reason = "mode must be SG";
+        }
+        return false;
+    }
+    if (xferBenchConfig::scheme != XFERBENCH_SCHEME_PAIRWISE) {
+        if (reason) {
+            *reason = "scheme must be pairwise";
+        }
+        return false;
+    }
+    return true;
+#else
+    if (reason) {
+        *reason = "CUDA is not available in this build";
+    }
+    return false;
+#endif
+}
 
 /**********
  * xferBench Utils
