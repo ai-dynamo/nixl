@@ -88,7 +88,7 @@ endif
 
 # Check for liburing
 has_io_uring = false
-io_uring_dep = dependency('liburing', required: false, fallback: ['liburing', 'uring'])
+io_uring_dep = dependency('liburing', required: false, fallback: ['liburing'])
 if io_uring_dep.found()
     if io_uring_dep.type_name() == 'internal'
         # From the liburing subproject wrap — pinned version has io_uring_queue_init_params.
