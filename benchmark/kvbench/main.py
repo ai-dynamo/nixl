@@ -135,59 +135,63 @@ def plan_command(model, model_config, model_configs, format, **kwargs):
             model_arch.set_model_config(model_configuration)
 
             separator = "=" * 80
-            isl_nixl_bench = NIXLBench(model_arch, model_configuration, **filtered_args)
+            io_sizes = model_arch.get_io_sizes(model_configuration.system.page_size)
 
-            io_size = model_arch.get_io_size(model_configuration.system.page_size)
-            batch_size = get_batch_size(model_arch, model_configuration, io_size)
-            isl_nixl_bench.set_io_size(io_size)
-            isl_nixl_bench.set_batch_size(batch_size)
+            for layer_class, io_size in io_sizes.items():
+                isl_nixl_bench = NIXLBench(model_arch, model_configuration, **filtered_args)
+                batch_size = get_batch_size(model_arch, model_configuration, io_size)
+                isl_nixl_bench.set_io_size(io_size)
+                isl_nixl_bench.set_batch_size(batch_size)
 
-            isl_nixl_bench.configure_scheme(direction="isl")
-            isl_nixl_bench.configure_segment_type(
-                kwargs.get("backend"), kwargs.get("source"), kwargs.get("destination")
-            )
+                isl_nixl_bench.configure_scheme(direction="isl")
+                isl_nixl_bench.configure_segment_type(
+                    kwargs.get("backend"), kwargs.get("source"), kwargs.get("destination")
+                )
 
-            # Generate plan
-            plan = isl_nixl_bench.plan(format=format)
+                # Generate plan
+                plan = isl_nixl_bench.plan(format=format)
 
-            # For JSON format, add config filename to the output
-            if format == "json":
-                plan_with_config = plan.copy() if isinstance(plan, dict) else {}
-                plan_with_config["config_file"] = config_file
-                all_plans.append(plan_with_config)
-            elif format == "csv":
-                plan_data = plan
-                # Add metadata
-                plan_data["config_file"] = config_file
-                plan_data["model"] = model_arch.to_dict().get("model")
+                # For JSON format, add config filename to the output
+                if format == "json":
+                    plan_with_config = plan.copy() if isinstance(plan, dict) else {}
+                    plan_with_config["config_file"] = config_file
+                    plan_with_config["layer_class"] = layer_class
+                    all_plans.append(plan_with_config)
+                elif format == "csv":
+                    plan_data = plan
+                    # Add metadata
+                    plan_data["config_file"] = config_file
+                    plan_data["layer_class"] = layer_class
+                    plan_data["model"] = model_arch.to_dict().get("model")
 
-                # Add all model_config parameters with proper prefixes
-                model_config_dict = model_configuration.to_dict()
+                    # Add all model_config parameters with proper prefixes
+                    model_config_dict = model_configuration.to_dict()
 
-                # Add strategy parameters
-                for key, value in model_config_dict.get("strategy", {}).items():
-                    plan_data[f"model_strategy_{key}"] = value
+                    # Add strategy parameters
+                    for key, value in model_config_dict.get("strategy", {}).items():
+                        plan_data[f"model_strategy_{key}"] = value
 
-                # Add runtime parameters
-                for key, value in model_config_dict.get("runtime", {}).items():
-                    plan_data[f"model_runtime_{key}"] = value
+                    # Add runtime parameters
+                    for key, value in model_config_dict.get("runtime", {}).items():
+                        plan_data[f"model_runtime_{key}"] = value
 
-                # Add system parameters
-                for key, value in model_config_dict.get("system", {}).items():
-                    plan_data[f"model_system_{key}"] = value
+                    # Add system parameters
+                    for key, value in model_config_dict.get("system", {}).items():
+                        plan_data[f"model_system_{key}"] = value
 
-                all_plans.append(plan_data)
-            else:
-                click.echo(separator)
-                click.echo(f"Model Config: {config_file}")
-                click.echo(f"ISL: {model_configuration.runtime.isl} tokens")
-                click.echo(f"Page Size: {model_configuration.system.page_size}")
-                click.echo(f"Requests: {model_configuration.runtime.num_requests}")
-                click.echo(f"TP: {model_configuration.model.tp_size}")
-                click.echo(f"PP: {model_configuration.model.pp_size}")
-                click.echo(separator)
-                click.echo(plan)
-                click.echo()
+                    all_plans.append(plan_data)
+                else:
+                    click.echo(separator)
+                    click.echo(f"Model Config: {config_file}")
+                    click.echo(f"Layer Class: {layer_class}")
+                    click.echo(f"ISL: {model_configuration.runtime.isl} tokens")
+                    click.echo(f"Page Size: {model_configuration.system.page_size}")
+                    click.echo(f"Requests: {model_configuration.runtime.num_requests}")
+                    click.echo(f"TP: {model_configuration.model.tp_size}")
+                    click.echo(f"PP: {model_configuration.model.pp_size}")
+                    click.echo(separator)
+                    click.echo(plan)
+                    click.echo()
         except Exception as e:
             click.echo(f"Error processing config file {config_file}: {str(e)}")
             errors.append((config_file, e))
@@ -238,27 +242,31 @@ def profile_command(model, model_config, **kwargs):
     filtered_args = {
         k: v for k, v in kwargs.items() if k in NIXLBench.defaults() and v is not None
     }
-    nixl_bench = NIXLBench(model_arch, model_configuration, **filtered_args)
-    io_size = model_arch.get_io_size(model_configuration.system.page_size)
-    batch_size = get_batch_size(model_arch, model_configuration, io_size)
-    nixl_bench.set_io_size(io_size)
-    nixl_bench.set_batch_size(batch_size)
-    nixl_bench.configure_buffer_size()
-
-    nixl_bench.configure_scheme(direction="isl")
-    nixl_bench.configure_segment_type(
-        kwargs.get("backend"), kwargs.get("source"), kwargs.get("destination")
-    )
+    io_sizes = model_arch.get_io_sizes(model_configuration.system.page_size)
     separator = "=" * 80
 
-    click.echo(f"Model Config: {model_config}")
-    click.echo(f"ISL: {model_configuration.runtime.isl} tokens")
-    click.echo(f"Page Size: {model_configuration.system.page_size}")
-    click.echo(f"Requests: {model_configuration.runtime.num_requests}")
-    click.echo(f"TP: {model_configuration.model.tp_size}")
-    click.echo(f"PP: {model_configuration.model.pp_size}")
-    click.echo(separator)
-    nixl_bench.profile()
+    for layer_class, io_size in io_sizes.items():
+        nixl_bench = NIXLBench(model_arch, model_configuration, **filtered_args)
+        batch_size = get_batch_size(model_arch, model_configuration, io_size)
+        nixl_bench.set_io_size(io_size)
+        nixl_bench.set_batch_size(batch_size)
+        nixl_bench.configure_buffer_size()
+
+        nixl_bench.configure_scheme(direction="isl")
+        nixl_bench.configure_segment_type(
+            kwargs.get("backend"), kwargs.get("source"), kwargs.get("destination")
+        )
+
+        click.echo(separator)
+        click.echo(f"Model Config: {model_config}")
+        click.echo(f"Layer Class: {layer_class}")
+        click.echo(f"ISL: {model_configuration.runtime.isl} tokens")
+        click.echo(f"Page Size: {model_configuration.system.page_size}")
+        click.echo(f"Requests: {model_configuration.runtime.num_requests}")
+        click.echo(f"TP: {model_configuration.model.tp_size}")
+        click.echo(f"PP: {model_configuration.model.pp_size}")
+        click.echo(separator)
+        nixl_bench.profile()
 
 
 @cli.command("kvcache")
@@ -287,6 +295,7 @@ def kvcache_command(model, model_config, **kwargs):
 
     labels = [
         "Model",
+        "Layer Class",
         "ISL",
         "Num Requests",
         "Batch Size",
@@ -296,23 +305,35 @@ def kvcache_command(model, model_config, **kwargs):
         "Page Size",
         "Access",
     ]
-    io_size = model_arch.get_io_size(model_configuration.system.page_size)
-    batch_size = get_batch_size(model_arch, model_configuration, io_size)
+    io_sizes = model_arch.get_io_sizes(model_configuration.system.page_size)
 
-    data = [
-        [
-            model_arch.model_name,
-            model_configuration.runtime.isl,
-            model_configuration.runtime.num_requests,
-            batch_size,
-            format_bytes(io_size),
-            model_configuration.model.tp_size,
-            model_configuration.model.pp_size,
-            model_configuration.system.page_size,
-            model_configuration.system.access_pattern,
-        ]
-    ]
+    data = []
+    for label, io_size in io_sizes.items():
+        batch_size = get_batch_size(model_arch, model_configuration, io_size)
+        data.append(
+            [
+                model_arch.model_name,
+                label,
+                model_configuration.runtime.isl,
+                model_configuration.runtime.num_requests,
+                batch_size,
+                format_bytes(io_size),
+                model_configuration.model.tp_size,
+                model_configuration.model.pp_size,
+                model_configuration.system.page_size,
+                model_configuration.system.access_pattern,
+            ]
+        )
     click.echo(tabulate(data, headers=labels, floatfmt=".6f"))
+
+    # Surface the aggregate cache size at the configured ISL for models that
+    # support heterogeneous per-layer caches (e.g. V4 hybrid attention).
+    if hasattr(model_arch, "get_total_kv_bytes"):
+        total = model_arch.get_total_kv_bytes(model_configuration.runtime.isl)
+        click.echo(
+            f"\nTotal KV cache @ ISL = {model_configuration.runtime.isl:,} tokens: "
+            f"{format_bytes(total)}"
+        )
 
 
 @cli.command("sequential-ct-perftest")
