@@ -35,7 +35,7 @@ public:
     // - setExecutor()
     // - putObjectAsync()
     // - getObjectAsync()
-    // - checkObjectExists()
+    // - checkObjectExistsAsync()
     //
     // Vendor clients can override these methods for custom behavior.
 };
