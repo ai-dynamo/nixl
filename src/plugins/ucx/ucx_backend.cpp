@@ -42,6 +42,7 @@ private:
     nixlUcxWorker *worker_;
     size_t workerId_;
 
+public:
     // Notification to be sent after completion of all requests
     struct Notif {
         std::string agent;
@@ -64,7 +65,6 @@ private:
         return status;
     }
 
-public:
     std::optional<Notif> notif;
 
     nixlUcxBackendReqH(nixlUcxWorker *worker, size_t worker_id)
@@ -1098,8 +1098,8 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
                                                nixl_cost_t &method,
                                                const nixl_opt_args_t* opt_args) const
 {
-    nixlUcxBackendReqH *intHandle = (nixlUcxBackendReqH *)handle;
-    size_t workerId = intHandle->getWorkerId();
+    nixlUcxBackendReqH *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    const size_t worker_id = int_handle->getWorkerId();
 
     if (local.descCount() != remote.descCount()) {
         NIXL_ERROR << "Local (" << local.descCount() << ") and remote (" << remote.descCount()
@@ -1130,7 +1130,7 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
         std::chrono::microseconds msg_duration;
         std::chrono::microseconds msg_err_margin;
         nixl_cost_t msg_method;
-        nixl_status_t ret = rmd->conn->getEp(workerId)->estimateCost(lsize, msg_duration, msg_err_margin, msg_method);
+        nixl_status_t ret = rmd->conn->getEp(worker_id)->estimateCost(lsize, msg_duration, msg_err_margin, msg_method);
         if (ret != NIXL_SUCCESS) {
             NIXL_ERROR << "Worker failed to estimate cost for segment " << i << " status: " << ret;
             return ret;
@@ -1202,8 +1202,8 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
                              nixlBackendReqH *handle,
                              size_t start_idx,
                              size_t end_idx) const {
-    nixlUcxBackendReqH *intHandle = (nixlUcxBackendReqH *)handle;
-    size_t workerId = intHandle->getWorkerId();
+    nixlUcxBackendReqH *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    const size_t worker_id = int_handle->getWorkerId();
     nixl_status_t ret;
 
     if (operation != NIXL_WRITE && operation != NIXL_READ) {
@@ -1212,16 +1212,16 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     /* Assuming we have a single EP, we need 3 requests: one pending request,
      * one flush request, and one notification request */
-    intHandle->reserve(3);
+    int_handle->reserve(3);
 
     for (size_t i = start_idx; i < end_idx;) {
         /* Send requests to a single EP */
         auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
-        auto &ep = rmd->conn->getEp(workerId);
-        auto result = sendXferRangeBatch(*ep, operation, local, remote, workerId, i, end_idx);
+        auto &ep = rmd->conn->getEp(worker_id);
+        auto result = sendXferRangeBatch(*ep, operation, local, remote, worker_id, i, end_idx);
 
         /* Append a single pending request for the entire EP batch */
-        ret = intHandle->append(result.status, result.req, rmd->conn);
+        ret = int_handle->append(result.status, result.req, rmd->conn);
         if (ret != NIXL_SUCCESS) {
             return ret;
         }
@@ -1230,15 +1230,15 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
     }
 
     /*
-     * Flush keeps intHandle non-empty until the operation is actually
+     * Flush keeps int_handle non-empty until the operation is actually
      * completed, which can happen after local requests completion.
      * We need to flush all distinct connections to ensure that the operation
      * is actually completed.
      */
-    for (auto &conn : intHandle->getConnections()) {
+    for (auto &conn : int_handle->getConnections()) {
         nixlUcxReq req;
-        ret = conn->getEp(workerId)->flushEp(req);
-        if (intHandle->append(ret, req, conn) != NIXL_SUCCESS) {
+        ret = conn->getEp(worker_id)->flushEp(req);
+        if (int_handle->append(ret, req, conn) != NIXL_SUCCESS) {
             return ret;
         }
     }
@@ -1295,9 +1295,9 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
-    nixlUcxBackendReqH *intHandle = (nixlUcxBackendReqH *)handle;
-    auto &notif = intHandle->notif;
-    nixl_status_t handle_status = intHandle->status();
+    nixlUcxBackendReqH *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    auto &notif = int_handle->notif;
+    const nixl_status_t handle_status = int_handle->status();
 
     if ((handle_status != NIXL_SUCCESS) || !notif.has_value()) {
         if (handle_status != NIXL_IN_PROG) { // error flow
@@ -1315,23 +1315,23 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 
     nixlUcxReq req;
     nixl_status_t status =
-        notifSendPriv(notif->agent, notif->payload, conn->getEp(intHandle->getWorkerId()), &req);
+        notifSendPriv(notif->agent, notif->payload, conn->getEp(int_handle->getWorkerId()), &req);
     notif.reset();
 
-    if (intHandle->append(status, req, conn) != NIXL_SUCCESS) {
+    if (int_handle->append(status, req, conn) != NIXL_SUCCESS) {
         return status;
     }
 
-    return intHandle->status();
+    return int_handle->status();
 }
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
-    nixlUcxBackendReqH *intHandle = (nixlUcxBackendReqH *)handle;
-    nixl_status_t status = intHandle->release();
+    nixlUcxBackendReqH *int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    const nixl_status_t status = int_handle->release();
 
     /* TODO: return to a pool instead. */
-    delete intHandle;
+    delete int_handle;
 
     return status;
 }
