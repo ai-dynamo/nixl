@@ -991,7 +991,7 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
         }
         // nixlSerDes::_stringToBytes() was used to "unpack" blob here.
         output = new nixlUcxPublicMetadata(
-            it->second, makePublicMetadataRkeys(search->second, uws.size(), blob.data()));
+            it->second, makePublicMetadataRkeys(it->second, uws.size(), blob.data()));
         return NIXL_SUCCESS;
     }
     catch (const std::runtime_error &e) {
