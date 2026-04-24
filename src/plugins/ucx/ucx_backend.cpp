@@ -53,6 +53,8 @@ public:
               payload(msg) {}
     };
 
+    std::optional<Notif> notif;
+
     [[nodiscard]] nixl_status_t
     checkConnection(nixl_status_t status = NIXL_SUCCESS) const {
         NIXL_ASSERT(!connections_.empty());
@@ -64,8 +66,6 @@ public:
         }
         return status;
     }
-
-    std::optional<Notif> notif;
 
     nixlUcxBackendReqH(nixlUcxWorker *worker, size_t worker_id)
         : worker_(worker),
