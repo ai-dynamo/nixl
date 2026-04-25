@@ -867,12 +867,16 @@ class Buffer:
                 with self._fetch_remote_metadata_from_tcp_store(
                     remote_ranks
                 ) as remote_mds:
-                    self.runtime.connect_ranks(remote_ranks, remote_mds, activate=activate)
+                    self.runtime.connect_ranks(
+                        remote_ranks, remote_mds, activate=activate
+                    )
             else:
                 self.runtime.connect_ranks(remote_ranks, activate=activate)
         else:
             if not activate:
-                raise ValueError("connect_ranks(activate=False) is only supported in low-latency mode")
+                raise ValueError(
+                    "connect_ranks(activate=False) is only supported in low-latency mode"
+                )
             self._ht_connect_ranks(remote_ranks)
 
     def disconnect_ranks(self, remote_ranks: List[int]) -> None:
