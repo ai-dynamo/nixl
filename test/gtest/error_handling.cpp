@@ -23,8 +23,15 @@
 
 namespace gtest {
 namespace nixl {
-    constexpr const char* ucx_err_handling_mode_key  = "ucx_error_handling_mode";
-    constexpr const char* ucx_err_handling_mode_peer = "peer";
+    constexpr const char *ucx_err_handling_mode_key = "ucx_error_handling_mode";
+    constexpr const char *ucx_err_handling_mode_peer = "peer";
+    constexpr const char *ucx_vram_memtype_hint_key = "ucx_vram_memtype_hint";
+    constexpr const char *ucx_vram_memtype_hint_auto = "auto";
+
+    void
+    setUcxPluginDir(ScopedEnv &env) {
+        env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
+    }
 
     static nixlBackendH *
     createUcxBackend(nixlAgent &agent,
@@ -44,6 +51,7 @@ namespace nixl {
 
         nixlBackendH* backend_handle = nullptr;
         EXPECT_EQ(ucx_err_handling_mode_peer, params[ucx_err_handling_mode_key]);
+        EXPECT_EQ(ucx_vram_memtype_hint_auto, params[ucx_vram_memtype_hint_key]);
         params["num_workers"] = std::to_string(num_workers);
         params["num_threads"] = std::to_string(num_threads);
         // If threadpool is configured always force split
@@ -256,7 +264,7 @@ TestErrorHandling::TestErrorHandling()
     m_env.addVar("UCX_RC_TIMEOUT", "100us");
     m_env.addVar("UCX_RC_RETRY_COUNT", "4");
     m_env.addVar("UCX_UD_TIMEOUT", "3s");
-    m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
+    nixl::setUcxPluginDir(m_env);
 }
 
 template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
@@ -433,6 +441,117 @@ TEST_P(TestErrorHandling, XferFailRestore) {
 TEST_P(TestErrorHandling, XferPostThenFail) {
     testXfer<TestType::FAIL_AFTER_POST, NIXL_WRITE>();
     testXfer<TestType::FAIL_AFTER_POST, NIXL_READ>();
+}
+
+TEST(UcxBackendParams, ExposesVramMemtypeHintDefault) {
+    ScopedEnv env;
+    nixl::setUcxPluginDir(env);
+
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
+    nixlAgent agent("ucx_param_defaults", cfg);
+
+    std::vector<nixl_backend_t> plugins;
+    ASSERT_EQ(NIXL_SUCCESS, agent.getAvailPlugins(plugins));
+    auto it = std::find(plugins.begin(), plugins.end(), "UCX");
+    if (it == plugins.end()) {
+        GTEST_SKIP() << "UCX plugin not available";
+    }
+
+    nixl_mem_list_t mems;
+    nixl_b_params_t params;
+    ASSERT_EQ(NIXL_SUCCESS, agent.getPluginParams(*it, mems, params));
+    ASSERT_TRUE(params.find(nixl::ucx_vram_memtype_hint_key) != params.end());
+    EXPECT_EQ(nixl::ucx_vram_memtype_hint_auto, params[nixl::ucx_vram_memtype_hint_key]);
+}
+
+TEST(UcxBackendParams, RejectsCaseMismatchedVramHint) {
+    ScopedEnv env;
+    nixl::setUcxPluginDir(env);
+
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
+    nixlAgent agent("ucx_param_invalid_case", cfg);
+
+    std::vector<nixl_backend_t> plugins;
+    ASSERT_EQ(NIXL_SUCCESS, agent.getAvailPlugins(plugins));
+    auto it = std::find(plugins.begin(), plugins.end(), "UCX");
+    if (it == plugins.end()) {
+        GTEST_SKIP() << "UCX plugin not available";
+    }
+
+    nixl_mem_list_t mems;
+    nixl_b_params_t params;
+    ASSERT_EQ(NIXL_SUCCESS, agent.getPluginParams(*it, mems, params));
+    params[nixl::ucx_vram_memtype_hint_key] = "CUDA";
+
+    const LogIgnoreGuard lig_expected_engine_failure(
+        "Failed to create engine: Invalid VRAM memtype hint mode: .*");
+    const LogIgnoreGuard lig_expected_backend_failure(
+        "backend (creation failed|initialization error) for 'UCX'");
+    nixlBackendH *backend = nullptr;
+    EXPECT_NE(NIXL_SUCCESS, agent.createBackend(*it, params, backend));
+    EXPECT_EQ(nullptr, backend);
+}
+
+TEST(UcxBackendParams, RejectsUnsupportedExplicitVramHintAtRuntime) {
+    ScopedEnv env;
+    nixl::setUcxPluginDir(env);
+
+    constexpr const char *explicit_hints[] = {"cuda", "cuda-managed", "rocm", "ze-device"};
+    bool found_expected_runtime_failure = false;
+
+    for (const auto *hint : explicit_hints) {
+        nixlAgentConfig cfg;
+        cfg.useProgThread = true;
+        nixlAgent agent(std::string("ucx_param_runtime_hint_") + hint, cfg);
+
+        std::vector<nixl_backend_t> plugins;
+        ASSERT_EQ(NIXL_SUCCESS, agent.getAvailPlugins(plugins));
+        auto it = std::find(plugins.begin(), plugins.end(), "UCX");
+        if (it == plugins.end()) {
+            GTEST_SKIP() << "UCX plugin not available";
+        }
+
+        nixl_mem_list_t mems;
+        nixl_b_params_t params;
+        ASSERT_EQ(NIXL_SUCCESS, agent.getPluginParams(*it, mems, params));
+        params[nixl::ucx_vram_memtype_hint_key] = hint;
+
+        const LogIgnoreGuard lig_expected_runtime_unsupported(
+            "Failed to create engine: Configured VRAM memtype hint '.*' is not supported by "
+            "current UCX context");
+        const LogIgnoreGuard lig_expected_runtime_query_failure(
+            "Failed to create engine: Failed to query UCX context memory types: .*");
+        const LogIgnoreGuard lig_expected_backend_failure(
+            "backend (creation failed|initialization error) for 'UCX'");
+
+        nixlBackendH *backend = nullptr;
+        const auto status = agent.createBackend(*it, params, backend);
+        if (status == NIXL_SUCCESS) {
+            ASSERT_NE(nullptr, backend) << "Successful createBackend returned null handle";
+            // Loop-local agent owns backend and cleans it up on iteration exit.
+            continue;
+        }
+
+        const bool saw_runtime_unsupported = lig_expected_runtime_unsupported.getIgnoredCount() > 0;
+        const bool saw_runtime_query_failure =
+            lig_expected_runtime_query_failure.getIgnoredCount() > 0;
+        ASSERT_EQ(nullptr, backend)
+            << "createBackend() failed for hint '" << hint << "' but returned a non-null backend";
+        ASSERT_TRUE(saw_runtime_unsupported || saw_runtime_query_failure)
+            << "createBackend() failed for hint '" << hint
+            << "' without expected runtime failure path. " << "backend=" << backend
+            << ", saw_unsupported=" << saw_runtime_unsupported
+            << ", saw_query_failure=" << saw_runtime_query_failure;
+        found_expected_runtime_failure = true;
+        break;
+    }
+
+    if (!found_expected_runtime_failure) {
+        GTEST_SKIP()
+            << "No explicit hint exercised an expected runtime failure path on this system";
+    }
 }
 
 INSTANTIATE_TEST_SUITE_P(ucx, TestErrorHandling, testing::Values(std::make_tuple("UCX", 1, 0)));
