@@ -130,7 +130,7 @@ using nixl_notifs_t = std::unordered_map<std::string, std::vector<nixl_blob_t>>;
 /**
  * @brief A constant to define the default communication port.
  */
-constexpr int default_comm_port = 8888;
+inline constexpr uint16_t default_comm_port = 8888;
 
 /**
  * @brief A constant to define the default metadata label for ETCD server key.
