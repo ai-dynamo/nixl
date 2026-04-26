@@ -632,6 +632,20 @@ class nixl_agent:
         else:
             return "ERR"
 
+    def parallel_transfer(self, handles: list, num_threads: int = 0):
+        """Submit multiple transfer handles in parallel using C++ threads.
+
+        Each handle is submitted and polled to completion from a separate
+        OS thread, bypassing Python GIL. This matches nixlbench's OpenMP
+        pattern for maximum storage throughput.
+
+        Args:
+            handles: List of nixl_xfer_handle objects
+            num_threads: Number of threads (0 = one per handle)
+        """
+        raw_handles = [h._handle if hasattr(h, '_handle') else h for h in handles]
+        self.agent.parallelPostXferReqs(raw_handles, num_threads)
+
     """
     @brief Get telemetry information of a transfer request.
            The output object has three time values fields in microseconds
