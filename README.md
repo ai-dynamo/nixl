@@ -60,14 +60,14 @@ This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend
 
 ### UCX
 
-NIXL was tested with UCX version 1.20.x.
+NIXL was tested with UCX version 1.21.x.
 
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
 $ git clone https://github.com/openucx/ucx.git
 $ cd ucx
-$ git checkout v1.20.x
+$ git checkout v1.21.x
 $ ./autogen.sh
 $ ./contrib/configure-release-mt       \
     --enable-shared                    \
