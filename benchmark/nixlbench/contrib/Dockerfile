@@ -83,7 +83,9 @@ RUN if [ "${MAKE_EFA}" = "true" ]; then \
         https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_VERSION}.tar.gz && \
       tar -xf aws-efa-installer-${EFA_VERSION}.tar.gz && \
       cd aws-efa-installer && \
+      apt-get update -y && \
       ./efa_installer.sh -y --skip-kmod --skip-limit-conf --no-verify && \
+      cd /tmp && \
       rm -rf /tmp/efa && \
       cp /opt/amazon/efa/lib/pkgconfig/libfabric.pc /usr/lib/pkgconfig/libfabric.pc && \
       ldconfig; \
