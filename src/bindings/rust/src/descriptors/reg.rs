@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -210,13 +210,8 @@ impl<'a> RegDescList<'a> {
     pub fn add_storage_desc(&mut self, desc: &'a dyn NixlDescriptor) -> Result<(), NixlError> {
         // Validate memory type matches
         let desc_mem_type = desc.mem_type();
-        let list_mem_type = if self.len()? > 0 {
-            self.get_type()?
-        } else {
-            desc_mem_type
-        };
-
-        if desc_mem_type != list_mem_type && list_mem_type != MemType::Unknown {
+        let list_mem_type = self.get_type()?;
+        if list_mem_type != MemType::Unknown && desc_mem_type != list_mem_type {
             return Err(NixlError::InvalidParam);
         }
 
@@ -225,9 +220,57 @@ impl<'a> RegDescList<'a> {
         let len = desc.size();
         let dev_id = desc.device_id();
 
-        // Add to list
+        // Add to list without metadata
         self.add_desc(addr, len, dev_id);
         Ok(())
+    }
+
+    /// Add a descriptor with explicitly provided metadata.
+    ///
+    /// Preferred over [`add_storage_desc_with_metadata`] because metadata is provided
+    /// separately from the descriptor — a descriptor (e.g., a `BlockId` in a Layout)
+    /// may have no concept of its own metadata; only the owning object does.
+    ///
+    /// # Safety
+    /// The caller must ensure that:
+    /// - The descriptor remains valid for the lifetime of the list
+    /// - The memory region pointed to by the descriptor remains valid
+    pub fn add_descriptor_with_metadata(
+        &mut self,
+        desc: &'a dyn NixlDescriptor,
+        metadata: Option<&[u8]>,
+    ) -> Result<(), NixlError> {
+        let desc_mem_type = desc.mem_type();
+        let list_mem_type = self.get_type()?;
+        if list_mem_type != MemType::Unknown && desc_mem_type != list_mem_type {
+            return Err(NixlError::InvalidParam);
+        }
+
+        let addr = unsafe { desc.as_ptr() } as usize;
+        let len = desc.size();
+        let dev_id = desc.device_id();
+
+        self.add_desc_with_meta(addr, len, dev_id, metadata.unwrap_or(&[]));
+        Ok(())
+    }
+
+    /// Add a descriptor using metadata from the descriptor's own [`NixlDescriptor::metadata`].
+    ///
+    /// Convenience wrapper for the common case where the descriptor does carry its
+    /// metadata. For cases where metadata lives outside the descriptor (e.g., a bare
+    /// `BlockId`), use [`add_descriptor_with_metadata`] instead and pass metadata
+    /// explicitly.
+    ///
+    /// # Safety
+    /// The caller must ensure that:
+    /// - The descriptor remains valid for the lifetime of the list
+    /// - The memory region pointed to by the descriptor remains valid
+    pub fn add_storage_desc_with_metadata(
+        &mut self,
+        desc: &'a dyn NixlDescriptor,
+    ) -> Result<(), NixlError> {
+        let metadata = desc.metadata();
+        self.add_descriptor_with_metadata(desc, metadata.as_deref())
     }
 
     pub(crate) fn handle(&self) -> *mut bindings::nixl_capi_reg_dlist_s {
