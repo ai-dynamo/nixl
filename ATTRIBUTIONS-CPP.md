@@ -1695,7 +1695,7 @@ This file contains the copying permission notices for various files in the
   72 requirements of the license of GCC.
   73
   ```
-## ucx - 1.20.x
+## ucx - 1.21.x
 
 - **Repository URL**: https://github.com/openucx/ucx/
 - **License URL**: https://github.com/openucx/ucx/blob/master/LICENSE
