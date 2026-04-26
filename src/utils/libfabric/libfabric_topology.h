@@ -238,6 +238,15 @@ public:
     static const uint16_t INVALID_NUMA_NODE_ID = UINT16_MAX;
 
     /**
+     * @brief Queries whether there is any NIC with PCIe info.
+     * @param[out] device_found Upon successful execution, returns whether a device with PCIe bus
+     * details was found.
+     * @return The operation's result.
+     */
+    nixl_status_t
+    hasPcieDevices(bool &device_found) const;
+
+    /**
      * @brief Retrieves the NUMA node id with which the given EFA device is associated.
      * @param efa_device The EFA device for which its associated NUMA node is to be retrieved.
      * @return The NUMA node id or @ref INVALID_NUMA_NODE_ID if failed.

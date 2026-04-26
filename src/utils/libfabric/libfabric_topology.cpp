@@ -195,6 +195,49 @@ nixlLibfabricTopology::isValidDevice(const std::string &efa_device) const {
     return std::find(all_devices.begin(), all_devices.end(), efa_device) != all_devices.end();
 }
 
+nixl_status_t
+nixlLibfabricTopology::hasPcieDevices(bool &device_found) const {
+    // try to find device info with PCIe addresses from libfabric
+    struct fi_info *hints, *info;
+
+    hints = fi_allocinfo();
+    if (!hints) {
+        NIXL_ERROR << "Failed to allocate fi_info for PCIe device search";
+        return NIXL_ERR_BACKEND;
+    }
+
+    // Configure hints for the discovered provider
+    hints->fabric_attr->prov_name = strdup(provider_name.c_str());
+
+    int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
+    if (ret) {
+        NIXL_ERROR << "fi_getinfo failed for PCIe device search with provider " << provider_name
+                   << ": " << fi_strerror(-ret);
+        fi_freeinfo(hints);
+        return NIXL_ERR_BACKEND;
+    }
+
+    device_found = false;
+    for (struct fi_info *cur = info; cur; cur = cur->next) {
+        if (cur->domain_attr && cur->domain_attr->name && cur->nic && cur->nic->bus_attr &&
+            cur->nic->bus_attr->bus_type == FI_BUS_PCI &&
+            cur->nic->bus_attr->attr.pci.domain_id != FI_ADDR_UNSPEC) {
+            // this is enough, we have bus_attr with type FI_BUS_PCI and the domain id is valid
+            device_found = true;
+            break;
+        }
+    }
+
+    fi_freeinfo(info);
+    fi_freeinfo(hints);
+    if (device_found) {
+        NIXL_TRACE << "Found at least one NIC with PCIe bus info";
+    } else {
+        NIXL_TRACE << "Did not find any NIC device with PCIe info";
+    }
+    return NIXL_SUCCESS;
+}
+
 uint16_t
 nixlLibfabricTopology::getDeviceNumaNode(const std::string &efa_device) const {
     int device_numa_node = -1;

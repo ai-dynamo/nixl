@@ -249,58 +249,84 @@ nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
     // NOTE: in non-uniform topology, the selection policy should have been per NUMA node, but that
     // is not a use case we relate to for now
 
-    // get bandwidth/rail limit from user or compute it, then select policy
-    size_t max_bw = 0;
-    size_t max_rails = 0;
-    size_t recommended_rails = 0;
-    size_t nic_speed = topology->getAvgNicBandwidth();
-    if (!getDramRailLimit(custom_params, max_bw, max_rails, recommended_rails) || max_rails == 0) {
-        // had some error in deducing rail count, so just use default policy
-        NIXL_WARN << "Using default (all) rail selection policy for DRAM memory type due to "
-                     "previous errors";
-        dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
-    } else if (topology->getAllDevices().size() == 1) {
-        // system has only 1 EFA, so use default policy (don't issue warning)
-        dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
-    }
-    // NOTE: from this point onward we regard only rails that are attached to a PCIe switch because
-    // these are the only ones that matter for avoiding PCIe congestion (the instance types we deal
-    // with have either all rails connected to PCIe switches, or have only one EFA that is either
-    // not attached to a NUMA node, as in C-series, or not attached to a PCIe switch, as in
-    // G-series), so we test rail count against topology->getTotalNicCount() (which represents the
-    // total number of "usable" rails, i.e. that are attached to a PCIe switch) and not against
-    // topology->getAllDevices().size()
-    else if (max_rails < topology->getTotalNicCount()) {
-        // bandwidth does not exceed total machine capacity, so use NUMA-aware rail selection policy
-        NIXL_INFO << "DRAM rail selection policy: numa-aware (max_rails=" << max_rails << ")";
-        size_t numa_rail_count = topology->getNumaRailCount(); // NOTE: averaged if non-uniform
-        if (max_rails > numa_rail_count) {
-            size_t numa_speed = numa_rail_count * nic_speed;
-            NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
-                      << " Gbps) exceeds single NUMA node capacity of " << numa_speed
-                      << " Gbps, and will spill over to other NUMA nodes";
-        } else if (max_rails > recommended_rails) {
-            // configured rail count does not spill over to other nodes, but still exceeds PCIe
-            // switch capacity, and is expected to cause congestion, so warn user
-            size_t recommended_bw = recommended_rails * nic_speed;
-            NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
-                      << " Gbps), which results in " << max_rails
-                      << " rails, exceeds the congestion-free recommendation of " << recommended_bw
-                      << " Gbps (" << recommended_rails
-                      << " rails per NUMA node), and is expected to cause PCIe congestion";
+    // when a provider does not provide PCIe data, there is no need to employ PCIe congestion
+    // avoidance mechanisms, which is one major part of what the NUMA-aware rail selection policy
+    // does. in order to avoid duplicate tests, we first check if the provider is not EFA
+    bool pcie_device_found = true;
+    if (topology->getProviderName().compare("efa") != 0) {
+        nixl_status_t res = topology->hasPcieDevices(pcie_device_found);
+        if (res != NIXL_SUCCESS) {
+            NIXL_WARN << "Failed to verify whether a device with PCIe bus information exists, "
+                         "when provider is "
+                      << topology->getProviderName();
+            pcie_device_found = false;
         }
-        NIXL_TRACE << "Using " << max_rails
-                   << " rails in NUMA-aware rail selection policy for DRAM_SEG";
-        dram_rail_selection_policy_ =
-            std::make_unique<nixlLibfabricNumaRailSelectionPolicy>(max_rails);
-    } else {
-        // this must be coming from user, it exceeds total machine capacity
-        size_t total_nic_speed = nic_speed * topology->getTotalNicCount();
-        NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
-                  << " Gbps) exceeds or equals to total machine capacity of " << total_nic_speed
-                  << " Gbps, and will use all available rails";
-        NIXL_WARN << "Using default (all) rail selection policy for DRAM_SEG memory type";
+    }
+
+    if (!pcie_device_found) {
+        // either an error occurred or there is no PCIe bus data, in either case we use the
+        // default policy
+        NIXL_INFO << "Using default (all) rail selection policy for DRAM memory type when "
+                     "provider is \""
+                  << topology->getProviderName() << "\" and no PCIe bus data is available";
         dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
+    } else {
+        // get bandwidth/rail limit from user or compute it, then select policy
+        size_t max_bw = 0;
+        size_t max_rails = 0;
+        size_t recommended_rails = 0;
+        size_t nic_speed = topology->getAvgNicBandwidth();
+
+        if (!getDramRailLimit(custom_params, max_bw, max_rails, recommended_rails) ||
+            max_rails == 0) {
+            // had some error in deducing rail count, so just use default policy
+            NIXL_WARN << "Using default (all) rail selection policy for DRAM memory type due to "
+                         "previous errors";
+            dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
+        } else if (topology->getAllDevices().size() == 1) {
+            // system has only 1 EFA, so use default policy (don't issue warning)
+            dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
+        }
+        // NOTE: from this point onward we regard only rails that are attached to a PCIe switch
+        // because these are the only ones that matter for avoiding PCIe congestion (the instance
+        // types we deal with have either all rails connected to PCIe switches, or have only one EFA
+        // that is either not attached to a NUMA node, as in C-series, or not attached to a PCIe
+        // switch, as in G-series), so we test rail count against topology->getTotalNicCount()
+        // (which represents the total number of "usable" rails, i.e. that are attached to a PCIe
+        // switch) and not against topology->getAllDevices().size()
+        else if (max_rails < topology->getTotalNicCount()) {
+            // bandwidth does not exceed total machine capacity, so use NUMA-aware rail selection
+            // policy
+            NIXL_TRACE << "Using NUMA-aware rail selection policy for DRAM memory type";
+            size_t numa_rail_count = topology->getNumaRailCount(); // NOTE: averaged if non-uniform
+            if (max_rails > numa_rail_count) {
+                size_t numa_speed = numa_rail_count * nic_speed;
+                NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
+                          << " Gbps) exceeds single NUMA node capacity of " << numa_speed
+                          << " Gbps, and will spill over to other NUMA nodes";
+            } else if (max_rails > recommended_rails) {
+                // configured rail count does not spill over to other nodes, but still exceeds PCIe
+                // switch capacity, and is expected to cause congestion, so warn user
+                size_t recommended_bw = recommended_rails * nic_speed;
+                NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
+                          << " Gbps), which results in " << max_rails
+                          << " rails, exceeds the congestion-free recommendation of "
+                          << recommended_bw << " Gbps (" << recommended_rails
+                          << " rails per NUMA node), and is expected to cause PCIe congestion";
+            }
+            NIXL_TRACE << "Using " << max_rails
+                       << " rails in NUMA-aware rail selection policy for DRAM_SEG";
+            dram_rail_selection_policy_ =
+                std::make_unique<nixlLibfabricNumaRailSelectionPolicy>(max_rails);
+        } else {
+            // this must be coming from user, it exceeds total machine capacity
+            size_t total_nic_speed = nic_speed * topology->getTotalNicCount();
+            NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
+                      << " Gbps) exceeds or equals to total machine capacity of " << total_nic_speed
+                      << " Gbps, and will use all available rails";
+            NIXL_WARN << "Using default (all) rail selection policy for DRAM_SEG memory type";
+            dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
+        }
     }
 
     // load policy
