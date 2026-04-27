@@ -60,6 +60,17 @@ run_elastic_test() {
     )
 }
 
+# nixl_ep requires UCX GPU Device API (UCX master). On v1.20.x it often is not built; on master
+# with BUILD_NIXL_EP=true the image must ship nixl_ep or CI must fail.
+if ! python3 -c "import sys; sys.path.insert(0, '${NIXL_BUILD_DIR}/${EP_SRC_DIR}'); import nixl_ep_cpp" 2>/dev/null; then
+    if [ "${UCX_VERSION:-}" = "master" ] && [ "${BUILD_NIXL_EP:-}" = "true" ]; then
+        echo "ERROR: nixl_ep (nixl_ep_cpp) is required for UCX master with BUILD_NIXL_EP=true but import failed."
+        exit 1
+    fi
+    echo "nixl_ep not available (e.g. UCX without GPU Device API), skipping EP tests"
+    exit 0
+fi
+
 # NVLink (default)
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/basic.json"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
