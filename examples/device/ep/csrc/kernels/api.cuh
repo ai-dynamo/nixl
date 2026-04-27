@@ -230,7 +230,7 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               bool use_fp8, bool round_scale, bool use_ue8m0,
               uint64_t timeout_cycles,
               void* workspace, int num_device_sms,
-              cudaStream_t stream, int phases, nixl_ep::gpu_nixl_ctx nixl_ctx);
+              cudaStream_t stream, int phases, nixl_ep::gpu_nixl_ctx* nixl_ctx);
 
 void combine(void* combined_x,
              void* rdma_recv_x, uint64_t* rdma_recv_flag, void* rdma_send_x,
@@ -243,9 +243,9 @@ void combine(void* combined_x,
              int num_topk, int num_experts, int rank, int num_ranks,
              bool use_logfmt, uint64_t timeout_cycles,
              void* workspace, int num_device_sms,
-             cudaStream_t stream, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx nixl_ctx);
+             cudaStream_t stream, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx* nixl_ctx);
 
-void barrier(gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, uint64_t timeout_cycles, cudaStream_t stream);
+void barrier(gpu_nixl_ctx* nixl_ctx, int* mask_buffer_ptr, uint64_t timeout_cycles, cudaStream_t stream);
 
 void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* output_mask_tensor, cudaStream_t stream);
 
