@@ -60,6 +60,16 @@ getHostname() {
     return "unknown";
 }
 
+[[nodiscard]] uint64_t
+docaTimestamp() noexcept {
+    uint64_t ts = 0;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    doca_telemetry_exporter_get_timestamp(&ts);
+#pragma GCC diagnostic pop
+    return ts;
+}
+
 [[nodiscard]] const char *
 eventNameCStr(nixl_telemetry_event_type_t type) noexcept {
     return nixlEnumStrings::telemetryEventTypeStr(type).data();
@@ -214,7 +224,7 @@ nixlTelemetryDocaExporter::registerCounter(const nixlTelemetryEvent &event,
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     return doca_telemetry_exporter_metrics_add_counter(ctx_->source,
-                                                       0,
+                                                       docaTimestamp(),
                                                        eventNameCStr(event.eventType_),
                                                        event.value_,
                                                        ctx_->label_set_id,
@@ -228,7 +238,7 @@ nixlTelemetryDocaExporter::registerGauge(const nixlTelemetryEvent &event,
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     return doca_telemetry_exporter_metrics_add_gauge(ctx_->source,
-                                                     0,
+                                                     docaTimestamp(),
                                                      eventNameCStr(event.eventType_),
                                                      event.value_,
                                                      ctx_->label_set_id,
