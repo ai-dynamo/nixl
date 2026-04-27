@@ -388,6 +388,10 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
 
         // Start Progress thread for rail completion processing
         if (progress_thread_enabled_) {
+            for (size_t i = 0; i < rail_manager.getNumRails(); ++i) {
+                rail_manager.getRail(i).setProgressThreadEnabled(true);
+            }
+
             NIXL_DEBUG << "Starting Progress thread for rails with delay: "
                        << progress_thread_delay_.count() << " microseconds";
             progress_thread_stop_ = false;
@@ -706,23 +710,23 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
             if (cuda_addr_wa_) {
                 bool need_restart;
                 if (vramUpdateCtx((void *)mem.addr, mem.devId, need_restart)) {
-                    NIXL_WARN << "CUDA address workaround failed for device " << mem.devId
-                              << ", disabling workaround for multi-GPU support";
-                    cuda_addr_wa_ = false; // Disable workaround for subsequent registrations
+                    NIXL_INFO << "Multi-GPU detected (device " << mem.devId
+                              << "), using cudaSetDevice fallback";
+                    cuda_addr_wa_ = false;
                 } else if (need_restart) {
-                    // Restart progress thread if needed
                     NIXL_DEBUG << "CUDA context updated, restarting progress thread";
                     vramApplyCtx();
                 }
-            } else {
-                // Set CUDA device context directly for multi-GPU support
+            }
+            // Fallback: set device via runtime API (uses primary context)
+            if (!cuda_addr_wa_) {
                 cudaError_t cuda_ret = cudaSetDevice(mem.devId);
                 if (cuda_ret != cudaSuccess) {
                     NIXL_ERROR << "Failed to set CUDA device " << mem.devId << ": "
                                << cudaGetErrorString(cuda_ret);
                     return NIXL_ERR_NOT_SUPPORTED;
                 }
-                NIXL_DEBUG << "Set CUDA device context to GPU " << mem.devId;
+                NIXL_INFO << "Set CUDA device context to GPU " << mem.devId;
             }
 
             // Query PCI bus ID from memory address (AFTER setting context)
