@@ -84,7 +84,7 @@ matrix:
       - aarch64
     ucx_version:
       - master
-      - v1.20.x
+      - v1.21.x
 
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 

@@ -50,11 +50,10 @@ ucsToNixlStatus(const ucs_status_t t) {
     case UCS_ERR_NOT_CONNECTED:
     case UCS_ERR_CONNECTION_RESET:
     case UCS_ERR_ENDPOINT_TIMEOUT:
+    case UCS_ERR_CANCELED: // UCX >= 1.21: peer-failure cancels pending requests
         return NIXL_ERR_REMOTE_DISCONNECT;
     case UCS_ERR_INVALID_PARAM:
         return NIXL_ERR_INVALID_PARAM;
-    case UCS_ERR_CANCELED:
-        return NIXL_ERR_CANCELED;
     default:
         NIXL_WARN << "Unexpected UCX error: " << ucs_status_string(t);
         return NIXL_ERR_BACKEND;
