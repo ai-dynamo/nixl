@@ -244,6 +244,7 @@ TEST(Config, ReadConfigFile) {
     gtest::ScopedEnv vars;
     vars.addVar("NIXL_CONFIG_FILE", path.native());
     vars.addVar(env1name, env1value);
+    vars.addVar(env2name, env2value);
     {
         const auto value = nixl::config::getValue<bool>(bool_name);
         EXPECT_TRUE(value);
@@ -263,7 +264,7 @@ TEST(Config, ReadConfigFile) {
     }
     {
         // Check that conversion failure on env var does not trigger lookup in config file.
-        EXPECT_THROW(nixl::config::getValue<int>(env2name), std::runtime_error);
+        EXPECT_THROW((void)nixl::config::getValue<int>(env2name), std::runtime_error);
     }
 }
 
