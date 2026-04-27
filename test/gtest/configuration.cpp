@@ -222,6 +222,10 @@ namespace {
     const std::string bool_name = "bool" + pid;
     const std::string number_name = "number" + pid;
     const std::string string_name = "string" + pid;
+    const std::string env1name = "env" + pid + "var1";
+    const std::string env1value = "value" + pid;
+    const std::string env2name = "env" + pid + "var2";
+    const std::string env2value = "not_an_int";
 
 } // namespace
 
@@ -234,9 +238,12 @@ TEST(Config, ReadConfigFile) {
         ofs << bool_name << " = true\n";
         ofs << number_name << " = 42\n";
         ofs << string_name << " = \"hello\"\n";
+        ofs << env1name << " = \"dummy\"\n";
+        ofs << env2name << " = 0\n";
     }
     gtest::ScopedEnv vars;
     vars.addVar("NIXL_CONFIG_FILE", path.native());
+    vars.addVar(env1name, env1value);
     {
         const auto value = nixl::config::getValue<bool>(bool_name);
         EXPECT_TRUE(value);
@@ -248,6 +255,15 @@ TEST(Config, ReadConfigFile) {
     {
         const auto value = nixl::config::getValue<std::string>(string_name);
         EXPECT_EQ(value, "hello");
+    }
+    {
+        // Check that environment wins against config file.
+        const auto value = nixl::config::getValue<std::string>(env1name);
+        EXPECT_EQ(value, env1value);
+    }
+    {
+        // Check that conversion failure on env var does not trigger lookup in config file.
+        EXPECT_THROW(nixl::config::getValue<int>(env2name), std::runtime_error);
     }
 }
 
