@@ -14,6 +14,22 @@
 # limitations under the License.
 
 utils_sources = [
+  'cli/benchmark_cli_builder.cpp',
+  'cli/benchmark_cli_builder.h',
+  'cli/benchmark_command.h',
+  'cli/benchmark_requests.h',
+  'cli/cli_option.cpp',
+  'cli/cli_option.h',
+  'cli/g3_scenario_command.cpp',
+  'cli/g3_scenario_command.h',
+  'cli/g4_scenario_command.cpp',
+  'cli/g4_scenario_command.h',
+  'cli/obj_plugin_command.cpp',
+  'cli/obj_plugin_command.h',
+  'cli/posix_plugin_command.cpp',
+  'cli/posix_plugin_command.h',
+  'cli/raw_command.cpp',
+  'cli/raw_command.h',
   'neuron.cpp',
   'neuron.h',
   'utils.cpp',

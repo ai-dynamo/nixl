@@ -35,6 +35,7 @@
 #include <gflags/gflags.h>
 
 #include "runtime/etcd/etcd_rt.h"
+#include "utils/cli/benchmark_cli_builder.h"
 #include "utils/neuron.h"
 #include "utils/utils.h"
 
@@ -266,8 +267,30 @@ std::string xferBenchConfig::gusli_config_file = "";
 std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
 
+namespace {
+nixlbench::ParsedBenchmarkCommand parsed_benchmark_command;
+}
+
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
+    if (argc > 1) {
+        std::string_view first_arg(argv[1]);
+        if (first_arg == "scenario" || first_arg == "raw" || first_arg == "--help" || first_arg == "-h") {
+            nixlbench::BenchmarkCliBuilder cli_builder;
+            nixlbench::ParsedBenchmarkCommand parsed;
+            int cli_ret = cli_builder.parse(argc, argv, parsed);
+            if (parsed.path == nixlbench::CommandPath::Help) {
+                parsed_benchmark_command = parsed;
+                return 1;
+            }
+            if (cli_ret != 0) {
+                return cli_ret;
+            }
+            parsed_benchmark_command = parsed;
+            return loadParams();
+        }
+    }
+
     std::string usage("NIXL Benchmark.  Sample usage:\n\n");
     usage += std::string(argv[0]) + " [flags]";
     gflags::SetUsageMessage(usage);
@@ -289,6 +312,11 @@ xferBenchConfig::parseConfig(int argc, char *argv[]) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
 
     return loadParams();
+}
+
+const nixlbench::ParsedBenchmarkCommand &
+xferBenchConfig::parsedCommand() {
+    return parsed_benchmark_command;
 }
 
 int
