@@ -62,7 +62,7 @@ class xferBenchNixlWorker: public xferBenchWorker {
         void
         poll(size_t block_size) override;
         int
-        synchronizeStart();
+        synchronizeStart() override;
 
         // Data operations
         std::variant<xferBenchStats, int>

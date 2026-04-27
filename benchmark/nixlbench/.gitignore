@@ -6,3 +6,5 @@ subprojects/cxxopts-*
 # tomlplusplus
 subprojects/tomlplusplus-*
 
+# CLI11
+subprojects/cli11/

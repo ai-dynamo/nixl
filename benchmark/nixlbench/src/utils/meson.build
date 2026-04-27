@@ -25,6 +25,7 @@ utils_deps = [
   cuda_dep,
   openmp_dep,
   gflags_dep,
+  cli11_dep,
   tomlplusplus_dep,
   dependency('dl', required: true)
 ]
@@ -39,4 +40,3 @@ utils_dep = declare_dependency(
   dependencies: utils_deps,
   include_directories: inc_dir
 )
-
