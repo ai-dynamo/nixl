@@ -21,6 +21,7 @@
 #include <doca_telemetry_exporter.h>
 #include <doca_error.h>
 #include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -57,6 +58,11 @@ getHostname() {
         return std::string(hostname.data());
     }
     return "unknown";
+}
+
+[[nodiscard]] const char *
+eventNameCStr(nixl_telemetry_event_type_t type) noexcept {
+    return nixlEnumStrings::telemetryEventTypeStr(type).data();
 }
 
 std::mutex g_ctx_mutex;
@@ -205,22 +211,28 @@ nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
 doca_error_t
 nixlTelemetryDocaExporter::registerCounter(const nixlTelemetryEvent &event,
                                            const char *label_values[]) {
-    const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    return doca_telemetry_exporter_metrics_add_counter(
-        ctx_->source, 0, event_name.c_str(), event.value_, ctx_->label_set_id, label_values);
+    return doca_telemetry_exporter_metrics_add_counter(ctx_->source,
+                                                       0,
+                                                       eventNameCStr(event.eventType_),
+                                                       event.value_,
+                                                       ctx_->label_set_id,
+                                                       label_values);
 #pragma GCC diagnostic pop
 }
 
 doca_error_t
 nixlTelemetryDocaExporter::registerGauge(const nixlTelemetryEvent &event,
                                          const char *label_values[]) {
-    const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    return doca_telemetry_exporter_metrics_add_gauge(
-        ctx_->source, 0, event_name.c_str(), event.value_, ctx_->label_set_id, label_values);
+    return doca_telemetry_exporter_metrics_add_gauge(ctx_->source,
+                                                     0,
+                                                     eventNameCStr(event.eventType_),
+                                                     event.value_,
+                                                     ctx_->label_set_id,
+                                                     label_values);
 #pragma GCC diagnostic pop
 }
 
