@@ -30,7 +30,7 @@
 
 namespace {
 // Lease TTL in seconds: rank key auto-expires this long after the last keepalive.
-constexpr int lease_ttl_s = 15;
+constexpr int lease_ttl_s = 30;
 } // namespace
 
 // ETCD Runtime implementation
@@ -149,6 +149,21 @@ xferBenchEtcdRT::cleanupForExit() {
     if (client) {
         client->rmdir(makeKey(""), true);
     }
+}
+
+bool
+xferBenchEtcdRT::checkKeepAlive() {
+    if (keepalive) {
+        try {
+            keepalive->Check();
+        }
+        catch (const std::exception &e) {
+            std::cerr << "nixlbench: keepalive Check() returns a failure detected in the past: "
+                      << e.what() << std::endl;
+            return false;
+        }
+    }
+    return true;
 }
 
 bool

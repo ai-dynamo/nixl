@@ -105,6 +105,10 @@ public:
     bool
     areAllPeersAlive() override;
 
+    // Check if the keepalive lease is still valid
+    bool
+    checkKeepAlive() override;
+
     // Cancel keepalive and remove namespace keys before a forced _Exit()
     void
     cleanupForExit() override;
