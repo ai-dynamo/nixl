@@ -242,7 +242,7 @@ class NIXLBench:
                 f"Invalid source/destination for OBJ: source={source}, destination={destination}, "
                 f"both are local — exactly one must be a remote OBJ endpoint"
             )
-        elif src_local:
+        if src_local:
             self.op_type = "WRITE"
             self.initiator_seg_type = arg_to_seg_type[source]
         elif dst_local:
