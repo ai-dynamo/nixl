@@ -1,0 +1,9 @@
+[wrap-git]
+url = https://github.com/CLIUtils/CLI11.git
+revision = v2.4.2
+depth = 1
+patch_directory = cli11
+
+[provide]
+CLI11 = cli11_dep
+dependency_names = CLI11
