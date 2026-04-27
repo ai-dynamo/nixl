@@ -95,8 +95,8 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
                            const size_t desc_count)
-    : initiatorDescs(std::make_unique<nixl_meta_dlist_t>(local_type, desc_count)),
-      targetDescs(std::make_unique<nixl_meta_dlist_t>(remote_type, desc_count)),
+    : initiatorDescs(local_type, desc_count),
+      targetDescs(remote_type, desc_count),
       remoteAgent(remote_agent),
       backendOp(backend_op) {}
 
@@ -802,8 +802,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     if (extra_params && extra_params->skipDescMerge) {
         for (int i=0; i<desc_count; ++i) {
-            (*handle->initiatorDescs)[i] = local_descs[local_indices[i]];
-            (*handle->targetDescs)[i] = remote_descs[remote_indices[i]];
+            handle->initiatorDescs[i] = local_descs[local_indices[i]];
+            handle->targetDescs[i] = remote_descs[remote_indices[i]];
         }
     } else {
         int i = 0, j = 0; //final list size
@@ -833,14 +833,14 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                 }
             }
 
-            (*handle->initiatorDescs)[j] = local_desc1;
-            (*handle->targetDescs)   [j] = remote_desc1;
+            handle->initiatorDescs[j] = local_desc1;
+            handle->targetDescs[j] = remote_desc1;
             j++;
             i++;
         }
         NIXL_DEBUG << "reqH descList size down to " << j;
-        handle->initiatorDescs->resize(j);
-        handle->targetDescs->resize(j);
+        handle->initiatorDescs.resize(j);
+        handle->targetDescs.resize(j);
     }
 
     handle->engine = backend;
@@ -849,12 +849,12 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     if (data->telemetryEnabled) {
         handle->telemetry.totalBytes = total_bytes;
-        handle->telemetry.descCount = handle->initiatorDescs->descCount();
+        handle->telemetry.descCount = handle->initiatorDescs.descCount();
     }
 
     ret = handle->engine->prepXfer (handle->backendOp,
-                                    *handle->initiatorDescs,
-                                    *handle->targetDescs,
+                                    handle->initiatorDescs,
+                                    handle->targetDescs,
                                     handle->remoteAgent,
                                     handle->backendHandle,
                                     &opt_args);
@@ -942,8 +942,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // preference list or more exhaustive search.
     for (auto &backend : backend_set) {
         // If populate fails, it clears the resp before return
-        ret1 = data->localSection_.populate(local_descs, backend, *handle->initiatorDescs);
-        ret2 = rem_sec_it->second.populate(remote_descs, backend, *handle->targetDescs);
+        ret1 = data->localSection_.populate(local_descs, backend, handle->initiatorDescs);
+        ret2 = rem_sec_it->second.populate(remote_descs, backend, handle->targetDescs);
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
             NIXL_INFO << "Selected backend: " << backend->getType();
@@ -984,12 +984,12 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     if (data->telemetryEnabled) {
         handle->telemetry.totalBytes = total_bytes;
-        handle->telemetry.descCount = handle->initiatorDescs->descCount();
+        handle->telemetry.descCount = handle->initiatorDescs.descCount();
     }
 
     ret1 = handle->engine->prepXfer (handle->backendOp,
-                                     *handle->initiatorDescs,
-                                     *handle->targetDescs,
+                                     handle->initiatorDescs,
+                                     handle->targetDescs,
                                      handle->remoteAgent,
                                      handle->backendHandle,
                                      &opt_args);
@@ -1031,8 +1031,8 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
     }
 
     ret = req_hndl->engine->estimateXferCost(req_hndl->backendOp,
-                                             *req_hndl->initiatorDescs,
-                                             *req_hndl->targetDescs,
+                                             req_hndl->initiatorDescs,
+                                             req_hndl->targetDescs,
                                              req_hndl->remoteAgent,
                                              req_hndl->backendHandle,
                                              duration,
@@ -1122,8 +1122,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     // If status is not NIXL_IN_PROG we can repost,
     req_hndl->status = req_hndl->engine->postXfer(req_hndl->backendOp,
-                                                  *req_hndl->initiatorDescs,
-                                                  *req_hndl->targetDescs,
+                                                  req_hndl->initiatorDescs,
+                                                  req_hndl->targetDescs,
                                                   req_hndl->remoteAgent,
                                                   req_hndl->backendHandle,
                                                   &opt_args);
@@ -1142,7 +1142,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     if (data->telemetryEnabled) {
-        NIXL_DEBUG << req_hndl->initiatorDescs->to_string(true);
+        NIXL_DEBUG << req_hndl->initiatorDescs.to_string(true);
 
         if (req_hndl->status < 0) {
             data->addErrorTelemetry(req_hndl->status);
