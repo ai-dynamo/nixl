@@ -31,8 +31,8 @@ bool
 parseConnectionString(const std::string &conn_str,
                       std::unique_ptr<char[]> &ip_addr,
                       int &port,
-                      int &gpu_index) {
-    // Exit with error if neither : or ? is found in conn_str
+                      std::string &gpu_bdf) {
+    // Format: ip:port?bdf  (e.g. "10.0.0.1:41861?0000:18:00.0")
     size_t colon_pos = conn_str.find(':');
     if (colon_pos == std::string::npos) {
         NIXL_ERROR << "Invalid connection string format: missing colon separator";
@@ -57,14 +57,7 @@ parseConnectionString(const std::string &conn_str,
         return false;
     }
 
-    std::string gpu_str = conn_str.substr(question_pos + 1);
-    try {
-        gpu_index = std::stoi(gpu_str);
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Invalid GPU index: " << gpu_str;
-        return false;
-    }
+    gpu_bdf = conn_str.substr(question_pos + 1);
 
     return true;
 }
@@ -238,17 +231,16 @@ nixlUcclEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
     std::unique_ptr<char[]> ip_addr;
     int port = 0;
-    int gpu_index = 0;
+    std::string gpu_bdf;
 
-    if (!parseConnectionString(remote_conn_info, ip_addr, port, gpu_index)) {
+    if (!parseConnectionString(remote_conn_info, ip_addr, port, gpu_bdf)) {
         return NIXL_ERR_BACKEND;
     }
 
     uccl_conn_t *conn = nullptr;
 
-    NIXL_DEBUG << "Connecting to " << ip_addr.get() << ":" << port << "?gpu=" << gpu_index
-               << std::endl;
-    conn = uccl_engine_connect(engine_, ip_addr.get(), gpu_index, port, false);
+    NIXL_DEBUG << "Connecting to " << ip_addr.get() << ":" << port << "?gpu=" << gpu_bdf;
+    conn = uccl_engine_connect(engine_, ip_addr.get(), gpu_bdf.c_str(), port, false);
     if (!conn) {
         NIXL_ERROR << "Failed to connect to remote agent " << remote_agent;
         return NIXL_ERR_BACKEND;
@@ -299,14 +291,14 @@ nixlUcclEngine::prepareLocalConn() const {
 
     std::unique_ptr<char[]> ip_addr;
     int port = 0;
-    int gpu_index = 0;
-    if (!parseConnectionString(conn_info, ip_addr, port, gpu_index)) {
+    std::string gpu_bdf;
+    if (!parseConnectionString(conn_info, ip_addr, port, gpu_bdf)) {
         return NIXL_ERR_BACKEND;
     }
 
     uccl_conn_t *conn = uccl_engine_connect(engine_,
                                             ip_addr.get(),
-                                            gpu_index,
+                                            gpu_bdf.c_str(),
                                             port,
                                             /*same_process=*/true);
     if (!conn) {
