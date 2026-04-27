@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '1.0.1',
+project('nixlbench', 'CPP', version: '1.1.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -97,8 +97,7 @@ endif
 
 cuda_fabric_available = false
 if cuda_available
-    if cpp.has_header_symbol('cuda.h', 'CU_MEM_HANDLE_TYPE_FABRIC',
-                             args: cuda_inc_path != '' ? '-I' + cuda_inc_path : [])
+    if cpp.has_header_symbol('cuda.h', 'CU_MEM_HANDLE_TYPE_FABRIC', dependencies: cuda_dep)
         cuda_fabric_available = true
     endif
 endif
@@ -111,6 +110,9 @@ etcd_dep = dependency('etcd-cpp-api', required : false)
 
 # GFlags
 gflags_dep = dependency('gflags', required: true)
+
+# ASIO (usually via libasio-dev package)
+asio_dep = dependency('asio', required: true)
 
 # Check for tomlplusplus (header only)
 tomlplusplus_dep = dependency('tomlplusplus', required: true, default_options: ['build_lib=false', 'compile_library=false'])
@@ -169,7 +171,7 @@ configure_file(
     install_dir: get_option('includedir') / 'nixlbench'
 )
 
-deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, gflags_dep, tomlplusplus_dep]
+deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, gflags_dep, tomlplusplus_dep, asio_dep]
 args = []
 if etcd_available
     deps += [etcd_dep]

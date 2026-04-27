@@ -37,6 +37,9 @@ if TYPE_CHECKING:
     import mpi4py  # noqa: F401
 
 
+DEFAULT_TIMEOUT_MS = 30_000
+
+
 class Buffer:
     """
     The core expert-parallel (EP) communication buffers for Mixture of Experts (MoE) model, which supports dispatch and combine operations using NVLink and RDMA.
@@ -59,6 +62,7 @@ class Buffer:
         group: Optional[dist.ProcessGroup] = None,
         comm: Optional["mpi4py.MPI.Comm"] = None,
         tcp_store_group: Optional[dist.TCPStore] = None,
+        timeout_ms: int = DEFAULT_TIMEOUT_MS,
     ) -> None:
         """
         Initialize the nixl communication buffer.
@@ -73,10 +77,15 @@ class Buffer:
             group: the communication group (optional).
             comm: the mpi4py.MPI.Comm communicator to use in case the group parameter is absent (optional).
             tcp_store_group: TCPStore for metadata exchange (optional).
+            timeout_ms: GPU kernel timeout in milliseconds.
+                In low-latency paths, a timeout marks the rank invalid and masks it out.
+                In high-throughput paths, a timeout is fatal and traps.
+                Default: 30000 ms.
         """
         self.rank = rank
         self.group_size = 0  # Will be updated by `update_memory_buffers`
         self.low_latency_mode = low_latency_mode
+        self.timeout_ms = timeout_ms
 
         self.explicitly_destroy = explicitly_destroy
         self.group = group
@@ -88,7 +97,7 @@ class Buffer:
             os.environ["UCX_TLS"] = "^cuda_ipc"
 
         self.runtime = nixl_ep_cpp.Buffer(
-            self.rank, explicitly_destroy, low_latency_mode
+            self.rank, explicitly_destroy, low_latency_mode, timeout_ms
         )
 
     def destroy(self):
@@ -844,23 +853,30 @@ class Buffer:
         else:
             self.runtime.connect_ranks(remote_ranks, None, ipc_handles)
 
-    def connect_ranks(self, remote_ranks: List[int]) -> None:
+    def connect_ranks(self, remote_ranks: List[int], activate: bool = True) -> None:
         """
         Add connections to remote ranks.
 
         Arguments:
             remote_ranks: List of remote rank IDs to establish connections with.
                          The current rank will be automatically filtered out.
+            activate: in low-latency mode, if False, keep newly connected ranks masked until update_mask_buffer(..., False).
         """
         if self.low_latency_mode:
             if self.tcp_store_group is not None:
                 with self._fetch_remote_metadata_from_tcp_store(
                     remote_ranks
                 ) as remote_mds:
-                    self.runtime.connect_ranks(remote_ranks, remote_mds)
+                    self.runtime.connect_ranks(
+                        remote_ranks, remote_mds, activate=activate
+                    )
             else:
-                self.runtime.connect_ranks(remote_ranks)
+                self.runtime.connect_ranks(remote_ranks, activate=activate)
         else:
+            if not activate:
+                raise ValueError(
+                    "connect_ranks(activate=False) is only supported in low-latency mode"
+                )
             self._ht_connect_ranks(remote_ranks)
 
     def disconnect_ranks(self, remote_ranks: List[int]) -> None:
@@ -875,7 +891,9 @@ class Buffer:
 
     def barrier(self) -> None:
         """
-        barrier for all active ranks.
-        notice that this barrier does not flush the network QPs as it is currently doesn't have any use-case that requires it
+        Barrier for all active ranks.
+
+        Updates the rank mask on timeout.
+        Does not flush network QPs, since there is currently no use case that requires it.
         """
         self.runtime.barrier()
