@@ -150,6 +150,7 @@ private:
     int max_num_ranks;
     int max_experts_per_rank;
     nixl_ep::gpu_nixl_ctx gpu_ctx;
+    nixl_ep::gpu_nixl_ctx* gpu_ctx_ptr = nullptr;
     uint64_t* last_ht_barrier_counter = nullptr;
     uint64_t* local_ht_barrier_counter = nullptr;
 
@@ -173,7 +174,7 @@ public:
 
     void update_memory_buffers(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes = 0);
 
-    void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, const std::vector<std::optional<pybind11::bytearray>>& all_gathered_handles = {});
+    void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, const std::vector<std::optional<pybind11::bytearray>>& all_gathered_handles = {}, bool activate = true);
 
     void disconnect_ranks(const std::vector<int>& remote_ranks_list);
 
