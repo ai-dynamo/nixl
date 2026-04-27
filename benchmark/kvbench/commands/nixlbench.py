@@ -228,9 +228,7 @@ class NIXLBench:
             )
 
     def _configure_obj(self, source: str, destination: str):
-        """Configure OBJ plugin for object storage operations.
-        The local side is always DRAM (or VRAM); the OBJ remote side
-        is implicit from the backend, not from seg_type."""
+        """Configure OBJ plugin for object storage operations."""
         arg_to_seg_type = {
             "memory": "DRAM",
             "gpu": "VRAM",
