@@ -164,12 +164,12 @@ def copytree(src, dst):
     """
     Copy a tree of files from @src directory to @dst directory.
     Deduplicates shared-library files (``.so``) that share the same inode
-    (symlinks/hardlinks to the same underlying file).  For each group of
+    (symlinks/hardlinks to the same underlying file). For each group of
     duplicate names only the real (non-symlink) file is kept -- typically the
-    fully-versioned name such as ``libuct_ib.so.0.0.0``.  This prevents the
+    fully-versioned name such as ``libuct_ib.so.0.0.0``. This prevents the
     dynamic linker from treating what used to be symlinks as separate
     libraries (different inodes), which would cause components to be
-    initialised multiple times.  Non-``.so`` files are always copied as-is.
+    initialised multiple times. Non-``.so`` files are always copied as-is.
 
     Returns:
         Tuple of (copied_files, dedup_map):
@@ -311,7 +311,7 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
             if os.path.isfile(fname) and ".so" in fname:
                 for old_name, new_name in dedup_map.items():
                     ret = os.system(
-                        f"patchelf --replace-needed '{old_name}' '{new_name}' {fname}"
+                        f"patchelf --replace-needed '{old_name}' '{new_name}' '{fname}'"
                     )
                     if ret != 0:
                         raise RuntimeError(
