@@ -529,7 +529,7 @@ nixlUcxWorker::connect(void *addr, std::size_t size) {
         return std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_);
     }
     catch (const std::exception &e) {
-        NIXL_ERROR << "NIXL UCX EP create failed: " << e.what();
+        NIXL_ERROR << "UCX endpoint create failed: " << e.what();
         return {};
     }
 }
