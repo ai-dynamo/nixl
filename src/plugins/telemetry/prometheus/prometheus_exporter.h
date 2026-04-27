@@ -53,22 +53,21 @@ public:
     exportEvent(const nixlTelemetryEvent &event) override;
 
 private:
+    // POD ownership handles for a metric instance registered in the shared
+    // Registry. Deliberately NO destructor: cleanup of the shared-Registry
+    // row happens exactly once, from the owning exporter's destructor via
+    // removeMetricsFromSharedRegistry(). Wiring family->Remove(metric) into
+    // this struct's dtor would cause every prvalue temporary (e.g. the one
+    // produced by `counters_[name] = {&f, &m}`) to scrub the metric from
+    // the Family we just added it to.
     struct CounterEntry {
         prometheus::Family<prometheus::Counter> *family = nullptr;
         prometheus::Counter *metric = nullptr;
-
-        ~CounterEntry() {
-            if (family && metric) family->Remove(metric);
-        }
     };
 
     struct GaugeEntry {
         prometheus::Family<prometheus::Gauge> *family = nullptr;
         prometheus::Gauge *metric = nullptr;
-
-        ~GaugeEntry() {
-            if (family && metric) family->Remove(metric);
-        }
     };
 
     const std::string agent_name_;
@@ -87,6 +86,11 @@ private:
 
     void
     registerGauge(const std::string &name, const std::string &help, const std::string &category);
+
+    // Scrub this agent's labeled Counter/Gauge instances from the shared
+    // Families. Call site is ~nixlTelemetryPrometheusExporter() only.
+    void
+    removeMetricsFromSharedRegistry();
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H

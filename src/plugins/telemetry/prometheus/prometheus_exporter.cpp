@@ -105,8 +105,23 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     }
 }
 
+void
+nixlTelemetryPrometheusExporter::removeMetricsFromSharedRegistry() {
+    for (auto &kv : counters_) {
+        if (kv.second.family && kv.second.metric) {
+            kv.second.family->Remove(kv.second.metric);
+        }
+    }
+    for (auto &kv : gauges_) {
+        if (kv.second.family && kv.second.metric) {
+            kv.second.family->Remove(kv.second.metric);
+        }
+    }
+}
+
 nixlTelemetryPrometheusExporter::~nixlTelemetryPrometheusExporter() {
     const std::lock_guard lock(s_mutex);
+    removeMetricsFromSharedRegistry();
     counters_.clear();
     gauges_.clear();
     s_agent_names.erase(agent_name_);
