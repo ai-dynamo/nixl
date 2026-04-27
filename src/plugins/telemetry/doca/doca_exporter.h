@@ -32,17 +32,17 @@ public:
     explicit nixlTelemetryDocaExporter(const nixlTelemetryExporterInitParams &init_params);
     ~nixlTelemetryDocaExporter() override;
 
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     exportEvent(const nixlTelemetryEvent &event) override;
 
 private:
     const std::string agent_name_;
     std::shared_ptr<DocaSharedContext> ctx_;
 
-    doca_error_t
+    [[nodiscard]] doca_error_t
     registerCounter(const nixlTelemetryEvent &event, const char *label_values[]);
 
-    doca_error_t
+    [[nodiscard]] doca_error_t
     registerGauge(const nixlTelemetryEvent &event, const char *label_values[]);
 };
 
