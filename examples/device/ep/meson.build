@@ -18,6 +18,11 @@ if not cuda_dep.found()
     subdir_done()
 endif
 
+if not ucx_gpu_device_api_available
+    warning('UCX GPU Device API not available, skipping nixl_ep build')
+    subdir_done()
+endif
+
 py = import('python').find_installation('python3', pure: false)
 
 # Check if PyTorch is available
