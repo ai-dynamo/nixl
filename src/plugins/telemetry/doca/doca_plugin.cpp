@@ -23,7 +23,7 @@ using doca_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryDocaExpor
 
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
 nixl_telemetry_plugin_init() {
-    return doca_exporter_plugin_t::create(nixlTelemetryPluginApiVersionV1, "doca", "1.0.0");
+    return doca_exporter_plugin_t::create(nixl_telemetry_plugin_api_version::V2, "doca", "1.0.0");
 }
 
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT void

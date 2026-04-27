@@ -21,6 +21,7 @@
 #include "telemetry_event.h"
 #include "nixl_types.h"
 
+#include <doca_error.h>
 #include <memory>
 #include <string>
 

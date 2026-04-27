@@ -205,28 +205,22 @@ nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
 doca_error_t
 nixlTelemetryDocaExporter::registerCounter(const nixlTelemetryEvent &event,
                                            const char *label_values[]) {
+    const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    return doca_telemetry_exporter_metrics_add_counter(ctx_->source,
-                                                       event.timestampUs_,
-                                                       event.eventName_,
-                                                       event.value_,
-                                                       ctx_->label_set_id,
-                                                       label_values);
+    return doca_telemetry_exporter_metrics_add_counter(
+        ctx_->source, 0, event_name.c_str(), event.value_, ctx_->label_set_id, label_values);
 #pragma GCC diagnostic pop
 }
 
 doca_error_t
 nixlTelemetryDocaExporter::registerGauge(const nixlTelemetryEvent &event,
                                          const char *label_values[]) {
+    const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    return doca_telemetry_exporter_metrics_add_gauge(ctx_->source,
-                                                     event.timestampUs_,
-                                                     event.eventName_,
-                                                     event.value_,
-                                                     ctx_->label_set_id,
-                                                     label_values);
+    return doca_telemetry_exporter_metrics_add_gauge(
+        ctx_->source, 0, event_name.c_str(), event.value_, ctx_->label_set_id, label_values);
 #pragma GCC diagnostic pop
 }
 
