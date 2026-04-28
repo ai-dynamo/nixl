@@ -21,6 +21,12 @@ const std::vector<CliOption> &G4ScenarioCommand::getOptions() const { return opt
 
 ScenarioType G4ScenarioCommand::scenarioType() const { return ScenarioType::G4; }
 
+bool G4ScenarioCommand::supportsPlugin(PluginType plugin) const {
+    return plugin == PluginType::Posix || plugin == PluginType::Obj;
+}
+
+int G4ScenarioCommand::run(ISouthboundPluginBenchmarkCommand &) { return 0; }
+
 const G4ScenarioRequest &G4ScenarioCommand::request() const { return request_; }
 
 } // namespace nixlbench

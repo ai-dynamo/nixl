@@ -20,6 +20,10 @@ const std::vector<CliOption> &G3ScenarioCommand::getOptions() const { return opt
 
 ScenarioType G3ScenarioCommand::scenarioType() const { return ScenarioType::G3; }
 
+bool G3ScenarioCommand::supportsPlugin(PluginType plugin) const { return plugin == PluginType::Posix; }
+
+int G3ScenarioCommand::run(ISouthboundPluginBenchmarkCommand &) { return 0; }
+
 const G3ScenarioRequest &G3ScenarioCommand::request() const { return request_; }
 
 } // namespace nixlbench

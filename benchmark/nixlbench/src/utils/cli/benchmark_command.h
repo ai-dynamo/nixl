@@ -14,6 +14,8 @@
 
 namespace nixlbench {
 
+class ISouthboundPluginBenchmarkCommand;
+
 class IBenchmarkCommand {
 public:
     virtual ~IBenchmarkCommand() = default;
@@ -32,6 +34,12 @@ class IBenchmarkScenario : public IBenchmarkCommand {
 public:
     virtual ScenarioType
     scenarioType() const = 0;
+
+    virtual bool
+    supportsPlugin(PluginType plugin) const = 0;
+
+    virtual int
+    run(ISouthboundPluginBenchmarkCommand &plugin) = 0;
 };
 
 class ISouthboundPluginBenchmarkCommand : public IBenchmarkCommand {

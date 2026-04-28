@@ -28,7 +28,6 @@
 #include <optional>
 #include <toml++/toml.hpp>
 #include <utils/common/nixl_time.h>
-#include "utils/cli/benchmark_requests.h"
 #include "runtime/runtime.h"
 
 #if HAVE_CUDA
@@ -196,8 +195,8 @@ public:
 
     static int
     parseConfig(int argc, char *argv[]);
-    static const nixlbench::ParsedBenchmarkCommand &
-    parsedCommand();
+    static bool
+    cliHelpRequested();
     static void
     printConfig();
     static void

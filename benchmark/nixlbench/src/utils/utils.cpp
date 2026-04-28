@@ -35,7 +35,6 @@
 #include <gflags/gflags.h>
 
 #include "runtime/etcd/etcd_rt.h"
-#include "utils/cli/benchmark_cli_builder.h"
 #include "utils/neuron.h"
 #include "utils/utils.h"
 
@@ -268,26 +267,33 @@ std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
 
 namespace {
-nixlbench::ParsedBenchmarkCommand parsed_benchmark_command;
+bool new_cli_help = false;
+
+template <typename T>
+T
+getTomlValue(const toml::table *tbl, const char *name, const T &fallback) {
+    if (tbl == nullptr) {
+        return fallback;
+    }
+    try {
+        return tbl->at_path(name).value<T>().value_or(fallback);
+    }
+    catch (const std::exception &) {
+        return fallback;
+    }
+}
+
 }
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
+    new_cli_help = false;
+
     if (argc > 1) {
         std::string_view first_arg(argv[1]);
         if (first_arg == "scenario" || first_arg == "raw" || first_arg == "--help" || first_arg == "-h") {
-            nixlbench::BenchmarkCliBuilder cli_builder;
-            nixlbench::ParsedBenchmarkCommand parsed;
-            int cli_ret = cli_builder.parse(argc, argv, parsed);
-            if (parsed.path == nixlbench::CommandPath::Help) {
-                parsed_benchmark_command = parsed;
-                return 1;
-            }
-            if (cli_ret != 0) {
-                return cli_ret;
-            }
-            parsed_benchmark_command = parsed;
-            return loadParams();
+            std::cerr << "CLI11 subcommands must be executed through BenchmarkCliBuilder" << std::endl;
+            return -1;
         }
     }
 
@@ -314,9 +320,9 @@ xferBenchConfig::parseConfig(int argc, char *argv[]) {
     return loadParams();
 }
 
-const nixlbench::ParsedBenchmarkCommand &
-xferBenchConfig::parsedCommand() {
-    return parsed_benchmark_command;
+bool
+xferBenchConfig::cliHelpRequested() {
+    return new_cli_help;
 }
 
 int
@@ -338,16 +344,11 @@ xferBenchConfig::loadParams(void) {
     // parameters over those specified in the config_file or set as defaults.
 #define NB_ARG(name)                                                                        \
     ({                                                                                      \
-        auto retval = FLAGS_##name;                                                         \
-        if (tbl != nullptr && gflags::GetCommandLineFlagInfoOrDie(#name).is_default) {      \
-            /* config_file exists and the parameter is not specified explicitly -> */       \
-            /*/ try to read the value from config_file first */                             \
-            try {                                                                           \
-                retval = tbl->at_path(#name).value<decltype(name)>().value();               \
-            }                                                                               \
-            catch (const std::exception &) {                                                \
-                /* the parameter is not in the config_file -> fall back to default value */ \
-            }                                                                               \
+        auto retval = name;                                                                 \
+        retval = FLAGS_##name;                                                             \
+        if (tbl != nullptr &&                                                               \
+            gflags::GetCommandLineFlagInfoOrDie(#name).is_default) {                        \
+            retval = getTomlValue(tbl.get(), #name, retval);                                \
         }                                                                                   \
         retval;                                                                             \
     })

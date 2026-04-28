@@ -18,6 +18,8 @@ public:
     std::string_view description() const override;
     const std::vector<CliOption> &getOptions() const override;
     ScenarioType scenarioType() const override;
+    bool supportsPlugin(PluginType plugin) const override;
+    int run(ISouthboundPluginBenchmarkCommand &plugin) override;
     const G3ScenarioRequest &request() const;
 
 private:

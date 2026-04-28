@@ -25,17 +25,34 @@ struct CliOption {
     OptionKind kind;
     OptionTarget target;
     bool required = false;
+    bool *provided = nullptr;
 
     static CliOption
-    option(std::string name, std::string help, bool *target, bool required = false);
+    option(std::string name,
+           std::string help,
+           bool *target,
+           bool required = false,
+           bool *provided = nullptr);
     static CliOption
-    option(std::string name, std::string help, int *target, bool required = false);
+    option(std::string name,
+           std::string help,
+           int *target,
+           bool required = false,
+           bool *provided = nullptr);
     static CliOption
-    option(std::string name, std::string help, uint64_t *target, bool required = false);
+    option(std::string name,
+           std::string help,
+           uint64_t *target,
+           bool required = false,
+           bool *provided = nullptr);
     static CliOption
-    option(std::string name, std::string help, std::string *target, bool required = false);
+    option(std::string name,
+           std::string help,
+           std::string *target,
+           bool required = false,
+           bool *provided = nullptr);
     static CliOption
-    flag(std::string name, std::string help, bool *target);
+    flag(std::string name, std::string help, bool *target, bool *provided = nullptr);
 };
 
 } // namespace nixlbench

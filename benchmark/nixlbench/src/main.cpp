@@ -28,6 +28,8 @@
 #include <unistd.h>
 #include <memory>
 #include <csignal>
+#include <string_view>
+#include "utils/cli/benchmark_cli_builder.h"
 
 static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int num_threads) {
     int initiator_device, target_device;
@@ -173,11 +175,10 @@ static std::unique_ptr<xferBenchWorker> createWorker(int *argc, char ***argv) {
     }
 }
 
-int main(int argc, char *argv[]) {
+static int runConfiguredBenchmark(int argc, char *argv[]) {
     int ret = xferBenchConfig::parseConfig(argc, argv);
     if (0 != ret) {
-        return xferBenchConfig::parsedCommand().path == nixlbench::CommandPath::Help ? EXIT_SUCCESS
-                                                                                     : EXIT_FAILURE;
+        return xferBenchConfig::cliHelpRequested() ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
     int num_threads = xferBenchConfig::num_threads;
@@ -228,4 +229,23 @@ int main(int argc, char *argv[]) {
     }
 
     return worker_ptr->signaled() ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+int main(int argc, char *argv[]) {
+    if (argc > 1) {
+        std::string_view first_arg(argv[1]);
+        if (first_arg == "scenario" || first_arg == "raw" || first_arg == "--help" || first_arg == "-h") {
+            nixlbench::BenchmarkCliBuilder cli;
+            int ret = cli.parse(argc, argv);
+            if (cli.helpRequested()) {
+                return EXIT_SUCCESS;
+            }
+            if (ret != 0) {
+                return EXIT_FAILURE;
+            }
+            return cli.run() == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+        }
+    }
+
+    return runConfiguredBenchmark(argc, argv);
 }
