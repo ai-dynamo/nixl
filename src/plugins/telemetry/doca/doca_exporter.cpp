@@ -70,11 +70,6 @@ docaTimestamp() noexcept {
     return ts;
 }
 
-[[nodiscard]] const char *
-eventNameCStr(nixl_telemetry_event_type_t type) noexcept {
-    return nixlEnumStrings::telemetryEventTypeStr(type).data();
-}
-
 std::mutex g_ctx_mutex;
 std::weak_ptr<DocaSharedContext> g_ctx_weak;
 std::mutex g_metrics_mutex;
@@ -223,9 +218,10 @@ nixlTelemetryDocaExporter::registerCounter(const nixlTelemetryEvent &event,
                                            const char *label_values[]) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
     return doca_telemetry_exporter_metrics_add_counter(ctx_->source,
                                                        docaTimestamp(),
-                                                       eventNameCStr(event.eventType_),
+                                                       event_name.c_str(),
                                                        event.value_,
                                                        ctx_->label_set_id,
                                                        label_values);
@@ -237,9 +233,10 @@ nixlTelemetryDocaExporter::registerGauge(const nixlTelemetryEvent &event,
                                          const char *label_values[]) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
     return doca_telemetry_exporter_metrics_add_gauge(ctx_->source,
                                                      docaTimestamp(),
-                                                     eventNameCStr(event.eventType_),
+                                                     event_name.c_str(),
                                                      event.value_,
                                                      ctx_->label_set_id,
                                                      label_values);
