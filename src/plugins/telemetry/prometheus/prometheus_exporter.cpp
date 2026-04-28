@@ -100,6 +100,7 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
         initializeMetrics();
     }
     catch (...) {
+        removeMetricsFromSharedRegistry();
         s_agent_names.erase(agent_name_);
         throw;
     }
