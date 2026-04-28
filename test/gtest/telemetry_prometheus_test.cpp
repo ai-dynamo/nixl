@@ -27,8 +27,10 @@
 
 #include <chrono>
 #include <cstring>
+#include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -84,6 +86,52 @@ waitForMetricsBody(uint16_t port) {
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     } while (std::chrono::steady_clock::now() < deadline);
     return body;
+}
+
+bool
+parsePrometheusSampleLine(const std::string &line,
+                          const std::string &metric_name,
+                          std::unordered_map<std::string, std::string> &labels,
+                          double &value) {
+    const std::string prefix = metric_name + "{";
+    if (line.rfind(prefix, 0) != 0) {
+        return false;
+    }
+
+    const auto labels_end = line.find("} ");
+    if (labels_end == std::string::npos) {
+        return false;
+    }
+
+    labels.clear();
+    const std::string label_text = line.substr(prefix.size(), labels_end - prefix.size());
+    size_t pos = 0;
+    while (pos < label_text.size()) {
+        const auto key_end = label_text.find("=\"", pos);
+        if (key_end == std::string::npos) {
+            return false;
+        }
+
+        const auto value_begin = key_end + 2;
+        const auto value_end = label_text.find('"', value_begin);
+        if (value_end == std::string::npos) {
+            return false;
+        }
+
+        labels[label_text.substr(pos, key_end - pos)] =
+            label_text.substr(value_begin, value_end - value_begin);
+        pos = value_end + 1;
+        if (pos == label_text.size()) {
+            break;
+        }
+        if (label_text[pos] != ',') {
+            return false;
+        }
+        ++pos;
+    }
+
+    value = std::stod(line.substr(labels_end + 2));
+    return true;
 }
 
 } // namespace
@@ -204,24 +252,44 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     const std::string body = waitForMetricsBody(port_);
     ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
 
-    // Locate the specific labeled line: agent_tx_bytes_total{...agent_name="..."} <value>
-    const std::string needle = "agent_tx_bytes_total{agent_name=\"" + agent_name +
-        "\",category=\"NIXL_TELEMETRY_TRANSFER\",hostname=\"";
-    const auto line_pos = body.find(needle);
-    ASSERT_NE(line_pos, std::string::npos)
+    std::istringstream body_lines(body);
+    std::string line;
+    std::unordered_map<std::string, std::string> labels;
+    double value = 0;
+    bool found_agent_metric = false;
+    while (std::getline(body_lines, line)) {
+        if (line.rfind("agent_tx_bytes_total{", 0) != 0) {
+            continue;
+        }
+
+        std::unordered_map<std::string, std::string> candidate_labels;
+        double candidate_value = 0;
+        ASSERT_TRUE(parsePrometheusSampleLine(
+            line, "agent_tx_bytes_total", candidate_labels, candidate_value))
+            << "line shape unexpected: " << line;
+
+        const auto agent_it = candidate_labels.find("agent_name");
+        const auto category_it = candidate_labels.find("category");
+        const auto hostname_it = candidate_labels.find("hostname");
+        if (agent_it != candidate_labels.end() && agent_it->second == agent_name &&
+            category_it != candidate_labels.end() &&
+            category_it->second == "NIXL_TELEMETRY_TRANSFER" &&
+            hostname_it != candidate_labels.end() && !hostname_it->second.empty()) {
+            labels = candidate_labels;
+            value = candidate_value;
+            found_agent_metric = true;
+            break;
+        }
+    }
+
+    ASSERT_TRUE(found_agent_metric)
         << "agent_tx_bytes_total for this agent is not in scrape body.\n"
         << "On buggy code, counters_ map holds a dangling Counter* and "
         << "Family::metrics_ is empty, so Family::Collect() returns {} and "
         << "TextSerializer emits nothing for this family.";
-
-    // Find end-of-line and extract the numeric value after "} "
-    const auto eol = body.find('\n', line_pos);
-    ASSERT_NE(eol, std::string::npos);
-    const std::string line = body.substr(line_pos, eol - line_pos);
-    const auto brace_close = line.find("} ");
-    ASSERT_NE(brace_close, std::string::npos) << "line shape unexpected: " << line;
-    const std::string value_str = line.substr(brace_close + 2);
-    const double value = std::stod(value_str);
+    EXPECT_EQ(labels["agent_name"], agent_name);
+    EXPECT_EQ(labels["category"], "NIXL_TELEMETRY_TRANSFER");
+    EXPECT_FALSE(labels["hostname"].empty());
 
     EXPECT_EQ(value, static_cast<double>(kIncrement * kEventCount))
         << "Counter value after " << kEventCount << " × Increment(" << kIncrement << ") should be "
