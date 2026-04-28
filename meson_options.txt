@@ -30,6 +30,7 @@ option('static_plugins', type: 'string', value: '', description: 'Plugins to be 
 option('enable_plugins', type: 'string', value: '', description: 'Comma-separated list of plugins to build. Default (empty) builds all available plugins.')
 option('disable_plugins', type: 'string', value: '', description: 'Comma-separated list of plugins to exclude from build. Cannot be used with enable_plugins.')
 option('build_docs', type: 'boolean', value: false, description: 'Build Doxygen documentation')
+option('release_wheel', type: 'boolean', value: false, description: 'Add nixl-cu12 and nixl-cu13 dependencies to the meta wheel')
 option('log_level', type: 'combo', choices: ['trace', 'debug', 'info', 'warning', 'error', 'fatal', 'auto'], value: 'auto', description: 'Log Level (auto: auto-detect based on build type: trace for debug builds, info for release builds)')
 option('rust', type: 'boolean', value: false, description: 'Build Rust bindings')
 
