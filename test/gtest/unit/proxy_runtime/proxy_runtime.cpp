@@ -414,5 +414,71 @@ TEST_F(ProxyRuntimeTest, WorkerSubmitsPreparedTransportDescriptors) {
     EXPECT_EQ(prepared.remote_agent, "peer");
 }
 
+TEST_F(ProxyRuntimeTest, WorkerSubmitsPreparedAtomicAddDescriptor) {
+    DummyBackendMD remote_md;
+
+    ASSERT_EQ(initRuntime(1, 1), NIXL_SUCCESS);
+
+    nixlMemViewH dst_proxy = nullptr;
+    ASSERT_EQ(runtime_.registerProxyMemView(reinterpret_cast<nixlMemViewH>(uintptr_t{0x20}),
+                                           &dst_proxy),
+              NIXL_SUCCESS);
+
+    nixl_remote_meta_dlist_t remote_dlist(DRAM_SEG);
+    nixlRemoteMetaDesc remote_desc("peer");
+    remote_desc.addr = 0x2000;
+    remote_desc.len = 64;
+    remote_desc.devId = 0;
+    remote_desc.metadataP = &remote_md;
+    remote_dlist.addDesc(remote_desc);
+    ASSERT_EQ(runtime_.storeMetadata(dst_proxy, remote_dlist), NIXL_SUCCESS);
+
+    ASSERT_EQ(runtime_.startWorkers(), NIXL_SUCCESS);
+
+    nixlProxySubmission submission{};
+    submission.op_idx = 11;
+    submission.opcode = nixl_proxy_opcode_t::ATOMIC_ADD;
+    submission.channel_id = 0;
+    submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+    submission.dst_offset = 8;
+    submission.size = sizeof(uint64_t);
+    submission.value = 42;
+
+    auto *ring = runtime_.deviceChannelViews()[0].work_ring;
+    ring->records[0] = submission;
+    __atomic_store_n(&ring->records[0].ready_flag, 1u, __ATOMIC_RELEASE);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+    while (std::chrono::steady_clock::now() < deadline) {
+        {
+            std::lock_guard<std::mutex> lock(backend_->submit_mutex_);
+            if (!backend_->submissions_.empty()) {
+                break;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    std::vector<nixlBackendProxySubmission> submissions;
+    {
+        std::lock_guard<std::mutex> lock(backend_->submit_mutex_);
+        submissions = backend_->submissions_;
+    }
+
+    ASSERT_EQ(runtime_.shutdown(), NIXL_SUCCESS);
+
+    ASSERT_EQ(submissions.size(), 1u);
+    const auto &prepared = submissions.front();
+    EXPECT_EQ(prepared.op_idx, 11u);
+    EXPECT_EQ(prepared.opcode, nixl_proxy_opcode_t::ATOMIC_ADD);
+    EXPECT_EQ(prepared.channel_id, 0u);
+    EXPECT_EQ(prepared.remote.mem_type, DRAM_SEG);
+    EXPECT_EQ(prepared.remote.desc.addr, 0x2008u);
+    EXPECT_EQ(prepared.remote.desc.len, sizeof(uint64_t));
+    EXPECT_EQ(prepared.remote.desc.metadataP, &remote_md);
+    EXPECT_EQ(prepared.remote_agent, "peer");
+    EXPECT_EQ(prepared.value, 42u);
+}
+
 } // namespace proxy_runtime
 } // namespace gtest

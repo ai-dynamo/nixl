@@ -368,6 +368,35 @@ namespace proxy_memview_registry {
                   NIXL_ERR_INVALID_PARAM);
     }
 
+    TEST_F(ProxyMemViewRegistryTest, ReadyRemoteEntryProducesAtomicPreparedDescriptor) {
+        nixlMemViewH dst_proxy = nullptr;
+        ASSERT_EQ(registry_.registerProxyMemView(makeFakeBackendHandle(20), &dst_proxy),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(registry_.storeMetadata(dst_proxy, makeRemoteMetadata(0x2000, "remote-agent")),
+                  NIXL_SUCCESS);
+
+        nixlProxySubmission submission{};
+        submission.opcode = nixl_proxy_opcode_t::ATOMIC_ADD;
+        submission.op_idx = 7;
+        submission.channel_id = 3;
+        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.dst_offset = 9;
+        submission.size = sizeof(uint64_t);
+        submission.value = 42;
+
+        nixlBackendProxySubmission prepared_submission;
+        ASSERT_EQ(registry_.prepareSubmission(submission, prepared_submission), NIXL_SUCCESS);
+        EXPECT_EQ(prepared_submission.opcode, nixl_proxy_opcode_t::ATOMIC_ADD);
+        EXPECT_EQ(prepared_submission.op_idx, 7u);
+        EXPECT_EQ(prepared_submission.channel_id, 3u);
+        EXPECT_EQ(prepared_submission.remote.mem_type, DRAM_SEG);
+        EXPECT_EQ(prepared_submission.remote.desc.addr, 0x2009u);
+        EXPECT_EQ(prepared_submission.remote.desc.len, sizeof(uint64_t));
+        EXPECT_EQ(prepared_submission.remote.desc.metadataP, &remote_md_);
+        EXPECT_EQ(prepared_submission.remote_agent, "remote-agent");
+        EXPECT_EQ(prepared_submission.value, 42u);
+    }
+
     TEST_F(ProxyMemViewRegistryTest, MetadataKindMustMatchSubmissionRole) {
         nixlMemViewH src_proxy = nullptr;
         nixlMemViewH dst_proxy = nullptr;
