@@ -641,11 +641,11 @@ private:
 
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params)
     : nixlUcxEngine(init_params) {
-    const size_t num_threads = nixl::getBackendParam(init_params.customParams, "num_threads", 0u);
+    const size_t num_threads = nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
     numSharedWorkers_ = getWorkers().size() - num_threads;
     NIXL_ASSERT(numSharedWorkers_ > 0);
 
-    splitBatchSize_ = nixl::getBackendParam(init_params.customParams, "split_batch_size", 1024u);
+    splitBatchSize_ = nixl::getBackendParamDefaulted(init_params.customParams, "split_batch_size", 1024u);
 
     if (init_params.enableProgTh) {
         sharedThread_ =
@@ -788,7 +788,7 @@ nixlUcxThreadPoolEngine::getNotifs(notif_list_t &notif_list) {
 std::unique_ptr<nixlUcxEngine>
 nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
     nixlUcxEngine *engine;
-    const size_t num_threads = nixl::getBackendParam(init_params.customParams, "num_threads", 0u);
+    const size_t num_threads = nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
     if (num_threads > 0) {
         engine = new nixlUcxThreadPoolEngine(init_params);
     } else if (init_params.enableProgTh) {
@@ -808,10 +808,10 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     if (custom_params->count("device_list")!=0)
         devs = absl::StrSplit((*custom_params)["device_list"], ", ");
 
-    size_t num_workers = nixl::getBackendParam(custom_params, "num_workers", 1u);
-    const size_t num_threads = nixl::getBackendParam(custom_params, "num_threads", 0u);
+    size_t num_workers = nixl::getBackendParamDefaulted(custom_params, "num_workers", 1u);
+    const size_t num_threads = nixl::getBackendParamDefaulted(custom_params, "num_threads", 0u);
     const size_t num_device_channels =
-        nixl::getBackendParam(custom_params, "ucx_num_device_channels", 4u);
+        nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 4u);
 
     if (num_workers <= num_threads) {
         /* There must be at least one shared worker */

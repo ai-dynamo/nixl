@@ -20,18 +20,19 @@
 #include "configuration.h"
 #include "nixl_types.h"
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 
 namespace nixl {
 
 template<typename T>
-[[nodiscard]] T
-getBackendParam(const nixl_b_params_t &params, const std::string &key, const T fallback) {
+[[nodiscard]] std::optional<T>
+getBackendParamOptional(const nixl_b_params_t &params, const std::string &key) {
     const auto it = params.find(key);
 
     if (it == params.end()) {
-        return fallback;
+        return std::nullopt;
     }
 
     try {
@@ -44,8 +45,20 @@ getBackendParam(const nixl_b_params_t &params, const std::string &key, const T f
 
 template<typename T>
 [[nodiscard]] T
-getBackendParam(const nixl_b_params_t *params, const std::string &key, const T fallback) {
-    return (params != nullptr) ? getBackendParam<T>(*params, key, fallback) : fallback;
+getBackendParamDefaulted(const nixl_b_params_t &params, const std::string &key, const T fallback) {
+    return getBackendParamOptional<T>(params, key).value_or(fallback);
+}
+
+template<typename T>
+[[nodiscard]] std::optional<T>
+getBackendParamOptional(const nixl_b_params_t *params, const std::string &key) {
+    return (params != nullptr) ? getBackendParamOptional<T>(*params, key) : std::nullopt;
+}
+
+template<typename T>
+[[nodiscard]] T
+getBackendParamDefaulted(const nixl_b_params_t *params, const std::string &key, const T fallback) {
+    return getBackendParamOptional<T>(params, key).value_or(fallback);
 }
 
 } // namespace nixl

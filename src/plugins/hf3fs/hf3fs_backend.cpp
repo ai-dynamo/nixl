@@ -23,6 +23,7 @@
 #include <filesystem>
 #include "hf3fs_backend.h"
 #include "hf3fs_log.h"
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "file/file_utils.h"
 
@@ -48,11 +49,12 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
     // Get mount point from parameters if available
     std::string mount_point = "/mnt/3fs/"; // default
     if (init_params && init_params->customParams) {
-        if (init_params->customParams->count("mount_point") > 0) {
-            mount_point = init_params->customParams->at("mount_point");
+        if (const auto opt = nixl::getBackendParamOptional<std::string>("mount_point")) {
+            mount_point = *opt;
         }
-        if (init_params->customParams->count("mem_config") > 0) {
-            std::string mem_config_str = init_params->customParams->at("mem_config");
+
+        if (const auto opt = nixl::getBackendParamOptional<std::string>("mem_config")) {
+            const std::string &mem_config_str = *opt;
             if (mem_config_str == "dram") {
                 mem_config = NIXL_HF3FS_MEM_CONFIG_DRAM;
             } else if (mem_config_str == "dram_zc") {
@@ -63,8 +65,9 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
                 return;
             }
         }
-        if (init_params->customParams->count("iopool_size") > 0) {
-            int size = atoi(init_params->customParams->at("iopool_size").c_str());
+
+        if (const auto opt = nixl::getBackendParamOptional<unsigned>("iopool_size")) {
+            const unsigned int size = *opt;
             if (size > 0) {
                 if (size < HF3FS_MAX_IOPOOL_SIZE) {
                     iopool_size = size;

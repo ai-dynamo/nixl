@@ -15,9 +15,11 @@
  * limitations under the License.
  */
 #include "gusli_backend.h"
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>
-#define __LOG_ERR(format, ...)                                                                    \
+
+#define __LOG_ERR(format, ...)                                          \
     do {                                                                                          \
         NIXL_ERROR << absl::StrFormat(                                                            \
             "GUSLI: %s() %s[%d]" format, __PRETTY_FUNCTION__, __FILE__, __LINE__, ##__VA_ARGS__); \
@@ -100,14 +102,16 @@ nixlGusliEngine::parseInitParams(const nixlBackendInitParams *nixl_init,
     gusli_params.log =
         stdout; // Redirect gusli logs to stdout, important errors will be printed by the plugin
     if (nixl_init && nixl_init->customParams) {
-        const nixl_b_params_t *backParams = nixl_init->customParams;
-        if (backParams->count("client_name") > 0)
-            gusli_params.client_name = backParams->at("client_name").c_str();
-        if (backParams->count("max_num_simultaneous_requests") > 0)
-            gusli_params.max_num_simultaneous_requests =
-                std::stoi(backParams->at("max_num_simultaneous_requests"));
-        if (backParams->count("config_file") > 0)
-            gusli_params.config_file = backParams->at("config_file").c_str();
+        const nixl_b_params_t *params = nixl_init->customParams;
+        if (params->count("client_name") > 0) {
+            gusli_params.client_name = params->at("client_name").c_str();
+        }
+        if (const auto num = nixl::getBackendParamOptional<unsigned>(params, "max_num_simultaneous_requests")) {
+            gusli_params.max_num_simultaneous_requests = *num;
+        }
+        if (params->count("config_file") > 0) {
+            gusli_params.config_file = params->at("config_file").c_str();
+        }
     }
 }
 

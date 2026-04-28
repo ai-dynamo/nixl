@@ -76,8 +76,8 @@ nixlUcclEngine::nixlUcclEngine(const nixlBackendInitParams *init_params)
 
     local_agent_name_ = init_params->localAgent;
     const nixl_b_params_t *custom_params = init_params->customParams;
-    const size_t num_cpus = nixl::getBackendParam(custom_params, "num_cpus", 4u);
-    const int in_python = nixl::getBackendParam(custom_params, "in_python", 1);
+    const size_t num_cpus = nixl::getBackendParamDefaulted(custom_params, "num_cpus", 4u);
+    const int in_python = nixl::getBackendParamDefaulted(custom_params, "in_python", 1);
     engine_ = uccl_engine_create(num_cpus, (in_python == 1));
     NIXL_DEBUG << "UCCL engine created";
 

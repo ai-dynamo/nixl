@@ -75,15 +75,15 @@ castPosixHandle(nixlBackendReqH *handle) {
 
 static std::string_view
 getIoQueueType(const nixl_b_params_t *custom_params) {
-    if (nixl::getBackendParam(custom_params, "use_aio", false)) {
+    if (nixl::getBackendParamDefaulted(custom_params, "use_aio", false)) {
         return "AIO";
     }
 
-    if (nixl::getBackendParam(custom_params, "use_uring", false)) {
+    if (nixl::getBackendParamDefaulted(custom_params, "use_uring", false)) {
         return "URING";
     }
 
-    if (nixl::getBackendParam(custom_params, "use_posix_aio", false)) {
+    if (nixl::getBackendParamDefaulted(custom_params, "use_posix_aio", false)) {
         return "POSIXAIO";
     }
 
@@ -195,8 +195,8 @@ nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
       io_queue_type_(getIoQueueType(init_params->customParams)),
       io_queue_(nixlPosixIOQueue::instantiate(
           io_queue_type_,
-          nixl::getBackendParam(init_params->customParams, "ios_pool_size", 0u),
-          nixl::getBackendParam(init_params->customParams, "kernel_queue_size", 0u))),
+          nixl::getBackendParamDefaulted(init_params->customParams, "ios_pool_size", 0u),
+          nixl::getBackendParamDefaulted(init_params->customParams, "kernel_queue_size", 0u))),
       io_queue_lock_(init_params->syncMode) {
     if (io_queue_type_.empty()) {
         initErr = true;

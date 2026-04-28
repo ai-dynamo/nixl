@@ -26,6 +26,7 @@
 #include <stdexcept>
 #include <cstdlib>
 #include <absl/strings/str_format.h>
+#include "common/backend.h"
 #include "common/configuration.h"
 #include "nixl_types.h"
 
@@ -33,13 +34,9 @@ namespace {
 
 std::string
 getAccountUrl(nixl_b_params_t *custom_params) {
-    if (custom_params) {
-        auto account_it = custom_params->find("account_url");
-        if (account_it != custom_params->end() && !account_it->second.empty()) {
-            return account_it->second;
-        }
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "account_url")) {
+        return *opt;
     }
-
     return nixl::config::getValueDefaulted("AZURE_STORAGE_ACCOUNT_URL", std::string());
 }
 
