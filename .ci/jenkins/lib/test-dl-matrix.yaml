@@ -149,12 +149,17 @@ steps:
     containerSelector: "{name: 'build_helper_dl'}"
     timeout: "${TEST_TIMEOUT}"
     parallel: false
-    run: |
-      set -x
-      sudo -E -u svc-nixl .ci/scripts/run_tests_slurm.sh --test_script_path=".gitlab/test_ep.sh" \
-        --container_name=nixl-dl-${ucx_version}-${BUILD_NUMBER} \
-        --slurm_job_id=$(cat /mnt/pvc/dl_job_id_${ucx_version}_${BUILD_NUMBER}.txt) \
-        --docker_image="${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      testScript: ".gitlab/test_ep.sh ${NIXL_INSTALL_DIR}"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
 
   - name: Run DL Rust tests
     containerSelector: "{name: 'build_helper_dl'}"
