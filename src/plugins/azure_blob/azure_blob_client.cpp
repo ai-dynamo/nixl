@@ -54,7 +54,8 @@ getContainerName(nixl_b_params_t *custom_params) {
 
 [[nodiscard]] std::string
 getConnectionString(nixl_b_params_t *custom_params) {
-    const auto str = nixl::getBackendParamDefaulted(custom_params, "connection_string", std::string());
+    const auto str =
+        nixl::getBackendParamDefaulted(custom_params, "connection_string", std::string());
     if (!str.empty()) {
         return str;
     }

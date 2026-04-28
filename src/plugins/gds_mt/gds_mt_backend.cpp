@@ -105,9 +105,10 @@ public:
 };
 
 [[nodiscard]] size_t
-getThreadCount (const nixlBackendInitParams *init_params) {
+getThreadCount(const nixlBackendInitParams *init_params) {
     nixl_b_params_t *params = init_params->customParams;
-    const size_t count = nixl::getBackendParamDefaulted(params, "thread_count", default_thread_count);
+    const size_t count =
+        nixl::getBackendParamDefaulted(params, "thread_count", default_thread_count);
     return (count > 0) ? count : default_thread_count;
 }
 

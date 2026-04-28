@@ -823,11 +823,13 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     }
 
     ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
-    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, std::string(nixl_ucx_err_handling_param_name))) {
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(
+            custom_params, std::string(nixl_ucx_err_handling_param_name))) {
         err_handling_mode = ucx_err_mode_from_string(*opt);
     }
 
-    const auto engine_config = nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
+    const auto engine_config =
+        nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
 
     uc = std::make_unique<nixlUcxContext>(devs,
                                           init_params.enableProgTh,

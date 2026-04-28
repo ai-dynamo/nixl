@@ -27,9 +27,12 @@ createAWSCredentials(nixl_b_params_t *custom_params) {
         return std::nullopt;
     }
 
-    const std::string access_key = nixl::getBackendParamDefaulted(custom_params, "access_key", std::string());
-    const std::string secret_key = nixl::getBackendParamDefaulted(custom_params, "secret_key", std::string());
-    const std::string session_token = nixl::getBackendParamDefaulted(custom_params, "session_token", std::string());
+    const std::string access_key =
+        nixl::getBackendParamDefaulted(custom_params, "access_key", std::string());
+    const std::string secret_key =
+        nixl::getBackendParamDefaulted(custom_params, "secret_key", std::string());
+    const std::string session_token =
+        nixl::getBackendParamDefaulted(custom_params, "session_token", std::string());
 
     if (access_key.empty() || secret_key.empty()) {
         return std::nullopt;
