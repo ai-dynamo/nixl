@@ -20,49 +20,10 @@
 #include "configuration.h"
 #include "nixl_types.h"
 
-#include <charconv>
 #include <stdexcept>
 #include <string>
-#include <system_error>
-#include <type_traits>
 
 namespace nixl {
-
-template<typename...> constexpr inline bool dependent_false = false;
-
-[[nodiscard]] inline bool
-getBackendBool(const std::string &key, const std::string &value) {
-    try {
-        return config::convertTraits<bool>::convert(value);
-    }
-    catch (const std::exception &e) {
-        throw std::runtime_error(e.what() + (" in backend parameter " + key));
-    }
-}
-
-template<typename T>
-[[nodiscard]] T
-getBackendInteger(const std::string &key, const std::string &value) {
-    T result;
-
-    const auto status = std::from_chars(value.data(), value.data() + value.size(), result, 10);
-
-    switch (status.ec) {
-    case std::errc::invalid_argument:
-        throw std::runtime_error("Invalid integer string " + value + " in backend parameter " +
-                                 key);
-    case std::errc::result_out_of_range:
-        throw std::runtime_error("Integer string " + value + " out of range in backend parameter " +
-                                 key);
-    default:
-        if (status.ptr != (value.data() + value.size())) {
-            throw std::runtime_error("Trailing garbage in integer string " + value +
-                                     " in backend parameter " + key);
-        }
-        break;
-    }
-    return result;
-}
 
 template<typename T>
 [[nodiscard]] T
@@ -73,16 +34,11 @@ getBackendParam(const nixl_b_params_t &params, const std::string &key, const T f
         return fallback;
     }
 
-    if constexpr (std::is_same_v<T, char>) {
-        static_assert(dependent_false<T>, "No conversion implemented for char");
-    } else if constexpr (std::is_same_v<T, bool>) {
-        return getBackendBool(key, it->second);
-    } else if constexpr (std::is_same_v<T, std::string>) {
-        return it->second;
-    } else if constexpr (std::is_integral_v<T>) {
-        return getBackendInteger<T>(key, it->second);
-    } else {
-        static_assert(dependent_false<T>, "No conversion implemented for type");
+    try {
+        return config::convertTraits<T>::convert(it->second);
+    }
+    catch (const std::exception &e) {
+      throw std::runtime_error(e.what() + (" converting backend parameter " + key));
     }
 }
 
