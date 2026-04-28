@@ -38,7 +38,7 @@ getBackendParam(const nixl_b_params_t &params, const std::string &key, const T f
         return config::convertTraits<T>::convert(it->second);
     }
     catch (const std::exception &e) {
-      throw std::runtime_error(e.what() + (" converting backend parameter " + key));
+        throw std::runtime_error(e.what() + (" converting backend parameter " + key));
     }
 }
 
