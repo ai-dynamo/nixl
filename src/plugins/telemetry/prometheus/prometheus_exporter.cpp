@@ -100,29 +100,15 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
         initializeMetrics();
     }
     catch (...) {
-        removeMetricsFromSharedRegistry();
+        counters_.clear();
+        gauges_.clear();
         s_agent_names.erase(agent_name_);
         throw;
     }
 }
 
-void
-nixlTelemetryPrometheusExporter::removeMetricsFromSharedRegistry() {
-    for (auto &kv : counters_) {
-        if (kv.second.family && kv.second.metric) {
-            kv.second.family->Remove(kv.second.metric);
-        }
-    }
-    for (auto &kv : gauges_) {
-        if (kv.second.family && kv.second.metric) {
-            kv.second.family->Remove(kv.second.metric);
-        }
-    }
-}
-
 nixlTelemetryPrometheusExporter::~nixlTelemetryPrometheusExporter() {
     const std::lock_guard lock(s_mutex);
-    removeMetricsFromSharedRegistry();
     counters_.clear();
     gauges_.clear();
     s_agent_names.erase(agent_name_);
@@ -170,7 +156,7 @@ nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
     auto &family = prometheus::BuildCounter().Name(name + "_total").Help(help).Register(*registry_);
     auto &metric =
         family.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
-    counters_[name] = {&family, &metric};
+    counters_.try_emplace(name, &family, &metric);
 }
 
 void
@@ -180,7 +166,7 @@ nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
     auto &family = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
     auto &metric =
         family.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
-    gauges_[name] = {&family, &metric};
+    gauges_.try_emplace(name, &family, &metric);
 }
 
 nixl_status_t
