@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.0.1',
+project('nixl', 'CPP', version: '1.1.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -246,12 +246,11 @@ etcd_lib_path = get_option('etcd_lib_path')
 if not etcd_dep.found() and etcd_lib_path != ''
     etcd_lib = cpp.find_library('etcd-cpp-api', dirs: etcd_lib_path)
     if etcd_lib.found()
-        if cpp.has_header('Client.hpp', args : '-I' + etcd_inc_path)
+        if cpp.has_header('etcd/Client.hpp', args : '-I' + etcd_inc_path)
             etcd_inc = include_directories(etcd_inc_path, is_system: true)
             etcd_dep = declare_dependency(
                         include_directories : etcd_inc,
                         dependencies : etcd_lib)
-            break
         endif
     endif
 endif

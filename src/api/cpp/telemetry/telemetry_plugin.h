@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,10 +24,10 @@
 #include <string_view>
 #include <memory>
 
-enum class nixl_telemetry_plugin_api_version : unsigned int { V1 = 1 };
-
-inline constexpr nixl_telemetry_plugin_api_version nixlTelemetryPluginApiVersionV1 =
-    nixl_telemetry_plugin_api_version::V1;
+enum class nixl_telemetry_plugin_api_version : unsigned int {
+    V1 = 1,
+    V2 = 2,
+};
 
 // Type alias for exporter creation function
 using exporter_creator_fn_t =
