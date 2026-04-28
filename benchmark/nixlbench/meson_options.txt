@@ -21,3 +21,10 @@ option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD C+
 option('nixl_path', type: 'string', value: '/usr/local', description: 'Path to NiXL')
 option('nvshmem_inc_path', type: 'string', value: '', description: 'Path to NVSHMEM include directory')
 option('nvshmem_lib_path', type: 'string', value: '', description: 'Path to NVSHMEM library directory')
+
+option('with_gds_plugin', type: 'boolean', value: true, description: 'Build the GDS southbound plugin')
+option('with_gds_mt_plugin', type: 'boolean', value: true, description: 'Build the GDS-MT southbound plugin')
+option('with_gpunetio_plugin', type: 'boolean', value: true, description: 'Build the GPUNetIO southbound plugin')
+option('with_azure_blob_plugin', type: 'boolean', value: true, description: 'Build the Azure Blob southbound plugin')
+option('with_hf3fs_plugin', type: 'boolean', value: true, description: 'Build the HF3FS southbound plugin')
+option('with_gusli_plugin', type: 'boolean', value: true, description: 'Build the GUSLI southbound plugin')
