@@ -45,10 +45,8 @@ nixl_status_t
 nixlUcxProxyBackendAdapter::submitPut(const nixlBackendProxySubmission &submission,
                                       uint64_t &request_token) {
     nixlBackendReqH *handle = nullptr;
-    nixl_status_t status = engine_->submitProxyRmaWrite(submission.local.desc,
-                                                        submission.remote.desc,
-                                                        submission.size,
-                                                        handle);
+    nixl_status_t status = engine_->submitProxyRmaWrite(
+        submission.local.desc, submission.remote.desc, submission.size, handle);
     if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
         NIXL_DEBUG << "nixlUcxProxyBackendAdapter::submitPut: submitProxyRmaWrite failed "
                       "status="
@@ -58,20 +56,33 @@ nixlUcxProxyBackendAdapter::submitPut(const nixlBackendProxySubmission &submissi
 
     request_token = trackRequest(handle);
     NIXL_DEBUG << "nixlUcxProxyBackendAdapter::submitPut: posted RDMA write"
-               << " src_addr=0x" << std::hex
-               << submission.local.desc.addr << std::dec
-               << " dst_addr=0x" << std::hex
-               << submission.remote.desc.addr << std::dec
-               << " size=" << submission.size
-               << " remote_agent='" << submission.remote_agent << "'"
+               << " src_addr=0x" << std::hex << submission.local.desc.addr << std::dec
+               << " dst_addr=0x" << std::hex << submission.remote.desc.addr << std::dec
+               << " size=" << submission.size << " remote_agent='" << submission.remote_agent << "'"
                << " token=" << request_token;
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlUcxProxyBackendAdapter::submitAtomicAdd(const nixlBackendProxySubmission &,
-                                            uint64_t &) {
-    return NIXL_ERR_NOT_SUPPORTED;
+nixlUcxProxyBackendAdapter::submitAtomicAdd(const nixlBackendProxySubmission &submission,
+                                            uint64_t &request_token) {
+    nixlBackendReqH *handle = nullptr;
+    nixl_status_t status =
+        engine_->submitProxyAtomicAdd(submission.remote.desc, submission.value, handle);
+    if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
+        NIXL_DEBUG << "nixlUcxProxyBackendAdapter::submitAtomicAdd: submitProxyAtomicAdd "
+                      "failed status="
+                   << status;
+        return status;
+    }
+
+    request_token = trackRequest(handle);
+    NIXL_DEBUG << "nixlUcxProxyBackendAdapter::submitAtomicAdd: posted RDMA atomic add"
+               << " dst_addr=0x" << std::hex << submission.remote.desc.addr << std::dec
+               << " size=" << submission.size << " value=" << submission.value << " remote_agent='"
+               << submission.remote_agent << "'"
+               << " token=" << request_token;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -110,8 +121,8 @@ nixlUcxProxyBackendAdapter::progress() {
 
 nixl_status_t
 nixlUcxProxyBackendAdapter::shutdown() {
-    NIXL_INFO << "nixlUcxProxyBackendAdapter::shutdown: releasing "
-              << tracked_requests_.size() << " tracked request(s)";
+    NIXL_INFO << "nixlUcxProxyBackendAdapter::shutdown: releasing " << tracked_requests_.size()
+              << " tracked request(s)";
     {
         std::lock_guard<std::mutex> lock(request_mutex_);
         if (engine_ != nullptr) {

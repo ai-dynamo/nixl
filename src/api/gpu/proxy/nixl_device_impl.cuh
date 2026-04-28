@@ -112,6 +112,7 @@ atomic_add(uint64_t value,
             submission.dst_proxy_memview_id = proxyMemViewIdFromHandle(counter.mvh);
             submission.dst_index = counter.index;
             submission.dst_offset = counter.offset;
+            submission.size = sizeof(uint64_t);
             submission.value = value;
             status = ctx->enqueue(submission, xfer_status);
         }
