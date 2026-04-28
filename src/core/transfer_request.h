@@ -42,6 +42,14 @@ public:
                  const nixl_mem_t remote_type,
                  const size_t desc_count = 0);
 
+    nixlXferReqH(nixlXferReqH &&) = delete;
+    nixlXferReqH(const nixlXferReqH &) = delete;
+
+    void
+    operator=(nixlXferReqH &&) = delete;
+    void
+    operator=(const nixlXferReqH &) = delete;
+
     ~nixlXferReqH() {
         if ((backendHandle != nullptr) && (engine != nullptr)) {
             engine->releaseReqH(backendHandle);
@@ -57,8 +65,8 @@ private:
     nixlBackendEngine *engine = nullptr;
     nixlBackendReqH *backendHandle = nullptr;
 
-    const std::unique_ptr<nixl_meta_dlist_t> initiatorDescs;
-    const std::unique_ptr<nixl_meta_dlist_t> targetDescs;
+    nixl_meta_dlist_t initiatorDescs;
+    nixl_meta_dlist_t targetDescs;
 
     const std::string remoteAgent;
     nixl_blob_t notifMsg;
