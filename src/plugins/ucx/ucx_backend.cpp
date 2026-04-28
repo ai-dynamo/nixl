@@ -810,7 +810,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
 
     size_t num_workers = nixl::getBackendParam(custom_params, "num_workers", 1u);
     const size_t num_threads = nixl::getBackendParam(custom_params, "num_threads", 0u);
-    const size_t num_device_channels = nixl::getBackendParam(custom_params, "ucx_num_device_channels", 4u);
+    const size_t num_device_channels =
+        nixl::getBackendParam(custom_params, "ucx_num_device_channels", 4u);
 
     if (num_workers <= num_threads) {
         /* There must be at least one shared worker */

@@ -27,8 +27,7 @@
 
 namespace nixl {
 
-template<typename... Ts>
-constexpr inline bool dependent_false = false;
+template<typename... Ts> constexpr inline bool dependent_false = false;
 
 template<typename T>
 [[nodiscard]] T
@@ -45,7 +44,8 @@ getBackendParam(const nixl_b_params_t &params, const std::string &key, const T d
         T result;
         {
             const std::string &value = it->second;
-            const auto status = std::from_chars(value.data(), value.data() + value.size(), result, 10);
+            const auto status =
+                std::from_chars(value.data(), value.data() + value.size(), result, 10);
             switch (status.ec) {
             case std::errc::invalid_argument:
                 // throw std::runtime_error("Invalid integer string " + value);

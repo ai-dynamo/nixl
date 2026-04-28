@@ -207,9 +207,10 @@ nixlPosixBackendReqH::postXfer() {
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       io_queue_type_(getIoQueueType(init_params->customParams)),
-      io_queue_(nixlPosixIOQueue::instantiate(io_queue_type_,
-                                              nixl::getBackendParam(init_params->customParams, "ios_pool_size", 0u),
-                                              nixl::getBackendParam(init_params->customParams, "kernel_queue_size", 0u))),
+      io_queue_(nixlPosixIOQueue::instantiate(
+          io_queue_type_,
+          nixl::getBackendParam(init_params->customParams, "ios_pool_size", 0u),
+          nixl::getBackendParam(init_params->customParams, "kernel_queue_size", 0u))),
       io_queue_lock_(init_params->syncMode) {
     if (io_queue_type_.empty()) {
         initErr = true;
