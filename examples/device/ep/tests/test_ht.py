@@ -450,7 +450,9 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
 
     num_nodes = int(os.getenv("WORLD_SIZE", 1))
 
-    rank, num_ranks, group = init_dist(local_rank, num_local_ranks)
+    rank, num_ranks, group = init_dist(
+        local_rank, num_local_ranks, master_addr=args.tcp_server
+    )
     print(
         f"pid: {os.getpid()}, rank: {rank}, num_ranks: {num_ranks} ,local_rank: {local_rank}",
         flush=True,
@@ -464,7 +466,9 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     )
 
     # Create TCPStore client for NIXL metadata exchange
-    tcp_server = args.tcp_server if args.tcp_server else os.getenv("MASTER_ADDR", "127.0.0.1")
+    tcp_server = (
+        args.tcp_server if args.tcp_server else os.getenv("MASTER_ADDR", "127.0.0.1")
+    )
     tcp_store = store_group.create_client_store(
         master_addr=tcp_server,
         port=TCP_STORE_PORT,
