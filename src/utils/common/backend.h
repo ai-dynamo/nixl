@@ -49,12 +49,15 @@ getBackendInteger(const std::string &key, const std::string &value) {
 
     switch (status.ec) {
     case std::errc::invalid_argument:
-        throw std::runtime_error("Invalid integer string " + value + " in backend parameter " + key);
+        throw std::runtime_error("Invalid integer string " + value + " in backend parameter " +
+                                 key);
     case std::errc::result_out_of_range:
-        throw std::runtime_error("Integer string " + value + " out of range in backend parameter " + key);
+        throw std::runtime_error("Integer string " + value + " out of range in backend parameter " +
+                                 key);
     default:
         if (status.ptr != (value.data() + value.size())) {
-            throw std::runtime_error("Trailing garbage in integer string " + value + " in backend parameter " + key);
+            throw std::runtime_error("Trailing garbage in integer string " + value +
+                                     " in backend parameter " + key);
         }
         break;
     }
