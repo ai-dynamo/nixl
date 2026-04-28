@@ -32,50 +32,45 @@
 
 namespace {
 
-std::string
+[[nodiscard]] std::string
 getAccountUrl(nixl_b_params_t *custom_params) {
-    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "account_url")) {
-        return *opt;
+    const auto str = nixl::getBackendParamDefaulted(custom_params, "account_url", std::string());
+    if (!str.empty()) {
+        return str;
     }
+
     return nixl::config::getValueDefaulted("AZURE_STORAGE_ACCOUNT_URL", std::string());
 }
 
-std::string
+[[nodiscard]] std::string
 getContainerName(nixl_b_params_t *custom_params) {
-    if (custom_params) {
-        auto container_it = custom_params->find("container_name");
-        if (container_it != custom_params->end() && !container_it->second.empty()) {
-            return container_it->second;
-        }
+    const auto str = nixl::getBackendParamDefaulted(custom_params, "container_name", std::string());
+    if (!str.empty()) {
+        return str;
     }
 
     return nixl::config::getNonEmptyString("AZURE_STORAGE_CONTAINER_NAME");
 }
 
-std::string
+[[nodiscard]] std::string
 getConnectionString(nixl_b_params_t *custom_params) {
-    if (custom_params) {
-        auto conn_it = custom_params->find("connection_string");
-        if (conn_it != custom_params->end() && !conn_it->second.empty()) {
-            return conn_it->second;
-        }
+    const auto str = nixl::getBackendParamDefaulted(custom_params, "connection_string", std::string());
+    if (!str.empty()) {
+        return str;
     }
-    const char *env_conn = std::getenv("AZURE_STORAGE_CONNECTION_STRING");
-    if (env_conn && env_conn[0] != '\0') return std::string(env_conn);
-    return "";
+
+    return nixl::config::getValueDefaulted("AZURE_STORAGE_CONNECTION_STRING", std::string());
 }
 
-std::string
+[[nodiscard]] std::string
 getCaBundle(nixl_b_params_t *custom_params) {
-    if (custom_params) {
-        auto ca_bundle_it = custom_params->find("ca_bundle");
-        if (ca_bundle_it != custom_params->end() && !ca_bundle_it->second.empty()) {
-            return ca_bundle_it->second;
-        }
+    const auto str = nixl::getBackendParamDefaulted(custom_params, "ca_bundle", std::string());
+    if (!str.empty()) {
+        return str;
     }
 
     // Return empty string if not provided, which means use default CA bundle
-    return nixl::config::getValueDefaulted<std::string>("AZURE_CA_BUNDLE", "");
+    return nixl::config::getValueDefaulted("AZURE_CA_BUNDLE", std::string());
 }
 
 } // namespace
@@ -83,13 +78,13 @@ getCaBundle(nixl_b_params_t *custom_params) {
 azureBlobClient::azureBlobClient(nixl_b_params_t *custom_params,
                                  std::shared_ptr<asio::thread_pool> executor) {
     executor_ = executor;
-    std::string accountUrl = ::getAccountUrl(custom_params);
-    std::string containerName = ::getContainerName(custom_params);
-    std::string connectionString = ::getConnectionString(custom_params);
+    const std::string accountUrl = ::getAccountUrl(custom_params);
+    const std::string containerName = ::getContainerName(custom_params);
+    const std::string connectionString = ::getConnectionString(custom_params);
     Azure::Storage::Blobs::BlobClientOptions options;
     options.Telemetry.ApplicationId = "azpartner-nixl/0.1.0";
 
-    std::string caBundle = ::getCaBundle(custom_params);
+    const std::string caBundle = ::getCaBundle(custom_params);
     if (!caBundle.empty()) {
         Azure::Core::Http::CurlTransportOptions curlOptions;
         curlOptions.CAInfo = caBundle;

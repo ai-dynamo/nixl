@@ -808,8 +808,9 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
-    if (custom_params->count("device_list")!=0)
-        devs = absl::StrSplit((*custom_params)["device_list"], ", ");
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "device_list")) {
+        devs = absl::StrSplit(*opt, ", ");
+    }
 
     size_t num_workers = nixl::getBackendParamDefaulted(custom_params, "num_workers", 1u);
     const size_t num_threads = nixl::getBackendParamDefaulted(custom_params, "num_threads", 0u);
@@ -821,18 +822,12 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
         num_workers = num_threads + 1;
     }
 
-    ucp_err_handling_mode_t err_handling_mode;
-    const auto err_handling_mode_it =
-        custom_params->find(std::string(nixl_ucx_err_handling_param_name));
-    if (err_handling_mode_it == custom_params->end()) {
-        err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
-    } else {
-        err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
+    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, std::string(nixl_ucx_err_handling_param_name))) {
+        err_handling_mode = ucx_err_mode_from_string(*opt);
     }
 
-    const auto engine_config_it = custom_params->find("engine_config");
-    const auto engine_config =
-        (engine_config_it != custom_params->end()) ? engine_config_it->second : "";
+    const auto engine_config = nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
 
     uc = std::make_unique<nixlUcxContext>(devs,
                                           init_params.enableProgTh,

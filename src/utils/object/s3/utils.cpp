@@ -15,59 +15,43 @@
  * limitations under the License.
  */
 
+#include "common/backend.h"
 #include "common/configuration.h"
 #include "utils.h"
 
 namespace nixl_s3_utils {
 
-std::optional<Aws::Auth::AWSCredentials>
+[[nodiscard]] std::optional<Aws::Auth::AWSCredentials>
 createAWSCredentials(nixl_b_params_t *custom_params) {
-    if (!custom_params) return std::nullopt;
+    if (!custom_params) {
+        return std::nullopt;
+    }
 
-    std::string access_key, secret_key, session_token;
+    const std::string access_key = nixl::getBackendParamDefaulted(custom_params, "access_key", std::string());
+    const std::string secret_key = nixl::getBackendParamDefaulted(custom_params, "secret_key", std::string());
+    const std::string session_token = nixl::getBackendParamDefaulted(custom_params, "session_token", std::string());
 
-    auto access_key_it = custom_params->find("access_key");
-    if (access_key_it != custom_params->end()) access_key = access_key_it->second;
+    if (access_key.empty() || secret_key.empty()) {
+        return std::nullopt;
+    }
 
-    auto secret_key_it = custom_params->find("secret_key");
-    if (secret_key_it != custom_params->end()) secret_key = secret_key_it->second;
-
-    auto session_token_it = custom_params->find("session_token");
-    if (session_token_it != custom_params->end()) session_token = session_token_it->second;
-
-    if (access_key.empty() || secret_key.empty()) return std::nullopt;
-
-    if (session_token.empty()) return Aws::Auth::AWSCredentials(access_key, secret_key);
+    if (session_token.empty()) {
+        return Aws::Auth::AWSCredentials(access_key, secret_key);
+    }
 
     return Aws::Auth::AWSCredentials(access_key, secret_key, session_token);
 }
 
-bool
+[[nodiscard]] bool
 getUseVirtualAddressing(nixl_b_params_t *custom_params) {
-    if (!custom_params) return false;
-
-    auto virtual_addressing_it = custom_params->find("use_virtual_addressing");
-    if (virtual_addressing_it != custom_params->end()) {
-        const std::string &value = virtual_addressing_it->second;
-        if (value == "true")
-            return true;
-        else if (value == "false")
-            return false;
-        else
-            throw std::runtime_error("Invalid value for use_virtual_addressing: '" + value +
-                                     "'. Must be 'true' or 'false'");
-    }
-
-    return false;
+    return nixl::getBackendParamDefaulted(custom_params, "use_virtual_addressing", false);
 }
 
-std::string
+[[nodiscard]] std::string
 getBucketName(nixl_b_params_t *custom_params) {
-    if (custom_params) {
-        auto bucket_it = custom_params->find("bucket");
-        if (bucket_it != custom_params->end() && !bucket_it->second.empty()) {
-            return bucket_it->second;
-        }
+    const auto str = nixl::getBackendParamDefaulted(custom_params, "bucket", std::string());
+    if (!str.empty()) {
+        return str;
     }
 
     return nixl::config::getNonEmptyString("AWS_DEFAULT_BUCKET");

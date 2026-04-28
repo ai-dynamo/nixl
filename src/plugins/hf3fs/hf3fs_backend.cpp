@@ -48,12 +48,14 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
 
     // Get mount point from parameters if available
     std::string mount_point = "/mnt/3fs/"; // default
-    if (init_params && init_params->customParams) {
-        if (const auto opt = nixl::getBackendParamOptional<std::string>("mount_point")) {
+    if (init_params) {
+        nixl_b_params_t *params = init_params->customParams;
+
+        if (const auto opt = nixl::getBackendParamOptional<std::string>(params, "mount_point")) {
             mount_point = *opt;
         }
 
-        if (const auto opt = nixl::getBackendParamOptional<std::string>("mem_config")) {
+        if (const auto opt = nixl::getBackendParamOptional<std::string>(params, "mem_config")) {
             const std::string &mem_config_str = *opt;
             if (mem_config_str == "dram") {
                 mem_config = NIXL_HF3FS_MEM_CONFIG_DRAM;
@@ -66,7 +68,7 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
             }
         }
 
-        if (const auto opt = nixl::getBackendParamOptional<unsigned>("iopool_size")) {
+        if (const auto opt = nixl::getBackendParamOptional<unsigned>(params, "iopool_size")) {
             const unsigned int size = *opt;
             if (size > 0) {
                 if (size < HF3FS_MAX_IOPOOL_SIZE) {
