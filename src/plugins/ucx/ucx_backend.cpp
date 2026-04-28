@@ -1070,6 +1070,47 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
     return NIXL_SUCCESS;
 }
 
+nixl_status_t
+nixlUcxEngine::submitProxyRmaWrite(const nixlMetaDesc &local,
+                                   const nixlMetaDesc &remote,
+                                   size_t size,
+                                   nixlBackendReqH *&handle) const {
+    handle = nullptr;
+
+    if (local.len != size || remote.len != size) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    auto *lmd = static_cast<nixlUcxPrivateMetadata *>(local.metadataP);
+    auto *rmd = static_cast<nixlUcxPublicMetadata *>(remote.metadataP);
+    if (lmd == nullptr || rmd == nullptr || rmd->conn == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    const auto worker_id = getWorkerId();
+    auto *ucx_handle = new nixlUcxBackendReqH(getWorker(worker_id).get(), worker_id);
+    handle = ucx_handle;
+    ucx_handle->reserve(1);
+
+    auto &ep = rmd->conn->getEp(worker_id);
+    nixlUcxReq req = nullptr;
+    const nixl_status_t submit_status = ep->write(reinterpret_cast<void *>(local.addr),
+                                                  lmd->mem,
+                                                  static_cast<uint64_t>(remote.addr),
+                                                  rmd->getRkey(worker_id),
+                                                  size,
+                                                  req);
+    const nixl_status_t append_status = ucx_handle->append(submit_status, req, rmd->conn);
+    if (append_status != NIXL_SUCCESS) {
+        releaseReqH(handle);
+        handle = nullptr;
+        return append_status;
+    }
+
+    return submit_status;
+}
+
+
 nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
                                                const nixl_meta_dlist_t &local,
                                                const nixl_meta_dlist_t &remote,

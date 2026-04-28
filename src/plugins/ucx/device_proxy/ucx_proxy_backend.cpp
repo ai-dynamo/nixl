@@ -44,25 +44,15 @@ nixlUcxProxyBackendAdapter::submit(const nixlBackendProxySubmission &submission,
 nixl_status_t
 nixlUcxProxyBackendAdapter::submitPut(const nixlBackendProxySubmission &submission,
                                       uint64_t &request_token) {
-    nixl_meta_dlist_t local_list(submission.local.mem_type);
-    local_list.addDesc(submission.local.desc);
-
-    nixl_meta_dlist_t remote_list(submission.remote.mem_type);
-    remote_list.addDesc(submission.remote.desc);
-
     nixlBackendReqH *handle = nullptr;
-    nixl_status_t status = engine_->prepXfer(
-        NIXL_WRITE, local_list, remote_list, submission.remote_agent, handle);
-    if (status != NIXL_SUCCESS) {
-        NIXL_DEBUG << "nixlUcxProxyBackendAdapter::submitPut: prepXfer failed status=" << status;
-        return status;
-    }
-
-    status = engine_->postXfer(
-        NIXL_WRITE, local_list, remote_list, submission.remote_agent, handle);
+    nixl_status_t status = engine_->submitProxyRmaWrite(submission.local.desc,
+                                                        submission.remote.desc,
+                                                        submission.size,
+                                                        handle);
     if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
-        NIXL_DEBUG << "nixlUcxProxyBackendAdapter::submitPut: postXfer failed status=" << status;
-        engine_->releaseReqH(handle);
+        NIXL_DEBUG << "nixlUcxProxyBackendAdapter::submitPut: submitProxyRmaWrite failed "
+                      "status="
+                   << status;
         return status;
     }
 
