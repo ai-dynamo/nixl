@@ -65,8 +65,8 @@ protected:
 public:
     // Notification to be sent after completion of all requests
     struct Notif {
-        std::string agent;
-        nixl_blob_t payload;
+        const std::string agent;
+        const nixl_blob_t payload;
 
         Notif(const std::string &remote_agent, const nixl_blob_t &msg)
             : agent(remote_agent),
@@ -1301,27 +1301,28 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
-    auto &notif = int_handle->notif;
     const nixl_status_t handle_status = int_handle->status();
 
-    if ((handle_status != NIXL_SUCCESS) || !notif.has_value()) {
-        if (handle_status != NIXL_IN_PROG) { // error flow
-            notif.reset();
-        }
-
+    if ((handle_status == NIXL_IN_PROG) || !int_handle->notif) {
         return handle_status;
     }
 
-    ucx_connection_ptr_t conn = getConnection(notif->agent);
+    if (handle_status != NIXL_SUCCESS) {
+        int_handle->notif.reset();
+        return handle_status;
+    }
+
+    const nixlUcxBackendReqH::Notif notif(std::move(int_handle->notif).value());
+    int_handle->notif.reset();
+
+    const ucx_connection_ptr_t conn = getConnection(notif.agent);
     if (!conn) {
-        notif.reset();
         return NIXL_ERR_NOT_FOUND;
     }
 
     nixlUcxReq req;
-    nixl_status_t status =
-        notifSendPriv(notif->agent, notif->payload, conn->getEp(int_handle->getWorkerId()), &req);
-    notif.reset();
+    const auto &ep = conn->getEp(int_handle->getWorkerId());
+    const nixl_status_t status = notifSendPriv(notif.agent, notif.payload, ep, &req);
 
     if (int_handle->append(status, req, conn) != NIXL_SUCCESS) {
         return status;
