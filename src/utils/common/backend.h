@@ -76,9 +76,9 @@ getBackendParam(const nixl_b_params_t &params, const std::string &key, const T f
     if constexpr (std::is_same_v<T, char>) {
         static_assert(dependent_false<T>, "No conversion implemented for char");
     } else if constexpr (std::is_same_v<T, bool>) {
-        return config::convertTraits<bool>::convert(it->second);
-    } else if constexpr (std::is_same_v<T, std::string>) {
         return getBackendBool(key, it->second);
+    } else if constexpr (std::is_same_v<T, std::string>) {
+        return it->second;
     } else if constexpr (std::is_integral_v<T>) {
         return getBackendInteger<T>(key, it->second);
     } else {
