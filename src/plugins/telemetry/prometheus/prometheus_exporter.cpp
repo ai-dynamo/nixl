@@ -157,6 +157,9 @@ nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
     auto &metric =
         family.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
     const auto inserted = counters_.try_emplace(name, &family, &metric).second;
+    if (!inserted) {
+        family.Remove(&metric);
+    }
     NIXL_ASSERT(inserted);
 }
 
@@ -168,6 +171,9 @@ nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
     auto &metric =
         family.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
     const auto inserted = gauges_.try_emplace(name, &family, &metric).second;
+    if (!inserted) {
+        family.Remove(&metric);
+    }
     NIXL_ASSERT(inserted);
 }
 
