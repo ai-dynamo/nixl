@@ -29,7 +29,7 @@ namespace {
 /** Setting the default values to check the batch limit */
 constexpr unsigned DEFAULT_BATCH_LIMIT = 128;
 /** Setting the max request size to 16 MB */
-constexpr unsigned DEFAULT_MAX_REQUEST_SIZE = 16 * 1024 * 1024;  // 16MB
+constexpr unsigned DEFAULT_MAX_REQUEST_SIZE = 16 * 1024 * 1024; // 16MB
 /** Create a batch pool of size 16 */
 constexpr unsigned DEFAULT_BATCH_POOL_SIZE = 16;
 } // namespace
@@ -40,10 +40,13 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
     gds_utils = new gdsUtil();
 
     try {
-        nixl_b_params_t* custom_params = init_params->customParams;
-        batch_pool_size = nixl::getBackendParamDefaulted(custom_params, "batch_pool_size", DEFAULT_BATCH_POOL_SIZE);
-        batch_limit = nixl::getBackendParamDefaulted(custom_params, "batch_limit", DEFAULT_BATCH_LIMIT);
-        max_request_size = nixl::getBackendParamDefaulted(custom_params, "max_request_size", DEFAULT_MAX_REQUEST_SIZE);
+        nixl_b_params_t *custom_params = init_params->customParams;
+        batch_pool_size = nixl::getBackendParamDefaulted(
+            custom_params, "batch_pool_size", DEFAULT_BATCH_POOL_SIZE);
+        batch_limit =
+            nixl::getBackendParamDefaulted(custom_params, "batch_limit", DEFAULT_BATCH_LIMIT);
+        max_request_size = nixl::getBackendParamDefaulted(
+            custom_params, "max_request_size", DEFAULT_MAX_REQUEST_SIZE);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();

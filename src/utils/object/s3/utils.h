@@ -57,7 +57,8 @@ getBucketName(nixl_b_params_t *custom_params);
 template<typename ConfigType>
 void
 configureClientCommon(ConfigType &config, nixl_b_params_t *custom_params) {
-    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "endpoint_override")) {
+    if (const auto opt =
+            nixl::getBackendParamOptional<std::string>(custom_params, "endpoint_override")) {
         config.endpointOverride = *opt;
     }
 
@@ -75,7 +76,8 @@ configureClientCommon(ConfigType &config, nixl_b_params_t *custom_params) {
         config.region = *opt;
     }
 
-    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "req_checksum")) {
+    if (const auto opt =
+            nixl::getBackendParamOptional<std::string>(custom_params, "req_checksum")) {
         if (*opt == "required") {
             config.checksumConfig.requestChecksumCalculation =
                 Aws::Client::RequestChecksumCalculation::WHEN_REQUIRED;

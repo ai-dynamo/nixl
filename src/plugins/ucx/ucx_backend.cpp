@@ -641,11 +641,13 @@ private:
 
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params)
     : nixlUcxEngine(init_params) {
-    const size_t num_threads = nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
+    const size_t num_threads =
+        nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
     numSharedWorkers_ = getWorkers().size() - num_threads;
     NIXL_ASSERT(numSharedWorkers_ > 0);
 
-    splitBatchSize_ = nixl::getBackendParamDefaulted(init_params.customParams, "split_batch_size", 1024u);
+    splitBatchSize_ =
+        nixl::getBackendParamDefaulted(init_params.customParams, "split_batch_size", 1024u);
 
     if (init_params.enableProgTh) {
         sharedThread_ =
@@ -788,7 +790,8 @@ nixlUcxThreadPoolEngine::getNotifs(notif_list_t &notif_list) {
 std::unique_ptr<nixlUcxEngine>
 nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
     nixlUcxEngine *engine;
-    const size_t num_threads = nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
+    const size_t num_threads =
+        nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
     if (num_threads > 0) {
         engine = new nixlUcxThreadPoolEngine(init_params);
     } else if (init_params.enableProgTh) {

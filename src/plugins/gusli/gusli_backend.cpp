@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +19,7 @@
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>
 
-#define __LOG_ERR(format, ...)                                          \
+#define __LOG_ERR(format, ...)                                                                    \
     do {                                                                                          \
         NIXL_ERROR << absl::StrFormat(                                                            \
             "GUSLI: %s() %s[%d]" format, __PRETTY_FUNCTION__, __FILE__, __LINE__, ##__VA_ARGS__); \
@@ -106,7 +106,8 @@ nixlGusliEngine::parseInitParams(const nixlBackendInitParams *nixl_init,
         if (params->count("client_name") > 0) {
             gusli_params.client_name = params->at("client_name").c_str();
         }
-        if (const auto num = nixl::getBackendParamOptional<unsigned>(params, "max_num_simultaneous_requests")) {
+        if (const auto num =
+                nixl::getBackendParamOptional<unsigned>(params, "max_num_simultaneous_requests")) {
             gusli_params.max_num_simultaneous_requests = *num;
         }
         if (params->count("config_file") > 0) {
