@@ -4,11 +4,11 @@
  */
 
 #include "utils/cli/benchmark_cli_builder.h"
+#include "utils/cli/plugin_registry.h"
 
 #include <CLI/CLI.hpp>
 
 #include <iostream>
-#include <utility>
 
 namespace nixlbench {
 namespace {
@@ -80,18 +80,17 @@ bindPlugin(CLI::App &parent,
 void
 bindScenario(CLI::App &scenario_root,
              IBenchmarkScenario &scenario,
-             std::initializer_list<std::reference_wrapper<ISouthboundPluginBenchmarkCommand>> plugins,
+             std::vector<std::unique_ptr<ISouthboundPluginBenchmarkCommand>> &plugins,
              IBenchmarkScenario *&selected_scenario,
              ISouthboundPluginBenchmarkCommand *&selected_plugin,
              std::vector<ProvidedOption> &provided_options) {
     auto *subcommand = scenario_root.add_subcommand(std::string(scenario.name()),
                                                     std::string(scenario.description()));
     bindOptions(*subcommand, scenario, provided_options);
-    for (auto plugin_ref : plugins) {
-        auto &plugin = plugin_ref.get();
-        if (scenario.supportsPlugin(plugin.pluginType()) &&
-            plugin.supportsScenario(scenario.scenarioType())) {
-            bindPlugin(*subcommand, plugin, selected_plugin, provided_options);
+    for (auto &plugin : plugins) {
+        if (scenario.supportsPlugin(plugin->pluginType()) &&
+            plugin->supportsScenario(scenario.scenarioType())) {
+            bindPlugin(*subcommand, *plugin, selected_plugin, provided_options);
         }
     }
     subcommand->require_subcommand(1);
@@ -100,8 +99,7 @@ bindScenario(CLI::App &scenario_root,
 
 } // namespace
 
-BenchmarkCliBuilder::BenchmarkCliBuilder()
-    : raw_posix_(true) {}
+BenchmarkCliBuilder::BenchmarkCliBuilder() {}
 
 int
 BenchmarkCliBuilder::parse(int argc, char **argv) {
@@ -109,35 +107,28 @@ BenchmarkCliBuilder::parse(int argc, char **argv) {
     selected_plugin_ = nullptr;
     help_ = false;
 
+    auto &registry = SouthboundPluginRegistry::instance();
+    g3_plugins_ = registry.createAll();
+    g4_plugins_ = registry.createAll();
+    raw_plugins_ = registry.createAll();
+    for (auto &plugin : raw_plugins_) {
+        plugin->enableRawCompatibilityOptions();
+    }
+
     CLI::App app("NIXL Benchmark");
     app.require_subcommand(1);
     std::vector<ProvidedOption> provided_options;
 
     auto *scenario_root = app.add_subcommand("scenario", "Run a benchmark scenario");
     scenario_root->require_subcommand(1);
-    bindScenario(*scenario_root,
-                 g3_,
-                 {scenario_g3_posix_},
-                 selected_scenario_,
-                 selected_plugin_,
-                 provided_options);
-    bindScenario(*scenario_root,
-                 g4_,
-                 {scenario_g4_posix_, scenario_g4_obj_},
-                 selected_scenario_,
-                 selected_plugin_,
-                 provided_options);
+    bindScenario(*scenario_root, g3_, g3_plugins_, selected_scenario_, selected_plugin_, provided_options);
+    bindScenario(*scenario_root, g4_, g4_plugins_, selected_scenario_, selected_plugin_, provided_options);
 
     auto *raw_subcommand = app.add_subcommand(std::string(raw_.name()), std::string(raw_.description()));
     bindOptions(*raw_subcommand, raw_, provided_options);
-    bindPlugin(*raw_subcommand, raw_posix_, selected_plugin_, provided_options);
-    bindPlugin(*raw_subcommand, raw_obj_, selected_plugin_, provided_options);
-    bindPlugin(*raw_subcommand, raw_gds_, selected_plugin_, provided_options);
-    bindPlugin(*raw_subcommand, raw_gds_mt_, selected_plugin_, provided_options);
-    bindPlugin(*raw_subcommand, raw_gpunetio_, selected_plugin_, provided_options);
-    bindPlugin(*raw_subcommand, raw_azure_blob_, selected_plugin_, provided_options);
-    bindPlugin(*raw_subcommand, raw_hf3fs_, selected_plugin_, provided_options);
-    bindPlugin(*raw_subcommand, raw_gusli_, selected_plugin_, provided_options);
+    for (auto &plugin : raw_plugins_) {
+        bindPlugin(*raw_subcommand, *plugin, selected_plugin_, provided_options);
+    }
     raw_subcommand->require_subcommand(1);
     raw_subcommand->callback([this]() { selected_scenario_ = &raw_; });
 

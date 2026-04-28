@@ -4,6 +4,7 @@
  */
 
 #include "utils/cli/obj_plugin_command.h"
+#include "utils/cli/plugin_registry.h"
 
 namespace nixlbench {
 
@@ -40,3 +41,5 @@ bool ObjPluginCommand::supportsScenario(ScenarioType scenario) const {
 const ObjPluginRequest &ObjPluginCommand::request() const { return request_; }
 
 } // namespace nixlbench
+
+REGISTER_SOUTHBOUND_PLUGIN(ObjPluginCommand)

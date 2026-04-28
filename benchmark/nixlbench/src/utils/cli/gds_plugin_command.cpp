@@ -4,6 +4,7 @@
  */
 
 #include "utils/cli/gds_plugin_command.h"
+#include "utils/cli/plugin_registry.h"
 
 namespace nixlbench {
 
@@ -20,3 +21,5 @@ bool GdsPluginCommand::supportsScenario(ScenarioType) const { return false; }
 const GdsPluginRequest &GdsPluginCommand::request() const { return request_; }
 
 } // namespace nixlbench
+
+REGISTER_SOUTHBOUND_PLUGIN(GdsPluginCommand)

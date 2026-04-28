@@ -5,14 +5,27 @@
 
 #include "utils/cli/raw_command.h"
 
-#include "utils/cli/azure_blob_plugin_command.h"
-#include "utils/cli/gds_mt_plugin_command.h"
-#include "utils/cli/gds_plugin_command.h"
-#include "utils/cli/gpunetio_plugin_command.h"
-#include "utils/cli/gusli_plugin_command.h"
-#include "utils/cli/hf3fs_plugin_command.h"
 #include "utils/cli/obj_plugin_command.h"
 #include "utils/cli/posix_plugin_command.h"
+
+#ifdef WITH_GDS_PLUGIN
+#include "utils/cli/gds_plugin_command.h"
+#endif
+#ifdef WITH_GDS_MT_PLUGIN
+#include "utils/cli/gds_mt_plugin_command.h"
+#endif
+#ifdef WITH_GPUNETIO_PLUGIN
+#include "utils/cli/gpunetio_plugin_command.h"
+#endif
+#ifdef WITH_AZURE_BLOB_PLUGIN
+#include "utils/cli/azure_blob_plugin_command.h"
+#endif
+#ifdef WITH_HF3FS_PLUGIN
+#include "utils/cli/hf3fs_plugin_command.h"
+#endif
+#ifdef WITH_GUSLI_PLUGIN
+#include "utils/cli/gusli_plugin_command.h"
+#endif
 
 #include <toml++/toml.hpp>
 
@@ -25,12 +38,24 @@ namespace {
 
 constexpr const char *kBackendPosix = "POSIX";
 constexpr const char *kBackendObj = "OBJ";
+#ifdef WITH_GDS_PLUGIN
 constexpr const char *kBackendGds = "GDS";
+#endif
+#ifdef WITH_GDS_MT_PLUGIN
 constexpr const char *kBackendGdsMt = "GDS_MT";
+#endif
+#ifdef WITH_GPUNETIO_PLUGIN
 constexpr const char *kBackendGpuNetIo = "GPUNETIO";
+#endif
+#ifdef WITH_AZURE_BLOB_PLUGIN
 constexpr const char *kBackendAzureBlob = "AZURE_BLOB";
+#endif
+#ifdef WITH_HF3FS_PLUGIN
 constexpr const char *kBackendHf3fs = "HF3FS";
+#endif
+#ifdef WITH_GUSLI_PLUGIN
 constexpr const char *kBackendGusli = "GUSLI";
+#endif
 
 template <typename T>
 T getTomlValue(const toml::table *tbl, const char *name, const T &fallback) {
@@ -230,7 +255,9 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
             raw.obj_accelerated_type = obj.obj_accelerated_type;
             raw.obj_accelerated_type_provided = true;
         }
-    } else if (plugin.pluginType() == PluginType::Gds) {
+    }
+#ifdef WITH_GDS_PLUGIN
+    else if (plugin.pluginType() == PluginType::Gds) {
         const auto &gds = static_cast<const GdsPluginCommand &>(plugin).request();
         raw.backend = kBackendGds;
         raw.backend_provided = true;
@@ -243,7 +270,10 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
             raw.gds_batch_limit = gds.gds_batch_limit;
             raw.gds_batch_limit_provided = true;
         }
-    } else if (plugin.pluginType() == PluginType::GdsMt) {
+    }
+#endif
+#ifdef WITH_GDS_MT_PLUGIN
+    else if (plugin.pluginType() == PluginType::GdsMt) {
         const auto &gds_mt = static_cast<const GdsMtPluginCommand &>(plugin).request();
         raw.backend = kBackendGdsMt;
         raw.backend_provided = true;
@@ -252,7 +282,10 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
             raw.gds_mt_num_threads = gds_mt.gds_mt_num_threads;
             raw.gds_mt_num_threads_provided = true;
         }
-    } else if (plugin.pluginType() == PluginType::GpuNetIo) {
+    }
+#endif
+#ifdef WITH_GPUNETIO_PLUGIN
+    else if (plugin.pluginType() == PluginType::GpuNetIo) {
         const auto &gpunetio = static_cast<const GpuNetIoPluginCommand &>(plugin).request();
         raw.backend = kBackendGpuNetIo;
         raw.backend_provided = true;
@@ -264,7 +297,10 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
             raw.gpunetio_oob_list = gpunetio.gpunetio_oob_list;
             raw.gpunetio_oob_list_provided = true;
         }
-    } else if (plugin.pluginType() == PluginType::AzureBlob) {
+    }
+#endif
+#ifdef WITH_AZURE_BLOB_PLUGIN
+    else if (plugin.pluginType() == PluginType::AzureBlob) {
         const auto &azure_blob = static_cast<const AzureBlobPluginCommand &>(plugin).request();
         raw.backend = kBackendAzureBlob;
         raw.backend_provided = true;
@@ -280,7 +316,10 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
             raw.azure_blob_connection_string = azure_blob.azure_blob_connection_string;
             raw.azure_blob_connection_string_provided = true;
         }
-    } else if (plugin.pluginType() == PluginType::Hf3fs) {
+    }
+#endif
+#ifdef WITH_HF3FS_PLUGIN
+    else if (plugin.pluginType() == PluginType::Hf3fs) {
         const auto &hf3fs = static_cast<const Hf3fsPluginCommand &>(plugin).request();
         raw.backend = kBackendHf3fs;
         raw.backend_provided = true;
@@ -289,7 +328,10 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
             raw.hf3fs_iopool_size = hf3fs.hf3fs_iopool_size;
             raw.hf3fs_iopool_size_provided = true;
         }
-    } else if (plugin.pluginType() == PluginType::Gusli) {
+    }
+#endif
+#ifdef WITH_GUSLI_PLUGIN
+    else if (plugin.pluginType() == PluginType::Gusli) {
         const auto &gusli = static_cast<const GusliPluginCommand &>(plugin).request();
         raw.backend = kBackendGusli;
         raw.backend_provided = true;
@@ -315,6 +357,7 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
             raw.gusli_device_security_provided = true;
         }
     }
+#endif
 }
 
 } // namespace

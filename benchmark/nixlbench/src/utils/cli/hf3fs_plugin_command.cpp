@@ -4,6 +4,7 @@
  */
 
 #include "utils/cli/hf3fs_plugin_command.h"
+#include "utils/cli/plugin_registry.h"
 
 namespace nixlbench {
 
@@ -20,3 +21,5 @@ bool Hf3fsPluginCommand::supportsScenario(ScenarioType) const { return false; }
 const Hf3fsPluginRequest &Hf3fsPluginCommand::request() const { return request_; }
 
 } // namespace nixlbench
+
+REGISTER_SOUTHBOUND_PLUGIN(Hf3fsPluginCommand)

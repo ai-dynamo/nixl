@@ -12,14 +12,14 @@ namespace nixlbench {
 
 class PosixPluginCommand : public ISouthboundPluginBenchmarkCommand {
 public:
-    explicit PosixPluginCommand(bool rawCompatibilityOptions = false);
+    PosixPluginCommand();
 
     std::string_view name() const override;
     std::string_view description() const override;
     const std::vector<CliOption> &getOptions() const override;
     PluginType pluginType() const override;
     bool supportsScenario(ScenarioType scenario) const override;
-    const PosixPluginRequest &request() const;
+     const PosixPluginRequest &request() const;
 
 private:
     PosixPluginRequest request_;

@@ -4,6 +4,7 @@
  */
 
 #include "utils/cli/gusli_plugin_command.h"
+#include "utils/cli/plugin_registry.h"
 
 namespace nixlbench {
 
@@ -20,3 +21,5 @@ bool GusliPluginCommand::supportsScenario(ScenarioType) const { return false; }
 const GusliPluginRequest &GusliPluginCommand::request() const { return request_; }
 
 } // namespace nixlbench
+
+REGISTER_SOUTHBOUND_PLUGIN(GusliPluginCommand)
