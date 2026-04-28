@@ -5,7 +5,7 @@ UCCL supports collectives for training, P2P communication for PD disaggregation 
 
 ## Capabilities
 
-The UCCL P2P backend supports internode communication over RDMA, TCP and TCP-X and intranode communication (GPU-to-GPU, GPU-to-CPU & vice-versa).
+The UCCL P2P backend supports internode communication over RDMA, TCP, TCP-X, and EFA, and intranode communication (GPU-to-GPU, GPU-to-CPU & vice-versa).
 
 ## Installation Guide
 
@@ -18,14 +18,13 @@ The UCCL P2P backend supports internode communication over RDMA, TCP and TCP-X a
     sudo make install
 ```
 
-By default, UCCL builds with **RDMA** transport. To build with a different transport, set the corresponding flag:
+UCCL is built with all transports included (**RDMA, TCP/TCP-X, and EFA**). To select a transport at runtime, set the environment variable while starting NIXL:
 
-| Transport | Build Command                                    |
+| Transport | Runtime ENV                                      |
 |-----------|--------------------------------------------------|
-| RDMA      | `make -j && sudo make install` *(default)*       |
-| TCPX      | `USE_TCPX=1 make -j && sudo make install`        |
-| TCP       | `USE_TCP=1 make -j && sudo make install`         |
-| EFA       | `USE_EFA=1 make -j && sudo make install`         |
+| RDMA      | *(default)*                                      |
+| TCPX/TCP  | `UCCL_P2P_TRANSPORT=tcp`                         |
+| EFA       | `UCCL_P2P_TRANSPORT=efa`                         |
 
 2. Build NIXL using regular method as in [README](https://github.com/ai-dynamo/nixl/blob/main/README.md).
 
@@ -63,15 +62,15 @@ The key part is `"backends": ["UCCL"]` — this tells NIXL to use the UCCL P2P e
 Refer to the [vLLM NIXL connector](https://github.com/vllm-project/vllm/blob/main/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py).
 
 
-## Road Map
+## Features & Roadmap
 
-- ✅ Add asynchronous posting of reads over multiple workers to mitigate latency increase upon fragmentation
+- ✅ Asynchronous posting of reads over multiple workers to mitigate latency increase upon fragmentation
 
-- ✅ Add Intra-node communication support
+- ✅ Intra-node communication support (IPC)
 
-- ✅ Add support for other transport (TCP, TCP-X, etc.)
+- ✅ Support for other transport (TCP, TCP-X, EFA.)
 
-- 🚧 Add Dynamic runtime transport selection (currently, it is compile-time)
+- ✅ Dynamic runtime transport selection
 
 - 🚧 Add Progress Thread support
 
