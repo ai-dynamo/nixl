@@ -72,6 +72,20 @@ httpGet(uint16_t port, const std::string &path) {
     return pos == std::string::npos ? std::string{} : response.substr(pos + 4);
 }
 
+std::string
+waitForMetricsBody(uint16_t port) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    std::string body;
+    do {
+        body = httpGet(port, "/metrics");
+        if (!body.empty()) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    } while (std::chrono::steady_clock::now() < deadline);
+    return body;
+}
+
 } // namespace
 
 class prometheusTelemetryTest : public ::testing::Test {
@@ -118,11 +132,7 @@ TEST_F(prometheusTelemetryTest, AgentMetricsAppearInScrape) {
     auto exporter = handle->createExporter(params);
     ASSERT_NE(exporter, nullptr);
 
-    // Exposer binds synchronously in the ctor via CivetServer, but give the
-    // OS a brief moment in case of slow CI hosts.
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-    const std::string body = httpGet(port_, "/metrics");
+    const std::string body = waitForMetricsBody(port_);
     ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
 
     // The 8 counter families that initializeMetrics() must publish.
@@ -177,8 +187,6 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     auto exporter = handle->createExporter(params);
     ASSERT_NE(exporter, nullptr);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
     // Five increments of 1000 bytes each → cumulative total must be 5000 in
     // the scrape body for AGENT_TX_BYTES. On buggy code, each Increment()
     // call dereferences a dangling Counter*; even if it returns without
@@ -193,8 +201,8 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
         EXPECT_EQ(exporter->exportEvent(event), NIXL_SUCCESS);
     }
 
-    const std::string body = httpGet(port_, "/metrics");
-    ASSERT_FALSE(body.empty());
+    const std::string body = waitForMetricsBody(port_);
+    ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
 
     // Locate the specific labeled line: agent_tx_bytes_total{...agent_name="..."} <value>
     const std::string needle = "agent_tx_bytes_total{agent_name=\"" + agent_name +
