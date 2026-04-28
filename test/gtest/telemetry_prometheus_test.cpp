@@ -130,7 +130,12 @@ parsePrometheusSampleLine(const std::string &line,
         ++pos;
     }
 
-    value = std::stod(line.substr(labels_end + 2));
+    try {
+        value = std::stod(line.substr(labels_end + 2));
+    }
+    catch (const std::exception &) {
+        return false;
+    }
     return true;
 }
 
