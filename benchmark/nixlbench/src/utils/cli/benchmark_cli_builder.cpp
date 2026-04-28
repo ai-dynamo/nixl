@@ -111,10 +111,7 @@ BenchmarkCliBuilder::parse(int argc, char **argv) {
     g3_plugins_ = registry.createAll();
     g4_plugins_ = registry.createAll();
     raw_plugins_ = registry.createAll();
-    for (auto &plugin : raw_plugins_) {
-        plugin->enableRawCompatibilityOptions();
-    }
-
+ 
     CLI::App app("NIXL Benchmark");
     app.require_subcommand(1);
     std::vector<ProvidedOption> provided_options;

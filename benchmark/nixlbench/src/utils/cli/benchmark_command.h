@@ -49,9 +49,6 @@ public:
 
     virtual bool
     supportsScenario(ScenarioType scenario) const = 0;
-
-    virtual void
-    enableRawCompatibilityOptions() {}
 };
 
 } // namespace nixlbench
