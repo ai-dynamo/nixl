@@ -18,4 +18,3 @@ if libfabric_dep.found()
     subdir('libfabric')
 endif
 subdir('serdes')
-subdir('stream')

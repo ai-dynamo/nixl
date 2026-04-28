@@ -186,11 +186,10 @@ telemetryLoader(void *handle, const std::string &plugin_path) {
         return nullptr;
     }
 
-    // Check API version
-    if (plugin->api_version != nixlTelemetryPluginApiVersionV1) {
+    if (plugin->api_version != nixl_telemetry_plugin_api_version::V2) {
         NIXL_ERROR << "Plugin API version mismatch for " << plugin_path << ": expected "
-                   << static_cast<int>(nixlTelemetryPluginApiVersionV1) << ", got "
-                   << static_cast<int>(plugin->api_version);
+                   << static_cast<unsigned int>(nixl_telemetry_plugin_api_version::V2) << ", got "
+                   << static_cast<unsigned int>(plugin->api_version);
         dlclose(handle);
         return nullptr;
     }
@@ -239,8 +238,11 @@ loadPluginList(const std::string &filename) {
 
 std::shared_ptr<const nixlPluginHandle>
 nixlPluginManager::loadPluginFromPath(const std::string &plugin_path, nixlPluginLoaderFunc loader) {
-    // Open the plugin file
-    void* handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    // Open the plugin file with RTLD_NODELETE to prevent glibc from physically unloading
+    // the library on dlclose. This is required because plugins link dynamically against Abseil,
+    // which uses thread_local and static initialization that are unsafe to unload dynamically
+    // and trigger glibc bugs on older versions (e.g. Ubuntu 22.04 / glibc 2.35).
+    void *handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
     if (!handle) {
         NIXL_INFO << "Failed to load plugin from " << plugin_path << ": " << dlerror();
         return nullptr;
@@ -250,20 +252,23 @@ nixlPluginManager::loadPluginFromPath(const std::string &plugin_path, nixlPlugin
 }
 
 void
-nixlPluginManager::loadPluginsFromList(const std::string &filename) {
+nixlPluginManager::discoverPluginsFromList(const std::string &filename) {
     auto plugins = loadPluginList(filename);
 
-    lock_guard lg(lock);
+    const lock_guard lg(lock);
 
     for (const auto& pair : plugins) {
         const std::string& name = pair.first;
         const std::string& path = pair.second;
 
-        auto plugin_handle = loadPluginFromPath(path, backendLoader);
-        if (plugin_handle) {
-            auto backend_plugin =
-                std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
-            loaded_backend_plugins_[name] = backend_plugin;
+        if (loaded_backend_plugins_.find(name) == loaded_backend_plugins_.end()) {
+            discovered_backend_plugins_.insert(name);
+            if (!path.empty()) {
+                explicit_plugin_paths_[name] = path;
+                NIXL_INFO << "Discovered backend plugin from list: " << name << " (" << path << ")";
+            } else {
+                NIXL_INFO << "Discovered backend plugin from list: " << name;
+            }
         }
     }
 }
@@ -294,7 +299,7 @@ nixlPluginManager::nixlPluginManager() {
     NIXL_DEBUG << "Loading plugins from file: " << NIXL_USE_PLUGIN_FILE;
     std::string plugin_file = NIXL_USE_PLUGIN_FILE;
     if (std::filesystem::exists(plugin_file)) {
-        loadPluginsFromList(plugin_file);
+        discoverPluginsFromList(plugin_file);
     }
 #endif
 
@@ -371,6 +376,21 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
     auto it = loaded_backend_plugins_.find(plugin_name);
     if (it != loaded_backend_plugins_.end()) {
         return it->second;
+    }
+
+    // Try the explicit path from the plugin list file first
+    auto path_it = explicit_plugin_paths_.find(plugin_name);
+    if (path_it != explicit_plugin_paths_.end()) {
+        const std::string &plugin_path = path_it->second;
+        if (std::filesystem::exists(plugin_path)) {
+            auto plugin_handle = loadPluginFromPath(plugin_path, backendLoader);
+            if (plugin_handle) {
+                auto backend_plugin =
+                    std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
+                loaded_backend_plugins_[plugin_name] = backend_plugin;
+                return backend_plugin;
+            }
+        }
     }
 
     // Try to load the plugin from all registered directories
@@ -455,9 +475,11 @@ void
 nixlPluginManager::discoverBackendPlugin(const std::string &filename) {
     if (startsWith(filename, backendPluginPrefix) && endsWith(filename, kPluginSuffix)) {
         std::string plugin_name = extractPluginName(filename, backendPluginPrefix);
-        auto plugin = loadBackendPlugin(plugin_name);
-        if (plugin) {
-            NIXL_INFO << "Discovered and loaded backend plugin: " << plugin_name;
+
+        const lock_guard lg(lock);
+        if (loaded_backend_plugins_.find(plugin_name) == loaded_backend_plugins_.end()) {
+            discovered_backend_plugins_.insert(plugin_name);
+            NIXL_INFO << "Discovered backend plugin: " << plugin_name;
         }
     }
 }
@@ -466,11 +488,7 @@ void
 nixlPluginManager::discoverTelemetryPlugin(const std::string &filename) {
     if (startsWith(filename, telemetryPluginPrefix) && endsWith(filename, kPluginSuffix)) {
         std::string plugin_name = extractPluginName(filename, telemetryPluginPrefix);
-
-        auto plugin = loadTelemetryPlugin(plugin_name);
-        if (plugin) {
-            NIXL_INFO << "Discovered and loaded telemetry plugin: " << plugin_name;
-        }
+        NIXL_INFO << "Discovered telemetry plugin: " << plugin_name;
     }
 }
 
@@ -564,6 +582,23 @@ nixlPluginManager::getLoadedBackendPluginNames() {
     std::vector<nixl_backend_t> names;
     for (const auto &pair : loaded_backend_plugins_) {
         names.push_back(pair.first);
+    }
+    return names;
+}
+
+std::vector<nixl_backend_t>
+nixlPluginManager::getAvailBackendPluginNames() {
+    const lock_guard lg(lock);
+
+    std::vector<nixl_backend_t> names;
+    for (const auto &pair : loaded_backend_plugins_) {
+        names.push_back(pair.first);
+    }
+    for (const auto &name : discovered_backend_plugins_) {
+        // Skip discovered plugins that are already loaded to avoid duplicates
+        if (loaded_backend_plugins_.find(name) == loaded_backend_plugins_.end()) {
+            names.push_back(name);
+        }
     }
     return names;
 }
