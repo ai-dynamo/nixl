@@ -72,11 +72,11 @@ if ! python3 -c "import sys; sys.path.insert(0, '${NIXL_BUILD_DIR}/${EP_SRC_DIR}
 fi
 
 # NVLink (default)
-run_elastic_test "${EP_SRC_DIR}/tests/elastic/basic.json"
+run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
 
 # RDMA (--disable-ll-nvlink)
-run_elastic_test "${EP_SRC_DIR}/tests/elastic/basic.json" "--disable-ll-nvlink"
+run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json" "--disable-ll-nvlink"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json" "--disable-ll-nvlink"
 
 kill -9 $ETCD_PID 2>/dev/null || true
