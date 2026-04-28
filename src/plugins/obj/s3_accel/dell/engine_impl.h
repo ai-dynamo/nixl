@@ -7,148 +7,113 @@
 #define NIXL_OBJ_PLUGIN_S3_DELL_ENGINE_IMPL_H
 
 #include "s3_accel/engine_impl.h"
-#include "s3_accel/dell/client.h"
-#include <cuobjclient.h>
+#include "s3_accel/dell/cuobj_token_manager.h"
 
 /**
- * S3 Dell ObjectScale Engine Implementation.
- * This class provides RDMA-accelerated S3 object storage operations specifically
- * for Dell ObjectScale storage systems. It inherits from S3AccelObjEngineImpl and
- * implements the cuObject API for GPU-direct storage operations.
+ * S3 Dell ObjectScale Engine Implementation (Pattern B).
+ *
+ * Provides RDMA-accelerated S3 object storage operations for Dell ObjectScale.
+ * Inherits from S3AccelObjEngineImpl and overrides only what is Dell-specific:
+ *
+ *   - getSupportedMems() → adds VRAM_SEG to the supported set.
+ *   - registerMem()      → registers DRAM/VRAM with cuObject for RDMA.
+ *   - deregisterMem()    → deregisters DRAM/VRAM from cuObject.
+ *   - getClient()        → returns the Dell RDMA client.
+ *
+ * The transfer lifecycle (prepXfer, postXfer, checkXfer, releaseReqH) is
+ * inherited unchanged from DefaultObjEngineImpl.  The parent's postXfer
+ * calls getClient()->putObjectAsync() / getObjectAsync(), which the Dell
+ * client overrides to inject RDMA tokens transparently.
  */
 class S3DellObsObjEngineImpl : public S3AccelObjEngineImpl {
 public:
     /**
-     * Constructor that initializes the S3 Dell ObjectScale engine.
-     * Creates both the S3 client and cuObject client for RDMA operations.
+     * Construct the Dell engine.
+     * Creates a CuObjTokenManager and an awsS3DellObsClient.
      *
-     * @param init_params Backend initialization parameters
+     * If the optional backend parameter "rdma_pool_size" is set, the first
+     * DRAM/VRAM registration will be expanded to cover the entire pool,
+     * so that subsequent page-sized registrations are instant no-ops.
+     *
+     * @param init_params  Backend initialisation parameters.
      */
     explicit S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params);
+
     /**
-     * Constructor that accepts an injected S3 client (for testing).
-     * Creates the cuObject client for RDMA operations using the provided S3 client.
+     * Construct the Dell engine with an injected S3 client (for testing).
      *
-     * @param init_params Backend initialization parameters
-     * @param s3_client Pre-configured S3 client (can be mock for testing)
+     * When a non-null s3_client is provided, it is used as-is (typically a
+     * mock).  The CuObjTokenManager is still created but may not be
+     * connected in a test environment.
+     *
+     * @param init_params  Backend initialisation parameters.
+     * @param s3_client    Pre-configured S3 client (can be a mock).
      */
     S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params,
                            std::shared_ptr<iS3Client> s3_client);
 
     /**
-     * Register memory with the backend for RDMA operations.
-     * Supports OBJ_SEG, DRAM_SEG, and VRAM_SEG memory types.
-     * For OBJ_SEG, creates object metadata and maps device ID to object key.
-     * For DRAM_SEG/VRAM_SEG, obtains cuObject descriptor for the memory region.
-     *
-     * @param mem Memory blob descriptor
-     * @param nixl_mem Memory type
-     * @param out Output backend metadata handle
-     * @return NIXL_SUCCESS on success, error code on failure
-     */
-    nixl_status_t
-    registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
-
-    /**
-     * Deregister memory from the backend.
-     * Cleans up cuObject descriptors and removes device ID mappings.
-     *
-     * @param meta Backend metadata handle to deregister
-     * @return NIXL_SUCCESS on success, error code on failure
-     */
-    nixl_status_t
-    deregisterMem(nixlBackendMD *meta) override;
-
-    /**
-     * Prepare a transfer operation between local and remote memory.
-     * Validates parameters, sets up RDMA contexts using cuObject, and creates
-     * transfer request handles for subsequent execution.
-     *
-     * @param operation Transfer operation (NIXL_READ or NIXL_WRITE)
-     * @param local Local memory descriptor list
-     * @param remote Remote memory descriptor list
-     * @param remote_agent Remote agent identifier
-     * @param local_agent Local agent identifier
-     * @param handle Output transfer request handle
-     * @param opt_args Optional backend arguments
-     * @return NIXL_SUCCESS on success, error code on failure
-     */
-    nixl_status_t
-    prepXfer(const nixl_xfer_op_t &operation,
-             const nixl_meta_dlist_t &local,
-             const nixl_meta_dlist_t &remote,
-             const std::string &remote_agent,
-             const std::string &local_agent,
-             nixlBackendReqH *&handle,
-             const nixl_opt_b_args_t *opt_args) const override;
-
-    /**
-     * Post a transfer operation for execution.
-     * Initiates asynchronous S3 operations with RDMA descriptors obtained
-     * from the preparation phase. Uses futures/promises to bridge callback
-     * and polling interfaces.
-     *
-     * @param operation Transfer operation (NIXL_READ or NIXL_WRITE)
-     * @param local Local memory descriptor list
-     * @param remote Remote memory descriptor list
-     * @param remote_agent Remote agent identifier
-     * @param handle Transfer request handle from prepXfer
-     * @param opt_args Optional backend arguments
-     * @return NIXL_IN_PROG if operation started, error code on failure
-     */
-    nixl_status_t
-    postXfer(const nixl_xfer_op_t &operation,
-             const nixl_meta_dlist_t &local,
-             const nixl_meta_dlist_t &remote,
-             const std::string &remote_agent,
-             nixlBackendReqH *&handle,
-             const nixl_opt_b_args_t *opt_args = nullptr) const override;
-
-    /**
-     * Check the status of an ongoing transfer operation.
-     * Polls the futures associated with the transfer request to determine
-     * completion status.
-     *
-     * @param handle Transfer request handle to check
-     * @return NIXL_SUCCESS if completed, NIXL_IN_PROG if ongoing, error code on failure
-     */
-    nixl_status_t
-    checkXfer(nixlBackendReqH *handle) const override;
-
-    /**
-     * Release a transfer request handle.
-     * Cleans up resources associated with the transfer request.
-     *
-     * @param handle Transfer request handle to release
-     * @return NIXL_SUCCESS on success
-     */
-    nixl_status_t
-    releaseReqH(nixlBackendReqH *handle) const override;
-
-    /**
-     * Get the list of supported memory types.
-     *
-     * @return List of supported memory segments (OBJ_SEG, DRAM_SEG, VRAM_SEG)
+     * @return {OBJ_SEG, DRAM_SEG, VRAM_SEG} — the Dell engine supports
+     *         GPU-direct transfers in addition to DRAM.
      */
     nixl_mem_list_t
     getSupportedMems() const override {
         return {OBJ_SEG, DRAM_SEG, VRAM_SEG};
     }
 
+    /**
+     * Register memory with the backend for RDMA operations.
+     *
+     * - OBJ_SEG: delegated to the parent (devId → object key mapping).
+     * - DRAM_SEG / VRAM_SEG: registered with cuObject via the token manager.
+     *   The token manager de-duplicates: if the address falls within an
+     *   already-registered pool region, the call is a refcount increment.
+     *
+     * @param mem       Memory blob descriptor (addr, len, devId, metaInfo).
+     * @param nixl_mem  Memory type.
+     * @param out       Output backend metadata handle.
+     * @return NIXL_SUCCESS, NIXL_ERR_BACKEND, or NIXL_ERR_NOT_SUPPORTED.
+     */
+    nixl_status_t
+    registerMem(const nixlBlobDesc &mem,
+                const nixl_mem_t &nixl_mem,
+                nixlBackendMD *&out) override;
+
+    /**
+     * Deregister memory from the backend.
+     *
+     * - DRAM/VRAM metadata (nixlDellMemMetadata): deregisters from cuObject.
+     * - OBJ_SEG metadata: delegated to the parent.
+     *
+     * @param meta  Backend metadata handle returned by registerMem().
+     * @return NIXL_SUCCESS or NIXL_ERR_BACKEND.
+     */
+    nixl_status_t
+    deregisterMem(nixlBackendMD *meta) override;
+
+    // prepXfer   — INHERITED from DefaultObjEngineImpl (validates, creates handle).
+    // postXfer   — INHERITED from DefaultObjEngineImpl (calls client->putObjectAsync/getObjectAsync).
+    // checkXfer  — INHERITED from DefaultObjEngineImpl (polls futures).
+    // releaseReqH — INHERITED from DefaultObjEngineImpl (deletes handle).
+
 protected:
     /**
-     * Get the S3 client instance.
-     *
-     * @return Pointer to the S3 client interface
+     * @return The Dell RDMA S3 client (or the injected mock).
      */
     iS3Client *
     getClient() const override;
 
 private:
-    /// S3 client for Dell ObjectScale operations
     std::shared_ptr<iS3Client> s3Client_;
-    /// cuObject client for RDMA operations
-    std::shared_ptr<cuObjClient> cuClient_;
+    std::shared_ptr<CuObjTokenManager> tokenMgr_;
+
+    /**
+     * Optional pool size hint read from the "rdma_pool_size" backend parameter.
+     * When non-zero, the first DRAM/VRAM registerMem is expanded to cover
+     * [addr, addr+rdmaPoolSize_) so that all subsequent pages within the
+     * same contiguous buffer are de-duplicated by the token manager.
+     */
+    size_t rdmaPoolSize_ = 0;
 };
 
 #endif // NIXL_OBJ_PLUGIN_S3_DELL_ENGINE_IMPL_H
