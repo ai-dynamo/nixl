@@ -55,8 +55,8 @@ httpGet(uint16_t port, const std::string &path) {
         return {};
     }
 
-    const std::string req = "GET " + path +
-        " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    const std::string req =
+        "GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     ::send(fd, req.data(), req.size(), 0);
 
     std::string response;
@@ -82,8 +82,8 @@ protected:
     // the gtest main() treats as a test failure.
     static void
     SetUpTestSuite() {
-        nixlPluginManager::getInstance().addPluginDirectory(
-            std::string(BUILD_DIR) + "/src/plugins/telemetry/prometheus");
+        nixlPluginManager::getInstance().addPluginDirectory(std::string(BUILD_DIR) +
+                                                            "/src/plugins/telemetry/prometheus");
     }
 
     void
@@ -187,10 +187,9 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     constexpr uint64_t kIncrement = 1000;
     constexpr int kEventCount = 5;
     for (int i = 0; i < kEventCount; ++i) {
-        const nixlTelemetryEvent event{
-            nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-            nixl_telemetry_event_type_t::AGENT_TX_BYTES,
-            kIncrement};
+        const nixlTelemetryEvent event{nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+                                       nixl_telemetry_event_type_t::AGENT_TX_BYTES,
+                                       kIncrement};
         EXPECT_EQ(exporter->exportEvent(event), NIXL_SUCCESS);
     }
 
@@ -198,8 +197,8 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     ASSERT_FALSE(body.empty());
 
     // Locate the specific labeled line: agent_tx_bytes_total{...agent_name="..."} <value>
-    const std::string needle =
-        "agent_tx_bytes_total{agent_name=\"" + agent_name + "\",category=\"NIXL_TELEMETRY_TRANSFER\",hostname=\"";
+    const std::string needle = "agent_tx_bytes_total{agent_name=\"" + agent_name +
+        "\",category=\"NIXL_TELEMETRY_TRANSFER\",hostname=\"";
     const auto line_pos = body.find(needle);
     ASSERT_NE(line_pos, std::string::npos)
         << "agent_tx_bytes_total for this agent is not in scrape body.\n"
@@ -217,6 +216,6 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     const double value = std::stod(value_str);
 
     EXPECT_EQ(value, static_cast<double>(kIncrement * kEventCount))
-        << "Counter value after " << kEventCount << " × Increment(" << kIncrement
-        << ") should be " << (kIncrement * kEventCount) << " but the scraped line is: " << line;
+        << "Counter value after " << kEventCount << " × Increment(" << kIncrement << ") should be "
+        << (kIncrement * kEventCount) << " but the scraped line is: " << line;
 }
