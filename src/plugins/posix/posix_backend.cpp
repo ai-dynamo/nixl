@@ -75,30 +75,16 @@ castPosixHandle(nixlBackendReqH *handle) {
 
 static std::string_view
 getIoQueueType(const nixl_b_params_t *custom_params) {
-    // Check for explicit backend request
-    if (custom_params) {
-        // First check if AIO is explicitly requested
-        if (custom_params->count("use_aio") > 0) {
-            const auto &value = custom_params->at("use_aio");
-            if (value == "true" || value == "1") {
-                return "AIO";
-            }
-        }
+    if (nixl::getBackendParam(custom_params, "use_aio", false)) {
+        return "AIO";
+    }
 
-        // Then check if io_uring is explicitly requested
-        if (custom_params->count("use_uring") > 0) {
-            const auto &value = custom_params->at("use_uring");
-            if (value == "true" || value == "1") {
-                return "URING";
-            }
-        }
-        // Then check if linux_aio is explicitly requested
-        if (custom_params->count("use_posix_aio") > 0) {
-            const auto &value = custom_params->at("use_posix_aio");
-            if (value == "true" || value == "1") {
-                return "POSIXAIO";
-            }
-        }
+    if (nixl::getBackendParam(custom_params, "use_uring", false)) {
+        return "URING";
+    }
+
+    if (nixl::getBackendParam(custom_params, "use_posix_aio", false)) {
+        return "POSIXAIO";
     }
 
     return nixlPosixIOQueue::getDefaultIoQueueType();
