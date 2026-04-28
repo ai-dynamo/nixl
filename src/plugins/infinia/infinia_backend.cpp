@@ -308,6 +308,19 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
             infinia_coremasks_ = coremasks_it->second;
             infinia_coremasks_set_ = true;
         }
+
+        // Look for Infinia max_retries configuration
+        auto max_retries_it = params->find("max_retries");
+        if (max_retries_it != params->end() && !max_retries_it->second.empty()) {
+            try {
+                batch_config_.max_retries = std::stoull(max_retries_it->second);
+            } catch (const std::exception&) {
+                NIXL_WARN << absl::StrFormat(
+                    "Invalid max_retries value '%s', using default %zu",
+                    max_retries_it->second.c_str(),
+                    red_async::RED_ASYNC_DEFAULT_MAX_RETRIES);
+            }
+        }
     }
 
     // Environment override for cluster
@@ -321,7 +334,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
         if (*env_tenant) {
             const char* tenant_ptr = nullptr;
             const char* subtenant_ptr = nullptr;
-            static std::string tenant_buf; // holds split strings' storage
+            std::string tenant_buf; // holds split strings' storage
             if (splitTenantSubtenant(env_tenant, tenant_ptr, subtenant_ptr, tenant_buf)) {
                 infinia_tenant_ = tenant_ptr;
                 infinia_subtenant_ = subtenant_ptr;
@@ -390,7 +403,9 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
 }
 
 infinia_engine::~infinia_engine() {
-    client_->cleanup();
+    if (client_) {
+        client_->cleanup();
+    }
 
     NIXL_DEBUG << "Infinia backend destroyed";
 }
@@ -412,9 +427,13 @@ bool infinia_engine::validateTransferParams(const nixl_xfer_op_t &operation,
         return false;
     }
 
-    auto supported_mems = getSupportedMems();
-    if (std::find(supported_mems.begin(), supported_mems.end(), local.getType()) == supported_mems.end()) {
+    if (local.getType() != DRAM_SEG && local.getType() != VRAM_SEG) {
         NIXL_ERROR << absl::StrFormat("Unsupported local memory type: %d", local.getType());
+        return false;
+    }
+
+    if (remote.getType() != OBJ_SEG) {
+        NIXL_ERROR << absl::StrFormat("Unsupported remote memory type: %d", remote.getType());
         return false;
     }
 
@@ -529,7 +548,7 @@ nixl_status_t infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
     resp.reserve(descs.descCount());
 
     // Create a BatchTask for this queryMem call and reserve capacity
-    red_async::BatchTask batch_task(client_->get_config(), &batch_config_);
+    red_async::BatchTask batch_task(client_->getConfig(), &batch_config_);
     batch_task.reserve(descs.descCount());
 
     // Storage for keys and stat buffers (must persist until batch completes)
@@ -540,7 +559,17 @@ nixl_status_t infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
     // Add all HEAD operations to the batch
     for (int i = 0; i < descs.descCount(); ++i) {
         const auto& desc = descs[i];
-        keys.push_back(desc.metaInfo);
+
+        // Mirror registerMem's key selection logic
+        if (!desc.metaInfo.empty()) {
+            keys.push_back(desc.metaInfo);
+        } else if (desc.devId != 0) {
+            keys.push_back(std::to_string(desc.devId));
+        } else {
+            NIXL_WARN << "Skipping OBJ query with empty metaInfo and devId==0";
+            resp.emplace_back(std::nullopt);
+            continue;
+        }
 
         // Build HEAD operation with stat buffer
         red_async::red_batch_operation_t op;
@@ -895,7 +924,7 @@ nixlInfiniaBackendReqH::nixlInfiniaBackendReqH(const nixl_xfer_op_t &operation,
     operation_count_(0),
     client_(client),
     batch_config_(batch_config),
-    batch_task_(client->get_config(), &batch_config) {
+    batch_task_(client->getConfig(), &batch_config) {
 
     NIXL_DEBUG << absl::StrFormat("Created Infinia request handle for %s operation",
                                  (operation == NIXL_READ) ? "READ" : "WRITE");

@@ -200,7 +200,9 @@ NB_ARG_STRING(azure_blob_connection_string,
               "local testing)");
 
 // INFINIA options - only used when backend is INFINIA
-NB_ARG_STRING(infinia_config_file, "", "Path to INFINIA-specific config file (TOML format)");
+NB_ARG_STRING(infinia_config_file,
+              "",
+              "Path to INFINIA-specific config file (simple key=value format)");
 
 // HF3FS options - only used when backend is HF3FS
 NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool");

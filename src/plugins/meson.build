@@ -106,8 +106,16 @@ infinia_lib_path = get_option('infinia_path') + '/lib'
 infinia_lib_file = 'red_client'
 infinia_lib_found = cc.find_library(infinia_lib_file, dirs: [infinia_lib_path], required: false)
 disable_infinia_backend = get_option('disable_infinia_backend')
-if not disable_infinia_backend and infinia_lib_found.found()
-    subdir('infinia')
+if enabled_plugins.get('INFINIA')
+    if (disable_infinia_backend or not infinia_lib_found.found()) and is_explicit_enable
+        if disable_infinia_backend
+            error('INFINIA plugin requested but Infinia backend is disabled')
+        else
+            error('INFINIA plugin requested but red_client library not found')
+        endif
+    elif not disable_infinia_backend and infinia_lib_found.found()
+        subdir('infinia')
+    endif
 endif
 
 gusli_lib_file = 'gusli_clnt'

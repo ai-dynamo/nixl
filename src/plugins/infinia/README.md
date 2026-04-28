@@ -28,7 +28,6 @@ The `infinia_path` should point to the Infinia installation directory containing
 ## Configuration
 
 The Infinia backend supports configuration through backend parameter maps and environment variables.
-Backend parameters take precedence over environment variables.
 
 ### Backend Parameters
 

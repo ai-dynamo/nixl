@@ -15,19 +15,21 @@
 # limitations under the License.
 
 infinia_path = get_option('infinia_path')
-if infinia_path != ''
-  infinia_lib_path = infinia_path + '/lib'
-  infinia_inc_path = infinia_path + '/include'
-  infinia_dep = declare_dependency(
-    link_args : ['-L' + infinia_lib_path,
-                 '-Wl,--push-state,--as-needed',
-                 '-Wl,-lstdc++',
-                 '-Wl,-rpath,' + infinia_lib_path,
-                 '-lred_client',
-                 '-lred_async',
-                 '-Wl,--pop-state'],
-    include_directories: infinia_inc_path)
+if infinia_path == ''
+  error('INFINIA backend requires -Dinfinia_path to point to Infinia Client libraries installation')
 endif
+
+infinia_lib_path = infinia_path + '/lib'
+infinia_inc_path = infinia_path + '/include'
+infinia_dep = declare_dependency(
+  link_args : ['-L' + infinia_lib_path,
+               '-Wl,--push-state,--as-needed',
+               '-Wl,-lstdc++',
+               '-Wl,-rpath,' + infinia_lib_path,
+               '-lred_client',
+               '-lred_async',
+               '-Wl,--pop-state'],
+  include_directories: infinia_inc_path)
 
 compile_flags = []
 if cuda_dep.found()

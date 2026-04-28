@@ -16,8 +16,8 @@
  * limitations under the License.
  */
 
-#ifndef __INFINIA_CLIENT_H
-#define __INFINIA_CLIENT_H
+#ifndef NIXL_SRC_PLUGINS_INFINIA_INFINIA_CLIENT_H
+#define NIXL_SRC_PLUGINS_INFINIA_INFINIA_CLIENT_H
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -48,16 +48,16 @@ public:
 
     ~InfiniaClient();
 
-    red_status_t initialize();
+    [[nodiscard]] red_status_t initialize();
     void cleanup();
 
-    bool isInitialized() const {
+    [[nodiscard]] bool isInitialized() const noexcept {
         return initialized_;
     }
 
     // Get red_config_t for accessing resources
-    red_async::red_config_t* get_config() {
-        return config.get();
+    [[nodiscard]] red_async::red_config_t* getConfig() const noexcept {
+        return config_.get();
     }
 
     private:
@@ -72,9 +72,9 @@ public:
     std::string coremasks_;
 
     // RED async API objects
-    std::unique_ptr<red_async::red_config_t> config;
+    std::unique_ptr<red_async::red_config_t> config_;
 
     bool initialized_;
 };
 
-#endif
+#endif // NIXL_SRC_PLUGINS_INFINIA_INFINIA_CLIENT_H

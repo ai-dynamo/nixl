@@ -18,7 +18,7 @@
 
 #include <cassert>
 #include <iostream>
-#include <string.h>
+#include <cstring>
 #include <cstdlib>
 
 #include "infinia_client.h"
@@ -56,30 +56,30 @@ red_status_t InfiniaClient::initialize() {
     NIXL_DEBUG << "Initializing InfiniaClient connection using red_config_t";
 
     // Create and configure red_config_t helper
-    config = std::make_unique<red_async::red_config_t>();
+    config_ = std::make_unique<red_async::red_config_t>();
 
-    config->set_cluster_name(cluster_name_);
-    config->set_tenant_name(tenant_name_);
-    config->set_subtenant_name(subtenant_name_);
-    config->set_dataset_base(bucket_name_);
-    config->set_client_sthreads(sthreads_);
-    config->set_num_buffers(num_buffers_);
-    config->set_num_ring_entries(num_ring_entries_);
+    config_->set_cluster_name(cluster_name_);
+    config_->set_tenant_name(tenant_name_);
+    config_->set_subtenant_name(subtenant_name_);
+    config_->set_dataset_base(bucket_name_);
+    config_->set_client_sthreads(sthreads_);
+    config_->set_num_buffers(num_buffers_);
+    config_->set_num_ring_entries(num_ring_entries_);
     if (!coremasks_.empty()) {
-        config->set_coremask(coremasks_);
+        config_->set_coremask(coremasks_);
     }
-    config->set_poller_thread(true);  // Required for async operations
-    config->set_num_contexts(1);      // Single context for NIXL plugin
-    config->set_create_tenants(false); // Don't auto-create tenants but report error if not exists
-    config->set_create_dataset(false);  // Don't auto-create dataset but report error if not exists
-    config->set_delete_dataset(false);
-    config->set_create_sys_user(false);
+    config_->set_poller_thread(true);  // Required for async operations
+    config_->set_num_contexts(1);      // Single context for NIXL plugin
+    config_->set_create_tenants(false); // Don't auto-create tenants but report error if not exists
+    config_->set_create_dataset(false);  // Don't auto-create dataset but report error if not exists
+    config_->set_delete_dataset(false);
+    config_->set_create_sys_user(false);
 
     // Initialize RED library, sessions, datasets, and roots
-    red_status_t rs = red_async::red_config_t::initialize(config.get());
+    red_status_t rs = red_async::red_config_t::initialize(config_.get());
     if (rs != RED_SUCCESS) {
         NIXL_ERROR << "red_config_t::initialize failed: " << red_strerror(rs);
-        config.reset();
+        config_.reset();
         return rs;
     }
 
@@ -113,12 +113,12 @@ void InfiniaClient::cleanup() {
     NIXL_DEBUG << "Cleaning up InfiniaClient connection";
 
     // Shutdown using red_config_t helper
-    if (config) {
-        red_status_t rs = red_async::red_config_t::shutdown(config.get());
+    if (config_) {
+        red_status_t rs = red_async::red_config_t::shutdown(config_.get());
         if (rs != RED_SUCCESS) {
             NIXL_ERROR << "red_config_t::shutdown failed: " << red_strerror(rs);
         }
-        config.reset();
+        config_.reset();
     }
 
     initialized_ = false;

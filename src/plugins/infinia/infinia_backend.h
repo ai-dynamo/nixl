@@ -16,8 +16,8 @@
  * limitations under the License.
  */
 
-#ifndef __INFINIA_BACKEND_H
-#define __INFINIA_BACKEND_H
+#ifndef NIXL_SRC_PLUGINS_INFINIA_INFINIA_BACKEND_H
+#define NIXL_SRC_PLUGINS_INFINIA_INFINIA_BACKEND_H
 
 #include <memory>
 #include <string>
@@ -31,25 +31,26 @@
 
 #include "infinia_client.h"
 
-#define INFINIA_DEFAULT_CLUSTER         "cluster1"
-#define INFINIA_DEFAULT_TENANT          "red"
-#define INFINIA_DEFAULT_SUBTENANT       "red"
-#define INFINIA_DEFAULT_DATASET         "nixl"
-#define INFINIA_DEFAULT_STHREADS        8
-#define INFINIA_DEFAULT_BUFFERS         512
-#define INFINIA_DEFAULT_RING_ENTRIES    512
-#define INFINIA_DEFAULT_COREMASK        "0x2"
+// INFINIA default configuration values
+inline constexpr const char* INFINIA_DEFAULT_CLUSTER = "cluster1";
+inline constexpr const char* INFINIA_DEFAULT_TENANT = "red";
+inline constexpr const char* INFINIA_DEFAULT_SUBTENANT = "red";
+inline constexpr const char* INFINIA_DEFAULT_DATASET = "nixl";
+inline constexpr int INFINIA_DEFAULT_STHREADS = 8;
+inline constexpr int INFINIA_DEFAULT_BUFFERS = 512;
+inline constexpr int INFINIA_DEFAULT_RING_ENTRIES = 512;
+inline constexpr const char* INFINIA_DEFAULT_COREMASK = "0x2";
 
 // Batch executor configuration defaults
-#define INFINIA_DEFAULT_MAX_BATCH_SIZE          64
-#define INFINIA_DEFAULT_MAX_CONCURRENT_BATCHES  4
-#define INFINIA_DEFAULT_WORKER_THREADS          0   // 0 = auto-detect
-#define INFINIA_DEFAULT_AUTO_TUNE               true
+inline constexpr int INFINIA_DEFAULT_MAX_BATCH_SIZE = 64;
+inline constexpr int INFINIA_DEFAULT_MAX_CONCURRENT_BATCHES = 4;
+inline constexpr int INFINIA_DEFAULT_WORKER_THREADS = 0;  // 0 = auto-detect
+inline constexpr bool INFINIA_DEFAULT_AUTO_TUNE = true;
 
 // RED Client Environment variable strings
-#define RED_CLUSTER_ENV     "RED_CLUSTER"
-#define RED_TENANT_ENV      "RED_TENANT"
-#define RED_DATASET_ENV     "RED_DATASET"
+inline constexpr const char* RED_CLUSTER_ENV = "RED_CLUSTER";
+inline constexpr const char* RED_TENANT_ENV = "RED_TENANT";
+inline constexpr const char* RED_DATASET_ENV = "RED_DATASET";
 
 // Forward declarations
 class nixlInfiniaBackendReqH;
@@ -85,7 +86,7 @@ private:
     red_async::rae_batch_config_t batch_config_;
 
     // Helper methods
-    bool validateTransferParams(const nixl_xfer_op_t &operation,
+    [[nodiscard]] bool validateTransferParams(const nixl_xfer_op_t &operation,
                                const nixl_meta_dlist_t &local,
                                const nixl_meta_dlist_t &remote,
                                const std::string &remote_agent) const;
@@ -103,77 +104,77 @@ public:
     virtual ~infinia_engine();
 
     // Backend capability methods
-    bool supportsRemote() const override {
+    [[nodiscard]] bool supportsRemote() const noexcept override {
         return false;  // Infinia supports remote operations
     }
 
-    bool supportsLocal() const override {
+    [[nodiscard]] bool supportsLocal() const noexcept override {
         return true;  // Infinia supports local operations
     }
 
-    bool supportsNotif() const override {
+    [[nodiscard]] bool supportsNotif() const noexcept override {
         return false;  // Notifications not implemented yet
     }
 
-    bool supportsProgTh() const {
+    [[nodiscard]] bool supportsProgTh() const noexcept {
         return false;  // Progress thread not implemented yet
     }
 
-    nixl_mem_list_t getSupportedMems() const override {
+    [[nodiscard]] nixl_mem_list_t getSupportedMems() const noexcept override {
         return {VRAM_SEG, DRAM_SEG, OBJ_SEG};
     }
 
     // Memory management methods
-    nixl_status_t registerMem(const nixlBlobDesc &mem,
+    [[nodiscard]] nixl_status_t registerMem(const nixlBlobDesc &mem,
                               const nixl_mem_t &nixl_mem,
                               nixlBackendMD* &out) override;
 
-    nixl_status_t deregisterMem(nixlBackendMD* meta) override;
+    [[nodiscard]] nixl_status_t deregisterMem(nixlBackendMD* meta) override;
 
-    nixl_status_t queryMem(const nixl_reg_dlist_t &descs,
+    [[nodiscard]] nixl_status_t queryMem(const nixl_reg_dlist_t &descs,
                            std::vector<nixl_query_resp_t> &resp) const override;
 
     // Connection management methods
-    nixl_status_t connect(const std::string &remote_agent) override;
-    nixl_status_t disconnect(const std::string &remote_agent) override;
+    [[nodiscard]] nixl_status_t connect(const std::string &remote_agent) override;
+    [[nodiscard]] nixl_status_t disconnect(const std::string &remote_agent) override;
 
     // Metadata management
-    nixl_status_t unloadMD(nixlBackendMD* input) override;
+    [[nodiscard]] nixl_status_t unloadMD(nixlBackendMD* input) override;
 
     // Transfer operations
-    nixl_status_t prepXfer(const nixl_xfer_op_t &operation,
+    [[nodiscard]] nixl_status_t prepXfer(const nixl_xfer_op_t &operation,
                            const nixl_meta_dlist_t &local,
                            const nixl_meta_dlist_t &remote,
                            const std::string &remote_agent,
                            nixlBackendReqH* &handle,
                            const nixl_opt_b_args_t* opt_args = nullptr) const override;
 
-    nixl_status_t postXfer(const nixl_xfer_op_t &operation,
+    [[nodiscard]] nixl_status_t postXfer(const nixl_xfer_op_t &operation,
                            const nixl_meta_dlist_t &local,
                            const nixl_meta_dlist_t &remote,
                            const std::string &remote_agent,
                            nixlBackendReqH* &handle,
                            const nixl_opt_b_args_t* opt_args = nullptr) const override;
 
-    nixl_status_t checkXfer(nixlBackendReqH* handle) const override;
-    nixl_status_t releaseReqH(nixlBackendReqH* handle) const override;
+    [[nodiscard]] nixl_status_t checkXfer(nixlBackendReqH* handle) const override;
+    [[nodiscard]] nixl_status_t releaseReqH(nixlBackendReqH* handle) const override;
 
     // Remote operations (required since supportsRemote() returns true)
-    nixl_status_t getPublicData(const nixlBackendMD* meta,
+    [[nodiscard]] nixl_status_t getPublicData(const nixlBackendMD* meta,
                                 std::string &str) const override;
 
-    nixl_status_t getConnInfo(std::string &str) const override;
+    [[nodiscard]] nixl_status_t getConnInfo(std::string &str) const override;
 
-    nixl_status_t loadRemoteConnInfo(const std::string &remote_agent,
+    [[nodiscard]] nixl_status_t loadRemoteConnInfo(const std::string &remote_agent,
                                      const std::string &remote_conn_info) override;
 
-    nixl_status_t loadRemoteMD(const nixlBlobDesc &input,
+    [[nodiscard]] nixl_status_t loadRemoteMD(const nixlBlobDesc &input,
                                const nixl_mem_t &nixl_mem,
                                const std::string &remote_agent,
                                nixlBackendMD* &output) override;
 
     // Local operations (required since supportsLocal() returns true)
-    nixl_status_t loadLocalMD(nixlBackendMD* input,
+    [[nodiscard]] nixl_status_t loadLocalMD(nixlBackendMD* input,
                               nixlBackendMD* &output) override;
 };
 
@@ -186,7 +187,8 @@ public:
           devId(dev_id),
           objKey(obj_key),
           buffer(nullptr),
-          length(0) {}
+          length(0),
+          iomem_handle{} {}
 
     ~nixlInfiniaMetadata() = default;
 
@@ -247,16 +249,16 @@ public:
     virtual ~nixlInfiniaBackendReqH();
 
     // Transfer operation methods
-    nixl_status_t prepareTransfer();
-    nixl_status_t postTransfer();
-    nixl_status_t checkTransfer();
+    [[nodiscard]] nixl_status_t prepareTransfer();
+    [[nodiscard]] nixl_status_t postTransfer();
+    [[nodiscard]] nixl_status_t checkTransfer();
 
     // State query methods
-    bool isPrepared() const { return transfer_prepared_; }
-    bool isPosted() const { return transfer_posted_; }
-    bool isCompleted() const { return transfer_completed_; }
-    red_status_t getStatus() const { return transfer_status_; }
-    size_t getOperationCount() const { return operation_count_; }
+    [[nodiscard]] bool isPrepared() const noexcept { return transfer_prepared_; }
+    [[nodiscard]] bool isPosted() const noexcept { return transfer_posted_; }
+    [[nodiscard]] bool isCompleted() const noexcept { return transfer_completed_; }
+    [[nodiscard]] red_status_t getStatus() const noexcept { return transfer_status_; }
+    [[nodiscard]] size_t getOperationCount() const noexcept { return operation_count_; }
 
     // Operation building methods
     void reserveOperations(size_t count);
@@ -267,4 +269,4 @@ public:
                      red_iomem_hndl_t iomem_handle);
 };
 
-#endif // __INFINIA_BACKEND_H
+#endif // NIXL_SRC_PLUGINS_INFINIA_INFINIA_BACKEND_H

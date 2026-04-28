@@ -36,6 +36,8 @@
 #include <cstring>
 #include <getopt.h>
 #include <random>
+#include <fstream>
+#include <sys/sysinfo.h>
 
 using namespace nixlTime;
 
@@ -53,6 +55,101 @@ static size_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
 
 // Progress bar configuration
 #define PROGRESS_WIDTH 50
+
+// Forward declaration of format_data_size (defined later)
+std::string format_data_size(size_t bytes);
+
+// Helper structure to hold system memory information
+struct MemoryInfo {
+    size_t total_ram;      // Total physical RAM in bytes
+    size_t available_ram;  // Available RAM in bytes
+    size_t free_ram;       // Free RAM in bytes
+    size_t buffers;        // Buffer cache in bytes
+    size_t cached;         // Page cache in bytes
+};
+
+// Get system memory information from /proc/meminfo
+bool get_memory_info(MemoryInfo& info) {
+    std::ifstream meminfo("/proc/meminfo");
+    if (!meminfo.is_open()) {
+        // Fallback to sysinfo if /proc/meminfo is not available
+        struct sysinfo si;
+        if (sysinfo(&si) != 0) {
+            return false;
+        }
+        info.total_ram = si.totalram * si.mem_unit;
+        info.free_ram = si.freeram * si.mem_unit;
+        info.available_ram = info.free_ram;
+        info.buffers = si.bufferram * si.mem_unit;
+        info.cached = 0;
+        return true;
+    }
+
+    // Parse /proc/meminfo for more accurate information
+    std::string line;
+    info.total_ram = 0;
+    info.available_ram = 0;
+    info.free_ram = 0;
+    info.buffers = 0;
+    info.cached = 0;
+
+    while (std::getline(meminfo, line)) {
+        size_t value;
+        if (sscanf(line.c_str(), "MemTotal: %zu kB", &value) == 1) {
+            info.total_ram = value * 1024;
+        } else if (sscanf(line.c_str(), "MemAvailable: %zu kB", &value) == 1) {
+            info.available_ram = value * 1024;
+        } else if (sscanf(line.c_str(), "MemFree: %zu kB", &value) == 1) {
+            info.free_ram = value * 1024;
+        } else if (sscanf(line.c_str(), "Buffers: %zu kB", &value) == 1) {
+            info.buffers = value * 1024;
+        } else if (sscanf(line.c_str(), "Cached: %zu kB", &value) == 1) {
+            info.cached = value * 1024;
+        }
+    }
+
+    // If MemAvailable is not present (older kernels), estimate it
+    if (info.available_ram == 0) {
+        info.available_ram = info.free_ram + info.buffers + info.cached;
+    }
+
+    return info.total_ram > 0;
+}
+
+// Check if there's enough memory available for the test
+// Returns true if sufficient memory, false otherwise
+bool check_memory_requirements(size_t required_bytes, double safety_factor = 0.9) {
+    MemoryInfo mem_info;
+    if (!get_memory_info(mem_info)) {
+        std::cerr << "Warning: Could not retrieve system memory information\n";
+        std::cerr << "Proceeding anyway, but be aware of potential OOM issues\n";
+        return true;  // Proceed with caution if we can't check
+    }
+
+    // Use available memory as the most accurate measure
+    size_t usable_memory = static_cast<size_t>(mem_info.available_ram * safety_factor);
+
+    std::cout << "\n=== Memory Check ===" << std::endl;
+    std::cout << "- Total RAM:       " << format_data_size(mem_info.total_ram) << std::endl;
+    std::cout << "- Available RAM:   " << format_data_size(mem_info.available_ram) << std::endl;
+    std::cout << "- Required:        " << format_data_size(required_bytes) << std::endl;
+    std::cout << "- Usable (90%):    " << format_data_size(usable_memory) << std::endl;
+
+    if (required_bytes > usable_memory) {
+        std::cerr << "\n*** ERROR: Insufficient memory! ***\n";
+        std::cerr << "Required:  " << format_data_size(required_bytes) << std::endl;
+        std::cerr << "Available: " << format_data_size(usable_memory) << " (90% of available RAM)\n";
+        std::cerr << "\nSuggestions:\n";
+        std::cerr << "1. Reduce number of transfers (-n flag)\n";
+        std::cerr << "2. Reduce transfer size (-s flag)\n";
+        std::cerr << "3. Close other applications to free memory\n";
+        std::cerr << "4. Add more RAM to the system\n";
+        return false;
+    }
+
+    std::cout << "- Status:          OK (sufficient memory)\n";
+    return true;
+}
 
 // Helper function to parse size strings like "1K", "2M", "3G"
 size_t parse_size(const char* size_str) {
@@ -95,7 +192,7 @@ void print_usage(const char* program_name) {
               << "  -C, --coremask MASK         CPU affinity: hex (\"0x0F\") or list (\"0-3,8\") (default: \"0x2\")\n"
               << "  -M, --max-retries N         Max retry attempts for operations (default: 3, range: 0-100)\n"
               << "\n  Other:\n"
-              << "  -S, --seed N                Random seed for reproducibility (default: -1 which means no reproducibility).\n"
+              << "  -S, --seed N                Random seed for reproducibility (default: 0, use -1 to skip validation).\n"
               << "  -h, --help                  Show this help message\n"
               << "\nExample:\n"
               << "  " << program_name << " -d -n 100 -s 2M -t 5 -T 16 -B 1024 -R 1024\n";
@@ -294,10 +391,12 @@ int main(int argc, char *argv[])
     double                  total_data_gb = 0;
     bool                    use_direct __attribute__((unused)) = false;
     unsigned int            iterations = DEFAULT_ITERATIONS;
-    int                     seed = -1;
+    int                     seed = 0;
     // -1: arg error, -2: creatBackend, -3: initialize, -4: registerMem
     // -5: createXferReq, -6: postXferReq, -7: getXferStatus, -15: validate
     int                     rc = 0;
+    nixlXferReqH*           write_req = nullptr;
+    nixlXferReqH*           read_req = nullptr;
 
     // Parse command line options
     static struct option long_options[] = {
@@ -432,14 +531,14 @@ int main(int argc, char *argv[])
     // Allocate arrays based on num_transfers
     if (use_vram) {
 #ifdef HAVE_CUDA
-        vram_addr = new void*[num_transfers];
+        vram_addr = new void*[num_transfers]();
 #endif
     }
     if (use_dram) {
-        dram_addr = new void*[num_transfers];
+        dram_addr = new void*[num_transfers]();
     }
 
-    test_keys = new char*[num_transfers];
+    test_keys = new char*[num_transfers]();
 
     // Initialize NIXL components
     nixlAgentConfig             cfg(true);
@@ -479,6 +578,24 @@ int main(int argc, char *argv[])
     std::cout << "- Core mask: " << coremask << std::endl;
     std::cout << "- Max retries: " << max_retries << std::endl;
     std::cout << "============================================================\n" << std::endl;
+
+    // Check memory requirements before starting
+    if (use_dram) {
+        // Estimate total memory needed:
+        // - Main buffers: num_transfers * transfer_size
+        // - Backend internal buffers: num_buffers * transfer_size (estimate)
+        // - Overhead for descriptors, keys, etc: ~10%
+        size_t buffer_memory = static_cast<size_t>(num_transfers) * transfer_size;
+        size_t backend_memory = static_cast<size_t>(num_buffers) * transfer_size;
+        size_t overhead = (buffer_memory + backend_memory) / 10;
+        size_t total_required = buffer_memory + backend_memory + overhead;
+
+        if (!check_memory_requirements(total_required)) {
+            std::cerr << "\nTest aborted due to insufficient memory.\n";
+            return -1;
+        }
+        std::cout << std::endl;
+    }
 
     nixlAgent agent("INFINIA_Tester", cfg);
 
@@ -525,13 +642,24 @@ int main(int argc, char *argv[])
 #ifdef HAVE_CUDA
         if (use_vram) {
             // Allocate and initialize VRAM buffer
-            if (cudaMalloc(&vram_addr[i], transfer_size) != cudaSuccess) {
-                std::cerr << "CUDA malloc failed\n";
+            cudaError_t cuda_err = cudaMalloc(&vram_addr[i], transfer_size);
+            if (cuda_err != cudaSuccess) {
+                std::cerr << "\n*** CUDA malloc failed at buffer " << i << "/" << num_transfers << " ***\n";
+                std::cerr << "Error: " << cudaGetErrorString(cuda_err) << "\n";
+                std::cerr << "Successfully allocated " << i << " buffers of "
+                          << format_data_size(transfer_size) << " each\n";
+                std::cerr << "Total allocated before failure: " << format_data_size(i * transfer_size) << "\n";
+                std::cerr << "\nThis typically indicates:\n";
+                std::cerr << "1. Insufficient GPU memory\n";
+                std::cerr << "2. GPU memory fragmentation\n";
+                std::cerr << "\nPlease reduce test parameters and try again.\n";
                 rc = -3;
                 goto cleanup;
             }
-            if (fill_gpu_test_pattern(vram_addr[i], transfer_size) != cudaSuccess) {
-                std::cerr << "CUDA buffer initialization failed\n";
+            cuda_err = fill_gpu_test_pattern(vram_addr[i], transfer_size);
+            if (cuda_err != cudaSuccess) {
+                std::cerr << "\n*** CUDA buffer initialization failed at buffer " << i << " ***\n";
+                std::cerr << "Error: " << cudaGetErrorString(cuda_err) << "\n";
                 rc = -3;
                 goto cleanup;
             }
@@ -540,8 +668,18 @@ int main(int argc, char *argv[])
 
         if (use_dram) {
             // Allocate and initialize DRAM buffer
-            if (posix_memalign(&dram_addr[i], PAGE_SIZE, transfer_size) != 0) {
-                std::cerr << "DRAM allocation failed\n";
+            int alloc_result = posix_memalign(&dram_addr[i], PAGE_SIZE, transfer_size);
+            if (alloc_result != 0) {
+                std::cerr << "\n*** DRAM allocation failed at buffer " << i << "/" << num_transfers << " ***\n";
+                std::cerr << "Error: " << strerror(alloc_result) << " (errno=" << alloc_result << ")\n";
+                std::cerr << "Successfully allocated " << i << " buffers of "
+                          << format_data_size(transfer_size) << " each\n";
+                std::cerr << "Total allocated before failure: " << format_data_size(i * transfer_size) << "\n";
+                std::cerr << "\nThis typically indicates:\n";
+                std::cerr << "1. Insufficient system memory (OOM condition)\n";
+                std::cerr << "2. Memory fragmentation preventing large allocations\n";
+                std::cerr << "3. System limits (ulimit) restricting memory usage\n";
+                std::cerr << "\nPlease reduce test parameters and try again.\n";
                 rc = -3;
                 goto cleanup;
             }
@@ -615,7 +753,6 @@ int main(int argc, char *argv[])
         std::cout << "============================================================" << std::endl;
 
         us_t write_duration(0);
-        nixlXferReqH* write_req = nullptr;
 
         // Create descriptor lists for all transfers
         nixl_reg_dlist_t src_reg(use_dram ? DRAM_SEG : VRAM_SEG);
@@ -680,6 +817,7 @@ int main(int argc, char *argv[])
 
         std::cout <<" Completed writing data to Infinia KV dataset.\n";
         agent.releaseXferReq(write_req);
+        write_req = nullptr;
         total_time += write_duration;
 
         size_t total_bytes = transfer_size * num_transfers * iterations;
@@ -782,7 +920,6 @@ int main(int argc, char *argv[])
         std::cout << "============================================================" << std::endl;
 
         us_t read_duration(0);
-        nixlXferReqH* read_req = nullptr;
 
         // Create descriptor lists for all transfers
         nixl_reg_dlist_t src_reg(use_dram ? DRAM_SEG : VRAM_SEG);
@@ -846,6 +983,7 @@ int main(int argc, char *argv[])
 
         std::cout <<" Completed reading data from Infinia KV dataset.\n";
         agent.releaseXferReq(read_req);
+        read_req = nullptr;
         total_time += read_duration;
 
         size_t total_bytes = transfer_size * num_transfers * iterations;
@@ -909,6 +1047,14 @@ cleanup:
     us_t cleanup_start = getUs();
     printProgress(1.0);
 
+    // Cleanup transfer request handles
+    if (write_req != nullptr) {
+        agent.releaseXferReq(write_req);
+    }
+    if (read_req != nullptr) {
+        agent.releaseXferReq(read_req);
+    }
+
     // Cleanup resources
     agent.deregisterMem(obj_for_infinia);
 #ifdef HAVE_CUDA
@@ -929,8 +1075,11 @@ cleanup:
         delete[] dram_addr;
         delete[] dram_buf;
     }
-    for (i = 0; i < num_transfers; i++) {
-        delete[] test_keys[i];
+    if (test_keys) {
+        for (i = 0; i < num_transfers; i++) {
+            delete[] test_keys[i];
+        }
+        delete[] test_keys;
     }
     delete[] ftrans;
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,7 +34,7 @@ if 'POSIX' in static_plugins
 endif
 
 disable_infinia_backend = get_option('disable_infinia_backend')
-if not disable_infinia_backend and 'INFINIA' in static_plugins
+if infinia_lib_found.found() and not disable_infinia_backend and 'INFINIA' in static_plugins
     nixl_lib_deps += [ infinia_backend_interface ]
 endif
 

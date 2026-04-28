@@ -540,6 +540,36 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 Note: storage_enable_direct is automatically enabled for GUSLI backend
 ```
 
+**INFINIA Backend:**
+```
+--infinia_config_file PATH             # Path to INFINIA plugin configuration file (simple key=value format)
+
+INFINIA Config File Format:
+  Simple key=value format (one parameter per line, comments start with #)
+
+  Required Parameters:
+    cluster=NAME                       # Infinia cluster name
+    tenant=NAME                        # Tenant name
+    dataset=NAME                       # Dataset name
+
+  Optional Parameters:
+    subtenant=NAME                     # Subtenant (default: "red")
+    sthreads=NUM                       # Number of service threads (default: 8, limited by CPU cores)
+    num_buffers=NUM                    # Pre-allocated deferred operation buffers for async ops (default: 512)
+    num_ring_entries=NUM               # Depth of the asynchronous I/O ring buffer (default: 512)
+    coremasks=VALUE                    # CPU affinity: hex ("0x0F"), list ("[0-3,8]"), or empty disables (default: "")
+    max_retries=NUM                    # BatchTask retry limit (default: 3)
+
+Example INFINIA config file:
+  # INFINIA configuration
+  cluster=my_cluster
+  tenant=my_tenant
+  dataset=my_dataset
+  sthreads=8
+  num_buffers=512
+  num_ring_entries=512
+```
+
 ### Configuration File
 
 The name of a config file can be specified using the `--config_file` command line parameter. The config file is in TOML format.
@@ -714,6 +744,46 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 **Notes**:
 - Number of devices in `--device_list` must match `--num_initiator_dev` and `--num_target_dev`
 - Direct I/O is automatically enabled for GUSLI (no need to specify `--storage_enable_direct`)
+
+**INFINIA Backend:**
+
+INFINIA uses a simple key=value configuration file passed via the `--infinia_config_file` parameter.
+
+```bash
+# Step 1: Create INFINIA plugin config file (infinia.conf)
+cat > infinia.conf << EOF
+# INFINIA configuration
+cluster=my_cluster
+tenant=my_tenant
+dataset=my_dataset
+sthreads=8
+num_buffers=512
+num_ring_entries=512
+EOF
+
+# Step 2: Run basic INFINIA benchmark (no ETCD needed for single instance)
+./nixlbench --backend INFINIA --infinia_config_file infinia.conf
+
+# Step 3: Or use a nixlbench TOML config file
+cat > nixlbench.toml << EOF
+backend = "INFINIA"
+infinia_config_file = "infinia.conf"
+initiator_seg_type = "DRAM"
+target_seg_type = "DRAM"
+total_buffer_size = 67108864
+num_iter = 16
+EOF
+
+./nixlbench --config_file nixlbench.toml
+
+# Command-line only approach
+./nixlbench \
+  --backend INFINIA \
+  --infinia_config_file infinia.conf \
+  --initiator_seg_type DRAM \
+  --target_seg_type DRAM \
+  --num_iter 16
+```
 
 ### Worker Types
 
