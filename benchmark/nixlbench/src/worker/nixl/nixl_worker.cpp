@@ -316,8 +316,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         } else {
             std::cout << "INFINIA backend (plugin will use environment variables or defaults)"
                       << std::endl;
-            std::cout << "  Tip: Use --infinia_config_file to specify a config file"
-                      << std::endl;
+            std::cout << "  Tip: Use --infinia_config_file to specify a config file" << std::endl;
         }
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;

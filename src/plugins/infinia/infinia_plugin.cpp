@@ -20,32 +20,37 @@
 #include "infinia_backend.h"
 
 // Plugin version information
-static const char* PLUGIN_NAME = "INFINIA";
-static const char* PLUGIN_VERSION = "0.1.4";
+static const char *PLUGIN_NAME = "INFINIA";
+static const char *PLUGIN_VERSION = "0.1.4";
 
 // Function to create a new Infinia backend engine instance
-static nixlBackendEngine* create_infinia_engine(const nixlBackendInitParams* init_params) {
+static nixlBackendEngine *
+create_infinia_engine(const nixlBackendInitParams *init_params) {
     return new infinia_engine(init_params);
 }
 
-static void destroy_infinia_engine(nixlBackendEngine *engine) {
+static void
+destroy_infinia_engine(nixlBackendEngine *engine) {
     delete engine;
 }
 
 // Function to get the plugin name
-static const char* get_plugin_name() {
+static const char *
+get_plugin_name() {
     return PLUGIN_NAME;
 }
 
 // Function to get the plugin version
-static const char* get_plugin_version() {
+static const char *
+get_plugin_version() {
     return PLUGIN_VERSION;
 }
 
 // Function to get backend options
 // Returns empty params - INFINIA backend uses environment variables
 // and doesn't require default parameter values
-static nixl_b_params_t get_backend_options() {
+static nixl_b_params_t
+get_backend_options() {
     nixl_b_params_t params;
     // Return empty params - configuration is done via environment variables
     // or explicit parameters passed to createBackend()
@@ -53,7 +58,8 @@ static nixl_b_params_t get_backend_options() {
 }
 
 // Function to get supported backend mem types
-static nixl_mem_list_t get_backend_mems() {
+static nixl_mem_list_t
+get_backend_mems() {
     nixl_mem_list_t mems;
     mems.push_back(DRAM_SEG);
     mems.push_back(VRAM_SEG);
@@ -62,31 +68,32 @@ static nixl_mem_list_t get_backend_mems() {
 }
 
 // Static plugin structure
-static nixlBackendPlugin plugin = {
-    NIXL_PLUGIN_API_VERSION,
-    create_infinia_engine,
-    destroy_infinia_engine,
-    get_plugin_name,
-    get_plugin_version,
-    get_backend_options,
-    get_backend_mems
-};
+static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
+                                   create_infinia_engine,
+                                   destroy_infinia_engine,
+                                   get_plugin_name,
+                                   get_plugin_version,
+                                   get_backend_options,
+                                   get_backend_mems};
 
 #ifdef STATIC_PLUGIN_INFINIA
 
-nixlBackendPlugin* createStaticInfiniaPlugin() {
+nixlBackendPlugin *
+createStaticInfiniaPlugin() {
     return &plugin; // Return the static plugin instance
 }
 
 #else
 
 // Plugin initialization function
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin* nixl_plugin_init() {
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
     return &plugin;
 }
 
 // Plugin cleanup function
-extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {
     // Cleanup any resources if needed
 }
 

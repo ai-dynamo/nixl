@@ -23,14 +23,14 @@
 
 #include "infinia_client.h"
 
-InfiniaClient::InfiniaClient(const std::string& cluster_name,
-                             const std::string& tenant_name,
-                             const std::string& subtenant_name,
-                             const std::string& bucket_name,
+InfiniaClient::InfiniaClient(const std::string &cluster_name,
+                             const std::string &tenant_name,
+                             const std::string &subtenant_name,
+                             const std::string &bucket_name,
                              const uint32_t sthreads,
                              const uint32_t num_buffers,
                              const uint32_t num_ring_entries,
-                             const std::string& coremasks)
+                             const std::string &coremasks)
     : cluster_name_(cluster_name),
       tenant_name_(tenant_name),
       subtenant_name_(subtenant_name),
@@ -39,8 +39,7 @@ InfiniaClient::InfiniaClient(const std::string& cluster_name,
       num_buffers_(num_buffers),
       num_ring_entries_(num_ring_entries),
       coremasks_(coremasks),
-      initialized_(false) {
-}
+      initialized_(false) {}
 
 InfiniaClient::~InfiniaClient() {
     if (initialized_) {
@@ -48,7 +47,8 @@ InfiniaClient::~InfiniaClient() {
     }
 }
 
-red_status_t InfiniaClient::initialize() {
+red_status_t
+InfiniaClient::initialize() {
     if (initialized_) {
         return RED_SUCCESS;
     }
@@ -68,10 +68,10 @@ red_status_t InfiniaClient::initialize() {
     if (!coremasks_.empty()) {
         config_->set_coremask(coremasks_);
     }
-    config_->set_poller_thread(true);  // Required for async operations
-    config_->set_num_contexts(1);      // Single context for NIXL plugin
+    config_->set_poller_thread(true); // Required for async operations
+    config_->set_num_contexts(1); // Single context for NIXL plugin
     config_->set_create_tenants(false); // Don't auto-create tenants but report error if not exists
-    config_->set_create_dataset(false);  // Don't auto-create dataset but report error if not exists
+    config_->set_create_dataset(false); // Don't auto-create dataset but report error if not exists
     config_->set_delete_dataset(false);
     config_->set_create_sys_user(false);
 
@@ -105,7 +105,8 @@ red_status_t InfiniaClient::initialize() {
     return RED_SUCCESS;
 }
 
-void InfiniaClient::cleanup() {
+void
+InfiniaClient::cleanup() {
     if (!initialized_) {
         return;
     }

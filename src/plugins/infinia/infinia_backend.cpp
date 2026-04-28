@@ -24,7 +24,7 @@
 #include <absl/log/log.h>
 #include <absl/strings/str_format.h>
 #include "common/nixl_log.h"
-#include <cstdlib>  // for std::getenv
+#include <cstdlib> // for std::getenv
 #include <thread>
 #include <fstream>
 #include <sstream>
@@ -37,124 +37,135 @@
 #include <cctype>
 
 namespace {
-    // Helper function to convert memory type to string
-    const char* memTypeToStr(nixl_mem_t mem) {
-        switch (mem) {
-            case DRAM_SEG: return "DRAM_SEG";
-            case VRAM_SEG: return "VRAM_SEG";
-            case BLK_SEG: return "BLK_SEG";
-            case OBJ_SEG: return "OBJ_SEG";
-            case FILE_SEG: return "FILE_SEG";
-            default: return "UNKNOWN_SEG";
-        }
-    }
-
-    // Helper function to trim whitespace from string_view (C++20)
-    constexpr std::string_view trim(std::string_view sv) noexcept {
-        const auto start = sv.find_first_not_of(" \t\r\n");
-        if (start == std::string_view::npos) {
-            return {};
-        }
-        const auto end = sv.find_last_not_of(" \t\r\n");
-        return sv.substr(start, end - start + 1);
-    }
-
-    // Modern C++20 config file parser using <filesystem>, <string_view>, and std::format
-    // Supports comments (#) and blank lines in key=value format
-    [[nodiscard]] static std::map<std::string, std::string> parseConfigFile(const std::string& filepath) {
-        namespace fs = std::filesystem;
-
-        // Use filesystem to check if file exists
-        const fs::path config_path{filepath};
-        if (!fs::exists(config_path)) {
-            throw std::runtime_error(std::format("Config file not found: {}", filepath));
-        }
-
-        if (!fs::is_regular_file(config_path)) {
-            throw std::runtime_error(std::format("Config path is not a file: {}", filepath));
-        }
-
-        std::ifstream file(config_path);
-        if (!file.is_open()) {
-            throw std::runtime_error(std::format("Failed to open config file: {}", filepath));
-        }
-
-        std::map<std::string, std::string> config;
-        std::string line;
-        int line_num = 0;
-
-        while (std::getline(file, line)) {
-            ++line_num;
-
-            // Use string_view for efficient string operations
-            const std::string_view line_view = trim(line);
-
-            // Skip empty lines and comments
-            if (line_view.empty() || line_view.starts_with('#')) {
-                continue;
-            }
-
-            // Parse key=value using string_view
-            const auto eq_pos = line_view.find('=');
-            if (eq_pos == std::string_view::npos) {
-                NIXL_WARN << std::format("Skipping invalid line {} in {}: {}",
-                                        line_num, filepath, line_view);
-                continue;
-            }
-
-            const auto key = trim(line_view.substr(0, eq_pos));
-            const auto value = trim(line_view.substr(eq_pos + 1));
-
-            // Convert string_view to string for storage
-            config.emplace(std::string{key}, std::string{value});
-        }
-
-        return config;
-    }
-
-    // Helper function to cast generic handle to Infinia-specific handle
-    nixlInfiniaBackendReqH& castInfiniaHandle(nixlBackendReqH* handle) {
-        if (!handle) {
-            throw std::invalid_argument("Received null handle");
-        }
-        return dynamic_cast<nixlInfiniaBackendReqH&>(*handle);
-    }
-
-    // Parse "TENANT/SUBTENANT" into two C-string pointers using a backing storage
-    static bool splitTenantSubtenant(const char* s,
-                                     const char*& tenant_ptr,
-                                     const char*& subtenant_ptr,
-                                     std::string& backing_storage) {
-        if (!s) return false;
-        const char* slash = std::strchr(s, '/');
-        if (!slash || slash == s || *(slash + 1) == '\0') {
-            return false; // require non-empty tenant and subtenant
-        }
-        backing_storage.assign(s);
-        size_t idx = backing_storage.find('/');
-        backing_storage[idx] = '\0';
-        tenant_ptr = backing_storage.c_str();
-        subtenant_ptr = backing_storage.c_str() + idx + 1;
-        return true;
+// Helper function to convert memory type to string
+const char *
+memTypeToStr(nixl_mem_t mem) {
+    switch (mem) {
+    case DRAM_SEG:
+        return "DRAM_SEG";
+    case VRAM_SEG:
+        return "VRAM_SEG";
+    case BLK_SEG:
+        return "BLK_SEG";
+    case OBJ_SEG:
+        return "OBJ_SEG";
+    case FILE_SEG:
+        return "FILE_SEG";
+    default:
+        return "UNKNOWN_SEG";
     }
 }
+
+// Helper function to trim whitespace from string_view (C++20)
+constexpr std::string_view
+trim(std::string_view sv) noexcept {
+    const auto start = sv.find_first_not_of(" \t\r\n");
+    if (start == std::string_view::npos) {
+        return {};
+    }
+    const auto end = sv.find_last_not_of(" \t\r\n");
+    return sv.substr(start, end - start + 1);
+}
+
+// Modern C++20 config file parser using <filesystem>, <string_view>, and std::format
+// Supports comments (#) and blank lines in key=value format
+[[nodiscard]] static std::map<std::string, std::string>
+parseConfigFile(const std::string &filepath) {
+    namespace fs = std::filesystem;
+
+    // Use filesystem to check if file exists
+    const fs::path config_path{filepath};
+    if (!fs::exists(config_path)) {
+        throw std::runtime_error(std::format("Config file not found: {}", filepath));
+    }
+
+    if (!fs::is_regular_file(config_path)) {
+        throw std::runtime_error(std::format("Config path is not a file: {}", filepath));
+    }
+
+    std::ifstream file(config_path);
+    if (!file.is_open()) {
+        throw std::runtime_error(std::format("Failed to open config file: {}", filepath));
+    }
+
+    std::map<std::string, std::string> config;
+    std::string line;
+    int line_num = 0;
+
+    while (std::getline(file, line)) {
+        ++line_num;
+
+        // Use string_view for efficient string operations
+        const std::string_view line_view = trim(line);
+
+        // Skip empty lines and comments
+        if (line_view.empty() || line_view.starts_with('#')) {
+            continue;
+        }
+
+        // Parse key=value using string_view
+        const auto eq_pos = line_view.find('=');
+        if (eq_pos == std::string_view::npos) {
+            NIXL_WARN << std::format(
+                "Skipping invalid line {} in {}: {}", line_num, filepath, line_view);
+            continue;
+        }
+
+        const auto key = trim(line_view.substr(0, eq_pos));
+        const auto value = trim(line_view.substr(eq_pos + 1));
+
+        // Convert string_view to string for storage
+        config.emplace(std::string{key}, std::string{value});
+    }
+
+    return config;
+}
+
+// Helper function to cast generic handle to Infinia-specific handle
+nixlInfiniaBackendReqH &
+castInfiniaHandle(nixlBackendReqH *handle) {
+    if (!handle) {
+        throw std::invalid_argument("Received null handle");
+    }
+    return dynamic_cast<nixlInfiniaBackendReqH &>(*handle);
+}
+
+// Parse "TENANT/SUBTENANT" into two C-string pointers using a backing storage
+static bool
+splitTenantSubtenant(const char *s,
+                     const char *&tenant_ptr,
+                     const char *&subtenant_ptr,
+                     std::string &backing_storage) {
+    if (!s) return false;
+    const char *slash = std::strchr(s, '/');
+    if (!slash || slash == s || *(slash + 1) == '\0') {
+        return false; // require non-empty tenant and subtenant
+    }
+    backing_storage.assign(s);
+    size_t idx = backing_storage.find('/');
+    backing_storage[idx] = '\0';
+    tenant_ptr = backing_storage.c_str();
+    subtenant_ptr = backing_storage.c_str() + idx + 1;
+    return true;
+}
+} // namespace
 
 // -----------------------------------------------------------------------------
 // Infinia Engine Implementation
 // -----------------------------------------------------------------------------
 
-infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
-    : nixlBackendEngine(init_params)
-    , infinia_cluster_(INFINIA_DEFAULT_CLUSTER)
-    , infinia_tenant_(INFINIA_DEFAULT_TENANT)
-    , infinia_subtenant_(INFINIA_DEFAULT_SUBTENANT)
-    , infinia_dataset_(INFINIA_DEFAULT_DATASET)
-    , infinia_sthreads_(INFINIA_DEFAULT_STHREADS)
-    , infinia_num_buffers_(INFINIA_DEFAULT_BUFFERS)
-    , infinia_num_ring_entries_(INFINIA_DEFAULT_RING_ENTRIES)
-    , infinia_coremasks_(INFINIA_DEFAULT_COREMASK)
-    , infinia_coremasks_set_(false)
-    , initialized_(false) {
+infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
+    : nixlBackendEngine(init_params),
+      infinia_cluster_(INFINIA_DEFAULT_CLUSTER),
+      infinia_tenant_(INFINIA_DEFAULT_TENANT),
+      infinia_subtenant_(INFINIA_DEFAULT_SUBTENANT),
+      infinia_dataset_(INFINIA_DEFAULT_DATASET),
+      infinia_sthreads_(INFINIA_DEFAULT_STHREADS),
+      infinia_num_buffers_(INFINIA_DEFAULT_BUFFERS),
+      infinia_num_ring_entries_(INFINIA_DEFAULT_RING_ENTRIES),
+      infinia_coremasks_(INFINIA_DEFAULT_COREMASK),
+      infinia_coremasks_set_(false),
+      initialized_(false) {
 
     red_status_t rs;
 
@@ -197,7 +208,8 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
                 if (it != config.end()) {
                     try {
                         infinia_sthreads_ = std::stoul(it->second);
-                    } catch (...) {
+                    }
+                    catch (...) {
                         NIXL_WARN << "Invalid sthreads value: " << it->second;
                     }
                 }
@@ -206,7 +218,8 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
                 if (it != config.end()) {
                     try {
                         infinia_num_buffers_ = std::stoul(it->second);
-                    } catch (...) {
+                    }
+                    catch (...) {
                         NIXL_WARN << "Invalid num_buffers value: " << it->second;
                     }
                 }
@@ -215,7 +228,8 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
                 if (it != config.end()) {
                     try {
                         infinia_num_ring_entries_ = std::stoul(it->second);
-                    } catch (...) {
+                    }
+                    catch (...) {
                         NIXL_WARN << "Invalid num_ring_entries value: " << it->second;
                     }
                 }
@@ -230,13 +244,15 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
                 if (it != config.end()) {
                     try {
                         batch_config_.max_retries = std::stoull(it->second);
-                    } catch (...) {
+                    }
+                    catch (...) {
                         NIXL_WARN << "Invalid max_retries value: " << it->second;
                     }
                 }
 
                 NIXL_INFO << "Loaded INFINIA configuration from: " << config_file_it->second;
-            } catch (const std::exception& err) {
+            }
+            catch (const std::exception &err) {
                 NIXL_ERROR << "Failed to parse INFINIA config file '" << config_file_it->second
                            << "': " << err.what();
                 initErr = true;
@@ -274,9 +290,11 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
         if (sthreads_it != params->end() && !sthreads_it->second.empty()) {
             try {
                 infinia_sthreads_ = std::stoul(sthreads_it->second);
-            } catch (const std::exception& e) {
+            }
+            catch (const std::exception &e) {
                 NIXL_WARN << absl::StrFormat("Invalid sthreads value '%s', using default %u",
-                                             sthreads_it->second.c_str(), INFINIA_DEFAULT_STHREADS);
+                                             sthreads_it->second.c_str(),
+                                             INFINIA_DEFAULT_STHREADS);
             }
         }
 
@@ -285,9 +303,11 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
         if (num_buffers_it != params->end() && !num_buffers_it->second.empty()) {
             try {
                 infinia_num_buffers_ = std::stoul(num_buffers_it->second);
-            } catch (const std::exception& e) {
+            }
+            catch (const std::exception &e) {
                 NIXL_WARN << absl::StrFormat("Invalid num_buffers value '%s', using default %u",
-                                             num_buffers_it->second.c_str(), INFINIA_DEFAULT_BUFFERS);
+                                             num_buffers_it->second.c_str(),
+                                             INFINIA_DEFAULT_BUFFERS);
             }
         }
 
@@ -296,9 +316,12 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
         if (num_ring_entries_it != params->end() && !num_ring_entries_it->second.empty()) {
             try {
                 infinia_num_ring_entries_ = std::stoul(num_ring_entries_it->second);
-            } catch (const std::exception& e) {
-                NIXL_WARN << absl::StrFormat("Invalid num_ring_entries value '%s', using default %u",
-                                             num_ring_entries_it->second.c_str(), INFINIA_DEFAULT_RING_ENTRIES);
+            }
+            catch (const std::exception &e) {
+                NIXL_WARN << absl::StrFormat(
+                    "Invalid num_ring_entries value '%s', using default %u",
+                    num_ring_entries_it->second.c_str(),
+                    INFINIA_DEFAULT_RING_ENTRIES);
             }
         }
 
@@ -314,26 +337,26 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
         if (max_retries_it != params->end() && !max_retries_it->second.empty()) {
             try {
                 batch_config_.max_retries = std::stoull(max_retries_it->second);
-            } catch (const std::exception&) {
-                NIXL_WARN << absl::StrFormat(
-                    "Invalid max_retries value '%s', using default %zu",
-                    max_retries_it->second.c_str(),
-                    red_async::RED_ASYNC_DEFAULT_MAX_RETRIES);
+            }
+            catch (const std::exception &) {
+                NIXL_WARN << absl::StrFormat("Invalid max_retries value '%s', using default %zu",
+                                             max_retries_it->second.c_str(),
+                                             red_async::RED_ASYNC_DEFAULT_MAX_RETRIES);
             }
         }
     }
 
     // Environment override for cluster
-    if (const char* env_cluster = std::getenv(RED_CLUSTER_ENV)) {
+    if (const char *env_cluster = std::getenv(RED_CLUSTER_ENV)) {
         if (*env_cluster) {
             infinia_cluster_ = env_cluster;
         }
     }
 
-    if (const char* env_tenant = std::getenv(RED_TENANT_ENV)) {
+    if (const char *env_tenant = std::getenv(RED_TENANT_ENV)) {
         if (*env_tenant) {
-            const char* tenant_ptr = nullptr;
-            const char* subtenant_ptr = nullptr;
+            const char *tenant_ptr = nullptr;
+            const char *subtenant_ptr = nullptr;
             std::string tenant_buf; // holds split strings' storage
             if (splitTenantSubtenant(env_tenant, tenant_ptr, subtenant_ptr, tenant_buf)) {
                 infinia_tenant_ = tenant_ptr;
@@ -345,7 +368,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
     }
 
     // Environment override for dataset
-    if (const char* env_dataset = std::getenv(RED_DATASET_ENV)) {
+    if (const char *env_dataset = std::getenv(RED_DATASET_ENV)) {
         if (*env_dataset) {
             infinia_dataset_ = env_dataset;
         }
@@ -390,14 +413,13 @@ infinia_engine::infinia_engine(const nixlBackendInitParams* init_params)
         return;
     }
 
-    NIXL_INFO << absl::StrFormat(
-        "Infinia engine initialized: max_retries=%zu, "
-        "sthreads=%u, buffers=%u, entries=%u, coremask=%s",
-        batch_config_.max_retries,
-        infinia_sthreads_,
-        infinia_num_buffers_,
-        infinia_num_ring_entries_,
-        infinia_coremasks_);
+    NIXL_INFO << absl::StrFormat("Infinia engine initialized: max_retries=%zu, "
+                                 "sthreads=%u, buffers=%u, entries=%u, coremask=%s",
+                                 batch_config_.max_retries,
+                                 infinia_sthreads_,
+                                 infinia_num_buffers_,
+                                 infinia_num_ring_entries_,
+                                 infinia_coremasks_);
 
     initialized_ = true;
 }
@@ -410,10 +432,11 @@ infinia_engine::~infinia_engine() {
     NIXL_DEBUG << "Infinia backend destroyed";
 }
 
-bool infinia_engine::validateTransferParams(const nixl_xfer_op_t &operation,
-                                           const nixl_meta_dlist_t &local,
-                                           const nixl_meta_dlist_t &remote,
-                                           const std::string &remote_agent) const {
+bool
+infinia_engine::validateTransferParams(const nixl_xfer_op_t &operation,
+                                       const nixl_meta_dlist_t &local,
+                                       const nixl_meta_dlist_t &remote,
+                                       const std::string &remote_agent) const {
     // Validate operation type
     if (operation != NIXL_READ && operation != NIXL_WRITE) {
         NIXL_ERROR << absl::StrFormat("Unsupported operation type: %d", operation);
@@ -423,7 +446,8 @@ bool infinia_engine::validateTransferParams(const nixl_xfer_op_t &operation,
     // Validate descriptor counts match
     if (local.descCount() != remote.descCount()) {
         NIXL_ERROR << absl::StrFormat("Descriptor count mismatch - local: %zu, remote: %zu",
-                                      local.descCount(), remote.descCount());
+                                      local.descCount(),
+                                      remote.descCount());
         return false;
     }
 
@@ -440,12 +464,19 @@ bool infinia_engine::validateTransferParams(const nixl_xfer_op_t &operation,
     return true;
 }
 
-nixl_status_t infinia_engine::registerMem(const nixlBlobDesc &mem,
-                                         const nixl_mem_t &nixl_mem,
-                                         nixlBackendMD* &out) {
+nixl_status_t
+infinia_engine::registerMem(const nixlBlobDesc &mem,
+                            const nixl_mem_t &nixl_mem,
+                            nixlBackendMD *&out) {
 
-    NIXL_DEBUG << absl::StrFormat("INFINIA: REGISTER mem=%s addr=0x%lx len=%zu (%.2f MiB) devId=0x%lx meta='%s'",
-        memTypeToStr(nixl_mem), mem.addr, mem.len, mem.len / (1024.0 * 1024.0), mem.devId, mem.metaInfo.c_str());
+    NIXL_DEBUG << absl::StrFormat(
+        "INFINIA: REGISTER mem=%s addr=0x%lx len=%zu (%.2f MiB) devId=0x%lx meta='%s'",
+        memTypeToStr(nixl_mem),
+        mem.addr,
+        mem.len,
+        mem.len / (1024.0 * 1024.0),
+        mem.devId,
+        mem.metaInfo.c_str());
 
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
@@ -478,18 +509,20 @@ nixl_status_t infinia_engine::registerMem(const nixlBlobDesc &mem,
     } else {
         // --- DRAM_SEG / VRAM_SEG: Register memory with RED ---
         auto metadata = std::make_unique<nixlInfiniaMetadata>(nixl_mem, mem.devId, "");
-        metadata->buffer = reinterpret_cast<void*>(mem.addr);
+        metadata->buffer = reinterpret_cast<void *>(mem.addr);
         metadata->length = mem.len;
 
         // Only register if not a probe call (addr/len are valid)
         if (mem.addr != 0 && mem.len != 0) {
-            void* buffer = reinterpret_cast<void*>(mem.addr);
+            void *buffer = reinterpret_cast<void *>(mem.addr);
             red_status_t rs = red_async::red_config_t::register_user_memory(
                 buffer, mem.len, &metadata->iomem_handle);
 
             if (rs != RED_SUCCESS) {
                 NIXL_ERROR << absl::StrFormat("Failed to register memory (%p, size=%zu): %s",
-                                            buffer, mem.len, red_strerror(rs));
+                                              buffer,
+                                              mem.len,
+                                              red_strerror(rs));
                 return NIXL_ERR_BACKEND;
             }
         }
@@ -500,7 +533,8 @@ nixl_status_t infinia_engine::registerMem(const nixlBlobDesc &mem,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t infinia_engine::deregisterMem(nixlBackendMD* meta) {
+nixl_status_t
+infinia_engine::deregisterMem(nixlBackendMD *meta) {
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
     }
@@ -509,12 +543,18 @@ nixl_status_t infinia_engine::deregisterMem(nixlBackendMD* meta) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Cast to Infinia metadata and remove from map. Use unique_ptr to ensure cleanup even if an exception occurs
-    std::unique_ptr<nixlInfiniaMetadata> infinia_meta(static_cast<nixlInfiniaMetadata*>(meta));
+    // Cast to Infinia metadata and remove from map. Use unique_ptr to ensure cleanup even if an
+    // exception occurs
+    std::unique_ptr<nixlInfiniaMetadata> infinia_meta(static_cast<nixlInfiniaMetadata *>(meta));
 
-    NIXL_DEBUG << absl::StrFormat("INFINIA: DEREGISTER mem=%s addr=%p len=%zu (%.2f MiB) devId=0x%lx key='%s'",
-        memTypeToStr(infinia_meta->nixlMem), infinia_meta->buffer, infinia_meta->length,
-        infinia_meta->length / (1024.0 * 1024.0), infinia_meta->devId, infinia_meta->objKey.c_str());
+    NIXL_DEBUG << absl::StrFormat(
+        "INFINIA: DEREGISTER mem=%s addr=%p len=%zu (%.2f MiB) devId=0x%lx key='%s'",
+        memTypeToStr(infinia_meta->nixlMem),
+        infinia_meta->buffer,
+        infinia_meta->length,
+        infinia_meta->length / (1024.0 * 1024.0),
+        infinia_meta->devId,
+        infinia_meta->objKey.c_str());
 
     // Remove from mapping (thread-safe)
     devid_to_key_map_.erase(infinia_meta->devId);
@@ -524,11 +564,12 @@ nixl_status_t infinia_engine::deregisterMem(nixlBackendMD* meta) {
 
         red_status_t rs = red_async::red_config_t::unregister_user_memory(infinia_meta->buffer);
         if (rs != RED_SUCCESS) {
-            NIXL_ERROR << absl::StrFormat("Failed to unregister memory (%p): %s",
-                                         infinia_meta->buffer, red_strerror(rs));
+            NIXL_ERROR << absl::StrFormat(
+                "Failed to unregister memory (%p): %s", infinia_meta->buffer, red_strerror(rs));
             // Continue with cleanup even if unregistration fails
         } else {
-            NIXL_DEBUG << absl::StrFormat("Successfully unregistered memory (%p)", infinia_meta->buffer);
+            NIXL_DEBUG << absl::StrFormat("Successfully unregistered memory (%p)",
+                                          infinia_meta->buffer);
         }
     }
 
@@ -536,14 +577,15 @@ nixl_status_t infinia_engine::deregisterMem(nixlBackendMD* meta) {
     return NIXL_SUCCESS;
 }
 
-nixl_status_t infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
-                                       std::vector<nixl_query_resp_t> &resp) const {
+nixl_status_t
+infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
+                         std::vector<nixl_query_resp_t> &resp) const {
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
     }
 
-    NIXL_DEBUG << absl::StrFormat("INFINIA: QUERYMEM mem=%s count=%d",
-        memTypeToStr(descs.getType()), descs.descCount());
+    NIXL_DEBUG << absl::StrFormat(
+        "INFINIA: QUERYMEM mem=%s count=%d", memTypeToStr(descs.getType()), descs.descCount());
 
     resp.reserve(descs.descCount());
 
@@ -558,7 +600,7 @@ nixl_status_t infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
 
     // Add all HEAD operations to the batch
     for (int i = 0; i < descs.descCount(); ++i) {
-        const auto& desc = descs[i];
+        const auto &desc = descs[i];
 
         // Mirror registerMem's key selection logic
         if (!desc.metaInfo.empty()) {
@@ -577,7 +619,7 @@ nixl_status_t infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
         op.key = keys.back().c_str();
         op.key_len = static_cast<uint32_t>(keys.back().length());
         op.offset = 0;
-        op.sg_list = nullptr;  // HEAD doesn't need data transfer
+        op.sg_list = nullptr; // HEAD doesn't need data transfer
         op.kv_flag = 0;
         op.di = nullptr;
         op.version_out = nullptr;
@@ -603,22 +645,22 @@ nixl_status_t infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
 
     // Process results
     for (size_t i = 0; i < result.operation_results.size(); ++i) {
-        const auto& op_result = result.operation_results[i];
+        const auto &op_result = result.operation_results[i];
 
         if (op_result.status == RED_SUCCESS) {
             // Key exists
             resp.emplace_back(nixl_query_resp_t{nixl_b_params_t{}});
-            NIXL_DEBUG << absl::StrFormat("INFINIA: QUERYMEM key='%s' found=true",
-                keys[i].c_str());
+            NIXL_DEBUG << absl::StrFormat("INFINIA: QUERYMEM key='%s' found=true", keys[i].c_str());
         } else if (op_result.status == RED_ENOENT) {
             // Key does not exist
             resp.emplace_back(std::nullopt);
             NIXL_DEBUG << absl::StrFormat("INFINIA: QUERYMEM key='%s' found=false",
-                keys[i].c_str());
+                                          keys[i].c_str());
         } else {
             // Other error - treat as key not found
             NIXL_WARN << absl::StrFormat("HEAD operation for key '%s' failed: %s",
-                keys[i].c_str(), red_strerror(op_result.status));
+                                         keys[i].c_str(),
+                                         red_strerror(op_result.status));
             resp.emplace_back(std::nullopt);
         }
     }
@@ -626,7 +668,8 @@ nixl_status_t infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t infinia_engine::connect(const std::string &remote_agent) {
+nixl_status_t
+infinia_engine::connect(const std::string &remote_agent) {
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
     }
@@ -636,7 +679,8 @@ nixl_status_t infinia_engine::connect(const std::string &remote_agent) {
     return NIXL_SUCCESS;
 }
 
-nixl_status_t infinia_engine::disconnect(const std::string &remote_agent) {
+nixl_status_t
+infinia_engine::disconnect(const std::string &remote_agent) {
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
     }
@@ -646,7 +690,8 @@ nixl_status_t infinia_engine::disconnect(const std::string &remote_agent) {
     return NIXL_SUCCESS;
 }
 
-nixl_status_t infinia_engine::unloadMD(nixlBackendMD* input) {
+nixl_status_t
+infinia_engine::unloadMD(nixlBackendMD *input) {
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
     }
@@ -656,17 +701,21 @@ nixl_status_t infinia_engine::unloadMD(nixlBackendMD* input) {
     return NIXL_SUCCESS;
 }
 
-nixl_status_t infinia_engine::prepXfer(const nixl_xfer_op_t &operation,
-                                      const nixl_meta_dlist_t &local,
-                                      const nixl_meta_dlist_t &remote,
-                                      const std::string &remote_agent,
-                                      nixlBackendReqH* &handle,
-                                      const nixl_opt_b_args_t* opt_args) const {
+nixl_status_t
+infinia_engine::prepXfer(const nixl_xfer_op_t &operation,
+                         const nixl_meta_dlist_t &local,
+                         const nixl_meta_dlist_t &remote,
+                         const std::string &remote_agent,
+                         nixlBackendReqH *&handle,
+                         const nixl_opt_b_args_t *opt_args) const {
 
-    NIXL_DEBUG << absl::StrFormat("INFINIA: PREPXFER op=%s, local: mem=%s count=%d remote: mem=%s count=%d agent='%s'",
+    NIXL_DEBUG << absl::StrFormat(
+        "INFINIA: PREPXFER op=%s, local: mem=%s count=%d remote: mem=%s count=%d agent='%s'",
         operation == NIXL_READ ? "READ" : "WRITE",
-        memTypeToStr(local.getType()), local.descCount(),
-        memTypeToStr(remote.getType()), remote.descCount(),
+        memTypeToStr(local.getType()),
+        local.descCount(),
+        memTypeToStr(remote.getType()),
+        remote.descCount(),
         remote_agent.c_str());
 
     if (!initialized_) {
@@ -687,41 +736,42 @@ nixl_status_t infinia_engine::prepXfer(const nixl_xfer_op_t &operation,
         // Collect all requests (some may need splits)
         for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
              local_it != local.end() && remote_it != remote.end();
-             ++local_it, ++remote_it)
-        {
+             ++local_it, ++remote_it) {
             // Look up the key from the devId mapping (thread-safe)
             std::string key;
             {
                 auto key_it = devid_to_key_map_.find(remote_it->devId);
-                if (key_it == devid_to_key_map_.end())
-                {
-                    NIXL_ERROR << absl::StrFormat("INFINIA: KEY FAILURE for devId=0x%lx", remote_it->devId);
-                    NIXL_ERROR << "Memory may not be registered, or devId mismatch between registration and transfer!";
-                    
+                if (key_it == devid_to_key_map_.end()) {
+                    NIXL_ERROR << absl::StrFormat("INFINIA: KEY FAILURE for devId=0x%lx",
+                                                  remote_it->devId);
+                    NIXL_ERROR << "Memory may not be registered, or devId mismatch between "
+                                  "registration and transfer!";
                     NIXL_ERROR << "========================================";
-                    NIXL_DEBUG << "  devid_to_key_map_ contains " << devid_to_key_map_.size() << " entries";
-                    if (devid_to_key_map_.size() <= 10)
-                    {
+                    NIXL_DEBUG << "  devid_to_key_map_ contains " << devid_to_key_map_.size()
+                               << " entries";
+                    if (devid_to_key_map_.size() <= 10) {
                         NIXL_DEBUG << "  --- Current devid_to_key_map_ contents ---";
-                        for (const auto& [dev_id, key_str] : devid_to_key_map_)
-                        {
+                        for (const auto &[dev_id, key_str] : devid_to_key_map_) {
                             NIXL_DEBUG << "    devId 0x" << std::hex << dev_id << std::dec
-                                    << " -> \"" << key_str << "\"";
+                                       << " -> \"" << key_str << "\"";
                         }
                     }
 
                     return NIXL_ERR_INVALID_PARAM;
                 }
-                key = key_it->second;  // Copy the key while holding the lock
+                key = key_it->second; // Copy the key while holding the lock
             }
 
-            void *val = reinterpret_cast<void*> (local_it->addr);
+            void *val = reinterpret_cast<void *>(local_it->addr);
 
             // Get pre-registered memory handle from local metadata
             // The local descriptor should have metadata pointer set by the agent
-            nixlInfiniaMetadata* local_metadata = static_cast<nixlInfiniaMetadata*>(local_it->metadataP);
+            nixlInfiniaMetadata *local_metadata =
+                static_cast<nixlInfiniaMetadata *>(local_it->metadataP);
             if (local_metadata == nullptr) {
-                NIXL_ERROR << absl::StrFormat("No metadata found for local memory (addr=0x%lx). Memory may not be registered.", local_it->addr);
+                NIXL_ERROR << absl::StrFormat("No metadata found for local memory (addr=0x%lx). "
+                                              "Memory may not be registered.",
+                                              local_it->addr);
                 return NIXL_ERR_INVALID_PARAM;
             }
 
@@ -732,34 +782,41 @@ nixl_status_t infinia_engine::prepXfer(const nixl_xfer_op_t &operation,
             uintptr_t registered_end = registered_start + local_metadata->length;
 
             if (transfer_start < registered_start || transfer_end > registered_end) {
-                NIXL_ERROR << absl::StrFormat(
-                    "Memory range validation failed:\n"
-                    "Transfer:   [%p, %p) size=%zu\n"
-                    "Registered: [%p, %p) size=%zu\n"
-                    "Offset from registered base: %zd bytes",
-                    val, reinterpret_cast<void*>(transfer_end), local_it->len,
-                    local_metadata->buffer, reinterpret_cast<void*>(registered_end), local_metadata->length,
-                    (ssize_t)(transfer_start - registered_start));
+                NIXL_ERROR << absl::StrFormat("Memory range validation failed:\n"
+                                              "Transfer:   [%p, %p) size=%zu\n"
+                                              "Registered: [%p, %p) size=%zu\n"
+                                              "Offset from registered base: %zd bytes",
+                                              val,
+                                              reinterpret_cast<void *>(transfer_end),
+                                              local_it->len,
+                                              local_metadata->buffer,
+                                              reinterpret_cast<void *>(registered_end),
+                                              local_metadata->length,
+                                              (ssize_t)(transfer_start - registered_start));
                 return NIXL_ERR_INVALID_PARAM;
             }
 
             // Debug log for successful validation (only in debug builds)
             NIXL_DEBUG << absl::StrFormat(
                 "INFINIA: MEMORY RANGE OK for transfer [%p+%zu] within registered [%p+%zu]",
-                val, local_it->len,
-                local_metadata->buffer, local_metadata->length);
+                val,
+                local_it->len,
+                local_metadata->buffer,
+                local_metadata->length);
 
             // Use pre-registered memory handle
             red_iomem_hndl_t iomem_handle = local_metadata->iomem_handle;
 
             // Determine operation type
             red_async::red_async_op_type_t op_type = (operation == NIXL_READ) ?
-                red_async::RED_ASYNC_OP_GET : red_async::RED_ASYNC_OP_PUT;
+                red_async::RED_ASYNC_OP_GET :
+                red_async::RED_ASYNC_OP_PUT;
 
             // Add operation directly to the batch task
             backend_handle->addOperation(op_type, key, val, local_it->len, iomem_handle);
 
-            NIXL_DEBUG << absl::StrFormat("INFINIA: ADDED OPERATION op=%s key='%s' addr=%p size=%zu",
+            NIXL_DEBUG << absl::StrFormat(
+                "INFINIA: ADDED OPERATION op=%s key='%s' addr=%p size=%zu",
                 op_type == red_async::RED_ASYNC_OP_GET ? "GET" : "PUT",
                 key.c_str(),
                 val,
@@ -775,18 +832,20 @@ nixl_status_t infinia_engine::prepXfer(const nixl_xfer_op_t &operation,
         handle = backend_handle.release();
 
         return NIXL_SUCCESS;
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e) {
         NIXL_ERROR << absl::StrFormat("Error preparing transfer: %s", e.what());
         return NIXL_ERR_BACKEND;
     }
 }
 
-nixl_status_t infinia_engine::postXfer(const nixl_xfer_op_t &operation,
-                                      const nixl_meta_dlist_t &local,
-                                      const nixl_meta_dlist_t &remote,
-                                      const std::string &remote_agent,
-                                      nixlBackendReqH* &handle,
-                                      const nixl_opt_b_args_t* opt_args) const {
+nixl_status_t
+infinia_engine::postXfer(const nixl_xfer_op_t &operation,
+                         const nixl_meta_dlist_t &local,
+                         const nixl_meta_dlist_t &remote,
+                         const std::string &remote_agent,
+                         nixlBackendReqH *&handle,
+                         const nixl_opt_b_args_t *opt_args) const {
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
     }
@@ -797,43 +856,48 @@ nixl_status_t infinia_engine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     try {
-        auto& backend_handle = castInfiniaHandle(handle);
+        auto &backend_handle = castInfiniaHandle(handle);
 
-        NIXL_DEBUG << absl::StrFormat("INFINIA: POSTXFER op=%s local: mem=%s count=%d remote: mem=%s count=%d agent='%s' operations=%zu",
-            operation == NIXL_READ ? "READ" : "WRITE",
-            memTypeToStr(local.getType()), local.descCount(),
-            memTypeToStr(remote.getType()), remote.descCount(),
-            remote_agent.c_str(),
-            backend_handle.getOperationCount());
+        NIXL_DEBUG << absl::StrFormat("INFINIA: POSTXFER op=%s local: mem=%s count=%d remote: "
+                                      "mem=%s count=%d agent='%s' operations=%zu",
+                                      operation == NIXL_READ ? "READ" : "WRITE",
+                                      memTypeToStr(local.getType()),
+                                      local.descCount(),
+                                      memTypeToStr(remote.getType()),
+                                      remote.descCount(),
+                                      remote_agent.c_str(),
+                                      backend_handle.getOperationCount());
 
         // Launch the coroutine task in a background thread
         // The task will execute all batch operations asynchronously
         return backend_handle.postTransfer();
-
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e) {
         NIXL_ERROR << absl::StrFormat("Error posting transfer: %s", e.what());
         return NIXL_ERR_BACKEND;
     }
 }
 
-nixl_status_t infinia_engine::checkXfer(nixlBackendReqH* handle) const {
+nixl_status_t
+infinia_engine::checkXfer(nixlBackendReqH *handle) const {
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
     }
 
     try {
-        auto& backend_handle = castInfiniaHandle(handle);
+        auto &backend_handle = castInfiniaHandle(handle);
 
         // Check the transfer status
         return backend_handle.checkTransfer();
-
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e) {
         NIXL_ERROR << absl::StrFormat("Error checking transfer: %s", e.what());
         return NIXL_ERR_BACKEND;
     }
 }
 
-nixl_status_t infinia_engine::releaseReqH(nixlBackendReqH* handle) const {
+nixl_status_t
+infinia_engine::releaseReqH(nixlBackendReqH *handle) const {
     if (!handle) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -844,8 +908,8 @@ nixl_status_t infinia_engine::releaseReqH(nixlBackendReqH* handle) const {
 }
 
 // Remote operation methods
-nixl_status_t infinia_engine::getPublicData(const nixlBackendMD* meta,
-                                           std::string &str) const {
+nixl_status_t
+infinia_engine::getPublicData(const nixlBackendMD *meta, std::string &str) const {
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
     }
@@ -855,7 +919,8 @@ nixl_status_t infinia_engine::getPublicData(const nixlBackendMD* meta,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t infinia_engine::getConnInfo(std::string &str) const {
+nixl_status_t
+infinia_engine::getConnInfo(std::string &str) const {
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
     }
@@ -863,35 +928,37 @@ nixl_status_t infinia_engine::getConnInfo(std::string &str) const {
     return NIXL_SUCCESS;
 }
 
-nixl_status_t infinia_engine::loadRemoteConnInfo(const std::string &remote_agent,
-                                                const std::string &remote_conn_info) {
+nixl_status_t
+infinia_engine::loadRemoteConnInfo(const std::string &remote_agent,
+                                   const std::string &remote_conn_info) {
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
     }
 
     // TODO: Parse and store remote connection information
-    NIXL_DEBUG << absl::StrFormat("Loading remote connection info for %s: %s",
-                                 remote_agent, remote_conn_info);
+    NIXL_DEBUG << absl::StrFormat(
+        "Loading remote connection info for %s: %s", remote_agent, remote_conn_info);
     return NIXL_SUCCESS;
 }
 
-nixl_status_t infinia_engine::loadRemoteMD(const nixlBlobDesc &input,
-                                          const nixl_mem_t &nixl_mem,
-                                          const std::string &remote_agent,
-                                          nixlBackendMD* &output) {
+nixl_status_t
+infinia_engine::loadRemoteMD(const nixlBlobDesc &input,
+                             const nixl_mem_t &nixl_mem,
+                             const std::string &remote_agent,
+                             nixlBackendMD *&output) {
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
     }
 
     // TODO: Create remote metadata object
     NIXL_DEBUG << absl::StrFormat("Loading remote metadata for agent: %s", remote_agent);
-    output = nullptr;  // TODO: Create actual remote metadata
+    output = nullptr; // TODO: Create actual remote metadata
     return NIXL_SUCCESS;
 }
 
 // Local operation methods
-nixl_status_t infinia_engine::loadLocalMD(nixlBackendMD* input,
-                                         nixlBackendMD* &output) {
+nixl_status_t
+infinia_engine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
     if (!initialized_) {
         return NIXL_ERR_BACKEND;
     }
@@ -909,25 +976,25 @@ nixlInfiniaBackendReqH::nixlInfiniaBackendReqH(const nixl_xfer_op_t &operation,
                                                const nixl_meta_dlist_t &local,
                                                const nixl_meta_dlist_t &remote,
                                                const std::string &remote_agent,
-                                               const nixl_opt_b_args_t* opt_args,
+                                               const nixl_opt_b_args_t *opt_args,
                                                std::shared_ptr<InfiniaClient> client,
-                                               const red_async::rae_batch_config_t& batch_config)
+                                               const red_async::rae_batch_config_t &batch_config)
     : operation_(operation),
-    local_(local),
-    remote_(remote),
-    remote_agent_(remote_agent),
-    opt_args_(opt_args),
-    transfer_prepared_(false),
-    transfer_posted_(false),
-    transfer_completed_(false),
-    transfer_status_(RED_SUCCESS),
-    operation_count_(0),
-    client_(client),
-    batch_config_(batch_config),
-    batch_task_(client->getConfig(), &batch_config) {
+      local_(local),
+      remote_(remote),
+      remote_agent_(remote_agent),
+      opt_args_(opt_args),
+      transfer_prepared_(false),
+      transfer_posted_(false),
+      transfer_completed_(false),
+      transfer_status_(RED_SUCCESS),
+      operation_count_(0),
+      client_(client),
+      batch_config_(batch_config),
+      batch_task_(client->getConfig(), &batch_config) {
 
     NIXL_DEBUG << absl::StrFormat("Created Infinia request handle for %s operation",
-                                 (operation == NIXL_READ) ? "READ" : "WRITE");
+                                  (operation == NIXL_READ) ? "READ" : "WRITE");
 }
 
 nixlInfiniaBackendReqH::~nixlInfiniaBackendReqH() {
@@ -937,13 +1004,16 @@ nixlInfiniaBackendReqH::~nixlInfiniaBackendReqH() {
     if (batch_task_.is_started() && !batch_task_.is_ready()) {
         try {
             batch_task_.wait();
-        } catch (const std::exception& e) {
-            NIXL_ERROR << absl::StrFormat("Exception while waiting for batch completion: %s", e.what());
+        }
+        catch (const std::exception &e) {
+            NIXL_ERROR << absl::StrFormat("Exception while waiting for batch completion: %s",
+                                          e.what());
         }
     }
 }
 
-void nixlInfiniaBackendReqH::reserveOperations(size_t count) {
+void
+nixlInfiniaBackendReqH::reserveOperations(size_t count) {
     // Reserve capacity in all vectors to prevent reallocation during addOperation()
     // This is critical because we pass pointers to vector elements to batch_task_,
     // and those pointers must remain valid until the batch completes
@@ -953,11 +1023,12 @@ void nixlInfiniaBackendReqH::reserveOperations(size_t count) {
     batch_task_.reserve(count);
 }
 
-void nixlInfiniaBackendReqH::addOperation(red_async::red_async_op_type_t op_type,
-                                          const std::string& key,
-                                          void* value_addr,
-                                          size_t value_size,
-                                          red_iomem_hndl_t iomem_handle) {
+void
+nixlInfiniaBackendReqH::addOperation(red_async::red_async_op_type_t op_type,
+                                     const std::string &key,
+                                     void *value_addr,
+                                     size_t value_size,
+                                     red_iomem_hndl_t iomem_handle) {
     // Store the key string (must persist until batch completes)
     keys_.push_back(key);
 
@@ -972,16 +1043,16 @@ void nixlInfiniaBackendReqH::addOperation(red_async::red_async_op_type_t op_type
     red_sg_list_t sg;
     sg.val_size = value_size;
     sg.num_elems = 1;
-    sg.sg_elem = &sg_elements_.back();  // Point to the stored element
+    sg.sg_elem = &sg_elements_.back(); // Point to the stored element
     sg_lists_.push_back(sg);
 
     // Build the operation
     red_async::red_batch_operation_t op;
     op.operation_type = op_type;
-    op.key = keys_.back().c_str();  // Point to the stored key
+    op.key = keys_.back().c_str(); // Point to the stored key
     op.key_len = static_cast<uint32_t>(keys_.back().length());
     op.offset = 0;
-    op.sg_list = &sg_lists_.back();  // Point to the stored sg_list
+    op.sg_list = &sg_lists_.back(); // Point to the stored sg_list
     op.kv_flag = 0;
     op.di = nullptr;
     op.version_out = nullptr;
@@ -990,7 +1061,8 @@ void nixlInfiniaBackendReqH::addOperation(red_async::red_async_op_type_t op_type
     operation_count_++;
 }
 
-nixl_status_t nixlInfiniaBackendReqH::prepareTransfer() {
+nixl_status_t
+nixlInfiniaBackendReqH::prepareTransfer() {
     if (transfer_prepared_) {
         NIXL_WARN << "Transfer already prepared";
         return NIXL_SUCCESS;
@@ -1002,7 +1074,8 @@ nixl_status_t nixlInfiniaBackendReqH::prepareTransfer() {
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlInfiniaBackendReqH::postTransfer() {
+nixl_status_t
+nixlInfiniaBackendReqH::postTransfer() {
     if (!transfer_prepared_) {
         NIXL_ERROR << "Transfer not prepared";
         return NIXL_ERR_INVALID_PARAM;
@@ -1014,7 +1087,8 @@ nixl_status_t nixlInfiniaBackendReqH::postTransfer() {
     }
 
     // Check if this is a repost after completion (handle reuse)
-    // Per BackendGuide: "transfer request will be prepped only once, but can be posted multiple times"
+    // Per BackendGuide: "transfer request will be prepped only once, but can be posted multiple
+    // times"
     if (transfer_completed_) {
         NIXL_DEBUG << "Reposting completed transfer - batch_task_ was reset in checkTransfer()";
         transfer_completed_ = false;
@@ -1032,9 +1106,8 @@ nixl_status_t nixlInfiniaBackendReqH::postTransfer() {
 
     // Start all operations using BatchTask API
     try {
-        NIXL_DEBUG << absl::StrFormat(
-            "Starting batch with config: max_retries=%zu",
-            batch_config_.max_retries);
+        NIXL_DEBUG << absl::StrFormat("Starting batch with config: max_retries=%zu",
+                                      batch_config_.max_retries);
 
         // Start all operations in parallel
         red_status_t rs = batch_task_.start();
@@ -1052,14 +1125,15 @@ nixl_status_t nixlInfiniaBackendReqH::postTransfer() {
             NIXL_ERROR << absl::StrFormat("Failed to start batch: %s", red_strerror(rs));
             return NIXL_ERR_BACKEND;
         }
-
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e) {
         NIXL_ERROR << absl::StrFormat("Failed to start batch: %s", e.what());
         return NIXL_ERR_BACKEND;
     }
 }
 
-nixl_status_t nixlInfiniaBackendReqH::checkTransfer() {
+nixl_status_t
+nixlInfiniaBackendReqH::checkTransfer() {
     if (!transfer_posted_) {
         NIXL_ERROR << "Transfer not posted";
         return NIXL_ERR_INVALID_PARAM;
@@ -1078,16 +1152,17 @@ nixl_status_t nixlInfiniaBackendReqH::checkTransfer() {
         size_t failed_operations = result.failed_indices.size();
         size_t successful_operations = total_operations - failed_operations;
 
-        NIXL_DEBUG << absl::StrFormat("INFINIA: CHECKXFER rs=%d total=%zu success=%zu failed=%zu errors=%s",
+        NIXL_DEBUG << absl::StrFormat(
+            "INFINIA: CHECKXFER rs=%d total=%zu success=%zu failed=%zu errors=%s",
             result.overall_status,
             total_operations,
             successful_operations,
             failed_operations,
             failed_operations > 0 ? "true" : "false");
 
-        if (failed_operations > 0)
-        {
-            NIXL_WARN << absl::StrFormat("INFINIA: ERROR rs=%d (%s) total=%zu success=%zu failed=%zu",
+        if (failed_operations > 0) {
+            NIXL_WARN << absl::StrFormat(
+                "INFINIA: ERROR rs=%d (%s) total=%zu success=%zu failed=%zu",
                 result.overall_status,
                 red_strerror(result.overall_status),
                 total_operations,
@@ -1095,16 +1170,14 @@ nixl_status_t nixlInfiniaBackendReqH::checkTransfer() {
                 failed_operations);
 
             // Log failed operations using failed_indices
-            if (!result.failed_indices.empty())
-            {
+            if (!result.failed_indices.empty()) {
                 const size_t max_detailed_failures = 100;
                 size_t logged_failures = 0;
 
-                for (size_t idx : result.failed_indices)
-                {
-                    if (logged_failures < max_detailed_failures && idx < result.operation_results.size())
-                    {
-                        const auto& op_result = result.operation_results[idx];
+                for (size_t idx : result.failed_indices) {
+                    if (logged_failures < max_detailed_failures &&
+                        idx < result.operation_results.size()) {
+                        const auto &op_result = result.operation_results[idx];
                         NIXL_WARN << absl::StrFormat(
                             "  Failed op[%zu]: key=\"%s\", operation=%s, status=%d (%s)",
                             idx,
@@ -1116,12 +1189,10 @@ nixl_status_t nixlInfiniaBackendReqH::checkTransfer() {
                     }
                 }
 
-                if (logged_failures < result.failed_indices.size())
-                {
-                    NIXL_WARN << absl::StrFormat(
-                        "  ... and %zu more failures (showing first %zu)",
-                        result.failed_indices.size() - logged_failures,
-                        max_detailed_failures);
+                if (logged_failures < result.failed_indices.size()) {
+                    NIXL_WARN << absl::StrFormat("  ... and %zu more failures (showing first %zu)",
+                                                 result.failed_indices.size() - logged_failures,
+                                                 max_detailed_failures);
                 }
             }
         }
@@ -1132,7 +1203,8 @@ nixl_status_t nixlInfiniaBackendReqH::checkTransfer() {
         // Reset BatchTask state for potential reuse (allows reposting)
         red_status_t reset_rs = batch_task_.reset_state();
         if (reset_rs != RED_SUCCESS) {
-            NIXL_WARN << absl::StrFormat("Failed to reset BatchTask state: %s", red_strerror(reset_rs));
+            NIXL_WARN << absl::StrFormat("Failed to reset BatchTask state: %s",
+                                         red_strerror(reset_rs));
         }
 
         // Mark transfer as completed (allows reposting)
@@ -1140,8 +1212,8 @@ nixl_status_t nixlInfiniaBackendReqH::checkTransfer() {
         transfer_completed_ = true;
 
         return transfer_status_ == RED_SUCCESS ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
-
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e) {
         NIXL_ERROR << absl::StrFormat("Exception while getting batch result: %s", e.what());
         transfer_posted_ = false;
         transfer_completed_ = true;

@@ -37,30 +37,34 @@
 
 class InfiniaClient {
 public:
-    InfiniaClient(const std::string& cluster_name,
-                  const std::string& tenant_name,
-                  const std::string& subtenant_name,
-                  const std::string& bucket_name,
+    InfiniaClient(const std::string &cluster_name,
+                  const std::string &tenant_name,
+                  const std::string &subtenant_name,
+                  const std::string &bucket_name,
                   const uint32_t sthreads,
                   const uint32_t num_buffers,
                   const uint32_t num_ring_entries,
-                  const std::string& coremasks);
+                  const std::string &coremasks);
 
     ~InfiniaClient();
 
-    [[nodiscard]] red_status_t initialize();
-    void cleanup();
+    [[nodiscard]] red_status_t
+    initialize();
+    void
+    cleanup();
 
-    [[nodiscard]] bool isInitialized() const noexcept {
+    [[nodiscard]] bool
+    isInitialized() const noexcept {
         return initialized_;
     }
 
     // Get red_config_t for accessing resources
-    [[nodiscard]] red_async::red_config_t* getConfig() const noexcept {
+    [[nodiscard]] red_async::red_config_t *
+    getConfig() const noexcept {
         return config_.get();
     }
 
-    private:
+private:
     // Client configuration parameters
     std::string cluster_name_;
     std::string tenant_name_;
