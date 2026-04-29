@@ -17,6 +17,10 @@
 
 nixl_lib_deps = [nixl_infra, serdes_interface, stream_interface, dl_dep, nixl_common_dep, thread_dep]
 
+if cuda_dep.found()
+    nixl_lib_deps += [ cuda_dep ]
+endif
+
 if etcd_dep.found()
     nixl_lib_deps += [ etcd_dep ]
 endif
@@ -58,6 +62,20 @@ if libtransfer_engine.found() and not disable_mooncake_backend and 'Mooncake' in
     nixl_lib_deps += [ mooncake_backend_interface, cuda_dep ]
 endif
 
+nixl_lib_link_args = ['-lstdc++fs']
+nixl_lib_build_rpath = ''
+nixl_lib_install_rpath = join_paths(get_option('prefix'), get_option('libdir'))
+if 'UCX' in static_plugins and ucx_path != ''
+    nixl_lib_link_args += [
+        '-L' + ucx_path + '/lib',
+        '-Wl,--no-as-needed',
+        '-lucp', '-lucs', '-luct',
+        '-Wl,--as-needed',
+    ]
+    nixl_lib_build_rpath = ucx_path + '/lib'
+    nixl_lib_install_rpath += ':' + ucx_path + '/lib'
+endif
+
 # Tracing (nixl::trace). Only the facade (tracer.cpp) and the plugin loader are
 # compiled into libnixl; each backend ships as a separate .so plugin under
 # src/plugins/tracing, loaded on demand by nixlPluginManager.
@@ -71,14 +89,17 @@ nixl_lib_sources = [
     'telemetry/buffer_plugin.cpp',
     'telemetry/nop_plugin.cpp',
     'tracing/tracer.cpp',
+    'device_proxy/proxy_runtime.cpp',
+    'device_proxy/proxy_worker.cpp',
 ]
 
 nixl_lib = library('nixl',
                    nixl_lib_sources,
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs, include_directories('tracing') ],
-                   link_args: ['-lstdc++fs'],
+                   link_args: nixl_lib_link_args,
                    dependencies: nixl_lib_deps,
                    install: true,
-                   install_rpath: join_paths(get_option('prefix'), get_option('libdir')))
+                   build_rpath: nixl_lib_build_rpath,
+                   install_rpath: nixl_lib_install_rpath)
 
 nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs)

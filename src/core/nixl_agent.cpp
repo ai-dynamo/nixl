@@ -441,6 +441,19 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         data->connMd_[type] = conn_info;
     }
 
+    if (data->proxyModeEnabled()) {
+        if (backend->supportsProxy()) {
+            const nixl_status_t ret = data->createProxyRuntime(backend.get(), type, init_params);
+            if (ret != NIXL_SUCCESS) {
+                NIXL_ERROR_FUNC << "Failed to initialize proxy runtime on backend '" << type
+                                << "' with status " << ret;
+                return ret;
+            }
+        } else {
+            NIXL_WARN << "Proxy runtime is enabled but backend '" << type << "' does not support it";
+        }
+    }
+
     // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?
     std::unique_ptr<nixlBackendH> bknd_temp(new nixlBackendH(backend.get()));
     const auto [it, inserted] = data->backendHandles_.try_emplace(type, std::move(bknd_temp));
