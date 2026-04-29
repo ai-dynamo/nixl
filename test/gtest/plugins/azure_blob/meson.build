@@ -40,7 +40,6 @@ azure_blob_test_exe = executable('azure_blob_gtest',
         azure_storage_common,
         azure_storage_blobs,
         azure_identity,
-        plugin_deps,
         azure_blob_backend_interface
     ],
     link_with: [nixl_build_lib],
