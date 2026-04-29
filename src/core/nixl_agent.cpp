@@ -352,6 +352,36 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
 
+    volatile bool cond = false;
+
+    // The code below was added to check if CI would fail these changes:
+    // fail
+    if (cond) NIXL_INFO << "single line without braces";
+
+    // fail
+    if (cond) { NIXL_INFO << "single line with braces"; }
+
+    // fail
+    if (cond)
+        NIXL_INFO << "block without braces";
+
+    // pass
+    if (cond) {
+        NIXL_INFO << "block with braces";
+    }
+
+    // fail
+    for (int i = 0; i < 10; i++) NIXL_INFO << "for loop without braces one line";
+
+    // fail
+    for (int i = 0; i < 10; i++)
+        NIXL_INFO << "for loop without braces";
+
+    // pass
+    for (int i = 0; i < 10; i++) {
+        NIXL_INFO << "for loop with braces";
+    }
+
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
     auto plugin_handle = plugin_manager.loadBackendPlugin(type);
