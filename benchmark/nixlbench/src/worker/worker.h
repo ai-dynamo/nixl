@@ -20,6 +20,7 @@
 
 #include "runtime/runtime.h"
 #include "utils/utils.h"
+#include <atomic>
 #include <string>
 #include <vector>
 #include <variant>
@@ -29,7 +30,7 @@ class xferBenchWorker {
     protected:
         std::string name;
         xferBenchRT *rt;
-        static int terminate;
+        static std::atomic<int> terminate;
 
     public:
         xferBenchWorker();

@@ -1,0 +1,154 @@
+# Build Matrix Configuration for NIXL CI Pipeline
+#
+# This file defines the build matrix configuration for the NIXL CI pipeline in Jenkins.
+# It specifies the build environment, resources, and test matrix for continuous integration.
+#
+# =============================================================================
+# Multi-Stage Docker Build Integration
+# =============================================================================
+# This CI pipeline uses contrib/build-container.sh with contrib/Dockerfile.manylinux
+# to build wheels for specific Python versions and architectures in each matrix
+# combination. The script handles the multi-stage Docker build internally, using
+# the CUDA manylinux base image from Artifactory as the build environment.
+#
+# CI Usage: build-container.sh --base-image ... --wheel-base ... (builds and packages wheels)
+# User Usage: Full image build via build-container.sh (same script, different invocation)
+#
+# =============================================================================
+# Key Components:
+# =============================================================================
+# - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
+# - Docker Images: Specifies the container images used for different build stages
+#   - Uses contrib/Dockerfile.manylinux via contrib/build-container.sh
+#   - Base image: artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09
+# - Matrix Axes: Defines build variations (Python versions and architectures)
+# - Build Steps: Sequential steps for building, testing, and wheel generation
+#
+# =============================================================================
+# When Modified:
+# =============================================================================
+# - Adding/removing Docker images: Affects available build environments
+# - Modifying matrix axes: Changes build variations (e.g., adding architectures)
+# - Adjusting resource limits: Impacts build performance and resource allocation
+# - Adding/removing steps: Changes the build pipeline sequence
+# - Changing build-container.sh args: Affects Docker build behavior and base image selection
+#
+# Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
+
+---
+# =============================================================================
+# Job Configuration
+# =============================================================================
+job: nixl-ci-build-wheel
+
+# Fail job if one of the steps fails or continue
+# Set to false to allow matrix builds to continue even if some combinations fail
+failFast: false
+
+# Build timeout - 4 hours for complex multi-architecture builds
+timeout_minutes: 240
+
+# =============================================================================
+# Container Registry Configuration
+# =============================================================================
+# Harbor registry for storing build artifacts and base images
+registry_host: nbu-harbor.gtm.nvidia.com
+registry_path: /nixl
+registry_auth: nixl_harbor_credentials
+
+credentials:
+  - credentialsId: 'svc-nixl-new-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USER'
+    passwordVariable: 'ARTIFACTORY_TOKEN'
+
+# =============================================================================
+# Kubernetes Resource Configuration
+# =============================================================================
+# High-performance build environment with substantial resources for complex builds
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  # 24GB memory and 16 CPU cores for parallel compilation and large builds
+  limits: '{memory: 24Gi, cpu: 16000m}'
+  requests: '{memory: 24Gi, cpu: 16000m}'
+
+# =============================================================================
+# Docker Build Configuration
+# =============================================================================
+# Uses podman-in-container (quay.io/podman/stable) as the build runner
+# build-container.sh runs podman/docker inside this container to build the wheel image
+runs_on_dockers:
+  - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+
+# =============================================================================
+# Build Matrix Configuration
+# =============================================================================
+# Defines the combinations of manylinux version and Python versions and architectures to build
+# Each combination runs in parallel
+matrix:
+  axes:
+    manylinux:
+      - "2_28"
+    # Python versions supported by NIXL
+    # Each version gets its own wheel with appropriate ABI tags
+    python_version:
+      - "3.12"
+    # Target architectures for wheel distribution
+    # x86_64: Intel/AMD 64-bit processors
+    # aarch64: ARM 64-bit processors (Apple Silicon, ARM servers)
+    arch:
+      - x86_64
+      - aarch64
+
+# =============================================================================
+# Environment and Build Steps
+# =============================================================================
+# Global environment variables for the build process
+env:
+  NPROC: 16
+  GRPC_NPROC: 10
+  DOCKER_REGISTRY_HOST: 'artifactory.nvidia.com'
+  BASE_IMAGE: "${DOCKER_REGISTRY_HOST}/sw-nbu-swx-nixl-docker-local/base/cuda"
+  BASE_TAG: '13.0-devel-manylinux--25.09'
+
+steps:
+  # =============================================================================
+  # Step 1: Environment Preparation
+  # =============================================================================
+  # Set up podman environment
+  # This step runs sequentially (not in parallel) to avoid conflicts
+  - name: Prepare
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    parallel: false
+    run: |
+      # Setup podman and dependencies
+      rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
+      podman system reset -f || true
+      ln -sfT $(type -p podman) /usr/bin/docker
+      # Login to Artifactory
+      echo "$ARTIFACTORY_TOKEN" | docker login "https://${DOCKER_REGISTRY_HOST}" -u "$ARTIFACTORY_USER" --password-stdin
+
+  # =============================================================================
+  # Step 2: Python Wheel Generation
+  # =============================================================================
+  # Create distributable Python wheels that bundle native libraries
+  # This step uses the build-wheel.sh script to package everything into wheels
+  - name: Build Wheel
+    parallel: false
+    run: |
+      set -x
+      export NPROC=$NPROC
+      export GRPC_NPROC=$GRPC_NPROC
+      ./contrib/build-container.sh \
+        --base-image "${BASE_IMAGE}" \
+        --base-image-tag "${BASE_TAG}" \
+        --wheel-base "manylinux_${manylinux}" \
+        --python-versions "${python_version}" \
+        --arch ${arch} \
+        --dockerfile contrib/Dockerfile.manylinux
+
+# =============================================================================
+# Task Naming Convention
+# =============================================================================
+# Unique identifier for each matrix combination
+taskName: '${name}_${manylinux}/${arch}/python_${python_version}'

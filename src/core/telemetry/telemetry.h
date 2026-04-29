@@ -79,12 +79,15 @@ private:
     void
     registerPeriodicTask(periodicTask &task);
     void
-    updateData(const std::string &event_name, nixl_telemetry_category_t category, uint64_t value);
+    updateData(nixl_telemetry_event_type_t event_type,
+               nixl_telemetry_category_t category,
+               uint64_t value);
     bool
     writeEventHelper();
     std::unique_ptr<nixlTelemetryExporter> exporter_;
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
     std::vector<nixlTelemetryEvent> events_;
+    size_t maxBufferedEvents_;
     std::mutex mutex_;
     asio::thread_pool pool_;
     periodicTask writeTask_;

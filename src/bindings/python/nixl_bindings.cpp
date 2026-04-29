@@ -152,6 +152,7 @@ PYBIND11_MODULE(_bindings, m) {
     py::enum_<nixl_thread_sync_t>(m, "nixl_thread_sync_t")
         .value("NIXL_THREAD_SYNC_NONE", nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)
         .value("NIXL_THREAD_SYNC_STRICT", nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT)
+        .value("NIXL_THREAD_SYNC_RW", nixl_thread_sync_t::NIXL_THREAD_SYNC_RW)
         .value("NIXL_THREAD_SYNC_DEFAULT", nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT)
         .export_values();
 

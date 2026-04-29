@@ -21,7 +21,7 @@ import torch
 
 import nixl._bindings as bindings
 import nixl._utils as utils
-from nixl._api import nixl_agent, nixl_agent_config
+from nixl._api import nixl_agent, nixl_agent_config, nixl_thread_sync_t
 
 # NIXL pytest fixtures
 
@@ -99,6 +99,32 @@ def test_instantiate_all():
     agent1 = nixl_agent("test", nixl_conf=None, instantiate_all=True)
 
     assert len(agent1.plugin_list) == len(agent1.backends)
+
+
+@pytest.mark.parametrize("sync_mode", [None] + list(nixl_thread_sync_t))
+@pytest.mark.parametrize("enable_listen", [True, False])
+def test_sync_mode_agent(monkeypatch, sync_mode, enable_listen):
+    captured = {}
+    real_ctor = bindings.nixlAgent
+
+    def spy_ctor(agent_name, agent_config):
+        captured["syncMode"] = agent_config.syncMode
+        return real_ctor(agent_name, agent_config)
+
+    monkeypatch.setattr(bindings, "nixlAgent", spy_ctor)
+    config = nixl_agent_config(sync_mode=sync_mode, enable_listen_thread=enable_listen)
+    nixl_agent(str(uuid.uuid4()), nixl_conf=config)
+    if sync_mode is not None:
+        assert captured["syncMode"] == sync_mode.value
+    elif enable_listen:
+        assert captured["syncMode"] == nixl_thread_sync_t.NIXL_THREAD_SYNC_STRICT.value
+    else:
+        assert captured["syncMode"] == nixl_thread_sync_t.NIXL_THREAD_SYNC_NONE.value
+
+
+def test_nixl_conf_bad_sync_mode():
+    with pytest.raises(TypeError, match="sync_mode must be a nixl_thread_sync_t"):
+        nixl_agent_config(sync_mode=1)
 
 
 def test_make_invalid_op(one_empty_agent, two_xfer_lists):
@@ -220,16 +246,7 @@ def test_incorrect_plugin_env(monkeypatch):
         nixl_agent("bad env agent")
 
 
-def test_get_xfer_telemetry(backend_name):
-    os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
-
-    agent1 = nixl_agent(
-        str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
-    )
-    agent2 = nixl_agent(
-        str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
-    )
-
+def _run_xfer_telemetry_check(agent1, agent2):
     mem_size = 128
     addr1 = utils.malloc_passthru(mem_size)
     addr2 = utils.malloc_passthru(mem_size)
@@ -250,7 +267,7 @@ def test_get_xfer_telemetry(backend_name):
             mem_type="DRAM",
         )
 
-        handle = agent1.initialize_xfer("WRITE", src, dst, agent2.name)
+        handle = agent1.initialize_xfer("WRITE", src, dst, agent2.name, b"telem_msg")
         st = agent1.transfer(handle)
         assert st in ("DONE", "PROC")
 
@@ -259,6 +276,9 @@ def test_get_xfer_telemetry(backend_name):
             assert st in ("DONE", "PROC")
             if st == "DONE":
                 break
+
+        while not agent2.check_remote_xfer_done(agent1.name, b"telem_msg"):
+            pass
 
         telem = agent1.get_xfer_telemetry(handle)
         assert telem.descCount == 2
@@ -272,62 +292,36 @@ def test_get_xfer_telemetry(backend_name):
     finally:
         utils.free_passthru(addr1)
         utils.free_passthru(addr2)
+
+
+def test_get_xfer_telemetry(backend_name):
+    os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
+    try:
+        agent1 = nixl_agent(
+            str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+        )
+        agent2 = nixl_agent(
+            str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+        )
+        _run_xfer_telemetry_check(agent1, agent2)
+    finally:
         os.environ.pop("NIXL_TELEMETRY_ENABLE")
 
 
 def test_get_xfer_telemetry_cfg(backend_name):
     os.environ["NIXL_TELEMETRY_ENABLE"] = "no"
     os.environ["NIXL_TELEMETRY_DIR"] = "/tmp/dummy"  # to be ignored
-
-    agent1 = nixl_agent(
-        str(uuid.uuid4()),
-        nixl_conf=nixl_agent_config(capture_telemetry=True, backends=[backend_name]),
-    )
-    agent2 = nixl_agent(
-        str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
-    )
-
-    mem_size = 128
-    addr1 = utils.malloc_passthru(mem_size)
-    addr2 = utils.malloc_passthru(mem_size)
-
     try:
-        reg1 = agent1.get_reg_descs([(addr1, mem_size, 0, "")], mem_type="DRAM")
-        reg2 = agent2.get_reg_descs([(addr2, mem_size, 0, "")], mem_type="DRAM")
-        agent1.register_memory(reg1)
-        agent2.register_memory(reg2)
-
-        agent1.add_remote_agent(agent2.get_agent_metadata())
-        src = agent1.get_xfer_descs(
-            [(addr1, mem_size // 2, 0), (addr1 + mem_size // 2, mem_size // 2, 0)],
-            mem_type="DRAM",
+        agent1 = nixl_agent(
+            str(uuid.uuid4()),
+            nixl_conf=nixl_agent_config(
+                capture_telemetry=True, backends=[backend_name]
+            ),
         )
-        dst = agent1.get_xfer_descs(
-            [(addr2, mem_size // 2, 0), (addr2 + mem_size // 2, mem_size // 2, 0)],
-            mem_type="DRAM",
+        agent2 = nixl_agent(
+            str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
         )
-
-        handle = agent1.initialize_xfer("WRITE", src, dst, agent2.name)
-        st = agent1.transfer(handle)
-        assert st in ("DONE", "PROC")
-
-        while True:
-            st = agent1.check_xfer_state(handle)
-            assert st in ("DONE", "PROC")
-            if st == "DONE":
-                break
-
-        telem = agent1.get_xfer_telemetry(handle)
-        assert telem.descCount == 2
-        assert telem.totalBytes == mem_size
-        assert telem.startTime > 0
-        assert telem.postDuration > 0
-        assert telem.xferDuration > 0
-        assert telem.xferDuration >= telem.postDuration
-
-        agent1.release_xfer_handle(handle)
+        _run_xfer_telemetry_check(agent1, agent2)
     finally:
-        utils.free_passthru(addr1)
-        utils.free_passthru(addr2)
         os.environ.pop("NIXL_TELEMETRY_ENABLE")
         os.environ.pop("NIXL_TELEMETRY_DIR")
