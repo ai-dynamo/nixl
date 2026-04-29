@@ -229,10 +229,6 @@ class nixl_agent:
 
         self.plugin_b_options: dict[str, dict[str, str]] = {}
         self.plugin_mem_types: dict[str, list[str]] = {}
-        for plugin in self.plugin_list:
-            (backend_options, mem_types) = self.agent.getPluginParams(plugin)
-            self.plugin_b_options[plugin] = backend_options
-            self.plugin_mem_types[plugin] = mem_types
 
         if instantiate_all:
             nixl_conf.backends = self.plugin_list
@@ -292,6 +288,16 @@ class nixl_agent:
     @return List of plugin names.
     """
 
+    def _load_plugin_params(self, plugin: str):
+        if plugin not in self.plugin_list:
+            return
+        try:
+            (backend_options, mem_types) = self.agent.getPluginParams(plugin)
+            self.plugin_b_options[plugin] = backend_options
+            self.plugin_mem_types[plugin] = mem_types
+        except Exception:
+            logger.warning("Failed to load params for plugin %s", plugin, exc_info=True)
+
     def get_plugin_list(self) -> list[str]:
         return self.plugin_list
 
@@ -303,13 +309,14 @@ class nixl_agent:
     """
 
     def get_plugin_mem_types(self, backend: str) -> list[str]:
-        if backend in self.plugin_mem_types:
-            return self.plugin_mem_types[backend]
-        else:
+        if backend not in self.plugin_mem_types:
+            self._load_plugin_params(backend)
+        if backend not in self.plugin_mem_types:
             logger.warning(
                 "Plugin %s is not available to get its supported mem types.", backend
             )
             return []
+        return self.plugin_mem_types[backend]
 
     """
     @brief Get the initialization parameters of a plugin.
@@ -320,11 +327,12 @@ class nixl_agent:
     """
 
     def get_plugin_params(self, backend: str) -> dict[str, str]:
-        if backend in self.plugin_b_options:
-            return self.plugin_b_options[backend]
-        else:
+        if backend not in self.plugin_b_options:
+            self._load_plugin_params(backend)
+        if backend not in self.plugin_b_options:
             logger.warning("Plugin %s is not available to get its parameters.", backend)
             return {}
+        return self.plugin_b_options[backend]
 
     """
     @brief  Get the memory types supported by a backend.

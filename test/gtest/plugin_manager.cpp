@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -167,6 +167,29 @@ TEST_P(LoadMultiplePluginsTestFixture, SimpleLifeCycleTest) {
 
 TEST_F(LoadedPluginTestFixture, NoLoadedPluginsTest) {
   EXPECT_TRUE(HasOnlyLoadedPlugins());
+}
+
+TEST_F(LoadedPluginTestFixture, DeferredDiscoveryTest) {
+    auto mock = GetMockBackendName();
+    auto avail = plugin_manager_.getAvailBackendPluginNames();
+    auto loaded = plugin_manager_.getLoadedBackendPluginNames();
+
+    // Available plugins should include discovered-but-not-loaded ones
+    EXPECT_GT(avail.size(), loaded.size());
+    EXPECT_NE(std::find(avail.begin(), avail.end(), mock), avail.end());
+    EXPECT_EQ(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
+
+    // After loading, it should appear in both
+    EXPECT_TRUE(LoadPlugin(mock));
+    loaded = plugin_manager_.getLoadedBackendPluginNames();
+    EXPECT_NE(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
+
+    // After unloading, still available (discovered on disk) but not loaded
+    UnloadPlugin(mock);
+    loaded = plugin_manager_.getLoadedBackendPluginNames();
+    EXPECT_EQ(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
+    avail = plugin_manager_.getAvailBackendPluginNames();
+    EXPECT_NE(std::find(avail.begin(), avail.end(), mock), avail.end());
 }
 
 TEST_F(LoadedPluginTestFixture, LoadSinglePluginTest) {
