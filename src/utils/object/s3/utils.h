@@ -104,18 +104,18 @@ configureClientCommon(ConfigType &config, nixl_b_params_t *custom_params) {
         }
     }
 
-    auto resp_checksum_it = custom_params->find("resp_checksum");
-    if (resp_checksum_it != custom_params->end()) {
-        if (resp_checksum_it->second == "required")
+    if (const auto opt =
+            nixl::getBackendParamOptional<std::string>(custom_params, "resp_checksum")) {
+        if (*opt == "required") {
             config.checksumConfig.responseChecksumValidation =
                 Aws::Client::ResponseChecksumValidation::WHEN_REQUIRED;
-        else if (resp_checksum_it->second == "supported")
+        } else if (*opt == "supported") {
             config.checksumConfig.responseChecksumValidation =
                 Aws::Client::ResponseChecksumValidation::WHEN_SUPPORTED;
-        else
-            throw std::runtime_error("Invalid value for resp_checksum: '" +
-                                     resp_checksum_it->second +
+        } else {
+            throw std::runtime_error("Invalid value for resp_checksum: '" + *opt +
                                      "'. Must be 'required' or 'supported'");
+        }
     }
 
     if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "ca_bundle")) {
