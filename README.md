@@ -37,21 +37,13 @@ NIXL is supported on a Linux environment only. It is tested on Ubuntu (22.04/24.
 The nixl python API and libraries, including UCX, are available directly through PyPI.
 For example, if you have a GPU running on a Linux host, container, or VM, you can do the following install:
 
-It can be installed for CUDA 12 with:
+Install with:
 
-```
-pip install nixl[cu12]
-```
-
-For CUDA 13 with:
-
-```
-pip install nixl[cu13]
+```bash
+pip install nixl
 ```
 
-For backwards compatibility, `pip install nixl` installs automatically `nixl[cu12]`, continuing to work seamlessly for CUDA 12 users without requiring changes to downstream project dependencies.
-
-If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environment, `nixl-cu13` takes precedence.
+This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
 ## Prerequisites for source build (Linux)
 ### Ubuntu:
@@ -68,14 +60,14 @@ If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environ
 
 ### UCX
 
-NIXL was tested with UCX version 1.20.x.
+NIXL was tested with UCX version 1.21.x.
 
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
 $ git clone https://github.com/openucx/ucx.git
 $ cd ucx
-$ git checkout v1.20.x
+$ git checkout v1.21.x
 $ ./autogen.sh
 $ ./contrib/configure-release-mt       \
     --enable-shared                    \
@@ -195,14 +187,10 @@ NIXL provides Python bindings through pybind11. For detailed Python API document
 The preferred way to install the Python bindings is through pip from PyPI:
 
 ```bash
-pip install nixl[cu12]
+pip install nixl
 ```
 
-Or for CUDA 13 with:
-
-```bash
-pip install nixl[cu13]
-```
+This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
 #### Installation from source
 

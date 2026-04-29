@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -84,7 +84,7 @@ nixlTelemetryCsvExporter::nixlTelemetryCsvExporter(
     }
 
     // Write CSV header
-    file_ << "timestamp_us,category,event_name,value\n";
+    file_ << "category,event_type,value\n";
     NIXL_INFO << "CSV exporter initialized: " << file_path;
 }
 
@@ -95,9 +95,8 @@ nixlTelemetryCsvExporter::exportEvent(const nixlTelemetryEvent &event) {
     }
 
     try {
-        file_ << event.timestampUs_ << ","
-              << static_cast<int>(event.category_) << ","
-              << event.eventName_ << ","
+        file_ << static_cast<int>(event.category_) << ","
+              << nixlEnumStrings::telemetryEventTypeStr(event.eventType_) << ","
               << event.value_ << "\n";
         file_.flush();
         return NIXL_SUCCESS;
@@ -122,7 +121,7 @@ using csv_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryCsvExporte
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
 nixl_telemetry_plugin_init() {
     return csv_exporter_plugin_t::create(
-        NIXL_TELEMETRY_PLUGIN_API_VERSION,
+        nixl_telemetry_plugin_api_version::V2,
         "csv",      // Plugin name
         "1.0.0"     // Plugin version
     );

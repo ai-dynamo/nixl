@@ -20,7 +20,6 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
 ARG DEFAULT_PYTHON_VERSION="3.14"
 ARG ARCH="x86_64"
-ARG UCX_REF="v1.21.x"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
@@ -28,6 +27,7 @@ ARG URING_TAG="liburing-2.13"
 ARG BUILD_NIXL_EP="true"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG NPROC
 
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy && \
@@ -71,7 +71,7 @@ RUN cd /tmp && \
     tar -xzf "hwloc-${HWLOC_VERSION}.tar.gz" && \
     cd "hwloc-${HWLOC_VERSION}" && \
     ./configure --prefix=/usr/local --disable-nvml && \
-    make -j"$(nproc)" && \
+    make -j"${NPROC:-$(nproc)}" && \
     make install && \
     ldconfig && \
     rm -rf "/tmp/hwloc-${HWLOC_VERSION}" "/tmp/hwloc-${HWLOC_VERSION}.tar.gz"
@@ -84,7 +84,7 @@ RUN cd /tmp && \
     cd openssl-3.0.16 && \
     ./Configure --prefix=/usr/local/openssl3 --openssldir=/usr/local/openssl3 \
         shared zlib linux-$ARCH && \
-    make -j$(nproc) && \
+    make -j${NPROC:-$(nproc)} && \
     make install_sw && \
     echo "/usr/local/openssl3/lib64" > /etc/ld.so.conf.d/openssl3.conf && \
     echo "/usr/local/openssl3/lib" >> /etc/ld.so.conf.d/openssl3.conf && \
@@ -112,10 +112,11 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
         -DBUILD_SHARED_LIBS=ON \
         -DABSL_PROPAGATE_CXX_STD=ON \
         -DABSL_ENABLE_INSTALL=ON && \
-    make -j$(nproc) && \
+    make -j${NPROC:-$(nproc)} && \
     make install && \
     ldconfig
 
+ARG GRPC_NPROC
 RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
     mkdir -p cmake/build && \
@@ -134,7 +135,7 @@ RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules
     -DgRPC_ABSL_PROVIDER=package \
     -DgRPC_PROTOBUF_PROVIDER=module \
     -DgRPC_ZLIB_PROVIDER=package ../.. && \
-    make -j$(nproc) && \
+    make -j${GRPC_NPROC:-$(nproc)} && \
     make install && \
     ldconfig
 
@@ -146,14 +147,14 @@ RUN cd /workspace && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=17 && \
-    make -j$(nproc) && make install
+    make -j${NPROC:-$(nproc)} && make install
 
 # The base image libcurl is linked against openssl 1.x, so we need to build from source
 # in order to use openssl 3.x. This is needed to build aws-sdk-cpp.
-RUN wget https://curl.se/download/curl-8.5.0.tar.gz && \
-    tar xzf curl-8.5.0.tar.gz && cd curl-8.5.0 && \
-    ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl3 --enable-shared && \
-    make -j$(nproc) && make install
+RUN wget --tries=3 --waitretry=5 https://curl.se/download/curl-8.19.0.tar.gz && \
+    tar xzf curl-8.19.0.tar.gz && cd curl-8.19.0 && \
+    ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl3 --without-libpsl --enable-shared && \
+    make -j${NPROC:-$(nproc)} && make install
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760
 RUN mkdir aws_sdk_build && cd aws_sdk_build && \
@@ -171,7 +172,7 @@ RUN git clone https://github.com/axboe/liburing.git && \
      cd liburing && \
      git checkout $URING_TAG && \
      ./configure --cc=gcc --cxx=g++ && \
-     make -j library && make liburing.pc && make install && \
+    make -j${NPROC:-$(nproc)} library && make liburing.pc && make install && \
      ldconfig && \
      cd ..
 
@@ -186,7 +187,7 @@ RUN git clone https://github.com/nvidia/gusli.git && \
 # Required for Azure SDK
 RUN git clone --depth 1 https://gitlab.gnome.org/GNOME/libxml2.git --branch 2.15 && \
     cd libxml2 && \
-    ACLOCAL_PATH=/usr/share/aclocal ./autogen.sh && make -j && \
+    ACLOCAL_PATH=/usr/share/aclocal ./autogen.sh && make -j${NPROC:-$(nproc)} && \
     make install
 
 RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
@@ -258,28 +259,6 @@ RUN cd /workspace && \
     rpm -Uvh gdrcopy-*.el8.$ARCH.rpm && \
     rpm -Uvh gdrcopy-devel-*.el8.noarch.rpm
 
-RUN cd /usr/local/src && \
-     git clone https://github.com/openucx/ucx.git && \
-     cd ucx && 			     \
-     git checkout $UCX_REF &&	     \
-     ./autogen.sh && \
-     ./contrib/configure-release-mt  \
-         --enable-shared             \
-         --disable-static            \
-         --disable-doxygen-doc       \
-         --enable-experimental-api   \
-         --enable-optimizations      \
-         --enable-cma                \
-         --enable-devel-headers      \
-         --with-cuda=/usr/local/cuda \
-         --with-verbs                \
-         --with-dm                   \
-         --without-gdrcopy           \
-         --with-efa  &&              \
-     make -j &&                      \
-     make -j install-strip &&        \
-     ldconfig
-
 # Build libfabric from source
 RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
@@ -297,7 +276,7 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
                 --enable-cuda-dlopen \
                 --with-gdrcopy \
                 --enable-gdrcopy-dlopen && \
-    make -j$(nproc) && \
+    make -j${NPROC:-$(nproc)} && \
     make install && \
     ldconfig
 
@@ -321,6 +300,30 @@ RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | c
 # Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
+ARG UCX_REF="v1.21.x"
+RUN cd /usr/local/src && \
+     git clone https://github.com/openucx/ucx.git && \
+     cd ucx &&                       \
+     git checkout "${UCX_REF}" &&    \
+     git log -1 &&                   \
+     ./autogen.sh &&                 \
+     ./contrib/configure-release-mt  \
+         --enable-shared             \
+         --disable-static            \
+         --disable-doxygen-doc       \
+         --enable-experimental-api   \
+         --enable-optimizations      \
+         --enable-cma                \
+         --enable-devel-headers      \
+         --with-cuda=/usr/local/cuda \
+         --with-verbs                \
+         --with-dm                   \
+         --without-gdrcopy           \
+         --with-efa &&               \
+     make -j &&                      \
+     make -j install-strip &&        \
+     ldconfig
+
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
 
@@ -334,7 +337,8 @@ RUN rm -rf build && \
     fi && \
     meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE $NIXL_EP_FLAG -Ducx_path=/usr/local \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
-    -Dcudapath_inc="/usr/local/cuda/include" && \
+    -Dcudapath_inc="/usr/local/cuda/include" \
+    -Drelease_wheel=true && \
     cd build && \
     ninja && \
     ninja install
@@ -368,9 +372,8 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     done
 
 # Copy the meta package wheel to the dist directory, which will be used to push to PyPI.
-# Only do this for the CUDA 12 builds, since by default nixl depends on nixl-cu12.
+# The meta-wheel is identical for cu12 and cu13 builds (it pins both backends via
+# -Drelease_wheel=true), so only emit it once — arbitrarily during the cu12 build.
 RUN if [ "$(echo $CUDA_VERSION | cut -d. -f1)" = "12" ]; then \
       cp build/src/bindings/python/nixl-meta/nixl*.whl dist/; \
     fi
-
-RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl build/src/bindings/python/nixl-meta/nixl*.whl

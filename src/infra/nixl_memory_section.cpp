@@ -142,17 +142,23 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
 
     nixlSecDescList &target = emplace(nixl_mem, backend);
 
-    // Add entries to the target list
     nixlSectionDesc local_sec, self_sec;
     nixlBasicDesc *lp = &local_sec;
     nixlBasicDesc *rp = &self_sec;
     nixl_status_t ret = NIXL_SUCCESS;
 
-    int i;
-    for (i = 0; i < mem_elms.descCount(); ++i) {
+    // Accumulate entries into batches, then merge on success
+    std::vector<nixlSectionDesc> local_batch;
+    std::vector<nixlSectionDesc> self_batch;
+    local_batch.reserve(mem_elms.descCount());
+    if (backend->supportsLocal()) {
+        self_batch.reserve(mem_elms.descCount());
+    }
+
+    for (const auto &mem : mem_elms) {
         // TODO: For now trusting the user, but there can be a more checks mode
         //       where we find overlaps and split the memories or warn the user
-        ret = backend->registerMem(mem_elms[i], nixl_mem, local_sec.metadataP);
+        ret = backend->registerMem(mem, nixl_mem, local_sec.metadataP);
         if (ret != NIXL_SUCCESS)
             break;
 
@@ -175,34 +181,32 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
             }
         }
 
-        *lp = mem_elms[i]; // Copy the basic desc part
+        *lp = mem; // Copy the basic desc part
         if (((nixl_mem == BLK_SEG) || (nixl_mem == OBJ_SEG) ||
              (nixl_mem == FILE_SEG)) && (lp->len==0))
             lp->len = SIZE_MAX; // File has no range limit
 
-        target.addDesc(local_sec);
+        local_batch.push_back(local_sec);
 
         if (backend->supportsLocal()) {
             *rp = *lp;
-            remote_self.addDesc(self_sec);
+            self_batch.push_back(self_sec);
         }
     }
 
-    // Abort in case of error
-    if (ret != NIXL_SUCCESS) {
-        for (int j = 0; j < i; ++j) {
-            int index = target.getIndex(mem_elms[j]);
-
-            if (backend->supportsLocal()) {
-                int self_index = remote_self.getIndex(mem_elms[j]);
-                // Should never be negative, as we just added it in previous loop
-                if (self_index >= 0 && remote_self[self_index].metadataP != target[index].metadataP)
-                    backend->unloadMD(remote_self[self_index].metadataP);
-            }
-            backend->deregisterMem(target[index].metadataP);
-            target.remDesc(index);
+    if (ret == NIXL_SUCCESS) {
+        target.addDescs(std::move(local_batch));
+        if (backend->supportsLocal()) {
+            remote_self.addDescs(std::move(self_batch));
         }
-        remote_self.clear();
+    } else {
+        for (size_t j = 0; j < local_batch.size(); ++j) {
+            if (backend->supportsLocal()) {
+                if (self_batch[j].metadataP != local_batch[j].metadataP)
+                    backend->unloadMD(self_batch[j].metadataP);
+            }
+            backend->deregisterMem(local_batch[j].metadataP);
+        }
     }
     return ret;
 }
@@ -307,18 +311,21 @@ nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
         }
 
         const nixlSecDescList &base = it->second;
-        nixlSecDescList resp(nixl_mem);
+        std::vector<nixlSectionDesc> descs;
+        descs.reserve(mem_elms.descCount());
         for (const auto &desc : mem_elms) {
-            int index = base.getIndex(desc);
+            const int index = base.getIndex(desc);
             if (index < 0) {
                 ret = NIXL_ERR_NOT_FOUND;
                 break;
             }
-            resp.addDesc(base[index]);
+            descs.push_back(base[index]);
         }
         if (ret != NIXL_SUCCESS) {
             break;
         }
+        nixlSecDescList resp(nixl_mem);
+        resp.addDescs(std::move(descs));
         mem_elms_to_serialize.try_emplace(sec_key, std::move(resp));
     }
 
@@ -418,8 +425,7 @@ nixlRemoteSection::loadRemoteData(nixlSerDes *deserializer, backend_map_t &backe
 }
 
 nixl_status_t
-nixlRemoteSection::loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEngine *backend) {
-
+nixlRemoteSection::loadLocalData(nixlSecDescList mem_elms, nixlBackendEngine *backend) {
     if (mem_elms.isEmpty()) { // Shouldn't happen
         return NIXL_ERR_UNKNOWN;
     }
@@ -428,10 +434,29 @@ nixlRemoteSection::loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEng
 
     nixlSecDescList &target = emplace(nixl_mem, backend);
 
-    for (auto &elm : mem_elms) {
-        target.addDesc(elm);
-    }
+    target.addDescs(std::move(mem_elms));
+
     return NIXL_SUCCESS;
+}
+
+void
+nixlRemoteSection::removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine &backend) {
+    const nixl_mem_t nixl_mem = mem_elms.getType();
+    const section_key_t sec_key(nixl_mem, &backend);
+    const auto it = sectionMap.find(sec_key);
+    if (it == sectionMap.end()) {
+        return;
+    }
+
+    nixlSecDescList &target = it->second;
+
+    for (auto &elm : mem_elms) {
+        const int index = target.getIndex(elm);
+        if (index >= 0) {
+            backend.unloadMD(target[index].metadataP);
+            target.remDesc(index);
+        }
+    }
 }
 
 nixlRemoteSection::~nixlRemoteSection() {

@@ -21,7 +21,7 @@ ARG NIXL_INSTALL_DIR
 ARG PRE_INSTALLED_ENV
 ARG PRE_INSTALLED_NIXL_ENV
 ARG PRE_INSTALLED_UCX_ENV
-ARG UCX_VERSION=v1.20.x
+ARG UCX_VERSION=v1.21.x
 # Labels for documentation
 LABEL maintainer="NVIDIA NIXL Team"
 LABEL description="Test environment for NIXL development"
