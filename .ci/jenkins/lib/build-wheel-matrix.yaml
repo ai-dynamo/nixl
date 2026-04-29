@@ -106,6 +106,7 @@ matrix:
 # Global environment variables for the build process
 env:
   NPROC: 16
+  GRPC_NPROC: 10
   DOCKER_REGISTRY_HOST: 'artifactory.nvidia.com'
   BASE_IMAGE: "${DOCKER_REGISTRY_HOST}/sw-nbu-swx-nixl-docker-local/base/cuda"
   BASE_TAG: '13.0-devel-manylinux--25.09'
@@ -137,6 +138,7 @@ steps:
     run: |
       set -x
       export NPROC=$NPROC
+      export GRPC_NPROC=$GRPC_NPROC
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_TAG}" \
