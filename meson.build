@@ -510,6 +510,7 @@ endif
 
 nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core', 'src/core/telemetry')
 nixl_gpu_inc_dirs = include_directories('src/api/gpu/ucx')
+nixl_gpu_proxy_inc_dirs = include_directories('src/api/gpu/proxy')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 

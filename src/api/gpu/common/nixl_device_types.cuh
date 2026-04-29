@@ -14,21 +14,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#ifndef NIXL_SRC_API_GPU_COMMON_NIXL_DEVICE_TYPES_CUH
+#define NIXL_SRC_API_GPU_COMMON_NIXL_DEVICE_TYPES_CUH
 
-// UCX-specific device API facade.  Self-contained: no backend-selection macro
-// required.  Include this header (or place src/api/gpu/ucx on the include
-// path so that <nixl_device.cuh> resolves here) when building CUDA
-// translation units that use the UCX GPU device API directly.
+#include <cstddef>
+#include <cstdint>
 
-#ifndef NIXL_SRC_API_GPU_UCX_NIXL_DEVICE_CUH
-#define NIXL_SRC_API_GPU_UCX_NIXL_DEVICE_CUH
+#include <nixl_types.h>
 
-#include "nixl_device_impl.cuh"
+struct nixlGpuXferStatusH {
+    alignas(16) unsigned char storage[64] = {};
+};
 
-namespace nixl::gpu {
-namespace selected_impl = ucx_impl;
-}
+enum class nixl_gpu_level_t : uint64_t { THREAD = 0, WARP = 1, BLOCK = 2, GRID = 3 };
 
-#include "../common/nixl_device_wrappers.cuh"
+namespace nixl_gpu_flags {
+constexpr uint64_t defer = 1;
+} // namespace nixl_gpu_flags
 
-#endif // NIXL_SRC_API_GPU_UCX_NIXL_DEVICE_CUH
+struct nixlMemViewElem {
+    nixlMemViewH mvh;
+    size_t index; /**< Index in the memory view */
+    size_t offset; /**< Offset within the buffer */
+};
+
+#endif // NIXL_SRC_API_GPU_COMMON_NIXL_DEVICE_TYPES_CUH

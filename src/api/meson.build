@@ -15,3 +15,6 @@
 
 subdir('cpp')
 subdir('python')
+if cuda_dep.found()
+    subdir('gpu')
+endif
