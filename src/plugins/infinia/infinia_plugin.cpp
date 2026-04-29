@@ -19,10 +19,6 @@
 #include "backend/backend_plugin.h"
 #include "infinia_backend.h"
 
-// Plugin version information
-static const char *PLUGIN_NAME = "INFINIA";
-static const char *PLUGIN_VERSION = "0.1.4";
-
 // Function to create a new Infinia backend engine instance
 static nixlBackendEngine *
 create_infinia_engine(const nixlBackendInitParams *init_params) {
@@ -37,13 +33,13 @@ destroy_infinia_engine(nixlBackendEngine *engine) {
 // Function to get the plugin name
 static const char *
 get_plugin_name() {
-    return PLUGIN_NAME;
+    return INFINIA_PLUGIN_NAME;
 }
 
 // Function to get the plugin version
 static const char *
 get_plugin_version() {
-    return PLUGIN_VERSION;
+    return INFINIA_PLUGIN_VERSION;
 }
 
 // Function to get backend options

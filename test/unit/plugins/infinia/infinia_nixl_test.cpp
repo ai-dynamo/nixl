@@ -546,6 +546,15 @@ main(int argc, char *argv[]) {
         return -1;
     }
 
+    if (skip_write && !skip_read) {
+        std::cerr << "Error: Read-only mode (--no-write) requires pre-existing objects\n";
+        std::cerr
+            << "       The test generates random keys in Phase 1 that don't exist in storage.\n";
+        std::cerr << "       All read operations would fail with 404 NOT FOUND errors.\n";
+        std::cerr << "Hint: Run full test (write+read) or use --no-read for write-only mode.\n";
+        return -1;
+    }
+
     // If neither is specified, default to VRAM
     if (!use_dram && !use_vram) {
 #ifdef HAVE_CUDA

@@ -169,7 +169,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
 
     red_status_t rs;
 
-    NIXL_INFO << absl::StrFormat("INFINIA: v1.0.4");
+    NIXL_INFO << absl::StrFormat("INFINIA: v%s", INFINIA_PLUGIN_VERSION);
 
     if (!init_params) {
         initErr = true;
@@ -515,8 +515,13 @@ infinia_engine::registerMem(const nixlBlobDesc &mem,
         // Only register if not a probe call (addr/len are valid)
         if (mem.addr != 0 && mem.len != 0) {
             void *buffer = reinterpret_cast<void *>(mem.addr);
+
+            // Determine memory type based on nixl_mem
+            red_memory_types_e mem_type =
+                (nixl_mem == VRAM_SEG) ? RED_MEMORY_TYPE_GPU : RED_MEMORY_TYPE_CPU;
+
             red_status_t rs = red_async::red_config_t::register_user_memory(
-                buffer, mem.len, &metadata->iomem_handle);
+                buffer, mem.len, &metadata->iomem_handle, mem_type);
 
             if (rs != RED_SUCCESS) {
                 NIXL_ERROR << absl::StrFormat("Failed to register memory (%p, size=%zu): %s",
@@ -813,14 +818,16 @@ infinia_engine::prepXfer(const nixl_xfer_op_t &operation,
                 red_async::RED_ASYNC_OP_PUT;
 
             // Add operation directly to the batch task
-            backend_handle->addOperation(op_type, key, val, local_it->len, iomem_handle);
+            backend_handle->addOperation(
+                op_type, key, val, local_it->len, iomem_handle, local_metadata->nixlMem);
 
             NIXL_DEBUG << absl::StrFormat(
-                "INFINIA: ADDED OPERATION op=%s key='%s' addr=%p size=%zu",
+                "INFINIA: ADDED OPERATION op=%s key='%s' addr=%p size=%zu mem_type=%s",
                 op_type == red_async::RED_ASYNC_OP_GET ? "GET" : "PUT",
                 key.c_str(),
                 val,
-                local_it->len);
+                local_it->len,
+                memTypeToStr(local_metadata->nixlMem));
         }
 
         nixl_status_t status = backend_handle->prepareTransfer();
@@ -1028,7 +1035,8 @@ nixlInfiniaBackendReqH::addOperation(red_async::red_async_op_type_t op_type,
                                      const std::string &key,
                                      void *value_addr,
                                      size_t value_size,
-                                     red_iomem_hndl_t iomem_handle) {
+                                     red_iomem_hndl_t iomem_handle,
+                                     nixl_mem_t mem_type) {
     // Store the key string (must persist until batch completes)
     keys_.push_back(key);
 
@@ -1044,6 +1052,13 @@ nixlInfiniaBackendReqH::addOperation(red_async::red_async_op_type_t op_type,
     sg.val_size = value_size;
     sg.num_elems = 1;
     sg.sg_elem = &sg_elements_.back(); // Point to the stored element
+    sg.flags = RED_SGL_HOST;
+
+    // Set flags based on memory type - enable GPU Direct for GPU memory
+    if (mem_type == VRAM_SEG) {
+        sg.flags = RED_SGL_GPU_DIRECT;
+    }
+
     sg_lists_.push_back(sg);
 
     // Build the operation

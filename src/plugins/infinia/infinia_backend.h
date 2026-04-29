@@ -31,6 +31,10 @@
 
 #include "infinia_client.h"
 
+// INFINIA plugin version information (single source of truth)
+inline constexpr const char *INFINIA_PLUGIN_NAME = "INFINIA";
+inline constexpr const char *INFINIA_PLUGIN_VERSION = "1.0.0";
+
 // INFINIA default configuration values
 inline constexpr const char *INFINIA_DEFAULT_CLUSTER = "cluster1";
 inline constexpr const char *INFINIA_DEFAULT_TENANT = "red";
@@ -301,12 +305,14 @@ public:
     // Operation building methods
     void
     reserveOperations(size_t count);
+
     void
     addOperation(red_async::red_async_op_type_t op_type,
                  const std::string &key,
                  void *value_addr,
                  size_t value_size,
-                 red_iomem_hndl_t iomem_handle);
+                 red_iomem_hndl_t iomem_handle,
+                 nixl_mem_t mem_type);
 };
 
 #endif // NIXL_SRC_PLUGINS_INFINIA_INFINIA_BACKEND_H
