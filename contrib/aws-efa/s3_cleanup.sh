@@ -1,4 +1,5 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,9 +13,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+if [ -z "$NIXL_AWS_ACCESS_KEY_ID" ] || [ -z "$NIXL_AWS_SECRET_ACCESS_KEY" ]; then
+    echo "Missing NIXL S3 credentials"
+    exit 1
+fi
 
-md_streamer = executable('md_streamer',
-            'metadata_streamer.cpp',
-            dependencies: [nixl_dep, nixl_infra, stream_interface],
-            include_directories: [nixl_inc_dirs, utils_inc_dirs],
-            install: true)
+export AWS_ACCESS_KEY_ID="$NIXL_AWS_ACCESS_KEY_ID"
+export AWS_SECRET_ACCESS_KEY="$NIXL_AWS_SECRET_ACCESS_KEY"
+export AWS_DEFAULT_BUCKET="nixl-ci-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}"
+
+set -exE -o pipefail
+
+aws s3 rb "s3://${AWS_DEFAULT_BUCKET}" --force || true

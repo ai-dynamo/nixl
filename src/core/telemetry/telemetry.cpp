@@ -20,7 +20,6 @@
 #include <filesystem>
 #include <unistd.h>
 #include <cstdlib>
-#include <cstring>
 #include <algorithm>
 
 #include "common/configuration.h"
@@ -33,6 +32,42 @@
 
 using namespace std::chrono_literals;
 namespace fs = std::filesystem;
+
+[[nodiscard]] nixl_telemetry_event_type_t
+nixlTelemetryEventTypeForStatus(nixl_status_t s) {
+    switch (s) {
+    case NIXL_SUCCESS:
+    case NIXL_IN_PROG:
+        NIXL_ASSERT_ALWAYS(false)
+            << "nixlTelemetryEventTypeForStatus expects a negative nixl_status_t error code";
+    case NIXL_ERR_NOT_POSTED:
+        return nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED;
+    case NIXL_ERR_INVALID_PARAM:
+        return nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM;
+    case NIXL_ERR_BACKEND:
+        return nixl_telemetry_event_type_t::AGENT_ERR_BACKEND;
+    case NIXL_ERR_NOT_FOUND:
+        return nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND;
+    case NIXL_ERR_MISMATCH:
+        return nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH;
+    case NIXL_ERR_NOT_ALLOWED:
+        return nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED;
+    case NIXL_ERR_REPOST_ACTIVE:
+        return nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE;
+    case NIXL_ERR_UNKNOWN:
+        return nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN;
+    case NIXL_ERR_NOT_SUPPORTED:
+        return nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED;
+    case NIXL_ERR_REMOTE_DISCONNECT:
+        return nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT;
+    case NIXL_ERR_CANCELED:
+        return nixl_telemetry_event_type_t::AGENT_ERR_CANCELED;
+    case NIXL_ERR_NO_TELEMETRY:
+        return nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY;
+    }
+    NIXL_ASSERT_ALWAYS(false) << "nixlTelemetryEventTypeForStatus: unhandled nixl_status_t "
+                              << static_cast<int>(s) << "; add a case when extending nixl_status_t";
+}
 
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
@@ -91,10 +126,10 @@ getExporterName() {
 
 void
 nixlTelemetry::initializeTelemetry() {
-    const auto buffer_size = nixl::config::getValueDefaulted<size_t>(TELEMETRY_BUFFER_SIZE_VAR,
-                                                                     DEFAULT_TELEMETRY_BUFFER_SIZE);
+    maxBufferedEvents_ = nixl::config::getValueDefaulted<size_t>(TELEMETRY_BUFFER_SIZE_VAR,
+                                                                 DEFAULT_TELEMETRY_BUFFER_SIZE);
 
-    if (buffer_size == 0) {
+    if (maxBufferedEvents_ == 0) {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");
     }
 
@@ -112,7 +147,7 @@ nixlTelemetry::initializeTelemetry() {
         throw std::runtime_error("Failed to load telemetry plugin: " + *exporter_name);
     }
 
-    const nixlTelemetryExporterInitParams init_params{agentName_, buffer_size};
+    const nixlTelemetryExporterInitParams init_params{agentName_, maxBufferedEvents_};
     exporter_ = plugin_handle->createExporter(init_params);
     if (!exporter_) {
         NIXL_ERROR << "Failed to create telemetry exporter: " << *exporter_name;
@@ -134,8 +169,7 @@ nixlTelemetry::initializeTelemetry() {
 bool
 nixlTelemetry::writeEventHelper() {
     std::vector<nixlTelemetryEvent> next_queue;
-    // assume next buffer will be the same size as the current one
-    next_queue.reserve(exporter_->getMaxEventsBuffered());
+    next_queue.reserve(maxBufferedEvents_);
     {
         std::lock_guard<std::mutex> lock(mutex_);
         events_.swap(next_queue);
@@ -167,89 +201,91 @@ nixlTelemetry::registerPeriodicTask(periodicTask &task) {
 }
 
 void
-nixlTelemetry::updateData(const std::string &event_name,
+nixlTelemetry::updateData(nixl_telemetry_event_type_t event_type,
                           nixl_telemetry_category_t category,
                           uint64_t value) {
     // agent can be multi-threaded
     std::lock_guard<std::mutex> lock(mutex_);
-    events_.emplace_back(std::chrono::duration_cast<std::chrono::microseconds>(
-                             std::chrono::system_clock::now().time_since_epoch())
-                             .count(),
-                         category,
-                         event_name,
-                         value);
+    if (events_.size() >= maxBufferedEvents_) {
+        return;
+    }
+    events_.emplace_back(category, event_type, value);
 }
 
 // The next 4 methods might be removed, as addXferTime covers them.
 void
 nixlTelemetry::updateTxBytes(uint64_t tx_bytes) {
-    updateData("agent_tx_bytes", nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, tx_bytes);
+    updateData(nixl_telemetry_event_type_t::AGENT_TX_BYTES,
+               nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+               tx_bytes);
 }
 
 void
 nixlTelemetry::updateRxBytes(uint64_t rx_bytes) {
-    updateData("agent_rx_bytes", nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, rx_bytes);
+    updateData(nixl_telemetry_event_type_t::AGENT_RX_BYTES,
+               nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
+               rx_bytes);
 }
 
 void
 nixlTelemetry::updateTxRequestsNum(uint32_t tx_requests_num) {
-    updateData("agent_tx_requests_num",
+    updateData(nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM,
                nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
                tx_requests_num);
 }
 
 void
 nixlTelemetry::updateRxRequestsNum(uint32_t rx_requests_num) {
-    updateData("agent_rx_requests_num",
+    updateData(nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM,
                nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
                rx_requests_num);
 }
 
 void
 nixlTelemetry::updateErrorCount(nixl_status_t error_type) {
-    updateData(
-        nixlEnumStrings::statusStr(error_type), nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR, 1);
+    NIXL_ASSERT_ALWAYS(static_cast<int>(error_type) < 0)
+        << "nixlTelemetry::updateErrorCount expects a negative nixl_status_t error code";
+    const auto event_type = nixlTelemetryEventTypeForStatus(error_type);
+    updateData(event_type, nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR, 1);
 }
 
 void
 nixlTelemetry::updateMemoryRegistered(uint64_t memory_registered) {
-    updateData("agent_memory_registered",
+    updateData(nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED,
                nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY,
                memory_registered);
 }
 
 void
 nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
-    updateData("agent_memory_deregistered",
+    updateData(nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED,
                nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY,
                memory_deregistered);
 }
 
 void
 nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
-    const char *bytes_name = is_write ? "agent_tx_bytes" : "agent_rx_bytes";
-    const char *requests_name = is_write ? "agent_tx_requests_num" : "agent_rx_requests_num";
-
-    const auto time = std::chrono::duration_cast<std::chrono::microseconds>(
-                          std::chrono::system_clock::now().time_since_epoch())
-                          .count();
+    const auto bytes_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_BYTES :
+                                       nixl_telemetry_event_type_t::AGENT_RX_BYTES;
+    const auto requests_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM :
+                                          nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM;
 
     const std::lock_guard lock(mutex_);
-    events_.emplace_back(time,
-                         nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-                         "agent_xfer_time",
-                         xfer_time.count());
-    events_.emplace_back(
-        time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_name, bytes);
-    events_.emplace_back(
-        time, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, requests_name, 1);
+    if (events_.size() + 3 > maxBufferedEvents_) {
+        return;
+    }
+    events_.emplace_back(nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
+                         nixl_telemetry_event_type_t::AGENT_XFER_TIME,
+                         static_cast<uint64_t>(xfer_time.count()));
+    events_.emplace_back(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_type, bytes);
+    events_.emplace_back(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, requests_type, 1);
 }
 
 void
 nixlTelemetry::addPostTime(std::chrono::microseconds post_time) {
-    updateData("agent_xfer_post_time",
+    updateData(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
                nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-               post_time.count());
+               static_cast<uint64_t>(post_time.count()));
 }
 
 std::string

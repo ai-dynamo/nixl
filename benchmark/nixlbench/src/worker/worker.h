@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,11 +15,12 @@
  * limitations under the License.
  */
 
-#ifndef __WORKER_H
-#define __WORKER_H
+#ifndef NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_WORKER_H
+#define NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_WORKER_H
 
 #include "runtime/runtime.h"
 #include "utils/utils.h"
+#include <atomic>
 #include <string>
 #include <vector>
 #include <variant>
@@ -29,10 +30,10 @@ class xferBenchWorker {
     protected:
         std::string name;
         xferBenchRT *rt;
-        static int terminate;
+        static std::atomic<int> terminate;
 
     public:
-        xferBenchWorker(int *argc, char ***argv);
+        xferBenchWorker();
         virtual ~xferBenchWorker();
 
         std::string getName() const;
@@ -64,4 +65,4 @@ class xferBenchWorker {
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) = 0;
 };
 
-#endif // __WORKER_H
+#endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_WORKER_H

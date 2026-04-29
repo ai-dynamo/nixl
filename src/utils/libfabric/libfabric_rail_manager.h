@@ -88,17 +88,18 @@ public:
      *
      * - max_bw_per_dram_seg (matching environment variable NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG):
      * Controls the bandwidth limit on DRAM_SEG memory type buffers per NUMA node. Specified in
-     * multiples of 1000^3 (e.g. 100, 200, etc.). If passed as key-value pair to the custom
-     * parameter map, the value should be passed as a string that can be parsed as integer (e.g.
-     * {"max_bw_per_dram_seg", "100"}). If not specified, then computed as the maximum possible
-     * bandwidth that would not saturate the topmost PCIe bridge/switch devices of the NUMA node of
-     * the origin buffer. This value (whether computed or provided by user) is converted to rail
-     * count limit and used in NUMA-aware rail selection policy for DRAM_SEG, in order to limit the
-     * number of rails used for this memory type. Rail selection is also limited to NUMA node of the
-     * origin buffer. If user override exceeds the total topmost PCIe switch capacity of the NUMA
-     * node, then rail selection spills over to additional rails on the PCI switches of the NUMA
-     * node, and subsequently to adjacent NUMA nodes if required. If user override exceeds total
-     * machine network capacity, then all rails will be used for DRAM_SEG memory type.
+     * decimal Gbps, as multiples of 10^9 (e.g. 100, 200, etc.). If passed as key-value pair to the
+     * custom parameter map, the value should be passed as a string that can be parsed as integer
+     * (e.g. {"max_bw_per_dram_seg", "100"}). If not specified, then computed as the maximum
+     * possible bandwidth that would not saturate the topmost PCIe bridge/switch devices of the NUMA
+     * node of the origin buffer. This value (whether computed or provided by user) is converted to
+     * rail count limit and used in NUMA-aware rail selection policy for DRAM_SEG, in order to limit
+     * the number of rails used for this memory type. Rail selection is also limited to NUMA node of
+     * the origin buffer. If user override exceeds the total topmost PCIe switch capacity of the
+     * NUMA node, then rail selection spills over to additional rails on the PCI switches of the
+     * NUMA node, and subsequently, if still not reaching user-specified limit, spills over to
+     * adjacent NUMA nodes if required. If user override exceeds total machine network capacity,
+     * then all rails will be used for DRAM_SEG memory type.
      */
     nixl_status_t
     init(const nixl_b_params_t &custom_params);
@@ -252,13 +253,13 @@ public:
     validateAllRailsInitialized();
 
     // Active Rail Management APIs
-    /** Mark rail as active for progress tracking optimization */
+    /** Increment active reference count on a rail */
     void
-    markRailActive(size_t rail_id);
+    incRailActive(size_t rail_id);
 
-    /** Mark rail as inactive for progress tracking optimization */
+    /** Decrement active reference count on a rail; rail becomes inactive when count reaches zero */
     void
-    markRailInactive(size_t rail_id);
+    decRailActive(size_t rail_id);
 
     /** Clear all active rail markings */
     void
@@ -350,8 +351,8 @@ private:
     // EFA device to rail mapping
     std::unordered_map<std::string, size_t> efa_device_to_rail_map;
 
-    // Active Rail Tracking System
-    std::unordered_set<size_t> active_rails_;
+    // active rails with reference counting (always positive)
+    std::unordered_map<size_t, size_t> active_rails_;
     mutable std::mutex active_rails_mutex_;
 
     // rail selection policy for DRAM memory type
@@ -359,7 +360,10 @@ private:
 
     // get rail count limit for DRAM memory type, either computed or from user
     bool
-    getDramRailLimit(const nixl_b_params_t &custom_params, size_t &max_bw, size_t &max_rails);
+    getDramRailLimit(const nixl_b_params_t &custom_params,
+                     size_t &max_bw,
+                     size_t &max_rails,
+                     size_t &recommended_rails);
 
     // Internal rail selection method
     std::vector<size_t>

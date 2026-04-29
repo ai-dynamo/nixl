@@ -229,8 +229,7 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
         throw std::runtime_error("Failed to create rails for libfabric rail manager");
     }
 
-    NIXL_DEBUG << "Successfully created " << rails_.size()
-               << " rails using provider=" << selected_provider_name;
+    NIXL_INFO << "Created " << rails_.size() << " rails using provider=" << selected_provider_name;
 }
 
 nixlLibfabricRailManager::~nixlLibfabricRailManager() {
@@ -253,22 +252,45 @@ nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
     // get bandwidth/rail limit from user or compute it, then select policy
     size_t max_bw = 0;
     size_t max_rails = 0;
+    size_t recommended_rails = 0;
     size_t nic_speed = topology->getAvgNicBandwidth();
-    if (!getDramRailLimit(custom_params, max_bw, max_rails) || max_rails == 0) {
+    if (!getDramRailLimit(custom_params, max_bw, max_rails, recommended_rails) || max_rails == 0) {
         // had some error in deducing rail count, so just use default policy
         NIXL_WARN << "Using default (all) rail selection policy for DRAM memory type due to "
                      "previous errors";
         dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
-    } else if (max_rails < topology->getTotalNicCount()) {
+    } else if (topology->getAllDevices().size() == 1) {
+        // system has only 1 EFA, so use default policy (don't issue warning)
+        dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
+    }
+    // NOTE: from this point onward we regard only rails that are attached to a PCIe switch because
+    // these are the only ones that matter for avoiding PCIe congestion (the instance types we deal
+    // with have either all rails connected to PCIe switches, or have only one EFA that is either
+    // not attached to a NUMA node, as in C-series, or not attached to a PCIe switch, as in
+    // G-series), so we test rail count against topology->getTotalNicCount() (which represents the
+    // total number of "usable" rails, i.e. that are attached to a PCIe switch) and not against
+    // topology->getAllDevices().size()
+    else if (max_rails < topology->getTotalNicCount()) {
         // bandwidth does not exceed total machine capacity, so use NUMA-aware rail selection policy
-        NIXL_TRACE << "Using NUMA-aware rail selection policy for DRAM memory type";
+        NIXL_INFO << "DRAM rail selection policy: numa-aware (max_rails=" << max_rails << ")";
         size_t numa_rail_count = topology->getNumaRailCount(); // NOTE: averaged if non-uniform
         if (max_rails > numa_rail_count) {
             size_t numa_speed = numa_rail_count * nic_speed;
             NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
                       << " Gbps) exceeds single NUMA node capacity of " << numa_speed
                       << " Gbps, and will spill over to other NUMA nodes";
+        } else if (max_rails > recommended_rails) {
+            // configured rail count does not spill over to other nodes, but still exceeds PCIe
+            // switch capacity, and is expected to cause congestion, so warn user
+            size_t recommended_bw = recommended_rails * nic_speed;
+            NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
+                      << " Gbps), which results in " << max_rails
+                      << " rails, exceeds the congestion-free recommendation of " << recommended_bw
+                      << " Gbps (" << recommended_rails
+                      << " rails per NUMA node), and is expected to cause PCIe congestion";
         }
+        NIXL_TRACE << "Using " << max_rails
+                   << " rails in NUMA-aware rail selection policy for DRAM_SEG";
         dram_rail_selection_policy_ =
             std::make_unique<nixlLibfabricNumaRailSelectionPolicy>(max_rails);
     } else {
@@ -524,14 +546,33 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 bool
 nixlLibfabricRailManager::getDramRailLimit(const nixl_b_params_t &custom_params,
                                            size_t &max_bw,
-                                           size_t &max_rails) {
-    // first make sure there are any EFA devices
-    if (topology->getTotalNicCount() == 0) {
+                                           size_t &max_rails,
+                                           size_t &recommended_rails) {
+    // trivial case: no EFA devices
+    if (topology->getAllDevices().empty()) {
+        max_rails = 0;
         NIXL_WARN << "Could not find EFA devices, rail selection for DRAM memory type aborted";
+        // this is unexpected, we except to find at least one EFA
         return false;
     }
 
-    // verify a few more computed values before continuing (avoid division by zero  )
+    // trivial case: only one EFA device
+    if (topology->getAllDevices().size() == 1) {
+        max_rails = 1;
+        NIXL_INFO << "NUMA-aware rail selection disabled when system has only one EFA device";
+        // this could happen (e.g. C-series instance types)
+        return true;
+    }
+
+    // first make sure there are any usable EFA devices
+    if (topology->getTotalNicCount() == 0) {
+        NIXL_WARN
+            << "Could not find EFA devices connected to any PCIe switch, NUMA-aware rail selection "
+               "for DRAM memory type aborted";
+        return false;
+    }
+
+    // verify a few more computed values before continuing (avoid division by zero)
     size_t nic_speed = topology->getAvgNicBandwidth();
     if (nic_speed == 0) {
         NIXL_WARN << "Could not deduce average EFA device line bandwidth, NUMA-aware rail "
@@ -545,31 +586,35 @@ nixlLibfabricRailManager::getDramRailLimit(const nixl_b_params_t &custom_params,
         return false;
     }
 
-    // now compute rail limit based on bandwidth limit
+    // compute recommended number of rails and corresponding bandwidth limit
+    size_t recommended_bw = topology->getAvgNumaNodeBandwidth();
+    if (recommended_bw == 0) {
+        NIXL_WARN << "Could not deduce average bandwidth limit per NUMA node, NUMA-aware rail "
+                     "selection for DRAM type aborted";
+        return false;
+    }
+    // NOTE: when rail limit is computed, we divide switch capacity by NIC upstream link
+    recommended_rails = recommended_bw / nic_upstream_speed;
+    NIXL_TRACE << "Computed (average) NUMA node combined PCIe switch bandwidth limit is "
+               << recommended_bw << " Gbps";
+    NIXL_TRACE << "Computed (average) rails per NUMA node is " << recommended_rails;
+
+    // now compute rail limit based on configured or computed bandwidth limit
     max_rails = 0;
     max_bw = 0;
 
     // get bandwidth limit from configuration or environment variable, and then deduce rail count
     // limit (which is used to implement NUMA-aware rail selection policy for DRAM_SEG memory type)
     // NOTE: corresponding env var is NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG, and is specified in
-    // Gigabits per second (e.g 100, 200, etc.)
+    // decimal Gigabits per second, as multiple of 10^9 (e.g 100, 200, etc.)
     nixl_status_t res =
         LibfabricUtils::getCustomIntParam(custom_params, "max_bw_per_dram_seg", max_bw);
     if (res != NIXL_SUCCESS) {
         // bandwidth limit could not be obtained from user (either user did not specify, or
         // configuration was malformed) so compute bandwidth limit from topology, and then deduce
         // rail count
-        max_bw = topology->getAvgNumaNodeBandwidth();
-        if (max_bw == 0) {
-            NIXL_WARN << "Could not deduce average bandwidth limit per NUMA node, NUMA-aware rail "
-                         "selection for DRAM type aborted";
-            return false;
-        }
-        // NOTE: when rail limit is computed, we divide switch capacity by NIC upstream link
-        max_rails = max_bw / nic_upstream_speed;
-        NIXL_TRACE << "Computed (average) NUMA node combined PCIe switch bandwidth limit is "
-                   << max_bw << " Gbps";
-        NIXL_TRACE << "Computed (average) rails per NUMA node is " << max_rails;
+        max_rails = recommended_rails;
+        max_bw = recommended_bw;
     } else {
         // print warning if bandwidth limit provided by user is less than the speed of a single NIC
         if (max_bw < nic_speed) {
@@ -712,7 +757,10 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
             for (size_t j = 0; j < i; ++j) {
                 const size_t cleanup_idx = selected_rails[j];
                 if (mr_list_out[cleanup_idx]) {
-                    rails_[cleanup_idx]->deregisterMemory(mr_list_out[cleanup_idx]);
+                    if (rails_[cleanup_idx]->deregisterMemory(mr_list_out[cleanup_idx]) ==
+                        NIXL_SUCCESS) {
+                        decRailActive(cleanup_idx);
+                    }
                     mr_list_out[cleanup_idx] = nullptr;
                 }
             }
@@ -730,7 +778,10 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
             for (size_t j = 0; j < i; ++j) {
                 const size_t cleanup_idx = selected_rails[j];
                 if (mr_list_out[cleanup_idx]) {
-                    rails_[cleanup_idx]->deregisterMemory(mr_list_out[cleanup_idx]);
+                    if (rails_[cleanup_idx]->deregisterMemory(mr_list_out[cleanup_idx]) ==
+                        NIXL_SUCCESS) {
+                        decRailActive(cleanup_idx);
+                    }
                     mr_list_out[cleanup_idx] = nullptr;
                 }
             }
@@ -741,11 +792,14 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         key_list_out[rail_idx] = key;
 
         // Mark rail as active for progress tracking optimization
-        markRailActive(rail_idx);
+        incRailActive(rail_idx);
 
         NIXL_DEBUG << "Registered memory on rail " << rail_idx
                    << " (mr=" << static_cast<const void *>(mr) << ", key=" << key << ")";
     }
+
+    NIXL_INFO << "Registered memory on " << selected_rails.size() << " rails, mem_type=" << mem_type
+              << " device=" << device_id;
 
     return NIXL_SUCCESS;
 }
@@ -770,13 +824,16 @@ nixlLibfabricRailManager::deregisterMemory(const std::vector<size_t> &selected_r
 
         if (mr_list[rail_idx]) {
             nixl_status_t status = rails_[rail_idx]->deregisterMemory(mr_list[rail_idx]);
-            if (status != NIXL_SUCCESS) {
+            if (status == NIXL_SUCCESS) {
+                decRailActive(rail_idx);
+            } else {
                 NIXL_ERROR << "Failed to deregister memory on rail " << rail_idx;
                 overall_status = status;
             }
-            markRailInactive(rail_idx);
         }
     }
+
+    NIXL_INFO << "Deregistered memory from " << selected_rails.size() << " rails";
 
     return overall_status;
 }
@@ -888,9 +945,6 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     NIXL_DEBUG << "Sending control message type " << msg_type_value << " agent_idx=" << agent_idx
                << " XFER_ID=" << xfer_id << " imm_data=" << imm_data << " on rail " << rail_id;
 
-    // Mark rail 0 as active so its CQ gets progressed
-    markRailActive(rail_id);
-
     // Use rail 0 for notifications
     nixl_status_t status = rails_[rail_id]->postSend(imm_data, dest_addr, req);
 
@@ -913,7 +967,9 @@ nixlLibfabricRailManager::progressActiveRails() {
         std::lock_guard<std::mutex> lock(active_rails_mutex_);
         // Always progress rail 0 for notifications (SEND/RECV)
         rails_to_process.insert(0);
-        rails_to_process.insert(active_rails_.begin(), active_rails_.end());
+        for (const auto &[rail_id, refcount] : active_rails_) {
+            rails_to_process.insert(rail_id);
+        }
     }
 
     // Process rails without holding the lock
@@ -1131,30 +1187,35 @@ nixlLibfabricRailManager::deserializeRailEndpoints(
 }
 
 void
-nixlLibfabricRailManager::markRailActive(size_t rail_id) {
+nixlLibfabricRailManager::incRailActive(size_t rail_id) {
     if (rail_id >= rails_.size()) {
-        NIXL_ERROR << "Invalid rail ID for markRailActive: " << rail_id;
+        NIXL_ERROR << "Invalid rail ID for incRailActive: " << rail_id;
         return;
     }
 
     std::lock_guard<std::mutex> lock(active_rails_mutex_);
-    bool was_inserted = active_rails_.insert(rail_id).second;
-
-    if (was_inserted) {
-        NIXL_DEBUG << "Marked rail " << rail_id
-                   << " as active (total active: " << active_rails_.size() << ")";
-    } else {
-        NIXL_TRACE << "Rail " << rail_id << " was already active";
-    }
+    active_rails_[rail_id]++;
+    NIXL_DEBUG << "incRailActive rail " << rail_id << " (refcount: " << active_rails_[rail_id]
+               << ", total active: " << active_rails_.size() << ")";
 }
 
 void
-nixlLibfabricRailManager::markRailInactive(size_t rail_id) {
+nixlLibfabricRailManager::decRailActive(size_t rail_id) {
     std::lock_guard<std::mutex> lock(active_rails_mutex_);
-    size_t erased = active_rails_.erase(rail_id);
-    if (erased > 0) {
-        NIXL_DEBUG << "Marked rail " << rail_id
-                   << " as inactive (total active: " << active_rails_.size() << ")";
+    auto it = active_rails_.find(rail_id);
+    if (it != active_rails_.end()) {
+        // The reference count is always non-zero under normal situation.
+        // Here is a defensive check, assuming a bug somewhere else set it to zero.
+        if (it->second > 0) {
+            it->second--;
+        }
+        if (it->second == 0) {
+            active_rails_.erase(it);
+            NIXL_DEBUG << "decRailActive rail " << rail_id
+                       << " now inactive (total active: " << active_rails_.size() << ")";
+        } else {
+            NIXL_DEBUG << "decRailActive rail " << rail_id << " (refcount: " << it->second << ")";
+        }
     } else {
         NIXL_TRACE << "Rail " << rail_id << " was not in active set";
     }

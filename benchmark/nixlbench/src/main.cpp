@@ -152,17 +152,19 @@ static int processBatchSizes(xferBenchWorker &worker,
     return 0;
 }
 
-static std::unique_ptr<xferBenchWorker> createWorker(int *argc, char ***argv) {
+namespace {
+std::unique_ptr<xferBenchWorker>
+createWorker() {
     if (xferBenchConfig::worker_type == "nixl") {
         std::vector<std::string> devices = xferBenchConfig::parseDeviceList();
         if (devices.empty()) {
             std::cerr << "Failed to parse device list" << std::endl;
             return nullptr;
         }
-        return std::make_unique<xferBenchNixlWorker>(argc, argv, devices);
+        return std::make_unique<xferBenchNixlWorker>(devices);
     } else if (xferBenchConfig::worker_type == "nvshmem") {
 #if HAVE_NVSHMEM && HAVE_CUDA
-        return std::make_unique<xferBenchNvshmemWorker>(argc, argv);
+        return std::make_unique<xferBenchNvshmemWorker>();
 #else
         std::cerr << "NVSHMEM worker requested but NVSHMEM or CUDA is not available" << std::endl;
         return nullptr;
@@ -172,6 +174,7 @@ static std::unique_ptr<xferBenchWorker> createWorker(int *argc, char ***argv) {
         return nullptr;
     }
 }
+} // namespace
 
 int main(int argc, char *argv[]) {
     int ret = xferBenchConfig::parseConfig(argc, argv);
@@ -182,12 +185,13 @@ int main(int argc, char *argv[]) {
     int num_threads = xferBenchConfig::num_threads;
 
     // Create the appropriate worker based on worker configuration
-    std::unique_ptr<xferBenchWorker> worker_ptr = createWorker(&argc, &argv);
+    std::unique_ptr<xferBenchWorker> worker_ptr = createWorker();
     if (!worker_ptr) {
         return EXIT_FAILURE;
     }
 
     std::signal(SIGINT, worker_ptr->signalHandler);
+    std::signal(SIGTERM, worker_ptr->signalHandler);
 
     // Ensure all processes are ready before exchanging metadata
     ret = worker_ptr->synchronizeStart();

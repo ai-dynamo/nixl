@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,8 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <algorithm>
+#include <chrono>
 #include <random>
 
 #include "common.h"
@@ -69,7 +71,11 @@ namespace agent {
 
     public:
         agentHelper(const std::string &name)
-            : agent_(std::make_unique<nixlAgent>(name, nixlAgentConfig(true))) {}
+            : agent_([&name]() {
+                  nixlAgentConfig cfg;
+                  cfg.useProgThread = true;
+                  return std::make_unique<nixlAgent>(name, cfg);
+              }()) {}
 
         ~agentHelper() {
             /* We must release nixlAgent first (i.e. explicitly in the destructor), as it calls
@@ -223,6 +229,70 @@ namespace agent {
         EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
     }
 
+    TEST_F(singleAgentSessionFixture, RegisterDeregisterMemRepeatedTest) {
+        constexpr int kWarmupIters = 3;
+        constexpr int kTimedIters = 64;
+        constexpr size_t kPoolSize = 128;
+
+        using clock = std::chrono::steady_clock;
+        using time_span = std::chrono::nanoseconds;
+
+        nixl_opt_args_t extra_params;
+        nixl_b_params_t params;
+        nixlBackendH *backend;
+
+        EXPECT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+        extra_params.backends.push_back(backend);
+
+        std::vector<std::unique_ptr<blob>> pool;
+        pool.resize(kPoolSize);
+        for (auto &p : pool) {
+            p = std::make_unique<blob>();
+        }
+
+        // Each round: registerMem once per pool entry, then deregisterMem once per entry.
+        auto run_batch = [&](int rounds = 1) {
+            for (int r = 0; r < rounds; ++r) {
+                for (auto &bp : pool) {
+                    nixl_reg_dlist_t reg_dlist{DRAM_SEG};
+                    reg_dlist.addDesc(bp->getDesc());
+                    EXPECT_EQ(agent_->registerMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+                }
+                for (auto &bp : pool) {
+                    nixl_reg_dlist_t reg_dlist{DRAM_SEG};
+                    reg_dlist.addDesc(bp->getDesc());
+                    EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+                }
+            }
+        };
+
+        // Warmup
+        run_batch(kWarmupIters);
+
+        // First measurement
+        auto start = clock::now();
+        run_batch();
+        const int64_t timed1_ns =
+            std::chrono::duration_cast<time_span>(clock::now() - start).count();
+
+        // Many cycles
+        run_batch(kTimedIters);
+
+        // Second measurement
+        start = clock::now();
+        run_batch();
+        const int64_t timed2_ns =
+            std::chrono::duration_cast<time_span>(clock::now() - start).count();
+
+        ASSERT_GT(timed1_ns, 0);
+        ASSERT_GT(timed2_ns, 0);
+        const double ratio = static_cast<double>(std::max(timed1_ns, timed2_ns)) /
+            static_cast<double>(std::min(timed1_ns, timed2_ns));
+        EXPECT_LE(ratio, 2.) << "timed batches differ by more than 100% "
+                                "(ns1="
+                             << timed1_ns << " ns2=" << timed2_ns << " ratio=" << ratio << ")";
+    }
+
     INSTANTIATE_TEST_SUITE_P(DramRegisterMemoryInstantiation,
                              singleAgentWithMemParamFixture,
                              testing::Values(DRAM_SEG));
@@ -302,8 +372,7 @@ namespace agent {
         remote_xfer_dlist.addDesc(remote_blob.getDesc());
 
         nixlXferReqH *xfer_req;
-        local_extra_params.notifMsg = msg;
-        local_extra_params.hasNotif = true;
+        local_extra_params.notif = msg;
         EXPECT_EQ(local_agent_->createXferReq(NIXL_WRITE,
                                               local_xfer_dlist,
                                               remote_xfer_dlist,
@@ -357,8 +426,7 @@ namespace agent {
         remote_xfer_dlist.addDesc(remote_blob.getDesc());
 
         nixlDlistH *desc_hndl1, *desc_hndl2;
-        EXPECT_EQ(local_agent_->prepXferDlist(NIXL_INIT_AGENT, local_xfer_dlist, desc_hndl1),
-                  NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->prepXferDlist(local_xfer_dlist, desc_hndl1), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->prepXferDlist(remote_agent_name_out, remote_xfer_dlist, desc_hndl2),
                   NIXL_SUCCESS);
 
@@ -367,8 +435,7 @@ namespace agent {
             indices.push_back(i);
 
         nixlXferReqH *xfer_req;
-        local_extra_params.notifMsg = msg;
-        local_extra_params.hasNotif = true;
+        local_extra_params.notif = msg;
         EXPECT_EQ(local_agent_->makeXferReq(NIXL_WRITE,
                                             desc_hndl1,
                                             indices,
