@@ -10,7 +10,7 @@ AllowAllParametersOfDeclarationOnNextLine: false
 AllowShortBlocksOnASingleLine: Empty
 AllowShortCaseLabelsOnASingleLine: false
 AllowShortFunctionsOnASingleLine: Empty
-AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
 AlwaysBreakAfterReturnType: All
 AlwaysBreakBeforeMultilineStrings: false
@@ -46,6 +46,7 @@ DerivePointerAlignment: false
 IndentCaseLabels: false
 IndentPPDirectives: None
 IndentWidth: 4
+InsertBraces: true
 IndentWrappedFunctionNames: false
 MaxEmptyLinesToKeep: 2
 NamespaceIndentation: Inner
