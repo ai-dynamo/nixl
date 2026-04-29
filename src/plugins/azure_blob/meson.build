@@ -43,7 +43,6 @@ if 'AZURE_BLOB' in static_plugins
         'AZURE_BLOB',
         azure_sources,
         dependencies: azure_deps,
-        cpp_args: compile_defs + compile_flags,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: false,
         name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
@@ -52,7 +51,7 @@ else
         'AZURE_BLOB',
         azure_sources,
         dependencies: azure_deps,
-        cpp_args: compile_defs + ['-fPIC'],
+        cpp_args: ['-fPIC'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
         name_prefix: 'libplugin_',  # Custom prefix for plugin libraries

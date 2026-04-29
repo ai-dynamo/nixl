@@ -16,7 +16,7 @@
 cpp = meson.get_compiler('cpp')
 mooncake_lib = cpp.find_library('transfer_engine')
 
-compile_flags = []
+mooncake_compile_flags = []
 
 mooncake_plugin_deps = [nixl_infra, nixl_common_dep, serdes_interface, mooncake_lib]
 
@@ -26,7 +26,7 @@ if 'MOONCAKE' in static_plugins
                dependencies: mooncake_plugin_deps,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: false,
-               cpp_args : compile_flags,
+               cpp_args : mooncake_compile_flags,
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
     mooncake_backend_lib = shared_library('MOONCAKE',
@@ -34,7 +34,7 @@ else
                dependencies: mooncake_plugin_deps,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
-               cpp_args : compile_flags + ['-fPIC'],
+               cpp_args : mooncake_compile_flags + ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                install_dir: plugin_install_dir,
                install_rpath: '$ORIGIN/..')
