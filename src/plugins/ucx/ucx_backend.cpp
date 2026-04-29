@@ -1307,16 +1307,15 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
         return handle_status;
     }
 
-    if (handle_status != NIXL_SUCCESS) {
-        int_handle->notif.reset();
-        return handle_status;
-    }
-
     const nixlUcxBackendReqH::Notif notif(std::move(int_handle->notif).value());
     int_handle->notif.reset();
 
+    if (__builtin_expect(handle_status != NIXL_SUCCESS, 0)) {
+        return handle_status;
+    }
+
     const ucx_connection_ptr_t conn = getConnection(notif.agent);
-    if (!conn) {
+    if (__builtin_expect(!conn, 0)) {
         return NIXL_ERR_NOT_FOUND;
     }
 
