@@ -73,9 +73,8 @@ statusStr(const nixl_status_t &status) {
         return "NIXL_ERR_CANCELED";
     case NIXL_ERR_NO_TELEMETRY:
         return "NIXL_ERR_NO_TELEMETRY";
-    default:
-        return "BAD_STATUS";
     }
+    return "BAD_STATUS";
 }
 
 } // namespace nixlEnumStrings
