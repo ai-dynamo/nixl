@@ -198,6 +198,11 @@ public:
     genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
     nixl_status_t
+    createDeviceProxyBackendAdapter(
+        const nixlBackendInitParams &init_params,
+        std::unique_ptr<nixlDeviceProxyBackendAdapter> &adapter) override;
+
+    nixl_status_t
     prepMemView(const nixl_remote_meta_dlist_t &,
                 nixlMemViewH &,
                 const nixl_opt_b_args_t * = nullptr) const override;

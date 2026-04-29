@@ -16,6 +16,7 @@
  */
 
 #include "ucx_backend.h"
+#include "device_proxy/ucx_proxy_backend.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/backend.h"
@@ -1429,6 +1430,14 @@ nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)
         return NIXL_SUCCESS;
     }
     return ret;
+}
+
+nixl_status_t 
+nixlUcxEngine::createDeviceProxyBackendAdapter(
+    const nixlBackendInitParams &init_params,
+    std::unique_ptr<nixlDeviceProxyBackendAdapter> &adapter) {
+    adapter = std::make_unique<nixlUcxProxyBackendAdapter>(this, init_params.enableProgTh);
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
