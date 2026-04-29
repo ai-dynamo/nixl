@@ -100,6 +100,7 @@ endif
 # Check for liburing
 has_io_uring = false
 io_uring_dep = dependency('liburing', required: false,
+                          fallback: ['liburing'],
                           default_options: ['default_library=shared'])
 if io_uring_dep.found()
   if io_uring_dep.type_name() == 'internal'
