@@ -773,6 +773,13 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
         return ret;
     }
 
+    if (hasProxyRuntime() && (proxyTransportEngine == eng)) {
+        const nixl_status_t proxy_ret = proxyRuntime->loadRemoteConnInfo(remote_name, conn_info);
+        if ((proxy_ret != NIXL_SUCCESS) && (proxy_ret != NIXL_ERR_NOT_SUPPORTED)) {
+            return proxy_ret;
+        }
+    }
+
     remoteBackends_[remote_name].emplace(backend, conn_info);
     return NIXL_SUCCESS;
 }
