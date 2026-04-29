@@ -45,16 +45,18 @@ if cuda_dep.found()
 endif
 
 plugins_gtest_sources = ['../main.cpp', '../common.cpp', 'obj_plugin.cpp']
+plugins_gtest_obj_deps = []
 if cuobj_dep.found()
     plugins_gtest_sources += 'obj_cuobj_plugin.cpp'
+    plugins_gtest_obj_deps = [obj_utils_interface, cuobj_dep]
 endif
 
 plugins_test_exe = executable('plugins_gtest',
     sources : plugins_gtest_sources,
     include_directories: [nixl_inc_dirs, utils_inc_dirs, plugins_inc_dirs, '.'],
     cpp_args : plugins_gtest_cpp_flags,
-    dependencies : [nixl_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, plugin_deps,
-                    obj_backend_interface] + plugins_gtest_cuda_deps,
+    dependencies : [nixl_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep,
+                    obj_backend_interface] + plugins_gtest_obj_deps + plugins_gtest_cuda_deps,
     link_with: [nixl_build_lib],
     install : true
 )
