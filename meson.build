@@ -99,15 +99,21 @@ endif
 
 # Check for liburing
 has_io_uring = false
-io_uring_dep = dependency('liburing', required: false,
-                          fallback: ['liburing', 'liburing_dep'],
+io_uring_dep = dependency('liburing', fallback: ['liburing'],
                           default_options: ['default_library=shared, follow_symlinks=true'])
 if io_uring_dep.found()
-  # Use has_header_symbol instead of has_function so the check works for both
-  # system-installed and subproject (internal) liburing — has_header_symbol only
-  # needs headers (no linking), so it succeeds even before the subproject is compiled.
-  has_io_uring = cpp.has_header_symbol('liburing.h', 'io_uring_queue_init_params',
-                                       dependencies: [io_uring_dep])
+  if io_uring_dep.type_name() == 'internal'
+    # Internal (subproject) deps cannot be passed to compiler checks in meson
+    # < 1.5.  Retrieve the include dirs from the already-configured subproject
+    # and probe the header directly.
+    liburing_subproj = subproject('liburing')
+    has_io_uring = cpp.has_header_symbol('liburing.h', 'io_uring_queue_init_params',
+                                         include_directories: liburing_subproj.get_variable('inc'))
+  else
+    has_io_uring = cpp.has_function('io_uring_queue_init_params',
+                                    prefix: '#include <liburing.h>',
+                                    dependencies: [io_uring_dep])
+  endif
 endif
 
 # Check for POSIX aio
