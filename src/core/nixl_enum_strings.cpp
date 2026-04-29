@@ -24,22 +24,30 @@ namespace nixlEnumStrings {
 
 std::string
 memTypeStr(const nixl_mem_t &mem) {
-    static const std::array strings = {"DRAM_SEG", "VRAM_SEG", "BLK_SEG", "OBJ_SEG", "FILE_SEG"};
-
-    if ((mem < 0) || (mem >= strings.size())) {
-        return "BAD_SEG";
+    switch (mem) {
+    case DRAM_SEG:
+        return "DRAM_SEG";
+    case VRAM_SEG:
+        return "VRAM_SEG";
+    case BLK_SEG:
+        return "BLK_SEG";
+    case OBJ_SEG:
+        return "OBJ_SEG";
+    case FILE_SEG:
+        return "FILE_SEG";
     }
-    return strings[mem];
+    return "BAD_SEG";
 }
 
 std::string
 xferOpStr(const nixl_xfer_op_t &op) {
-    static const std::array strings = {"READ", "WRITE"};
-
-    if ((op < 0) || (op >= strings.size())) {
-        return "BAD_OP";
+    switch (op) {
+    case NIXL_READ:
+        return "READ";
+    case NIXL_WRITE:
+        return "WRITE";
     }
-    return strings[op];
+    return "BAD_OP";
 }
 
 std::string
