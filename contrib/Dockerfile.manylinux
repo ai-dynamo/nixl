@@ -116,6 +116,7 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
     make install && \
     ldconfig
 
+ARG GRPC_NPROC
 RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
     mkdir -p cmake/build && \
@@ -134,7 +135,7 @@ RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules
     -DgRPC_ABSL_PROVIDER=package \
     -DgRPC_PROTOBUF_PROVIDER=module \
     -DgRPC_ZLIB_PROVIDER=package ../.. && \
-    make -j10 && \
+    make -j${GRPC_NPROC:-$(nproc)} && \
     make install && \
     ldconfig
 
