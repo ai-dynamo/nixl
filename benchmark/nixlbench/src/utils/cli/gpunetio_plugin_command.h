@@ -22,8 +22,8 @@ public:
 private:
     GpuNetIoPluginRequest request_;
     std::vector<CliOption> options_{
-        CliOption::option("gpunetio_device_list", "GPUNetIO device list", &request_.gpunetio_device_list, false, &request_.gpunetio_device_list_provided),
-        CliOption::option("gpunetio_oob_list", "GPUNetIO OOB list", &request_.gpunetio_oob_list, false, &request_.gpunetio_oob_list_provided),
+        CliOption::option("gpunetio_device_list", "GPUNetIO device list", &request_.gpunetio_device_list),
+        CliOption::option("gpunetio_oob_list", "GPUNetIO OOB list", &request_.gpunetio_oob_list),
     };
 };
 

@@ -44,8 +44,45 @@ CliOption::option(std::string name,
 }
 
 CliOption
+CliOption::option(std::string name,
+                  std::string help,
+                  Provided<bool> *target,
+                  bool required) {
+    return option(std::move(name), std::move(help), target->valuePtr(), required, target->providedPtr());
+}
+
+CliOption
+CliOption::option(std::string name,
+                  std::string help,
+                  Provided<int> *target,
+                  bool required) {
+    return option(std::move(name), std::move(help), target->valuePtr(), required, target->providedPtr());
+}
+
+CliOption
+CliOption::option(std::string name,
+                  std::string help,
+                  Provided<uint64_t> *target,
+                  bool required) {
+    return option(std::move(name), std::move(help), target->valuePtr(), required, target->providedPtr());
+}
+
+CliOption
+CliOption::option(std::string name,
+                  std::string help,
+                  Provided<std::string> *target,
+                  bool required) {
+    return option(std::move(name), std::move(help), target->valuePtr(), required, target->providedPtr());
+}
+
+CliOption
 CliOption::flag(std::string name, std::string help, bool *target, bool *provided) {
     return {std::move(name), std::move(help), OptionKind::Flag, target, false, provided};
+}
+
+CliOption
+CliOption::flag(std::string name, std::string help, Provided<bool> *target) {
+    return flag(std::move(name), std::move(help), target->valuePtr(), target->providedPtr());
 }
 
 } // namespace nixlbench

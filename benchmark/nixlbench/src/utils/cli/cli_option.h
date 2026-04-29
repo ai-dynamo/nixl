@@ -10,6 +10,8 @@
 #include <string>
 #include <variant>
 
+#include "utils/cli/benchmark_requests.h"
+
 namespace nixlbench {
 
 enum class OptionKind {
@@ -52,7 +54,29 @@ struct CliOption {
            bool required = false,
            bool *provided = nullptr);
     static CliOption
+    option(std::string name,
+           std::string help,
+           Provided<bool> *target,
+           bool required = false);
+    static CliOption
+    option(std::string name,
+           std::string help,
+           Provided<int> *target,
+           bool required = false);
+    static CliOption
+    option(std::string name,
+           std::string help,
+           Provided<uint64_t> *target,
+           bool required = false);
+    static CliOption
+    option(std::string name,
+           std::string help,
+           Provided<std::string> *target,
+           bool required = false);
+    static CliOption
     flag(std::string name, std::string help, bool *target, bool *provided = nullptr);
+    static CliOption
+    flag(std::string name, std::string help, Provided<bool> *target);
 };
 
 } // namespace nixlbench

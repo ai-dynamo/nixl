@@ -71,13 +71,14 @@ T getTomlValue(const toml::table *tbl, const char *name, const T &fallback) {
 }
 
 template <typename T>
-void resolveRawArg(RawRequest &raw, const toml::table *tbl, const char *name, T RawRequest::*value, bool RawRequest::*provided) {
-    if (!(raw.*provided)) {
-        raw.*value = getTomlValue(tbl, name, raw.*value);
+void resolveRawArg(RawRequest &raw, const toml::table *tbl, const char *name, Provided<T> RawRequest::*field) {
+    auto &arg = raw.*field;
+    if (!arg.wasProvided()) {
+        arg.value = getTomlValue(tbl, name, arg.value);
     }
 }
 
-#define RESOLVE_RAW_ARG(name) resolveRawArg(raw, tbl, #name, &RawRequest::name, &RawRequest::name##_provided)
+#define RESOLVE_RAW_ARG(name) resolveRawArg(raw, tbl, #name, &RawRequest::name)
 
 void resolveConfigValues(RawRequest &raw, const toml::table *tbl) {
     RESOLVE_RAW_ARG(benchmark_group);
@@ -147,214 +148,168 @@ void resolveConfigValues(RawRequest &raw, const toml::table *tbl) {
 
 template <typename StoragePluginRequest>
 void applyStoragePluginOptions(RawRequest &raw, const StoragePluginRequest &plugin) {
-    if (plugin.filepath_provided) {
-        raw.filepath = plugin.filepath;
-        raw.filepath_provided = true;
+    if (plugin.filepath.wasProvided()) {
+        raw.filepath.setProvided(plugin.filepath.value);
     }
-    if (plugin.filenames_provided) {
-        raw.filenames = plugin.filenames;
-        raw.filenames_provided = true;
+    if (plugin.filenames.wasProvided()) {
+        raw.filenames.setProvided(plugin.filenames.value);
     }
-    if (plugin.num_files_provided) {
-        raw.num_files = plugin.num_files;
-        raw.num_files_provided = true;
+    if (plugin.num_files.wasProvided()) {
+        raw.num_files.setProvided(plugin.num_files.value);
     }
-    if (plugin.storage_enable_direct_provided) {
-        raw.storage_enable_direct = plugin.storage_enable_direct;
-        raw.storage_enable_direct_provided = true;
+    if (plugin.storage_enable_direct.wasProvided()) {
+        raw.storage_enable_direct.setProvided(plugin.storage_enable_direct.value);
     }
 }
 
 void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand &plugin) {
     if (plugin.pluginType() == PluginType::Posix) {
         const auto &posix = static_cast<const PosixPluginCommand &>(plugin).request();
-        raw.backend = kBackendPosix;
-        raw.backend_provided = true;
+        raw.backend.setProvided(kBackendPosix);
         applyStoragePluginOptions(raw, posix);
-        if (posix.posix_api_type_provided) {
-            raw.posix_api_type = posix.posix_api_type;
-            raw.posix_api_type_provided = true;
+        if (posix.posix_api_type.wasProvided()) {
+            raw.posix_api_type.setProvided(posix.posix_api_type.value);
         }
-        if (posix.posix_ios_pool_size_provided) {
-            raw.posix_ios_pool_size = posix.posix_ios_pool_size;
-            raw.posix_ios_pool_size_provided = true;
+        if (posix.posix_ios_pool_size.wasProvided()) {
+            raw.posix_ios_pool_size.setProvided(posix.posix_ios_pool_size.value);
         }
-        if (posix.posix_kernel_queue_size_provided) {
-            raw.posix_kernel_queue_size = posix.posix_kernel_queue_size;
-            raw.posix_kernel_queue_size_provided = true;
+        if (posix.posix_kernel_queue_size.wasProvided()) {
+            raw.posix_kernel_queue_size.setProvided(posix.posix_kernel_queue_size.value);
         }
-        if (posix.api_type_provided) {
-            raw.posix_api_type = posix.api_type;
-            raw.posix_api_type_provided = true;
+        if (posix.api_type.wasProvided()) {
+            raw.posix_api_type.setProvided(posix.api_type.value);
         }
-        if (posix.enable_direct_provided) {
-            raw.storage_enable_direct = posix.enable_direct;
-            raw.storage_enable_direct_provided = true;
+        if (posix.enable_direct.wasProvided()) {
+            raw.storage_enable_direct.setProvided(posix.enable_direct.value);
         }
     } else if (plugin.pluginType() == PluginType::Obj) {
         const auto &obj = static_cast<const ObjPluginCommand &>(plugin).request();
-        raw.backend = kBackendObj;
-        raw.backend_provided = true;
-        if (obj.obj_access_key_provided) {
-            raw.obj_access_key = obj.obj_access_key;
-            raw.obj_access_key_provided = true;
+        raw.backend.setProvided(kBackendObj);
+        if (obj.obj_access_key.wasProvided()) {
+            raw.obj_access_key.setProvided(obj.obj_access_key.value);
         }
-        if (obj.obj_secret_key_provided) {
-            raw.obj_secret_key = obj.obj_secret_key;
-            raw.obj_secret_key_provided = true;
+        if (obj.obj_secret_key.wasProvided()) {
+            raw.obj_secret_key.setProvided(obj.obj_secret_key.value);
         }
-        if (obj.obj_session_token_provided) {
-            raw.obj_session_token = obj.obj_session_token;
-            raw.obj_session_token_provided = true;
+        if (obj.obj_session_token.wasProvided()) {
+            raw.obj_session_token.setProvided(obj.obj_session_token.value);
         }
-        if (obj.obj_bucket_name_provided) {
-            raw.obj_bucket_name = obj.obj_bucket_name;
-            raw.obj_bucket_name_provided = true;
+        if (obj.obj_bucket_name.wasProvided()) {
+            raw.obj_bucket_name.setProvided(obj.obj_bucket_name.value);
         }
         if (!obj.bucket_name.empty()) {
-            raw.obj_bucket_name = obj.bucket_name;
-            raw.obj_bucket_name_provided = true;
+            raw.obj_bucket_name.setProvided(obj.bucket_name);
         }
-        if (obj.obj_scheme_provided) {
-            raw.obj_scheme = obj.obj_scheme;
-            raw.obj_scheme_provided = true;
+        if (obj.obj_scheme.wasProvided()) {
+            raw.obj_scheme.setProvided(obj.obj_scheme.value);
         }
-        if (obj.obj_region_provided) {
-            raw.obj_region = obj.obj_region;
-            raw.obj_region_provided = true;
+        if (obj.obj_region.wasProvided()) {
+            raw.obj_region.setProvided(obj.obj_region.value);
         }
-        if (obj.obj_use_virtual_addressing_provided) {
-            raw.obj_use_virtual_addressing = obj.obj_use_virtual_addressing;
-            raw.obj_use_virtual_addressing_provided = true;
+        if (obj.obj_use_virtual_addressing.wasProvided()) {
+            raw.obj_use_virtual_addressing.setProvided(obj.obj_use_virtual_addressing.value);
         }
-        if (obj.obj_endpoint_override_provided) {
-            raw.obj_endpoint_override = obj.obj_endpoint_override;
-            raw.obj_endpoint_override_provided = true;
+        if (obj.obj_endpoint_override.wasProvided()) {
+            raw.obj_endpoint_override.setProvided(obj.obj_endpoint_override.value);
         }
         if (!obj.endpoint_url.empty()) {
-            raw.obj_endpoint_override = obj.endpoint_url;
-            raw.obj_endpoint_override_provided = true;
+            raw.obj_endpoint_override.setProvided(obj.endpoint_url);
         }
-        if (obj.obj_req_checksum_provided) {
-            raw.obj_req_checksum = obj.obj_req_checksum;
-            raw.obj_req_checksum_provided = true;
+        if (obj.obj_req_checksum.wasProvided()) {
+            raw.obj_req_checksum.setProvided(obj.obj_req_checksum.value);
         }
-        if (obj.obj_ca_bundle_provided) {
-            raw.obj_ca_bundle = obj.obj_ca_bundle;
-            raw.obj_ca_bundle_provided = true;
+        if (obj.obj_ca_bundle.wasProvided()) {
+            raw.obj_ca_bundle.setProvided(obj.obj_ca_bundle.value);
         }
-        if (obj.obj_crt_min_limit_provided) {
-            raw.obj_crt_min_limit = obj.obj_crt_min_limit;
-            raw.obj_crt_min_limit_provided = true;
+        if (obj.obj_crt_min_limit.wasProvided()) {
+            raw.obj_crt_min_limit.setProvided(obj.obj_crt_min_limit.value);
         }
-        if (obj.obj_accelerated_enable_provided) {
-            raw.obj_accelerated_enable = obj.obj_accelerated_enable;
-            raw.obj_accelerated_enable_provided = true;
+        if (obj.obj_accelerated_enable.wasProvided()) {
+            raw.obj_accelerated_enable.setProvided(obj.obj_accelerated_enable.value);
         }
-        if (obj.obj_accelerated_type_provided) {
-            raw.obj_accelerated_type = obj.obj_accelerated_type;
-            raw.obj_accelerated_type_provided = true;
+        if (obj.obj_accelerated_type.wasProvided()) {
+            raw.obj_accelerated_type.setProvided(obj.obj_accelerated_type.value);
         }
     }
 #ifdef WITH_GDS_PLUGIN
     else if (plugin.pluginType() == PluginType::Gds) {
         const auto &gds = static_cast<const GdsPluginCommand &>(plugin).request();
-        raw.backend = kBackendGds;
-        raw.backend_provided = true;
+        raw.backend.setProvided(kBackendGds);
         applyStoragePluginOptions(raw, gds);
-        if (gds.gds_batch_pool_size_provided) {
-            raw.gds_batch_pool_size = gds.gds_batch_pool_size;
-            raw.gds_batch_pool_size_provided = true;
+        if (gds.gds_batch_pool_size.wasProvided()) {
+            raw.gds_batch_pool_size.setProvided(gds.gds_batch_pool_size.value);
         }
-        if (gds.gds_batch_limit_provided) {
-            raw.gds_batch_limit = gds.gds_batch_limit;
-            raw.gds_batch_limit_provided = true;
+        if (gds.gds_batch_limit.wasProvided()) {
+            raw.gds_batch_limit.setProvided(gds.gds_batch_limit.value);
         }
     }
 #endif
 #ifdef WITH_GDS_MT_PLUGIN
     else if (plugin.pluginType() == PluginType::GdsMt) {
         const auto &gds_mt = static_cast<const GdsMtPluginCommand &>(plugin).request();
-        raw.backend = kBackendGdsMt;
-        raw.backend_provided = true;
+        raw.backend.setProvided(kBackendGdsMt);
         applyStoragePluginOptions(raw, gds_mt);
-        if (gds_mt.gds_mt_num_threads_provided) {
-            raw.gds_mt_num_threads = gds_mt.gds_mt_num_threads;
-            raw.gds_mt_num_threads_provided = true;
+        if (gds_mt.gds_mt_num_threads.wasProvided()) {
+            raw.gds_mt_num_threads.setProvided(gds_mt.gds_mt_num_threads.value);
         }
     }
 #endif
 #ifdef WITH_GPUNETIO_PLUGIN
     else if (plugin.pluginType() == PluginType::GpuNetIo) {
         const auto &gpunetio = static_cast<const GpuNetIoPluginCommand &>(plugin).request();
-        raw.backend = kBackendGpuNetIo;
-        raw.backend_provided = true;
-        if (gpunetio.gpunetio_device_list_provided) {
-            raw.gpunetio_device_list = gpunetio.gpunetio_device_list;
-            raw.gpunetio_device_list_provided = true;
+        raw.backend.setProvided(kBackendGpuNetIo);
+        if (gpunetio.gpunetio_device_list.wasProvided()) {
+            raw.gpunetio_device_list.setProvided(gpunetio.gpunetio_device_list.value);
         }
-        if (gpunetio.gpunetio_oob_list_provided) {
-            raw.gpunetio_oob_list = gpunetio.gpunetio_oob_list;
-            raw.gpunetio_oob_list_provided = true;
+        if (gpunetio.gpunetio_oob_list.wasProvided()) {
+            raw.gpunetio_oob_list.setProvided(gpunetio.gpunetio_oob_list.value);
         }
     }
 #endif
 #ifdef WITH_AZURE_BLOB_PLUGIN
     else if (plugin.pluginType() == PluginType::AzureBlob) {
         const auto &azure_blob = static_cast<const AzureBlobPluginCommand &>(plugin).request();
-        raw.backend = kBackendAzureBlob;
-        raw.backend_provided = true;
-        if (azure_blob.azure_blob_account_url_provided) {
-            raw.azure_blob_account_url = azure_blob.azure_blob_account_url;
-            raw.azure_blob_account_url_provided = true;
+        raw.backend.setProvided(kBackendAzureBlob);
+        if (azure_blob.azure_blob_account_url.wasProvided()) {
+            raw.azure_blob_account_url.setProvided(azure_blob.azure_blob_account_url.value);
         }
-        if (azure_blob.azure_blob_container_name_provided) {
-            raw.azure_blob_container_name = azure_blob.azure_blob_container_name;
-            raw.azure_blob_container_name_provided = true;
+        if (azure_blob.azure_blob_container_name.wasProvided()) {
+            raw.azure_blob_container_name.setProvided(azure_blob.azure_blob_container_name.value);
         }
-        if (azure_blob.azure_blob_connection_string_provided) {
-            raw.azure_blob_connection_string = azure_blob.azure_blob_connection_string;
-            raw.azure_blob_connection_string_provided = true;
+        if (azure_blob.azure_blob_connection_string.wasProvided()) {
+            raw.azure_blob_connection_string.setProvided(azure_blob.azure_blob_connection_string.value);
         }
     }
 #endif
 #ifdef WITH_HF3FS_PLUGIN
     else if (plugin.pluginType() == PluginType::Hf3fs) {
         const auto &hf3fs = static_cast<const Hf3fsPluginCommand &>(plugin).request();
-        raw.backend = kBackendHf3fs;
-        raw.backend_provided = true;
+        raw.backend.setProvided(kBackendHf3fs);
         applyStoragePluginOptions(raw, hf3fs);
-        if (hf3fs.hf3fs_iopool_size_provided) {
-            raw.hf3fs_iopool_size = hf3fs.hf3fs_iopool_size;
-            raw.hf3fs_iopool_size_provided = true;
+        if (hf3fs.hf3fs_iopool_size.wasProvided()) {
+            raw.hf3fs_iopool_size.setProvided(hf3fs.hf3fs_iopool_size.value);
         }
     }
 #endif
 #ifdef WITH_GUSLI_PLUGIN
     else if (plugin.pluginType() == PluginType::Gusli) {
         const auto &gusli = static_cast<const GusliPluginCommand &>(plugin).request();
-        raw.backend = kBackendGusli;
-        raw.backend_provided = true;
+        raw.backend.setProvided(kBackendGusli);
         applyStoragePluginOptions(raw, gusli);
-        if (gusli.gusli_client_name_provided) {
-            raw.gusli_client_name = gusli.gusli_client_name;
-            raw.gusli_client_name_provided = true;
+        if (gusli.gusli_client_name.wasProvided()) {
+            raw.gusli_client_name.setProvided(gusli.gusli_client_name.value);
         }
-        if (gusli.gusli_max_simultaneous_requests_provided) {
-            raw.gusli_max_simultaneous_requests = gusli.gusli_max_simultaneous_requests;
-            raw.gusli_max_simultaneous_requests_provided = true;
+        if (gusli.gusli_max_simultaneous_requests.wasProvided()) {
+            raw.gusli_max_simultaneous_requests.setProvided(gusli.gusli_max_simultaneous_requests.value);
         }
-        if (gusli.gusli_config_file_provided) {
-            raw.gusli_config_file = gusli.gusli_config_file;
-            raw.gusli_config_file_provided = true;
+        if (gusli.gusli_config_file.wasProvided()) {
+            raw.gusli_config_file.setProvided(gusli.gusli_config_file.value);
         }
-        if (gusli.gusli_device_byte_offsets_provided) {
-            raw.gusli_device_byte_offsets = gusli.gusli_device_byte_offsets;
-            raw.gusli_device_byte_offsets_provided = true;
+        if (gusli.gusli_device_byte_offsets.wasProvided()) {
+            raw.gusli_device_byte_offsets.setProvided(gusli.gusli_device_byte_offsets.value);
         }
-        if (gusli.gusli_device_security_provided) {
-            raw.gusli_device_security = gusli.gusli_device_security;
-            raw.gusli_device_security_provided = true;
+        if (gusli.gusli_device_security.wasProvided()) {
+            raw.gusli_device_security.setProvided(gusli.gusli_device_security.value);
         }
     }
 #endif
@@ -363,34 +318,34 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
 } // namespace
 
 RawCommand::RawCommand()
-    : options_{CliOption::option("config_file", "Config file", &request_.config_file, false, &request_.config_file_provided),
-               CliOption::option("benchmark_group", "Benchmark group", &request_.benchmark_group, false, &request_.benchmark_group_provided),
-               CliOption::option("runtime_type", "Runtime type", &request_.runtime_type, false, &request_.runtime_type_provided),
-               CliOption::option("worker_type", "Worker type", &request_.worker_type, false, &request_.worker_type_provided),
-               CliOption::option("backend", "NIXL backend", &request_.backend, false, &request_.backend_provided),
-               CliOption::option("initiator_seg_type", "Initiator segment type", &request_.initiator_seg_type, false, &request_.initiator_seg_type_provided),
-               CliOption::option("target_seg_type", "Target segment type", &request_.target_seg_type, false, &request_.target_seg_type_provided),
-               CliOption::option("scheme", "Transfer scheme", &request_.scheme, false, &request_.scheme_provided),
-               CliOption::option("mode", "Benchmark GPU mode", &request_.mode, false, &request_.mode_provided),
-               CliOption::option("op_type", "Operation type", &request_.op_type, false, &request_.op_type_provided),
-               CliOption::flag("check_consistency", "Enable consistency check", &request_.check_consistency, &request_.check_consistency_provided),
-               CliOption::option("total_buffer_size", "Total buffer size", &request_.total_buffer_size, false, &request_.total_buffer_size_provided),
-               CliOption::option("start_block_size", "Starting block size", &request_.start_block_size, false, &request_.start_block_size_provided),
-               CliOption::option("max_block_size", "Maximum block size", &request_.max_block_size, false, &request_.max_block_size_provided),
-               CliOption::option("start_batch_size", "Starting batch size", &request_.start_batch_size, false, &request_.start_batch_size_provided),
-               CliOption::option("max_batch_size", "Maximum batch size", &request_.max_batch_size, false, &request_.max_batch_size_provided),
-               CliOption::option("num_iter,num-iterations", "Benchmark iterations", &request_.num_iter, false, &request_.num_iter_provided),
-               CliOption::flag("recreate_xfer", "Recreate transfers each iteration", &request_.recreate_xfer, &request_.recreate_xfer_provided),
-               CliOption::option("large_blk_iter_ftr", "Large block iteration factor", &request_.large_blk_iter_ftr, false, &request_.large_blk_iter_ftr_provided),
-               CliOption::option("warmup_iter", "Warmup iterations", &request_.warmup_iter, false, &request_.warmup_iter_provided),
-               CliOption::option("num_threads", "Benchmark threads", &request_.num_threads, false, &request_.num_threads_provided),
-               CliOption::option("num_initiator_dev", "Initiator device count", &request_.num_initiator_dev, false, &request_.num_initiator_dev_provided),
-               CliOption::option("num_target_dev", "Target device count", &request_.num_target_dev, false, &request_.num_target_dev_provided),
-               CliOption::flag("enable_pt", "Enable progress thread", &request_.enable_pt, &request_.enable_pt_provided),
-               CliOption::option("progress_threads", "Progress thread count", &request_.progress_threads, false, &request_.progress_threads_provided),
-                CliOption::flag("enable_vmm", "Enable VMM allocation", &request_.enable_vmm, &request_.enable_vmm_provided),
-                CliOption::option("device_list", "Device list", &request_.device_list, false, &request_.device_list_provided),
-                CliOption::option("etcd_endpoints", "ETCD endpoints", &request_.etcd_endpoints, false, &request_.etcd_endpoints_provided)} {}
+    : options_{CliOption::option("config_file", "Config file", &request_.config_file),
+               CliOption::option("benchmark_group", "Benchmark group", &request_.benchmark_group),
+               CliOption::option("runtime_type", "Runtime type", &request_.runtime_type),
+               CliOption::option("worker_type", "Worker type", &request_.worker_type),
+               CliOption::option("backend", "NIXL backend", &request_.backend),
+               CliOption::option("initiator_seg_type", "Initiator segment type", &request_.initiator_seg_type),
+               CliOption::option("target_seg_type", "Target segment type", &request_.target_seg_type),
+               CliOption::option("scheme", "Transfer scheme", &request_.scheme),
+               CliOption::option("mode", "Benchmark GPU mode", &request_.mode),
+               CliOption::option("op_type", "Operation type", &request_.op_type),
+               CliOption::flag("check_consistency", "Enable consistency check", &request_.check_consistency),
+               CliOption::option("total_buffer_size", "Total buffer size", &request_.total_buffer_size),
+               CliOption::option("start_block_size", "Starting block size", &request_.start_block_size),
+               CliOption::option("max_block_size", "Maximum block size", &request_.max_block_size),
+               CliOption::option("start_batch_size", "Starting batch size", &request_.start_batch_size),
+               CliOption::option("max_batch_size", "Maximum batch size", &request_.max_batch_size),
+               CliOption::option("num_iter,num-iterations", "Benchmark iterations", &request_.num_iter),
+               CliOption::flag("recreate_xfer", "Recreate transfers each iteration", &request_.recreate_xfer),
+               CliOption::option("large_blk_iter_ftr", "Large block iteration factor", &request_.large_blk_iter_ftr),
+               CliOption::option("warmup_iter", "Warmup iterations", &request_.warmup_iter),
+               CliOption::option("num_threads", "Benchmark threads", &request_.num_threads),
+               CliOption::option("num_initiator_dev", "Initiator device count", &request_.num_initiator_dev),
+               CliOption::option("num_target_dev", "Target device count", &request_.num_target_dev),
+               CliOption::flag("enable_pt", "Enable progress thread", &request_.enable_pt),
+               CliOption::option("progress_threads", "Progress thread count", &request_.progress_threads),
+               CliOption::flag("enable_vmm", "Enable VMM allocation", &request_.enable_vmm),
+               CliOption::option("device_list", "Device list", &request_.device_list),
+               CliOption::option("etcd_endpoints", "ETCD endpoints", &request_.etcd_endpoints)} {}
 
 std::string_view RawCommand::name() const { return "raw"; }
 
@@ -410,13 +365,13 @@ bool RawCommand::finalizeRequest(const ISouthboundPluginBenchmarkCommand &plugin
     applyPluginOptions(request_, plugin);
 
     std::unique_ptr<toml::table> tbl;
-    if (!request_.config_file.empty()) {
+    if (!request_.config_file.value.empty()) {
         try {
-            tbl = std::make_unique<toml::table>(toml::parse_file(request_.config_file));
+            tbl = std::make_unique<toml::table>(toml::parse_file(request_.config_file.value));
         }
         catch (const toml::parse_error &err) {
             std::ostringstream oss;
-            oss << "Failed to load config file: " << request_.config_file << ": " << err.what();
+            oss << "Failed to load config file: " << request_.config_file.value << ": " << err.what();
             error = oss.str();
             return false;
         }

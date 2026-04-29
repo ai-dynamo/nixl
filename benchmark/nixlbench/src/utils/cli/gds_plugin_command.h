@@ -22,12 +22,12 @@ public:
 private:
     GdsPluginRequest request_;
     std::vector<CliOption> options_{
-        CliOption::option("filepath", "Storage file path", &request_.filepath, false, &request_.filepath_provided),
-        CliOption::option("filenames", "Storage filenames", &request_.filenames, false, &request_.filenames_provided),
-        CliOption::option("num_files", "Storage file count", &request_.num_files, false, &request_.num_files_provided),
-        CliOption::flag("storage_enable_direct", "Enable direct storage I/O", &request_.storage_enable_direct, &request_.storage_enable_direct_provided),
-        CliOption::option("gds_batch_pool_size", "GDS batch pool size", &request_.gds_batch_pool_size, false, &request_.gds_batch_pool_size_provided),
-        CliOption::option("gds_batch_limit", "GDS batch limit", &request_.gds_batch_limit, false, &request_.gds_batch_limit_provided),
+        CliOption::option("filepath", "Storage file path", &request_.filepath),
+        CliOption::option("filenames", "Storage filenames", &request_.filenames),
+        CliOption::option("num_files", "Storage file count", &request_.num_files),
+        CliOption::flag("storage_enable_direct", "Enable direct storage I/O", &request_.storage_enable_direct),
+        CliOption::option("gds_batch_pool_size", "GDS batch pool size", &request_.gds_batch_pool_size),
+        CliOption::option("gds_batch_limit", "GDS batch limit", &request_.gds_batch_limit),
     };
 };
 
