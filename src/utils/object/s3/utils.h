@@ -52,7 +52,21 @@ getBucketName(nixl_b_params_t *custom_params);
 
 /**
  * Template function to configure common client settings.
- * Works with both Aws::Client::ClientConfiguration and Aws::S3Crt::ClientConfiguration
+ * Works with both Aws::Client::ClientConfiguration and
+ * Aws::S3Crt::ClientConfiguration.
+ *
+ * Supported keys in @p custom_params:
+ *  - endpoint_override  S3 endpoint URL
+ *  - scheme             "http" or "https"
+ *  - region             AWS region string
+ *  - req_checksum       Request checksum calculation policy
+ *                       ("required" | "supported")
+ *  - resp_checksum      Response checksum validation policy
+ *                       ("required" | "supported")
+ *  - ca_bundle          Path to a CA certificate bundle
+ *
+ * @param config       Client configuration to populate.
+ * @param custom_params  Key-value map; may be nullptr.
  */
 template<typename ConfigType>
 void
@@ -88,6 +102,20 @@ configureClientCommon(ConfigType &config, nixl_b_params_t *custom_params) {
             throw std::runtime_error("Invalid value for req_checksum: '" + *opt +
                                      "'. Must be 'required' or 'supported'");
         }
+    }
+
+    auto resp_checksum_it = custom_params->find("resp_checksum");
+    if (resp_checksum_it != custom_params->end()) {
+        if (resp_checksum_it->second == "required")
+            config.checksumConfig.responseChecksumValidation =
+                Aws::Client::ResponseChecksumValidation::WHEN_REQUIRED;
+        else if (resp_checksum_it->second == "supported")
+            config.checksumConfig.responseChecksumValidation =
+                Aws::Client::ResponseChecksumValidation::WHEN_SUPPORTED;
+        else
+            throw std::runtime_error("Invalid value for resp_checksum: '" +
+                                     resp_checksum_it->second +
+                                     "'. Must be 'required' or 'supported'");
     }
 
     if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "ca_bundle")) {
