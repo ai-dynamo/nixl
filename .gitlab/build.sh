@@ -123,6 +123,7 @@ else
                                  libhwloc-dev \
                                  libxml2-dev \
                                  libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
+    $SUDO apt-mark hold liburing2 liburing-dev
 
     # Ubuntu 22.04 specific setup
     if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
@@ -294,6 +295,7 @@ else
       echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
       git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
+      sed -i '/liburing-dev/d' dependencies.sh
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
       cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
