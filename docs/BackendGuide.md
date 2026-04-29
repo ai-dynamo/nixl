@@ -44,7 +44,7 @@ For a backend to be compatible with NIXL, it must implement several key SB API m
 * Constructor: A key/value set of parameters alongside Agent name is passed to the backend.
 * Destructor: Release the remaining resources.
 
-The key/value parameters are a map of strings to byte arrays that are passed from the Agent. These can be whatever the backend needs as its initialization parameters. See the `get_backend_options` plugin API for more detail on how to specify these.
+The key/value parameters are a map of strings to byte arrays that are passed from the Agent. These can be whatever the backend needs as its initialization parameters. See the `get_backend_options` plugin API for more detail on how to specify these. The functions in `src/utils/common/backend.h` can be used to access the parameters and convert them to some commonly used types.
 
 ### Capability Indicators:
 
