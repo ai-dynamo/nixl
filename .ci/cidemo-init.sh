@@ -12,6 +12,7 @@ CI_FILES=(
 # YAML files containing CI_IMAGE_TAG
 BUILD_MATRIX_YAML=".ci/jenkins/lib/build-matrix.yaml"
 TEST_MATRIX_YAML=".ci/jenkins/lib/test-matrix.yaml"
+TEST_DL_MATRIX_YAML=".ci/jenkins/lib/test-dl-matrix.yaml"
 
 # Function to extract CI_IMAGE_TAG from a YAML file
 get_ci_image_tag() {
@@ -58,16 +59,20 @@ echo "CI files were modified. Checking if CI_IMAGE_TAG was increased..."
 # Get current and previous CI_IMAGE_TAG values
 current_build_image_tag=$(get_ci_image_tag "$BUILD_MATRIX_YAML" "")
 current_test_image_tag=$(get_ci_image_tag "$TEST_MATRIX_YAML" "")
+current_test_dl_image_tag=$(get_ci_image_tag "$TEST_DL_MATRIX_YAML" "")
 
 previous_build_image_tag=$(get_ci_image_tag "$BUILD_MATRIX_YAML" "HEAD~1")
 previous_test_image_tag=$(get_ci_image_tag "$TEST_MATRIX_YAML" "HEAD~1")
+previous_test_dl_image_tag=$(get_ci_image_tag "$TEST_DL_MATRIX_YAML" "HEAD~1")
 
-echo "Build Matrix CI_IMAGE_TAG: $previous_build_image_tag -> $current_build_image_tag"
-echo "Test Matrix CI_IMAGE_TAG:  $previous_test_image_tag -> $current_test_image_tag"
+echo "Build Matrix CI_IMAGE_TAG:    $previous_build_image_tag -> $current_build_image_tag"
+echo "Test Matrix CI_IMAGE_TAG:     $previous_test_image_tag -> $current_test_image_tag"
+echo "Test DL Matrix CI_IMAGE_TAG:  $previous_test_dl_image_tag -> $current_test_dl_image_tag"
 
-# Check if CI_IMAGE_TAG was changed in both files
+# Check if CI_IMAGE_TAG was changed in all files
 build_tag_changed=false
 test_tag_changed=false
+test_dl_tag_changed=false
 
 if [ "$current_build_image_tag" != "$previous_build_image_tag" ]; then
     echo "✓ CI_IMAGE_TAG in build-matrix.yaml was updated"
@@ -79,7 +84,12 @@ if [ "$current_test_image_tag" != "$previous_test_image_tag" ]; then
     test_tag_changed=true
 fi
 
-if [ "$build_tag_changed" = false ] || [ "$test_tag_changed" = false ]; then
+if [ "$current_test_dl_image_tag" != "$previous_test_dl_image_tag" ]; then
+    echo "✓ CI_IMAGE_TAG in test-dl-matrix.yaml was updated"
+    test_dl_tag_changed=true
+fi
+
+if [ "$build_tag_changed" = false ] || [ "$test_tag_changed" = false ] || [ "$test_dl_tag_changed" = false ]; then
     echo ""
     echo "❌ ERROR: You have changed CI files but forgot to increase CI_IMAGE_TAG!"
     echo ""
@@ -93,8 +103,9 @@ if [ "$build_tag_changed" = false ] || [ "$test_tag_changed" = false ]; then
     done
     echo ""
     echo "Please update CI_IMAGE_TAG in:"
-    echo "  - $BUILD_MATRIX_YAML (line 45)"
-    echo "  - $TEST_MATRIX_YAML (line 33)"
+    echo "  - $BUILD_MATRIX_YAML (line 46)"
+    echo "  - $TEST_MATRIX_YAML (line 53)"
+    echo "  - $TEST_DL_MATRIX_YAML (line 52)"
     echo ""
     exit 1
 fi
