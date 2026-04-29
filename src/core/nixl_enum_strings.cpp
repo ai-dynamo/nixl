@@ -17,7 +17,6 @@
 
 #include "nixl_types.h"
 
-#include <array>
 #include <string>
 
 namespace nixlEnumStrings {
