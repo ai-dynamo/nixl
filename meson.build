@@ -99,8 +99,8 @@ endif
 
 # Check for liburing
 has_io_uring = false
-io_uring_dep = dependency('liburing',
-                          default_options: ['default_library=shared, follow_symlinks=true'])
+io_uring_dep = dependency('liburing', required: false,
+                          default_options: ['default_library=shared'])
 if io_uring_dep.found()
   if io_uring_dep.type_name() == 'internal'
     # Internal (subproject) deps cannot be passed to compiler checks in meson

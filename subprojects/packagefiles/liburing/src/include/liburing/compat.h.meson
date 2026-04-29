@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: MIT */
+#ifndef LIBURING_COMPAT_H
+#define LIBURING_COMPAT_H
+@__kernel_rwf_t_compat@
+@__kernel_timespec_compat@
+@open_how_compat@
+@no_glibc_statx@
+@futexv_compat@
+@block_uring_cmd_discard_compat@
+#endif
