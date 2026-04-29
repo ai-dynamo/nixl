@@ -47,7 +47,7 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<GusliDeviceConfig> gusli_devices;
 
     public:
-        xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices);
+        xferBenchNixlWorker(std::vector<std::string> devices);
         ~xferBenchNixlWorker();  // Custom destructor to clean up resources
 
         // Memory management

@@ -31,7 +31,7 @@
         }                                                                       \
     } while(0)
 
-xferBenchNvshmemWorker::xferBenchNvshmemWorker(int *argc, char ***argv): xferBenchWorker(argc, argv) {
+xferBenchNvshmemWorker::xferBenchNvshmemWorker(): xferBenchWorker() {
     // Initialize NVSHMEM
     if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
 	    rank = rt->getRank();

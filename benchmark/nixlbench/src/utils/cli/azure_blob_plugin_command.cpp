@@ -16,7 +16,7 @@ const std::vector<CliOption> &AzureBlobPluginCommand::getOptions() const { retur
 
 PluginType AzureBlobPluginCommand::pluginType() const { return PluginType::AzureBlob; }
 
-bool AzureBlobPluginCommand::supportsScenario(ScenarioType) const { return false; }
+bool AzureBlobPluginCommand::supportsScenario(ScenarioType scenario) const { return scenario == ScenarioType::Raw; }
 
 const AzureBlobPluginRequest &AzureBlobPluginCommand::request() const { return request_; }
 

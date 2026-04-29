@@ -116,7 +116,7 @@ int xferBenchWorker::synchronize() {
     return 0;
 }
 
-xferBenchWorker::xferBenchWorker(int *argc, char ***argv) {
+xferBenchWorker::xferBenchWorker() {
     terminate = 0;
 
     rt = createRT(&terminate);

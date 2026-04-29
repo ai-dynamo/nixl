@@ -32,7 +32,7 @@ class xferBenchWorker {
         static int terminate;
 
     public:
-        xferBenchWorker(int *argc, char ***argv);
+        xferBenchWorker();
         virtual ~xferBenchWorker();
 
         std::string getName() const;

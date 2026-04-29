@@ -7,6 +7,7 @@
 
 #include "utils/cli/obj_plugin_command.h"
 #include "utils/cli/posix_plugin_command.h"
+#include "utils/cli/raw_execution.h"
 
 #ifdef WITH_GDS_PLUGIN
 #include "utils/cli/gds_plugin_command.h"
@@ -30,6 +31,7 @@
 #include <toml++/toml.hpp>
 
 #include <exception>
+#include <cctype>
 #include <memory>
 #include <sstream>
 
@@ -359,7 +361,7 @@ ScenarioType RawCommand::scenarioType() const { return ScenarioType::Raw; }
 
 bool RawCommand::supportsPlugin(PluginType plugin) const { return plugin != PluginType::None; }
 
-int RawCommand::run(ISouthboundPluginBenchmarkCommand &) { return 0; }
+int RawCommand::run(ISouthboundPluginBenchmarkCommand &) { return runRawRequest(request_); }
 
 bool RawCommand::finalizeRequest(const ISouthboundPluginBenchmarkCommand &plugin, std::string &error) {
     applyPluginOptions(request_, plugin);

@@ -33,7 +33,7 @@ const std::vector<CliOption> &PosixPluginCommand::getOptions() const { return op
 PluginType PosixPluginCommand::pluginType() const { return PluginType::Posix; }
 
 bool PosixPluginCommand::supportsScenario(ScenarioType scenario) const {
-    return scenario == ScenarioType::G3 || scenario == ScenarioType::G4;
+    return scenario == ScenarioType::Raw || scenario == ScenarioType::G3 || scenario == ScenarioType::G4;
 }
 
 const PosixPluginRequest &PosixPluginCommand::request() const { return request_; }

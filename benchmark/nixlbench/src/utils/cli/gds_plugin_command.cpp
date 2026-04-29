@@ -16,7 +16,7 @@ const std::vector<CliOption> &GdsPluginCommand::getOptions() const { return opti
 
 PluginType GdsPluginCommand::pluginType() const { return PluginType::Gds; }
 
-bool GdsPluginCommand::supportsScenario(ScenarioType) const { return false; }
+bool GdsPluginCommand::supportsScenario(ScenarioType scenario) const { return scenario == ScenarioType::Raw; }
 
 const GdsPluginRequest &GdsPluginCommand::request() const { return request_; }
 

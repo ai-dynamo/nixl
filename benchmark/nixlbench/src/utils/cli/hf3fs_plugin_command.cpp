@@ -16,7 +16,7 @@ const std::vector<CliOption> &Hf3fsPluginCommand::getOptions() const { return op
 
 PluginType Hf3fsPluginCommand::pluginType() const { return PluginType::Hf3fs; }
 
-bool Hf3fsPluginCommand::supportsScenario(ScenarioType) const { return false; }
+bool Hf3fsPluginCommand::supportsScenario(ScenarioType scenario) const { return scenario == ScenarioType::Raw; }
 
 const Hf3fsPluginRequest &Hf3fsPluginCommand::request() const { return request_; }
 

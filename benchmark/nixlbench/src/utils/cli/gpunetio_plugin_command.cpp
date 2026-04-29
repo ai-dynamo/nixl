@@ -16,7 +16,7 @@ const std::vector<CliOption> &GpuNetIoPluginCommand::getOptions() const { return
 
 PluginType GpuNetIoPluginCommand::pluginType() const { return PluginType::GpuNetIo; }
 
-bool GpuNetIoPluginCommand::supportsScenario(ScenarioType) const { return false; }
+bool GpuNetIoPluginCommand::supportsScenario(ScenarioType scenario) const { return scenario == ScenarioType::Raw; }
 
 const GpuNetIoPluginRequest &GpuNetIoPluginCommand::request() const { return request_; }
 

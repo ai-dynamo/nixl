@@ -35,7 +35,7 @@ const std::vector<CliOption> &ObjPluginCommand::getOptions() const { return opti
 PluginType ObjPluginCommand::pluginType() const { return PluginType::Obj; }
 
 bool ObjPluginCommand::supportsScenario(ScenarioType scenario) const {
-    return scenario == ScenarioType::G4;
+    return scenario == ScenarioType::Raw || scenario == ScenarioType::G4;
 }
 
 const ObjPluginRequest &ObjPluginCommand::request() const { return request_; }

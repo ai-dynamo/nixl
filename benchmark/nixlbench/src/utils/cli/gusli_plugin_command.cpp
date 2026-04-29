@@ -16,7 +16,7 @@ const std::vector<CliOption> &GusliPluginCommand::getOptions() const { return op
 
 PluginType GusliPluginCommand::pluginType() const { return PluginType::Gusli; }
 
-bool GusliPluginCommand::supportsScenario(ScenarioType) const { return false; }
+bool GusliPluginCommand::supportsScenario(ScenarioType scenario) const { return scenario == ScenarioType::Raw; }
 
 const GusliPluginRequest &GusliPluginCommand::request() const { return request_; }
 

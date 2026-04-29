@@ -32,6 +32,8 @@ utils_sources = [
   'cli/obj_plugin_command.h',
   'cli/raw_command.cpp',
   'cli/raw_command.h',
+  'cli/raw_execution.cpp',
+  'cli/raw_execution.h',
   'neuron.cpp',
   'neuron.h',
   'utils.cpp',
