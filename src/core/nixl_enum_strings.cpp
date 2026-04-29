@@ -24,9 +24,7 @@ namespace nixlEnumStrings {
 
 std::string
 memTypeStr(const nixl_mem_t &mem) {
-    static const std::array strings = {
-        "DRAM_SEG", "VRAM_SEG", "BLK_SEG", "OBJ_SEG", "FILE_SEG"
-    };
+    static const std::array strings = {"DRAM_SEG", "VRAM_SEG", "BLK_SEG", "OBJ_SEG", "FILE_SEG"};
 
     if ((mem < 0) || (mem >= strings.size())) {
         return "BAD_SEG";
@@ -36,9 +34,7 @@ memTypeStr(const nixl_mem_t &mem) {
 
 std::string
 xferOpStr(const nixl_xfer_op_t &op) {
-    static const std::array strings = {
-        "READ", "WRITE"
-    };
+    static const std::array strings = {"READ", "WRITE"};
 
     if ((op < 0) || (op >= strings.size())) {
         return "BAD_OP";
