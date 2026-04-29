@@ -11,4 +11,4 @@ patch_fallback_url = https://github.com/mesonbuild/wrapdb/releases/download/libu
 wrapdb_version = 2.14-1
 
 [provide]
-dependency_names = liburing
+liburing = liburing_dep
