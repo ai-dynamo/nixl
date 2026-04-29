@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +14,7 @@
 # limitations under the License.
 
 cpp = meson.get_compiler('cpp')
-compile_flags = []
+uccl_compile_flags = []
 
 
 if 'UCCL' in static_plugins
@@ -23,7 +23,7 @@ if 'UCCL' in static_plugins
                dependencies: [nixl_infra, serdes_interface, cuda_dep, libuccl_p2p, nixl_common_dep],
                include_directories: nixl_inc_dirs,
                install: false,
-               cpp_args : compile_flags,
+               cpp_args : uccl_compile_flags,
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
     uccl_backend_lib = shared_library('UCCL',
@@ -31,7 +31,7 @@ else
                dependencies: [nixl_infra, serdes_interface, cuda_dep, libuccl_p2p, nixl_common_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
-               cpp_args : compile_flags + ['-fPIC'],
+               cpp_args : uccl_compile_flags + ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                install_dir: plugin_install_dir)
 

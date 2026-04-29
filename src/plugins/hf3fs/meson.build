@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,7 +28,7 @@ if 'HF3FS' in static_plugins
                     dependencies: [nixl_infra, threefs_dep, nixl_common_dep, file_utils_interface],
                     include_directories: [nixl_inc_dirs, utils_inc_dirs],
                     install: false,
-                    cpp_args : compile_flags,
+                    cpp_args : [],
                     name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
   hf3fs_backend_lib = shared_library('HF3FS',

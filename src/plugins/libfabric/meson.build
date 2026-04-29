@@ -26,12 +26,12 @@ libfabric_plugin_deps = [
     dependency('dl', required: true)
 ]
 
-compile_flags = ['-DHAVE_LIBFABRIC']
+libfabric_compile_flags = ['-DHAVE_LIBFABRIC']
 
 # Add CUDA support if available
 if cuda_dep.found()
     libfabric_plugin_deps += [cuda_dep]
-    compile_flags += ['-DHAVE_CUDA']
+    libfabric_compile_flags += ['-DHAVE_CUDA']
 endif
 
 # Build as static or shared library based on configuration
@@ -44,7 +44,7 @@ if 'LIBFABRIC' in static_plugins
         dependencies: libfabric_plugin_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: false,
-        cpp_args: compile_flags,
+        cpp_args: libfabric_compile_flags,
         name_prefix: 'libplugin_',
     )
 else
@@ -56,7 +56,7 @@ else
         dependencies: libfabric_plugin_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
-        cpp_args: compile_flags + ['-fPIC'],
+        cpp_args: libfabric_compile_flags + ['-fPIC'],
         name_prefix: 'libplugin_',
         install_dir: plugin_install_dir,
     )
