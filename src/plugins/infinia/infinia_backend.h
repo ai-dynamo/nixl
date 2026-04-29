@@ -39,7 +39,7 @@ inline constexpr const char *INFINIA_PLUGIN_VERSION = "1.0.0";
 inline constexpr const char *INFINIA_DEFAULT_CLUSTER = "cluster1";
 inline constexpr const char *INFINIA_DEFAULT_TENANT = "red";
 inline constexpr const char *INFINIA_DEFAULT_SUBTENANT = "red";
-inline constexpr const char *INFINIA_DEFAULT_DATASET = "nixl";
+inline constexpr const char *INFINIA_DEFAULT_DATASET = "red";
 inline constexpr int INFINIA_DEFAULT_STHREADS = 8;
 inline constexpr int INFINIA_DEFAULT_BUFFERS = 512;
 inline constexpr int INFINIA_DEFAULT_RING_ENTRIES = 512;
@@ -106,12 +106,12 @@ public:
     /**
      * @brief Destructor
      */
-    virtual ~infinia_engine();
+    ~infinia_engine() override;
 
     // Backend capability methods
     [[nodiscard]] bool
     supportsRemote() const noexcept override {
-        return false; // Infinia supports remote operations
+        return false;
     }
 
     [[nodiscard]] bool
@@ -266,7 +266,7 @@ public:
                            std::shared_ptr<InfiniaClient> client,
                            const red_async::rae_batch_config_t &batch_config);
 
-    virtual ~nixlInfiniaBackendReqH();
+    ~nixlInfiniaBackendReqH() override;
 
     // Transfer operation methods
     [[nodiscard]] nixl_status_t

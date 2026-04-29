@@ -592,7 +592,9 @@ infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
     NIXL_DEBUG << absl::StrFormat(
         "INFINIA: QUERYMEM mem=%s count=%d", memTypeToStr(descs.getType()), descs.descCount());
 
-    resp.reserve(descs.descCount());
+    // Pre-allocate response vector with nullopt for all descriptors
+    // This handles skipped descriptors and maintains proper ordering
+    resp.assign(descs.descCount(), std::nullopt);
 
     // Create a BatchTask for this queryMem call and reserve capacity
     red_async::BatchTask batch_task(client_->getConfig(), &batch_config_);
@@ -602,6 +604,11 @@ infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
     std::vector<std::string> keys;
     keys.reserve(descs.descCount());
     std::vector<struct stat> stat_buffers(descs.descCount());
+
+    // Track mapping from batch operation index to descriptor index
+    // Needed because skipped descriptors create gaps in operation indices
+    std::vector<size_t> op_to_desc_idx;
+    op_to_desc_idx.reserve(descs.descCount());
 
     // Add all HEAD operations to the batch
     for (int i = 0; i < descs.descCount(); ++i) {
@@ -614,9 +621,12 @@ infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
             keys.push_back(std::to_string(desc.devId));
         } else {
             NIXL_WARN << "Skipping OBJ query with empty metaInfo and devId==0";
-            resp.emplace_back(std::nullopt);
+            // resp[i] already initialized to nullopt, just skip adding operation
             continue;
         }
+
+        // Record mapping from batch operation index to descriptor index
+        op_to_desc_idx.push_back(i);
 
         // Build HEAD operation with stat buffer
         red_async::red_batch_operation_t op;
@@ -648,25 +658,27 @@ infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
     // Get results (wait() guarantees batch is ready)
     auto result = batch_task.get_result();
 
-    // Process results
-    for (size_t i = 0; i < result.operation_results.size(); ++i) {
-        const auto &op_result = result.operation_results[i];
+    // Process results using index mapping to maintain descriptor order
+    for (size_t op_idx = 0; op_idx < result.operation_results.size(); ++op_idx) {
+        const auto &op_result = result.operation_results[op_idx];
+        const size_t desc_idx = op_to_desc_idx[op_idx];
 
         if (op_result.status == RED_SUCCESS) {
             // Key exists
-            resp.emplace_back(nixl_query_resp_t{nixl_b_params_t{}});
-            NIXL_DEBUG << absl::StrFormat("INFINIA: QUERYMEM key='%s' found=true", keys[i].c_str());
+            resp[desc_idx] = nixl_query_resp_t{nixl_b_params_t{}};
+            NIXL_DEBUG << absl::StrFormat("INFINIA: QUERYMEM key='%s' found=true",
+                                          keys[op_idx].c_str());
         } else if (op_result.status == RED_ENOENT) {
             // Key does not exist
-            resp.emplace_back(std::nullopt);
+            resp[desc_idx] = std::nullopt;
             NIXL_DEBUG << absl::StrFormat("INFINIA: QUERYMEM key='%s' found=false",
-                                          keys[i].c_str());
+                                          keys[op_idx].c_str());
         } else {
             // Other error - treat as key not found
             NIXL_WARN << absl::StrFormat("HEAD operation for key '%s' failed: %s",
-                                         keys[i].c_str(),
+                                         keys[op_idx].c_str(),
                                          red_strerror(op_result.status));
-            resp.emplace_back(std::nullopt);
+            resp[desc_idx] = std::nullopt;
         }
     }
 

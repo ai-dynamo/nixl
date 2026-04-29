@@ -345,12 +345,12 @@ fill_test_key(char *key) {
     std::uniform_int_distribution<unsigned char> distribution(0, 255);
 
     std::stringstream output;
-    for (size_t i = 0; i < 32; ++i) {
+    for (size_t i = 0; i < KEY_SIZE; ++i) {
         output << std::setw(2) << std::setfill('0') << static_cast<int>(distribution(generator));
     }
 
-    strncpy(key, output.str().c_str(), 32);
-    key[32] = '\0';
+    strncpy(key, output.str().c_str(), KEY_SIZE);
+    key[KEY_SIZE] = '\0';
 
     return true;
 }
