@@ -198,7 +198,7 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
     mkdir sdk_build && \
     cd sdk_build && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
-    make -j && \
+    make -j${NPROC:-$(nproc)} && \
     make install
 
 # Install install Azure SDK for C++ dependencies and build
@@ -207,7 +207,7 @@ RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch 
     cd azure-sdk-for-cpp/ && \
     mkdir build && cd build && \
     AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
-    cmake --build . --target azure-storage-blobs azure-identity && \
+    cmake --build . --parallel ${NPROC:-$(nproc)} --target azure-storage-blobs azure-identity && \
     cmake --install sdk/core && \
     cmake --install sdk/storage/azure-storage-common && \
     cmake --install sdk/storage/azure-storage-blobs && \
@@ -257,7 +257,7 @@ RUN rm -rf build && \
     mkdir build && \
     meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
-    ninja && \
+    ninja -j${NPROC:-$(nproc)} && \
     ninja install
 
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
@@ -280,7 +280,7 @@ RUN ls -ll /workspace/nixlbench
 RUN rm -rf build && \
     mkdir build && \
     meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench --buildtype=$BUILD_TYPE && \
-    cd build && ninja && ninja install
+    cd build && ninja -j${NPROC:-$(nproc)} && ninja install
 
 WORKDIR /workspace/nixl
 
