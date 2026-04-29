@@ -52,7 +52,7 @@ subdir('mocks')
 subdir('unit')
 subdir('plugins')
 
-if ucx_gpu_device_api_available
+if cuda_dep.found()
     subdir('device_api')
 endif
 
@@ -158,6 +158,36 @@ if nixl_trace_nvtx_enabled
              is_parallel: false,
              timeout: 600)
     endif
+endif
+
+proxy_gtest_available = cuda_dep.found()
+
+if proxy_gtest_available
+    proxy_gtest_sources = [
+        'main.cpp',
+        'mocks/gmock_engine.cpp',
+        'plugin_manager.cpp',
+        'error_handling.cpp',
+        'common.cpp',
+    ] + proxy_device_api_test_sources
+
+    proxy_define = ['-DHAVE_CUDA', '-DNIXL_GPU_DEVICE_BACKEND_PROXY']
+
+    proxy_test_exe = executable('gtest_proxy',
+        sources : proxy_gtest_sources,
+        include_directories : [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs,
+                               nixl_gpu_proxy_inc_dirs, include_directories('device_api')],
+        cpp_args : cpp_flags + proxy_define,
+        cuda_args : proxy_define,
+        dependencies : [nixl_dep, nixl_common_dep, cuda_dep,
+                        gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep,
+                        file_utils_interface],
+        # nixl_gpu_proxy_lib must be linked directly so Meson includes
+        # nixl_device_proxy.cu.o in the RDC device-link step for gtest_proxy.
+        link_with : [nixl_build_lib, nixl_gpu_proxy_lib],
+        install : false)
+
+    test('gtest_proxy', proxy_test_exe, args: [plugin_dirs_arg])
 endif
 
 if get_option('b_sanitize').split(',').contains('thread')
