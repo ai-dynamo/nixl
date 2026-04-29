@@ -1,4 +1,5 @@
 ---
+# Requires clang-format-15+
 AccessModifierOffset: -4
 AlignAfterOpenBracket: Align
 AlignConsecutiveAssignments: false
