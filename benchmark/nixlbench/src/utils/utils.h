@@ -141,6 +141,7 @@ public:
     static std::string mode;
     static std::string op_type;
     static bool check_consistency;
+    static bool show_extended_stats;
     static size_t total_buffer_size;
     static bool recreate_xfer;
     static int num_initiator_dev;

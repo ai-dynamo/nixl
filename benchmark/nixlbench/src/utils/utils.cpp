@@ -74,6 +74,7 @@ NB_ARG_STRING(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, manytoone, o
 NB_ARG_STRING(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc)");
 NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
 NB_ARG_BOOL(check_consistency, false, "Enable Consistency Check");
+NB_ARG_BOOL(show_extended_stats, false, "Show extended statistics (P100)");
 NB_ARG_UINT64(total_buffer_size,
               8LL * 1024 * (1 << 20),
               "Total buffer size across device for each process");
@@ -238,6 +239,7 @@ std::string xferBenchConfig::scheme = "";
 std::string xferBenchConfig::mode = "";
 std::string xferBenchConfig::op_type = "";
 bool xferBenchConfig::check_consistency = false;
+bool xferBenchConfig::show_extended_stats = false;
 size_t xferBenchConfig::total_buffer_size = 0;
 bool xferBenchConfig::recreate_xfer = false;
 int xferBenchConfig::num_initiator_dev = 0;
@@ -463,6 +465,7 @@ xferBenchConfig::loadParams(void) {
     mode = NB_ARG(mode);
     op_type = NB_ARG(op_type);
     check_consistency = NB_ARG(check_consistency);
+    show_extended_stats = NB_ARG(show_extended_stats);
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);
     num_target_dev = NB_ARG(num_target_dev);
@@ -1091,8 +1094,11 @@ xferBenchUtils::printStatsHeader() {
                   << std::setw(15) << "Avg Post (us)"
                   << std::setw(15) << "P99 Post (us)"
                   << std::setw(15) << "Avg Tx (us)"
-                  << std::setw(15) << "P99 Tx (us)"
-                  << std::endl;
+                  << std::setw(15) << "P99 Tx (us)";
+        if (xferBenchConfig::show_extended_stats) {
+            std::cout << std::setw(15) << "P100 Tx (us)";
+        }
+        std::cout << std::endl;
         // clang-format on
     } else {
         // clang-format off
@@ -1106,8 +1112,11 @@ xferBenchUtils::printStatsHeader() {
                   << std::setw(15) << "Avg Post (us)"
                   << std::setw(15) << "P99 Post (us)"
                   << std::setw(15) << "Avg Tx (us)"
-                  << std::setw(15) << "P99 Tx (us)"
-                  << std::endl;
+                  << std::setw(15) << "P99 Tx (us)";
+        if (xferBenchConfig::show_extended_stats) {
+            std::cout << std::setw(15) << "P100 Tx (us)";
+        }
+        std::cout << std::endl;
         // clang-format on
     }
     xferBenchConfig::printSeparator('-');
@@ -1179,8 +1188,11 @@ xferBenchUtils::printStats(bool is_target,
                   << std::setw(15) << post_duration
                   << std::setw(15) << post_p99_duration
                   << std::setw(15) << transfer_duration
-                  << std::setw(15) << transfer_p99_duration
-                  << std::endl;
+                  << std::setw(15) << transfer_p99_duration;
+        if (xferBenchConfig::show_extended_stats) {
+            std::cout << std::setw(15) << stats.transfer_duration.max();
+        }
+        std::cout << std::endl;
         // clang-format on
     } else {
         // clang-format off
@@ -1195,8 +1207,11 @@ xferBenchUtils::printStats(bool is_target,
                   << std::setw(15) << post_duration
                   << std::setw(15) << post_p99_duration
                   << std::setw(15) << transfer_duration
-                  << std::setw(15) << transfer_p99_duration
-                  << std::endl;
+                  << std::setw(15) << transfer_p99_duration;
+        if (xferBenchConfig::show_extended_stats) {
+            std::cout << std::setw(15) << stats.transfer_duration.max();
+        }
+        std::cout << std::endl;
         // clang-format on
     }
 }
