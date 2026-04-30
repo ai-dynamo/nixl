@@ -435,7 +435,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --config_file PATH         # Configuraion file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA, WQSKV] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 --etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
@@ -785,6 +785,76 @@ EOF
   --num_iter 16
 ```
 
+**WQSKV Backend (WDS KVCache):**
+
+The WQSKV backend wraps the proprietary WDS KVCache vendor library
+(`libwclient_kvcache.so`) and exposes `PUT`/`GET` over DRAM as a NIXL local
+backend (no remote agent, no networking — keys are stored by the vendor
+library). It is built only when `libwclient_kvcache.so` and `jsoncpp` are
+available at NIXL configure time; see
+[../../src/plugins/wqskv/README.md](../../src/plugins/wqskv/README.md) for
+plugin-side build and configuration details.
+
+**Setup:** Set the JSON config path the plugin should consume on `init`. The
+benchmark itself does not pass `customParams["config_path"]`; instead, export
+the env var the plugin reads as a fallback:
+
+```bash
+export WDS_BACKEND_CONFIG_PATH=/path/to/wdsBackendClient.json
+```
+
+A reference config schema lives at `config/wdsBachend*.json` in this repo;
+required keys are `poolid`, `thread_num`, `thread_mode` (`poll` / `event`),
+`wengine_conf`, `node_id`, `bvar_port`, `bind_cpus`, and `mem_size`. The same
+schema is shared with `mooncake-store/src/wds/wds_backend.cpp`.
+
+**Constraints (vendor-imposed):**
+
+- `DRAM_SEG` only on both initiator and target.
+- Local-only: `--scheme pairwise` with one process; no multi-node setup.
+- `WRITE` workloads must use a fresh key per iteration. nixlbench handles
+  this automatically via a process-monotonic atomic suffix
+  (`g_wqskv_write_seq`) appended to the `metaInfo` registered with each
+  descriptor.
+- `READ` workloads cycle a small pool of 128 pre-populated keys per
+  block size, written once before the benchmark loop begins. The
+  pre-populate phase tolerates "key already exists" failures from prior
+  runs.
+
+```bash
+# Single-instance WQSKV WRITE benchmark (no ETCD needed)
+export WDS_BACKEND_CONFIG_PATH=/path/to/wdsBackendClient.json
+./nixlbench --backend WQSKV --op_type WRITE \
+            --initiator_seg_type DRAM --target_seg_type DRAM \
+            --num_iter 1000 --warmup_iter 100
+
+# WQSKV READ — pre-populate runs implicitly before the timed loop
+./nixlbench --backend WQSKV --op_type READ \
+            --initiator_seg_type DRAM --target_seg_type DRAM \
+            --num_iter 1000 --warmup_iter 100
+
+# With ETCD coordination if needed (still single-instance)
+./nixlbench --etcd_endpoints http://etcd-server:2379 \
+            --backend WQSKV --op_type WRITE \
+            --initiator_seg_type DRAM --target_seg_type DRAM
+```
+
+**Smoke test:** run a tiny WRITE then a tiny READ against a freshly started
+WDS KVCache instance to confirm config + library wiring:
+
+```bash
+export WDS_BACKEND_CONFIG_PATH=/path/to/wdsBackendClient.json
+./nixlbench --backend WQSKV --op_type WRITE \
+            --start_block_size 4096 --max_block_size 4096 \
+            --num_iter 10 --warmup_iter 0
+./nixlbench --backend WQSKV --op_type READ \
+            --start_block_size 4096 --max_block_size 4096 \
+            --num_iter 10 --warmup_iter 0
+```
+
+`VRAM` segment types, multi-node `--scheme`, `--enable_pt`, and `--num_threads >
+1` are not exercised by the plugin's local-only design and may behave
+unexpectedly.
 ### Worker Types
 
 **NVSHMEM Worker:**

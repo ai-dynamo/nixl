@@ -17,6 +17,7 @@
 
 #include "worker/nixl/nixl_worker.h"
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cctype>
 #include <chrono>
@@ -98,6 +99,33 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     return config.str();
 }
 
+static bool
+ci_equal_asciiz(const std::string &s, const char *lit) {
+    const size_t n = std::strlen(lit);
+    if (s.size() != n) {
+        return false;
+    }
+    for (size_t i = 0; i < n; i++) {
+        if (std::tolower(static_cast<unsigned char>(s[i])) !=
+            std::tolower(static_cast<unsigned char>(lit[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool
+backendEqualsWqskv(const std::string &b) {
+    std::string s = b;
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) {
+        s.erase(0, 1);
+    }
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) {
+        s.pop_back();
+    }
+    return (XFERBENCH_BACKEND_WQSKV == s) || ci_equal_asciiz(s, "WQSKV");
+}
+
 xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
     : xferBenchWorker() {
     seg_type = GET_SEG_TYPE(isInitiator());
@@ -128,8 +156,12 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL) ||
-        xferBenchConfig::isStorageBackend()) {
-        backend_name = xferBenchConfig::backend;
+        xferBenchConfig::isStorageBackend() || backendEqualsWqskv(xferBenchConfig::backend)) {
+        if (backendEqualsWqskv(xferBenchConfig::backend)) {
+            backend_name = XFERBENCH_BACKEND_WQSKV;
+        } else {
+            backend_name = xferBenchConfig::backend;
+        }
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -312,6 +344,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["container_name"] = xferBenchConfig::azure_blob_container_name;
         backend_params["connection_string"] = xferBenchConfig::azure_blob_connection_string;
         std::cout << "AZURE_BLOB backend" << std::endl;
+
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INFINIA)) {
         // INFINIA backend - configuration via config file
         if (!xferBenchConfig::infinia_config_file.empty()) {
@@ -323,6 +356,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
                       << std::endl;
             std::cout << "  Tip: Use --infinia_config_file to specify a config file" << std::endl;
         }
+    } else if (backendEqualsWqskv(xferBenchConfig::backend)) {
+        std::cout << "WQSKV backend configured (wraps wds_kvcache_*)" << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -990,6 +1025,30 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(iov_list));
         }
+    } else if (backendEqualsWqskv(xferBenchConfig::backend)) {
+        // WQSKV backend: create DRAM_SEG descriptors with keys in metaInfo
+        // Same shape as other KV-style backends; backed by external WDS KV cache via plugin.
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
+
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                std::string unique_name = "nixlbench_wqskv" + std::to_string(list_idx) + "_" +
+                    std::to_string(i) + "_" + std::to_string(timestamp);
+
+                // Create a DRAM_SEG descriptor with key in metaInfo
+                xferBenchIOV wqskv_desc(0, buffer_size, i, unique_name);
+                std::cout << "Creating WQSKV key: " << unique_name << std::endl;
+                iov_list.push_back(wqskv_desc);
+            }
+            // Register DRAM_SEG descriptors with keys in metaInfo
+            nixl_reg_dlist_t desc_list(DRAM_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+            remote_iovs.push_back(iov_list);
+        }
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         // GUSLI backend uses block device descriptors
         if (gusli_devices.empty()) {
@@ -1131,14 +1190,69 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
 void
 xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
-    // Ordering: deregister remote regions before local ones
-    // (remote registrations may reference local buffers).
-    // NixlMemRegion::release() handles deregisterMem + per-IOV cleanup.
-    remote_regs_.clear();
-    // xferFileState RAII closes backing fds after deregistrations complete.
-    remote_fds.clear();
-    local_regs_.clear();
-    iov_lists.clear();
+
+    nixl_opt_args_t opt_args;
+
+
+    opt_args.backends.push_back(backend_engine);
+    for (auto &iov_list : iov_lists) {
+        nixl_reg_dlist_t desc_list(seg_type);
+        iovListToNixlRegDlist(iov_list, desc_list);
+        CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+
+        for (auto &iov : iov_list) {
+            switch (seg_type) {
+            case DRAM_SEG:
+                cleanupBasicDescDram(iov);
+                break;
+#if HAVE_CUDA
+            case VRAM_SEG:
+                cleanupBasicDescVram(iov);
+                break;
+#endif
+            default:
+                std::cerr << "Unsupported mem type: " << seg_type << std::endl;
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+
+    if (xferBenchConfig::isObjStorageBackend()) {
+        for (auto &iov_list : remote_iovs) {
+            for (auto &iov : iov_list) {
+                cleanupBasicDescObj(iov);
+            }
+            nixl_reg_dlist_t desc_list(OBJ_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+        }
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
+        for (auto &iov_list : remote_iovs) {
+            for (auto &iov : iov_list) {
+                cleanupBasicDescBlk(iov);
+            }
+            nixl_reg_dlist_t desc_list(BLK_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+        }
+    } else if (backendEqualsWqskv(xferBenchConfig::backend)) {
+        // WQSKV backend cleanup: deregister DRAM_SEG descriptors
+        for (auto &iov_list : remote_iovs) {
+            nixl_reg_dlist_t desc_list(DRAM_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+        }
+    } else if (xferBenchConfig::isStorageBackend()) {
+        for (auto &iov_list : remote_iovs) {
+            for (auto &iov : iov_list) {
+                cleanupBasicDescFile(iov);
+            }
+            nixl_reg_dlist_t desc_list(FILE_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+        }
+    }
+
 }
 
 int
@@ -1211,7 +1325,17 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     std::vector<std::vector<xferBenchIOV>> res;
     int desc_str_sz;
 
-    if (xferBenchConfig::isStorageBackend()) {
+    // WQSKV never uses remote_fds; handle it before isStorageBackend() to avoid
+    // reaching remote_fds[fd_idx] with an empty vector.
+    if (backendEqualsWqskv(xferBenchConfig::backend)) {
+        for (auto &iov_list : local_iovs) {
+            std::vector<xferBenchIOV> remote_iov_list;
+            for (auto &iov : iov_list) {
+                remote_iov_list.push_back(iov);
+            }
+            res.push_back(remote_iov_list);
+        }
+    } else if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
         for (size_t list_idx = 0; list_idx < local_iovs.size(); list_idx++) {
@@ -1318,6 +1442,8 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
+    } else if (backendEqualsWqskv(xferBenchConfig::backend)) {
+        remote_desc = nixl_xfer_dlist_t(DRAM_SEG);
     } else if (xferBenchConfig::isStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(FILE_SEG);
     }
@@ -1326,77 +1452,168 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
     iovListToNixlXferDlist(remote_iov, remote_desc);
 }
 
-static nixl_mem_t
-getRemoteSegType() {
-    if (xferBenchConfig::isObjStorageBackend()) {
-        return OBJ_SEG;
-    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
-        return BLK_SEG;
-    } else if (xferBenchConfig::isStorageBackend()) {
-        return FILE_SEG;
+
+// Process-wide monotonic counter for WQSKV WRITE per-iter key suffixes. The
+// base key already carries a session-unique timestamp from allocateMemory, so
+// a counter starting at 0 each process is enough for inter-iteration
+// uniqueness. Atomic so multiple OMP threads can fetch_add concurrently
+// without colliding suffixes.
+static std::atomic<uint64_t> g_wqskv_write_seq{0};
+
+// Pool size for WQSKV READ keys per block_size. Pre-populate writes this many
+// keys, READ iters cycle through them. Trades pre-populate cost for vendor
+// cache/hot-key diversity in the bench measurement.
+static constexpr int kWqskvReadKeyPoolSize = 128;
+
+// Serialize per-descriptor keys for opt_args.customParam: '\n' separated, one
+// per IOV. Each entry is base.metaInfo + suffix. The plugin parses this in
+// prepXfer (capturing onto the backend req handle) and uses it in postXfer
+// instead of the registerMem-time key.
+static std::string
+serializeWqskvCustomParam(const std::vector<xferBenchIOV> &base_remote_iov,
+                          const std::string &suffix) {
+    std::string out;
+    for (size_t k = 0; k < base_remote_iov.size(); ++k) {
+        if (k > 0) out.push_back('\n');
+        out.append(base_remote_iov[k].metaInfo);
+        out.append(suffix);
     }
-    return GET_SEG_TYPE(false);
+    return out;
 }
 
-// Register local and remote memory with the agent.
-static nixl_status_t
-registerIterationMem(nixlAgent *agent,
-                     const std::vector<xferBenchIOV> &local_iov,
-                     const std::vector<xferBenchIOV> &remote_iov,
-                     nixlBackendH *backend_engine) {
-    nixl_opt_args_t reg_args;
-    reg_args.backends.push_back(backend_engine);
+// WQSKV per-iter request lifecycle: createXferReq -> single transfer ->
+// releaseXferReq, with a fresh customParam suffix each call. Both WRITE
+// (per-iter sequence suffix) and READ (cycle through pre-populated keys) use
+// this -- WQSKV's plugin returns NIXL_SUCCESS from postXfer for async vendor
+// ops, so only releaseReqH actually waits for completion.
+static int
+execWqskvSingleIter(nixlAgent *agent,
+                    const nixl_xfer_op_t op,
+                    nixl_xfer_dlist_t &local_desc,
+                    nixl_xfer_dlist_t &remote_desc,
+                    const std::vector<xferBenchIOV> &base_remote_iov,
+                    const std::string &target,
+                    const nixl_opt_args_t &base_params,
+                    const std::string &key_suffix,
+                    xferBenchTimer &timer,
+                    xferBenchStats &thread_stats,
+                    nixlTime::us_t &prepare_duration_acc) {
+    nixl_opt_args_t params = base_params;
+    params.customParam = serializeWqskvCustomParam(base_remote_iov, key_suffix);
 
-    nixl_reg_dlist_t local_reg = iovListToNixlRegDlist(local_iov, GET_SEG_TYPE(true));
-    nixl_status_t rc = agent->registerMem(local_reg, &reg_args);
-    if (rc != NIXL_SUCCESS) {
-        return rc;
+    nixlXferReqH *req = nullptr;
+    nixl_status_t create_rc =
+        agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
+    if (__builtin_expect(create_rc != NIXL_SUCCESS, 0)) {
+        std::cerr << "createXferReq failed: " << nixlEnumStrings::statusStr(create_rc) << std::endl;
+        return -1;
     }
+    prepare_duration_acc += timer.lap();
 
-    if (xferBenchConfig::isStorageBackend()) {
-        nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
-        rc = agent->registerMem(remote_reg, &reg_args);
-        if (rc != NIXL_SUCCESS) {
-            return rc;
+    nixl_status_t rc = execSingleTransfer(agent, req, timer, thread_stats);
+    if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+        std::cerr << "NIXL Xfer failed with status: " << nixlEnumStrings::statusStr(rc)
+                  << std::endl;
+        agent->releaseXferReq(req);
+        return -1;
+    }
+    thread_stats.transfer_duration.add(timer.lap());
+
+    if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0)) {
+        std::cerr << "NIXL releaseXferReq failed" << std::endl;
+        return -1;
+    }
+    return 0;
+}
+
+// WQSKV WRITE: each iter gets a fresh key via process-monotonic atomic suffix.
+// Vendor rejects overwrites, so reusing keys across iters fails.
+static int
+execWqskvWriteIterations(nixlAgent *agent,
+                         nixl_xfer_dlist_t &local_desc,
+                         nixl_xfer_dlist_t &remote_desc,
+                         const std::vector<xferBenchIOV> &base_remote_iov,
+                         const std::string &target,
+                         const nixl_opt_args_t &base_params,
+                         const int num_iter,
+                         xferBenchTimer &timer,
+                         xferBenchStats &thread_stats) {
+    nixlTime::us_t total_prepare_duration = 0;
+    for (int i = 0; i < num_iter; ++i) {
+        uint64_t seq = g_wqskv_write_seq.fetch_add(1, std::memory_order_relaxed);
+        std::string suffix = "_seq" + std::to_string(seq);
+        if (execWqskvSingleIter(agent,
+                                NIXL_WRITE,
+                                local_desc,
+                                remote_desc,
+                                base_remote_iov,
+                                target,
+                                base_params,
+                                suffix,
+                                timer,
+                                thread_stats,
+                                total_prepare_duration) != 0) {
+            return -1;
         }
     }
-
-    return NIXL_SUCCESS;
+    if (num_iter > 0) {
+        thread_stats.prepare_duration.add(total_prepare_duration / num_iter);
+    }
+    return 0;
 }
 
-// Deregister local and remote memory from the agent.
-static nixl_status_t
-deregisterIterationMem(nixlAgent *agent,
-                       const std::vector<xferBenchIOV> &local_iov,
-                       const std::vector<xferBenchIOV> &remote_iov,
-                       nixlBackendH *backend_engine) {
-    nixl_opt_args_t reg_args;
-    reg_args.backends.push_back(backend_engine);
-
-    nixl_reg_dlist_t local_reg = iovListToNixlRegDlist(local_iov, GET_SEG_TYPE(true));
-    nixl_status_t rc = agent->deregisterMem(local_reg, &reg_args);
-    if (rc != NIXL_SUCCESS) {
-        return rc;
-    }
-
-    if (xferBenchConfig::isStorageBackend()) {
-        nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
-        rc = agent->deregisterMem(remote_reg, &reg_args);
-        if (rc != NIXL_SUCCESS) {
-            return rc;
+// WQSKV READ: cycles through kWqskvReadKeyPoolSize pre-populated keys for the
+// current block_size. Each iter creates+releases its own req (plugin's postXfer
+// returns NIXL_SUCCESS even for async vendor ops; only releaseReqH waits for
+// completion, so reusing one req across posts would race the pending counter).
+static int
+execWqskvReadIterations(nixlAgent *agent,
+                        nixl_xfer_dlist_t &local_desc,
+                        nixl_xfer_dlist_t &remote_desc,
+                        const std::vector<xferBenchIOV> &base_remote_iov,
+                        const std::string &target,
+                        const nixl_opt_args_t &base_params,
+                        const std::string &block_suffix,
+                        const int num_iter,
+                        xferBenchTimer &timer,
+                        xferBenchStats &thread_stats) {
+    nixlTime::us_t total_prepare_duration = 0;
+    for (int i = 0; i < num_iter; ++i) {
+        std::string suffix = block_suffix + "_k" + std::to_string(i % kWqskvReadKeyPoolSize);
+        if (execWqskvSingleIter(agent,
+                                NIXL_READ,
+                                local_desc,
+                                remote_desc,
+                                base_remote_iov,
+                                target,
+                                base_params,
+                                suffix,
+                                timer,
+                                thread_stats,
+                                total_prepare_duration) != 0) {
+            return -1;
         }
     }
-
-    return NIXL_SUCCESS;
+    if (num_iter > 0) {
+        thread_stats.prepare_duration.add(total_prepare_duration / num_iter);
+    }
+    return 0;
 }
 
-// Per-slot state for execTransferLoop. A slot owns its slice of the IOV
-// vector for the lifetime of the run; req/registered track the current
-// nixlXferReqH and registration state so the prepare/post/recycle helpers
-// can be called idempotently.
-struct slotState {
-    std::vector<xferBenchIOV> local_iov;
-    std::vector<xferBenchIOV> remote_iov;
+// Execute transfers with configurable request lifecycle behavior
+// recreate_per_iteration: true for GUSLI (bug workaround), false for standard backends
+static int
+execTransferIterations(nixlAgent *agent,
+                       const nixl_xfer_op_t op,
+                       nixl_xfer_dlist_t &local_desc,
+                       nixl_xfer_dlist_t &remote_desc,
+                       const std::string &target,
+                       nixl_opt_args_t &params,
+                       const int num_iter,
+                       xferBenchTimer &timer,
+                       xferBenchStats &thread_stats,
+                       const bool recreate_per_iteration) {
+
     nixlXferReqH *req = nullptr;
     bool in_flight = false;
     bool registered = false;
@@ -1668,6 +1885,57 @@ execTransferLoop(nixlAgent *agent,
     return 0;
 }
 
+// WQSKV READ pre-populate: vendor's wds_kvcache_get_vec rejects reads of
+// never-written keys AND strictly asserts read length == stored value_length.
+// So each block_size needs its own pool of keys, written exactly once at that
+// block_size. We write kWqskvReadKeyPoolSize keys so READ iters can rotate
+// across the pool instead of all hammering one key.
+//
+// Pre-populate failures (e.g. key already exists from a prior run) are
+// non-fatal: a leftover key with the right length is still a valid hit.
+static void
+execWqskvPrePopulate(nixlAgent *agent,
+                     const std::vector<std::vector<xferBenchIOV>> &local_iovs,
+                     const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
+                     const std::string &block_suffix,
+                     const int num_threads) {
+#pragma omp parallel num_threads(num_threads)
+    {
+        const int tid = omp_get_thread_num();
+        const auto &local_iov = local_iovs[tid];
+        const auto &remote_iov = remote_iovs[tid];
+
+        nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
+        nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
+        prepareTransferDescriptors(local_desc, remote_desc, local_iov, remote_iov);
+
+        std::string target = "initiator";
+        for (int k = 0; k < kWqskvReadKeyPoolSize; ++k) {
+            std::string suffix = block_suffix + "_k" + std::to_string(k);
+            nixl_opt_args_t params;
+            params.customParam = serializeWqskvCustomParam(remote_iov, suffix);
+            nixlXferReqH *req = nullptr;
+            nixl_status_t create_rc =
+                agent->createXferReq(NIXL_WRITE, local_desc, remote_desc, target, req, &params);
+            if (create_rc != NIXL_SUCCESS) {
+                std::cerr << "WQSKV pre-populate createXferReq failed: "
+                          << nixlEnumStrings::statusStr(create_rc) << std::endl;
+                continue;
+            }
+            nixl_status_t rc = agent->postXferReq(req);
+            while (rc == NIXL_IN_PROG) {
+                rc = agent->getXferStatus(req);
+            }
+            if (rc != NIXL_SUCCESS) {
+                std::cerr << "WQSKV pre-populate WRITE non-fatal failure (key " << k
+                          << "): " << nixlEnumStrings::statusStr(rc)
+                          << " (key may already exist with same length)" << std::endl;
+            }
+            agent->releaseXferReq(req);
+        }
+    }
+}
+
 static int
 execTransfer(nixlAgent *agent,
              nixlBackendH *backend_engine,
@@ -1697,16 +1965,46 @@ execTransfer(nixlAgent *agent,
             params.notif = "0xBEEF";
         }
 
-        int result = execTransferLoop(agent,
-                                      backend_engine,
-                                      op,
-                                      target,
-                                      params,
-                                      num_iter,
-                                      thread_stats,
-                                      local_iov,
-                                      remote_iov,
-                                      terminate_ptr);
+
+        int result = 0;
+        const bool is_wqskv = backendEqualsWqskv(xferBenchConfig::backend);
+        if (is_wqskv && op == NIXL_WRITE) {
+            result = execWqskvWriteIterations(agent,
+                                              local_desc,
+                                              remote_desc,
+                                              remote_iov,
+                                              target,
+                                              params,
+                                              num_iter,
+                                              timer,
+                                              thread_stats);
+        } else if (is_wqskv && op == NIXL_READ && !local_iov.empty()) {
+            // Cycle iters across the kWqskvReadKeyPoolSize keys pre-populated
+            // for this block_size by execWqskvPrePopulate.
+            std::string block_suffix = "_blk" + std::to_string(local_iov[0].len);
+            result = execWqskvReadIterations(agent,
+                                             local_desc,
+                                             remote_desc,
+                                             remote_iov,
+                                             target,
+                                             params,
+                                             block_suffix,
+                                             num_iter,
+                                             timer,
+                                             thread_stats);
+        } else {
+            result = execTransferIterations(agent,
+                                            op,
+                                            local_desc,
+                                            remote_desc,
+                                            target,
+                                            params,
+                                            num_iter,
+                                            timer,
+                                            thread_stats,
+                                            xferBenchConfig::recreate_xfer);
+        }
+
 
         if (result != 0) [[unlikely]] {
             ret = result;
@@ -1740,6 +2038,16 @@ xferBenchNixlWorker::transfer(size_t block_size,
     if (block_size > LARGE_BLOCK_SIZE) {
         skip /= xferBenchConfig::large_blk_iter_ftr;
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
+    }
+
+    // WQSKV READ: vendor rejects reads of never-written keys AND strictly asserts
+    // read length == stored value_length. Each block_size needs its own key,
+    // written exactly once at that block_size. Suffix ties pre-populate and READ
+    // iters together (see execTransfer's READ branch).
+    if (backendEqualsWqskv(xferBenchConfig::backend) && xfer_op == NIXL_READ) {
+        const std::string key_suffix = "_blk" + std::to_string(block_size);
+        execWqskvPrePopulate(
+            agent, local_iovs, remote_iovs, key_suffix, xferBenchConfig::num_threads);
     }
 
     if (skip > 0) {
