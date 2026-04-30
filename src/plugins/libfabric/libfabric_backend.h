@@ -77,14 +77,14 @@ class nixlLibfabricPrivateMetadata : public nixlBackendMD {
 private:
     void *buffer_; // Local memory buffer address
     size_t length_; // Buffer length in bytes
-    int gpu_device_id_; // GPU device ID for VRAM, -1 for DRAM
+    int device_id_; // Device ID for VRAM, -1 for DRAM
     std::vector<struct fid_mr *> rail_mr_list_; // Memory registrations, one per rail
     std::vector<uint64_t> rail_key_list_; // Remote access keys, one per rail
     std::vector<char *> src_ep_names_; // Source endpoint names, one per rail
     std::vector<size_t> selected_rails_; // Rails selected based on memory topology
 
 public:
-    nixlLibfabricPrivateMetadata() : nixlBackendMD(true), gpu_device_id_(-1) {}
+    nixlLibfabricPrivateMetadata() : nixlBackendMD(true), device_id_(-1) {}
     friend class nixlLibfabricEngine;
 };
 
@@ -113,11 +113,8 @@ private:
     size_t agent_index_; // Unique agent identifier in agent_names vector
     std::string remoteAgent_; // Remote agent name
     std::unordered_map<size_t, std::vector<fi_addr_t>>
-        rail_remote_addr_list_; // Data rail libfabric addresses. key=data rail id.
-    std::unordered_map<size_t, std::vector<fi_addr_t>>
-        control_rail_remote_addr_list_; // Control rail libfabric addresses. key=control rail id.
-    std::vector<char *> src_ep_names_; // Data rail endpoint names
-    std::vector<char *> control_ep_names_; // Control rail endpoint names
+        rail_remote_addr_list_; // Rail libfabric addresses. key=rail id.
+    std::vector<char *> src_ep_names_; // Rail endpoint names
     ConnectionState overall_state_; // Current connection state
     std::mutex conn_state_mutex_; // Protects connection state
     std::condition_variable cv_; // For blocking connection establishment
@@ -176,9 +173,6 @@ class nixlLibfabricEngine : public nixlBackendEngine {
     friend class nixlLibfabricRail; // Allow nixlLibfabricRail to access private members
 
 private:
-    // Threading infrastructure - declared first to match initialization order
-    std::atomic<bool> cm_thread_stop_;
-
     // Store user's original progress thread preference
     bool progress_thread_enabled_;
 
@@ -204,12 +198,16 @@ private:
     std::thread cm_thread_;
     std::condition_variable cm_cv_;
 
-    // Progress thread for data rail CQs only
+    // Progress thread for rail CQs
     std::thread progress_thread_;
     std::atomic<bool> progress_thread_stop_;
 
     // Mutex for connection state tracking
     mutable std::mutex connection_state_mutex_;
+
+
+    // System runtime type (set during initialization from rail_manager)
+    fi_hmem_iface runtime_;
 
     void
     cleanup();
@@ -255,8 +253,7 @@ private:
     // Common connection creation helper
     nixl_status_t
     createAgentConnection(const std::string &agent_name,
-                          const std::vector<std::array<char, 56>> &data_rail_endpoints,
-                          const std::vector<std::array<char, 56>> &control_rail_endpoints);
+                          const std::vector<std::array<char, 56>> &data_rail_endpoints);
 
     // Private notification implementation with unified binary notification system
     nixl_status_t
@@ -272,18 +269,16 @@ private:
                                 const std::string &agent_name,
                                 uint32_t &total_message_length,
                                 std::vector<BinaryNotification> &fragments_out) const;
+
 #ifdef HAVE_CUDA
     // CUDA context management
     std::unique_ptr<nixlLibfabricCudaCtx> cudaCtx_;
     bool cuda_addr_wa_; // CUDA address workaround flag
 #endif
 
-    // ConnectionManagement thread and completion processing
-    nixl_status_t
-    cmThread();
     void
     postShutdownCompletion();
-    // Progress thread for data rail CQs only
+    // Progress thread for rail CQs
     nixl_status_t
     progressThread();
 
@@ -291,14 +286,6 @@ private:
     // Engine message processing methods
     void
     processNotification(const std::string &serialized_notif);
-    void
-    processConnectionAck(uint16_t agent_idx,
-                         nixlLibfabricConnection *conn_info,
-                         ConnectionState state);
-    nixl_status_t
-    processConnectionRequest(uint16_t agent_idx,
-                             const std::string &serialized_data,
-                             nixlLibfabricRail *rail);
     nixl_status_t
     loadMetadataHelper(const std::vector<uint64_t> &rail_keys,
                        void *buffer,

@@ -63,7 +63,11 @@ endif
 
 nixl_ep_sources = [
     'csrc/nixl_ep.cpp',
-    'csrc/kernels/nixl_ep.cu',
+    'csrc/vmm.cpp',
+    'csrc/kernels/nixl_ep_ll.cu',
+    'csrc/kernels/nixl_ep_ht.cu',
+    'csrc/kernels/layout.cu',
+    'csrc/kernels/runtime.cu',
 ]
 
 nixl_ep_inc_dirs = [
@@ -73,11 +77,6 @@ nixl_ep_inc_dirs = [
     include_directories('csrc/kernels'),
     torch_inc_dirs,
 ]
-
-doca_build_deps = []
-if doca_gpunetio_dep.found()
-    doca_build_deps = [doca_gpunetio_dep]
-endif
 
 nixl_ep_cpp_args = [
     '-DHAVE_CUDA',
@@ -100,7 +99,6 @@ nixl_ep_cuda_args = [
     '-Xcompiler', '-Wno-sign-compare',
     '-Xcompiler', '-Wno-reorder',
     '-Xcompiler', '-Wno-attributes',
-    '-DENABLE_FAST_DEBUG=1',
 ]
 
 topk_idx_bits = meson.get_external_property('topk_idx_bits', '64')
@@ -127,6 +125,12 @@ if get_option('buildtype') == 'debug'
     nixl_ep_cpp_args += ['-g']
 endif
 
+enable_fast_debug = get_option('buildtype') != 'release'
+
+if enable_fast_debug
+    nixl_ep_cuda_args += ['-DENABLE_FAST_DEBUG']
+endif
+
 nixl_ep_install_rpath = join_paths(get_option('prefix'), get_option('libdir'))
 nixl_ep_install_rpath += ':' + join_paths(get_option('prefix'), get_option('libdir'), 'plugins')
 nixl_ep_install_rpath += ':' + torch_lib_dir
@@ -139,7 +143,7 @@ nixl_ep_ext = py.extension_module('nixl_ep_cpp',
         pybind_dep,
         cuda_dep,
         torch_dep,
-    ] + ucx_build_deps + doca_build_deps,
+    ] + ucx_build_deps,
     include_directories: nixl_ep_inc_dirs,
     cpp_args: nixl_ep_cpp_args,
     cuda_args: nixl_ep_cuda_args,

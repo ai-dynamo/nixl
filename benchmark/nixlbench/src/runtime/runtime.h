@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,16 +15,10 @@
  * limitations under the License.
  */
 
-#ifndef __RUNTIME_H
-#define __RUNTIME_H
+#ifndef NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_RUNTIME_H
+#define NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_RUNTIME_H
 
-#include <iostream>
 #include <string>
-
-class xferBenchRTReq {
-    public:
-        friend class xferBenchRT;
-};
 
 class xferBenchRT {
     private:
@@ -34,7 +28,7 @@ class xferBenchRT {
         void setSize(int s) { size = s; };
         void setRank(int r) { rank = r; };
     public:
-    	virtual ~xferBenchRT() {};
+        virtual ~xferBenchRT() = default;
 
         int getSize() const;
         int getRank() const;
@@ -47,6 +41,23 @@ class xferBenchRT {
 
         // Add a barrier function to synchronize all processes
         virtual int barrier(const std::string& barrier_id) = 0;
+
+        // Check if all peer processes are still alive; returns true by default
+        [[nodiscard]] virtual bool
+        areAllPeersAlive() {
+            return true;
+        }
+
+        // Check if the keepalive lease is still valid; returns true by default
+        [[nodiscard]] virtual bool
+        checkKeepAlive() {
+            return true;
+        }
+
+        // Best-effort cleanup of runtime state (e.g. etcd keys) before a
+        // forced exit that bypasses normal destructors.
+        virtual void
+        cleanupForExit() {}
 };
 
-#endif // __RUNTIME_H
+#endif // NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_RUNTIME_H

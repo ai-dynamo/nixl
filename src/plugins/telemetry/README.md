@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,8 +46,8 @@ Here's a minimal example of a CSV file exporter plugin:
 ### 1. Create Your Exporter Class (`csv_exporter.h`)
 
 ```cpp
-#ifndef _TELEMETRY_CSV_EXPORTER_H
-#define _TELEMETRY_CSV_EXPORTER_H
+#ifndef NIXL_TELEMETRY_CSV_EXPORTER_H
+#define NIXL_TELEMETRY_CSV_EXPORTER_H
 
 #include "telemetry/telemetry_exporter.h"
 #include <fstream>
@@ -71,19 +71,20 @@ private:
 ```cpp
 #include "csv_exporter.h"
 #include "common/nixl_log.h"
+#include "common/configuration.h"
 
 nixlTelemetryCsvExporter::nixlTelemetryCsvExporter(
     const nixlTelemetryExporterInitParams *init_params)
     : nixlTelemetryExporter(init_params) {
 
-    auto file_path = std::get_end("NIXL_TELEMETRY_CSV_FILE");
+    auto file_path = nixl::config::getValue<std::string>("NIXL_TELEMETRY_CSV_FILE");
     file_.open(file_path, std::ios::out | std::ios::app);
     if (!file_.is_open()) {
         throw std::runtime_error("Failed to open CSV file: " + file_path);
     }
 
     // Write CSV header
-    file_ << "timestamp_us,category,event_name,value\n";
+    file_ << "category,event_type,value\n";
     NIXL_INFO << "CSV exporter initialized: " << file_path;
 }
 
@@ -94,9 +95,8 @@ nixlTelemetryCsvExporter::exportEvent(const nixlTelemetryEvent &event) {
     }
 
     try {
-        file_ << event.timestampUs_ << ","
-              << static_cast<int>(event.category_) << ","
-              << event.eventName_ << ","
+        file_ << static_cast<int>(event.category_) << ","
+              << nixlEnumStrings::telemetryEventTypeStr(event.eventType_) << ","
               << event.value_ << "\n";
         file_.flush();
         return NIXL_SUCCESS;
@@ -121,7 +121,7 @@ using csv_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryCsvExporte
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
 nixl_telemetry_plugin_init() {
     return csv_exporter_plugin_t::create(
-        NIXL_TELEMETRY_PLUGIN_API_VERSION,
+        nixl_telemetry_plugin_api_version::V2,
         "csv",      // Plugin name
         "1.0.0"     // Plugin version
     );

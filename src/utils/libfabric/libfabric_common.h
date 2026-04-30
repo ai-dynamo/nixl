@@ -36,8 +36,6 @@
 
 
 // Libfabric configuration constants
-#define NIXL_LIBFABRIC_DEFAULT_CONTROL_RAILS 1
-
 // Sockets provider requires short timeout to maintain software progress during fi_cq_sread().
 // Long timeouts block in poll(), preventing message processing. EFA uses hardware completions.
 #define NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_MS 10
@@ -45,17 +43,12 @@
 #define LF_EP_NAME_MAX_LEN 56
 
 // Request pool configuration constants
-#define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 4096 // SEND/RECV operations (1:1 with buffers)
-#define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/read operations (no buffers)
-#define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192
+#define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 4096 // SEND/RECV operations (for notifications)
+#define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/READ operations
+#define NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE 8192 // For SEND/RECV notifications
 #define NIXL_LIBFABRIC_RECV_POOL_SIZE 1024 // Number of recv requests to pre-post per rail
 
 // Retry configuration constants
-#define NIXL_LIBFABRIC_MAX_RETRIES 10
-#define NIXL_LIBFABRIC_EFA_RETRY_DELAY_US 100
-#define NIXL_LIBFABRIC_DEFAULT_RETRY_DELAY_US 1000
-#define NIXL_LIBFABRIC_BASE_RETRY_DELAY_US 1000 // Base 1ms delay between retries
-#define NIXL_LIBFABRIC_MAX_RETRY_DELAY_US 100000 // Max 100ms delay between retries
 #define NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS 100 // Log every N attempts to avoid spam
 
 // The immediate data associated with an RDMA operation is 32 bits and is divided as follows:
@@ -80,10 +73,7 @@
 #define NIXL_SEQ_ID_MASK 0xFU // 0x0000000F (4 bits)
 
 // Message type constants
-#define NIXL_LIBFABRIC_MSG_CONNECT 0
-#define NIXL_LIBFABRIC_MSG_ACK 1
 #define NIXL_LIBFABRIC_MSG_NOTIFICTION 2
-#define NIXL_LIBFABRIC_MSG_DISCONNECT 3
 #define NIXL_LIBFABRIC_MSG_TRANSFER 4
 
 // Single-operation immediate data extraction (no intermediate shifts)
@@ -99,6 +89,11 @@
      (((uint64_t)(agent_idx) & NIXL_AGENT_INDEX_MASK) << NIXL_AGENT_INDEX_SHIFT) | \
      (((uint64_t)(xfer_id) & NIXL_XFER_ID_MASK) << NIXL_XFER_ID_SHIFT) |           \
      (((uint64_t)(seq_id) & NIXL_SEQ_ID_MASK) << NIXL_SEQ_ID_SHIFT))
+
+#define NIXL_LIBFABRIC_CQ_BATCH_SIZE 16
+
+// Giga (decimal) constant
+constexpr inline uint64_t NIXL_LIBFABRIC_GIGA = 1000ull * 1000ull * 1000ull;
 
 /**
  * @brief Notification header for all fragments (10 bytes)
@@ -259,6 +254,14 @@ public:
     }
 };
 
+// helper type for hashing integer pair
+template<typename T, typename U = T> struct pair_hash {
+    inline size_t
+    operator()(const std::pair<T, U> &int_pair) const {
+        return std::hash<T>()(int_pair.first) ^ std::hash<U>()(int_pair.second);
+    }
+};
+
 // Global XFER_ID management
 namespace LibfabricUtils {
 // Get next unique XFER_ID
@@ -280,6 +283,45 @@ getAvailableNetworkDevices();
 // String utilities
 std::string
 hexdump(const void *data, size_t size);
+
+/** @brief Converts rail id vector to string. */
+extern std::string
+railIdsToString(const std::vector<size_t> &rail_ids);
+
+/** @brief Retrieves the maximum NUMA node id. */
+extern bool
+getMaxNumaNode(int &node_id);
+
+/** @brief Retrieves the number of configured NUMA nodes. */
+extern bool
+getNumConfiguredNumaNodes(int &node_count);
+} // namespace LibfabricUtils
+
+// Configuration helper functions
+namespace LibfabricUtils {
+/**
+ * @brief Loads string from custom plugin parameters.
+ * @note Can override from env var with name NIXL_LIBFABRIC_<upper-case key>.
+ * @param custom_param The backend parameters.
+ * @param key The key name.
+ * @param[out] value The resulting value (valid only if call succeeds).
+ * @return Result status.
+ */
+extern nixl_status_t
+getCustomStringParam(const nixl_b_params_t &custom_params,
+                     const std::string &key,
+                     std::string &value);
+
+/**
+ * @brief Loads integer from custom plugin parameters.
+ * @note Can override from env var with name NIXL_LIBFABRIC_<upper-case key>.
+ * @param custom_param The backend parameters.
+ * @param key The key name.
+ * @param[out] value The resulting value (valid only if call succeeds).
+ * @return Result status.
+ */
+extern nixl_status_t
+getCustomIntParam(const nixl_b_params_t &custom_params, const std::string &key, size_t &value);
 } // namespace LibfabricUtils
 
 #endif // NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_COMMON_H

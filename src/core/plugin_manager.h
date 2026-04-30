@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +18,10 @@
 #ifndef __PLUGIN_MANAGER_H
 #define __PLUGIN_MANAGER_H
 
+#include <filesystem>
 #include <string>
 #include <map>
+#include <set>
 #include <memory>
 #include <vector>
 #include <mutex>
@@ -71,12 +73,12 @@ private:
 
 // Structure to hold static plugin info
 struct nixlBackendStaticPluginInfo {
-    const char* name;
+    std::string name;
     nixlStaticPluginCreatorFunc createFunc;
 };
 
 struct nixlTelemetryStaticPluginInfo {
-    const char *name;
+    std::string name;
     nixlTelemetryStaticPluginCreatorFunc createFunc;
 };
 
@@ -97,7 +99,7 @@ private:
 };
 
 typedef std::shared_ptr<const nixlPluginHandle> (
-    *nixlPluginLoaderFunc)(void *handle, const std::string_view &plugin_path);
+    *nixlPluginLoaderFunc)(void *handle, const std::string &plugin_path);
 
 class nixlPluginManager {
 public:
@@ -109,7 +111,7 @@ public:
     nixlPluginManager& operator=(const nixlPluginManager&) = delete;
 
     void
-    loadPluginsFromList(const std::string &filename);
+    discoverPluginsFromList(const std::string &filename);
 
     // Load a specific backend plugin
     std::shared_ptr<const nixlBackendPluginHandle>
@@ -139,6 +141,10 @@ public:
     std::vector<nixl_backend_t>
     getLoadedBackendPluginNames();
 
+    // Get all available backend plugin names (loaded + discovered on disk)
+    std::vector<nixl_backend_t>
+    getAvailBackendPluginNames();
+
     // Get all loaded telemetry plugin names
     std::vector<nixl_telemetry_plugin_t>
     getLoadedTelemetryPluginNames();
@@ -159,6 +165,10 @@ private:
         loaded_backend_plugins_;
     std::map<nixl_telemetry_plugin_t, std::shared_ptr<const nixlTelemetryPluginHandle>>
         loaded_telemetry_plugins_;
+    // Plugins discovered on disk but not yet dlopen'd
+    std::set<nixl_backend_t> discovered_backend_plugins_;
+    // Explicit paths from the plugin list file (name -> .so path)
+    std::map<nixl_backend_t, std::string> explicit_plugin_paths_;
     std::vector<std::string> plugin_dirs_;
     std::vector<nixlBackendStaticPluginInfo> backend_static_plugins_;
     std::vector<nixlTelemetryStaticPluginInfo> telemetry_static_plugins_;
@@ -167,14 +177,14 @@ private:
     void
     registerBuiltinPlugins();
     void
-    registerBackendStaticPlugin(const std::string_view &name, nixlStaticPluginCreatorFunc creator);
+    registerBackendStaticPlugin(const std::string &name, nixlStaticPluginCreatorFunc creator);
     void
-    registerTelemetryStaticPlugin(const std::string_view &name,
+    registerTelemetryStaticPlugin(const std::string &name,
                                   nixlTelemetryStaticPluginCreatorFunc creator);
 
     // Search a directory for plugins
     void
-    discoverPluginsFromDir(const std::string_view &dirpath);
+    discoverPluginsFromDir(const std::filesystem::path &dirpath);
 
     // Discover helper functions
     void

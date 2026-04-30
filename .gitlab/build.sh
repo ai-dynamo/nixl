@@ -29,13 +29,17 @@ EXTRA_BUILD_ARGS=${3:-""}
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 NIXLBENCH_BUILD_DIR=${NIXLBENCH_BUILD_DIR:-nixlbench_build}
 # UCX_VERSION is the version of UCX to build override default with env variable.
-UCX_VERSION=${UCX_VERSION:-v1.20.x}
+UCX_VERSION=${UCX_VERSION:-v1.21.x}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
+# Abseil and gRPC versions for consistent toolchain build.
+ABSL_TAG=${ABSL_TAG:-lts_2025_08_14}
+GRPC_TAG=${GRPC_TAG:-v1.73.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
-UCCL_COMMIT_SHA="a962f611021afc2e3c9358f6da4ae96539cbca0f"
+UCCL_COMMIT_SHA="2de728f1a27ea3f3b66059baf838f940e243ebc6"
+AZURITE_VER="3.35.0"
 TMPDIR=$(mktemp -d)
 
 if [ -z "$INSTALL_DIR" ]; then
@@ -57,6 +61,13 @@ fi
 
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
+
+export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${LIBFABRIC_INSTALL_DIR}/lib"
+export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
+export PATH="${INSTALL_DIR}/bin:$HOME/.local/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
+export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:${LIBFABRIC_INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH"
+export NIXL_PLUGIN_DIR="${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
+export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 
 if [ -n "$PRE_INSTALLED_ENV" ]; then
     echo "PRE_INSTALLED_ENV is set, skipping package installation"
@@ -87,8 +98,6 @@ else
                                  libpython3-dev \
                                  libboost-all-dev \
                                  libssl-dev \
-                                 libgrpc-dev \
-                                 libgrpc++-dev \
                                  libprotobuf-dev \
                                  libcpprest-dev \
                                  libaio-dev \
@@ -98,6 +107,7 @@ else
                                  patchelf \
                                  meson \
                                  ninja-build \
+                                 parallel \
                                  pkg-config \
                                  protobuf-compiler-grpc \
                                  pybind11-dev \
@@ -112,6 +122,7 @@ else
                                  clang \
                                  hwloc \
                                  libhwloc-dev \
+                                 libxml2-dev \
                                  libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
 
     # Ubuntu 22.04 specific setup
@@ -126,7 +137,16 @@ else
         click tabulate auditwheel tomlkit \
         pytest pytest-timeout zmq \
         mpmath typing-extensions sympy numpy \
-        networkx MarkupSafe fsspec filelock jinja2 torch
+        networkx MarkupSafe fsspec filelock jinja2
+
+    # Install torch from the CUDA-matched PyTorch index
+    cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
+    if [ -z "$cuda_version" ]; then
+        echo "ERROR: unable to determine CUDA version from nvcc" >&2
+        exit 1
+    fi
+    $SUDO pip3 --no-cache-dir install --break-system-packages \
+        --index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
 
     # Add DOCA repository and install packages
     ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
@@ -152,6 +172,15 @@ else
     chmod +x ${TMPDIR}/install_uv.sh
     ${TMPDIR}/install_uv.sh
 
+    # Install Node Version Manager then Nodejs to install Azurite
+    wget --tries=3 --waitretry=5 "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh" -O ${TMPDIR}/install_nvm.sh
+    chmod +x ${TMPDIR}/install_nvm.sh
+    ${TMPDIR}/install_nvm.sh
+    export NVM_DIR=${HOME}/.nvm
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    nvm install --lts  # install nodejs
+    npm install -g azurite@${AZURITE_VER}
+
     wget --tries=3 --waitretry=5 -O "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
     tar xjf "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -C ${TMPDIR}
     rm "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
@@ -167,15 +196,72 @@ else
                   --enable-efa && \
       make -j"$NPROC" && \
       make install && \
-      $SUDO ldconfig \
+      $SUDO ldconfig && \
+      cd .. && \
+      rm -rf libfabric-*
+    )
+
+    ( \
+      cd ${TMPDIR} && \
+      git clone https://github.com/abseil/abseil-cpp.git && \
+      cd abseil-cpp && \
+      git fetch --depth 1 origin "${ABSL_TAG}" && \
+      git checkout "${ABSL_TAG}" && \
+      mkdir -p build && cd build && \
+      cmake .. \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=ON \
+          -DABSL_PROPAGATE_CXX_STD=ON \
+          -DABSL_ENABLE_INSTALL=ON && \
+      make -j"$NPROC" && \
+      $SUDO make install && \
+      $SUDO ldconfig && \
+      cd ${TMPDIR} && \
+      rm -rf abseil-cpp \
+    )
+
+    ( \
+      cd ${TMPDIR} && \
+      git clone --recurse-submodules -b "${GRPC_TAG}" --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+      cd grpc && \
+      mkdir -p cmake/build && \
+      cd cmake/build && \
+      cmake ../.. \
+          -DgRPC_INSTALL=ON \
+          -DgRPC_BUILD_TESTS=OFF \
+          -DBUILD_SHARED_LIBS=ON \
+          -DCMAKE_CXX_STANDARD=17 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" \
+          -Dabsl_DIR="${INSTALL_DIR}/lib/cmake/absl" \
+          -DgRPC_SSL_PROVIDER=package \
+          -DgRPC_ABSL_PROVIDER=package \
+          -DgRPC_PROTOBUF_PROVIDER=module \
+          -DgRPC_ZLIB_PROVIDER=package && \
+      make -j"$NPROC" && \
+      $SUDO make install && \
+      $SUDO ldconfig && \
+      cd ${TMPDIR} && \
+      rm -rf grpc \
     )
 
     ( \
       cd ${TMPDIR} && \
       git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
       cd etcd-cpp-apiv3 && \
+      sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
       mkdir build && cd build && \
-      cmake .. && \
+      cmake .. \
+          -DBUILD_ETCD_CORE_ONLY=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DETCD_CMAKE_CXX_STANDARD=17 \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" && \
       make -j"$NPROC" && \
       $SUDO make install && \
       $SUDO ldconfig \
@@ -183,12 +269,14 @@ else
 
     ( \
       cd ${TMPDIR} && \
-      git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.581 && \
+      git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
       mkdir aws_sdk_build && \
       cd aws_sdk_build && \
       cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
       make -j"$NPROC" && \
-      $SUDO make install
+      $SUDO make install && \
+      cd .. && \
+      rm -rf aws_sdk_build aws-sdk-cpp
     )
 
     ( \
@@ -196,19 +284,25 @@ else
       git clone https://github.com/nvidia/gusli.git && \
       cd gusli && \
       $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
-      $SUDO ldconfig
+      $SUDO ldconfig && \
+      cd .. && \
+      $SUDO rm -rf gusli
     )
 
     ( \
       cd ${TMPDIR} && \
-      git clone --depth 1 https://github.com/kvcache-ai/Mooncake.git && \
+      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}" && \
+      echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
+      git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
-      $SUDO bash dependencies.sh && \
+      $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
-      cmake .. -DBUILD_SHARED_LIBS=ON && \
-      make -j4 && \
-      $SUDO make install && \
-      $SUDO ldconfig
+      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
+      ninja && \
+      $SUDO ninja install && \
+      $SUDO ldconfig && \
+      cd .. && \
+      rm -rf Mooncake
     )
 
     ( \
@@ -216,6 +310,21 @@ else
       git clone --depth 1 https://github.com/google/gtest-parallel.git &&
       mkdir -p ${INSTALL_DIR}/bin &&
       cp ${TMPDIR}/gtest-parallel/* ${INSTALL_DIR}/bin/
+    )
+
+    ( \
+      cd ${TMPDIR} && \
+      df -h && \
+      curl -sL https://aka.ms/InstallAzureCLIDeb | $SUDO bash && \
+      git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
+      cd azure-sdk-for-cpp/ && \
+      mkdir build && cd build && \
+      AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
+      cmake --build . --target azure-storage-blobs azure-identity && \
+      $SUDO cmake --install sdk/core && \
+      $SUDO cmake --install sdk/storage/azure-storage-common && \
+      $SUDO cmake --install sdk/storage/azure-storage-blobs && \
+      $SUDO cmake --install sdk/identity
     )
 fi # PRE_INSTALLED_ENV end
 
@@ -235,9 +344,10 @@ else
     else
         echo "No NVIDIA GPU(s) detected. Skipping UCCL installation."
     fi
-    curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz -C ${TMPDIR}
+    git clone https://github.com/openucx/ucx.git ${TMPDIR}/ucx
     ( \
-    cd ${TMPDIR}/openucx-ucx* && \
+    cd ${TMPDIR}/ucx && \
+    git checkout "${UCX_VERSION}" && \
     ./autogen.sh && \
     ./contrib/configure-release-mt \
             --prefix="${UCX_INSTALL_DIR}" \
@@ -249,21 +359,15 @@ else
             --enable-devel-headers \
             --with-verbs \
             --with-dm \
+            --without-gdrcopy \
             ${UCX_CUDA_BUILD_ARGS} && \
           make -j"$NPROC" && \
-          make -j install-strip && \
+          $SUDO make -j install-strip && \
           $SUDO ldconfig \
     )
 fi # PRE_INSTALLED_UCX_ENV end
 
 $SUDO rm -rf ${TMPDIR}
-
-export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${LIBFABRIC_INSTALL_DIR}/lib"
-export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
-export PATH="${INSTALL_DIR}/bin:$HOME/.local/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
-export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:${LIBFABRIC_INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH"
-export NIXL_PLUGIN_DIR="${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
-export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 
 # Disabling CUDA IPC not to use NVLINK, as it slows down local
 # UCX transfers and can cause contention with local collectives.

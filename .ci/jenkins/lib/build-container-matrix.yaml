@@ -16,7 +16,7 @@ kubernetes:
   requests: "{memory: 8Gi, cpu: 4000m}"
 
 runs_on_dockers:
-  - { name: "podman-v5.7.1", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+  - { name: "podman", url: "quay.io/podman/stable:v5.7.1", privileged: true }
 
 # Build matrix
 matrix:
@@ -27,22 +27,20 @@ matrix:
 
 # Configuration
 env:
-  REGISTRY_HOSTESS: "artifactory.nvidia.com"
-  REGISTRY_HOSTESS_OLD: "urm.nvidia.com"
-  REGISTRY_REPO: "sw-nbu-swx-nixl-docker-local/verification"
+  REGISTRY_HOST_NAME: "artifactory.nvidia.com"
+  REGISTRY_REPO_NAME: "sw-nbu-swx-nixl-docker-local"
+  REGISTRY_REPO_PATH: "verification"
+  ARTIFACTORY_REGISTRY_URL: "${REGISTRY_HOST_NAME}/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}"
+  ARTIFACTORY_CLEANUP_AGE: "3m" # 3 months
   LOCAL_TAG_BASE: "nixl-ci:build-"
   MAIL_FROM: "jenkins@nvidia.com"
 
-taskName: "${BUILD_TARGET}/${arch}/${axis_index}"
+taskName: "${BUILD_TARGET}/${arch}"
 
 credentials:
   - credentialsId: 'svc-nixl-new-artifactory-token'
-    # Preserve historical variable names for the primary registry push logic
     usernameVariable: 'ARTIFACTORY_USERNAME'
     passwordVariable: 'ARTIFACTORY_PASSWORD'
-  - credentialsId: 'svc-nixl-artifactory-token'
-    usernameVariable: 'ARTIFACTORY_OLD_USERNAME'
-    passwordVariable: 'ARTIFACTORY_OLD_PASSWORD'
 
 pipeline_start:
   shell: action
@@ -61,6 +59,7 @@ pipeline_start:
 # Build pipeline
 steps:
   - name: Prepare
+    containerSelector: "{name: 'podman'}"
     run: |
       # Setup podman and dependencies
       set -x
@@ -72,6 +71,7 @@ steps:
 
   - name: Build NIXLBench
     enable: ${ENABLE_NIXLBENCH_BUILD}
+    containerSelector: "{name: 'podman'}"
     run: |
       # Clone UCX source for nixlbench
       git clone https://github.com/openucx/ucx.git ucx-src
@@ -88,6 +88,7 @@ steps:
 
   - name: Build NIXL
     enable: ${ENABLE_NIXL_BUILD}
+    containerSelector: "{name: 'podman'}"
     run: |
       export UCX_REF="${UCX_VERSION}"
 
@@ -106,6 +107,7 @@ steps:
         ${NIXL_EP_FLAG}
 
   - name: Add Version Info
+    containerSelector: "{name: 'podman'}"
     run: |
       git config --global --add safe.directory '*'
       # Extract standardized 8-char commit hash for UCX version info:
@@ -143,24 +145,22 @@ steps:
       docker rm -f tempcontainer || true
 
   - name: Push
+    containerSelector: "{name: 'podman'}"
     credentialsId: 'svc-nixl-new-artifactory-token'
     run: |
       source version-info
-      ARTIFACTORY_REGISTRY="${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}"
-      ARTIFACTORY_API="https://${REGISTRY_HOSTESS}/artifactory/api/storage/${REGISTRY_REPO}/${BUILD_TARGET}"
+      ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY_URL}/${BUILD_TARGET}"
+      ARTIFACTORY_API="https://${REGISTRY_HOST_NAME}/artifactory/api/storage/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}/${BUILD_TARGET}"
 
       # Prepare image properties
       IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${UCX_VERSION};arch=${arch};"
       IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
       IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
 
-      [[ -n "${ARTIFACTORY_USERNAME:-}" ]] || { echo "ERROR: ARTIFACTORY_USERNAME is empty"; exit 1; }
-      [[ -n "${ARTIFACTORY_PASSWORD:-}" ]] || { echo "ERROR: ARTIFACTORY_PASSWORD is empty"; exit 1; }
+      # Login to Artifactory
+      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
 
-      # Login to new Artifactory
-      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOSTESS}" -u "$ARTIFACTORY_USERNAME" --password-stdin
-
-      # Function to tag, push, and set properties (new Artifactory)
+      # Function to tag, push, and set properties
       tag_push_set_properties() {
         local target_tag="$1"
         echo "Creating tag: ${target_tag}"
@@ -170,54 +170,21 @@ steps:
           "${ARTIFACTORY_API}/${target_tag}?properties=${IMAGE_PROPERTIES}"
       }
 
-      # Always create standard tag (new Artifactory)
+      # Always create standard tag
       tag_push_set_properties "${TAG_NAME}"
 
-      # Check if latest tag should be updated (new Artifactory)
+      # Check if latest tag should be updated
       if [[ "${UPDATE_LATEST}" == "true" ]]; then
         tag_push_set_properties "${BASE_IMAGE_TAG}-${arch}-latest"
-      fi
-
-  - name: Push (old Artifactory)
-    credentialsId: 'svc-nixl-artifactory-token'
-    run: |
-      source version-info
-      ARTIFACTORY_REGISTRY_OLD="${REGISTRY_HOSTESS_OLD}/${REGISTRY_REPO}/${BUILD_TARGET}"
-      ARTIFACTORY_API_OLD="https://${REGISTRY_HOSTESS_OLD}/artifactory/api/storage/${REGISTRY_REPO}/${BUILD_TARGET}"
-
-      # Prepare image properties
-      IMAGE_PROPERTIES="BUILD_TARGET=${BUILD_TARGET};NIXL_VERSION=${NIXL_VERSION};UCX_VERSION=${UCX_VERSION};arch=${arch};"
-      IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
-      IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
-
-      [[ -n "${ARTIFACTORY_OLD_USERNAME:-}" ]] || { echo "ERROR: ARTIFACTORY_OLD_USERNAME is empty"; exit 1; }
-      [[ -n "${ARTIFACTORY_OLD_PASSWORD:-}" ]] || { echo "ERROR: ARTIFACTORY_OLD_PASSWORD is empty"; exit 1; }
-
-      echo "$ARTIFACTORY_OLD_PASSWORD" | docker login "${REGISTRY_HOSTESS_OLD}" -u "$ARTIFACTORY_OLD_USERNAME" --password-stdin
-
-      tag_push_set_properties_old() {
-        local target_tag="$1"
-        echo "Creating tag (old): ${target_tag}"
-        docker tag "${LOCAL_TAG_BASE}${arch}" "${ARTIFACTORY_REGISTRY_OLD}:${target_tag}"
-        docker push "${ARTIFACTORY_REGISTRY_OLD}:${target_tag}"
-        curl -H "Authorization: Bearer ${ARTIFACTORY_OLD_PASSWORD}" -X PUT \
-          "${ARTIFACTORY_API_OLD}/${target_tag}?properties=${IMAGE_PROPERTIES}"
-      }
-
-      tag_push_set_properties_old "${TAG_NAME}"
-      if [[ "${UPDATE_LATEST}" == "true" ]]; then
-        tag_push_set_properties_old "${BASE_IMAGE_TAG}-${arch}-latest"
       fi
 
   - name: Show Results
     run: |
       source version-info
       echo "Image type built: ${BUILD_TARGET} (${arch})"
-      echo "Image pushed to (new): ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}:${TAG_NAME}"
-      echo "Image pushed to (old): ${REGISTRY_HOSTESS_OLD}/${REGISTRY_REPO}/${BUILD_TARGET}:${TAG_NAME}"
+      echo "Image pushed to: ${ARTIFACTORY_REGISTRY_URL}/${BUILD_TARGET}:${TAG_NAME}"
       if [[ "${UPDATE_LATEST}" == "true" ]]; then
-        echo "Latest tag updated (new): ${REGISTRY_HOSTESS}/${REGISTRY_REPO}/${BUILD_TARGET}:${BASE_IMAGE_TAG}-${arch}-latest"
-        echo "Latest tag updated (old): ${REGISTRY_HOSTESS_OLD}/${REGISTRY_REPO}/${BUILD_TARGET}:${BASE_IMAGE_TAG}-${arch}-latest"
+        echo "Latest tag updated: ${ARTIFACTORY_REGISTRY_URL}/${BUILD_TARGET}:${BASE_IMAGE_TAG}-${arch}-latest"
       fi
 
       echo -e "\nBuild config for manual repro:"
@@ -236,6 +203,7 @@ steps:
 pipeline_stop:
   shell: action
   module: groovy
+  containerSelector: "{name: 'podman'}"
   run: |
     if (params.MAIL_TO) {
         def jobStatus = currentBuild.result ?: 'SUCCESS'
@@ -263,4 +231,7 @@ pipeline_stop:
                 ${params.BUILD_NIXL_EP ? "<p>Build NIXL EP: <b>Yes</b></p>" : ''}
             """
         )
+    }
+    withCredentials([usernamePassword(credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_TOKEN')]) {
+      sh "yum install -y jq > /dev/null && .ci/scripts/artifactory-cleanup-by-time.sh --path ${REGISTRY_REPO_PATH}/${BUILD_TARGET} ${REGISTRY_REPO_NAME} ${ARTIFACTORY_CLEANUP_AGE}"
     }

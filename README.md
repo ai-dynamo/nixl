@@ -37,21 +37,13 @@ NIXL is supported on a Linux environment only. It is tested on Ubuntu (22.04/24.
 The nixl python API and libraries, including UCX, are available directly through PyPI.
 For example, if you have a GPU running on a Linux host, container, or VM, you can do the following install:
 
-It can be installed for CUDA 12 with:
+Install with:
 
-```
-pip install nixl[cu12]
-```
-
-For CUDA 13 with:
-
-```
-pip install nixl[cu13]
+```bash
+pip install nixl
 ```
 
-For backwards compatibility, `pip install nixl` installs automatically `nixl[cu12]`, continuing to work seamlessly for CUDA 12 users without requiring changes to downstream project dependencies.
-
-If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environment, `nixl-cu13` takes precedence.
+This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
 ## Prerequisites for source build (Linux)
 ### Ubuntu:
@@ -68,14 +60,14 @@ If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environ
 
 ### UCX
 
-NIXL was tested with UCX version 1.20.x.
+NIXL was tested with UCX version 1.21.x.
 
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
 $ git clone https://github.com/openucx/ucx.git
 $ cd ucx
-$ git checkout v1.20.x
+$ git checkout v1.21.x
 $ ./autogen.sh
 $ ./contrib/configure-release-mt       \
     --enable-shared                    \
@@ -195,37 +187,101 @@ NIXL provides Python bindings through pybind11. For detailed Python API document
 The preferred way to install the Python bindings is through pip from PyPI:
 
 ```bash
-pip install nixl[cu12]
+pip install nixl
 ```
 
-Or for CUDA 13 with:
+This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
-```bash
-pip install nixl[cu13]
+#### Installation from source
+
+Prerequisites:
+
+- `uv`: https://docs.astral.sh/uv/getting-started/installation/
+- `tomlkit`: https://pypi.org/project/tomlkit/
+- `PyTorch`: https://pytorch.org/get-started/locally/
+
+`uv` is always required *even if* you have another kind of Python virtual environment manager or if you are using a system-wide Python installation without using a virtual environment.
+
+Example with `uv` Python virtual environment:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:${PATH}"
+
+uv venv .venv --python 3.12
+source .venv/bin/activate
+uv pip install tomlkit
 ```
 
-To build and install the Python bindings from source, you have to build and install separately the platform-specific package and the `nixl` meta-package:
+Example with python-virtualenv:
 
-On CUDA 12:
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:${PATH}"
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install tomlkit
+```
+
+Example with system-wide Python installation without using a virtual environment:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:${PATH}"
+
+pip install tomlkit
+```
+
+Then install PyTorch following the instructions on the PyTorch website: https://pytorch.org/get-started/locally/
+
+After installing the prerequisites, you can build and install the NIXL binaries and the Python bindings from source. You have to:
+
+1. Build NIXL binaries and install them
+2. Build and install the CUDA platform-specific package (`nixl-cu12` or `nixl-cu13`)
+3. Build and install the `nixl` meta-package
+
+**For CUDA 12:**
 
 ```
 pip install .
 meson setup build
-ninja -C build
+ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
 ```
 
-On CUDA 13:
+**For CUDA 13:**
 
 ```
 pip install .
 ./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
 meson setup build
-ninja -C build
+ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
 ```
 
-For Python examples, see [examples/python/](examples/python/).
+To check if the installation is successful, you can run the following command:
+
+```
+python3 -c "import nixl; agent = nixl.nixl_agent('agent1')"
+```
+
+which should print:
+
+```
+2026-01-08 13:36:27 NIXL INFO    _api.py:363 Backend UCX was instantiated
+2026-01-08 13:36:27 NIXL INFO    _api.py:253 Initialized NIXL agent: agent1
+```
+
+You can also run a complete Python example to test the installation:
+
+```
+python3 examples/python/expanded_two_peers.py --mode=target --use_cuda=true --ip=127.0.0.1 --port=4242 &
+sleep 5
+python3 examples/python/expanded_two_peers.py --mode=initiator --use_cuda=true --ip=127.0.0.1 --port=4242
+```
+
+For more Python examples, see [examples/python/](examples/python/).
 
 ### Rust Bindings
 #### Build

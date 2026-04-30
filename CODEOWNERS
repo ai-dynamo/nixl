@@ -15,11 +15,10 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 
 # Bindings
 /src/bindings/python @ovidiusm @mkhazraee @roiedanino
-/src/bindings/rust @roiedanino @gleon99 @mkhazraee
+/src/bindings/rust @roiedanino @gleon99 @tomerg-nvidia @mkhazraee
 
-# UCX Plugins
-/src/plugins/ucx* @brminich @yosefe @gleon99
-/src/utils/ucx @brminich @yosefe @gleon99
+# UCX Plugin
+/src/plugins/ucx @brminich @yosefe @gleon99
 
 # Storage Plugins
 /src/plugins/posix @w1ldptr @vvenkates27 @brminich
@@ -37,4 +36,4 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 /test/unit/utils/libfabric @amitrad-aws @yexiang-aws @akkart-aws @fengjica
 
 # NIXL EP example
-/examples/device/ep @itayalroy @ebarilanM @ai-dynamo/nixl-maintainers
+/examples/device/ep @itayalroy @ebarilanM @ofirfarjun7 @ai-dynamo/nixl-maintainers

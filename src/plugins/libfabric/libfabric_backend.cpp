@@ -18,8 +18,10 @@
 
 #include "libfabric_backend.h"
 #include "serdes/serdes.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 
+#include <dlfcn.h>
 #include <limits>
 #include <cstring>
 #include <unistd.h>
@@ -28,6 +30,54 @@
 #include <numeric>
 
 #include "absl/strings/numbers.h"
+
+/****************************************
+ * Neuron Address Query
+ *****************************************/
+namespace {
+
+void *
+dlopen_libnrt() {
+    static void *const handle = dlopen("libnrt.so.1", RTLD_NOW);
+    return handle;
+}
+
+template<class Fn>
+Fn *
+_load_nrt_symbol(const char *fn_name, Fn *) {
+    void *libnrt_handle = dlopen_libnrt();
+    if (libnrt_handle) {
+        return reinterpret_cast<Fn *>(dlsym(libnrt_handle, fn_name));
+    }
+    return nullptr;
+}
+
+#define LOAD_NRT_SYMBOL(sym) _load_nrt_symbol(#sym, &sym)
+
+int
+nrt_get_attached_efa_bdf(const void *va, char *efa_bdf, size_t *len) {
+    static const auto fn = LOAD_NRT_SYMBOL(nrt_get_attached_efa_bdf);
+    if (fn == nullptr) {
+        NIXL_ERROR << "Could not resolve libnrt symbol: " << __func__;
+        return -1;
+    }
+    return fn(va, efa_bdf, len);
+}
+
+int
+nrtQueryAddr(const void *va, std::string *efa_bdf) {
+    char buf[] = "0000:00:00.0";
+    size_t buflen = sizeof(buf);
+
+    if (nrt_get_attached_efa_bdf(va, buf, &buflen) == 0) {
+        efa_bdf->assign(buf, buflen);
+        return 0;
+    }
+
+    return -1;
+}
+
+} // namespace
 
 #ifdef HAVE_CUDA
 // CUDA error checking macros
@@ -240,23 +290,38 @@ nixlLibfabricBackendH::is_completed() const {
 
 nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
-      cm_thread_stop_(false),
       progress_thread_enabled_(init_params->enableProgTh),
       progress_thread_delay_(std::chrono::microseconds(init_params->pthrDelay)),
-      rail_manager(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD) {
+      rail_manager(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
+      runtime_(FI_HMEM_SYSTEM) {
 
-    NIXL_DEBUG << "Initializing Libfabric Backend with GPU Support";
+    NIXL_INFO << "Initializing Libfabric Backend";
+
+    // this is required for loading rail selection policy by configuration
+    if (rail_manager.init(getCustomParams()) != NIXL_SUCCESS) {
+        throw std::runtime_error("Failed to initialize the rail manager");
+    }
+
+    // Query system runtime type from rail manager (determined once at topology discovery)
+    runtime_ = rail_manager.getRuntime();
+
+    NIXL_INFO << "System runtime: "
+              << (runtime_ == FI_HMEM_CUDA       ? "CUDA" :
+                      runtime_ == FI_HMEM_NEURON ? "NEURON" :
+                                                   "SYSTEM");
 
 #ifdef HAVE_CUDA
-    // Initialize CUDA context management
-    vramInitCtx();
-    // CUDA address workaround
-    if (getenv("NIXL_DISABLE_CUDA_ADDR_WA")) {
-        NIXL_DEBUG << "Disabling CUDA address workaround";
-        cuda_addr_wa_ = false;
-    } else {
-        cuda_addr_wa_ = true;
-        NIXL_DEBUG << "CUDA address workaround enabled";
+    if (runtime_ == FI_HMEM_CUDA) {
+        // Initialize CUDA context management
+        vramInitCtx();
+        // CUDA address workaround
+        if (nixl::config::checkExistence("NIXL_DISABLE_CUDA_ADDR_WA")) {
+            NIXL_INFO << "CUDA address workaround: disabled";
+            cuda_addr_wa_ = false;
+        } else {
+            cuda_addr_wa_ = true;
+            NIXL_INFO << "CUDA address workaround: enabled";
+        }
     }
 #endif
 
@@ -267,104 +332,68 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
     if (getInitParam("striping_threshold", threshold_str) == NIXL_SUCCESS) {
         try {
             striping_threshold_ = std::stoull(threshold_str);
-            NIXL_DEBUG << "Using custom striping threshold: " << striping_threshold_ << " bytes";
+            NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes (custom)";
         }
         catch (const std::exception &e) {
             NIXL_WARN << "Invalid striping_threshold value '" << threshold_str
                       << "', using default: " << striping_threshold_ << " bytes";
         }
     } else {
-        NIXL_DEBUG << "Using default striping threshold: " << striping_threshold_ << " bytes";
+        NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes (default)";
     }
 
     // Initialize Rail Manager which will discover the topology and create all rails.
     try {
-        NIXL_DEBUG << "Rail Manager created with " << rail_manager.getNumDataRails()
-                   << " data rails and " << rail_manager.getNumControlRails() << " control rails";
+        NIXL_INFO << "Rail Manager created with " << rail_manager.getNumRails() << " rails";
 
-        // Set up callbacks on each rail using Engine's static callback functions
-        size_t control_rail_id = 0;
-        NIXL_DEBUG << "Set notification processor for control rail 0";
-        rail_manager.getControlRail(control_rail_id)
+        // Set up notification callback on rail 0
+        size_t notification_rail_id = 0;
+        NIXL_DEBUG << "Set notification processor for rail 0";
+        rail_manager.getRail(notification_rail_id)
             .setNotificationCallback([this](const std::string &serialized_notif) {
                 processNotification(serialized_notif);
             });
 
-        // Set up connection state callbacks for control rails
-        NIXL_DEBUG << "Set connection state processor for CM rail 0";
-
-        rail_manager.getControlRail(control_rail_id)
-            .setConnectionAckCallback([this](const uint16_t agent_idx,
-                                             nixlLibfabricConnection *conn_info,
-                                             ConnectionState state) {
-                processConnectionAck(agent_idx, conn_info, state);
-            });
-
-        // Set up connection request callback for control rails
-        rail_manager.getControlRail(control_rail_id)
-            .setConnectionReqCallback([this](const uint16_t agent_idx,
-                                             const std::string &serialized_data,
-                                             nixlLibfabricRail *rail) -> nixl_status_t {
-                return processConnectionRequest(agent_idx, serialized_data, rail);
-            });
-
-        // Set up XFER_ID tracking callbacks for all data rails
-        NIXL_DEBUG << "Setting up XFER_ID tracking callbacks for " << rail_manager.getNumDataRails()
-                   << " data rails";
-        for (size_t data_rail_id = 0; data_rail_id < rail_manager.getNumDataRails();
-             ++data_rail_id) {
-            rail_manager.getDataRail(data_rail_id).setXferIdCallback([this](uint64_t imm_data) {
+        // Set up XFER_ID tracking callbacks for all rails
+        NIXL_DEBUG << "Setting up XFER_ID tracking callbacks for " << rail_manager.getNumRails()
+                   << " rails";
+        for (size_t rail_id = 0; rail_id < rail_manager.getNumRails(); ++rail_id) {
+            rail_manager.getRail(rail_id).setXferIdCallback([this](uint64_t imm_data) {
                 // Extract XFER_ID from immediate data
                 uint16_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(imm_data);
                 addReceivedXferId(xfer_id);
             });
-            NIXL_DEBUG << "Set XFER_ID callback for data rail " << data_rail_id;
+            NIXL_DEBUG << "Set XFER_ID callback for rail " << rail_id;
         }
 
         // Create self-connection
         std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> data_endpoints(
-            rail_manager.getNumDataRails());
-        std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> control_endpoints(
-            rail_manager.getNumControlRails());
-        // Prepare data rail endpoints
-        for (size_t rail_id = 0; rail_id < rail_manager.getNumDataRails(); ++rail_id) {
+            rail_manager.getNumRails());
+        // Prepare rail endpoints
+        for (size_t rail_id = 0; rail_id < rail_manager.getNumRails(); ++rail_id) {
             std::memcpy(data_endpoints[rail_id].data(),
-                        rail_manager.getDataRail(rail_id).ep_name,
-                        sizeof(rail_manager.getDataRail(rail_id).ep_name));
-        }
-        // Prepare control rail endpoints
-        for (size_t rail_id = 0; rail_id < rail_manager.getNumControlRails(); ++rail_id) {
-            std::memcpy(control_endpoints[rail_id].data(),
-                        rail_manager.getControlRail(rail_id).ep_name,
-                        sizeof(rail_manager.getControlRail(rail_id).ep_name));
+                        rail_manager.getRail(rail_id).ep_name,
+                        sizeof(rail_manager.getRail(rail_id).ep_name));
         }
         // Create self-connection using common method
-        nixl_status_t conn_status =
-            createAgentConnection(localAgent, data_endpoints, control_endpoints);
+        nixl_status_t conn_status = createAgentConnection(localAgent, data_endpoints);
         if (conn_status != NIXL_SUCCESS) {
             throw std::runtime_error(
                 "createAgentConnection failed for self-connection with status: " +
                 std::to_string(conn_status));
         }
 
-        NIXL_DEBUG << "Created self-connection for agent: " << localAgent << " on "
-                   << rail_manager.getNumDataRails() << " data rails and "
-                   << rail_manager.getNumControlRails() << " control rails";
+        NIXL_INFO << "Created self-connection for agent: " << localAgent << " on "
+                  << rail_manager.getNumRails() << " rails";
 
-        // Threading infrastructure
-        // Start CM thread for background processing
-        NIXL_DEBUG << "Starting CM thread";
-        cm_thread_ = std::thread(&nixlLibfabricEngine::cmThread, this);
-        if (!cm_thread_.joinable()) {
-            NIXL_ERROR << "Failed to start CM thread";
-            throw std::runtime_error("Failed to start CM thread");
-        }
-        NIXL_DEBUG << "ConnectionManagement thread started successfully";
-
-        // Start Progress thread for data rail completion processing
+        // Start Progress thread for rail completion processing
         if (progress_thread_enabled_) {
-            NIXL_DEBUG << "Starting Progress thread for data rails with delay: "
-                       << progress_thread_delay_.count() << " microseconds";
+            for (size_t i = 0; i < rail_manager.getNumRails(); ++i) {
+                rail_manager.getRail(i).setProgressThreadEnabled(true);
+            }
+
+            NIXL_INFO << "Starting Progress thread for rails with delay: "
+                      << progress_thread_delay_.count() << " microseconds";
             progress_thread_stop_ = false;
             progress_thread_ = std::thread(&nixlLibfabricEngine::progressThread, this);
 
@@ -372,7 +401,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
                 NIXL_ERROR << "Failed to start Progress thread";
                 throw std::runtime_error("Failed to start Progress thread");
             }
-            NIXL_DEBUG << "Progress thread started successfully";
+            NIXL_INFO << "Progress thread started successfully";
         } else {
             NIXL_DEBUG << "Progress thread disabled, using manual progress in checkXfer/getNotifs";
         }
@@ -388,21 +417,10 @@ nixlLibfabricEngine::~nixlLibfabricEngine() {
     NIXL_DEBUG
         << "Destructor starting, stopping all threads FIRST to prevent timing report interruption";
 
-    // STOP ALL THREADS FIRST to prevent any interference with timing report
-    cm_thread_stop_.store(true);
-
     if (progress_thread_enabled_) {
         progress_thread_stop_.store(true);
     }
 
-    // Post dummy completion to wake up blocking threads
-    postShutdownCompletion();
-
-    if (cm_thread_.joinable()) {
-        NIXL_DEBUG << "Waiting for CM thread to exit";
-        cm_thread_.join();
-        NIXL_DEBUG << "CM thread joined successfully";
-    }
     if (progress_thread_enabled_ && progress_thread_.joinable()) {
         NIXL_DEBUG << "Waiting for Progress thread to exit";
         progress_thread_.join();
@@ -421,14 +439,14 @@ nixlLibfabricEngine::~nixlLibfabricEngine() {
 nixl_status_t
 nixlLibfabricEngine::getConnInfo(std::string &str) const {
     // Verify all rail endpoints are initialized
-    for (size_t rail_id = 0; rail_id < rail_manager.getNumDataRails(); ++rail_id) {
-        if (!rail_manager.getDataRail(rail_id).endpoint) {
+    for (size_t rail_id = 0; rail_id < rail_manager.getNumRails(); ++rail_id) {
+        if (!rail_manager.getRail(rail_id).endpoint) {
             NIXL_ERROR << "Rail " << rail_id << " endpoint not initialized";
             return NIXL_ERR_BACKEND;
         }
     }
 
-    NIXL_DEBUG << "Retrieving local endpoint addresses for all " << rail_manager.getNumDataRails()
+    NIXL_DEBUG << "Retrieving local endpoint addresses for all " << rail_manager.getNumRails()
                << " rails";
 
     // Use Rail Manager's connection SerDes method with "dest" prefix for remote consumption
@@ -438,9 +456,8 @@ nixlLibfabricEngine::getConnInfo(std::string &str) const {
         return status;
     }
 
-    NIXL_DEBUG << "Rail Manager serialized connection info for " << rail_manager.getNumDataRails()
-               << " rails, " << rail_manager.getNumControlRails() << " control rails, "
-               << "total size=" << str.length();
+    NIXL_DEBUG << "Rail Manager serialized connection info for " << rail_manager.getNumRails()
+               << " rails, total size=" << str.length();
 
     return NIXL_SUCCESS;
 }
@@ -459,29 +476,27 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    NIXL_DEBUG << "Processing " << rail_manager.getNumDataRails() << " data rails and "
-               << rail_manager.getNumControlRails() << " control rails for agent: " << remote_agent;
+    NIXL_DEBUG << "Processing " << rail_manager.getNumRails()
+               << " rails for agent: " << remote_agent;
 
     // Use Rail Manager's connection SerDes method with "dest" prefix (remote is sending us their
     // endpoints as "dest")
     std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> data_endpoints;
-    std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> control_endpoints;
-    nixl_status_t status = rail_manager.deserializeConnectionInfo(
-        "dest", remote_conn_info, data_endpoints, control_endpoints);
+    nixl_status_t status =
+        rail_manager.deserializeConnectionInfo("dest", remote_conn_info, data_endpoints);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Rail Manager deserializeConnectionInfo failed";
         return status;
     }
-    // Create connection to remote agent
-    nixl_status_t conn_status =
-        createAgentConnection(remote_agent, data_endpoints, control_endpoints);
+    // Create connection to remote agent using rail 0 for notifications
+    nixl_status_t conn_status = createAgentConnection(remote_agent, data_endpoints);
     if (conn_status != NIXL_SUCCESS) {
         NIXL_ERROR << "createAgentConnection failed with status: " << conn_status;
         return conn_status;
     }
 
-    NIXL_DEBUG << "Successfully stored multirail connection for " << remote_agent << " on "
-               << rail_manager.getNumDataRails() << " rails";
+    NIXL_INFO << "Successfully stored multirail connection for " << remote_agent << " on "
+              << rail_manager.getNumRails() << " rails";
     return NIXL_SUCCESS;
 }
 
@@ -495,8 +510,8 @@ nixlLibfabricEngine::connect(const std::string &remote_agent) {
     // Check if connection is already established
     auto it = connections_.find(remote_agent);
     if (it != connections_.end() && it->second->overall_state_ == ConnectionState::CONNECTED) {
-        NIXL_DEBUG << "Connection already established for " << remote_agent
-                   << ", fi_addr=" << it->second->rail_remote_addr_list_[0][0];
+        NIXL_INFO << "Connection already established for " << remote_agent
+                  << ", fi_addr=" << it->second->rail_remote_addr_list_[0][0];
         return NIXL_SUCCESS;
     }
 
@@ -519,7 +534,7 @@ nixlLibfabricEngine::connect(const std::string &remote_agent) {
         return NIXL_ERR_NOT_FOUND;
     }
 
-    NIXL_DEBUG << "Successfully established connection for " << remote_agent;
+    NIXL_INFO << "Successfully established connection for " << remote_agent;
     return NIXL_SUCCESS;
 }
 
@@ -528,12 +543,12 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
     std::lock_guard<std::mutex> lock(connection_state_mutex_);
     auto it = connections_.find(remote_agent);
     if (it == connections_.end()) {
-        NIXL_ERROR << "Disconnect failed. No metadata connection info for " << remote_agent;
+        NIXL_WARN << "Disconnect failed. No metadata connection info for " << remote_agent;
         return NIXL_ERR_NOT_FOUND;
     }
     // Connection exists - check if already disconnected
     if (it->second->overall_state_ == ConnectionState::DISCONNECTED) {
-        NIXL_DEBUG << "Connection already established for " << remote_agent
+        NIXL_DEBUG << "Connection already disconnected for " << remote_agent
                    << ", fi_addr=" << it->second->rail_remote_addr_list_[0][0];
         return NIXL_SUCCESS;
     }
@@ -545,27 +560,25 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
 
     // Remove connection from map
     connections_.erase(remote_agent);
-    NIXL_DEBUG << "Connection erased from the connection map for agent: " << remote_agent;
+    NIXL_INFO << "Disconnected from agent: " << remote_agent;
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlLibfabricEngine::createAgentConnection(
     const std::string &agent_name,
-    const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &data_rail_endpoints,
-    const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &control_rail_endpoints) {
+    const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &data_rail_endpoints) {
 
     NIXL_DEBUG << "Creating connection for agent: " << agent_name;
 
-    if (data_rail_endpoints.size() != rail_manager.getNumDataRails()) {
-        NIXL_INFO << "Local " << rail_manager.getNumDataRails() << " data rail endpoints, remote "
-                  << data_rail_endpoints.size();
+    if (data_rail_endpoints.empty()) {
+        NIXL_ERROR << "Remote agent " << agent_name << " published zero rail endpoints";
+        return NIXL_ERR_INVALID_PARAM;
     }
 
-    if (control_rail_endpoints.size() != rail_manager.getNumControlRails()) {
-        NIXL_ERROR << "Expected " << rail_manager.getNumControlRails()
-                   << " control rail endpoints, got " << control_rail_endpoints.size();
-        return NIXL_ERR_INVALID_PARAM;
+    if (data_rail_endpoints.size() != rail_manager.getNumRails()) {
+        NIXL_WARN << "Rail count mismatch (local: " << rail_manager.getNumRails()
+                  << ", remote: " << data_rail_endpoints.size() << ")";
     }
 
     // Create connection object
@@ -576,29 +589,14 @@ nixlLibfabricEngine::createAgentConnection(
     }
 
     conn->remoteAgent_ = agent_name;
-    conn->rail_remote_addr_list_.reserve(rail_manager.getNumDataRails());
-    conn->control_rail_remote_addr_list_.reserve(rail_manager.getNumControlRails());
+    conn->rail_remote_addr_list_.reserve(rail_manager.getNumRails());
 
-    // Process all data rails in one operation
-    nixl_status_t data_status =
-        rail_manager.insertAllAddresses(nixlLibfabricRailManager::RailType::DATA,
-                                        data_rail_endpoints,
-                                        conn->rail_remote_addr_list_,
-                                        conn->src_ep_names_);
+    // Process all rails in one operation
+    nixl_status_t data_status = rail_manager.insertAllAddresses(
+        data_rail_endpoints, conn->rail_remote_addr_list_, conn->src_ep_names_);
     if (data_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "insertAllAddresses failed for data rails with status: " << data_status;
-        return NIXL_ERR_BACKEND;
-    }
-
-    // Process all control rails in one operation
-    nixl_status_t control_status =
-        rail_manager.insertAllAddresses(nixlLibfabricRailManager::RailType::CONTROL,
-                                        control_rail_endpoints,
-                                        conn->control_rail_remote_addr_list_,
-                                        conn->control_ep_names_);
-    if (control_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "insertAllAddresses failed for control rails with status: " << control_status;
-        return NIXL_ERR_BACKEND;
+        NIXL_ERROR << "insertAllAddresses failed for rails with status: " << data_status;
+        return data_status;
     }
 
     // Manage agent names and index
@@ -613,9 +611,8 @@ nixlLibfabricEngine::createAgentConnection(
     // Store connection
     connections_[agent_name] = conn;
 
-    NIXL_DEBUG << "Successfully created connection for agent: " << agent_name << " on "
-               << rail_manager.getNumDataRails() << " data rails and "
-               << rail_manager.getNumControlRails() << " control rails";
+    NIXL_INFO << "Successfully created connection for agent: " << agent_name << " on "
+              << rail_manager.getNumRails() << " rails";
 
     return NIXL_SUCCESS;
 }
@@ -637,92 +634,33 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
         return NIXL_ERR_NOT_FOUND;
     }
 
-
-    // Verify we have addresses for all data rails
-    if (it->second->rail_remote_addr_list_.size() != rail_manager.getNumDataRails()) {
+    // Verify we have addresses for all rails
+    if (it->second->rail_remote_addr_list_.size() != rail_manager.getNumRails()) {
         NIXL_ERROR << "Remote connection has " << it->second->rail_remote_addr_list_.size()
-                   << " data rails, expected " << rail_manager.getNumDataRails();
+                   << " rails, expected " << rail_manager.getNumRails();
         return NIXL_ERR_BACKEND;
     }
 
-    NIXL_DEBUG << "Establishing connections_ on control rails and data rails for agent: "
-               << remote_agent;
+    NIXL_DEBUG << "Establishing rail connections for agent: " << remote_agent;
 
     // Use single "Communicator" for CM
     auto *conn_info = it->second.get();
-
-    NIXL_DEBUG << "Using connection info with " << conn_info->src_ep_names_.size()
-               << " data rails and " << conn_info->control_ep_names_.size() << " control rails";
-    for (size_t i = 0; i < conn_info->src_ep_names_.size(); ++i) {
-        NIXL_DEBUG << "Data rail " << i << ": "
-                   << LibfabricUtils::hexdump(conn_info->src_ep_names_[i], LF_EP_NAME_MAX_LEN);
-    }
-    for (size_t i = 0; i < conn_info->control_ep_names_.size(); ++i) {
-        NIXL_DEBUG << "Control rail " << i << ": "
-                   << LibfabricUtils::hexdump(conn_info->control_ep_names_[i], LF_EP_NAME_MAX_LEN);
-    }
-    NIXL_DEBUG << "Agent index: " << it->second->agent_index_;
     if (!conn_info) {
         NIXL_ERROR << "Connection info for agent " << remote_agent << " is null";
         return NIXL_ERR_BACKEND;
     }
 
-    // Allocate control request
-    const size_t control_rail_id = 0;
-
-    // Serialize connection info
-    std::string serialized_conn_info;
-    nixl_status_t serialize_status =
-        rail_manager.serializeConnectionInfo("src", serialized_conn_info);
-    if (serialize_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Rail manager serializeConnectionInfo failed";
-        return serialize_status;
+    NIXL_DEBUG << "Using connection info with " << conn_info->src_ep_names_.size() << " rails";
+    for (size_t i = 0; i < conn_info->src_ep_names_.size(); ++i) {
+        NIXL_DEBUG << "Rail " << i << ": "
+                   << LibfabricUtils::hexdump(conn_info->src_ep_names_[i], LF_EP_NAME_MAX_LEN);
     }
+    NIXL_DEBUG << "Agent index: " << it->second->agent_index_;
 
-    nixlLibfabricReq *control_request =
-        rail_manager.getControlRail(control_rail_id)
-            .allocateControlRequest(serialized_conn_info.length(), LibfabricUtils::getNextXferId());
-    if (!control_request) {
-        NIXL_ERROR << "Failed to allocate control request for connection establishment";
-        return NIXL_ERR_BACKEND;
-    }
+    conn_info->overall_state_ = ConnectionState::CONNECTED;
+    NIXL_INFO << "Connection state for agent " << remote_agent << " is now "
+              << conn_info->overall_state_;
 
-    // Copy serialized data to control request buffer
-    memcpy(control_request->buffer, serialized_conn_info.data(), serialized_conn_info.length());
-    control_request->buffer_size = serialized_conn_info.length();
-
-    nixl_status_t status = rail_manager.postControlMessage(
-        nixlLibfabricRailManager::ControlMessageType::CONNECTION_REQ,
-        control_request,
-        conn_info->control_rail_remote_addr_list_[0][0], // Always use control rail 0
-        it->second->agent_index_ // agent_index is only used in the ACK back from remote,
-                                 // to match connection request
-    );
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "postSend failed on rail " << 0;
-        // TODO, wrap req info into a nixlLibfabricRequestHandle and add retry logic
-        return NIXL_ERR_BACKEND;
-    }
-    // Register the connection state tracker with the CM thread
-    // Wait for the CM thread to establish the connection
-    // TODO: Currently blocking, update to timeout and return NIXL_IN_PROG
-    {
-        std::unique_lock<std::mutex> lock(conn_info->conn_state_mutex_);
-        NIXL_DEBUG << "Waiting for connection to be established for agent: " << remote_agent;
-        conn_info->cv_.wait(lock, [conn_info] {
-            return conn_info->overall_state_ == ConnectionState::CONNECTED ||
-                conn_info->overall_state_ == ConnectionState::FAILED;
-        });
-        NIXL_DEBUG << "Connection state for agent " << remote_agent << " is now "
-                   << conn_info->overall_state_;
-
-        if (conn_info->overall_state_ == ConnectionState::FAILED) {
-            NIXL_ERROR << "Connection failed on control rail 0";
-            return NIXL_ERR_BACKEND;
-        }
-    }
-
-    NIXL_DEBUG << "Connection already established for agent: " << remote_agent;
     return NIXL_SUCCESS;
 }
 
@@ -735,8 +673,17 @@ nixlLibfabricEngine::getSupportedMems() const {
     nixl_mem_list_t mems;
     mems.push_back(DRAM_SEG);
 #ifdef HAVE_CUDA
-    mems.push_back(VRAM_SEG);
+    if (runtime_ == FI_HMEM_CUDA) {
+        NIXL_DEBUG << "CUDA runtime detected, adding VRAM support";
+        mems.push_back(VRAM_SEG);
+    } else
 #endif
+        if (runtime_ == FI_HMEM_NEURON) {
+        NIXL_DEBUG << "Neuron runtime detected, adding VRAM support";
+        mems.push_back(VRAM_SEG);
+    } else {
+        NIXL_DEBUG << "No accelerator runtime, skipping VRAM support";
+    }
     return mems;
 }
 
@@ -744,63 +691,82 @@ nixl_status_t
 nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
                                  const nixl_mem_t &nixl_mem,
                                  nixlBackendMD *&out) {
+    const auto supported = getSupportedMems();
+    if (std::find(supported.begin(), supported.end(), nixl_mem) == supported.end()) {
+        NIXL_ERROR << "Memory type " << nixl_mem << " is not supported by libfabric backend.";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
     auto priv = std::make_unique<nixlLibfabricPrivateMetadata>();
 
     priv->buffer_ = (void *)mem.addr;
     priv->length_ = mem.len;
-    priv->gpu_device_id_ = mem.devId; // Store GPU device ID
+    priv->device_id_ = mem.devId; // Store device ID
 
     std::string pci_bus_id = "";
-#ifdef HAVE_CUDA
-    // Handle CUDA memory registration with GPU Direct RDMA support
+
+    // Use system runtime type to determine device-specific operations
     if (nixl_mem == VRAM_SEG) {
-        // For multi-GPU support, skip CUDA address workaround
-        if (cuda_addr_wa_) {
-            bool need_restart;
-            if (vramUpdateCtx((void *)mem.addr, mem.devId, need_restart)) {
-                NIXL_WARN << "CUDA address workaround failed for device " << mem.devId
-                          << ", disabling workaround for multi-GPU support";
-                cuda_addr_wa_ = false; // Disable workaround for subsequent registrations
-            } else if (need_restart) {
-                // Restart progress thread if needed
-                NIXL_DEBUG << "CUDA context updated, restarting progress thread";
-                vramApplyCtx();
+#ifdef HAVE_CUDA
+        if (runtime_ == FI_HMEM_CUDA) {
+            // CUDA-specific address query
+            // For multi-GPU support, skip CUDA address workaround
+            if (cuda_addr_wa_) {
+                bool need_restart;
+                if (vramUpdateCtx((void *)mem.addr, mem.devId, need_restart)) {
+                    NIXL_INFO << "Multi-GPU detected (device " << mem.devId
+                              << "), using cudaSetDevice fallback";
+                    cuda_addr_wa_ = false;
+                } else if (need_restart) {
+                    NIXL_DEBUG << "CUDA context updated, restarting progress thread";
+                    vramApplyCtx();
+                }
             }
-        }
-        // Set CUDA device context directly for multi-GPU support
-        if (!cuda_addr_wa_) {
-            cudaError_t cuda_ret = cudaSetDevice(mem.devId);
-            if (cuda_ret != cudaSuccess) {
-                NIXL_ERROR << "Failed to set CUDA device " << mem.devId << ": "
-                           << cudaGetErrorString(cuda_ret);
-                return NIXL_ERR_NOT_SUPPORTED;
+            // Fallback: set device via runtime API (uses primary context)
+            if (!cuda_addr_wa_) {
+                cudaError_t cuda_ret = cudaSetDevice(mem.devId);
+                if (cuda_ret != cudaSuccess) {
+                    NIXL_ERROR << "Failed to set CUDA device " << mem.devId << ": "
+                               << cudaGetErrorString(cuda_ret);
+                    return NIXL_ERR_NOT_SUPPORTED;
+                }
+                NIXL_INFO << "Set CUDA device context to GPU " << mem.devId;
             }
-            NIXL_DEBUG << "Set CUDA device context to GPU " << mem.devId;
+
+            // Query PCI bus ID from memory address (AFTER setting context)
+            bool is_dev;
+            CUdevice dev;
+            CUcontext ctx;
+
+            int ret = cudaQueryAddr((void *)mem.addr, is_dev, dev, ctx, pci_bus_id);
+            if (ret || !is_dev) {
+                NIXL_ERROR << "Failed to query device from memory " << (void *)mem.addr;
+                return NIXL_ERR_BACKEND;
+            }
+
+            NIXL_DEBUG << "Queried PCI bus ID: " << pci_bus_id << " for GPU " << mem.devId;
         }
-
-        // Query PCI bus ID from memory address (AFTER setting context)
-        bool is_dev;
-        CUdevice dev;
-        CUcontext ctx;
-
-        int ret = cudaQueryAddr((void *)mem.addr, is_dev, dev, ctx, pci_bus_id);
-        if (ret || !is_dev) {
-            NIXL_ERROR << "Failed to query device from memory " << (void *)mem.addr;
-            return NIXL_ERR_BACKEND;
-        }
-
-        NIXL_DEBUG << "Queried PCI bus ID: " << pci_bus_id << " for GPU " << mem.devId;
-    }
 #endif
+        if (runtime_ == FI_HMEM_NEURON) {
+            // Neuron-specific address query
+            int ret = nrtQueryAddr((void *)mem.addr, &pci_bus_id);
+            if (ret) {
+                NIXL_ERROR << "Could not query EFA device from memory " << (void *)mem.addr;
+                // Fall back to all rails.
+            }
+            NIXL_DEBUG << "Queried PCI bus ID: " << pci_bus_id << " for Neuron device "
+                       << mem.devId;
+        }
+    }
 
     // Initialize vectors to accommodate all possible rails (for indexing consistency)
-    priv->rail_mr_list_.resize(rail_manager.getNumDataRails(), nullptr);
+    priv->rail_mr_list_.resize(rail_manager.getNumRails(), nullptr);
     priv->rail_key_list_.clear();
-    priv->rail_key_list_.resize(rail_manager.getNumDataRails(), FI_KEY_NOTAVAIL);
+    priv->rail_key_list_.resize(rail_manager.getNumRails(), FI_KEY_NOTAVAIL);
 
 #ifdef HAVE_CUDA
     // Set CUDA context before libfabric operations for VRAM
-    if (nixl_mem == VRAM_SEG) {
+    if (nixl_mem == VRAM_SEG && runtime_ == FI_HMEM_CUDA) {
         vramApplyCtx();
     }
 #endif
@@ -829,7 +795,8 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
                << (nixl_mem == VRAM_SEG ? " with GPU Direct RDMA support" : "");
 
     NIXL_DEBUG << "Successfully registered memory on " << priv->selected_rails_.size()
-               << " rails for " << (nixl_mem == VRAM_SEG ? "GPU" : "CPU") << " " << mem.devId;
+               << " rails for " << (nixl_mem == VRAM_SEG ? "accelerator" : "CPU") << " device "
+               << mem.devId;
     out = priv.release();
     return NIXL_SUCCESS;
 }
@@ -1030,6 +997,20 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    // Update notification from opt_args on repost
+    if (opt_args && opt_args->hasNotif) {
+        backend_handle->has_notif = true;
+        backend_handle->binary_notifs.clear();
+        fragmentNotificationMessage(opt_args->notifMsg,
+                                    localAgent,
+                                    backend_handle->total_notif_msg_len,
+                                    backend_handle->binary_notifs);
+    } else if (opt_args && !opt_args->hasNotif) {
+        backend_handle->has_notif = false;
+        backend_handle->binary_notifs.clear();
+        backend_handle->total_notif_msg_len = 0;
+    }
+
     // Allocate xfer_id once in prepXfer
     backend_handle->post_xfer_id = LibfabricUtils::getNextXferId();
 
@@ -1042,7 +1023,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     op_type = (operation == NIXL_WRITE) ? nixlLibfabricReq::WRITE : nixlLibfabricReq::READ;
 
     // Set initial submit request count to maximum possible requests for this xfer.
-    size_t max_possible_requests = desc_count * rail_manager.getNumDataRails();
+    size_t max_possible_requests = desc_count * rail_manager.getNumRails();
     backend_handle->init_request_tracking(max_possible_requests);
 
     size_t total_submitted = 0;
@@ -1064,9 +1045,9 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         // Get transfer info for THIS descriptor
         void *transfer_addr = (void *)local[desc_idx].addr;
         size_t transfer_size = local[desc_idx].len;
-        int gpu_id = local[desc_idx].devId;
+        int device_id = local[desc_idx].devId;
 
-        NIXL_DEBUG << "Processing descriptor " << desc_idx << " GPU " << gpu_id
+        NIXL_DEBUG << "Processing descriptor " << desc_idx << " device " << device_id
                    << " local_addr: " << transfer_addr << " size=" << transfer_size
                    << " remote_addr=" << (void *)remote[desc_idx].addr;
 
@@ -1077,12 +1058,15 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         // Use descriptor's specific target address
         uint64_t remote_target_addr = remote[desc_idx].addr;
 
+        uint64_t remote_registered_base = remote_md->remote_buf_addr_;
+
         size_t submitted_count = 0;
         nixl_status_t status = rail_manager.prepareAndSubmitTransfer(
             op_type,
             transfer_addr,
             transfer_size,
             remote_target_addr,
+            remote_registered_base,
             local_md->selected_rails_,
             local_md->rail_mr_list_,
             remote_md->rail_remote_key_list_,
@@ -1096,8 +1080,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             submitted_count);
 
         if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx << " GPU "
-                       << gpu_id;
+            NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx
+                       << " device " << device_id;
             return status;
         }
 
@@ -1136,11 +1120,12 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                    << ", expected_completions: " << backend_handle->get_submitted_requests_count();
     }
 
-    // Progress data rails to kick off transfers
+    // Progress rails to kick off transfers
     if (!progress_thread_enabled_) {
-        nixl_status_t progress_status = rail_manager.progressActiveDataRails();
-        if (progress_status == NIXL_IN_PROG) {
-            return NIXL_IN_PROG;
+        nixl_status_t progress_status = rail_manager.progressActiveRails();
+        if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
+            NIXL_ERROR << "Failed to progress rails in postXfer";
+            return progress_status;
         }
     }
 
@@ -1168,12 +1153,13 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
     auto backend_handle = static_cast<nixlLibfabricBackendH *>(handle);
 
     if (!progress_thread_enabled_) {
-        nixl_status_t progress_status = rail_manager.progressActiveDataRails();
+        nixl_status_t progress_status = rail_manager.progressActiveRails();
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
-            NIXL_ERROR << "Failed to progress data rails in checkXfer";
+            NIXL_ERROR << "Failed to progress rails in checkXfer";
             return progress_status;
         }
     }
+
     // Then check for completions after processing any pending completions
     if (backend_handle->is_completed()) {
         NIXL_DEBUG << "Data transfer completed successfully";
@@ -1309,8 +1295,7 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    auto connection = it->second;
-    const size_t control_rail_id = 0; // Only use control rail 0 for notifications
+    const auto &connection = it->second;
 
     NIXL_DEBUG << "Sending " << binary_notifications.size() << " notification fragments"
                << " total_message_length=" << total_message_length;
@@ -1332,10 +1317,11 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
                 total_message_length, expected_completions, metadata.agent_name_length);
         }
 
-        // Allocate control request for this notification fragment
+        // Allocate control request for this notification fragment from rail 0
+        size_t rail_id = 0;
         size_t max_size = BinaryNotification::MAX_FRAGMENT_SIZE;
-        nixlLibfabricReq *control_request = rail_manager.getControlRail(control_rail_id)
-                                                .allocateControlRequest(max_size, notif_xfer_id);
+        nixlLibfabricReq *control_request =
+            rail_manager.getRail(rail_id).allocateControlRequest(max_size, notif_xfer_id);
 
         if (!control_request) {
             NIXL_ERROR << "Failed to allocate control request for notification fragment " << seq_id;
@@ -1351,16 +1337,26 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
                    << " payload_chunk_size=" << header.payload_length << "B"
                    << " notif_xfer_id=" << header.notif_xfer_id;
 
+        // Use rail 0's remote address since notifications now use rails
         nixl_status_t status = rail_manager.postControlMessage(
             nixlLibfabricRailManager::ControlMessageType::NOTIFICATION,
             control_request,
-            connection->control_rail_remote_addr_list_[control_rail_id][0],
+            connection->rail_remote_addr_list_[rail_id][0],
             connection->agent_index_);
 
         if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "postControlMessage failed on control rail " << control_rail_id
-                       << " for fragment " << seq_id;
+            NIXL_ERROR << "postControlMessage failed on rail " << rail_id << " for fragment "
+                       << seq_id;
             return NIXL_ERR_BACKEND;
+        }
+
+        // Progress rail 0 to ensure the message is sent
+        if (!progress_thread_enabled_) {
+            status = rail_manager.getRail(rail_id).progressCompletionQueue();
+            if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
+                NIXL_ERROR << "Failed to progress rail 0 in notifSendPriv";
+                return status;
+            }
         }
     }
 
@@ -1385,9 +1381,9 @@ nixlLibfabricEngine::genNotif(const std::string &remote_agent, const std::string
 nixl_status_t
 nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
     if (!progress_thread_enabled_) {
-        nixl_status_t progress_status = rail_manager.progressActiveDataRails();
+        nixl_status_t progress_status = rail_manager.progressActiveRails();
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
-            NIXL_ERROR << "Failed to progress data rails in getNotifs";
+            NIXL_ERROR << "Failed to progress rails in getNotifs";
             return progress_status;
         }
     }
@@ -1415,51 +1411,23 @@ nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
 }
 
 /****************************************
- * ConnectionManagement Thread Function
- *****************************************/
-
-// Background progress function that continuously processes completions on all rails
-nixl_status_t
-nixlLibfabricEngine::cmThread() {
-    NIXL_DEBUG << "CM: Thread started successfully";
-
-    // Main progress loop - continuously process completions on all rails
-    while (!cm_thread_stop_.load()) {
-
-        nixl_status_t status = rail_manager.progressAllControlRails();
-        if (status == NIXL_SUCCESS) {
-            NIXL_DEBUG << "CM: Processed completions on control rails";
-        } else if (status != NIXL_IN_PROG && status != NIXL_SUCCESS) {
-            NIXL_ERROR << "CM: Failed to process completions on control rails";
-            return NIXL_ERR_BACKEND;
-        }
-        // Sleep briefly to avoid spinning too aggressively when blocking cq read is not used
-        if (!rail_manager.getControlRail(0).blocking_cq_sread_supported) {
-            std::this_thread::sleep_for(std::chrono::nanoseconds(10));
-        }
-    }
-    NIXL_DEBUG << "CM: Thread exiting cleanly";
-    return NIXL_SUCCESS;
-}
-
-/****************************************
  * Progress Thread Function (Data Rails Only)
  *****************************************/
 
-// Progress thread that continuously processes completions only on data rails
+// Progress thread that continuously processes completions only on rails
 nixl_status_t
 nixlLibfabricEngine::progressThread() {
-    NIXL_DEBUG << "PT: Thread started successfully for data rails only";
-    // Main progress loop - continuously process completions only on data rails
+    NIXL_DEBUG << "PT: Thread started successfully for rails only";
+    // Main progress loop - continuously process completions only on rails
     while (!progress_thread_stop_.load()) {
-        // Process completions only on data rails (non-blocking)
+        // Process completions only on rails (non-blocking)
         bool any_completions = false;
-        nixl_status_t status = rail_manager.progressActiveDataRails();
+        nixl_status_t status = rail_manager.progressActiveRails();
         if (status == NIXL_SUCCESS) {
             any_completions = true;
-            NIXL_DEBUG << "PT: Processed completions on data rails";
+            NIXL_DEBUG << "PT: Processed completions on rails";
         } else if (status != NIXL_IN_PROG && status != NIXL_SUCCESS) {
-            NIXL_ERROR << "PT: Failed to process completions on data rails";
+            NIXL_ERROR << "PT: Failed to process completions on rails";
             // Don't return error, continue for robustness
         }
         if (!any_completions) {
@@ -1468,46 +1436,6 @@ nixlLibfabricEngine::progressThread() {
     }
     NIXL_DEBUG << "PT: Thread exiting cleanly";
     return NIXL_SUCCESS;
-}
-
-void
-nixlLibfabricEngine::postShutdownCompletion() {
-    NIXL_DEBUG << "Posting shutdown signal to wake up background thread";
-    // Send shutdown message to self on rail 0 if self-connection exists
-    auto self_conn_it = connections_.find(localAgent);
-    if (self_conn_it != connections_.end() && self_conn_it->second &&
-        rail_manager.getNumDataRails() > 0) {
-        const size_t rail_id = 0; // Use rail 0 for shutdown signal
-
-        // Allocate control request
-        const size_t control_rail_id = 0;
-        const size_t shutdown_msg_len = 8; // "SHUTDOWN" length
-        nixlLibfabricReq *control_request =
-            rail_manager.getControlRail(control_rail_id)
-                .allocateControlRequest(shutdown_msg_len, LibfabricUtils::getNextXferId());
-        if (!control_request) {
-            NIXL_ERROR << "Failed to allocate control request for shutdown";
-            return;
-        }
-
-        // Copy shutdown message to the control request buffer
-        std::strcpy(static_cast<char *>(control_request->buffer), "SHUTDOWN");
-        control_request->buffer_size = shutdown_msg_len;
-
-        nixl_status_t status = rail_manager.postControlMessage(
-            nixlLibfabricRailManager::ControlMessageType::DISCONNECT_REQ,
-            control_request,
-            self_conn_it->second->rail_remote_addr_list_[rail_id][0],
-            self_conn_it->second->agent_index_);
-
-        if (status == NIXL_SUCCESS) {
-            NIXL_DEBUG << "Shutdown signal posted successfully on rail " << rail_id;
-        } else {
-            NIXL_ERROR << "Failed to post shutdown signal on rail " << rail_id;
-        }
-    } else {
-        NIXL_ERROR << "Could not find self-connection or rails not initialized";
-    }
 }
 
 /****************************************
@@ -1598,97 +1526,6 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
 
     // Check if any notifications can now be completed (after releasing the lock)
     checkPendingNotifications();
-}
-
-void
-nixlLibfabricEngine::processConnectionAck(uint16_t agent_idx,
-                                          nixlLibfabricConnection *conn_info,
-                                          ConnectionState state) {
-    std::string remote_agent_name = agent_names_[agent_idx];
-    NIXL_DEBUG << "Connection state callback for agent " << remote_agent_name
-               << " agent_idx=" << agent_idx;
-    std::lock_guard<std::mutex> lock(connections_[remote_agent_name]->conn_state_mutex_);
-    connections_[remote_agent_name]->overall_state_ = ConnectionState::CONNECTED;
-    connections_[remote_agent_name]->cv_.notify_all();
-    NIXL_DEBUG << "Connection state updated to CONNECTED";
-}
-
-nixl_status_t
-nixlLibfabricEngine::processConnectionRequest(uint16_t agent_idx,
-                                              const std::string &serialized_data,
-                                              nixlLibfabricRail *rail) {
-    NIXL_DEBUG << "Processing connection request from agent " << agent_idx << " on rail "
-               << rail->rail_id;
-
-    // Use rail manager to deserialize ALL endpoints at once with "src" prefix (connection request
-    // contains source endpoints)
-    std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> data_endpoints;
-    std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> control_endpoints;
-    nixl_status_t status = rail_manager.deserializeConnectionInfo(
-        "src", serialized_data, data_endpoints, control_endpoints);
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to deserialize connection info";
-        return status;
-    }
-
-    // Insert ALL data rail addresses at once
-    std::unordered_map<size_t, std::vector<fi_addr_t>> data_fi_addrs;
-    std::vector<char *> data_ep_names;
-    status = rail_manager.insertAllAddresses(
-        nixlLibfabricRailManager::RailType::DATA, data_endpoints, data_fi_addrs, data_ep_names);
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to insert data rail addresses";
-        return status;
-    }
-
-    // Insert ALL control rail addresses at once
-    std::unordered_map<size_t, std::vector<fi_addr_t>> control_fi_addrs;
-    std::vector<char *> control_ep_names;
-    status = rail_manager.insertAllAddresses(nixlLibfabricRailManager::RailType::CONTROL,
-                                             control_endpoints,
-                                             control_fi_addrs,
-                                             control_ep_names);
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to insert control rail addresses";
-        return status;
-    }
-
-    // Use the first control rail's fi_addr for ACK (same as before)
-    fi_addr_t initiator_control_fi_addr = control_fi_addrs[0][0];
-
-    NIXL_DEBUG << "Successfully inserted addresses for " << data_fi_addrs.size()
-               << " data rails and " << control_fi_addrs.size() << " control rails"
-               << ", initiator_control_fi_addr=" << initiator_control_fi_addr;
-
-    // Send acknowledgement back to the initiator using the rail manager
-    size_t ep_name_len = sizeof(rail->ep_name);
-
-    // Allocate control request
-    const size_t control_rail_id = 0;
-    nixlLibfabricReq *control_request =
-        rail_manager.getControlRail(control_rail_id)
-            .allocateControlRequest(ep_name_len, LibfabricUtils::getNextXferId());
-    if (!control_request) {
-        NIXL_ERROR << "Failed to allocate control request for connection ACK";
-        return NIXL_ERR_BACKEND;
-    }
-
-    // Copy endpoint name to control request buffer
-    std::memcpy(control_request->buffer, rail->ep_name, ep_name_len);
-    control_request->buffer_size = ep_name_len;
-
-    nixl_status_t ack_status = rail_manager.postControlMessage(
-        nixlLibfabricRailManager::ControlMessageType::CONNECTION_ACK,
-        control_request,
-        initiator_control_fi_addr,
-        agent_idx);
-    if (ack_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to send ACK via rail manager";
-        return ack_status;
-    }
-
-    NIXL_DEBUG << "ACK sent successfully via rail manager";
-    return NIXL_SUCCESS;
 }
 
 /****************************************

@@ -32,6 +32,7 @@ import nixl_ep
 import rank_server
 import store_group
 import torch
+from nixl_ep.buffer import DEFAULT_TIMEOUT_MS
 from plan import Plan
 
 # Add tests directory to path to import test utils
@@ -47,6 +48,16 @@ from utils import (  # noqa: E402
 
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
+
+
+def non_negative_int(value: str) -> int:
+    try:
+        int_value = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a non-negative integer") from exc
+    if int_value < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return int_value
 
 
 def handle_sigterm(
@@ -67,7 +78,10 @@ def handle_sigterm(
     if buffer is not None and buffer.runtime is not None:
         buffer.destroy()  # to invalidate local MD
         del buffer
-    sys.exit(1)
+
+    # Continue with default signal handler
+    signal.signal(signum, signal.SIG_DFL)
+    signal.raise_signal(signum)
 
 
 def self_kill():
@@ -488,10 +502,10 @@ def worker(torch_rank: int, args: argparse.Namespace):
 
     buffer = nixl_ep.Buffer(
         rank=global_rank,
-        nvlink_backend=args.nvlink_backend,
+        disable_ll_nvlink=args.disable_ll_nvlink,
         explicitly_destroy=True,
-        enable_shrink=True,
         tcp_store_group=tcp_store,
+        timeout_ms=args.timeout_ms,
     )
     buffer.update_memory_buffers(
         num_ranks=max_num_ranks,
@@ -621,10 +635,15 @@ def main():
     )
     parser.add_argument("--kineto", action="store_true", help="Enable kineto profiling")
     parser.add_argument(
-        "--nvlink-backend",
-        choices=["nixl", "ipc", "none"],
-        default="ipc",
-        help="NVLink backend to use",
+        "--disable-ll-nvlink",
+        action="store_true",
+        help="Disable NVLink communication for low-latency kernels",
+    )
+    parser.add_argument(
+        "--timeout-ms",
+        type=non_negative_int,
+        default=DEFAULT_TIMEOUT_MS,
+        help="GPU timeout in milliseconds (non-negative integer)",
     )
 
     args = parser.parse_args()
@@ -647,12 +666,16 @@ def main():
         daemon=False,
         start_method="spawn",
     )
-
-    for p in ctx.processes:
-        try:
-            p.join()
-        except Exception:
-            pass
+    failed = []
+    for i, p in enumerate(ctx.processes):
+        p.join()
+        # Ignore expected fault-tolerance SIGTERM exits.
+        if p.exitcode not in (0, -signal.SIGTERM):
+            failed.append((i, p.exitcode))
+    if failed:
+        raise RuntimeError(
+            f"Worker processes failed: {', '.join(f'worker {i} (exit code {code})' for i, code in failed)}"
+        )
 
 
 if __name__ == "__main__":

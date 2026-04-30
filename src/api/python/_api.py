@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import pickle
+from enum import Enum
 from typing import Optional, Union
 
 import numpy as np
@@ -117,6 +118,17 @@ class nixl_xfer_handle:
 # Opaque handle for backend can be just int, as it's not passed to the user
 nixl_backend_handle = int
 
+"""
+@brief Enumeration of supported thread synchronization modes.
+"""
+
+
+class nixl_thread_sync_t(Enum):
+    NIXL_THREAD_SYNC_NONE = nixlBind.NIXL_THREAD_SYNC_NONE
+    NIXL_THREAD_SYNC_STRICT = nixlBind.NIXL_THREAD_SYNC_STRICT
+    NIXL_THREAD_SYNC_RW = nixlBind.NIXL_THREAD_SYNC_RW
+    NIXL_THREAD_SYNC_DEFAULT = nixlBind.NIXL_THREAD_SYNC_DEFAULT
+
 
 """
 @brief Configuration class for NIXL agent.
@@ -129,6 +141,8 @@ nixl_backend_handle = int
 @param backends List of backend names for agent to initialize.
         Default is UCX, other backends can be added to the list, or after
         agent creation, can be initialized with create_backend.
+@param sync_mode Thread synchronization mode to use for the agent.
+        If None, sync_mode is set based on the enable_listen flag.
 """
 
 
@@ -141,6 +155,7 @@ class nixl_agent_config:
         capture_telemetry: bool = False,
         num_threads: int = 0,
         backends: list[str] = ["UCX"],
+        sync_mode: Optional[nixl_thread_sync_t] = None,
     ):
         # TODO: add backend init parameters
         self.backends = backends
@@ -149,6 +164,12 @@ class nixl_agent_config:
         self.port = listen_port
         self.capture_telemetry = capture_telemetry
         self.num_threads = num_threads
+        if sync_mode is not None and not isinstance(sync_mode, nixl_thread_sync_t):
+            raise TypeError(
+                f"sync_mode must be a nixl_thread_sync_t (got {type(sync_mode).__name__!r})"
+            )
+
+        self.sync_mode = sync_mode
 
 
 """
@@ -177,23 +198,21 @@ class nixl_agent:
         if not nixl_conf:
             nixl_conf = nixl_agent_config()  # Using defaults set in nixl_agent_config
 
-        thread_config = (
-            nixlBind.NIXL_THREAD_SYNC_STRICT
+        default_sync_mode = (
+            nixl_thread_sync_t.NIXL_THREAD_SYNC_STRICT
             if nixl_conf.enable_listen
-            else nixlBind.NIXL_THREAD_SYNC_NONE
+            else nixl_thread_sync_t.NIXL_THREAD_SYNC_NONE
         )
 
         # Set agent config and instantiate an agent
-        agent_config = nixlBind.nixlAgentConfig(
-            nixl_conf.enable_pthread,
-            nixl_conf.enable_listen,
-            nixl_conf.port,
-            thread_config,
-            1,
-            0,
-            100000,
-            nixl_conf.capture_telemetry,
-        )
+        agent_config = nixlBind.nixlAgentConfig()
+        agent_config.useProgThread = nixl_conf.enable_pthread
+        agent_config.useListenThread = nixl_conf.enable_listen
+        agent_config.listenPort = nixl_conf.port
+        agent_config.syncMode = (nixl_conf.sync_mode or default_sync_mode).value
+        agent_config.pthrDelay = 0
+        agent_config.lthrDelay = 100000
+        agent_config.captureTelemetry = nixl_conf.capture_telemetry
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
         self.name = agent_name
@@ -210,10 +229,6 @@ class nixl_agent:
 
         self.plugin_b_options: dict[str, dict[str, str]] = {}
         self.plugin_mem_types: dict[str, list[str]] = {}
-        for plugin in self.plugin_list:
-            (backend_options, mem_types) = self.agent.getPluginParams(plugin)
-            self.plugin_b_options[plugin] = backend_options
-            self.plugin_mem_types[plugin] = mem_types
 
         if instantiate_all:
             nixl_conf.backends = self.plugin_list
@@ -273,6 +288,16 @@ class nixl_agent:
     @return List of plugin names.
     """
 
+    def _load_plugin_params(self, plugin: str):
+        if plugin not in self.plugin_list:
+            return
+        try:
+            (backend_options, mem_types) = self.agent.getPluginParams(plugin)
+            self.plugin_b_options[plugin] = backend_options
+            self.plugin_mem_types[plugin] = mem_types
+        except Exception:
+            logger.warning("Failed to load params for plugin %s", plugin, exc_info=True)
+
     def get_plugin_list(self) -> list[str]:
         return self.plugin_list
 
@@ -284,13 +309,14 @@ class nixl_agent:
     """
 
     def get_plugin_mem_types(self, backend: str) -> list[str]:
-        if backend in self.plugin_mem_types:
-            return self.plugin_mem_types[backend]
-        else:
+        if backend not in self.plugin_mem_types:
+            self._load_plugin_params(backend)
+        if backend not in self.plugin_mem_types:
             logger.warning(
                 "Plugin %s is not available to get its supported mem types.", backend
             )
             return []
+        return self.plugin_mem_types[backend]
 
     """
     @brief Get the initialization parameters of a plugin.
@@ -301,11 +327,12 @@ class nixl_agent:
     """
 
     def get_plugin_params(self, backend: str) -> dict[str, str]:
-        if backend in self.plugin_b_options:
-            return self.plugin_b_options[backend]
-        else:
+        if backend not in self.plugin_b_options:
+            self._load_plugin_params(backend)
+        if backend not in self.plugin_b_options:
             logger.warning("Plugin %s is not available to get its parameters.", backend)
             return {}
+        return self.plugin_b_options[backend]
 
     """
     @brief  Get the memory types supported by a backend.
@@ -474,14 +501,18 @@ class nixl_agent:
     ) -> nixl_prepped_dlist_handle:
         descs = self.get_xfer_descs(xfer_list, mem_type)
 
-        if agent_name == "NIXL_INIT_AGENT" or agent_name == "":
+        is_local = agent_name == "NIXL_INIT_AGENT" or agent_name == ""
+        if is_local:
             agent_name = nixlBind.NIXL_INIT_AGENT
 
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
 
-        handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
+        if is_local:
+            handle = self.agent.prepXferDlist(descs, handle_list)
+        else:
+            handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
         return nixl_prepped_dlist_handle(self.agent, handle)
 
     """
@@ -513,7 +544,7 @@ class nixl_agent:
     @param notif_msg Optional notification message to send after transfer is done.
            notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
     @param backends Optional list of backend names to limit which backends NIXL can use.
-    @param skip_desc_merge Whether to skip descriptor merging optimization.
+    @param skip_desc_merge Deprecated: Whether to skip descriptor merging optimization.
     @return Opaque handle for posting/checking transfer.
             The handle can be released by calling release_xfer_handle from agent, or release() method on itself.
     """

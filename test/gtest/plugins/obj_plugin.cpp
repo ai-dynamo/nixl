@@ -16,6 +16,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstdlib>
 
 #include "plugins_common.h"
 #include "transfer_handler.h"
@@ -31,10 +32,30 @@ namespace gtest::plugins::obj {
  *
  * These variables are required for authenticating and interacting with the S3 bucket
  * used during the tests.
+ *
+ * Test suites:
+ * - ObjTests: Standard S3 client tests (crtMinLimit = 0)
+ * - ObjCrtTests: S3 CRT client tests (crtMinLimit = 5 MiB, buffer = 10 MiB)
+ *                crtMinLimit is set to the S3 minimum part size (5 MiB) so that
+ *                partSize is not clamped and MPU is exercised with multiple parts.
+ * - ObjAccelTests: S3 Accelerated client tests (accelerated = true)
+ *                  Note: Defined in obj_cuobj_plugin.cpp, only compiled if
+ *                  HAVE_CUOBJ_CLIENT is defined
+ * - ObjDellTests: Dell ObjectScale S3 over RDMA tests
+ *                 (accelerated = true, type = dell, req_checksum = required, scheme = http)
+ *                 Note: Defined in obj_cuobj_plugin.cpp, only compiled if
+ *                 HAVE_CUOBJ_CLIENT is defined.
+ *                 Skipped at runtime if NIXL_OBJ_ENDPOINT_OVERRIDE is not set.
+ *                 Includes DellVramXferTest (GPU memory) if HAVE_CUDA is also defined.
+ *
+ * Environment:
+ *       - NIXL_OBJ_ENDPOINT_OVERRIDE  (e.g. http://100.68.213.151:9020)
+ *         Optional for all test suites. When set, overrides the S3 endpoint for
+ *         Standard, CRT, Accel, and Dell tests alike.
  */
 
 nixl_b_params_t obj_params = {{"crtMinLimit", "0"}};
-nixl_b_params_t obj_crt_params = {{"crtMinLimit", "1024"}};
+nixl_b_params_t obj_crt_params = {{"crtMinLimit", "5242880"}}; // 5 MiB: S3 minimum part size
 const std::string local_agent_name = "Agent1";
 const std::string crt_agent_name = "Agent2-CRT";
 const nixlBackendInitParams obj_test_params = {.localAgent = local_agent_name,
@@ -54,8 +75,18 @@ const nixlBackendInitParams obj_crt_test_params = {.localAgent = crt_agent_name,
 
 class setupObjTestFixture : public setupBackendTestFixture {
 protected:
+    nixl_b_params_t localParams_;
+
     setupObjTestFixture() {
-        localBackendEngine_ = std::make_shared<nixlObjEngine>(&GetParam());
+        localParams_ = *GetParam().customParams;
+        const char *endpoint = std::getenv("NIXL_OBJ_ENDPOINT_OVERRIDE");
+        if (endpoint && endpoint[0] != '\0') {
+            localParams_["endpoint_override"] = endpoint;
+            localParams_["req_checksum"] = "required";
+        }
+        nixlBackendInitParams initParams = GetParam();
+        initParams.customParams = &localParams_;
+        localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
     }
 };
 
@@ -98,26 +129,35 @@ TEST_P(setupObjTestFixture, queryMemTest) {
     EXPECT_EQ(resp[2].has_value(), false);
 }
 
-
 INSTANTIATE_TEST_SUITE_P(ObjTests, setupObjTestFixture, testing::Values(obj_test_params));
 
 // Separate test suite for S3 CRT client with crtMinLimit enabled
 class setupObjCrtTestFixture : public setupBackendTestFixture {
 protected:
+    nixl_b_params_t localParams_;
+
     setupObjCrtTestFixture() {
-        localBackendEngine_ = std::make_shared<nixlObjEngine>(&GetParam());
+        localParams_ = *GetParam().customParams;
+        const char *endpoint = std::getenv("NIXL_OBJ_ENDPOINT_OVERRIDE");
+        if (endpoint && endpoint[0] != '\0') {
+            localParams_["endpoint_override"] = endpoint;
+            localParams_["req_checksum"] = "required";
+        }
+        nixlBackendInitParams initParams = GetParam();
+        initParams.customParams = &localParams_;
+        localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
     }
 };
 
 TEST_P(setupObjCrtTestFixture, CrtXferTest) {
-    // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
+    // 10 MiB buffer: above the 5 MiB CRT threshold, exercises MPU (two 5 MiB parts)
     transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
                                                 localBackendEngine_,
-                                                local_agent_name,
-                                                local_agent_name,
+                                                crt_agent_name,
+                                                crt_agent_name,
                                                 false,
                                                 1,
-                                                2048);
+                                                10485760);
     transfer.setLocalMem();
     transfer.testTransfer(NIXL_WRITE);
     transfer.resetLocalMem();
@@ -126,14 +166,14 @@ TEST_P(setupObjCrtTestFixture, CrtXferTest) {
 }
 
 TEST_P(setupObjCrtTestFixture, CrtXferMultiBufsTest) {
-    // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
+    // 10 MiB buffer: above the 5 MiB CRT threshold, exercises MPU (two 5 MiB parts)
     transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
                                                 localBackendEngine_,
-                                                local_agent_name,
-                                                local_agent_name,
+                                                crt_agent_name,
+                                                crt_agent_name,
                                                 false,
                                                 3,
-                                                2048);
+                                                10485760);
     transfer.setLocalMem();
     transfer.testTransfer(NIXL_WRITE);
     transfer.resetLocalMem();
@@ -142,14 +182,14 @@ TEST_P(setupObjCrtTestFixture, CrtXferMultiBufsTest) {
 }
 
 TEST_P(setupObjCrtTestFixture, CrtQueryMemTest) {
-    // Use 2048 byte buffer to trigger CRT client (crtMinLimit is 1024)
+    // 10 MiB buffer: above the 5 MiB CRT threshold, exercises MPU (two 5 MiB parts)
     transferHandler<DRAM_SEG, OBJ_SEG> transfer(localBackendEngine_,
                                                 localBackendEngine_,
-                                                local_agent_name,
-                                                local_agent_name,
+                                                crt_agent_name,
+                                                crt_agent_name,
                                                 false,
                                                 3,
-                                                2048);
+                                                10485760);
     transfer.setLocalMem();
     transfer.testTransfer(NIXL_WRITE);
 

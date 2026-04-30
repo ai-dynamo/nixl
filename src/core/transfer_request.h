@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,12 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __TRANSFER_REQUEST_H_
-#define __TRANSFER_REQUEST_H_
+#ifndef NIXL_SRC_CORE_TRANSFER_REQUEST_H
+#define NIXL_SRC_CORE_TRANSFER_REQUEST_H
 
+#include <memory>
 #include <string>
 #include <unordered_map>
-#include <memory>
+#include <utility>
 
 #include "nixl_types.h"
 #include "backend_engine.h"
@@ -34,56 +35,56 @@ enum nixl_telemetry_stat_status_t {
 // Contains pointers to corresponding backend engine and its handler, and populated
 // and verified DescLists, and other state and metadata needed for a NIXL transfer
 class nixlXferReqH {
-    private:
-        nixlBackendEngine* engine         = nullptr;
-        nixlBackendReqH*   backendHandle  = nullptr;
+public:
+    nixlXferReqH(const std::string &remote_agent,
+                 const nixl_xfer_op_t backend_op,
+                 const nixl_mem_t local_type,
+                 const nixl_mem_t remote_type,
+                 const size_t desc_count = 0);
 
-        nixl_meta_dlist_t* initiatorDescs = nullptr;
-        nixl_meta_dlist_t* targetDescs    = nullptr;
+    nixlXferReqH(nixlXferReqH &&) = delete;
+    nixlXferReqH(const nixlXferReqH &) = delete;
 
-        std::string        remoteAgent;
-        nixl_blob_t        notifMsg;
-        bool               hasNotif       = false;
+    void
+    operator=(nixlXferReqH &&) = delete;
+    void
+    operator=(const nixlXferReqH &) = delete;
 
-        nixl_xfer_op_t     backendOp;
-        nixl_status_t      status;
-
-        nixl_xfer_telem_t telemetry;
-
-    public:
-        inline nixlXferReqH() { }
-
-        inline ~nixlXferReqH() {
-            // delete checks for nullptr itself
-            delete initiatorDescs;
-            delete targetDescs;
-            if (backendHandle != nullptr)
-                engine->releaseReqH(backendHandle);
+    ~nixlXferReqH() {
+        if ((backendHandle != nullptr) && (engine != nullptr)) {
+            engine->releaseReqH(backendHandle);
         }
+    }
 
-        void
-        updateRequestStats(std::unique_ptr<nixlTelemetry> &telemetry,
-                           nixl_telemetry_stat_status_t stat_status);
-
-        friend class nixlAgent;
-};
-
-class nixlDlistH {
-    private:
-        std::unordered_map<nixlBackendEngine*, nixl_meta_dlist_t*> descs;
-
-        std::string        remoteAgent;
-        bool               isLocal;
-
-    public:
-        inline nixlDlistH() { }
-
-        inline ~nixlDlistH() {
-            for (auto & elm : descs)
-                delete elm.second;
-        }
+    void
+    updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
 
     friend class nixlAgent;
+
+private:
+    nixlBackendEngine *engine = nullptr;
+    nixlBackendReqH *backendHandle = nullptr;
+
+    nixl_meta_dlist_t initiatorDescs;
+    nixl_meta_dlist_t targetDescs;
+
+    const std::string remoteAgent;
+    nixl_blob_t notifMsg;
+    bool hasNotif = false;
+
+    const nixl_xfer_op_t backendOp;
+    nixl_status_t status = NIXL_ERR_NOT_POSTED;
+
+    nixl_xfer_telem_t telemetry;
+};
+
+struct nixlDlistH {
+    using descs_t = std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_dlist_t>>;
+
+    nixlDlistH(const std::string &remote_agent, descs_t &&descs);
+
+    const std::string remoteAgent; // Empty means "local".
+    const descs_t descs;
 };
 
 #endif

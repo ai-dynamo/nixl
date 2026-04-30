@@ -45,21 +45,6 @@ signal_handler(int signal) {
 }
 
 std::string
-format_timestamp(uint64_t timestamp_us) {
-    auto time_point =
-        std::chrono::system_clock::time_point(std::chrono::microseconds(timestamp_us));
-    auto time_t = std::chrono::system_clock::to_time_t(time_point);
-
-    std::stringstream ss;
-    ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
-
-    auto microseconds = timestamp_us % 1000000;
-    ss << "." << std::setfill('0') << std::setw(6) << microseconds;
-
-    return ss.str();
-}
-
-std::string
 format_bytes(uint64_t bytes) {
     const char *units[] = {"B", "KB", "MB", "GB", "TB"};
     int unit_index = 0;
@@ -80,10 +65,10 @@ print_telemetry_event(const nixlTelemetryEvent &event) {
     // Can be extended to more general ostream if needed
     // friend std::ostream &operator<<(std::ostream &os, const nixlTelemetryEvent &event)
     std::cout << "\n=== NIXL Telemetry Event ===" << std::endl;
-    std::cout << "Timestamp: " << format_timestamp(event.timestampUs_) << std::endl;
     std::cout << "Category: " << nixlEnumStrings::telemetryCategoryStr(event.category_)
               << std::endl;
-    std::cout << "Event name: " << event.eventName_ << std::endl;
+    std::cout << "Event name: " << nixlEnumStrings::telemetryEventTypeStr(event.eventType_)
+              << std::endl;
     std::cout << "Value: " << event.value_ << std::endl;
 
     std::cout << "===========================" << std::endl;
