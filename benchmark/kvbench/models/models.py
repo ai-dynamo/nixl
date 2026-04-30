@@ -74,6 +74,13 @@ class BaseModelArch(ABC):
     def get_io_size(self, page_size: int = 1) -> int:
         raise NotImplementedError("Subclasses must implement this method")
 
+    def get_io_sizes(self, page_size: int = 1) -> Dict[str, int]:
+        """Return a label → IO bytes map. Default wraps get_io_size() so that
+        homogeneous-layer models (Llama3.1, GPT-OSS, Qwen3, DeepSeek-R1) keep
+        their current single-size contract. Heterogeneous-layer models (V4)
+        override this and raise from get_io_size()."""
+        return {"default": self.get_io_size(page_size)}
+
     @abstractmethod
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -120,6 +127,10 @@ class BaseModelArch(ABC):
                 from models.llama3_1 import Llama3_1
 
                 modelc = Llama3_1(**filtered_dict)
+            elif "deepseek_v4" in model_name.lower():
+                from models.deepseek_v4 import DeepSeekV4
+
+                modelc = DeepSeekV4(**filtered_dict)
             elif "deepseek_r1" in model_name.lower():
                 from models.deepseek_r1 import DeepSeekR1
 

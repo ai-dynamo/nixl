@@ -38,6 +38,7 @@ class StrategyConfig:
     pp_size: int = 1
     model_quant_mode: str = "fp8"
     kvcache_quant_mode: str = "fp8"
+    index_quant_mode: str = "bf16"
 
 
 @dataclass
@@ -187,6 +188,7 @@ class ModelConfig:
                 "pp_size": self.model.pp_size,
                 "model_quant_mode": self.model.model_quant_mode,
                 "kvcache_quant_mode": self.model.kvcache_quant_mode,
+                "index_quant_mode": self.model.index_quant_mode,
             },
             "runtime": {
                 "num_requests": self.runtime.num_requests,
