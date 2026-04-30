@@ -221,7 +221,7 @@ sudo apt-get update && sudo apt-get install -y \
   autotools-dev automake libtool libz-dev flex \
   libgtest-dev hwloc libhwloc-dev libgflags-dev \
   libgrpc-dev libgrpc++-dev libprotobuf-dev \
-  libaio-dev liburing-dev protobuf-compiler-grpc \
+  libaio-dev protobuf-compiler-grpc \
   libcpprest-dev etcd-server etcd-client \
   pybind11-dev libclang-dev libcurl4-openssl-dev \
   libssl-dev uuid-dev libxml2-dev zlib1g-dev python3-dev python3-pip

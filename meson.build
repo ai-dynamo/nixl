@@ -79,6 +79,17 @@ dl_dep = cpp.find_library('dl', required: true)
 rt_dep = cpp.find_library('rt', required: true)
 thread_dep = dependency('threads')
 
+# Forced to ignore this error due to:
+# https://github.com/abseil/abseil-cpp/issues/1779
+# This must be global since subprojects cannot be assigned with arguments.
+# Adding this configuration only for release build to consider it while developing.
+# NOTE: Must be declared before any subproject fallback that builds a target
+# (e.g. liburing wrap), because Meson forbids add_global_arguments after targets.
+if get_option('buildtype') == 'release'
+  abseil_flags = cpp.get_supported_arguments('-Wno-error=maybe-uninitialized', '-Wno-maybe-uninitialized')
+  add_global_arguments(abseil_flags, language: 'cpp')
+endif
+
 # Check for libaio (for LINUX AIO plugin and test)
 has_linux_aio = false
 linux_aio_dep = cpp.find_library('aio', required: false)
@@ -88,9 +99,22 @@ endif
 
 # Check for liburing
 has_io_uring = false
-io_uring_dep = dependency('liburing', required: false)
+io_uring_dep = dependency('liburing', required: false,
+                          fallback: ['liburing'],
+                          default_options: ['default_library=shared'])
 if io_uring_dep.found()
-    has_io_uring = cpp.has_function('io_uring_queue_init_params', prefix: '#include <liburing.h>',  dependencies: [io_uring_dep])
+  if io_uring_dep.type_name() == 'internal'
+    # Internal (subproject) deps cannot be passed to compiler checks in meson
+    # < 1.5.  Retrieve the include dirs from the already-configured subproject
+    # and probe the header directly.
+    liburing_subproj = subproject('liburing')
+    has_io_uring = cpp.has_header_symbol('liburing.h', 'io_uring_queue_init_params',
+                                         include_directories: liburing_subproj.get_variable('inc'))
+  else
+    has_io_uring = cpp.has_function('io_uring_queue_init_params',
+                                    prefix: '#include <liburing.h>',
+                                    dependencies: [io_uring_dep])
+  endif
 endif
 
 # Check for POSIX aio
@@ -103,15 +127,6 @@ has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 cuobj_dep = dependency('cuobjclient-13.1', required: false)
 if cuobj_dep.found()
     add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
-endif
-
-# Forced to ignore this error due to:
-# https://github.com/abseil/abseil-cpp/issues/1779
-# This must be global since subprojects cannot be assigned with arguments.
-# Adding this configuration only for release build to consider it while developing.
-if get_option('buildtype') == 'release'
-  abseil_flags = cpp.get_supported_arguments('-Wno-error=maybe-uninitialized', '-Wno-maybe-uninitialized')
-  add_global_arguments(abseil_flags, language: 'cpp')
 endif
 
 # Search for Abseil dependencies in the system first
