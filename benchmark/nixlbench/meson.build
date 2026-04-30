@@ -217,7 +217,7 @@ if nvshmem_available
     nvcc_args += ['-lnixl', '-lnixl_build', '-lserdes', '-lcuda', '-lcudart', '-lnvshmem']
     nvcc_args += args
     nvcc_cmd_files = [
-                 meson.current_build_dir() + '/src/utils/libutils.a.p/utils.cpp.o',
+                  meson.current_build_dir() + '/src/utils/libutils.a.p/utils.cpp.o',
                  meson.current_build_dir() + '/src/runtime/libruntime.a.p/runtime.cpp.o',
                  meson.current_build_dir() + '/src/worker/libworker.a.p/worker.cpp.o',
                  meson.current_build_dir() + '/src/worker/nixl/libnixl_worker.a.p/nixl_worker.cpp.o',
@@ -234,7 +234,7 @@ if nvshmem_available
     nvcc_command += nvcc_cmd_files
 
     custom_target('nixlbench',
-        input: 'src/main.cpp',
+        input: ['src/main.cpp', 'src/benchmark_runner.cpp'],
         output: 'nixlbench',
         command: nvcc_command,
         build_by_default: true,
@@ -242,7 +242,7 @@ if nvshmem_available
         install_dir: get_option('bindir'),
         depends: [nixlbench_runtimes, utils_lib, worker_libs])
 else
-    executable('nixlbench', 'src/main.cpp',
+    executable('nixlbench', ['src/main.cpp', 'src/benchmark_runner.cpp'],
                 include_directories: inc_dir,
                 link_with: [nixlbench_runtimes, utils_lib, worker_libs],
                 dependencies: deps,
