@@ -39,6 +39,7 @@ UCX_REF=${UCX_REF:-v1.21.x}
 BUILD_NIXL_EP="true"
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
+GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
 
 get_options() {
@@ -222,6 +223,7 @@ BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
 BUILD_ARGS+=" --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
+BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 
