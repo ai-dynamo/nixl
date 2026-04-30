@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -108,6 +108,8 @@ nixlGusliEngine::parseInitParams(const nixlBackendInitParams *nixl_init,
                 std::stoi(backParams->at("max_num_simultaneous_requests"));
         if (backParams->count("config_file") > 0)
             gusli_params.config_file = backParams->at("config_file").c_str();
+        if (backParams->count("try_use_uring") > 0)
+            try_use_uring_ = (backParams->at("try_use_uring") == "true");
     }
 }
 
@@ -226,9 +228,10 @@ public:
     nixlGusliBackendReqHSingleBdev(const nixl_xfer_op_t nixlOp,
                                    int32_t gid,
                                    const nixlMetaDesc &local,
-                                   const nixlMetaDesc &remote)
+                                   const nixlMetaDesc &remote,
+                                   bool try_use_uring)
         : nixlGusliBackendReqHbase(nixlOp) {
-        initCommon();
+        initCommon(try_use_uring);
 
         io.params.init_1_rng(
             op, gid, (uint64_t)remote.addr, (uint64_t)local.len, (void *)local.addr);
@@ -245,9 +248,10 @@ public:
     nixlGusliBackendReqHSingleBdev(const nixl_xfer_op_t nixl_op,
                                    int32_t gid,
                                    const nixl_meta_dlist_t &local,
-                                   const nixl_meta_dlist_t &remote)
+                                   const nixl_meta_dlist_t &remote,
+                                   bool try_use_uring)
         : nixlGusliBackendReqHbase(nixl_op) {
-        initCommon();
+        initCommon(try_use_uring);
         const int num_ranges = remote.descCount();
         gusli::io_multi_map_t *mio =
             (gusli::io_multi_map_t *)local[0].addr; // Allocate scatter gather in the first entry
@@ -309,8 +313,9 @@ private:
     gusli::io_request io; // gusli executor of 1 io
 
     void
-    initCommon(void) {
+    initCommon(bool try_use_uring) {
         io.params.set(op).set_priority(100).set_async_pollable();
+        io.params.set_try_use_uring(try_use_uring);
     }
 };
 
@@ -321,14 +326,16 @@ public:
                                  bool hasSglMem,
                                  const nixl_meta_dlist_t &local,
                                  const nixl_meta_dlist_t &remote,
-                                 std::function<int32_t(uint64_t)> convertIdFunc)
+                                 std::function<int32_t(uint64_t)> convertIdFunc,
+                                 bool try_use_uring)
         : nixlGusliBackendReqHbase(nixl_op) {
         child.reserve(nSubIOs);
         const unsigned num_ranges = remote.descCount();
         unsigned i = (hasSglMem ? 1 : 0); // If supplied sgl, can't use it for now, just ignore it
         __LOG_IO(this, "_Compound IO, has_sgl=%d, nSubIOs=%u", hasSglMem, (num_ranges - i));
         for (; i < num_ranges; i++)
-            child.emplace_back(nixl_op, convertIdFunc(remote[i].devId), local[i], remote[i]);
+            child.emplace_back(
+                nixl_op, convertIdFunc(remote[i].devId), local[i], remote[i], try_use_uring);
     }
 
     ~nixlGusliBackendReqHCompound() override = default;
@@ -390,14 +397,20 @@ nixlGusliEngine::prepXfer(const nixl_xfer_op_t &op,
     std::unique_ptr<nixlGusliBackendReqHbase> req;
     try {
         if (is_single_range_io) {
-            req = std::make_unique<nixlGusliBackendReqHSingleBdev>(op, gid, local[0], remote[0]);
+            req = std::make_unique<nixlGusliBackendReqHSingleBdev>(
+                op, gid, local[0], remote[0], try_use_uring_);
         } else if (can_use_multi_range_optimization) {
-            req = std::make_unique<nixlGusliBackendReqHSingleBdev>(op, gid, local, remote);
+            req = std::make_unique<nixlGusliBackendReqHSingleBdev>(
+                op, gid, local, remote, try_use_uring_);
         } else {
             req = std::make_unique<nixlGusliBackendReqHCompound>(
-                op, num_ranges, has_sgl_mem, local, remote, [this](uint64_t devId) {
-                    return this->getGidOfBDev(devId);
-                });
+                op,
+                num_ranges,
+                has_sgl_mem,
+                local,
+                remote,
+                [this](uint64_t devId) { return this->getGidOfBDev(devId); },
+                try_use_uring_);
         }
         handle = (nixlBackendReqH *)req.release();
     }

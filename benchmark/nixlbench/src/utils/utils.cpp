@@ -221,6 +221,9 @@ NB_ARG_STRING(gusli_device_security,
               "If empty or fewer than devices, uses 'sec=0x3' as default. "
               "For GUSLI backend, use device_list in format 'id:type:path' where type is F (file) "
               "or K (kernel device).");
+NB_ARG_BOOL(gusli_try_use_uring,
+            false,
+            "Try to use io_uring engine in GUSLI backend (default: false)");
 
 
 #undef NB_ARG_INT32
@@ -294,6 +297,7 @@ int xferBenchConfig::gusli_max_simultaneous_requests = 0;
 std::string xferBenchConfig::gusli_config_file = "";
 std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
+bool xferBenchConfig::gusli_try_use_uring = false;
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -415,6 +419,7 @@ xferBenchConfig::loadParams(void) {
             gusli_config_file = NB_ARG(gusli_config_file);
             gusli_device_byte_offsets = NB_ARG(gusli_device_byte_offsets);
             gusli_device_security = NB_ARG(gusli_device_security);
+            gusli_try_use_uring = NB_ARG(gusli_try_use_uring);
         }
 
         // Load OBJ-specific configurations if backend is OBJ

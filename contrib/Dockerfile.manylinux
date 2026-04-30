@@ -181,7 +181,7 @@ ENV PKG_CONFIG_PATH=/usr/lib/pkgconfig:$PKG_CONFIG_PATH
 RUN git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
      sed -i '/^LFLAGS_ALL =/{/-lrt/ b; s/$/ -lrt/}' Makefile && \
-     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 && \
      cd ..
 
 # Required for Azure SDK

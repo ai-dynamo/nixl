@@ -196,6 +196,7 @@ public:
     static std::string gusli_config_file;
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
+    static bool gusli_try_use_uring;
 
     static int
     parseConfig(int argc, char *argv[]);
