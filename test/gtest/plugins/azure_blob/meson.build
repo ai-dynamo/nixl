@@ -34,6 +34,7 @@ azure_blob_test_exe = executable('azure_blob_gtest',
     dependencies : [
         nixl_dep,
         gtest_dep,
+        absl_log_dep,
         absl_strings_dep,
         absl_time_dep,
         azure_core,
