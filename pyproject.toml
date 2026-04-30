@@ -31,6 +31,10 @@ authors = [
 
 dependencies = ["torch", "numpy"]
 
+[tool.mypy]
+mypy_path = ["src/bindings/python/nixl-meta"]
+ignore_missing_imports = true
+
 [tool.isort]
 profile = "black"
 
