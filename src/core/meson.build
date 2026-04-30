@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,6 +55,7 @@ endif
 
 nixl_lib = library('nixl',
                    'nixl_agent.cpp',
+                   'nixl_enum_strings.cpp',
                    'nixl_plugin_manager.cpp',
                    'nixl_listener.cpp',
                    'telemetry/telemetry.cpp',
