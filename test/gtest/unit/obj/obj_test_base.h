@@ -156,7 +156,11 @@ public:
                        size_t offset,
                        std::string_view rdma_desc,
                        put_object_callback_t callback) override {
-        if (rdma_desc.empty()) {
+        if (data_len == 0) {
+            getPendingCallbacks().push_back([callback]() { callback(false); });
+        } else if (offset != 0) {
+            getPendingCallbacks().push_back([callback]() { callback(false); });
+        } else if (rdma_desc.empty()) {
             getPendingCallbacks().push_back([callback]() { callback(false); });
         } else {
             getPendingCallbacks().push_back([callback, this]() { callback(getSimulateSuccess()); });
@@ -170,7 +174,9 @@ public:
                        size_t offset,
                        std::string_view rdma_desc,
                        get_object_callback_t callback) override {
-        if (rdma_desc.empty()) {
+        if (data_len == 0) {
+            getPendingCallbacks().push_back([callback]() { callback(false); });
+        } else if (rdma_desc.empty()) {
             getPendingCallbacks().push_back([callback]() { callback(false); });
         } else {
             getPendingCallbacks().push_back([callback, data_ptr, data_len, offset, this]() {
