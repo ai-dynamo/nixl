@@ -40,12 +40,14 @@
 #define ROUND_UP(value, granularity) \
     ((((value) + (granularity) - 1) / (granularity)) * (granularity))
 
-#define CHECK_NIXL_ERROR(result, message)                                                       \
-    do {                                                                                        \
-        if (0 != result) {                                                                      \
-            std::cerr << "NIXL: " << message << " (Error code: " << result << ")" << std::endl; \
-            exit(EXIT_FAILURE);                                                                 \
-        }                                                                                       \
+#define CHECK_NIXL_ERROR(result, message)                                                     \
+    do {                                                                                      \
+        const nixl_status_t _r = (result);                                                    \
+        if (0 != _r) {                                                                        \
+            std::cerr << "NIXL: " << message << " (" << nixlEnumStrings::statusStr(_r) << ")" \
+                      << std::endl;                                                           \
+            exit(EXIT_FAILURE);                                                               \
+        }                                                                                     \
     } while (0)
 
 static nixl_mem_t
