@@ -347,7 +347,7 @@ void Buffer::destroy() {
 
 void Buffer::barrier() {
     auto compute_stream = at::cuda::getCurrentCUDAStream();
-    ep_kernels::barrier(gpu_ctx, mask_buffer_ptr, timeout_cycles, compute_stream);
+    ep_kernels::barrier(gpu_ctx_ptr, mask_buffer_ptr, timeout_cycles, compute_stream);
 }
 
 void Buffer::_nixl_agents_connect(const std::vector<int>& ranks, const std::vector<nixl_blob_t>& remote_mds) {
@@ -440,13 +440,14 @@ void Buffer::_ipc_handles_sync(const std::vector<std::optional<pybind11::bytearr
 }
 
 void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds,
-    const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles) {
+    const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles, bool activate) {
     EP_HOST_ASSERT(!remote_ranks_list.empty());
     EP_HOST_ASSERT(!remote_mds.has_value() || remote_mds->size() == remote_ranks_list.size());
 
     if (!low_latency_mode && num_nvl_bytes > 0) {
         EP_HOST_ASSERT(remote_ranks.empty() && "connect_ranks called more than once in high-throughput mode; elasticity is not yet supported");
     }
+    EP_HOST_ASSERT(low_latency_mode || activate);
 
     std::vector<int> new_ranks;
     std::vector<nixl_blob_t> new_ranks_mds;
@@ -463,7 +464,8 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std:
             continue;
 
         new_ranks.push_back(remote_rank);
-        CUDA_CHECK(cudaMemset(mask_buffer_ptr + remote_rank, 0, sizeof(int)));
+        int mask = activate ? 0 : 1;
+        CUDA_CHECK(cudaMemcpy(mask_buffer_ptr + remote_rank, &mask, sizeof(int), cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemset(sync_count_ptr + remote_rank, 0, sizeof(int)));
         CUDA_CHECK(cudaMemset(sync_buffer_ptr + remote_rank, 0, sizeof(int)));
 
@@ -595,6 +597,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
                            const std::optional<torch::Tensor>& cached_rdma_channel_prefix_matrix, const std::optional<torch::Tensor>& cached_recv_rdma_rank_prefix_sum,
                            const std::optional<torch::Tensor>& cached_gbl_channel_prefix_matrix, const std::optional<torch::Tensor>& cached_recv_gbl_rank_prefix_sum,
                            int expert_alignment, const Config& config, std::optional<EventHandle>& previous_event, bool async, bool allocate_on_comm_stream) {
+    EP_HOST_ASSERT(!low_latency_mode && "ht_dispatch() requires high-throughput mode (low_latency_mode=false)");
     // In dispatch, CPU will busy-wait until GPU receive tensor size metadata from other ranks, which can be quite long.
     // If users of DeepEP need to execute other Python code on other threads, such as KV transfer, their code will get stuck due to GIL
     // unless we release GIL here.
@@ -875,6 +878,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
                           const torch::Tensor& rdma_channel_prefix_matrix, const torch::Tensor& rdma_rank_prefix_sum, const torch::Tensor& gbl_channel_prefix_matrix,
                           const torch::Tensor& combined_rdma_head, const torch::Tensor& combined_nvl_head,
                           const Config& config, std::optional<EventHandle>& previous_event, bool async, bool allocate_on_comm_stream) {
+    EP_HOST_ASSERT(!low_latency_mode && "ht_combine() requires high-throughput mode (low_latency_mode=false)");
     const int num_channels = config.num_sms / 2;
     EP_HOST_ASSERT(config.num_sms % 2 == 0);
 
@@ -1003,6 +1007,7 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
                              int num_max_dispatch_tokens_per_rank, int num_experts,
                              bool use_fp8, bool round_scale, bool use_ue8m0,
                              bool async, bool return_recv_hook) {
+    EP_HOST_ASSERT(low_latency_mode && "dispatch() requires low-latency mode (low_latency_mode=true)");
     // Tensor checks
     // By default using `ptp128c` FP8 cast
     EP_HOST_ASSERT(x.dim() == 2 and x.is_contiguous() and x.scalar_type() == torch::kBFloat16);
@@ -1088,7 +1093,7 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
                                use_fp8, round_scale, use_ue8m0,
                                timeout_cycles,
                                workspace, num_device_sms,
-                               launch_stream, phases, gpu_ctx);
+                               launch_stream, phases, gpu_ctx_ptr);
     };
     launcher(return_recv_hook ? EP_SEND_PHASE : (EP_SEND_PHASE | EP_RECV_PHASE));
 
@@ -1118,6 +1123,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
                             int num_max_dispatch_tokens_per_rank, int num_experts,
                             bool use_logfmt, bool zero_copy, bool async, bool return_recv_hook,
                             const std::optional<torch::Tensor>& out) {
+    EP_HOST_ASSERT(low_latency_mode && "combine() requires low-latency mode (low_latency_mode=true)");
     // Tensor checks
     EP_HOST_ASSERT(x.dim() == 3 and x.is_contiguous() and x.scalar_type() == torch::kBFloat16);
     EP_HOST_ASSERT(x.size(0) == num_experts / num_ranks);
@@ -1186,7 +1192,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
                               num_topk, num_experts, rank, num_ranks,
                              use_logfmt, timeout_cycles,
                               workspace, num_device_sms,
-                              launch_stream, phases, zero_copy, gpu_ctx);
+                              launch_stream, phases, zero_copy, gpu_ctx_ptr);
     };
     launcher(return_recv_hook ? EP_SEND_PHASE : (EP_SEND_PHASE | EP_RECV_PHASE));
 
@@ -1292,6 +1298,7 @@ void Buffer::_nixl_ep_memory_views_create(void) {
             EP_HOST_ASSERT(nixl_agent_info->agent->prepMemView(ht_barrier_descs, gpu_ctx.ht_barrier_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
         }
     }
+    CUDA_CHECK(cudaMemcpy(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx), cudaMemcpyHostToDevice));
 }
 
 void Buffer::_nixl_ep_memory_views_destroy(void) {
@@ -1316,10 +1323,16 @@ void Buffer::_nixl_ep_init(void) {
         .num_rdma_ranks = num_rdma_ranks,
         .rank = rank,
     };
+    CUDA_CHECK(cudaMalloc(&gpu_ctx_ptr, sizeof(gpu_nixl_ctx)));
+    CUDA_CHECK(cudaMemcpy(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx), cudaMemcpyHostToDevice));
 }
 
 void Buffer::_nixl_ep_destroy(void) {
     _nixl_ep_memory_views_destroy();
+    if (gpu_ctx_ptr != nullptr) {
+        cudaFree(gpu_ctx_ptr);
+        gpu_ctx_ptr = nullptr;
+    }
 }
 
 void Buffer::_nixl_agent_init() {
@@ -1446,9 +1459,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def(pybind11::init<int, bool, bool, int>())
         .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers)
         .def("barrier", &nixl_ep::Buffer::barrier)
-        .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles) {
-            buffer.connect_ranks(remote_ranks, nixl_ep::convert_mds(remote_mds), all_gathered_handles);
-        }, py::arg("remote_ranks"), py::arg("remote_mds") = std::nullopt, py::arg("ipc_handles") = std::vector<std::optional<pybind11::bytearray>>{})
+        .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles, bool activate) {
+            buffer.connect_ranks(remote_ranks, nixl_ep::convert_mds(remote_mds), all_gathered_handles, activate);
+        }, py::arg("remote_ranks"), py::arg("remote_mds") = std::nullopt, py::arg("ipc_handles") = std::vector<std::optional<pybind11::bytearray>>{}, py::arg("activate") = true)
         .def("disconnect_ranks", &nixl_ep::Buffer::disconnect_ranks)
         .def("is_available", &nixl_ep::Buffer::is_available)
         .def("get_num_rdma_ranks", &nixl_ep::Buffer::get_num_rdma_ranks)
