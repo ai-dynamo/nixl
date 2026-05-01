@@ -15,7 +15,7 @@
 
 import contextlib
 import pickle
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 import numpy as np
 import torch
@@ -237,6 +237,8 @@ class nixl_agent:
             "FILE": nixlBind.FILE_SEG,
             "BLOCK": nixlBind.BLK_SEG,
             "OBJ": nixlBind.OBJ_SEG,
+            # TODO(nixl): Remove legacy aliases after downstream callers migrate
+            # to canonical mem_type names ("DRAM"/"VRAM") in follow-up PRs.
             "cpu": nixlBind.DRAM_SEG,
             "cuda": nixlBind.VRAM_SEG,
             "xpu": nixlBind.VRAM_SEG,
@@ -914,15 +916,8 @@ class nixl_agent:
         else:
             return False
 
-    def get_mem_type_from_device(self, device_or_holder) -> str:
-        device = getattr(device_or_holder, "device", device_or_holder)
-        device_type = getattr(device, "type", None)
-
-        if device_type == "cuda":
-            return "cuda"
-        if device_type == "xpu":
-            return "xpu"
-        return "cpu"
+    def get_mem_type(self, tensor: torch.Tensor) -> Literal["DRAM", "VRAM"]:
+        return "DRAM" if tensor.get_device() == -1 else "VRAM"
 
     """
     @brief Get nixlXferDList from different input types:
@@ -973,7 +968,7 @@ class nixl_agent:
                 logger.error("Please provide a non-empty descriptor list")
                 new_descs = None
             elif descs.is_contiguous():
-                mem_type = self.get_mem_type_from_device(descs)
+                mem_type = self.get_mem_type(descs)
                 base_addr = descs.data_ptr()
                 region_len = descs.numel() * descs.element_size()
                 gpu_id = descs.get_device()
@@ -1001,11 +996,11 @@ class nixl_agent:
                 logger.error("3-tuple list needed for transfer")
                 new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
-            tensor_type = descs[0].device
+            ref_device = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
             for i in range(len(descs)):
-                if descs[i].device != tensor_type:
+                if descs[i].device != ref_device:
                     return None
                 if not descs[i].is_contiguous():
                     logger.error("Please use a list of contiguous Tensors")
@@ -1016,7 +1011,7 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
-            mem_type = self.get_mem_type_from_device(tensor_type)
+            mem_type = self.get_mem_type(descs[0])
             new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], dlist)
         else:
             new_descs = None
@@ -1072,7 +1067,7 @@ class nixl_agent:
                 logger.error("Please provide a non-empty descriptor list")
                 new_descs = None
             elif descs.is_contiguous():
-                mem_type = self.get_mem_type_from_device(descs)
+                mem_type = self.get_mem_type(descs)
                 base_addr = descs.data_ptr()
                 region_len = descs.numel() * descs.element_size()
                 gpu_id = descs.get_device()
@@ -1100,11 +1095,11 @@ class nixl_agent:
                 logger.error("4-tuple list needed for registration")
                 new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
-            tensor_type = descs[0].device
+            ref_device = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
             for i in range(len(descs)):
-                if descs[i].device != tensor_type:
+                if descs[i].device != ref_device:
                     return None
                 if not descs[i].is_contiguous():
                     logger.error("Please use a list of contiguous Tensors")
@@ -1115,7 +1110,7 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
-            mem_type = self.get_mem_type_from_device(tensor_type)
+            mem_type = self.get_mem_type(descs[0])
             new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], dlist)
         else:
             new_descs = None
