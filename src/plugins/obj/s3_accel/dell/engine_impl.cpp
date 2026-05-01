@@ -15,7 +15,16 @@
 #include <chrono>
 #include <algorithm>
 
+#include "obj_engine_registry.h"
+
 namespace {
+
+objAccelEngineRegistrar reg_dell(
+    "dell",
+    [](const nixlBackendInitParams *p) { return std::make_unique<S3DellObsObjEngineImpl>(p); },
+    [](const nixlBackendInitParams *p, std::shared_ptr<iS3Client> s3, std::shared_ptr<iS3Client>) {
+        return std::make_unique<S3DellObsObjEngineImpl>(p, std::move(s3));
+    });
 
 /**
  * RDMA context structure for cuObject operations.
