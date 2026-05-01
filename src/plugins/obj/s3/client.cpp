@@ -18,9 +18,11 @@
 #include "client.h"
 #include "object/s3/utils.h"
 #include "object/s3/aws_sdk_init.h"
+#include "common/nixl_log.h"
 #include <aws/s3/model/PutObjectRequest.h>
 #include <aws/s3/model/GetObjectRequest.h>
 #include <aws/s3/model/HeadObjectRequest.h>
+#include <aws/s3/S3Errors.h>
 #include <aws/core/utils/stream/PreallocatedStreamBuf.h>
 #include <aws/core/utils/memory/stl/AWSStringStream.h>
 #include <absl/strings/str_format.h>
@@ -119,17 +121,39 @@ awsS3Client::getObjectAsync(std::string_view key,
         nullptr);
 }
 
-bool
-awsS3Client::checkObjectExists(std::string_view key) {
+void
+awsS3Client::checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) {
     Aws::S3::Model::HeadObjectRequest request;
     request.WithBucket(bucketName_).WithKey(Aws::String(key));
 
-    auto outcome = s3Client_->HeadObject(request);
-    if (outcome.IsSuccess())
-        return true;
-    else if (outcome.GetError().GetResponseCode() == Aws::Http::HttpResponseCode::NOT_FOUND)
-        return false;
-    else
-        throw std::runtime_error("Failed to check if object exists: " +
-                                 outcome.GetError().GetMessage());
+    s3Client_->HeadObjectAsync(
+        request,
+        [callback](const Aws::S3::S3Client *,
+                   const Aws::S3::Model::HeadObjectRequest &,
+                   const Aws::S3::Model::HeadObjectOutcome &outcome,
+                   const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
+            if (outcome.IsSuccess()) {
+                callback(true);
+            } else {
+                auto error_type = outcome.GetError().GetErrorType();
+                // HeadObject returns HTTP 404 with no body for missing objects,
+                // so the SDK cannot parse "NoSuchKey" from XML and instead maps
+                // the 404 to RESOURCE_NOT_FOUND.  Accept both that and the
+                // explicit NO_SUCH_KEY (which some S3-compatible stores may
+                // return via headers or enriched error responses).
+                if (error_type == Aws::S3::S3Errors::NO_SUCH_KEY ||
+                    error_type == Aws::S3::S3Errors::RESOURCE_NOT_FOUND) {
+                    callback(false);
+                } else if (error_type == Aws::S3::S3Errors::NO_SUCH_BUCKET) {
+                    NIXL_ERROR << "checkObjectExistsAsync bucket/endpoint error: "
+                               << outcome.GetError().GetMessage();
+                    callback(std::nullopt);
+                } else {
+                    NIXL_ERROR << "checkObjectExistsAsync error: "
+                               << outcome.GetError().GetMessage();
+                    callback(std::nullopt);
+                }
+            }
+        },
+        nullptr);
 }
