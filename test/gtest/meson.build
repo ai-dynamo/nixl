@@ -32,6 +32,7 @@ gtest_inc_dirs = include_directories('.')
 subdir('mocks')
 subdir('unit')
 subdir('plugins')
+subdir('benchmark')
 
 if ucx_gpu_device_api_available
     subdir('device_api')
@@ -92,7 +93,7 @@ test_exe = executable('gtest',
     sources : gtest_sources,
     include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, nixl_common_dep, cuda_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface],
+    dependencies : [nixl_dep, nixl_common_dep, cuda_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface, benchmark_dep],
     link_with: [nixl_build_lib],
     install : true
 )
