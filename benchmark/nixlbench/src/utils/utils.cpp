@@ -520,9 +520,11 @@ xferBenchConfig::loadParams(void) {
         std::cerr << "Error: Consistency check is not supported for INFINIA backend" << std::endl;
         std::cerr << "       The INFINIA backend uses native object storage operations that do not"
                   << std::endl;
-        std::cerr << "       support the file-based consistency verification used by other backends."
+        std::cerr
+            << "       support the file-based consistency verification used by other backends."
+            << std::endl;
+        std::cerr << "Hint: Remove --check_consistency flag when using --backend INFINIA"
                   << std::endl;
-        std::cerr << "Hint: Remove --check_consistency flag when using --backend INFINIA" << std::endl;
         return -1;
     }
 
