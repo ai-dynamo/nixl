@@ -24,14 +24,14 @@ if 'GUSLI' in static_plugins
         dependencies: gusli_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: false,
-        cpp_args: compile_defs + compile_flags,
+        cpp_args: [],
         name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
   gusli_backend_lib = shared_library('GUSLI', cpp_sources,
         dependencies: gusli_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
-        cpp_args: compile_defs + ['-fPIC'],
+        cpp_args: ['-fPIC'],
         name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
         install_dir: plugin_install_dir,
         install_rpath: '$ORIGIN/..')

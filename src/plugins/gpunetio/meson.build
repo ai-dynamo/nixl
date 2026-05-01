@@ -16,7 +16,7 @@
 plugin_gpunetio_deps = [dependency('libibverbs'), dependency('libmlx5'), dependency('doca-common'), dependency('doca-verbs'), dependency('doca-gpunetio')]
 
 gpu_cuda_args = []
-compile_flags = ['-D DOCA_ALLOW_EXPERIMENTAL_API']
+gpunetio_compile_flags = ['-D DOCA_ALLOW_EXPERIMENTAL_API']
 
 if 'GPUNETIO' in static_plugins
     gpunetio_backend_lib = static_library('GPUNETIO',
@@ -24,7 +24,7 @@ if 'GPUNETIO' in static_plugins
                dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
-               cpp_args : compile_flags,
+               cpp_args : gpunetio_compile_flags,
                cuda_args : gpu_cuda_args + ['-rdc=true'],
                name_prefix: 'libplugin_',
                install_dir: plugin_install_dir)  # Custom prefix for plugin libraries
@@ -34,7 +34,7 @@ else
                dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep],
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
-               cpp_args : compile_flags + ['-fPIC'],
+               cpp_args : gpunetio_compile_flags + ['-fPIC'],
                cuda_args : gpu_cuda_args,
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                install_dir: plugin_install_dir)

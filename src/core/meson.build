@@ -67,4 +67,4 @@ nixl_lib = library('nixl',
                    install: true,
                    install_rpath: join_paths(get_option('prefix'), get_option('libdir')))
 
-nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs)
+nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_inc_dirs, dependencies: nixl_lib_deps)
