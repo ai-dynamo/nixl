@@ -87,6 +87,9 @@ public:
     void
     addDescs(nixlSecDescList &&other);
 
+    void
+    remDescs(std::vector<int> indices, order ord = order::UNSORTED);
+
     // Shadow the parent's non-const operator[] to return a const ref,
     // this prevents mutation of descriptor fields after insertion
     const nixlSectionDesc &
