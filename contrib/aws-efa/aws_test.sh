@@ -30,7 +30,7 @@ usage() {
     echo "  GITHUB_REPOSITORY - GitHub repository (e.g., \"ai-dynamo/nixl\")"
     echo ""
     echo "Optional environment variables:"
-    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04)"
+    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda-dl-base:25.11-cuda13.0-devel-ubuntu24.04)"
     echo "  TEST_TIMEOUT      - Timeout for test execution in minutes"
     exit 1
 }
@@ -41,7 +41,7 @@ if [ -z "$GITHUB_REF" ] || [ -z "$GITHUB_SERVER_URL" ] || [ -z "$GITHUB_REPOSITO
     usage
 fi
 
-export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04"}
+export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda-dl-base:25.11-cuda13.0-devel-ubuntu24.04"}
 
 checkout_ref="$GITHUB_REF"
 case "$GITHUB_REF" in
