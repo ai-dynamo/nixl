@@ -515,6 +515,17 @@ xferBenchConfig::loadParams(void) {
         }
     }
 
+    // Validate backend-specific configurations
+    if (backend == XFERBENCH_BACKEND_INFINIA && check_consistency) {
+        std::cerr << "Error: Consistency check is not supported for INFINIA backend" << std::endl;
+        std::cerr << "       The INFINIA backend uses native object storage operations that do not"
+                  << std::endl;
+        std::cerr << "       support the file-based consistency verification used by other backends."
+                  << std::endl;
+        std::cerr << "Hint: Remove --check_consistency flag when using --backend INFINIA" << std::endl;
+        return -1;
+    }
+
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
         if (!((XFERBENCH_SEG_TYPE_VRAM == initiator_seg_type) &&
               (XFERBENCH_SEG_TYPE_VRAM == target_seg_type) && (1 == num_threads) &&
@@ -772,12 +783,6 @@ xferBenchConfig::isObjStorageBackend() {
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 };
 
-// Check if backend requires external CLI tools for object management (S3/Azure)
-bool
-xferBenchConfig::isExternalObjStorageBackend() {
-    return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
-};
 
 /**********
  * xferBench Utils
@@ -1243,8 +1248,8 @@ xferBenchUtils::buildAwsCredentials() {
 
 bool
 xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
-    if (!xferBenchConfig::isExternalObjStorageBackend()) {
-        // INFINIA and other native object storage backends don't need external put
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
+        // INFINIA backends don't need external CLI put
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
@@ -1260,8 +1265,8 @@ xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
 
 bool
 xferBenchUtils::getObj(const std::string &name) {
-    if (!xferBenchConfig::isExternalObjStorageBackend()) {
-        // INFINIA and other native object storage backends don't need external get
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
+        // INFINIA backends don't need external CLI get
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
@@ -1277,8 +1282,7 @@ xferBenchUtils::getObj(const std::string &name) {
 
 bool
 xferBenchUtils::rmObj(const std::string &name) {
-    if (!xferBenchConfig::isExternalObjStorageBackend()) {
-        // INFINIA and other native object storage backends don't need external rm
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {

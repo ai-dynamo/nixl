@@ -213,8 +213,6 @@ public:
     isStorageBackend();
     static bool
     isObjStorageBackend();
-    static bool
-    isExternalObjStorageBackend();
 
 protected:
     static int

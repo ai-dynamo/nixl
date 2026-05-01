@@ -19,78 +19,30 @@
 #include "backend/backend_plugin.h"
 #include "infinia_backend.h"
 
-// Function to create a new Infinia backend engine instance
-static nixlBackendEngine *
-create_infinia_engine(const nixlBackendInitParams *init_params) {
-    return new infinia_engine(init_params);
-}
+// Plugin type alias for convenience
+using infinia_plugin_t = nixlBackendPluginCreator<infinia_engine>;
 
-static void
-destroy_infinia_engine(nixlBackendEngine *engine) {
-    delete engine;
-}
-
-// Function to get the plugin name
-static const char *
-get_plugin_name() {
-    return INFINIA_PLUGIN_NAME;
-}
-
-// Function to get the plugin version
-static const char *
-get_plugin_version() {
-    return INFINIA_PLUGIN_VERSION;
-}
-
-// Function to get backend options
-// Returns empty params - INFINIA backend uses environment variables
-// and doesn't require default parameter values
-static nixl_b_params_t
-get_backend_options() {
-    nixl_b_params_t params;
-    // Return empty params - configuration is done via environment variables
-    // or explicit parameters passed to createBackend()
-    return params;
-}
-
-// Function to get supported backend mem types
-static nixl_mem_list_t
-get_backend_mems() {
-    nixl_mem_list_t mems;
-    mems.push_back(DRAM_SEG);
-    mems.push_back(VRAM_SEG);
-    mems.push_back(OBJ_SEG);
-    return mems;
-}
-
-// Static plugin structure
-static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
-                                   create_infinia_engine,
-                                   destroy_infinia_engine,
-                                   get_plugin_name,
-                                   get_plugin_version,
-                                   get_backend_options,
-                                   get_backend_mems};
+static const nixl_mem_list_t supported_segments = {DRAM_SEG, VRAM_SEG, OBJ_SEG};
 
 #ifdef STATIC_PLUGIN_INFINIA
-
 nixlBackendPlugin *
 createStaticInfiniaPlugin() {
-    return &plugin; // Return the static plugin instance
+    return infinia_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                    INFINIA_PLUGIN_NAME,
+                                    INFINIA_PLUGIN_VERSION,
+                                    {},
+                                    supported_segments);
 }
-
 #else
-
-// Plugin initialization function
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return &plugin;
+    return infinia_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                    INFINIA_PLUGIN_NAME,
+                                    INFINIA_PLUGIN_VERSION,
+                                    {},
+                                    supported_segments);
 }
 
-// Plugin cleanup function
 extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {
-    // Cleanup any resources if needed
-}
-
+nixl_plugin_fini() {}
 #endif
