@@ -161,6 +161,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
                   << (("all" == devices[0]) ? "all" : backend_params["device_list"]) << " rank "
                   << rank << ", type " << name << ", hostname " << hostname << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC)) {
+        backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
+
         if (gethostname(hostname, 256)) {
             std::cerr << "Failed to get hostname" << std::endl;
             exit(EXIT_FAILURE);
@@ -173,7 +175,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
 
         std::cout << "Init nixl worker, dev " << (("all" == devices[0]) ? "all" : devices[rank])
                   << " rank " << rank << ", type " << name << ", hostname " << hostname
-                  << ", nc_count " << nc_count << std::endl;
+                  << ", nc_count " << nc_count << ", post threads "
+                  << xferBenchConfig::progress_threads << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS)) {
         // Using default param values for GDS backend
         std::cout << "GDS backend" << std::endl;
