@@ -9,6 +9,7 @@
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <optional>
@@ -158,7 +159,7 @@ DefaultObjEngineImpl::deregisterMem(nixlBackendMD *meta) {
 nixl_status_t
 DefaultObjEngineImpl::queryMem(const nixl_reg_dlist_t &descs,
                                std::vector<nixl_query_resp_t> &resp) const {
-    resp.reserve(descs.descCount());
+    resp.assign(descs.descCount(), std::nullopt);
 
     iS3Client *client = getClient();
     if (!client) {
@@ -166,14 +167,89 @@ DefaultObjEngineImpl::queryMem(const nixl_reg_dlist_t &descs,
         return NIXL_ERR_BACKEND;
     }
 
+    struct PerDescriptorState {
+        std::shared_ptr<std::promise<void>> promise;
+        std::shared_ptr<std::atomic<bool>> completed;
+    };
+
+    std::vector<std::future<void>> futures;
+    futures.reserve(descs.descCount());
+    std::vector<PerDescriptorState> states;
+    states.reserve(descs.descCount());
+    std::atomic<bool> has_error{false};
+
+    constexpr auto kQueryTimeout = std::chrono::seconds(30);
+
     try {
-        for (auto &desc : descs)
-            resp.emplace_back(client->checkObjectExists(desc.metaInfo) ?
-                                  nixl_query_resp_t{nixl_b_params_t{}} :
-                                  std::nullopt);
+        // Launch async requests for each descriptor
+        for (int i = 0; i < descs.descCount(); ++i) {
+            auto &desc = descs[i];
+            auto state = PerDescriptorState{std::make_shared<std::promise<void>>(),
+                                            std::make_shared<std::atomic<bool>>(false)};
+
+            client->checkObjectExistsAsync(
+                desc.metaInfo,
+                [&resp, &has_error, i, promise = state.promise, completed = state.completed](
+                    std::optional<bool> exists) {
+                    if (completed->exchange(true)) return;
+                    if (!exists.has_value()) {
+                        resp[i] = std::nullopt;
+                        has_error.store(true, std::memory_order_relaxed);
+                    } else {
+                        resp[i] = *exists ? nixl_query_resp_t{nixl_b_params_t{}} : std::nullopt;
+                    }
+                    try {
+                        promise->set_value();
+                    }
+                    catch (...) {
+                    }
+                });
+
+            futures.push_back(state.promise->get_future());
+            states.push_back(std::move(state));
+        }
     }
-    catch (const std::runtime_error &e) {
+    catch (const std::exception &e) {
+        // Drain all already-launched async callbacks with timeout before returning
+        for (size_t j = 0; j < futures.size(); ++j) {
+            if (futures[j].wait_for(kQueryTimeout) == std::future_status::timeout) {
+                if (!states[j].completed->exchange(true)) {
+                    try {
+                        states[j].promise->set_value();
+                    }
+                    catch (...) {
+                    }
+                }
+            }
+        }
+        // Wait for all callbacks to complete their writes to resp/has_error
+        // to avoid use-after-free if a callback passed the exchange check
+        // but was preempted before writing.
+        for (size_t j = 0; j < futures.size(); ++j)
+            futures[j].wait();
         NIXL_ERROR << "Failed to query memory: " << e.what();
+        return NIXL_ERR_BACKEND;
+    }
+
+    // Wait for all async operations with timeout fallback
+    for (size_t i = 0; i < futures.size(); ++i) {
+        if (futures[i].wait_for(kQueryTimeout) == std::future_status::timeout) {
+            // Watchdog: if callback never fired, mark as completed and resolve
+            if (!states[i].completed->exchange(true)) {
+                resp[i] = std::nullopt;
+                has_error.store(true, std::memory_order_relaxed);
+                try {
+                    states[i].promise->set_value();
+                }
+                catch (...) {
+                }
+            }
+            NIXL_ERROR << "checkObjectExistsAsync timed out for descriptor " << i;
+        }
+    }
+
+    if (has_error.load(std::memory_order_relaxed)) {
+        NIXL_ERROR << "Failed to query memory: one or more HeadObject requests failed";
         return NIXL_ERR_BACKEND;
     }
 
