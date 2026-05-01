@@ -26,7 +26,7 @@ private:
         CliOption::option("filenames", "Storage filenames", &request_.filenames),
         CliOption::option("num_files", "Storage file count", &request_.num_files),
         CliOption::flag("storage_enable_direct", "Enable direct storage I/O", &request_.storage_enable_direct),
-        CliOption::option("hf3fs_iopool_size", "HF3FS IO pool size", &request_.hf3fs_iopool_size),
+        CliOption::option("iopool_size", "HF3FS IO pool size", &request_.iopool_size),
     };
 };
 

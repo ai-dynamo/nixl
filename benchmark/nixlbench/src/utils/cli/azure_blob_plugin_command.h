@@ -22,9 +22,9 @@ public:
 private:
     AzureBlobPluginRequest request_;
     std::vector<CliOption> options_{
-        CliOption::option("azure_blob_account_url", "Azure Blob account URL", &request_.azure_blob_account_url),
-        CliOption::option("azure_blob_container_name", "Azure Blob container", &request_.azure_blob_container_name),
-        CliOption::option("azure_blob_connection_string", "Azure Blob connection string", &request_.azure_blob_connection_string),
+        CliOption::option("account_url", "Azure Blob account URL", &request_.blob_account_url),
+        CliOption::option("container_name", "Azure Blob container", &request_.blob_container_name),
+        CliOption::option("connection_string", "Azure Blob connection string", &request_.blob_connection_string),
     };
 };
 

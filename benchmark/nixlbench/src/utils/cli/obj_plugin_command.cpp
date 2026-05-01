@@ -9,20 +9,19 @@
 namespace nixlbench {
 
 ObjPluginCommand::ObjPluginCommand()
-    : options_{CliOption::option("endpoint-url", "Object endpoint URL", &request_.endpoint_url),
-                    CliOption::option("bucket_name", "Object bucket name", &request_.bucket_name),
-                    CliOption::option("access_key", "S3 access key", &request_.obj_access_key),
-                    CliOption::option("secret_key", "S3 secret key", &request_.obj_secret_key),
-                    CliOption::option("session_token", "S3 session token", &request_.obj_session_token),
-                    CliOption::option("scheme", "S3 scheme", &request_.obj_scheme),
-                    CliOption::option("region", "S3 region", &request_.obj_region),
-                    CliOption::flag("use_virtual_addressing", "Use S3 virtual addressing", &request_.obj_use_virtual_addressing),
-                    CliOption::option("endpoint_override", "S3 endpoint override", &request_.obj_endpoint_override),
-                    CliOption::option("req_checksum", "S3 checksum mode", &request_.obj_req_checksum),
-                    CliOption::option("ca_bundle", "S3 CA bundle", &request_.obj_ca_bundle),
-                    CliOption::option("crt_min_limit", "S3 CRT minimum object size", &request_.obj_crt_min_limit),
-                    CliOption::flag("accelerated_enable", "Enable S3 accelerated client", &request_.obj_accelerated_enable),
-                    CliOption::option("accelerated_type", "S3 accelerated client type", &request_.obj_accelerated_type)} 
+    : options_{CliOption::option("bucket_name", "Object bucket name", &request_.bucket_name),
+                    CliOption::option("access_key", "S3 access key", &request_.access_key),
+                    CliOption::option("secret_key", "S3 secret key", &request_.secret_key),
+                    CliOption::option("session_token", "S3 session token", &request_.session_token),
+                    CliOption::option("scheme", "S3 scheme", &request_.scheme),
+                    CliOption::option("region", "S3 region", &request_.region),
+                    CliOption::flag("use_virtual_addressing", "Use S3 virtual addressing", &request_.use_virtual_addressing),
+                    CliOption::option("endpoint_override", "S3 endpoint override", &request_.endpoint_override),
+                    CliOption::option("req_checksum", "S3 checksum mode", &request_.req_checksum),
+                    CliOption::option("ca_bundle", "S3 CA bundle", &request_.ca_bundle),
+                    CliOption::option("crt_min_limit", "S3 CRT minimum object size", &request_.crt_min_limit),
+                    CliOption::flag("accelerated_enable", "Enable S3 accelerated client", &request_.accelerated_enable),
+                    CliOption::option("accelerated_type", "S3 accelerated client type", &request_.accelerated_type)} 
 {
 }
 

@@ -26,8 +26,8 @@ private:
         CliOption::option("filenames", "Storage filenames", &request_.filenames),
         CliOption::option("num_files", "Storage file count", &request_.num_files),
         CliOption::flag("storage_enable_direct", "Enable direct storage I/O", &request_.storage_enable_direct),
-        CliOption::option("gds_batch_pool_size", "GDS batch pool size", &request_.gds_batch_pool_size),
-        CliOption::option("gds_batch_limit", "GDS batch limit", &request_.gds_batch_limit),
+        CliOption::option("batch_pool_size", "GDS batch pool size", &request_.batch_pool_size),
+        CliOption::option("batch_limit", "GDS batch limit", &request_.batch_limit),
     };
 };
 

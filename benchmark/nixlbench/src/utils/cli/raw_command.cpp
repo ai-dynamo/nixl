@@ -187,50 +187,44 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
     } else if (plugin.pluginType() == PluginType::Obj) {
         const auto &obj = static_cast<const ObjPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendObj);
-        if (obj.obj_access_key.wasProvided()) {
-            raw.obj_access_key.setProvided(obj.obj_access_key.value);
+        if (obj.access_key.wasProvided()) {
+            raw.obj_access_key.setProvided(obj.access_key.value);
         }
-        if (obj.obj_secret_key.wasProvided()) {
-            raw.obj_secret_key.setProvided(obj.obj_secret_key.value);
+        if (obj.secret_key.wasProvided()) {
+            raw.obj_secret_key.setProvided(obj.secret_key.value);
         }
-        if (obj.obj_session_token.wasProvided()) {
-            raw.obj_session_token.setProvided(obj.obj_session_token.value);
+        if (obj.session_token.wasProvided()) {
+            raw.obj_session_token.setProvided(obj.session_token.value);
         }
-        if (obj.obj_bucket_name.wasProvided()) {
-            raw.obj_bucket_name.setProvided(obj.obj_bucket_name.value);
+        if (obj.bucket_name.wasProvided()) {
+            raw.obj_bucket_name.setProvided(obj.bucket_name.value);
         }
-        if (!obj.bucket_name.empty()) {
-            raw.obj_bucket_name.setProvided(obj.bucket_name);
+        if (obj.scheme.wasProvided()) {
+            raw.obj_scheme.setProvided(obj.scheme.value);
         }
-        if (obj.obj_scheme.wasProvided()) {
-            raw.obj_scheme.setProvided(obj.obj_scheme.value);
+        if (obj.region.wasProvided()) {
+            raw.obj_region.setProvided(obj.region.value);
         }
-        if (obj.obj_region.wasProvided()) {
-            raw.obj_region.setProvided(obj.obj_region.value);
+        if (obj.use_virtual_addressing.wasProvided()) {
+            raw.obj_use_virtual_addressing.setProvided(obj.use_virtual_addressing.value);
         }
-        if (obj.obj_use_virtual_addressing.wasProvided()) {
-            raw.obj_use_virtual_addressing.setProvided(obj.obj_use_virtual_addressing.value);
+        if (obj.endpoint_override.wasProvided()) {
+            raw.obj_endpoint_override.setProvided(obj.endpoint_override.value);
         }
-        if (obj.obj_endpoint_override.wasProvided()) {
-            raw.obj_endpoint_override.setProvided(obj.obj_endpoint_override.value);
+        if (obj.req_checksum.wasProvided()) {
+            raw.obj_req_checksum.setProvided(obj.req_checksum.value);
         }
-        if (!obj.endpoint_url.empty()) {
-            raw.obj_endpoint_override.setProvided(obj.endpoint_url);
+        if (obj.ca_bundle.wasProvided()) {
+            raw.obj_ca_bundle.setProvided(obj.ca_bundle.value);
         }
-        if (obj.obj_req_checksum.wasProvided()) {
-            raw.obj_req_checksum.setProvided(obj.obj_req_checksum.value);
+        if (obj.crt_min_limit.wasProvided()) {
+            raw.obj_crt_min_limit.setProvided(obj.crt_min_limit.value);
         }
-        if (obj.obj_ca_bundle.wasProvided()) {
-            raw.obj_ca_bundle.setProvided(obj.obj_ca_bundle.value);
+        if (obj.accelerated_enable.wasProvided()) {
+            raw.obj_accelerated_enable.setProvided(obj.accelerated_enable.value);
         }
-        if (obj.obj_crt_min_limit.wasProvided()) {
-            raw.obj_crt_min_limit.setProvided(obj.obj_crt_min_limit.value);
-        }
-        if (obj.obj_accelerated_enable.wasProvided()) {
-            raw.obj_accelerated_enable.setProvided(obj.obj_accelerated_enable.value);
-        }
-        if (obj.obj_accelerated_type.wasProvided()) {
-            raw.obj_accelerated_type.setProvided(obj.obj_accelerated_type.value);
+        if (obj.accelerated_type.wasProvided()) {
+            raw.obj_accelerated_type.setProvided(obj.accelerated_type.value);
         }
     }
 #ifdef WITH_GDS_PLUGIN
@@ -238,11 +232,11 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
         const auto &gds = static_cast<const GdsPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendGds);
         applyStoragePluginOptions(raw, gds);
-        if (gds.gds_batch_pool_size.wasProvided()) {
-            raw.gds_batch_pool_size.setProvided(gds.gds_batch_pool_size.value);
+        if (gds.batch_pool_size.wasProvided()) {
+            raw.gds_batch_pool_size.setProvided(gds.batch_pool_size.value);
         }
-        if (gds.gds_batch_limit.wasProvided()) {
-            raw.gds_batch_limit.setProvided(gds.gds_batch_limit.value);
+        if (gds.batch_limit.wasProvided()) {
+            raw.gds_batch_limit.setProvided(gds.batch_limit.value);
         }
     }
 #endif
@@ -251,8 +245,8 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
         const auto &gds_mt = static_cast<const GdsMtPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendGdsMt);
         applyStoragePluginOptions(raw, gds_mt);
-        if (gds_mt.gds_mt_num_threads.wasProvided()) {
-            raw.gds_mt_num_threads.setProvided(gds_mt.gds_mt_num_threads.value);
+        if (gds_mt.num_threads.wasProvided()) {
+            raw.gds_mt_num_threads.setProvided(gds_mt.num_threads.value);
         }
     }
 #endif
@@ -260,11 +254,11 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
     else if (plugin.pluginType() == PluginType::GpuNetIo) {
         const auto &gpunetio = static_cast<const GpuNetIoPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendGpuNetIo);
-        if (gpunetio.gpunetio_device_list.wasProvided()) {
-            raw.gpunetio_device_list.setProvided(gpunetio.gpunetio_device_list.value);
+        if (gpunetio.device_list.wasProvided()) {
+            raw.gpunetio_device_list.setProvided(gpunetio.device_list.value);
         }
-        if (gpunetio.gpunetio_oob_list.wasProvided()) {
-            raw.gpunetio_oob_list.setProvided(gpunetio.gpunetio_oob_list.value);
+        if (gpunetio.oob_list.wasProvided()) {
+            raw.gpunetio_oob_list.setProvided(gpunetio.oob_list.value);
         }
     }
 #endif
@@ -272,14 +266,14 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
     else if (plugin.pluginType() == PluginType::AzureBlob) {
         const auto &azure_blob = static_cast<const AzureBlobPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendAzureBlob);
-        if (azure_blob.azure_blob_account_url.wasProvided()) {
-            raw.azure_blob_account_url.setProvided(azure_blob.azure_blob_account_url.value);
+        if (azure_blob.blob_account_url.wasProvided()) {
+            raw.azure_blob_account_url.setProvided(azure_blob.blob_account_url.value);
         }
-        if (azure_blob.azure_blob_container_name.wasProvided()) {
-            raw.azure_blob_container_name.setProvided(azure_blob.azure_blob_container_name.value);
+        if (azure_blob.blob_container_name.wasProvided()) {
+            raw.azure_blob_container_name.setProvided(azure_blob.blob_container_name.value);
         }
-        if (azure_blob.azure_blob_connection_string.wasProvided()) {
-            raw.azure_blob_connection_string.setProvided(azure_blob.azure_blob_connection_string.value);
+        if (azure_blob.blob_connection_string.wasProvided()) {
+            raw.azure_blob_connection_string.setProvided(azure_blob.blob_connection_string.value);
         }
     }
 #endif
@@ -288,8 +282,8 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
         const auto &hf3fs = static_cast<const Hf3fsPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendHf3fs);
         applyStoragePluginOptions(raw, hf3fs);
-        if (hf3fs.hf3fs_iopool_size.wasProvided()) {
-            raw.hf3fs_iopool_size.setProvided(hf3fs.hf3fs_iopool_size.value);
+        if (hf3fs.iopool_size.wasProvided()) {
+            raw.hf3fs_iopool_size.setProvided(hf3fs.iopool_size.value);
         }
     }
 #endif
@@ -298,20 +292,20 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
         const auto &gusli = static_cast<const GusliPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendGusli);
         applyStoragePluginOptions(raw, gusli);
-        if (gusli.gusli_client_name.wasProvided()) {
-            raw.gusli_client_name.setProvided(gusli.gusli_client_name.value);
+        if (gusli.client_name.wasProvided()) {
+            raw.gusli_client_name.setProvided(gusli.client_name.value);
         }
-        if (gusli.gusli_max_simultaneous_requests.wasProvided()) {
-            raw.gusli_max_simultaneous_requests.setProvided(gusli.gusli_max_simultaneous_requests.value);
+        if (gusli.max_simultaneous_requests.wasProvided()) {
+            raw.gusli_max_simultaneous_requests.setProvided(gusli.max_simultaneous_requests.value);
         }
-        if (gusli.gusli_config_file.wasProvided()) {
-            raw.gusli_config_file.setProvided(gusli.gusli_config_file.value);
+        if (gusli.config_file.wasProvided()) {
+            raw.gusli_config_file.setProvided(gusli.config_file.value);
         }
-        if (gusli.gusli_device_byte_offsets.wasProvided()) {
-            raw.gusli_device_byte_offsets.setProvided(gusli.gusli_device_byte_offsets.value);
+        if (gusli.device_byte_offsets.wasProvided()) {
+            raw.gusli_device_byte_offsets.setProvided(gusli.device_byte_offsets.value);
         }
-        if (gusli.gusli_device_security.wasProvided()) {
-            raw.gusli_device_security.setProvided(gusli.gusli_device_security.value);
+        if (gusli.device_security.wasProvided()) {
+            raw.gusli_device_security.setProvided(gusli.device_security.value);
         }
     }
 #endif

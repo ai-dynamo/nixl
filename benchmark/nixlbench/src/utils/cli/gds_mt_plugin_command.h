@@ -26,7 +26,7 @@ private:
         CliOption::option("filenames", "Storage filenames", &request_.filenames),
         CliOption::option("num_files", "Storage file count", &request_.num_files),
         CliOption::flag("storage_enable_direct", "Enable direct storage I/O", &request_.storage_enable_direct),
-        CliOption::option("gds_mt_num_threads", "GDS-MT thread count", &request_.gds_mt_num_threads),
+        CliOption::option("num_threads", "GDS-MT thread count", &request_.num_threads),
     };
 };
 

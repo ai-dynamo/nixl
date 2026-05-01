@@ -9,9 +9,7 @@
 namespace nixlbench {
 
 PosixPluginCommand::PosixPluginCommand()
-    : options_{CliOption::option("storage_path", "Storage path", &request_.storage_path),
-               CliOption::option("should-split-dir-per-thread", "Use a directory per thread", &request_.should_split_dir_per_thread),
-               CliOption::option("mode", "POSIX mode: aio or iouring", &request_.mode),
+    : options_{CliOption::option("should-split-dir-per-thread", "Use a directory per thread", &request_.should_split_dir_per_thread),
                CliOption::option("filepath", "Storage file path", &request_.filepath),
                CliOption::option("filenames", "Storage filenames", &request_.filenames),
                CliOption::option("num_files", "Storage file count", &request_.num_files),

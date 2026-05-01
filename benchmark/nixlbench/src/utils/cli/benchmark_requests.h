@@ -126,9 +126,7 @@ struct RawRequest {
 };
 
 struct PosixPluginRequest {
-    std::string storage_path;
     bool should_split_dir_per_thread = false;
-    std::string mode = "aio";
     Provided<std::string> filepath;
     Provided<std::string> filenames;
     Provided<int> num_files{1};
@@ -140,21 +138,19 @@ struct PosixPluginRequest {
 };
 
 struct ObjPluginRequest {
-    std::string endpoint_url;
-    std::string bucket_name;
-    Provided<std::string> obj_access_key;
-    Provided<std::string> obj_secret_key;
-    Provided<std::string> obj_session_token;
-    Provided<std::string> obj_bucket_name;
-    Provided<std::string> obj_scheme{"http"};
-    Provided<std::string> obj_region{"eu-central-1"};
-    Provided<bool> obj_use_virtual_addressing{false};
-    Provided<std::string> obj_endpoint_override;
-    Provided<std::string> obj_req_checksum{"supported"};
-    Provided<std::string> obj_ca_bundle;
-    Provided<uint64_t> obj_crt_min_limit{0};
-    Provided<bool> obj_accelerated_enable{false};
-    Provided<std::string> obj_accelerated_type;
+    Provided<std::string> access_key;
+    Provided<std::string> secret_key;
+    Provided<std::string> session_token;
+    Provided<std::string> bucket_name;
+    Provided<std::string> scheme{"http"};
+    Provided<std::string> region{"eu-central-1"};
+    Provided<bool> use_virtual_addressing{false};
+    Provided<std::string> endpoint_override;
+    Provided<std::string> req_checksum{"supported"};
+    Provided<std::string> ca_bundle;
+    Provided<uint64_t> crt_min_limit{0};
+    Provided<bool> accelerated_enable{false};
+    Provided<std::string> accelerated_type;
 };
 
 struct GdsPluginRequest {
@@ -162,8 +158,8 @@ struct GdsPluginRequest {
     Provided<std::string> filenames;
     Provided<int> num_files{1};
     Provided<bool> storage_enable_direct{false};
-    Provided<int> gds_batch_pool_size{32};
-    Provided<int> gds_batch_limit{128};
+    Provided<int> batch_pool_size{32};
+    Provided<int> batch_limit{128};
 };
 
 struct GdsMtPluginRequest {
@@ -171,18 +167,18 @@ struct GdsMtPluginRequest {
     Provided<std::string> filenames;
     Provided<int> num_files{1};
     Provided<bool> storage_enable_direct{false};
-    Provided<int> gds_mt_num_threads{1};
+    Provided<int> num_threads{1};
 };
 
 struct GpuNetIoPluginRequest {
-    Provided<std::string> gpunetio_device_list{"0"};
-    Provided<std::string> gpunetio_oob_list;
+    Provided<std::string> device_list{"0"};
+    Provided<std::string> oob_list;
 };
 
 struct AzureBlobPluginRequest {
-    Provided<std::string> azure_blob_account_url;
-    Provided<std::string> azure_blob_container_name;
-    Provided<std::string> azure_blob_connection_string;
+    Provided<std::string> blob_account_url;
+    Provided<std::string> blob_container_name;
+    Provided<std::string> blob_connection_string;
 };
 
 struct Hf3fsPluginRequest {
@@ -190,7 +186,7 @@ struct Hf3fsPluginRequest {
     Provided<std::string> filenames;
     Provided<int> num_files{1};
     Provided<bool> storage_enable_direct{false};
-    Provided<int> hf3fs_iopool_size{64};
+    Provided<int> iopool_size{64};
 };
 
 struct GusliPluginRequest {
@@ -198,11 +194,11 @@ struct GusliPluginRequest {
     Provided<std::string> filenames;
     Provided<int> num_files{1};
     Provided<bool> storage_enable_direct{false};
-    Provided<std::string> gusli_client_name{"NIXLBench"};
-    Provided<int> gusli_max_simultaneous_requests{32};
-    Provided<std::string> gusli_config_file;
-    Provided<std::string> gusli_device_byte_offsets;
-    Provided<std::string> gusli_device_security;
+    Provided<std::string> client_name{"NIXLBench"};
+    Provided<int> max_simultaneous_requests{32};
+    Provided<std::string> config_file;
+    Provided<std::string> device_byte_offsets;
+    Provided<std::string> device_security;
 };
 
 } // namespace nixlbench
