@@ -169,14 +169,14 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
         const auto &posix = static_cast<const PosixPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendPosix);
         applyStoragePluginOptions(raw, posix);
-        if (posix.posix_api_type.wasProvided()) {
-            raw.posix_api_type.setProvided(posix.posix_api_type.value);
+        if (posix.api_type.wasProvided()) {
+            raw.posix_api_type.setProvided(posix.api_type.value);
         }
-        if (posix.posix_ios_pool_size.wasProvided()) {
-            raw.posix_ios_pool_size.setProvided(posix.posix_ios_pool_size.value);
+        if (posix.ios_pool_size.wasProvided()) {
+            raw.posix_ios_pool_size.setProvided(posix.ios_pool_size.value);
         }
-        if (posix.posix_kernel_queue_size.wasProvided()) {
-            raw.posix_kernel_queue_size.setProvided(posix.posix_kernel_queue_size.value);
+        if (posix.kernel_queue_size.wasProvided()) {
+            raw.posix_kernel_queue_size.setProvided(posix.kernel_queue_size.value);
         }
         if (posix.api_type.wasProvided()) {
             raw.posix_api_type.setProvided(posix.api_type.value);

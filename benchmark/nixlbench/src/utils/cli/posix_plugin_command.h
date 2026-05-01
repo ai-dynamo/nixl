@@ -19,7 +19,7 @@ public:
     const std::vector<CliOption> &getOptions() const override;
     PluginType pluginType() const override;
     bool supportsScenario(ScenarioType scenario) const override;
-     const PosixPluginRequest &request() const;
+    const PosixPluginRequest &request() const;
 
 private:
     PosixPluginRequest request_;

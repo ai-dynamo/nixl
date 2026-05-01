@@ -133,10 +133,9 @@ struct PosixPluginRequest {
     Provided<std::string> filenames;
     Provided<int> num_files{1};
     Provided<bool> storage_enable_direct{false};
-    Provided<std::string> posix_api_type{"AIO"};
-    Provided<int> posix_ios_pool_size{65536};
-    Provided<int> posix_kernel_queue_size{256};
     Provided<std::string> api_type{"AIO"};
+    Provided<int> ios_pool_size{65536};
+    Provided<int> kernel_queue_size{256};
     Provided<bool> enable_direct{false};
 };
 

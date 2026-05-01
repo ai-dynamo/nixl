@@ -16,10 +16,9 @@ PosixPluginCommand::PosixPluginCommand()
                CliOption::option("filenames", "Storage filenames", &request_.filenames),
                CliOption::option("num_files", "Storage file count", &request_.num_files),
                CliOption::flag("storage_enable_direct", "Enable direct storage I/O", &request_.storage_enable_direct),
-               CliOption::option("posix_api_type", "POSIX API type", &request_.posix_api_type),
-               CliOption::option("posix_ios_pool_size", "POSIX IO pool size", &request_.posix_ios_pool_size),
-               CliOption::option("posix_kernel_queue_size", "POSIX kernel queue size", &request_.posix_kernel_queue_size),
-               CliOption::option("api_type", "Raw POSIX API type", &request_.api_type),
+               CliOption::option("ios_pool_size", "POSIX IO pool size", &request_.ios_pool_size),
+               CliOption::option("kernel_queue_size", "POSIX kernel queue size", &request_.kernel_queue_size),
+               CliOption::option("api_type", "POSIX API type", &request_.api_type),
                CliOption::flag("enable-direct", "Enable direct I/O", &request_.enable_direct)}
 {}
 
