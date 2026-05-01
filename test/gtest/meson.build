@@ -66,6 +66,7 @@ gtest_sources = [
     'error_handling.cpp',
     'test_transfer.cpp',
     'metadata_exchange.cpp',
+    'notif_callbacks.cpp',
     'common.cpp',
     'query_mem.cpp',
     'telemetry_test.cpp',
