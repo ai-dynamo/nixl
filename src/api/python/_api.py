@@ -15,6 +15,7 @@
 
 import contextlib
 import pickle
+from enum import Enum
 from typing import Literal, Optional, Union
 
 import numpy as np
@@ -118,6 +119,17 @@ class nixl_xfer_handle:
 # Opaque handle for backend can be just int, as it's not passed to the user
 nixl_backend_handle = int
 
+"""
+@brief Enumeration of supported thread synchronization modes.
+"""
+
+
+class nixl_thread_sync_t(Enum):
+    NIXL_THREAD_SYNC_NONE = nixlBind.NIXL_THREAD_SYNC_NONE
+    NIXL_THREAD_SYNC_STRICT = nixlBind.NIXL_THREAD_SYNC_STRICT
+    NIXL_THREAD_SYNC_RW = nixlBind.NIXL_THREAD_SYNC_RW
+    NIXL_THREAD_SYNC_DEFAULT = nixlBind.NIXL_THREAD_SYNC_DEFAULT
+
 
 """
 @brief Configuration class for NIXL agent.
@@ -130,6 +142,8 @@ nixl_backend_handle = int
 @param backends List of backend names for agent to initialize.
         Default is UCX, other backends can be added to the list, or after
         agent creation, can be initialized with create_backend.
+@param sync_mode Thread synchronization mode to use for the agent.
+        If None, sync_mode is set based on the enable_listen flag.
 """
 
 
@@ -142,6 +156,7 @@ class nixl_agent_config:
         capture_telemetry: bool = False,
         num_threads: int = 0,
         backends: list[str] = ["UCX"],
+        sync_mode: Optional[nixl_thread_sync_t] = None,
     ):
         # TODO: add backend init parameters
         self.backends = backends
@@ -150,6 +165,12 @@ class nixl_agent_config:
         self.port = listen_port
         self.capture_telemetry = capture_telemetry
         self.num_threads = num_threads
+        if sync_mode is not None and not isinstance(sync_mode, nixl_thread_sync_t):
+            raise TypeError(
+                f"sync_mode must be a nixl_thread_sync_t (got {type(sync_mode).__name__!r})"
+            )
+
+        self.sync_mode = sync_mode
 
 
 """
@@ -178,10 +199,10 @@ class nixl_agent:
         if not nixl_conf:
             nixl_conf = nixl_agent_config()  # Using defaults set in nixl_agent_config
 
-        thread_config = (
-            nixlBind.NIXL_THREAD_SYNC_STRICT
+        default_sync_mode = (
+            nixl_thread_sync_t.NIXL_THREAD_SYNC_STRICT
             if nixl_conf.enable_listen
-            else nixlBind.NIXL_THREAD_SYNC_NONE
+            else nixl_thread_sync_t.NIXL_THREAD_SYNC_NONE
         )
 
         # Set agent config and instantiate an agent
@@ -189,7 +210,7 @@ class nixl_agent:
         agent_config.useProgThread = nixl_conf.enable_pthread
         agent_config.useListenThread = nixl_conf.enable_listen
         agent_config.listenPort = nixl_conf.port
-        agent_config.syncMode = thread_config
+        agent_config.syncMode = (nixl_conf.sync_mode or default_sync_mode).value
         agent_config.pthrDelay = 0
         agent_config.lthrDelay = 100000
         agent_config.captureTelemetry = nixl_conf.capture_telemetry
