@@ -13,9 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import pickle
 from enum import Enum
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 import numpy as np
 import torch
@@ -257,8 +258,11 @@ class nixl_agent:
             "FILE": nixlBind.FILE_SEG,
             "BLOCK": nixlBind.BLK_SEG,
             "OBJ": nixlBind.OBJ_SEG,
+            # TODO(nixl): Remove legacy aliases after downstream callers migrate
+            # to canonical mem_type names ("DRAM"/"VRAM") in follow-up PRs.
             "cpu": nixlBind.DRAM_SEG,
             "cuda": nixlBind.VRAM_SEG,
+            "xpu": nixlBind.VRAM_SEG,
         }
         self.nixl_ops = {
             "WRITE": nixlBind.NIXL_WRITE,
@@ -933,6 +937,9 @@ class nixl_agent:
         else:
             return False
 
+    def get_mem_type(self, tensor: torch.Tensor) -> Literal["DRAM", "VRAM"]:
+        return "DRAM" if tensor.get_device() == -1 else "VRAM"
+
     """
     @brief Get nixlXferDList from different input types:
             a) list of 3 element tuples (address, len, device ID) alongside a mandatory memory type
@@ -954,22 +961,20 @@ class nixl_agent:
     ) -> nixlBind.nixlXferDList:
         # can add check for DLPack input
 
+        descs_len = None
+        with contextlib.suppress(TypeError):
+            descs_len = len(descs)
+
         if isinstance(descs, nixlBind.nixlXferDList):
             return descs
-        elif isinstance(descs, nixlBind.nixlRegDList):
+        if isinstance(descs, nixlBind.nixlRegDList):
             logger.error("RegList type detected for transfer, please use XferList")
             new_descs = None
-        elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 3:
-                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
-            elif mem_type is None:
-                logger.error("Please specify a mem type if not using Tensors")
-                new_descs = None
-            else:
-                logger.error("3-tuple list needed for transfer")
-                new_descs = None
         elif isinstance(descs, np.ndarray):
-            if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
+            if descs.size == 0:
+                logger.error("Please provide a non-empty descriptor list")
+                new_descs = None
+            elif mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
                 new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
             elif mem_type is None:
                 logger.error("Please specify a mem type if not using Tensors")
@@ -980,8 +985,11 @@ class nixl_agent:
                 )
                 new_descs = None
         elif isinstance(descs, torch.Tensor):
-            if descs.is_contiguous():
-                mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
+            if descs.numel() == 0:
+                logger.error("Please provide a non-empty descriptor list")
+                new_descs = None
+            elif descs.is_contiguous():
+                mem_type = self.get_mem_type(descs)
                 base_addr = descs.data_ptr()
                 region_len = descs.numel() * descs.element_size()
                 gpu_id = descs.get_device()
@@ -993,12 +1001,27 @@ class nixl_agent:
             else:
                 logger.error("Please use a list of contiguous Tensors")
                 new_descs = None
+        elif descs_len == 0:
+            logger.error("Please provide a non-empty descriptor list")
+            new_descs = None
+        elif not isinstance(descs, (list, tuple)):
+            logger.error("descs must be a list or tuple")
+            new_descs = None
+        elif isinstance(descs[0], tuple):
+            if mem_type is not None and len(descs[0]) == 3:
+                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
+            elif mem_type is None:
+                logger.error("Please specify a mem type if not using Tensors")
+                new_descs = None
+            else:
+                logger.error("3-tuple list needed for transfer")
+                new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
-            tensor_type = descs[0].device
+            ref_device = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
             for i in range(len(descs)):
-                if descs[i].device != tensor_type:
+                if descs[i].device != ref_device:
                     return None
                 if not descs[i].is_contiguous():
                     logger.error("Please use a list of contiguous Tensors")
@@ -1009,7 +1032,7 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
-            mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
+            mem_type = self.get_mem_type(descs[0])
             new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], dlist)
         else:
             new_descs = None
@@ -1037,22 +1060,20 @@ class nixl_agent:
     ) -> nixlBind.nixlRegDList:
         # can add check for DLPack input
 
+        descs_len = None
+        with contextlib.suppress(TypeError):
+            descs_len = len(descs)
+
         if isinstance(descs, nixlBind.nixlRegDList):
             return descs
-        elif isinstance(descs, nixlBind.nixlXferDList):
+        if isinstance(descs, nixlBind.nixlXferDList):
             logger.error("XferList type detected for registration, please use RegList")
             new_descs = None
-        elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 4:
-                new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
-            elif mem_type is None:
-                logger.error("Please specify a mem type if not using Tensors")
-                new_descs = None
-            else:
-                logger.error("4-tuple list needed for registration")
-                new_descs = None
         elif isinstance(descs, np.ndarray):
-            if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
+            if descs.size == 0:
+                logger.error("Please provide a non-empty descriptor list")
+                new_descs = None
+            elif mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
                 new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
             elif mem_type is None:
                 logger.error("Please specify a mem type if not using Tensors")
@@ -1063,8 +1084,11 @@ class nixl_agent:
                 )
                 new_descs = None
         elif isinstance(descs, torch.Tensor):
-            if descs.is_contiguous():
-                mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
+            if descs.numel() == 0:
+                logger.error("Please provide a non-empty descriptor list")
+                new_descs = None
+            elif descs.is_contiguous():
+                mem_type = self.get_mem_type(descs)
                 base_addr = descs.data_ptr()
                 region_len = descs.numel() * descs.element_size()
                 gpu_id = descs.get_device()
@@ -1076,12 +1100,27 @@ class nixl_agent:
             else:
                 logger.error("Please use a list of contiguous Tensors")
                 new_descs = None
+        elif descs_len == 0:
+            logger.error("Please provide a non-empty descriptor list")
+            new_descs = None
+        elif not isinstance(descs, (list, tuple)):
+            logger.error("descs must be a list or tuple")
+            new_descs = None
+        elif isinstance(descs[0], tuple):
+            if mem_type is not None and len(descs[0]) == 4:
+                new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
+            elif mem_type is None:
+                logger.error("Please specify a mem type if not using Tensors")
+                new_descs = None
+            else:
+                logger.error("4-tuple list needed for registration")
+                new_descs = None
         elif isinstance(descs[0], torch.Tensor):  # List[torch.Tensor]:
-            tensor_type = descs[0].device
+            ref_device = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
             for i in range(len(descs)):
-                if descs[i].device != tensor_type:
+                if descs[i].device != ref_device:
                     return None
                 if not descs[i].is_contiguous():
                     logger.error("Please use a list of contiguous Tensors")
@@ -1092,7 +1131,7 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
-            mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
+            mem_type = self.get_mem_type(descs[0])
             new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], dlist)
         else:
             new_descs = None
