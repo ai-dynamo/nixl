@@ -1,0 +1,29 @@
+name: Run Pre-Commit Hooks XPU
+
+on: [push, pull_request]
+
+jobs:
+  build-xpu-dockerfile:
+    name: Build .ci/dockerfiles/Dockerfile.xpu
+    runs-on: docker_builder_big
+    timeout-minutes: 120
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image from Dockerfile.xpu
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .ci/dockerfiles/Dockerfile.xpu
+          push: false
+          tags: nixl-xpu:${{ github.event_name }}-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
