@@ -14,69 +14,69 @@
 
 namespace nixlbench {
 
-enum class OptionKind {
-    Value,
-    Flag,
+enum class option_kind_t {
+    VALUE,
+    FLAG,
 };
 
-using OptionTarget = std::variant<bool *, int *, uint64_t *, std::string *>;
+using option_target_t = std::variant<bool *, int *, uint64_t *, std::string *>;
 
-struct CliOption {
+struct cliOption {
     std::string name;
     std::string help;
-    OptionKind kind;
-    OptionTarget target;
+    option_kind_t kind;
+    option_target_t target;
     bool required = false;
     bool *provided = nullptr;
 
-    static CliOption
+    static cliOption
     option(std::string name,
            std::string help,
            bool *target,
            bool required = false,
            bool *provided = nullptr);
-    static CliOption
+    static cliOption
     option(std::string name,
            std::string help,
            int *target,
            bool required = false,
            bool *provided = nullptr);
-    static CliOption
+    static cliOption
     option(std::string name,
            std::string help,
            uint64_t *target,
            bool required = false,
            bool *provided = nullptr);
-    static CliOption
+    static cliOption
     option(std::string name,
            std::string help,
            std::string *target,
            bool required = false,
            bool *provided = nullptr);
-    static CliOption
+    static cliOption
     option(std::string name,
            std::string help,
-           Provided<bool> *target,
+           providedValue<bool> *target,
            bool required = false);
-    static CliOption
+    static cliOption
     option(std::string name,
            std::string help,
-           Provided<int> *target,
+           providedValue<int> *target,
            bool required = false);
-    static CliOption
+    static cliOption
     option(std::string name,
            std::string help,
-           Provided<uint64_t> *target,
+           providedValue<uint64_t> *target,
            bool required = false);
-    static CliOption
+    static cliOption
     option(std::string name,
            std::string help,
-           Provided<std::string> *target,
+           providedValue<std::string> *target,
            bool required = false);
-    static CliOption
+    static cliOption
     flag(std::string name, std::string help, bool *target, bool *provided = nullptr);
-    static CliOption
-    flag(std::string name, std::string help, Provided<bool> *target);
+    static cliOption
+    flag(std::string name, std::string help, providedValue<bool> *target);
 };
 
 } // namespace nixlbench

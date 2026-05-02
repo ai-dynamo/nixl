@@ -10,20 +10,20 @@
 
 namespace nixlbench {
 
-class GpuNetIoPluginCommand : public ISouthboundPluginBenchmarkCommand {
+class gpunetioPluginCommand : public southboundPluginBenchmarkCommand {
 public:
     std::string_view name() const override;
     std::string_view description() const override;
-    const std::vector<CliOption> &getOptions() const override;
-    PluginType pluginType() const override;
-    bool supportsScenario(ScenarioType scenario) const override;
-    const GpuNetIoPluginRequest &request() const;
+    const std::vector<cliOption> &getOptions() const override;
+    plugin_type_t pluginType() const override;
+    bool supportsScenario(scenario_type_t scenario) const override;
+    const gpunetioPluginRequest &request() const;
 
 private:
-    GpuNetIoPluginRequest request_;
-    std::vector<CliOption> options_{
-        CliOption::option("device_list", "GPUNetIO device list", &request_.device_list),
-        CliOption::option("oob_list", "GPUNetIO OOB list", &request_.oob_list),
+    gpunetioPluginRequest request_;
+    std::vector<cliOption> options_{
+        cliOption::option("device_list", "GPUNetIO device list", &request_.device_list),
+        cliOption::option("oob_list", "GPUNetIO OOB list", &request_.oob_list),
     };
 };
 

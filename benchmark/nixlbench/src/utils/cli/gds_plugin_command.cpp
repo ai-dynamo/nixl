@@ -8,18 +8,18 @@
 
 namespace nixlbench {
 
-std::string_view GdsPluginCommand::name() const { return "gds"; }
+std::string_view gdsPluginCommand::name() const { return "gds"; }
 
-std::string_view GdsPluginCommand::description() const { return "Use the GDS storage backend"; }
+std::string_view gdsPluginCommand::description() const { return "Use the GDS storage backend"; }
 
-const std::vector<CliOption> &GdsPluginCommand::getOptions() const { return options_; }
+const std::vector<cliOption> &gdsPluginCommand::getOptions() const { return options_; }
 
-PluginType GdsPluginCommand::pluginType() const { return PluginType::Gds; }
+plugin_type_t gdsPluginCommand::pluginType() const { return plugin_type_t::GDS; }
 
-bool GdsPluginCommand::supportsScenario(ScenarioType scenario) const { return scenario == ScenarioType::Raw; }
+bool gdsPluginCommand::supportsScenario(scenario_type_t scenario) const { return scenario == scenario_type_t::RAW; }
 
-const GdsPluginRequest &GdsPluginCommand::request() const { return request_; }
+const gdsPluginRequest &gdsPluginCommand::request() const { return request_; }
 
 } // namespace nixlbench
 
-REGISTER_SOUTHBOUND_PLUGIN(GdsPluginCommand)
+REGISTER_SOUTHBOUND_PLUGIN(gdsPluginCommand)

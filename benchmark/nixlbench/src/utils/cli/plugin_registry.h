@@ -14,28 +14,28 @@
 
 namespace nixlbench {
 
-class SouthboundPluginRegistry {
+class southboundPluginRegistry {
 public:
-    using Factory = std::function<std::unique_ptr<ISouthboundPluginBenchmarkCommand>()>;
+    using Factory = std::function<std::unique_ptr<southboundPluginBenchmarkCommand>()>;
 
-    static SouthboundPluginRegistry &instance();
+    static southboundPluginRegistry &instance();
 
     bool registerPlugin(Factory factory);
 
-    std::vector<std::unique_ptr<ISouthboundPluginBenchmarkCommand>> createAll() const;
+    std::vector<std::unique_ptr<southboundPluginBenchmarkCommand>> createAll() const;
 
 private:
-    SouthboundPluginRegistry() = default;
+    southboundPluginRegistry() = default;
     std::vector<Factory> factories_;
 };
 
 } // namespace nixlbench
 
-#define REGISTER_SOUTHBOUND_PLUGIN(PluginClass)                                    \
+#define REGISTER_SOUTHBOUND_PLUGIN(plugin_class)                                    \
     namespace {                                                                    \
-    const bool PluginClass##_registered_ =                                         \
-        ::nixlbench::SouthboundPluginRegistry::instance().registerPlugin(          \
-            [] { return std::make_unique<::nixlbench::PluginClass>(); });          \
+    const bool plugin_class##_registered_ =                                         \
+        ::nixlbench::southboundPluginRegistry::instance().registerPlugin(          \
+            [] { return std::make_unique<::nixlbench::plugin_class>(); });          \
     }
 
 #endif // NIXLBENCH_PLUGIN_REGISTRY_H

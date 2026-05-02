@@ -12,193 +12,193 @@
 namespace nixlbench {
 
 template <typename T>
-struct Provided {
+struct providedValue {
     T value{};
-    bool provided = false;
+    bool isProvided = false;
 
-    Provided() = default;
-    explicit Provided(const T &default_value) : value(default_value) {}
+    providedValue() = default;
+    explicit providedValue(const T &default_value) : value(default_value) {}
 
     T *valuePtr() { return &value; }
-    bool *providedPtr() { return &provided; }
-    bool wasProvided() const { return provided; }
+    bool *providedPtr() { return &isProvided; }
+    bool wasProvided() const { return isProvided; }
     void setProvided(const T &new_value) {
         value = new_value;
-        provided = true;
+        isProvided = true;
     }
 };
 
-enum class ScenarioType {
-    None,
-    Raw,
+enum class scenario_type_t {
+    NONE,
+    RAW,
     G3,
     G4,
 };
 
-enum class PluginType {
-    None,
-    Posix,
-    Obj,
-    Gds,
-    GdsMt,
-    GpuNetIo,
-    AzureBlob,
-    Hf3fs,
-    Gusli,
+enum class plugin_type_t {
+    NONE,
+    POSIX,
+    OBJ,
+    GDS,
+    GDS_MT,
+    GPUNETIO,
+    AZURE_BLOB,
+    HF3FS,
+    GUSLI,
 };
 
-struct G3ScenarioRequest {
+struct g3ScenarioRequest {
     std::string file_size;
     int parallel_threads = 1;
     std::string batch_size;
 };
 
-struct G4ScenarioRequest {
+struct g4ScenarioRequest {
     std::string file_size;
     int num_kvs = 0;
     int parallel_threads = 1;
     std::string batch_size;
 };
 
-struct RawRequest {
-    Provided<std::string> config_file;
-    Provided<std::string> benchmark_group{"default"};
-    Provided<std::string> runtime_type{"ETCD"};
-    Provided<std::string> worker_type{"nixl"};
-    Provided<std::string> backend{"UCX"};
-    Provided<std::string> initiator_seg_type{"DRAM"};
-    Provided<std::string> target_seg_type{"DRAM"};
-    Provided<std::string> scheme{"pairwise"};
-    Provided<std::string> mode{"SG"};
-    Provided<std::string> op_type{"WRITE"};
-    Provided<bool> check_consistency{false};
-    Provided<uint64_t> total_buffer_size{8589934592ULL};
-    Provided<uint64_t> start_block_size{4096};
-    Provided<uint64_t> max_block_size{67108864};
-    Provided<uint64_t> start_batch_size{1};
-    Provided<uint64_t> max_batch_size{1};
-    Provided<int> num_iter{1000};
-    Provided<bool> recreate_xfer{false};
-    Provided<int> large_blk_iter_ftr{16};
-    Provided<int> warmup_iter{100};
-    Provided<int> num_threads{1};
-    Provided<int> num_initiator_dev{1};
-    Provided<int> num_target_dev{1};
-    Provided<bool> enable_pt{false};
-    Provided<uint64_t> progress_threads{0};
-    Provided<bool> enable_vmm{false};
-    Provided<std::string> filepath;
-    Provided<std::string> filenames;
-    Provided<int> num_files{1};
-    Provided<bool> storage_enable_direct{false};
-    Provided<int> gds_batch_pool_size{32};
-    Provided<int> gds_batch_limit{128};
-    Provided<int> gds_mt_num_threads{1};
-    Provided<std::string> device_list{"all"};
-    Provided<std::string> etcd_endpoints;
-    Provided<std::string> posix_api_type{"AIO"};
-    Provided<int> posix_ios_pool_size{65536};
-    Provided<int> posix_kernel_queue_size{256};
-    Provided<std::string> gpunetio_device_list{"0"};
-    Provided<std::string> gpunetio_oob_list;
-    Provided<std::string> obj_access_key;
-    Provided<std::string> obj_secret_key;
-    Provided<std::string> obj_session_token;
-    Provided<std::string> obj_bucket_name;
-    Provided<std::string> obj_scheme{"http"};
-    Provided<std::string> obj_region{"eu-central-1"};
-    Provided<bool> obj_use_virtual_addressing{false};
-    Provided<std::string> obj_endpoint_override;
-    Provided<std::string> obj_req_checksum{"supported"};
-    Provided<std::string> obj_ca_bundle;
-    Provided<uint64_t> obj_crt_min_limit{0};
-    Provided<bool> obj_accelerated_enable{false};
-    Provided<std::string> obj_accelerated_type;
-    Provided<std::string> azure_blob_account_url;
-    Provided<std::string> azure_blob_container_name;
-    Provided<std::string> azure_blob_connection_string;
-    Provided<int> hf3fs_iopool_size{64};
-    Provided<std::string> gusli_client_name{"NIXLBench"};
-    Provided<int> gusli_max_simultaneous_requests{32};
-    Provided<std::string> gusli_config_file;
-    Provided<std::string> gusli_device_byte_offsets;
-    Provided<std::string> gusli_device_security;
+struct rawRequest {
+    providedValue<std::string> config_file;
+    providedValue<std::string> benchmark_group{"default"};
+    providedValue<std::string> runtime_type{"ETCD"};
+    providedValue<std::string> worker_type{"nixl"};
+    providedValue<std::string> backend{"UCX"};
+    providedValue<std::string> initiator_seg_type{"DRAM"};
+    providedValue<std::string> target_seg_type{"DRAM"};
+    providedValue<std::string> scheme{"pairwise"};
+    providedValue<std::string> mode{"SG"};
+    providedValue<std::string> op_type{"WRITE"};
+    providedValue<bool> check_consistency{false};
+    providedValue<uint64_t> total_buffer_size{8589934592ULL};
+    providedValue<uint64_t> start_block_size{4096};
+    providedValue<uint64_t> max_block_size{67108864};
+    providedValue<uint64_t> start_batch_size{1};
+    providedValue<uint64_t> max_batch_size{1};
+    providedValue<int> num_iter{1000};
+    providedValue<bool> recreate_xfer{false};
+    providedValue<int> large_blk_iter_ftr{16};
+    providedValue<int> warmup_iter{100};
+    providedValue<int> num_threads{1};
+    providedValue<int> num_initiator_dev{1};
+    providedValue<int> num_target_dev{1};
+    providedValue<bool> enable_pt{false};
+    providedValue<uint64_t> progress_threads{0};
+    providedValue<bool> enable_vmm{false};
+    providedValue<std::string> filepath;
+    providedValue<std::string> filenames;
+    providedValue<int> num_files{1};
+    providedValue<bool> storage_enable_direct{false};
+    providedValue<int> gds_batch_pool_size{32};
+    providedValue<int> gds_batch_limit{128};
+    providedValue<int> gds_mt_num_threads{1};
+    providedValue<std::string> device_list{"all"};
+    providedValue<std::string> etcd_endpoints;
+    providedValue<std::string> posix_api_type{"AIO"};
+    providedValue<int> posix_ios_pool_size{65536};
+    providedValue<int> posix_kernel_queue_size{256};
+    providedValue<std::string> gpunetio_device_list{"0"};
+    providedValue<std::string> gpunetio_oob_list;
+    providedValue<std::string> obj_access_key;
+    providedValue<std::string> obj_secret_key;
+    providedValue<std::string> obj_session_token;
+    providedValue<std::string> obj_bucket_name;
+    providedValue<std::string> obj_scheme{"http"};
+    providedValue<std::string> obj_region{"eu-central-1"};
+    providedValue<bool> obj_use_virtual_addressing{false};
+    providedValue<std::string> obj_endpoint_override;
+    providedValue<std::string> obj_req_checksum{"supported"};
+    providedValue<std::string> obj_ca_bundle;
+    providedValue<uint64_t> obj_crt_min_limit{0};
+    providedValue<bool> obj_accelerated_enable{false};
+    providedValue<std::string> obj_accelerated_type;
+    providedValue<std::string> azure_blob_account_url;
+    providedValue<std::string> azure_blob_container_name;
+    providedValue<std::string> azure_blob_connection_string;
+    providedValue<int> hf3fs_iopool_size{64};
+    providedValue<std::string> gusli_client_name{"NIXLBench"};
+    providedValue<int> gusli_max_simultaneous_requests{32};
+    providedValue<std::string> gusli_config_file;
+    providedValue<std::string> gusli_device_byte_offsets;
+    providedValue<std::string> gusli_device_security;
 };
 
-struct PosixPluginRequest {
+struct posixPluginRequest {
     bool should_split_dir_per_thread = false;
-    Provided<std::string> filepath;
-    Provided<std::string> filenames;
-    Provided<int> num_files{1};
-    Provided<bool> storage_enable_direct{false};
-    Provided<std::string> api_type{"AIO"};
-    Provided<int> ios_pool_size{65536};
-    Provided<int> kernel_queue_size{256};
-    Provided<bool> enable_direct{false};
+    providedValue<std::string> filepath;
+    providedValue<std::string> filenames;
+    providedValue<int> num_files{1};
+    providedValue<bool> storage_enable_direct{false};
+    providedValue<std::string> api_type{"AIO"};
+    providedValue<int> ios_pool_size{65536};
+    providedValue<int> kernel_queue_size{256};
+    providedValue<bool> enable_direct{false};
 };
 
-struct ObjPluginRequest {
-    Provided<std::string> access_key;
-    Provided<std::string> secret_key;
-    Provided<std::string> session_token;
-    Provided<std::string> bucket_name;
-    Provided<std::string> scheme{"http"};
-    Provided<std::string> region{"eu-central-1"};
-    Provided<bool> use_virtual_addressing{false};
-    Provided<std::string> endpoint_override;
-    Provided<std::string> req_checksum{"supported"};
-    Provided<std::string> ca_bundle;
-    Provided<uint64_t> crt_min_limit{0};
-    Provided<bool> accelerated_enable{false};
-    Provided<std::string> accelerated_type;
+struct objPluginRequest {
+    providedValue<std::string> access_key;
+    providedValue<std::string> secret_key;
+    providedValue<std::string> session_token;
+    providedValue<std::string> bucket_name;
+    providedValue<std::string> scheme{"http"};
+    providedValue<std::string> region{"eu-central-1"};
+    providedValue<bool> use_virtual_addressing{false};
+    providedValue<std::string> endpoint_override;
+    providedValue<std::string> req_checksum{"supported"};
+    providedValue<std::string> ca_bundle;
+    providedValue<uint64_t> crt_min_limit{0};
+    providedValue<bool> accelerated_enable{false};
+    providedValue<std::string> accelerated_type;
 };
 
-struct GdsPluginRequest {
-    Provided<std::string> filepath;
-    Provided<std::string> filenames;
-    Provided<int> num_files{1};
-    Provided<bool> storage_enable_direct{false};
-    Provided<int> batch_pool_size{32};
-    Provided<int> batch_limit{128};
+struct gdsPluginRequest {
+    providedValue<std::string> filepath;
+    providedValue<std::string> filenames;
+    providedValue<int> num_files{1};
+    providedValue<bool> storage_enable_direct{false};
+    providedValue<int> batch_pool_size{32};
+    providedValue<int> batch_limit{128};
 };
 
-struct GdsMtPluginRequest {
-    Provided<std::string> filepath;
-    Provided<std::string> filenames;
-    Provided<int> num_files{1};
-    Provided<bool> storage_enable_direct{false};
-    Provided<int> num_threads{1};
+struct gdsMtPluginRequest {
+    providedValue<std::string> filepath;
+    providedValue<std::string> filenames;
+    providedValue<int> num_files{1};
+    providedValue<bool> storage_enable_direct{false};
+    providedValue<int> num_threads{1};
 };
 
-struct GpuNetIoPluginRequest {
-    Provided<std::string> device_list{"0"};
-    Provided<std::string> oob_list;
+struct gpunetioPluginRequest {
+    providedValue<std::string> device_list{"0"};
+    providedValue<std::string> oob_list;
 };
 
-struct AzureBlobPluginRequest {
-    Provided<std::string> blob_account_url;
-    Provided<std::string> blob_container_name;
-    Provided<std::string> blob_connection_string;
+struct azureBlobPluginRequest {
+    providedValue<std::string> blob_account_url;
+    providedValue<std::string> blob_container_name;
+    providedValue<std::string> blob_connection_string;
 };
 
-struct Hf3fsPluginRequest {
-    Provided<std::string> filepath;
-    Provided<std::string> filenames;
-    Provided<int> num_files{1};
-    Provided<bool> storage_enable_direct{false};
-    Provided<int> iopool_size{64};
+struct hf3fsPluginRequest {
+    providedValue<std::string> filepath;
+    providedValue<std::string> filenames;
+    providedValue<int> num_files{1};
+    providedValue<bool> storage_enable_direct{false};
+    providedValue<int> iopool_size{64};
 };
 
-struct GusliPluginRequest {
-    Provided<std::string> filepath;
-    Provided<std::string> filenames;
-    Provided<int> num_files{1};
-    Provided<bool> storage_enable_direct{false};
-    Provided<std::string> client_name{"NIXLBench"};
-    Provided<int> max_simultaneous_requests{32};
-    Provided<std::string> config_file;
-    Provided<std::string> device_byte_offsets;
-    Provided<std::string> device_security;
+struct gusliPluginRequest {
+    providedValue<std::string> filepath;
+    providedValue<std::string> filenames;
+    providedValue<int> num_files{1};
+    providedValue<bool> storage_enable_direct{false};
+    providedValue<std::string> client_name{"NIXLBench"};
+    providedValue<int> max_simultaneous_requests{32};
+    providedValue<std::string> config_file;
+    providedValue<std::string> device_byte_offsets;
+    providedValue<std::string> device_security;
 };
 
 } // namespace nixlbench

@@ -10,22 +10,22 @@
 
 namespace nixlbench {
 
-class RawCommand : public IBenchmarkScenario {
+class rawCommand : public benchmarkScenario {
 public:
-    RawCommand();
+    rawCommand();
 
     std::string_view name() const override;
     std::string_view description() const override;
-    const std::vector<CliOption> &getOptions() const override;
-    ScenarioType scenarioType() const override;
-    bool supportsPlugin(PluginType plugin) const override;
-    int run(ISouthboundPluginBenchmarkCommand &plugin) override;
-    const RawRequest &request() const;
-    bool finalizeRequest(const ISouthboundPluginBenchmarkCommand &plugin, std::string &error);
+    const std::vector<cliOption> &getOptions() const override;
+    scenario_type_t scenarioType() const override;
+    bool supportsPlugin(plugin_type_t plugin) const override;
+    int run(southboundPluginBenchmarkCommand &plugin) override;
+    const rawRequest &request() const;
+    bool finalizeRequest(const southboundPluginBenchmarkCommand &plugin, std::string &error);
 
 private:
-    RawRequest request_;
-    std::vector<CliOption> options_;
+    rawRequest request_;
+    std::vector<cliOption> options_;
 };
 
 } // namespace nixlbench

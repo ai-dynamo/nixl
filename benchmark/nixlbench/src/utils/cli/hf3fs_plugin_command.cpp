@@ -8,18 +8,18 @@
 
 namespace nixlbench {
 
-std::string_view Hf3fsPluginCommand::name() const { return "hf3fs"; }
+std::string_view hf3fsPluginCommand::name() const { return "hf3fs"; }
 
-std::string_view Hf3fsPluginCommand::description() const { return "Use the HF3FS storage backend"; }
+std::string_view hf3fsPluginCommand::description() const { return "Use the HF3FS storage backend"; }
 
-const std::vector<CliOption> &Hf3fsPluginCommand::getOptions() const { return options_; }
+const std::vector<cliOption> &hf3fsPluginCommand::getOptions() const { return options_; }
 
-PluginType Hf3fsPluginCommand::pluginType() const { return PluginType::Hf3fs; }
+plugin_type_t hf3fsPluginCommand::pluginType() const { return plugin_type_t::HF3FS; }
 
-bool Hf3fsPluginCommand::supportsScenario(ScenarioType scenario) const { return scenario == ScenarioType::Raw; }
+bool hf3fsPluginCommand::supportsScenario(scenario_type_t scenario) const { return scenario == scenario_type_t::RAW; }
 
-const Hf3fsPluginRequest &Hf3fsPluginCommand::request() const { return request_; }
+const hf3fsPluginRequest &hf3fsPluginCommand::request() const { return request_; }
 
 } // namespace nixlbench
 
-REGISTER_SOUTHBOUND_PLUGIN(Hf3fsPluginCommand)
+REGISTER_SOUTHBOUND_PLUGIN(hf3fsPluginCommand)

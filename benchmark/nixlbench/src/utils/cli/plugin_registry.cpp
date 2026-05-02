@@ -7,21 +7,21 @@
 
 namespace nixlbench {
 
-SouthboundPluginRegistry &
-SouthboundPluginRegistry::instance() {
-    static SouthboundPluginRegistry registry;
+southboundPluginRegistry &
+southboundPluginRegistry::instance() {
+    static southboundPluginRegistry registry;
     return registry;
 }
 
 bool
-SouthboundPluginRegistry::registerPlugin(Factory factory) {
+southboundPluginRegistry::registerPlugin(Factory factory) {
     factories_.push_back(std::move(factory));
     return true;
 }
 
-std::vector<std::unique_ptr<ISouthboundPluginBenchmarkCommand>>
-SouthboundPluginRegistry::createAll() const {
-    std::vector<std::unique_ptr<ISouthboundPluginBenchmarkCommand>> plugins;
+std::vector<std::unique_ptr<southboundPluginBenchmarkCommand>>
+southboundPluginRegistry::createAll() const {
+    std::vector<std::unique_ptr<southboundPluginBenchmarkCommand>> plugins;
     plugins.reserve(factories_.size());
     for (const auto &factory : factories_) {
         plugins.push_back(factory());

@@ -34,7 +34,7 @@ int main(int argc, char *argv[]) {
     if (argc > 1) {
         std::string_view first_arg(argv[1]);
         if (first_arg == "scenario" || first_arg == "raw" || first_arg == "--help" || first_arg == "-h") {
-            nixlbench::BenchmarkCliBuilder cli;
+            nixlbench::benchmarkCliBuilder cli;
             int ret = cli.parse(argc, argv);
             if (cli.helpRequested()) {
                 return EXIT_SUCCESS;

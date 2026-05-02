@@ -10,20 +10,20 @@
 
 namespace nixlbench {
 
-class ObjPluginCommand : public ISouthboundPluginBenchmarkCommand {
+class objPluginCommand : public southboundPluginBenchmarkCommand {
 public:
-    ObjPluginCommand();
+    objPluginCommand();
 
     std::string_view name() const override;
     std::string_view description() const override;
-    const std::vector<CliOption> &getOptions() const override;
-    PluginType pluginType() const override;
-    bool supportsScenario(ScenarioType scenario) const override;
-    const ObjPluginRequest &request() const;
+    const std::vector<cliOption> &getOptions() const override;
+    plugin_type_t pluginType() const override;
+    bool supportsScenario(scenario_type_t scenario) const override;
+    const objPluginRequest &request() const;
 
 private:
-    ObjPluginRequest request_;
-    std::vector<CliOption> options_;
+    objPluginRequest request_;
+    std::vector<cliOption> options_;
 };
 
 } // namespace nixlbench

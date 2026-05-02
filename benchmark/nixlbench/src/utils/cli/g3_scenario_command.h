@@ -10,21 +10,21 @@
 
 namespace nixlbench {
 
-class G3ScenarioCommand : public IBenchmarkScenario {
+class g3ScenarioCommand : public benchmarkScenario {
 public:
-    G3ScenarioCommand();
+    g3ScenarioCommand();
 
     std::string_view name() const override;
     std::string_view description() const override;
-    const std::vector<CliOption> &getOptions() const override;
-    ScenarioType scenarioType() const override;
-    bool supportsPlugin(PluginType plugin) const override;
-    int run(ISouthboundPluginBenchmarkCommand &plugin) override;
-    const G3ScenarioRequest &request() const;
+    const std::vector<cliOption> &getOptions() const override;
+    scenario_type_t scenarioType() const override;
+    bool supportsPlugin(plugin_type_t plugin) const override;
+    int run(southboundPluginBenchmarkCommand &plugin) override;
+    const g3ScenarioRequest &request() const;
 
 private:
-    G3ScenarioRequest request_;
-    std::vector<CliOption> options_;
+    g3ScenarioRequest request_;
+    std::vector<cliOption> options_;
 };
 
 } // namespace nixlbench

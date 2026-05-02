@@ -10,21 +10,21 @@
 
 namespace nixlbench {
 
-class AzureBlobPluginCommand : public ISouthboundPluginBenchmarkCommand {
+class azureBlobPluginCommand : public southboundPluginBenchmarkCommand {
 public:
     std::string_view name() const override;
     std::string_view description() const override;
-    const std::vector<CliOption> &getOptions() const override;
-    PluginType pluginType() const override;
-    bool supportsScenario(ScenarioType scenario) const override;
-    const AzureBlobPluginRequest &request() const;
+    const std::vector<cliOption> &getOptions() const override;
+    plugin_type_t pluginType() const override;
+    bool supportsScenario(scenario_type_t scenario) const override;
+    const azureBlobPluginRequest &request() const;
 
 private:
-    AzureBlobPluginRequest request_;
-    std::vector<CliOption> options_{
-        CliOption::option("account_url", "Azure Blob account URL", &request_.blob_account_url),
-        CliOption::option("container_name", "Azure Blob container", &request_.blob_container_name),
-        CliOption::option("connection_string", "Azure Blob connection string", &request_.blob_connection_string),
+    azureBlobPluginRequest request_;
+    std::vector<cliOption> options_{
+        cliOption::option("account_url", "Azure Blob account URL", &request_.blob_account_url),
+        cliOption::option("container_name", "Azure Blob container", &request_.blob_container_name),
+        cliOption::option("connection_string", "Azure Blob connection string", &request_.blob_connection_string),
     };
 };
 

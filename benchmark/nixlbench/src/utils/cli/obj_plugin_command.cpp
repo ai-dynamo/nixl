@@ -8,37 +8,37 @@
 
 namespace nixlbench {
 
-ObjPluginCommand::ObjPluginCommand()
-    : options_{CliOption::option("bucket_name", "Object bucket name", &request_.bucket_name),
-                    CliOption::option("access_key", "S3 access key", &request_.access_key),
-                    CliOption::option("secret_key", "S3 secret key", &request_.secret_key),
-                    CliOption::option("session_token", "S3 session token", &request_.session_token),
-                    CliOption::option("scheme", "S3 scheme", &request_.scheme),
-                    CliOption::option("region", "S3 region", &request_.region),
-                    CliOption::flag("use_virtual_addressing", "Use S3 virtual addressing", &request_.use_virtual_addressing),
-                    CliOption::option("endpoint_override", "S3 endpoint override", &request_.endpoint_override),
-                    CliOption::option("req_checksum", "S3 checksum mode", &request_.req_checksum),
-                    CliOption::option("ca_bundle", "S3 CA bundle", &request_.ca_bundle),
-                    CliOption::option("crt_min_limit", "S3 CRT minimum object size", &request_.crt_min_limit),
-                    CliOption::flag("accelerated_enable", "Enable S3 accelerated client", &request_.accelerated_enable),
-                    CliOption::option("accelerated_type", "S3 accelerated client type", &request_.accelerated_type)} 
+objPluginCommand::objPluginCommand()
+    : options_{cliOption::option("bucket_name", "Object bucket name", &request_.bucket_name),
+                    cliOption::option("access_key", "S3 access key", &request_.access_key),
+                    cliOption::option("secret_key", "S3 secret key", &request_.secret_key),
+                    cliOption::option("session_token", "S3 session token", &request_.session_token),
+                    cliOption::option("scheme", "S3 scheme", &request_.scheme),
+                    cliOption::option("region", "S3 region", &request_.region),
+                    cliOption::flag("use_virtual_addressing", "Use S3 virtual addressing", &request_.use_virtual_addressing),
+                    cliOption::option("endpoint_override", "S3 endpoint override", &request_.endpoint_override),
+                    cliOption::option("req_checksum", "S3 checksum mode", &request_.req_checksum),
+                    cliOption::option("ca_bundle", "S3 CA bundle", &request_.ca_bundle),
+                    cliOption::option("crt_min_limit", "S3 CRT minimum object size", &request_.crt_min_limit),
+                    cliOption::flag("accelerated_enable", "Enable S3 accelerated client", &request_.accelerated_enable),
+                    cliOption::option("accelerated_type", "S3 accelerated client type", &request_.accelerated_type)} 
 {
 }
 
-std::string_view ObjPluginCommand::name() const { return "obj"; }
+std::string_view objPluginCommand::name() const { return "obj"; }
 
-std::string_view ObjPluginCommand::description() const { return "Use the object storage backend"; }
+std::string_view objPluginCommand::description() const { return "Use the object storage backend"; }
 
-const std::vector<CliOption> &ObjPluginCommand::getOptions() const { return options_; }
+const std::vector<cliOption> &objPluginCommand::getOptions() const { return options_; }
 
-PluginType ObjPluginCommand::pluginType() const { return PluginType::Obj; }
+plugin_type_t objPluginCommand::pluginType() const { return plugin_type_t::OBJ; }
 
-bool ObjPluginCommand::supportsScenario(ScenarioType scenario) const {
-    return scenario == ScenarioType::Raw || scenario == ScenarioType::G4;
+bool objPluginCommand::supportsScenario(scenario_type_t scenario) const {
+    return scenario == scenario_type_t::RAW || scenario == scenario_type_t::G4;
 }
 
-const ObjPluginRequest &ObjPluginCommand::request() const { return request_; }
+const objPluginRequest &objPluginCommand::request() const { return request_; }
 
 } // namespace nixlbench
 
-REGISTER_SOUTHBOUND_PLUGIN(ObjPluginCommand)
+REGISTER_SOUTHBOUND_PLUGIN(objPluginCommand)

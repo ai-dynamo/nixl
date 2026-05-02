@@ -8,18 +8,18 @@
 
 namespace nixlbench {
 
-std::string_view GpuNetIoPluginCommand::name() const { return "gpunetio"; }
+std::string_view gpunetioPluginCommand::name() const { return "gpunetio"; }
 
-std::string_view GpuNetIoPluginCommand::description() const { return "Use the GPUNetIO backend"; }
+std::string_view gpunetioPluginCommand::description() const { return "Use the GPUNetIO backend"; }
 
-const std::vector<CliOption> &GpuNetIoPluginCommand::getOptions() const { return options_; }
+const std::vector<cliOption> &gpunetioPluginCommand::getOptions() const { return options_; }
 
-PluginType GpuNetIoPluginCommand::pluginType() const { return PluginType::GpuNetIo; }
+plugin_type_t gpunetioPluginCommand::pluginType() const { return plugin_type_t::GPUNETIO; }
 
-bool GpuNetIoPluginCommand::supportsScenario(ScenarioType scenario) const { return scenario == ScenarioType::Raw; }
+bool gpunetioPluginCommand::supportsScenario(scenario_type_t scenario) const { return scenario == scenario_type_t::RAW; }
 
-const GpuNetIoPluginRequest &GpuNetIoPluginCommand::request() const { return request_; }
+const gpunetioPluginRequest &gpunetioPluginCommand::request() const { return request_; }
 
 } // namespace nixlbench
 
-REGISTER_SOUTHBOUND_PLUGIN(GpuNetIoPluginCommand)
+REGISTER_SOUTHBOUND_PLUGIN(gpunetioPluginCommand)

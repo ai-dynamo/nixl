@@ -14,11 +14,11 @@
 
 namespace nixlbench {
 
-class ISouthboundPluginBenchmarkCommand;
+class southboundPluginBenchmarkCommand;
 
-class IBenchmarkCommand {
+class benchmarkCommand {
 public:
-    virtual ~IBenchmarkCommand() = default;
+    virtual ~benchmarkCommand() = default;
 
     virtual std::string_view
     name() const = 0;
@@ -26,29 +26,29 @@ public:
     virtual std::string_view
     description() const = 0;
 
-    virtual const std::vector<CliOption> &
+    virtual const std::vector<cliOption> &
     getOptions() const = 0;
 };
 
-class IBenchmarkScenario : public IBenchmarkCommand {
+class benchmarkScenario : public benchmarkCommand {
 public:
-    virtual ScenarioType
+    virtual scenario_type_t
     scenarioType() const = 0;
 
     virtual bool
-    supportsPlugin(PluginType plugin) const = 0;
+    supportsPlugin(plugin_type_t plugin) const = 0;
 
     virtual int
-    run(ISouthboundPluginBenchmarkCommand &plugin) = 0;
+    run(southboundPluginBenchmarkCommand &plugin) = 0;
 };
 
-class ISouthboundPluginBenchmarkCommand : public IBenchmarkCommand {
+class southboundPluginBenchmarkCommand : public benchmarkCommand {
 public:
-    virtual PluginType
+    virtual plugin_type_t
     pluginType() const = 0;
 
     virtual bool
-    supportsScenario(ScenarioType scenario) const = 0;
+    supportsScenario(scenario_type_t scenario) const = 0;
 };
 
 } // namespace nixlbench

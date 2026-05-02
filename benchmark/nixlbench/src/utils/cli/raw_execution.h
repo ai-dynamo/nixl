@@ -11,7 +11,7 @@
 namespace nixlbench {
 
 int
-runRawRequest(const RawRequest &request);
+runRawRequest(const rawRequest &request);
 
 } // namespace nixlbench
 

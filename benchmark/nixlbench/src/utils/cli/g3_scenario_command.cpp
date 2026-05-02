@@ -7,23 +7,23 @@
 
 namespace nixlbench {
 
-G3ScenarioCommand::G3ScenarioCommand()
-    : options_{CliOption::option("file_size", "File size", &request_.file_size, true),
-               CliOption::option("parallel-threads", "Parallel threads", &request_.parallel_threads, true),
-               CliOption::option("batch-size", "Batch size", &request_.batch_size, true)} {}
+g3ScenarioCommand::g3ScenarioCommand()
+    : options_{cliOption::option("file_size", "File size", &request_.file_size, true),
+               cliOption::option("parallel-threads", "Parallel threads", &request_.parallel_threads, true),
+               cliOption::option("batch-size", "Batch size", &request_.batch_size, true)} {}
 
-std::string_view G3ScenarioCommand::name() const { return "g3"; }
+std::string_view g3ScenarioCommand::name() const { return "g3"; }
 
-std::string_view G3ScenarioCommand::description() const { return "Run G3 storage scenario"; }
+std::string_view g3ScenarioCommand::description() const { return "Run G3 storage scenario"; }
 
-const std::vector<CliOption> &G3ScenarioCommand::getOptions() const { return options_; }
+const std::vector<cliOption> &g3ScenarioCommand::getOptions() const { return options_; }
 
-ScenarioType G3ScenarioCommand::scenarioType() const { return ScenarioType::G3; }
+scenario_type_t g3ScenarioCommand::scenarioType() const { return scenario_type_t::G3; }
 
-bool G3ScenarioCommand::supportsPlugin(PluginType plugin) const { return plugin == PluginType::Posix; }
+bool g3ScenarioCommand::supportsPlugin(plugin_type_t plugin) const { return plugin == plugin_type_t::POSIX; }
 
-int G3ScenarioCommand::run(ISouthboundPluginBenchmarkCommand &) { return 0; }
+int g3ScenarioCommand::run(southboundPluginBenchmarkCommand &) { return 0; }
 
-const G3ScenarioRequest &G3ScenarioCommand::request() const { return request_; }
+const g3ScenarioRequest &g3ScenarioCommand::request() const { return request_; }
 
 } // namespace nixlbench

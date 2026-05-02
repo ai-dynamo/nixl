@@ -14,7 +14,7 @@ namespace nixlbench {
 namespace {
 
 void
-applyRawRequestToConfig(const RawRequest &request) {
+applyRawRequestToConfig(const rawRequest &request) {
     xferBenchConfig::benchmark_group = request.benchmark_group.value;
     xferBenchConfig::runtime_type = request.runtime_type.value;
     xferBenchConfig::worker_type = request.worker_type.value;
@@ -206,7 +206,7 @@ validateRawConfig() {
 } // namespace
 
 int
-runRawRequest(const RawRequest &request) {
+runRawRequest(const rawRequest &request) {
     applyRawRequestToConfig(request);
     if (!validateRawConfig()) {
         return 1;

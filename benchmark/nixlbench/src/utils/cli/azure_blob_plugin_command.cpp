@@ -8,18 +8,18 @@
 
 namespace nixlbench {
 
-std::string_view AzureBlobPluginCommand::name() const { return "azure_blob"; }
+std::string_view azureBlobPluginCommand::name() const { return "azure_blob"; }
 
-std::string_view AzureBlobPluginCommand::description() const { return "Use the Azure Blob backend"; }
+std::string_view azureBlobPluginCommand::description() const { return "Use the Azure Blob backend"; }
 
-const std::vector<CliOption> &AzureBlobPluginCommand::getOptions() const { return options_; }
+const std::vector<cliOption> &azureBlobPluginCommand::getOptions() const { return options_; }
 
-PluginType AzureBlobPluginCommand::pluginType() const { return PluginType::AzureBlob; }
+plugin_type_t azureBlobPluginCommand::pluginType() const { return plugin_type_t::AZURE_BLOB; }
 
-bool AzureBlobPluginCommand::supportsScenario(ScenarioType scenario) const { return scenario == ScenarioType::Raw; }
+bool azureBlobPluginCommand::supportsScenario(scenario_type_t scenario) const { return scenario == scenario_type_t::RAW; }
 
-const AzureBlobPluginRequest &AzureBlobPluginCommand::request() const { return request_; }
+const azureBlobPluginRequest &azureBlobPluginCommand::request() const { return request_; }
 
 } // namespace nixlbench
 
-REGISTER_SOUTHBOUND_PLUGIN(AzureBlobPluginCommand)
+REGISTER_SOUTHBOUND_PLUGIN(azureBlobPluginCommand)

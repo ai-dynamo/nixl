@@ -73,16 +73,16 @@ T getTomlValue(const toml::table *tbl, const char *name, const T &fallback) {
 }
 
 template <typename T>
-void resolveRawArg(RawRequest &raw, const toml::table *tbl, const char *name, Provided<T> RawRequest::*field) {
+void resolveRawArg(rawRequest &raw, const toml::table *tbl, const char *name, providedValue<T> rawRequest::*field) {
     auto &arg = raw.*field;
     if (!arg.wasProvided()) {
         arg.value = getTomlValue(tbl, name, arg.value);
     }
 }
 
-#define RESOLVE_RAW_ARG(name) resolveRawArg(raw, tbl, #name, &RawRequest::name)
+#define RESOLVE_RAW_ARG(name) resolveRawArg(raw, tbl, #name, &rawRequest::name)
 
-void resolveConfigValues(RawRequest &raw, const toml::table *tbl) {
+void resolveConfigValues(rawRequest &raw, const toml::table *tbl) {
     RESOLVE_RAW_ARG(benchmark_group);
     RESOLVE_RAW_ARG(runtime_type);
     RESOLVE_RAW_ARG(worker_type);
@@ -148,8 +148,8 @@ void resolveConfigValues(RawRequest &raw, const toml::table *tbl) {
 
 #undef RESOLVE_RAW_ARG
 
-template <typename StoragePluginRequest>
-void applyStoragePluginOptions(RawRequest &raw, const StoragePluginRequest &plugin) {
+template <typename storagePluginRequest>
+void applyStoragePluginOptions(rawRequest &raw, const storagePluginRequest &plugin) {
     if (plugin.filepath.wasProvided()) {
         raw.filepath.setProvided(plugin.filepath.value);
     }
@@ -164,9 +164,9 @@ void applyStoragePluginOptions(RawRequest &raw, const StoragePluginRequest &plug
     }
 }
 
-void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand &plugin) {
-    if (plugin.pluginType() == PluginType::Posix) {
-        const auto &posix = static_cast<const PosixPluginCommand &>(plugin).request();
+void applyPluginOptions(rawRequest &raw, const southboundPluginBenchmarkCommand &plugin) {
+    if (plugin.pluginType() == plugin_type_t::POSIX) {
+        const auto &posix = static_cast<const posixPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendPosix);
         applyStoragePluginOptions(raw, posix);
         if (posix.api_type.wasProvided()) {
@@ -184,8 +184,8 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
         if (posix.enable_direct.wasProvided()) {
             raw.storage_enable_direct.setProvided(posix.enable_direct.value);
         }
-    } else if (plugin.pluginType() == PluginType::Obj) {
-        const auto &obj = static_cast<const ObjPluginCommand &>(plugin).request();
+    } else if (plugin.pluginType() == plugin_type_t::OBJ) {
+        const auto &obj = static_cast<const objPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendObj);
         if (obj.access_key.wasProvided()) {
             raw.obj_access_key.setProvided(obj.access_key.value);
@@ -228,8 +228,8 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
         }
     }
 #ifdef WITH_GDS_PLUGIN
-    else if (plugin.pluginType() == PluginType::Gds) {
-        const auto &gds = static_cast<const GdsPluginCommand &>(plugin).request();
+    else if (plugin.pluginType() == plugin_type_t::GDS) {
+        const auto &gds = static_cast<const gdsPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendGds);
         applyStoragePluginOptions(raw, gds);
         if (gds.batch_pool_size.wasProvided()) {
@@ -241,8 +241,8 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
     }
 #endif
 #ifdef WITH_GDS_MT_PLUGIN
-    else if (plugin.pluginType() == PluginType::GdsMt) {
-        const auto &gds_mt = static_cast<const GdsMtPluginCommand &>(plugin).request();
+    else if (plugin.pluginType() == plugin_type_t::GDS_MT) {
+        const auto &gds_mt = static_cast<const gdsMtPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendGdsMt);
         applyStoragePluginOptions(raw, gds_mt);
         if (gds_mt.num_threads.wasProvided()) {
@@ -251,8 +251,8 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
     }
 #endif
 #ifdef WITH_GPUNETIO_PLUGIN
-    else if (plugin.pluginType() == PluginType::GpuNetIo) {
-        const auto &gpunetio = static_cast<const GpuNetIoPluginCommand &>(plugin).request();
+    else if (plugin.pluginType() == plugin_type_t::GPUNETIO) {
+        const auto &gpunetio = static_cast<const gpunetioPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendGpuNetIo);
         if (gpunetio.device_list.wasProvided()) {
             raw.gpunetio_device_list.setProvided(gpunetio.device_list.value);
@@ -263,8 +263,8 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
     }
 #endif
 #ifdef WITH_AZURE_BLOB_PLUGIN
-    else if (plugin.pluginType() == PluginType::AzureBlob) {
-        const auto &azure_blob = static_cast<const AzureBlobPluginCommand &>(plugin).request();
+    else if (plugin.pluginType() == plugin_type_t::AZURE_BLOB) {
+        const auto &azure_blob = static_cast<const azureBlobPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendAzureBlob);
         if (azure_blob.blob_account_url.wasProvided()) {
             raw.azure_blob_account_url.setProvided(azure_blob.blob_account_url.value);
@@ -278,8 +278,8 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
     }
 #endif
 #ifdef WITH_HF3FS_PLUGIN
-    else if (plugin.pluginType() == PluginType::Hf3fs) {
-        const auto &hf3fs = static_cast<const Hf3fsPluginCommand &>(plugin).request();
+    else if (plugin.pluginType() == plugin_type_t::HF3FS) {
+        const auto &hf3fs = static_cast<const hf3fsPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendHf3fs);
         applyStoragePluginOptions(raw, hf3fs);
         if (hf3fs.iopool_size.wasProvided()) {
@@ -288,8 +288,8 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
     }
 #endif
 #ifdef WITH_GUSLI_PLUGIN
-    else if (plugin.pluginType() == PluginType::Gusli) {
-        const auto &gusli = static_cast<const GusliPluginCommand &>(plugin).request();
+    else if (plugin.pluginType() == plugin_type_t::GUSLI) {
+        const auto &gusli = static_cast<const gusliPluginCommand &>(plugin).request();
         raw.backend.setProvided(kBackendGusli);
         applyStoragePluginOptions(raw, gusli);
         if (gusli.client_name.wasProvided()) {
@@ -313,51 +313,51 @@ void applyPluginOptions(RawRequest &raw, const ISouthboundPluginBenchmarkCommand
 
 } // namespace
 
-RawCommand::RawCommand()
-    : options_{CliOption::option("config_file", "Config file", &request_.config_file),
-               CliOption::option("benchmark_group", "Benchmark group", &request_.benchmark_group),
-               CliOption::option("runtime_type", "Runtime type", &request_.runtime_type),
-               CliOption::option("worker_type", "Worker type", &request_.worker_type),
-               CliOption::option("backend", "NIXL backend", &request_.backend),
-               CliOption::option("initiator_seg_type", "Initiator segment type", &request_.initiator_seg_type),
-               CliOption::option("target_seg_type", "Target segment type", &request_.target_seg_type),
-               CliOption::option("scheme", "Transfer scheme", &request_.scheme),
-               CliOption::option("mode", "Benchmark GPU mode", &request_.mode),
-               CliOption::option("op_type", "Operation type", &request_.op_type),
-               CliOption::flag("check_consistency", "Enable consistency check", &request_.check_consistency),
-               CliOption::option("total_buffer_size", "Total buffer size", &request_.total_buffer_size),
-               CliOption::option("start_block_size", "Starting block size", &request_.start_block_size),
-               CliOption::option("max_block_size", "Maximum block size", &request_.max_block_size),
-               CliOption::option("start_batch_size", "Starting batch size", &request_.start_batch_size),
-               CliOption::option("max_batch_size", "Maximum batch size", &request_.max_batch_size),
-               CliOption::option("num_iter,num-iterations", "Benchmark iterations", &request_.num_iter),
-               CliOption::flag("recreate_xfer", "Recreate transfers each iteration", &request_.recreate_xfer),
-               CliOption::option("large_blk_iter_ftr", "Large block iteration factor", &request_.large_blk_iter_ftr),
-               CliOption::option("warmup_iter", "Warmup iterations", &request_.warmup_iter),
-               CliOption::option("num_threads", "Benchmark threads", &request_.num_threads),
-               CliOption::option("num_initiator_dev", "Initiator device count", &request_.num_initiator_dev),
-               CliOption::option("num_target_dev", "Target device count", &request_.num_target_dev),
-               CliOption::flag("enable_pt", "Enable progress thread", &request_.enable_pt),
-               CliOption::option("progress_threads", "Progress thread count", &request_.progress_threads),
-               CliOption::flag("enable_vmm", "Enable VMM allocation", &request_.enable_vmm),
-               CliOption::option("device_list", "Device list", &request_.device_list),
-               CliOption::option("etcd_endpoints", "ETCD endpoints", &request_.etcd_endpoints)} {}
+rawCommand::rawCommand()
+    : options_{cliOption::option("config_file", "Config file", &request_.config_file),
+               cliOption::option("benchmark_group", "Benchmark group", &request_.benchmark_group),
+               cliOption::option("runtime_type", "Runtime type", &request_.runtime_type),
+               cliOption::option("worker_type", "Worker type", &request_.worker_type),
+               cliOption::option("backend", "NIXL backend", &request_.backend),
+               cliOption::option("initiator_seg_type", "Initiator segment type", &request_.initiator_seg_type),
+               cliOption::option("target_seg_type", "Target segment type", &request_.target_seg_type),
+               cliOption::option("scheme", "Transfer scheme", &request_.scheme),
+               cliOption::option("mode", "Benchmark GPU mode", &request_.mode),
+               cliOption::option("op_type", "Operation type", &request_.op_type),
+               cliOption::flag("check_consistency", "Enable consistency check", &request_.check_consistency),
+               cliOption::option("total_buffer_size", "Total buffer size", &request_.total_buffer_size),
+               cliOption::option("start_block_size", "Starting block size", &request_.start_block_size),
+               cliOption::option("max_block_size", "Maximum block size", &request_.max_block_size),
+               cliOption::option("start_batch_size", "Starting batch size", &request_.start_batch_size),
+               cliOption::option("max_batch_size", "Maximum batch size", &request_.max_batch_size),
+               cliOption::option("num_iter,num-iterations", "Benchmark iterations", &request_.num_iter),
+               cliOption::flag("recreate_xfer", "Recreate transfers each iteration", &request_.recreate_xfer),
+               cliOption::option("large_blk_iter_ftr", "Large block iteration factor", &request_.large_blk_iter_ftr),
+               cliOption::option("warmup_iter", "Warmup iterations", &request_.warmup_iter),
+               cliOption::option("num_threads", "Benchmark threads", &request_.num_threads),
+               cliOption::option("num_initiator_dev", "Initiator device count", &request_.num_initiator_dev),
+               cliOption::option("num_target_dev", "Target device count", &request_.num_target_dev),
+               cliOption::flag("enable_pt", "Enable progress thread", &request_.enable_pt),
+               cliOption::option("progress_threads", "Progress thread count", &request_.progress_threads),
+               cliOption::flag("enable_vmm", "Enable VMM allocation", &request_.enable_vmm),
+               cliOption::option("device_list", "Device list", &request_.device_list),
+               cliOption::option("etcd_endpoints", "ETCD endpoints", &request_.etcd_endpoints)} {}
 
-std::string_view RawCommand::name() const { return "raw"; }
+std::string_view rawCommand::name() const { return "raw"; }
 
-std::string_view RawCommand::description() const { return "Run compatibility benchmark command"; }
+std::string_view rawCommand::description() const { return "Run compatibility benchmark command"; }
 
-const std::vector<CliOption> &RawCommand::getOptions() const { return options_; }
+const std::vector<cliOption> &rawCommand::getOptions() const { return options_; }
 
-const RawRequest &RawCommand::request() const { return request_; }
+const rawRequest &rawCommand::request() const { return request_; }
 
-ScenarioType RawCommand::scenarioType() const { return ScenarioType::Raw; }
+scenario_type_t rawCommand::scenarioType() const { return scenario_type_t::RAW; }
 
-bool RawCommand::supportsPlugin(PluginType plugin) const { return plugin != PluginType::None; }
+bool rawCommand::supportsPlugin(plugin_type_t plugin) const { return plugin != plugin_type_t::NONE; }
 
-int RawCommand::run(ISouthboundPluginBenchmarkCommand &) { return runRawRequest(request_); }
+int rawCommand::run(southboundPluginBenchmarkCommand &) { return runRawRequest(request_); }
 
-bool RawCommand::finalizeRequest(const ISouthboundPluginBenchmarkCommand &plugin, std::string &error) {
+bool rawCommand::finalizeRequest(const southboundPluginBenchmarkCommand &plugin, std::string &error) {
     applyPluginOptions(request_, plugin);
 
     std::unique_ptr<toml::table> tbl;

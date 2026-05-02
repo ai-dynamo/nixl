@@ -13,7 +13,7 @@
 namespace nixlbench {
 namespace {
 
-struct ProvidedOption {
+struct providedOption {
     CLI::Option *option;
     bool *provided;
 };
@@ -38,21 +38,21 @@ buildCliName(const std::string &name) {
 }
 
 void
-bindOption(CLI::App &app, const CliOption &option, std::vector<ProvidedOption> &provided_options) {
+bindOption(CLI::App &app, const cliOption &option, std::vector<providedOption> &provided_options) {
     std::string cli_name = buildCliName(option.name);
     std::visit(
         [&](auto *target) {
-            CLI::Option *cli_option = nullptr;
-            if (option.kind == OptionKind::Flag) {
-                cli_option = app.add_flag(cli_name, *target, option.help);
+            CLI::Option *cliOption = nullptr;
+            if (option.kind == option_kind_t::FLAG) {
+                cliOption = app.add_flag(cli_name, *target, option.help);
             } else {
-                cli_option = app.add_option(cli_name, *target, option.help);
+                cliOption = app.add_option(cli_name, *target, option.help);
             }
             if (option.required) {
-                cli_option->required();
+                cliOption->required();
             }
             if (option.provided != nullptr) {
-                provided_options.push_back({cli_option, option.provided});
+                provided_options.push_back({cliOption, option.provided});
             }
         },
         option.target);
@@ -60,8 +60,8 @@ bindOption(CLI::App &app, const CliOption &option, std::vector<ProvidedOption> &
 
 void
 bindOptions(CLI::App &app,
-            const IBenchmarkCommand &command,
-            std::vector<ProvidedOption> &provided_options) {
+            const benchmarkCommand &command,
+            std::vector<providedOption> &provided_options) {
     for (const auto &option : command.getOptions()) {
         bindOption(app, option, provided_options);
     }
@@ -69,9 +69,9 @@ bindOptions(CLI::App &app,
 
 void
 bindPlugin(CLI::App &parent,
-           ISouthboundPluginBenchmarkCommand &plugin,
-           ISouthboundPluginBenchmarkCommand *&selected_plugin,
-           std::vector<ProvidedOption> &provided_options) {
+           southboundPluginBenchmarkCommand &plugin,
+           southboundPluginBenchmarkCommand *&selected_plugin,
+           std::vector<providedOption> &provided_options) {
     auto *subcommand = parent.add_subcommand(std::string(plugin.name()), std::string(plugin.description()));
     bindOptions(*subcommand, plugin, provided_options);
     subcommand->callback([&selected_plugin, &plugin]() { selected_plugin = &plugin; });
@@ -79,11 +79,11 @@ bindPlugin(CLI::App &parent,
 
 void
 bindScenario(CLI::App &scenario_root,
-             IBenchmarkScenario &scenario,
-             std::vector<std::unique_ptr<ISouthboundPluginBenchmarkCommand>> &plugins,
-             IBenchmarkScenario *&selected_scenario,
-             ISouthboundPluginBenchmarkCommand *&selected_plugin,
-             std::vector<ProvidedOption> &provided_options) {
+             benchmarkScenario &scenario,
+             std::vector<std::unique_ptr<southboundPluginBenchmarkCommand>> &plugins,
+             benchmarkScenario *&selected_scenario,
+             southboundPluginBenchmarkCommand *&selected_plugin,
+             std::vector<providedOption> &provided_options) {
     auto *subcommand = scenario_root.add_subcommand(std::string(scenario.name()),
                                                     std::string(scenario.description()));
     bindOptions(*subcommand, scenario, provided_options);
@@ -99,35 +99,35 @@ bindScenario(CLI::App &scenario_root,
 
 } // namespace
 
-BenchmarkCliBuilder::BenchmarkCliBuilder() {}
+benchmarkCliBuilder::benchmarkCliBuilder() {}
 
 int
-BenchmarkCliBuilder::parse(int argc, char **argv) {
-    selected_scenario_ = nullptr;
-    selected_plugin_ = nullptr;
+benchmarkCliBuilder::parse(int argc, char **argv) {
+    selectedScenario_ = nullptr;
+    selectedPlugin_ = nullptr;
     help_ = false;
 
-    auto &registry = SouthboundPluginRegistry::instance();
-    g3_plugins_ = registry.createAll();
-    g4_plugins_ = registry.createAll();
-    raw_plugins_ = registry.createAll();
+    auto &registry = southboundPluginRegistry::instance();
+    g3Plugins_ = registry.createAll();
+    g4Plugins_ = registry.createAll();
+    rawPlugins_ = registry.createAll();
  
     CLI::App app("NIXL Benchmark");
     app.require_subcommand(1);
-    std::vector<ProvidedOption> provided_options;
+    std::vector<providedOption> provided_options;
 
     auto *scenario_root = app.add_subcommand("scenario", "Run a benchmark scenario");
     scenario_root->require_subcommand(1);
-    bindScenario(*scenario_root, g3_, g3_plugins_, selected_scenario_, selected_plugin_, provided_options);
-    bindScenario(*scenario_root, g4_, g4_plugins_, selected_scenario_, selected_plugin_, provided_options);
+    bindScenario(*scenario_root, g3_, g3Plugins_, selectedScenario_, selectedPlugin_, provided_options);
+    bindScenario(*scenario_root, g4_, g4Plugins_, selectedScenario_, selectedPlugin_, provided_options);
 
     auto *raw_subcommand = app.add_subcommand(std::string(raw_.name()), std::string(raw_.description()));
     bindOptions(*raw_subcommand, raw_, provided_options);
-    for (auto &plugin : raw_plugins_) {
-        bindPlugin(*raw_subcommand, *plugin, selected_plugin_, provided_options);
+    for (auto &plugin : rawPlugins_) {
+        bindPlugin(*raw_subcommand, *plugin, selectedPlugin_, provided_options);
     }
     raw_subcommand->require_subcommand(1);
-    raw_subcommand->callback([this]() { selected_scenario_ = &raw_; });
+    raw_subcommand->callback([this]() { selectedScenario_ = &raw_; });
 
     try {
         app.parse(argc, argv);
@@ -144,17 +144,17 @@ BenchmarkCliBuilder::parse(int argc, char **argv) {
         *provided_option.provided = provided_option.option->count() > 0;
     }
 
-    if (selected_scenario_ == nullptr || selected_plugin_ == nullptr) {
+    if (selectedScenario_ == nullptr || selectedPlugin_ == nullptr) {
         return 1;
     }
-    if (!selected_scenario_->supportsPlugin(selected_plugin_->pluginType()) ||
-        !selected_plugin_->supportsScenario(selected_scenario_->scenarioType())) {
+    if (!selectedScenario_->supportsPlugin(selectedPlugin_->pluginType()) ||
+        !selectedPlugin_->supportsScenario(selectedScenario_->scenarioType())) {
         std::cerr << "Unsupported scenario/plugin combination" << std::endl;
         return 1;
     }
-    if (selected_scenario_->scenarioType() == ScenarioType::Raw) {
+    if (selectedScenario_->scenarioType() == scenario_type_t::RAW) {
         std::string error;
-        if (!raw_.finalizeRequest(*selected_plugin_, error)) {
+        if (!raw_.finalizeRequest(*selectedPlugin_, error)) {
             std::cerr << error << std::endl;
             return 1;
         }
@@ -164,29 +164,29 @@ BenchmarkCliBuilder::parse(int argc, char **argv) {
 }
 
 int
-BenchmarkCliBuilder::run() {
+benchmarkCliBuilder::run() {
     if (help_) {
         return 0;
     }
-    if (selected_scenario_ == nullptr || selected_plugin_ == nullptr) {
+    if (selectedScenario_ == nullptr || selectedPlugin_ == nullptr) {
         return 1;
     }
-    return selected_scenario_->run(*selected_plugin_);
+    return selectedScenario_->run(*selectedPlugin_);
 }
 
 bool
-BenchmarkCliBuilder::helpRequested() const {
+benchmarkCliBuilder::helpRequested() const {
     return help_;
 }
 
-const IBenchmarkScenario *
-BenchmarkCliBuilder::selectedScenario() const {
-    return selected_scenario_;
+const benchmarkScenario *
+benchmarkCliBuilder::selectedScenario() const {
+    return selectedScenario_;
 }
 
-const ISouthboundPluginBenchmarkCommand *
-BenchmarkCliBuilder::selectedPlugin() const {
-    return selected_plugin_;
+const southboundPluginBenchmarkCommand *
+benchmarkCliBuilder::selectedPlugin() const {
+    return selectedPlugin_;
 }
 
 } // namespace nixlbench

@@ -8,18 +8,18 @@
 
 namespace nixlbench {
 
-std::string_view GusliPluginCommand::name() const { return "gusli"; }
+std::string_view gusliPluginCommand::name() const { return "gusli"; }
 
-std::string_view GusliPluginCommand::description() const { return "Use the GUSLI storage backend"; }
+std::string_view gusliPluginCommand::description() const { return "Use the GUSLI storage backend"; }
 
-const std::vector<CliOption> &GusliPluginCommand::getOptions() const { return options_; }
+const std::vector<cliOption> &gusliPluginCommand::getOptions() const { return options_; }
 
-PluginType GusliPluginCommand::pluginType() const { return PluginType::Gusli; }
+plugin_type_t gusliPluginCommand::pluginType() const { return plugin_type_t::GUSLI; }
 
-bool GusliPluginCommand::supportsScenario(ScenarioType scenario) const { return scenario == ScenarioType::Raw; }
+bool gusliPluginCommand::supportsScenario(scenario_type_t scenario) const { return scenario == scenario_type_t::RAW; }
 
-const GusliPluginRequest &GusliPluginCommand::request() const { return request_; }
+const gusliPluginRequest &gusliPluginCommand::request() const { return request_; }
 
 } // namespace nixlbench
 
-REGISTER_SOUTHBOUND_PLUGIN(GusliPluginCommand)
+REGISTER_SOUTHBOUND_PLUGIN(gusliPluginCommand)

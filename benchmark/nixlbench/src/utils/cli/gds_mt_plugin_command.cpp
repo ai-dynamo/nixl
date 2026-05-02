@@ -8,18 +8,18 @@
 
 namespace nixlbench {
 
-std::string_view GdsMtPluginCommand::name() const { return "gds_mt"; }
+std::string_view gdsMtPluginCommand::name() const { return "gds_mt"; }
 
-std::string_view GdsMtPluginCommand::description() const { return "Use the GDS-MT storage backend"; }
+std::string_view gdsMtPluginCommand::description() const { return "Use the GDS-MT storage backend"; }
 
-const std::vector<CliOption> &GdsMtPluginCommand::getOptions() const { return options_; }
+const std::vector<cliOption> &gdsMtPluginCommand::getOptions() const { return options_; }
 
-PluginType GdsMtPluginCommand::pluginType() const { return PluginType::GdsMt; }
+plugin_type_t gdsMtPluginCommand::pluginType() const { return plugin_type_t::GDS_MT; }
 
-bool GdsMtPluginCommand::supportsScenario(ScenarioType scenario) const { return scenario == ScenarioType::Raw; }
+bool gdsMtPluginCommand::supportsScenario(scenario_type_t scenario) const { return scenario == scenario_type_t::RAW; }
 
-const GdsMtPluginRequest &GdsMtPluginCommand::request() const { return request_; }
+const gdsMtPluginRequest &gdsMtPluginCommand::request() const { return request_; }
 
 } // namespace nixlbench
 
-REGISTER_SOUTHBOUND_PLUGIN(GdsMtPluginCommand)
+REGISTER_SOUTHBOUND_PLUGIN(gdsMtPluginCommand)

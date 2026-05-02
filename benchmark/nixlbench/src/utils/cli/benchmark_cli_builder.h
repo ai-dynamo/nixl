@@ -16,9 +16,9 @@
 
 namespace nixlbench {
 
-class BenchmarkCliBuilder {
+class benchmarkCliBuilder {
 public:
-    BenchmarkCliBuilder();
+    benchmarkCliBuilder();
 
     int
     parse(int argc, char **argv);
@@ -29,23 +29,23 @@ public:
     bool
     helpRequested() const;
 
-    const IBenchmarkScenario *
+    const benchmarkScenario *
     selectedScenario() const;
 
-    const ISouthboundPluginBenchmarkCommand *
+    const southboundPluginBenchmarkCommand *
     selectedPlugin() const;
 
 private:
-    G3ScenarioCommand g3_;
-    G4ScenarioCommand g4_;
-    RawCommand raw_;
+    g3ScenarioCommand g3_;
+    g4ScenarioCommand g4_;
+    rawCommand raw_;
 
-    std::vector<std::unique_ptr<ISouthboundPluginBenchmarkCommand>> g3_plugins_;
-    std::vector<std::unique_ptr<ISouthboundPluginBenchmarkCommand>> g4_plugins_;
-    std::vector<std::unique_ptr<ISouthboundPluginBenchmarkCommand>> raw_plugins_;
+    std::vector<std::unique_ptr<southboundPluginBenchmarkCommand>> g3Plugins_;
+    std::vector<std::unique_ptr<southboundPluginBenchmarkCommand>> g4Plugins_;
+    std::vector<std::unique_ptr<southboundPluginBenchmarkCommand>> rawPlugins_;
 
-    IBenchmarkScenario *selected_scenario_ = nullptr;
-    ISouthboundPluginBenchmarkCommand *selected_plugin_ = nullptr;
+    benchmarkScenario *selectedScenario_ = nullptr;
+    southboundPluginBenchmarkCommand *selectedPlugin_ = nullptr;
     bool help_ = false;
 };
 
