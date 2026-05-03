@@ -100,6 +100,8 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
         initializeMetrics();
     }
     catch (...) {
+        counters_.clear();
+        gauges_.clear();
         s_agent_names.erase(agent_name_);
         throw;
     }
@@ -154,7 +156,11 @@ nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
     auto &family = prometheus::BuildCounter().Name(name + "_total").Help(help).Register(*registry_);
     auto &metric =
         family.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
-    counters_[name] = {&family, &metric};
+    const auto inserted = counters_.try_emplace(name, &family, &metric).second;
+    if (!inserted) {
+        family.Remove(&metric);
+    }
+    NIXL_ASSERT(inserted);
 }
 
 void
@@ -164,7 +170,11 @@ nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
     auto &family = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
     auto &metric =
         family.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
-    gauges_[name] = {&family, &metric};
+    const auto inserted = gauges_.try_emplace(name, &family, &metric).second;
+    if (!inserted) {
+        family.Remove(&metric);
+    }
+    NIXL_ASSERT(inserted);
 }
 
 nixl_status_t
