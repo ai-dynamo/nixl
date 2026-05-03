@@ -42,7 +42,7 @@ buildHf3fsOptionSpecs() {
 
 nixlBackendPluginCapabilities
 buildHf3fsCapabilities() {
-    return {true, false};
+    return {true, false, true};
 }
 
 } // namespace

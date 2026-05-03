@@ -26,7 +26,7 @@ namespace {
 
 nixlBackendPluginCapabilities
 buildLibfabricCapabilities() {
-    return {false, true};
+    return {false, true, false};
 }
 
 } // namespace

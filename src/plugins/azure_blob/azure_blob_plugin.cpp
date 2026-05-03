@@ -49,7 +49,7 @@ buildAzureBlobOptionSpecs() {
 
 nixlBackendPluginCapabilities
 buildAzureBlobCapabilities() {
-    return {true, false};
+    return {true, false, false};
 }
 
 } // namespace

@@ -43,7 +43,7 @@ buildPosixOptionSpecs() {
 
 nixlBackendPluginCapabilities
 buildPosixCapabilities() {
-    return {true, false};
+    return {true, false, true};
 }
 
 } // namespace

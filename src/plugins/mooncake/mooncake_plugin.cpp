@@ -33,7 +33,7 @@ buildMooncakeOptionSpecs() {
 
 nixlBackendPluginCapabilities
 buildMooncakeCapabilities() {
-    return {false, true};
+    return {false, true, false};
 }
 } // namespace
 

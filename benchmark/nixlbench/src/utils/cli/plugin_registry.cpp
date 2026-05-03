@@ -61,17 +61,20 @@ southboundPluginRegistry::createAll() const {
 std::vector<std::unique_ptr<southboundPluginBenchmarkCommand>>
 southboundPluginRegistry::createForAvailableMetadataPlugins() const {
     std::vector<std::unique_ptr<southboundPluginBenchmarkCommand>> plugins;
-    nixlAgent agent("nixlbench-cli", nixlAgentConfig{});
+    // Keep the metadata probe agent alive for the process lifetime. Some NIXL
+    // builds start helper threads during plugin discovery, and tearing the agent
+    // down before CLI parsing completes can block in debug builds.
+    static auto *agent = new nixlAgent("nixlbench-cli", nixlAgentConfig{});
     std::vector<nixl_backend_t> available_plugins;
-    agent.getAvailPlugins(available_plugins);
+    agent->getAvailPlugins(available_plugins);
 
     for (const auto &plugin_name : available_plugins) {
         nixl_backend_option_list_t option_specs;
         nixlBackendPluginCapabilities capabilities;
-        if (agent.getPluginOptionSpecs(plugin_name, option_specs) != NIXL_SUCCESS) {
+        if (agent->getPluginOptionSpecs(plugin_name, option_specs) != NIXL_SUCCESS) {
             continue;
         }
-        if (agent.getPluginCapabilities(plugin_name, capabilities) != NIXL_SUCCESS) {
+        if (agent->getPluginCapabilities(plugin_name, capabilities) != NIXL_SUCCESS) {
             capabilities = {};
         }
         plugins.push_back(

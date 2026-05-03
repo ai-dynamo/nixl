@@ -89,7 +89,7 @@ get_backend_option_specs() {
 
 nixlBackendPluginCapabilities
 get_backend_capabilities() {
-    return {false, true};
+    return {false, true, false};
 }
 
 } // namespace

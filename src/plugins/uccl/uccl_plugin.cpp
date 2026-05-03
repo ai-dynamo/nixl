@@ -35,7 +35,7 @@ buildUcclOptionSpecs() {
 
 nixlBackendPluginCapabilities
 buildUcclCapabilities() {
-    return {false, true};
+    return {false, true, false};
 }
 } // namespace
 

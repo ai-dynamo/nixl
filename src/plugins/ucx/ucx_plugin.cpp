@@ -33,7 +33,7 @@ buildUcxOptionSpecs() {
 
 nixlBackendPluginCapabilities
 buildUcxCapabilities() {
-    return {false, true};
+    return {false, true, false};
 }
 
 } // namespace

@@ -56,6 +56,13 @@ struct metadataPluginOptionValue {
 
 using metadata_plugin_option_map_t = std::unordered_map<std::string, metadataPluginOptionValue>;
 
+struct fileWorkloadRequest {
+    providedValue<std::string> filepath;
+    providedValue<std::string> filenames;
+    providedValue<int> num_files{1};
+    providedValue<bool> enable_direct{false};
+};
+
 struct g3ScenarioRequest {
     std::string file_size;
     int parallel_threads = 1;

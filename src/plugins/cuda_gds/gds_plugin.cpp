@@ -33,7 +33,7 @@ buildGdsOptionSpecs() {
 
 nixlBackendPluginCapabilities
 buildGdsCapabilities() {
-    return {true, false};
+    return {true, false, true};
 }
 
 } // namespace

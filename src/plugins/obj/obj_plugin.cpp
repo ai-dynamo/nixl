@@ -66,7 +66,7 @@ buildObjOptionSpecs() {
 
 nixlBackendPluginCapabilities
 buildObjCapabilities() {
-    return {true, false};
+    return {true, false, false};
 }
 
 } // namespace

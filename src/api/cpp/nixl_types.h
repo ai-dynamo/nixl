@@ -153,6 +153,7 @@ using nixl_backend_option_list_t = std::vector<nixlBackendOptionSpec>;
 struct nixlBackendPluginCapabilities {
     bool canUseAsStorage = false;             ///< Backend can be used as storage.
     bool canUseAsNetworkDestination = false;  ///< Backend can be a network destination.
+    bool canReadWriteFiles = false;           ///< Backend uses filesystem files for storage.
 };
 
 /**

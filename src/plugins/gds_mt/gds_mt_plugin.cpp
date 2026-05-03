@@ -33,7 +33,7 @@ buildGdsMtOptionSpecs() {
 
 nixlBackendPluginCapabilities
 buildGdsMtCapabilities() {
-    return {true, false};
+    return {true, false, true};
 }
 
 } // namespace

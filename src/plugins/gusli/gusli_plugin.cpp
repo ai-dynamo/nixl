@@ -45,7 +45,7 @@ buildGusliOptionSpecs() {
 
 nixlBackendPluginCapabilities
 buildGusliCapabilities() {
-    return {true, false};
+    return {true, false, false};
 }
 
 } // namespace
