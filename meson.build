@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'LIBBLKIO']
 
 enabled_plugins = {}
 
@@ -299,6 +299,19 @@ if libfabric_path != ''
 else
   libfabric_dep = dependency('libfabric', required: false)
 endif
+
+# Check for libblkio
+libblkio_dep = dependency('libblkio', required: false)
+if not libblkio_dep.found()
+  # Try to find libblkio in common locations
+  libblkio_lib = cpp.find_library('libblkio', dirs: ['/usr/local/lib/x86_64-linux-gnu', '/usr/local/lib', '/usr/lib/x86_64-linux-gnu', '/usr/lib'], required: false)
+  if libblkio_lib.found() and cpp.has_header('blkio.h')
+    libblkio_dep = declare_dependency(dependencies: libblkio_lib)
+  endif
+endif
+
+# Check whether the libblkio plugin is enabled
+has_libblkio_plugin = libblkio_dep.found()
 
 # UCX GPU device API detection
 nvcc_prog = find_program('nvcc', required: false)

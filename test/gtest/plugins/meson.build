@@ -17,6 +17,10 @@ if enabled_plugins.get('UCCL')
     subdir('uccl')
 endif
 
+if enabled_plugins.get('LIBBLKIO') and has_libblkio_plugin
+    subdir('libblkio')
+endif
+
 if enabled_plugins.get('AZURE_BLOB')
     subdir('azure_blob')
 endif
