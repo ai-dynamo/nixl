@@ -1247,10 +1247,12 @@ xferBenchUtils::printStats(bool is_target,
     double avg_latency = 0, throughput_gb = 0;
     double totalbw = 0;
 
-    int num_iter = xferBenchConfig::num_iter;
+    int total_iter = xferBenchConfig::num_iter;
+    int per_thread_iter = total_iter / xferBenchConfig::num_threads;
 
     if (block_size > LARGE_BLOCK_SIZE) {
-        num_iter /= xferBenchConfig::large_blk_iter_ftr;
+        total_iter /= xferBenchConfig::large_blk_iter_ftr;
+        per_thread_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
     // Targets don't participate in reduction - they have no throughput to contribute
@@ -1260,8 +1262,8 @@ xferBenchUtils::printStats(bool is_target,
 
     double total_duration = stats.total_duration.avg();
 
-    total_data_transferred = ((block_size * batch_size) * num_iter); // In Bytes
-    avg_latency = (total_duration / (num_iter * batch_size)); // In microsec
+    total_data_transferred = ((block_size * batch_size) * total_iter); // In Bytes
+    avg_latency = (total_duration / (per_thread_iter * batch_size)); // In microsec
     if (IS_PAIRWISE_AND_MG() ||
         (IS_PAIRWISE_AND_SG() && xferBenchConfig::num_initiator_dev > 1 && rt->getSize() == 1)) {
         total_data_transferred *= xferBenchConfig::num_initiator_dev; // In Bytes
