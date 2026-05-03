@@ -21,8 +21,10 @@
 // Plugin type alias for convenience
 using gusli_plugin_t = nixlBackendPluginCreator<nixlGusliEngine>;
 
+namespace {
+
 [[nodiscard]] nixl_b_params_t
-get_gusli_backend_options() {
+getGusliBackendOptions() {
     nixl_b_params_t params;
     params["client_name"] = "";
     params["max_num_simultaneous_requests"] = "256";
@@ -30,14 +32,34 @@ get_gusli_backend_options() {
     return params;
 }
 
+nixl_backend_option_list_t
+buildGusliOptionSpecs() {
+    return {{"client_name", "GUSLI client name", nixl_backend_option_type_t::STRING, false, ""},
+            {"max_num_simultaneous_requests",
+             "GUSLI request concurrency",
+             nixl_backend_option_type_t::INT,
+             false,
+             "256"},
+            {"config_file", "GUSLI config file", nixl_backend_option_type_t::STRING, false, ""}};
+}
+
+nixlBackendPluginCapabilities
+buildGusliCapabilities() {
+    return {true, false};
+}
+
+} // namespace
+
 #ifdef STATIC_PLUGIN_GUSLI
 nixlBackendPlugin *
 createStaticGusliPlugin() {
     return gusli_plugin_t::create(NIXL_PLUGIN_API_VERSION,
                                   "GUSLI",
                                   "0.1.0",
-                                  get_gusli_backend_options(),
-                                  {BLK_SEG, DRAM_SEG});
+                                  getGusliBackendOptions(),
+                                  {BLK_SEG, DRAM_SEG},
+                                  buildGusliOptionSpecs(),
+                                  buildGusliCapabilities());
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
@@ -45,8 +67,10 @@ nixl_plugin_init() {
     return gusli_plugin_t::create(NIXL_PLUGIN_API_VERSION,
                                   "GUSLI",
                                   "0.1.0",
-                                  get_gusli_backend_options(),
-                                  {BLK_SEG, DRAM_SEG});
+                                  getGusliBackendOptions(),
+                                  {BLK_SEG, DRAM_SEG},
+                                  buildGusliOptionSpecs(),
+                                  buildGusliCapabilities());
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

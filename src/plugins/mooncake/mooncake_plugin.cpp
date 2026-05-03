@@ -20,10 +20,20 @@
 
 namespace {
 nixl_b_params_t
-get_mooncake_options() {
+getMooncakeOptions() {
     nixl_b_params_t params;
     params["mooncake_devices"] = "";
     return params;
+}
+
+nixl_backend_option_list_t
+buildMooncakeOptionSpecs() {
+    return {{"mooncake_devices", "Mooncake device list", nixl_backend_option_type_t::STRING, false, ""}};
+}
+
+nixlBackendPluginCapabilities
+buildMooncakeCapabilities() {
+    return {false, true};
 }
 } // namespace
 
@@ -33,14 +43,24 @@ using mooncake_plugin_t = nixlBackendPluginCreator<nixlMooncakeEngine>;
 #ifdef STATIC_PLUGIN_MOONCAKE
 nixlBackendPlugin *
 createStaticMOONCAKEPlugin() {
-    return mooncake_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
+    return mooncake_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                     "MOONCAKE",
+                                     "0.1.0",
+                                     getMooncakeOptions(),
+                                     {DRAM_SEG, VRAM_SEG},
+                                     buildMooncakeOptionSpecs(),
+                                     buildMooncakeCapabilities());
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return mooncake_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
+    return mooncake_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                     "MOONCAKE",
+                                     "0.1.0",
+                                     getMooncakeOptions(),
+                                     {DRAM_SEG, VRAM_SEG},
+                                     buildMooncakeOptionSpecs(),
+                                     buildMooncakeCapabilities());
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

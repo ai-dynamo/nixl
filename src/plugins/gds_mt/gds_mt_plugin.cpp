@@ -24,17 +24,41 @@
 // Plugin type alias for convenience
 using gds_mt_plugin_t = nixlBackendPluginCreator<nixlGdsMtEngine>;
 
+namespace {
+
+nixl_backend_option_list_t
+buildGdsMtOptionSpecs() {
+    return {{"thread_count", "GDS-MT thread count", nixl_backend_option_type_t::INT, false, "1"}};
+}
+
+nixlBackendPluginCapabilities
+buildGdsMtCapabilities() {
+    return {true, false};
+}
+
+} // namespace
+
 #ifdef STATIC_PLUGIN_GDS_MT
 nixlBackendPlugin *
 createStaticGDS_MTPlugin() {
-    return gds_mt_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "GDS_MT", "0.1.0", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+    return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                   "GDS_MT",
+                                   "0.1.0",
+                                   {},
+                                   {DRAM_SEG, VRAM_SEG, FILE_SEG},
+                                   buildGdsMtOptionSpecs(),
+                                   buildGdsMtCapabilities());
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return gds_mt_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "GDS_MT", "0.1.0", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+    return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                   "GDS_MT",
+                                   "0.1.0",
+                                   {},
+                                   {DRAM_SEG, VRAM_SEG, FILE_SEG},
+                                   buildGdsMtOptionSpecs(),
+                                   buildGdsMtCapabilities());
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

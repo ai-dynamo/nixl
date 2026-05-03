@@ -21,6 +21,23 @@
 // Plugin type alias for convenience
 using ucx_plugin_t = nixlBackendPluginCreator<nixlUcxEngine>;
 
+namespace {
+
+nixl_backend_option_list_t
+buildUcxOptionSpecs() {
+    return {{"ucx_devices", "UCX device list", nixl_backend_option_type_t::STRING, false, ""},
+            {"device_list", "UCX device list", nixl_backend_option_type_t::STRING, false, ""},
+            {"num_workers", "UCX worker count", nixl_backend_option_type_t::INT, false, "1"},
+            {"num_threads", "UCX progress thread count", nixl_backend_option_type_t::INT, false, "0"}};
+}
+
+nixlBackendPluginCapabilities
+buildUcxCapabilities() {
+    return {false, true};
+}
+
+} // namespace
+
 #ifdef STATIC_PLUGIN_UCX
 nixlBackendPlugin *
 createStaticUCXPlugin() {
@@ -28,7 +45,9 @@ createStaticUCXPlugin() {
                                 "UCX",
                                 "0.1.0",
                                 get_ucx_backend_common_options(),
-                                {DRAM_SEG, VRAM_SEG});
+                                {DRAM_SEG, VRAM_SEG},
+                                buildUcxOptionSpecs(),
+                                buildUcxCapabilities());
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
@@ -37,7 +56,9 @@ nixl_plugin_init() {
                                 "UCX",
                                 "0.1.0",
                                 get_ucx_backend_common_options(),
-                                {DRAM_SEG, VRAM_SEG});
+                                {DRAM_SEG, VRAM_SEG},
+                                buildUcxOptionSpecs(),
+                                buildUcxCapabilities());
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

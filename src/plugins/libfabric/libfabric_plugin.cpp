@@ -22,17 +22,36 @@
 // Plugin type alias for convenience
 using libfabric_plugin_t = nixlBackendPluginCreator<nixlLibfabricEngine>;
 
+namespace {
+
+nixlBackendPluginCapabilities
+buildLibfabricCapabilities() {
+    return {false, true};
+}
+
+} // namespace
+
 #ifdef STATIC_PLUGIN_LIBFABRIC
 nixlBackendPlugin *
 createStaticLIBFABRICPlugin() {
-    return libfabric_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "LIBFABRIC", "0.1.0", {}, {DRAM_SEG, VRAM_SEG});
+    return libfabric_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                      "LIBFABRIC",
+                                      "0.1.0",
+                                      {},
+                                      {DRAM_SEG, VRAM_SEG},
+                                      {},
+                                      buildLibfabricCapabilities());
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return libfabric_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "LIBFABRIC", "0.1.0", {}, {DRAM_SEG, VRAM_SEG});
+    return libfabric_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                      "LIBFABRIC",
+                                      "0.1.0",
+                                      {},
+                                      {DRAM_SEG, VRAM_SEG},
+                                      {},
+                                      buildLibfabricCapabilities());
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

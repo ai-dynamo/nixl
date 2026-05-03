@@ -69,14 +69,41 @@ get_backend_mems() {
     return mems;
 }
 
+namespace {
+
+nixl_backend_option_list_t
+get_backend_option_specs() {
+    return {{"network_devices",
+             "GPUNetIO network devices",
+             nixl_backend_option_type_t::STRING,
+             false,
+             ""},
+            {"oob_interface",
+             "GPUNetIO OOB interface",
+             nixl_backend_option_type_t::STRING,
+             false,
+             ""},
+            {"gpu_devices", "GPUNetIO GPU devices", nixl_backend_option_type_t::STRING, false, ""},
+            {"cuda_streams", "GPUNetIO CUDA stream count", nixl_backend_option_type_t::INT, false, ""}};
+}
+
+nixlBackendPluginCapabilities
+get_backend_capabilities() {
+    return {false, true};
+}
+
+} // namespace
+
 // Static plugin structure
 static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
-                                   create_engine,
-                                   destroy_engine,
-                                   get_plugin_name,
-                                   get_plugin_version,
-                                   get_backend_options,
-                                   get_backend_mems};
+                                    create_engine,
+                                    destroy_engine,
+                                    get_plugin_name,
+                                    get_plugin_version,
+                                    get_backend_options,
+                                    get_backend_mems,
+                                    get_backend_option_specs,
+                                    get_backend_capabilities};
 
 #ifdef STATIC_PLUGIN_GPUNETIO
 
