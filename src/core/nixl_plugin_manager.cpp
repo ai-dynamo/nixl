@@ -438,17 +438,17 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
 }
 
 namespace {
-static bool
+bool
 startsWith(const std::string &str, const std::string &prefix) {
     return str.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), str.begin());
 }
 
-static bool
+bool
 endsWith(const std::string &str, const std::string &suffix) {
     return str.size() >= suffix.size() && std::equal(suffix.rbegin(), suffix.rend(), str.rbegin());
 }
 
-static std::string
+std::string
 extractPluginName(const std::string &filename, const std::string &prefix) {
     return filename.substr(prefix.size(), filename.size() - prefix.size() - kPluginSuffix.size());
 }
@@ -558,6 +558,24 @@ nixlBackendPluginHandle::getBackendMems() const {
         return plugin_->get_backend_mems();
     }
     return mems; // Return empty mems if not implemented
+}
+
+nixl_backend_option_list_t
+nixlBackendPluginHandle::getBackendOptionSpecs() const {
+    nixl_backend_option_list_t optionSpecs;
+    if (plugin_ && plugin_->get_backend_option_specs) {
+        return plugin_->get_backend_option_specs();
+    }
+    return optionSpecs;
+}
+
+nixlBackendPluginCapabilities
+nixlBackendPluginHandle::getBackendCapabilities() const {
+    nixlBackendPluginCapabilities capabilities;
+    if (plugin_ && plugin_->get_backend_capabilities) {
+        return plugin_->get_backend_capabilities();
+    }
+    return capabilities;
 }
 
 std::vector<nixl_backend_t>

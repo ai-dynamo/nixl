@@ -65,6 +65,10 @@ public:
     getVersion() const override;
     nixl_b_params_t getBackendOptions() const;
     nixl_mem_list_t getBackendMems() const;
+    nixl_backend_option_list_t
+    getBackendOptionSpecs() const;
+    nixlBackendPluginCapabilities
+    getBackendCapabilities() const;
 
 private:
     nixlBackendPlugin *plugin_;

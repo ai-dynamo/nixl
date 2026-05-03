@@ -25,7 +25,7 @@
 class nixlUcxEngine;
 
 // Define the plugin API version
-#define NIXL_PLUGIN_API_VERSION 1
+#define NIXL_PLUGIN_API_VERSION 2
 
 // Define the plugin interface class
 class nixlBackendPlugin {
@@ -49,6 +49,12 @@ public:
 
     // Function to get supported backend mem types
     nixl_mem_list_t (*get_backend_mems)();
+
+    // Function to get backend init option specifications
+    nixl_backend_option_list_t (*get_backend_option_specs)();
+
+    // Function to get backend capabilities
+    nixlBackendPluginCapabilities (*get_backend_capabilities)();
 };
 
 // Macro to define exported C functions for the plugin
@@ -62,12 +68,16 @@ public:
            const char *name,
            const char *version,
            const nixl_b_params_t &params,
-           const nixl_mem_list_t &mem_list) {
+           const nixl_mem_list_t &mem_list,
+           const nixl_backend_option_list_t &option_specs = {},
+           const nixlBackendPluginCapabilities &capabilities = {}) {
 
         static const char *plugin_name = name;
         static const char *plugin_version = version;
         static const nixl_b_params_t plugin_params = params;
         static const nixl_mem_list_t plugin_mems = mem_list;
+        static const nixl_backend_option_list_t plugin_option_specs = option_specs;
+        static const nixlBackendPluginCapabilities plugin_capabilities = capabilities;
 
         static nixlBackendPlugin plugin_instance = {api_version,
                                                     createEngine,
@@ -75,7 +85,9 @@ public:
                                                     []() { return plugin_name; },
                                                     []() { return plugin_version; },
                                                     []() { return plugin_params; },
-                                                    []() { return plugin_mems; }};
+                                                    []() { return plugin_mems; },
+                                                    []() { return plugin_option_specs; },
+                                                    []() { return plugin_capabilities; }};
 
         return &plugin_instance;
     }
