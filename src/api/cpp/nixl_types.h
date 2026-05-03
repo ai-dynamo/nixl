@@ -122,6 +122,40 @@ using nixl_mem_list_t = std::vector<nixl_mem_t>;
 using nixl_b_params_t = std::unordered_map<std::string, std::string>;
 
 /**
+ * @brief Backend initialization option value types for static plugin metadata.
+ */
+enum class nixl_backend_option_type_t {
+    BOOL,   ///< Boolean value represented as a string in nixl_b_params_t.
+    INT,    ///< Signed integer value represented as a string in nixl_b_params_t.
+    UINT64, ///< Unsigned 64-bit integer represented as a string in nixl_b_params_t.
+    STRING, ///< String value.
+};
+
+/**
+ * @brief Describes one backend init-time custom parameter accepted by createBackend().
+ */
+struct nixlBackendOptionSpec {
+    std::string name;                       ///< Backend init parameter name.
+    std::string help;                       ///< User-facing description of the parameter.
+    nixl_backend_option_type_t type;        ///< Parameter value type.
+    bool required = false;                  ///< Whether the parameter is required.
+    std::string defaultValue;               ///< Default value represented as a string.
+};
+
+/**
+ * @brief A list of backend init-time option specifications.
+ */
+using nixl_backend_option_list_t = std::vector<nixlBackendOptionSpec>;
+
+/**
+ * @brief Static backend role capabilities exposed by a plugin.
+ */
+struct nixlBackendPluginCapabilities {
+    bool canUseAsStorage = false;             ///< Backend can be used as storage.
+    bool canUseAsNetworkDestination = false;  ///< Backend can be a network destination.
+};
+
+/**
  * @brief A typedef for a  std::unordered_map<std::string, std::vector<nixl_blob_t>>
  *        to hold nixl_notifs_t (nixl notifications)
  */
