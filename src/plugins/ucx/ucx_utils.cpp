@@ -24,6 +24,9 @@
 #include <string>
 #include <vector>
 
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
+
 #include <nixl_types.h>
 
 #include "common/hw_info.h"
@@ -407,14 +410,14 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
 
     nixl::ucx::config config;
 
-    /* If requested, restrict the set of network devices */
+    // If requested, restrict the set of network devices
     if (devs.size()) {
-        /* TODO: check if this is the best way */
-        std::string devs_str;
-        for (const auto &dev : devs) {
-            devs_str += dev + ":1,";
-        }
-        devs_str.pop_back(); // to remove odd comma after the last device
+        // Before UCX 1.21 each device name needs an explicit port suffix
+        const absl::string_view suffix = (ucpVersion_ < UCP_VERSION(1, 21)) ? ":1" : "";
+        const std::string devs_str =
+            absl::StrJoin(devs, ",", [suffix](std::string *out, absl::string_view dev) {
+                absl::StrAppend(out, dev, suffix);
+            });
         config.modifyAlways("NET_DEVICES", devs_str.c_str());
     }
 
