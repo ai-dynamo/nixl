@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,8 @@
 option('cudapath_inc', type: 'string', value: '', description: 'Include path for CUDA')
 option('cudapath_lib', type: 'string', value: '', description: 'Library path for CUDA')
 option('cudapath_stub', type: 'string', value: '', description: 'Extra Stub path for CUDA')
+option('ucx_device_include_path', type: 'string', value: '',
+       description: 'Path to UCX headers providing gpu/ucx/nixl_device.cuh for Device API kernels')
 option('etcd_inc_path', type: 'string', value: '', description: 'Path to ETCD C++ Client includes')
 option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD C++ Client library')
 option('nixl_path', type: 'string', value: '/usr/local', description: 'Path to NiXL')

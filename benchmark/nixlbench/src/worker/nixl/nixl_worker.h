@@ -25,7 +25,9 @@
 #include <vector>
 #include <optional>
 #include <memory>
+#include <functional>
 #include <nixl.h>
+#include <nixl_types.h>
 #include "utils/utils.h"
 #include "worker/worker.h"
 
@@ -45,6 +47,13 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<xferFileState> remote_fds;
         std::vector<std::vector<xferBenchIOV>> remote_iovs;
         std::vector<GusliDeviceConfig> gusli_devices;
+        nixlMemViewH local_mvh;
+        nixlMemViewH remote_mvh;
+        std::string remote_agent_name;
+        /// Device API: target holds local registered counter buffer (done + error uint64_t
+        /// counters); initiator holds peer descriptor after exchangeIOV (no local alloc on
+        /// initiator).
+        std::optional<xferBenchIOV> completion_counter_iov;
 
     public:
         explicit xferBenchNixlWorker(const std::vector<std::string> &devices);
@@ -70,6 +79,15 @@ class xferBenchNixlWorker: public xferBenchWorker {
                  const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
 
+        void
+        prepareGPULocalView(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists);
+        void
+        prepareGPURemoteView(const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists);
+        void
+        releaseGPULocalView();
+        void
+        releaseGPURemoteView();
+
     private:
         std::optional<xferBenchIOV>
         initBasicDescDram(size_t buffer_size, int mem_dev_id);
@@ -78,6 +96,15 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);
         void
         cleanupBasicDescVram(xferBenchIOV &basic_desc);
+#if HAVE_UCX_DEVICE_KERNEL
+        std::optional<xferBenchIOV>
+        initCompletionCounterVram();
+        bool
+        waitForDeviceCompletionCounter(const xferBenchIOV &counter_iov,
+                                       uint64_t expected_value,
+                                       const char *phase,
+                                       const std::function<void()> &checkLiveness);
+#endif
         std::optional<xferBenchIOV>
         initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
         void cleanupBasicDescFile(xferBenchIOV &basic_desc);

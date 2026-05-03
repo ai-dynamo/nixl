@@ -120,9 +120,25 @@ static int processBatchSizes(xferBenchWorker &worker,
                 return EXIT_FAILURE;
             }
 
+#if HAVE_UCX_DEVICE_KERNEL
+            if (xferBenchConfig::use_device_api) {
+                if (auto *nixl_worker = dynamic_cast<xferBenchNixlWorker *>(&worker)) {
+                    nixl_worker->prepareGPULocalView(local_trans_lists);
+                }
+            }
+
+#endif
             worker.exchangeIOV(local_trans_lists, block_size);
             worker.poll(block_size);
 
+#if HAVE_UCX_DEVICE_KERNEL
+            if (xferBenchConfig::use_device_api) {
+                if (auto *nixl_worker = dynamic_cast<xferBenchNixlWorker *>(&worker)) {
+                    nixl_worker->releaseGPULocalView();
+                }
+            }
+
+#endif
             if (!xferBenchUtils::validateTransfer(false, local_trans_lists, local_trans_lists)) {
                 return EXIT_FAILURE;
             }
@@ -135,7 +151,26 @@ static int processBatchSizes(xferBenchWorker &worker,
             std::vector<std::vector<xferBenchIOV>> remote_trans_lists(
                 worker.exchangeIOV(local_trans_lists, block_size));
 
+#if HAVE_UCX_DEVICE_KERNEL
+            if (xferBenchConfig::use_device_api) {
+                if (auto *nixl_worker = dynamic_cast<xferBenchNixlWorker *>(&worker)) {
+                    nixl_worker->prepareGPULocalView(local_trans_lists);
+                    nixl_worker->prepareGPURemoteView(remote_trans_lists);
+                }
+            }
+
+#endif
             auto result = worker.transfer(block_size, local_trans_lists, remote_trans_lists);
+
+#if HAVE_UCX_DEVICE_KERNEL
+            if (xferBenchConfig::use_device_api) {
+                if (auto *nixl_worker = dynamic_cast<xferBenchNixlWorker *>(&worker)) {
+                    nixl_worker->releaseGPURemoteView();
+                    nixl_worker->releaseGPULocalView();
+                }
+            }
+
+#endif
             if (std::holds_alternative<int>(result)) {
                 return 1;
             }
