@@ -19,7 +19,7 @@ enum class option_kind_t {
     FLAG,
 };
 
-using option_target_t = std::variant<bool *, int *, uint64_t *, std::string *>;
+using option_target_t = std::variant<bool *, int *, uint64_t *, std::string *, metadataPluginOptionValue *>;
 
 struct cliOption {
     std::string name;

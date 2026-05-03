@@ -20,7 +20,7 @@ const std::vector<cliOption> &g3ScenarioCommand::getOptions() const { return opt
 
 scenario_type_t g3ScenarioCommand::scenarioType() const { return scenario_type_t::G3; }
 
-bool g3ScenarioCommand::supportsPlugin(plugin_type_t plugin) const { return plugin == plugin_type_t::POSIX; }
+bool g3ScenarioCommand::supportsPlugin(nixlBackendPluginCapabilities pluginCapabilities) const { return pluginCapabilities.canUseAsStorage; }
 
 int g3ScenarioCommand::run(southboundPluginBenchmarkCommand &) { return 0; }
 

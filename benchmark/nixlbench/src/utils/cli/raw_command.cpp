@@ -5,28 +5,7 @@
 
 #include "utils/cli/raw_command.h"
 
-#include "utils/cli/obj_plugin_command.h"
-#include "utils/cli/posix_plugin_command.h"
 #include "utils/cli/raw_execution.h"
-
-#ifdef WITH_GDS_PLUGIN
-#include "utils/cli/gds_plugin_command.h"
-#endif
-#ifdef WITH_GDS_MT_PLUGIN
-#include "utils/cli/gds_mt_plugin_command.h"
-#endif
-#ifdef WITH_GPUNETIO_PLUGIN
-#include "utils/cli/gpunetio_plugin_command.h"
-#endif
-#ifdef WITH_AZURE_BLOB_PLUGIN
-#include "utils/cli/azure_blob_plugin_command.h"
-#endif
-#ifdef WITH_HF3FS_PLUGIN
-#include "utils/cli/hf3fs_plugin_command.h"
-#endif
-#ifdef WITH_GUSLI_PLUGIN
-#include "utils/cli/gusli_plugin_command.h"
-#endif
 
 #include <toml++/toml.hpp>
 
@@ -40,24 +19,12 @@ namespace {
 
 constexpr const char *kBackendPosix = "POSIX";
 constexpr const char *kBackendObj = "OBJ";
-#ifdef WITH_GDS_PLUGIN
 constexpr const char *kBackendGds = "GDS";
-#endif
-#ifdef WITH_GDS_MT_PLUGIN
 constexpr const char *kBackendGdsMt = "GDS_MT";
-#endif
-#ifdef WITH_GPUNETIO_PLUGIN
 constexpr const char *kBackendGpuNetIo = "GPUNETIO";
-#endif
-#ifdef WITH_AZURE_BLOB_PLUGIN
 constexpr const char *kBackendAzureBlob = "AZURE_BLOB";
-#endif
-#ifdef WITH_HF3FS_PLUGIN
 constexpr const char *kBackendHf3fs = "HF3FS";
-#endif
-#ifdef WITH_GUSLI_PLUGIN
 constexpr const char *kBackendGusli = "GUSLI";
-#endif
 
 template <typename T>
 T getTomlValue(const toml::table *tbl, const char *name, const T &fallback) {
@@ -148,167 +115,120 @@ void resolveConfigValues(rawRequest &raw, const toml::table *tbl) {
 
 #undef RESOLVE_RAW_ARG
 
-template <typename storagePluginRequest>
-void applyStoragePluginOptions(rawRequest &raw, const storagePluginRequest &plugin) {
-    if (plugin.filepath.wasProvided()) {
-        raw.filepath.setProvided(plugin.filepath.value);
+const metadataPluginOptionValue *
+findOption(const metadata_plugin_option_map_t &options, const std::string &name) {
+    const auto iter = options.find(name);
+    if (iter == options.end() || !iter->second.isProvided) {
+        return nullptr;
     }
-    if (plugin.filenames.wasProvided()) {
-        raw.filenames.setProvided(plugin.filenames.value);
+    return &iter->second;
+}
+
+std::string
+optionStringValue(const metadataPluginOptionValue &option) {
+    return option.value.empty() ? (option.boolValue ? "true" : "false") : option.value;
+}
+
+void setStringOption(providedValue<std::string> &raw,
+                     const metadata_plugin_option_map_t &options,
+                     const char *name) {
+    if (const auto *option = findOption(options, name)) {
+        raw.setProvided(optionStringValue(*option));
     }
-    if (plugin.num_files.wasProvided()) {
-        raw.num_files.setProvided(plugin.num_files.value);
+}
+
+void setBoolOption(providedValue<bool> &raw,
+                   const metadata_plugin_option_map_t &options,
+                   const char *name) {
+    if (const auto *option = findOption(options, name)) {
+        raw.setProvided(option->boolValue || option->value == "true");
     }
-    if (plugin.storage_enable_direct.wasProvided()) {
-        raw.storage_enable_direct.setProvided(plugin.storage_enable_direct.value);
+}
+
+void setIntOption(providedValue<int> &raw,
+                  const metadata_plugin_option_map_t &options,
+                  const char *name) {
+    if (const auto *option = findOption(options, name)) {
+        raw.setProvided(std::stoi(optionStringValue(*option)));
+    }
+}
+
+void setUint64Option(providedValue<uint64_t> &raw,
+                     const metadata_plugin_option_map_t &options,
+                     const char *name) {
+    if (const auto *option = findOption(options, name)) {
+        raw.setProvided(std::stoull(optionStringValue(*option)));
     }
 }
 
 void applyPluginOptions(rawRequest &raw, const southboundPluginBenchmarkCommand &plugin) {
-    if (plugin.pluginType() == plugin_type_t::POSIX) {
-        const auto &posix = static_cast<const posixPluginCommand &>(plugin).request();
+    const auto &options = plugin.metadataOptions();
+    if (plugin.name() == kBackendPosix) {
         raw.backend.setProvided(kBackendPosix);
-        applyStoragePluginOptions(raw, posix);
-        if (posix.api_type.wasProvided()) {
-            raw.posix_api_type.setProvided(posix.api_type.value);
+        if (const auto *option = findOption(options, "use_aio")) {
+            const auto value = optionStringValue(*option);
+            if (value == "aio" || value == "AIO" || option->boolValue || value == "true") {
+                raw.posix_api_type.setProvided("AIO");
+            } else if (value == "iouring" || value == "uring" || value == "URING") {
+                raw.posix_api_type.setProvided("URING");
+            } else if (value == "posixaio" || value == "POSIXAIO") {
+                raw.posix_api_type.setProvided("POSIXAIO");
+            }
         }
-        if (posix.ios_pool_size.wasProvided()) {
-            raw.posix_ios_pool_size.setProvided(posix.ios_pool_size.value);
+        if (const auto *option = findOption(options, "use_uring")) {
+            if (option->boolValue || optionStringValue(*option) == "true") {
+                raw.posix_api_type.setProvided("URING");
+            }
         }
-        if (posix.kernel_queue_size.wasProvided()) {
-            raw.posix_kernel_queue_size.setProvided(posix.kernel_queue_size.value);
+        if (const auto *option = findOption(options, "use_posix_aio")) {
+            if (option->boolValue || optionStringValue(*option) == "true") {
+                raw.posix_api_type.setProvided("POSIXAIO");
+            }
         }
-        if (posix.api_type.wasProvided()) {
-            raw.posix_api_type.setProvided(posix.api_type.value);
-        }
-        if (posix.enable_direct.wasProvided()) {
-            raw.storage_enable_direct.setProvided(posix.enable_direct.value);
-        }
-    } else if (plugin.pluginType() == plugin_type_t::OBJ) {
-        const auto &obj = static_cast<const objPluginCommand &>(plugin).request();
+        setIntOption(raw.posix_ios_pool_size, options, "ios_pool_size");
+        setIntOption(raw.posix_kernel_queue_size, options, "kernel_queue_size");
+    } else if (plugin.name() == kBackendObj) {
         raw.backend.setProvided(kBackendObj);
-        if (obj.access_key.wasProvided()) {
-            raw.obj_access_key.setProvided(obj.access_key.value);
-        }
-        if (obj.secret_key.wasProvided()) {
-            raw.obj_secret_key.setProvided(obj.secret_key.value);
-        }
-        if (obj.session_token.wasProvided()) {
-            raw.obj_session_token.setProvided(obj.session_token.value);
-        }
-        if (obj.bucket_name.wasProvided()) {
-            raw.obj_bucket_name.setProvided(obj.bucket_name.value);
-        }
-        if (obj.scheme.wasProvided()) {
-            raw.obj_scheme.setProvided(obj.scheme.value);
-        }
-        if (obj.region.wasProvided()) {
-            raw.obj_region.setProvided(obj.region.value);
-        }
-        if (obj.use_virtual_addressing.wasProvided()) {
-            raw.obj_use_virtual_addressing.setProvided(obj.use_virtual_addressing.value);
-        }
-        if (obj.endpoint_override.wasProvided()) {
-            raw.obj_endpoint_override.setProvided(obj.endpoint_override.value);
-        }
-        if (obj.req_checksum.wasProvided()) {
-            raw.obj_req_checksum.setProvided(obj.req_checksum.value);
-        }
-        if (obj.ca_bundle.wasProvided()) {
-            raw.obj_ca_bundle.setProvided(obj.ca_bundle.value);
-        }
-        if (obj.crt_min_limit.wasProvided()) {
-            raw.obj_crt_min_limit.setProvided(obj.crt_min_limit.value);
-        }
-        if (obj.accelerated_enable.wasProvided()) {
-            raw.obj_accelerated_enable.setProvided(obj.accelerated_enable.value);
-        }
-        if (obj.accelerated_type.wasProvided()) {
-            raw.obj_accelerated_type.setProvided(obj.accelerated_type.value);
-        }
-    }
-#ifdef WITH_GDS_PLUGIN
-    else if (plugin.pluginType() == plugin_type_t::GDS) {
-        const auto &gds = static_cast<const gdsPluginCommand &>(plugin).request();
+        setStringOption(raw.obj_bucket_name, options, "bucket");
+        setStringOption(raw.obj_access_key, options, "access_key");
+        setStringOption(raw.obj_secret_key, options, "secret_key");
+        setStringOption(raw.obj_session_token, options, "session_token");
+        setStringOption(raw.obj_scheme, options, "scheme");
+        setStringOption(raw.obj_region, options, "region");
+        setBoolOption(raw.obj_use_virtual_addressing, options, "use_virtual_addressing");
+        setStringOption(raw.obj_endpoint_override, options, "endpoint_override");
+        setStringOption(raw.obj_req_checksum, options, "req_checksum");
+        setStringOption(raw.obj_ca_bundle, options, "ca_bundle");
+        setUint64Option(raw.obj_crt_min_limit, options, "crtMinLimit");
+        setBoolOption(raw.obj_accelerated_enable, options, "accelerated");
+        setStringOption(raw.obj_accelerated_type, options, "type");
+    } else if (plugin.name() == kBackendGds) {
         raw.backend.setProvided(kBackendGds);
-        applyStoragePluginOptions(raw, gds);
-        if (gds.batch_pool_size.wasProvided()) {
-            raw.gds_batch_pool_size.setProvided(gds.batch_pool_size.value);
-        }
-        if (gds.batch_limit.wasProvided()) {
-            raw.gds_batch_limit.setProvided(gds.batch_limit.value);
-        }
-    }
-#endif
-#ifdef WITH_GDS_MT_PLUGIN
-    else if (plugin.pluginType() == plugin_type_t::GDS_MT) {
-        const auto &gds_mt = static_cast<const gdsMtPluginCommand &>(plugin).request();
+        setIntOption(raw.gds_batch_pool_size, options, "batch_pool_size");
+        setIntOption(raw.gds_batch_limit, options, "batch_limit");
+    } else if (plugin.name() == kBackendGdsMt) {
         raw.backend.setProvided(kBackendGdsMt);
-        applyStoragePluginOptions(raw, gds_mt);
-        if (gds_mt.num_threads.wasProvided()) {
-            raw.gds_mt_num_threads.setProvided(gds_mt.num_threads.value);
-        }
-    }
-#endif
-#ifdef WITH_GPUNETIO_PLUGIN
-    else if (plugin.pluginType() == plugin_type_t::GPUNETIO) {
-        const auto &gpunetio = static_cast<const gpunetioPluginCommand &>(plugin).request();
+        setIntOption(raw.gds_mt_num_threads, options, "thread_count");
+    } else if (plugin.name() == kBackendGpuNetIo) {
         raw.backend.setProvided(kBackendGpuNetIo);
-        if (gpunetio.device_list.wasProvided()) {
-            raw.gpunetio_device_list.setProvided(gpunetio.device_list.value);
-        }
-        if (gpunetio.oob_list.wasProvided()) {
-            raw.gpunetio_oob_list.setProvided(gpunetio.oob_list.value);
-        }
-    }
-#endif
-#ifdef WITH_AZURE_BLOB_PLUGIN
-    else if (plugin.pluginType() == plugin_type_t::AZURE_BLOB) {
-        const auto &azure_blob = static_cast<const azureBlobPluginCommand &>(plugin).request();
+        setStringOption(raw.device_list, options, "network_devices");
+        setStringOption(raw.gpunetio_oob_list, options, "oob_interface");
+        setStringOption(raw.gpunetio_device_list, options, "gpu_devices");
+    } else if (plugin.name() == kBackendAzureBlob) {
         raw.backend.setProvided(kBackendAzureBlob);
-        if (azure_blob.blob_account_url.wasProvided()) {
-            raw.azure_blob_account_url.setProvided(azure_blob.blob_account_url.value);
-        }
-        if (azure_blob.blob_container_name.wasProvided()) {
-            raw.azure_blob_container_name.setProvided(azure_blob.blob_container_name.value);
-        }
-        if (azure_blob.blob_connection_string.wasProvided()) {
-            raw.azure_blob_connection_string.setProvided(azure_blob.blob_connection_string.value);
-        }
-    }
-#endif
-#ifdef WITH_HF3FS_PLUGIN
-    else if (plugin.pluginType() == plugin_type_t::HF3FS) {
-        const auto &hf3fs = static_cast<const hf3fsPluginCommand &>(plugin).request();
+        setStringOption(raw.azure_blob_account_url, options, "account_url");
+        setStringOption(raw.azure_blob_container_name, options, "container_name");
+        setStringOption(raw.azure_blob_connection_string, options, "connection_string");
+    } else if (plugin.name() == kBackendHf3fs) {
         raw.backend.setProvided(kBackendHf3fs);
-        applyStoragePluginOptions(raw, hf3fs);
-        if (hf3fs.iopool_size.wasProvided()) {
-            raw.hf3fs_iopool_size.setProvided(hf3fs.iopool_size.value);
-        }
-    }
-#endif
-#ifdef WITH_GUSLI_PLUGIN
-    else if (plugin.pluginType() == plugin_type_t::GUSLI) {
-        const auto &gusli = static_cast<const gusliPluginCommand &>(plugin).request();
+        setStringOption(raw.filepath, options, "mount_point");
+        setIntOption(raw.hf3fs_iopool_size, options, "iopool_size");
+    } else if (plugin.name() == kBackendGusli) {
         raw.backend.setProvided(kBackendGusli);
-        applyStoragePluginOptions(raw, gusli);
-        if (gusli.client_name.wasProvided()) {
-            raw.gusli_client_name.setProvided(gusli.client_name.value);
-        }
-        if (gusli.max_simultaneous_requests.wasProvided()) {
-            raw.gusli_max_simultaneous_requests.setProvided(gusli.max_simultaneous_requests.value);
-        }
-        if (gusli.config_file.wasProvided()) {
-            raw.gusli_config_file.setProvided(gusli.config_file.value);
-        }
-        if (gusli.device_byte_offsets.wasProvided()) {
-            raw.gusli_device_byte_offsets.setProvided(gusli.device_byte_offsets.value);
-        }
-        if (gusli.device_security.wasProvided()) {
-            raw.gusli_device_security.setProvided(gusli.device_security.value);
-        }
+        setStringOption(raw.gusli_client_name, options, "client_name");
+        setIntOption(raw.gusli_max_simultaneous_requests, options, "max_num_simultaneous_requests");
+        setStringOption(raw.gusli_config_file, options, "config_file");
     }
-#endif
 }
 
 } // namespace
@@ -353,7 +273,7 @@ const rawRequest &rawCommand::request() const { return request_; }
 
 scenario_type_t rawCommand::scenarioType() const { return scenario_type_t::RAW; }
 
-bool rawCommand::supportsPlugin(plugin_type_t plugin) const { return plugin != plugin_type_t::NONE; }
+bool rawCommand::supportsPlugin(nixlBackendPluginCapabilities pluginCapabilities) const { return true; }
 
 int rawCommand::run(southboundPluginBenchmarkCommand &) { return runRawRequest(request_); }
 

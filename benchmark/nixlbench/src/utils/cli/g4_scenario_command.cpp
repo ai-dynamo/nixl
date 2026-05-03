@@ -21,8 +21,8 @@ const std::vector<cliOption> &g4ScenarioCommand::getOptions() const { return opt
 
 scenario_type_t g4ScenarioCommand::scenarioType() const { return scenario_type_t::G4; }
 
-bool g4ScenarioCommand::supportsPlugin(plugin_type_t plugin) const {
-    return plugin == plugin_type_t::POSIX || plugin == plugin_type_t::OBJ;
+bool g4ScenarioCommand::supportsPlugin(nixlBackendPluginCapabilities pluginCapabilities) const {
+    return pluginCapabilities.canUseAsStorage;
 }
 
 int g4ScenarioCommand::run(southboundPluginBenchmarkCommand &) { return 0; }

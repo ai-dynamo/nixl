@@ -18,7 +18,7 @@ public:
     std::string_view description() const override;
     const std::vector<cliOption> &getOptions() const override;
     scenario_type_t scenarioType() const override;
-    bool supportsPlugin(plugin_type_t plugin) const override;
+    bool supportsPlugin(nixlBackendPluginCapabilities pluginCapabilities) const override;
     int run(southboundPluginBenchmarkCommand &plugin) override;
     const g3ScenarioRequest &request() const;
 

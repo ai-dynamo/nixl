@@ -20,16 +20,14 @@ utils_sources = [
   'cli/benchmark_requests.h',
   'cli/cli_option.cpp',
   'cli/cli_option.h',
+  'cli/metadata_plugin_command.cpp',
+  'cli/metadata_plugin_command.h',
   'cli/plugin_registry.cpp',
   'cli/plugin_registry.h',
   'cli/g3_scenario_command.cpp',
   'cli/g3_scenario_command.h',
   'cli/g4_scenario_command.cpp',
   'cli/g4_scenario_command.h',
-  'cli/posix_plugin_command.cpp',
-  'cli/posix_plugin_command.h',
-  'cli/obj_plugin_command.cpp',
-  'cli/obj_plugin_command.h',
   'cli/raw_command.cpp',
   'cli/raw_command.h',
   'cli/raw_execution.cpp',
@@ -40,36 +38,6 @@ utils_sources = [
   'utils.h',
   'scope_guard.h'
 ]
-
-if get_option('with_gds_plugin')
-  utils_sources += ['cli/gds_plugin_command.cpp', 'cli/gds_plugin_command.h']
-  add_project_arguments('-DWITH_GDS_PLUGIN', language: 'cpp')
-endif
-
-if get_option('with_gds_mt_plugin')
-  utils_sources += ['cli/gds_mt_plugin_command.cpp', 'cli/gds_mt_plugin_command.h']
-  add_project_arguments('-DWITH_GDS_MT_PLUGIN', language: 'cpp')
-endif
-
-if get_option('with_gpunetio_plugin')
-  utils_sources += ['cli/gpunetio_plugin_command.cpp', 'cli/gpunetio_plugin_command.h']
-  add_project_arguments('-DWITH_GPUNETIO_PLUGIN', language: 'cpp')
-endif
-
-if get_option('with_azure_blob_plugin')
-  utils_sources += ['cli/azure_blob_plugin_command.cpp', 'cli/azure_blob_plugin_command.h']
-  add_project_arguments('-DWITH_AZURE_BLOB_PLUGIN', language: 'cpp')
-endif
-
-if get_option('with_hf3fs_plugin')
-  utils_sources += ['cli/hf3fs_plugin_command.cpp', 'cli/hf3fs_plugin_command.h']
-  add_project_arguments('-DWITH_HF3FS_PLUGIN', language: 'cpp')
-endif
-
-if get_option('with_gusli_plugin')
-  utils_sources += ['cli/gusli_plugin_command.cpp', 'cli/gusli_plugin_command.h']
-  add_project_arguments('-DWITH_GUSLI_PLUGIN', language: 'cpp')
-endif
 
 utils_deps = [
   cuda_dep,

@@ -10,6 +10,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace nixlbench {
@@ -23,6 +24,9 @@ public:
     bool registerPlugin(Factory factory);
 
     std::vector<std::unique_ptr<southboundPluginBenchmarkCommand>> createAll() const;
+
+    std::vector<std::unique_ptr<southboundPluginBenchmarkCommand>>
+    createForAvailableMetadataPlugins() const;
 
 private:
     southboundPluginRegistry() = default;

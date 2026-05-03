@@ -6,6 +6,7 @@
 #ifndef NIXLBENCH_BENCHMARK_COMMAND_H
 #define NIXLBENCH_BENCHMARK_COMMAND_H
 
+#include "nixl_types.h"
 #include "utils/cli/benchmark_requests.h"
 #include "utils/cli/cli_option.h"
 
@@ -36,7 +37,7 @@ public:
     scenarioType() const = 0;
 
     virtual bool
-    supportsPlugin(plugin_type_t plugin) const = 0;
+    supportsPlugin(nixlBackendPluginCapabilities pluginCapabilities) const = 0;
 
     virtual int
     run(southboundPluginBenchmarkCommand &plugin) = 0;
@@ -44,11 +45,11 @@ public:
 
 class southboundPluginBenchmarkCommand : public benchmarkCommand {
 public:
-    virtual plugin_type_t
-    pluginType() const = 0;
+    virtual const metadata_plugin_option_map_t &
+    metadataOptions() const = 0;
 
-    virtual bool
-    supportsScenario(scenario_type_t scenario) const = 0;
+    virtual const nixlBackendPluginCapabilities &
+    capabilities() const = 0;
 };
 
 } // namespace nixlbench

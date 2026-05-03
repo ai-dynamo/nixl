@@ -7,6 +7,7 @@
 #define NIXLBENCH_BENCHMARK_REQUESTS_H
 
 #include <cstdint>
+#include <unordered_map>
 #include <string>
 
 namespace nixlbench {
@@ -35,17 +36,25 @@ enum class scenario_type_t {
     G4,
 };
 
-enum class plugin_type_t {
-    NONE,
-    POSIX,
-    OBJ,
-    GDS,
-    GDS_MT,
-    GPUNETIO,
-    AZURE_BLOB,
-    HF3FS,
-    GUSLI,
+// enum class plugin_type_t {
+//     NONE,
+//     POSIX,
+//     OBJ,
+//     GDS,
+//     GDS_MT,
+//     GPUNETIO,
+//     AZURE_BLOB,
+//     HF3FS,
+//     GUSLI,
+// };
+
+struct metadataPluginOptionValue {
+    std::string value;
+    bool boolValue = false;
+    bool isProvided = false;
 };
+
+using metadata_plugin_option_map_t = std::unordered_map<std::string, metadataPluginOptionValue>;
 
 struct g3ScenarioRequest {
     std::string file_size;
