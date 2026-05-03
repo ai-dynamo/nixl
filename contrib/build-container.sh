@@ -18,6 +18,7 @@
 SOURCE_DIR=$(dirname "$(readlink -f "$0")")
 BUILD_CONTEXT=$(dirname "$(readlink -f "$SOURCE_DIR")")
 DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
+. "${BUILD_CONTEXT}/.ci/scripts/common.sh"
 commit_id=$(git rev-parse --short HEAD)
 
 # Get latest TAG and add COMMIT_ID for dev

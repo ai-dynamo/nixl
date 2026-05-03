@@ -52,7 +52,7 @@ env:
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   TEST_TIMEOUT: 50
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260426-1"
+  CI_IMAGE_TAG: "20260428-1"
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
