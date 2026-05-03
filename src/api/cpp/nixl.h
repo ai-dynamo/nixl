@@ -78,6 +78,29 @@ class nixlAgent {
         getPluginParams (const nixl_backend_t &type,
                          nixl_mem_list_t &mems,
                          nixl_b_params_t &params) const;
+
+        /**
+         * @brief  Get the init-time option metadata for a backend plugin.
+         *
+         * @param  type           Plugin backend type
+         * @param  options [out]  List of init-time custom parameters accepted by the plugin
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        getPluginOptionSpecs(const nixl_backend_t &type,
+                             nixl_backend_option_list_t &options) const;
+
+        /**
+         * @brief  Get the role capabilities exposed by a backend plugin.
+         *
+         * @param  type                Plugin backend type
+         * @param  capabilities [out]  Backend role capability metadata
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        getPluginCapabilities(const nixl_backend_t &type,
+                              nixlBackendPluginCapabilities &capabilities) const;
+
         /**
          * @brief  Get the backend parameters after instantiation. This will be a comprehensive
          *         list, for instance the default values used for parameters that were not

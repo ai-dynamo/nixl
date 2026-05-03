@@ -261,6 +261,60 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
 }
 
 nixl_status_t
+nixlAgent::getPluginOptionSpecs(const nixl_backend_t &type,
+                                nixl_backend_option_list_t &options) const {
+    auto &plugin_manager = nixlPluginManager::getInstance();
+    auto plugin_handle = plugin_manager.getBackendPlugin(type);
+
+    if (plugin_handle) {
+        options = plugin_handle->getBackendOptionSpecs();
+        return NIXL_SUCCESS;
+    }
+
+    plugin_handle = plugin_manager.loadBackendPlugin(type);
+    if (plugin_handle) {
+        options = plugin_handle->getBackendOptionSpecs();
+
+        NIXL_LOCK_GUARD(data->lock);
+
+        if (data->backendEngines.count(type) == 0) {
+            plugin_manager.unloadBackendPlugin(type);
+        }
+        return NIXL_SUCCESS;
+    }
+
+    NIXL_ERROR_FUNC << "backend '" << type << "' not found";
+    return NIXL_ERR_NOT_FOUND;
+}
+
+nixl_status_t
+nixlAgent::getPluginCapabilities(const nixl_backend_t &type,
+                                 nixlBackendPluginCapabilities &capabilities) const {
+    auto &plugin_manager = nixlPluginManager::getInstance();
+    auto plugin_handle = plugin_manager.getBackendPlugin(type);
+
+    if (plugin_handle) {
+        capabilities = plugin_handle->getBackendCapabilities();
+        return NIXL_SUCCESS;
+    }
+
+    plugin_handle = plugin_manager.loadBackendPlugin(type);
+    if (plugin_handle) {
+        capabilities = plugin_handle->getBackendCapabilities();
+
+        NIXL_LOCK_GUARD(data->lock);
+
+        if (data->backendEngines.count(type) == 0) {
+            plugin_manager.unloadBackendPlugin(type);
+        }
+        return NIXL_SUCCESS;
+    }
+
+    NIXL_ERROR_FUNC << "backend '" << type << "' not found";
+    return NIXL_ERR_NOT_FOUND;
+}
+
+nixl_status_t
 nixlAgent::getBackendParams (const nixlBackendH* backend,
                              nixl_mem_list_t &mems,
                              nixl_b_params_t &params) const {
