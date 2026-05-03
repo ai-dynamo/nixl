@@ -22,6 +22,7 @@
 #include "posix_backend.h"
 #include <absl/log/log.h>
 #include <absl/strings/str_format.h>
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include "file/file_utils.h"
@@ -74,58 +75,19 @@ castPosixHandle(nixlBackendReqH *handle) {
 
 static std::string_view
 getIoQueueType(const nixl_b_params_t *custom_params) {
-    // Check for explicit backend request
-    if (custom_params) {
-        // First check if AIO is explicitly requested
-        if (custom_params->count("use_aio") > 0) {
-            const auto &value = custom_params->at("use_aio");
-            if (value == "true" || value == "1") {
-                return "AIO";
-            }
-        }
+    if (nixl::getBackendParamDefaulted(custom_params, "use_aio", false)) {
+        return "AIO";
+    }
 
-        // Then check if io_uring is explicitly requested
-        if (custom_params->count("use_uring") > 0) {
-            const auto &value = custom_params->at("use_uring");
-            if (value == "true" || value == "1") {
-                return "URING";
-            }
-        }
-        // Then check if linux_aio is explicitly requested
-        if (custom_params->count("use_posix_aio") > 0) {
-            const auto &value = custom_params->at("use_posix_aio");
-            if (value == "true" || value == "1") {
-                return "POSIXAIO";
-            }
-        }
+    if (nixl::getBackendParamDefaulted(custom_params, "use_uring", false)) {
+        return "URING";
+    }
+
+    if (nixl::getBackendParamDefaulted(custom_params, "use_posix_aio", false)) {
+        return "POSIXAIO";
     }
 
     return nixlPosixIOQueue::getDefaultIoQueueType();
-}
-
-static uint32_t
-getIOSPoolSize(const nixl_b_params_t *custom_params) {
-    uint32_t ios_pool_size = 0;
-    if (custom_params) {
-        if (custom_params->count("ios_pool_size") > 0) {
-            const auto &value = custom_params->at("ios_pool_size");
-            ios_pool_size = std::stoi(value);
-        }
-    }
-    return ios_pool_size;
-}
-
-static uint32_t
-getKernelQueueSize(const nixl_b_params_t *custom_params) {
-    int kernel_queue_size = 0;
-    if (custom_params) {
-        if (custom_params->count("kernel_queue_size") > 0) {
-            const auto &value = custom_params->at("kernel_queue_size");
-            kernel_queue_size = std::stoi(value);
-        }
-    }
-
-    return kernel_queue_size;
 }
 
 // Log completion percentage at regular intervals (every log_percent_step percent)
@@ -231,9 +193,10 @@ nixlPosixBackendReqH::postXfer() {
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       io_queue_type_(getIoQueueType(init_params->customParams)),
-      io_queue_(nixlPosixIOQueue::instantiate(io_queue_type_,
-                                              getIOSPoolSize(init_params->customParams),
-                                              getKernelQueueSize(init_params->customParams))),
+      io_queue_(nixlPosixIOQueue::instantiate(
+          io_queue_type_,
+          nixl::getBackendParamDefaulted(init_params->customParams, "ios_pool_size", 0u),
+          nixl::getBackendParamDefaulted(init_params->customParams, "kernel_queue_size", 0u))),
       io_queue_lock_(init_params->syncMode) {
     if (io_queue_type_.empty()) {
         initErr = true;

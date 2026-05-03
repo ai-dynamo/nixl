@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,64 +18,40 @@
 #include <cufile.h>
 #include "gds_backend.h"
 #include "gds_utils.h"
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "file/file_utils.h"
 #include <unordered_map>
 #include <memory>
 #include <cuda_runtime.h>
 
+namespace {
 /** Setting the default values to check the batch limit */
-#define DEFAULT_BATCH_LIMIT 128
+constexpr unsigned DEFAULT_BATCH_LIMIT = 128;
 /** Setting the max request size to 16 MB */
-#define DEFAULT_MAX_REQUEST_SIZE (16 * 1024 * 1024)  // 16MB
+constexpr unsigned DEFAULT_MAX_REQUEST_SIZE = 16 * 1024 * 1024; // 16MB
 /** Create a batch pool of size 16 */
-#define DEFAULT_BATCH_POOL_SIZE 16
+constexpr unsigned DEFAULT_BATCH_POOL_SIZE = 16;
+} // namespace
 
 nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
     : nixlBackendEngine(init_params)
 {
     gds_utils = new gdsUtil();
 
-    // Set default values
-    batch_pool_size = DEFAULT_BATCH_POOL_SIZE;
-    batch_limit = DEFAULT_BATCH_LIMIT;
-    max_request_size = DEFAULT_MAX_REQUEST_SIZE;
-
-    // Read custom parameters if available
-    nixl_b_params_t* custom_params = init_params->customParams;
-    if (custom_params) {
-        // Configure batch_pool_size
-        if (custom_params->count("batch_pool_size") > 0) {
-            try {
-                batch_pool_size = std::stoi((*custom_params)["batch_pool_size"]);
-            } catch (const std::exception& e) {
-                NIXL_ERROR << "Invalid batch_pool_size parameter: " << e.what();
-                this->initErr = true;
-                return;
-            }
-        }
-
-        // Configure batch_limit
-        if (custom_params->count("batch_limit") > 0) {
-            try {
-                batch_limit = std::stoi((*custom_params)["batch_limit"]);
-            } catch (const std::exception& e) {
-                NIXL_ERROR << "Invalid batch_limit parameter: " << e.what();
-                this->initErr = true;
-                return;
-            }
-        }
-
-        // Configure max_request_size
-        if (custom_params->count("max_request_size") > 0) {
-            try {
-                max_request_size = std::stoul((*custom_params)["max_request_size"]);
-            } catch (const std::exception& e) {
-                NIXL_ERROR << "Invalid max_request_size parameter: " << e.what();
-                this->initErr = true;
-                return;
-            }
-        }
+    try {
+        nixl_b_params_t *custom_params = init_params->customParams;
+        batch_pool_size = nixl::getBackendParamDefaulted(
+            custom_params, "batch_pool_size", DEFAULT_BATCH_POOL_SIZE);
+        batch_limit =
+            nixl::getBackendParamDefaulted(custom_params, "batch_limit", DEFAULT_BATCH_LIMIT);
+        max_request_size = nixl::getBackendParamDefaulted(
+            custom_params, "max_request_size", DEFAULT_MAX_REQUEST_SIZE);
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << e.what();
+        this->initErr = true;
+        return;
     }
 
     this->initErr = false;

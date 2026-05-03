@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +29,7 @@
 #include <variant>
 #include <future>
 #include <atomic>
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "gds_mt_backend.h"
 #include "gds_mt_utils.h"
@@ -103,26 +104,12 @@ public:
     std::atomic<nixl_status_t> overall_status;
 };
 
-size_t
-getThreadCount (const nixlBackendInitParams *init_params) {
-    size_t thread_count = default_thread_count;
-
-    nixl_b_params_t *custom_params = init_params->customParams;
-    if (custom_params) {
-        if (custom_params->count ("thread_count") > 0) {
-            try {
-                size_t tcount = std::stoul ((*custom_params)["thread_count"]);
-                if (tcount != 0) {
-                    thread_count = tcount;
-                }
-            }
-            catch (const std::exception &e) {
-                throw std::runtime_error ("GDS_MT: Invalid thread_count parameter: " +
-                                          std::string (e.what()));
-            }
-        }
-    }
-    return thread_count;
+[[nodiscard]] size_t
+getThreadCount(const nixlBackendInitParams *init_params) {
+    nixl_b_params_t *params = init_params->customParams;
+    const size_t count =
+        nixl::getBackendParamDefaulted(params, "thread_count", default_thread_count);
+    return (count > 0) ? count : default_thread_count;
 }
 
 void

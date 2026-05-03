@@ -17,6 +17,7 @@
  */
 
 #include "azure_blob_backend.h"
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include <asio.hpp>
@@ -30,11 +31,10 @@
 
 namespace {
 
-std::size_t
+[[nodiscard]] std::size_t
 getNumThreads(nixl_b_params_t *custom_params) {
-    return custom_params && custom_params->count("num_threads") > 0 ?
-        std::stoul(custom_params->at("num_threads")) :
-        std::max(1u, std::thread::hardware_concurrency() / 2);
+    static const std::size_t fallback = std::max(1u, std::thread::hardware_concurrency() / 2);
+    return nixl::getBackendParamDefaulted(custom_params, "num_threads", fallback);
 }
 
 bool

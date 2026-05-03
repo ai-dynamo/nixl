@@ -3,52 +3,36 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef OBJ_PLUGIN_UTILS_OBJECT_ENGINE_UTILS_H
-#define OBJ_PLUGIN_UTILS_OBJECT_ENGINE_UTILS_H
+#ifndef NIXL_SRC_UTILS_OBJECT_ENGINE_UTILS_H
+#define NIXL_SRC_UTILS_OBJECT_ENGINE_UTILS_H
 
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include <algorithm>
 #include <thread>
 
-inline std::size_t
+[[nodiscard]] inline std::size_t
 getNumThreads(nixl_b_params_t *custom_params) {
-    return custom_params && custom_params->count("num_threads") > 0 ?
-        std::stoul(custom_params->at("num_threads")) :
-        std::max(1u, std::thread::hardware_concurrency() / 2);
+    const std::size_t fallback = std::max(1u, std::thread::hardware_concurrency() / 2);
+    return nixl::getBackendParamDefaulted(custom_params, "num_threads", fallback);
 }
 
-inline size_t
+[[nodiscard]] inline size_t
 getCrtMinLimit(nixl_b_params_t *custom_params) {
-    if (!custom_params) return 0;
-
-    auto it = custom_params->find("crtMinLimit");
-    if (it != custom_params->end()) {
-        try {
-            return std::stoull(it->second);
-        }
-        catch (const std::exception &e) {
-            NIXL_WARN << "Invalid crtMinLimit value: " << it->second
-                      << ", using default (CRT disabled)";
-            return 0;
-        }
-    }
-    return 0; // Disabled by default
+    return nixl::getBackendParamDefaulted(custom_params, "crtMinLimit", size_t(0));
 }
 
-inline bool
+[[nodiscard]] inline bool
 isAcceleratedRequested(nixl_b_params_t *custom_params) {
-    if (!custom_params) return false;
-    auto accel_it = custom_params->find("accelerated");
-    return accel_it != custom_params->end() && accel_it->second == "true";
+    return nixl::getBackendParamDefaulted(custom_params, "accelerated", false);
 }
 
-inline bool
+[[nodiscard]] inline bool
 isDellOBSRequested(nixl_b_params_t *custom_params) {
-    if (!isAcceleratedRequested(custom_params)) return false;
-    auto type_it = custom_params->find("type");
-    return type_it != custom_params->end() && type_it->second == "dell";
+    return isAcceleratedRequested(custom_params) &&
+        (nixl::getBackendParamOptional<std::string>(custom_params, "type") == "dell");
 }
 
 
-#endif // OBJ_PLUGIN_UTILS_OBJECT_ENGINE_UTILS_H
+#endif
