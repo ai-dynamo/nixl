@@ -158,6 +158,7 @@ endif
 subdir('src/utils')
 subdir('src/runtime')
 subdir('src/worker')
+subdir('tests')
 
 # Configure header file
 configure_file(
