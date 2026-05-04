@@ -18,6 +18,7 @@
 #ifndef __WORKER_H
 #define __WORKER_H
 
+#include "benchmark_config.h"
 #include "runtime/runtime.h"
 #include "utils/utils.h"
 #include <string>
@@ -25,15 +26,32 @@
 #include <variant>
 #include <memory>
 
+namespace nixlbench {
+
+bool
+usesNullRuntime(const benchmarkConfig &config);
+
+int
+runtimeWorldSize(const benchmarkConfig &config);
+
+std::string
+rankRoleName(const benchmarkConfig &config, int rank);
+
+std::vector<std::string>
+parseWorkerDeviceList(const benchmarkConfig &config);
+
+} // namespace nixlbench
+
 class xferBenchWorker {
     protected:
         std::string name;
         xferBenchRT *rt;
-        xferBenchConfig &config;
+        const nixlbench::benchmarkConfig &benchmark_config;
+        xferBenchConfig config;
         static int terminate;
 
     public:
-        xferBenchWorker(xferBenchConfig &config);
+        xferBenchWorker(const nixlbench::benchmarkConfig &config);
         virtual ~xferBenchWorker();
 
         std::string getName() const;

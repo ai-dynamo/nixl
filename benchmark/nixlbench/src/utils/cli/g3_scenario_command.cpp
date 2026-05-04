@@ -97,15 +97,17 @@ g3ScenarioCommand::run(southboundPluginBenchmarkCommand &plugin) {
     // create worker
     std::vector<std::string> devices;
     devices.push_back(std::string(plugin.name()));
-    xferBenchConfig config;
-    config.backend = std::string(plugin.name());
-    config.num_threads = request_.parallel_threads;
-    config.start_block_size = request_.block_size_bytes;
-    config.max_block_size = request_.block_size_bytes;
-    config.start_batch_size = request_.batch_size;
-    config.max_batch_size = request_.batch_size;
-    config.total_buffer_size = parse_file_size(request_.file_size);
-    auto worker_ptr = std::make_unique<xferBenchNixlWorker>(config, devices);
+    benchmarkConfig benchmark_config;
+    benchmark_config.backend.name = std::string(plugin.name());
+    benchmark_config.backend.capabilities.canUseAsStorage = true;
+    benchmark_config.transfer.num_threads = request_.parallel_threads;
+    benchmark_config.transfer.start_block_size = request_.block_size_bytes;
+    benchmark_config.transfer.max_block_size = request_.block_size_bytes;
+    benchmark_config.transfer.start_batch_size = request_.batch_size;
+    benchmark_config.transfer.max_batch_size = request_.batch_size;
+    benchmark_config.transfer.total_buffer_size = parse_file_size(request_.file_size);
+    auto worker_ptr = std::make_unique<xferBenchNixlWorker>(benchmark_config, devices);
+    xferBenchConfig config = makeLegacyConfigFromBenchmarkConfig(benchmark_config);
 
     // create files, return handles
     std::vector<std::vector<xferBenchIOV>> iov_lists =

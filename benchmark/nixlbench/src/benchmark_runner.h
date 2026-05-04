@@ -20,7 +20,7 @@ int
 runBenchmark(xferBenchConfig &config);
 
 std::unique_ptr<xferBenchWorker>
-createWorker(xferBenchConfig &config);
+createWorker(const nixlbench::benchmarkConfig &config);
 
 int
 processBatchSizes(xferBenchWorker &worker,

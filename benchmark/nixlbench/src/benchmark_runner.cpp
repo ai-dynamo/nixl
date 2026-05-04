@@ -26,10 +26,10 @@
 namespace {
 
 int
-runBenchmarkLegacyLoop(xferBenchConfig &config) {
+runBenchmarkLegacyLoop(const nixlbench::benchmarkConfig &benchmark_config, xferBenchConfig &config) {
     int num_threads = config.num_threads;
 
-    std::unique_ptr<xferBenchWorker> worker_ptr = createWorker(config);
+    std::unique_ptr<xferBenchWorker> worker_ptr = createWorker(benchmark_config);
     if (!worker_ptr) {
         return EXIT_FAILURE;
     }
@@ -198,15 +198,15 @@ processBatchSizes(xferBenchWorker &worker,
 }
 
 std::unique_ptr<xferBenchWorker>
-createWorker(xferBenchConfig &config) {
-    if (config.worker_type == "nixl") {
-        std::vector<std::string> devices = config.parseDeviceList();
+createWorker(const nixlbench::benchmarkConfig &config) {
+    if (config.worker.type == XFERBENCH_WORKER_NIXL) {
+        std::vector<std::string> devices = nixlbench::parseWorkerDeviceList(config);
         if (devices.empty()) {
             std::cerr << "Failed to parse device list" << std::endl;
             return nullptr;
         }
         return std::make_unique<xferBenchNixlWorker>(config, devices);
-    } else if (config.worker_type == "nvshmem") {
+    } else if (config.worker.type == XFERBENCH_WORKER_NVSHMEM) {
 #if HAVE_NVSHMEM && HAVE_CUDA
         return std::make_unique<xferBenchNvshmemWorker>(config);
 #else
@@ -214,7 +214,7 @@ createWorker(xferBenchConfig &config) {
         return nullptr;
 #endif
     } else {
-        std::cerr << "Unsupported worker type: " << config.worker_type << std::endl;
+        std::cerr << "Unsupported worker type: " << config.worker.type << std::endl;
         return nullptr;
     }
 }
@@ -285,7 +285,9 @@ runBenchmark(const nixlbench::benchmarkConfig &config) {
     if (!nixlbench::validateRawConfigForRun(legacy_config)) {
         return EXIT_FAILURE;
     }
-    return runBenchmarkLegacyLoop(legacy_config);
+    const nixlbench::benchmarkConfig validated_config =
+        nixlbench::makeBenchmarkConfigFromLegacy(legacy_config);
+    return runBenchmarkLegacyLoop(validated_config, legacy_config);
 }
 
 int

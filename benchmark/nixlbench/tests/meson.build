@@ -9,10 +9,11 @@ if gtest_dep.found()
     [
       'benchmark_config_test.cpp',
       'benchmark_config_adapter_test.cpp',
+      'worker_config_test.cpp',
       'xfer_bench_config_test.cpp',
     ],
     include_directories: inc_dir,
-    link_with: [nixlbench_runtimes],
+    link_with: [nixlbench_runtimes, worker_lib],
     dependencies: [gtest_dep, utils_dep],
   )
 

@@ -31,16 +31,17 @@
         }                                                                       \
     } while(0)
 
-xferBenchNvshmemWorker::xferBenchNvshmemWorker(xferBenchConfig &config) : xferBenchWorker(config) {
+xferBenchNvshmemWorker::xferBenchNvshmemWorker(const nixlbench::benchmarkConfig &benchmark_config)
+    : xferBenchWorker(benchmark_config) {
     // Initialize NVSHMEM
-    if (XFERBENCH_RT_ETCD == config.runtime_type) {
-	    rank = rt->getRank();
-	    size = rt->getSize();
+    if (XFERBENCH_RT_ETCD == benchmark_config.runtime.type) {
+	rank = rt->getRank();
+	size = rt->getSize();
 
         return;        //NVSHMEM not yet initialized
     }
 
-    std::cout << "Runtime " << config.runtime_type
+    std::cout << "Runtime " << benchmark_config.runtime.type
 		      << " not supported for NVSHMEM worker" << std::endl;
     exit(EXIT_FAILURE);
 }

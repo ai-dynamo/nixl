@@ -17,9 +17,75 @@
 
 #include "worker.h"
 #include "runtime/etcd/etcd_rt.h"
-#include "utils/utils.h"
 
+#include <sstream>
 #include <unistd.h>
+
+namespace nixlbench {
+
+bool
+usesNullRuntime(const benchmarkConfig &config) {
+    return isStorageBackend(config.backend) && config.runtime.etcd_endpoints.empty();
+}
+
+int
+runtimeWorldSize(const benchmarkConfig &config) {
+    if (isStorageBackend(config.backend)) {
+        return 1;
+    }
+    if (config.transfer.mode == XFERBENCH_MODE_SG) {
+        return config.worker.num_initiator_dev + config.worker.num_target_dev;
+    }
+    return 2;
+}
+
+std::string
+rankRoleName(const benchmarkConfig &config, int rank) {
+    if (usesNullRuntime(config)) {
+        return "initiator";
+    }
+    if (config.transfer.mode == XFERBENCH_MODE_SG) {
+        if (rank >= 0 && rank < config.worker.num_initiator_dev) {
+            return "initiator";
+        }
+        return "target";
+    }
+    if (config.transfer.mode == XFERBENCH_MODE_MG) {
+        if (0 == rank) {
+            return "initiator";
+        }
+        return "target";
+    }
+    return "";
+}
+
+std::vector<std::string>
+parseWorkerDeviceList(const benchmarkConfig &config) {
+    std::vector<std::string> devices;
+    std::string dev;
+    std::stringstream ss(config.worker.device_list);
+
+    // TODO: Add support for other schemes
+    if (config.transfer.scheme == XFERBENCH_SCHEME_PAIRWISE && config.worker.device_list != "all") {
+        while (std::getline(ss, dev, ',')) {
+            devices.push_back(dev);
+        }
+
+        if ((int)devices.size() != config.worker.num_initiator_dev ||
+            (int)devices.size() != config.worker.num_target_dev) {
+            std::cerr << "Incorrect device list " << config.worker.device_list
+                      << " provided for pairwise scheme " << devices.size() << "# devices"
+                      << std::endl;
+            return {};
+        }
+    } else {
+        devices.push_back("all");
+    }
+
+    return devices;
+}
+
+} // namespace nixlbench
 
 // Null runtime for storage backends that don't need ETCD
 class xferBenchNullRT : public xferBenchRT {
@@ -68,25 +134,18 @@ public:
     }
 };
 
-static xferBenchRT *createRT(const xferBenchConfig &config, int *terminate) {
+static xferBenchRT *createRT(const nixlbench::benchmarkConfig &config, int *terminate) {
     // For storage backends without ETCD endpoints, use null runtime
-    if (config.isStorageBackend() && config.etcd_endpoints.empty()) {
+    if (nixlbench::usesNullRuntime(config)) {
         std::cout << "Using null runtime for storage backend without ETCD" << std::endl;
         return new xferBenchNullRT();
     }
 
 #if HAVE_ETCD
-    if (XFERBENCH_RT_ETCD == config.runtime_type) {
-        int total = 2;
-        if (XFERBENCH_MODE_SG == config.mode) {
-            total = config.num_initiator_dev +
-                config.num_target_dev;
-        }
-        if (config.isStorageBackend()) {
-            total = 1;
-        }
+    if (XFERBENCH_RT_ETCD == config.runtime.type) {
+        int total = nixlbench::runtimeWorldSize(config);
         xferBenchEtcdRT *etcd_rt = new xferBenchEtcdRT(
-            config.benchmark_group, config.etcd_endpoints, total, terminate);
+            config.common.benchmark_group, config.runtime.etcd_endpoints, total, terminate);
         if (etcd_rt->setup() != 0) {
             std::cerr << "Failed to setup ETCD runtime" << std::endl;
             delete etcd_rt;
@@ -96,13 +155,13 @@ static xferBenchRT *createRT(const xferBenchConfig &config, int *terminate) {
     }
 #endif
 
-    std::cerr << "Invalid runtime: " << config.runtime_type << std::endl;
+    std::cerr << "Invalid runtime: " << config.runtime.type << std::endl;
     exit(EXIT_FAILURE);
 }
 
 int xferBenchWorker::synchronize() {
     // For storage backends without ETCD, no synchronization needed
-    if (config.isStorageBackend() && config.etcd_endpoints.empty()) {
+    if (nixlbench::usesNullRuntime(benchmark_config)) {
         return 0;
     }
 
@@ -116,7 +175,8 @@ int xferBenchWorker::synchronize() {
     return 0;
 }
 
-xferBenchWorker::xferBenchWorker(xferBenchConfig &config) : config(config) {
+xferBenchWorker::xferBenchWorker(const nixlbench::benchmarkConfig &config)
+    : benchmark_config(config), config(nixlbench::makeLegacyConfigFromBenchmarkConfig(config)) {
     terminate = 0;
 
     rt = createRT(config, &terminate);
@@ -127,22 +187,7 @@ xferBenchWorker::xferBenchWorker(xferBenchConfig &config) : config(config) {
 
     int rank = rt->getRank();
 
-    // For storage backends without ETCD, always act as initiator
-    if (config.isStorageBackend() && config.etcd_endpoints.empty()) {
-        name = "initiator";
-    } else if (XFERBENCH_MODE_SG == config.mode) {
-        if (rank >= 0 && rank < config.num_initiator_dev) {
-            name = "initiator";
-        } else {
-            name = "target";
-        }
-    } else if (XFERBENCH_MODE_MG == config.mode) {
-        if (0 == rank) {
-            name = "initiator";
-        } else {
-            name = "target";
-        }
-    }
+    name = nixlbench::rankRoleName(config, rank);
 
     // Set the RT for utils
     xferBenchUtils::setRT(rt);
