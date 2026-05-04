@@ -19,6 +19,7 @@
 #include <chrono>
 #include <iostream>
 #include <numeric>
+#include <type_traits>
 
 #include "nixl.h"
 #include "serdes/serdes.h"
@@ -29,6 +30,7 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/operators.h"
+#include "common/util.h"
 #include "common/hw_info.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
@@ -54,14 +56,14 @@ nixlEngineDeleter::operator()(nixlBackendEngine *engine) const noexcept {
 }
 
 nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
-                           const nixl_xfer_op_t backend_op,
+                           const nixl_xfer_op_t operation,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
                            const size_t desc_count)
     : initiatorDescs(local_type, desc_count),
       targetDescs(remote_type, desc_count),
       remoteAgent(remote_agent),
-      backendOp(backend_op) {}
+      backendOp(operation) {}
 
 void
 nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
@@ -82,7 +84,7 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
 
     if (telemetry_pub && (stat_status != NIXL_TELEMETRY_POST)) {
         telemetry_pub->addPostTime(telemetry.postDuration);
-        telemetry_pub->addXferTime(duration, backendOp == NIXL_WRITE, telemetry.totalBytes);
+        telemetry_pub->addXferTime(duration, backendOp, telemetry.totalBytes);
     }
 
     NIXL_TRACE << "[NIXL TELEMETRY]: From backend " << engine->getType()
@@ -657,6 +659,11 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                         nixlXferReqH* &req_hndl,
                         const nixl_opt_args_t* extra_params) const {
 
+    if (!nixl::isReadWrite(operation)) {
+        NIXL_ERROR << "Operation is not read or write";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     nixl_opt_b_args_t  opt_args;
     nixl_status_t      ret;
     int                desc_count = (int) local_indices.size();
@@ -840,6 +847,12 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlXferReqH* &req_hndl,
                          const nixl_opt_args_t* extra_params) const {
+
+    if (!nixl::isReadWrite(operation)) {
+        NIXL_ERROR << "Operation is not read or write";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     nixl_status_t ret1, ret2;
     nixl_opt_b_args_t opt_args;
     backend_set_t backend_set;
@@ -1013,6 +1026,12 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
 nixl_status_t
 nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                        const nixl_opt_args_t* extra_params) const {
+
+    if (!nixl::isReadWrite(req_hndl->backendOp)) {
+        NIXL_ERROR << "Operation is not read or write";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     nixl_opt_b_args_t opt_args;
 
     opt_args.hasNotif = false;

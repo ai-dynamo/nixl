@@ -23,16 +23,20 @@
 #include <absl/log/log.h>
 #include <absl/strings/str_format.h>
 #include "common/nixl_log.h"
+#include "common/util.h"
 #include "nixl_types.h"
 #include "file/file_utils.h"
 
 namespace {
 bool
-isValidPrepXferParams(const nixl_xfer_op_t &operation,
+isValidPrepXferParams(const nixl_xfer_op_t operation,
                       const nixl_meta_dlist_t &local,
                       const nixl_meta_dlist_t &remote,
                       const std::string &remote_agent,
                       const std::string &local_agent) {
+
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     if (remote_agent != local_agent) {
         NIXL_ERROR << absl::StrFormat(
             "Error: Remote agent must match the requesting agent (%s). Got %s",

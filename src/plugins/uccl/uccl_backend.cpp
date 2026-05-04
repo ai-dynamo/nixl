@@ -16,6 +16,9 @@
  */
 #include "uccl_backend.h"
 #include "serdes/serdes.h"
+#include "common/nixl_log.h"
+#include "common/util.h"
+
 #include <iostream>
 #include <cstdlib>
 #include <cstring>
@@ -407,6 +410,8 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     nixlUcclBackendMD *lmd;
     nixlUcclBackendMD *rmd;
     handle = nullptr;
@@ -472,6 +477,8 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     nixlUcclReqH *uccl_handle;
     nixlUcclBackendMD *lmd;
 
@@ -538,20 +545,12 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     uint64_t transfer_id = 0;
     uccl_handle = static_cast<nixlUcclReqH *>(handle);
 
-    switch (operation) {
-    case NIXL_READ: {
+    if (operation == NIXL_READ) {
         result = uccl_engine_read_vector(
             conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
-        break;
-    }
-    case NIXL_WRITE: {
+    } else {
         result = uccl_engine_write_vector(
             conn, mr_ids, addr_v, size_v, uccl_handle->fifo_items, lcnt, &transfer_id);
-        break;
-    }
-    default:
-        NIXL_ERROR << "Unsupported operation type: " << operation;
-        return NIXL_ERR_INVALID_PARAM;
     }
 
     if (result != 0) {
