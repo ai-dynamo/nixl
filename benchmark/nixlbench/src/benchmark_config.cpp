@@ -89,6 +89,141 @@ setPosixApiOptions(metadata_plugin_option_map_t &options, const std::string &api
     setOption(options, "use_posix_aio", api_type == XFERBENCH_POSIX_API_POSIXAIO);
 }
 
+const metadataPluginOptionValue *
+findOption(const metadata_plugin_option_map_t &options, const char *name) {
+    const auto iter = options.find(name);
+    if (iter == options.end()) {
+        return nullptr;
+    }
+    return &iter->second;
+}
+
+std::string
+optionStringValue(const metadataPluginOptionValue &option) {
+    return option.value.empty() ? (option.boolValue ? "true" : "false") : option.value;
+}
+
+bool
+optionBoolValue(const metadataPluginOptionValue &option) {
+    return option.boolValue || option.value == "true" || option.value == "1";
+}
+
+void
+setLegacyStringOption(std::string &legacy_value,
+                      const metadata_plugin_option_map_t &options,
+                      const char *name) {
+    if (const auto *option = findOption(options, name)) {
+        legacy_value = optionStringValue(*option);
+    }
+}
+
+void
+setLegacyBoolOption(bool &legacy_value,
+                    const metadata_plugin_option_map_t &options,
+                    const char *name) {
+    if (const auto *option = findOption(options, name)) {
+        legacy_value = optionBoolValue(*option);
+    }
+}
+
+void
+setLegacyIntOption(int &legacy_value,
+                   const metadata_plugin_option_map_t &options,
+                   const char *name) {
+    if (const auto *option = findOption(options, name)) {
+        legacy_value = std::stoi(optionStringValue(*option));
+    }
+}
+
+void
+setLegacySizeOption(std::size_t &legacy_value,
+                    const metadata_plugin_option_map_t &options,
+                    const char *name) {
+    if (const auto *option = findOption(options, name)) {
+        legacy_value = std::stoull(optionStringValue(*option));
+    }
+}
+
+void
+setLegacyPosixApiOption(xferBenchConfig &legacy_config,
+                        const metadata_plugin_option_map_t &options) {
+    if (const auto *option = findOption(options, "use_aio")) {
+        const auto value = optionStringValue(*option);
+        if (value == "aio" || value == "AIO" || optionBoolValue(*option)) {
+            legacy_config.posix_api_type = XFERBENCH_POSIX_API_AIO;
+        } else if (value == "iouring" || value == "uring" || value == "URING") {
+            legacy_config.posix_api_type = XFERBENCH_POSIX_API_URING;
+        } else if (value == "posixaio" || value == "POSIXAIO") {
+            legacy_config.posix_api_type = XFERBENCH_POSIX_API_POSIXAIO;
+        }
+    }
+    if (const auto *option = findOption(options, "use_uring")) {
+        if (optionBoolValue(*option)) {
+            legacy_config.posix_api_type = XFERBENCH_POSIX_API_URING;
+        }
+    }
+    if (const auto *option = findOption(options, "use_posix_aio")) {
+        if (optionBoolValue(*option)) {
+            legacy_config.posix_api_type = XFERBENCH_POSIX_API_POSIXAIO;
+        }
+    }
+}
+
+void
+applyLegacyBackendOptions(xferBenchConfig &legacy_config,
+                          const benchmarkConfig &config) {
+    const auto &options = config.backend.options;
+
+    if (config.backend.name == XFERBENCH_BACKEND_GDS) {
+        setLegacyIntOption(legacy_config.gds_batch_pool_size, options, "batch_pool_size");
+        setLegacyIntOption(legacy_config.gds_batch_limit, options, "batch_limit");
+    } else if (config.backend.name == XFERBENCH_BACKEND_GDS_MT) {
+        setLegacyIntOption(legacy_config.gds_mt_num_threads, options, "thread_count");
+    } else if (config.backend.name == XFERBENCH_BACKEND_POSIX) {
+        setLegacyPosixApiOption(legacy_config, options);
+        setLegacyIntOption(legacy_config.posix_ios_pool_size, options, "ios_pool_size");
+        setLegacyIntOption(legacy_config.posix_kernel_queue_size, options, "kernel_queue_size");
+    } else if (config.backend.name == XFERBENCH_BACKEND_GPUNETIO) {
+        setLegacyStringOption(legacy_config.device_list, options, "network_devices");
+        setLegacyStringOption(legacy_config.gpunetio_device_list, options, "gpu_devices");
+        setLegacyStringOption(legacy_config.gpunetio_oob_list, options, "oob_interface");
+    } else if (config.backend.name == XFERBENCH_BACKEND_HF3FS) {
+        setLegacyIntOption(legacy_config.hf3fs_iopool_size, options, "iopool_size");
+    } else if (config.backend.name == XFERBENCH_BACKEND_OBJ) {
+        setLegacyStringOption(legacy_config.obj_access_key, options, "access_key");
+        setLegacyStringOption(legacy_config.obj_secret_key, options, "secret_key");
+        setLegacyStringOption(legacy_config.obj_session_token, options, "session_token");
+        setLegacyStringOption(legacy_config.obj_bucket_name, options, "bucket");
+        setLegacyStringOption(legacy_config.obj_scheme, options, "scheme");
+        setLegacyStringOption(legacy_config.obj_region, options, "region");
+        setLegacyBoolOption(legacy_config.obj_use_virtual_addressing,
+                            options,
+                            "use_virtual_addressing");
+        setLegacyStringOption(legacy_config.obj_endpoint_override, options, "endpoint_override");
+        setLegacyStringOption(legacy_config.obj_req_checksum, options, "req_checksum");
+        setLegacyStringOption(legacy_config.obj_ca_bundle, options, "ca_bundle");
+        setLegacySizeOption(legacy_config.obj_crt_min_limit, options, "crtMinLimit");
+        setLegacyBoolOption(legacy_config.obj_accelerated_enable, options, "accelerated");
+        setLegacyStringOption(legacy_config.obj_accelerated_type, options, "type");
+    } else if (config.backend.name == XFERBENCH_BACKEND_GUSLI) {
+        setLegacyStringOption(legacy_config.gusli_client_name, options, "client_name");
+        setLegacyIntOption(legacy_config.gusli_max_simultaneous_requests,
+                           options,
+                           "max_num_simultaneous_requests");
+        setLegacyStringOption(legacy_config.gusli_config_file, options, "config_file");
+        setLegacyStringOption(legacy_config.gusli_device_byte_offsets,
+                              options,
+                              "device_byte_offsets");
+        setLegacyStringOption(legacy_config.gusli_device_security, options, "device_security");
+    } else if (config.backend.name == XFERBENCH_BACKEND_AZURE_BLOB) {
+        setLegacyStringOption(legacy_config.azure_blob_account_url, options, "account_url");
+        setLegacyStringOption(legacy_config.azure_blob_container_name, options, "container_name");
+        setLegacyStringOption(legacy_config.azure_blob_connection_string,
+                              options,
+                              "connection_string");
+    }
+}
+
 void
 addLegacyBackendOptions(benchmarkConfig &config, const xferBenchConfig &legacy_config) {
     auto &options = config.backend.options;
@@ -277,6 +412,50 @@ makeBenchmarkConfigFromRawRequest(const rawRequest &request) {
     config.storage.enable_direct = request.storage_enable_direct.value;
 
     return config;
+}
+
+xferBenchConfig
+makeLegacyConfigFromBenchmarkConfig(const benchmarkConfig &config) {
+    xferBenchConfig legacy_config;
+
+    legacy_config.benchmark_group = config.common.benchmark_group;
+    legacy_config.check_consistency = config.common.check_consistency;
+    legacy_config.recreate_xfer = config.common.recreate_xfer;
+    legacy_config.num_iter = config.common.num_iter;
+    legacy_config.large_blk_iter_ftr = config.common.large_blk_iter_ftr;
+    legacy_config.warmup_iter = config.common.warmup_iter;
+
+    legacy_config.runtime_type = config.runtime.type;
+    legacy_config.etcd_endpoints = config.runtime.etcd_endpoints;
+
+    legacy_config.initiator_seg_type = config.transfer.initiator_seg_type;
+    legacy_config.target_seg_type = config.transfer.target_seg_type;
+    legacy_config.scheme = config.transfer.scheme;
+    legacy_config.mode = config.transfer.mode;
+    legacy_config.op_type = config.transfer.op_type;
+    legacy_config.total_buffer_size = config.transfer.total_buffer_size;
+    legacy_config.start_block_size = config.transfer.start_block_size;
+    legacy_config.max_block_size = config.transfer.max_block_size;
+    legacy_config.start_batch_size = config.transfer.start_batch_size;
+    legacy_config.max_batch_size = config.transfer.max_batch_size;
+    legacy_config.num_threads = config.transfer.num_threads;
+
+    legacy_config.worker_type = config.worker.type;
+    legacy_config.num_initiator_dev = config.worker.num_initiator_dev;
+    legacy_config.num_target_dev = config.worker.num_target_dev;
+    legacy_config.enable_pt = config.worker.enable_pt;
+    legacy_config.progress_threads = config.worker.progress_threads;
+    legacy_config.device_list = config.worker.device_list;
+    legacy_config.enable_vmm = config.worker.enable_vmm;
+
+    legacy_config.backend = config.backend.name;
+    legacy_config.filepath = config.storage.filepath;
+    legacy_config.filenames = config.storage.filenames;
+    legacy_config.num_files = config.storage.num_files;
+    legacy_config.storage_enable_direct = config.storage.enable_direct;
+    applyLegacyBackendOptions(legacy_config, config);
+
+    return legacy_config;
 }
 
 } // namespace nixlbench

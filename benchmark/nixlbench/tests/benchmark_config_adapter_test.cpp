@@ -4,6 +4,7 @@
  */
 
 #include "benchmark_config.h"
+#include "utils/cli/raw_execution.h"
 #include "utils/utils.h"
 
 #include <gtest/gtest.h>
@@ -159,6 +160,156 @@ TEST(BenchmarkConfigAdapterTest, LegacyConversionMapsGusliFieldsWithoutValidatio
     EXPECT_EQ(option(config, "config_file").value, "config-body");
     EXPECT_EQ(option(config, "device_byte_offsets").value, "1024,2048");
     EXPECT_EQ(option(config, "device_security").value, "sec=0x3,sec=0x71");
+}
+
+TEST(BenchmarkConfigAdapterTest, StructuredCopyBackMapsCommonTransferWorkerAndStorageFields) {
+    benchmarkConfig config;
+    config.common.benchmark_group = "group-b";
+    config.common.check_consistency = true;
+    config.common.recreate_xfer = true;
+    config.common.num_iter = 128;
+    config.common.large_blk_iter_ftr = 4;
+    config.common.warmup_iter = 16;
+    config.runtime.type = XFERBENCH_RT_ETCD;
+    config.runtime.etcd_endpoints = "http://etcd:1234";
+    config.transfer.initiator_seg_type = XFERBENCH_SEG_TYPE_VRAM;
+    config.transfer.target_seg_type = XFERBENCH_SEG_TYPE_DRAM;
+    config.transfer.scheme = XFERBENCH_SCHEME_ONE_TO_MANY;
+    config.transfer.mode = XFERBENCH_MODE_MG;
+    config.transfer.op_type = XFERBENCH_OP_READ;
+    config.transfer.total_buffer_size = 8192;
+    config.transfer.start_block_size = 128;
+    config.transfer.max_block_size = 1024;
+    config.transfer.start_batch_size = 2;
+    config.transfer.max_batch_size = 8;
+    config.transfer.num_threads = 3;
+    config.worker.type = XFERBENCH_WORKER_NIXL;
+    config.worker.num_initiator_dev = 2;
+    config.worker.num_target_dev = 5;
+    config.worker.enable_pt = true;
+    config.worker.progress_threads = 6;
+    config.worker.device_list = "mlx5_2";
+    config.worker.enable_vmm = true;
+    config.backend.name = XFERBENCH_BACKEND_GDS;
+    config.backend.options["batch_pool_size"] = {"9", false, true};
+    config.backend.options["batch_limit"] = {"17", false, true};
+    config.storage.filepath = "/storage";
+    config.storage.filenames = "a,b";
+    config.storage.num_files = 2;
+    config.storage.enable_direct = true;
+
+    const xferBenchConfig legacy = makeLegacyConfigFromBenchmarkConfig(config);
+
+    EXPECT_EQ(legacy.benchmark_group, "group-b");
+    EXPECT_TRUE(legacy.check_consistency);
+    EXPECT_TRUE(legacy.recreate_xfer);
+    EXPECT_EQ(legacy.num_iter, 128);
+    EXPECT_EQ(legacy.large_blk_iter_ftr, 4);
+    EXPECT_EQ(legacy.warmup_iter, 16);
+    EXPECT_EQ(legacy.runtime_type, XFERBENCH_RT_ETCD);
+    EXPECT_EQ(legacy.etcd_endpoints, "http://etcd:1234");
+    EXPECT_EQ(legacy.initiator_seg_type, XFERBENCH_SEG_TYPE_VRAM);
+    EXPECT_EQ(legacy.target_seg_type, XFERBENCH_SEG_TYPE_DRAM);
+    EXPECT_EQ(legacy.scheme, XFERBENCH_SCHEME_ONE_TO_MANY);
+    EXPECT_EQ(legacy.mode, XFERBENCH_MODE_MG);
+    EXPECT_EQ(legacy.op_type, XFERBENCH_OP_READ);
+    EXPECT_EQ(legacy.total_buffer_size, 8192U);
+    EXPECT_EQ(legacy.start_block_size, 128U);
+    EXPECT_EQ(legacy.max_block_size, 1024U);
+    EXPECT_EQ(legacy.start_batch_size, 2U);
+    EXPECT_EQ(legacy.max_batch_size, 8U);
+    EXPECT_EQ(legacy.num_threads, 3);
+    EXPECT_EQ(legacy.worker_type, XFERBENCH_WORKER_NIXL);
+    EXPECT_EQ(legacy.num_initiator_dev, 2);
+    EXPECT_EQ(legacy.num_target_dev, 5);
+    EXPECT_TRUE(legacy.enable_pt);
+    EXPECT_EQ(legacy.progress_threads, 6U);
+    EXPECT_EQ(legacy.device_list, "mlx5_2");
+    EXPECT_TRUE(legacy.enable_vmm);
+    EXPECT_EQ(legacy.backend, XFERBENCH_BACKEND_GDS);
+    EXPECT_EQ(legacy.gds_batch_pool_size, 9);
+    EXPECT_EQ(legacy.gds_batch_limit, 17);
+    EXPECT_EQ(legacy.filepath, "/storage");
+    EXPECT_EQ(legacy.filenames, "a,b");
+    EXPECT_EQ(legacy.num_files, 2);
+    EXPECT_TRUE(legacy.storage_enable_direct);
+}
+
+TEST(BenchmarkConfigAdapterTest, StructuredCopyBackMapsPosixAndObjBackendOptions) {
+    benchmarkConfig posix_config;
+    posix_config.backend.name = XFERBENCH_BACKEND_POSIX;
+    posix_config.backend.options["use_uring"] = {"false", true, true};
+    posix_config.backend.options["ios_pool_size"] = {"13", false, true};
+    posix_config.backend.options["kernel_queue_size"] = {"21", false, true};
+
+    const xferBenchConfig posix_legacy = makeLegacyConfigFromBenchmarkConfig(posix_config);
+
+    EXPECT_EQ(posix_legacy.posix_api_type, XFERBENCH_POSIX_API_URING);
+    EXPECT_EQ(posix_legacy.posix_ios_pool_size, 13);
+    EXPECT_EQ(posix_legacy.posix_kernel_queue_size, 21);
+
+    benchmarkConfig obj_config;
+    obj_config.backend.name = XFERBENCH_BACKEND_OBJ;
+    obj_config.backend.options["access_key"] = {"access", false, true};
+    obj_config.backend.options["secret_key"] = {"secret", false, true};
+    obj_config.backend.options["session_token"] = {"token", false, true};
+    obj_config.backend.options["bucket"] = {"bucket", false, true};
+    obj_config.backend.options["scheme"] = {XFERBENCH_OBJ_SCHEME_HTTPS, false, true};
+    obj_config.backend.options["region"] = {"region", false, true};
+    obj_config.backend.options["use_virtual_addressing"] = {"true", true, true};
+    obj_config.backend.options["endpoint_override"] = {"endpoint", false, true};
+    obj_config.backend.options["req_checksum"] = {XFERBENCH_OBJ_REQ_CHECKSUM_REQUIRED,
+                                                   false,
+                                                   true};
+    obj_config.backend.options["ca_bundle"] = {"ca.pem", false, true};
+    obj_config.backend.options["crtMinLimit"] = {"55", false, true};
+    obj_config.backend.options["accelerated"] = {"true", true, true};
+    obj_config.backend.options["type"] = {"vendor", false, true};
+
+    const xferBenchConfig obj_legacy = makeLegacyConfigFromBenchmarkConfig(obj_config);
+
+    EXPECT_EQ(obj_legacy.obj_access_key, "access");
+    EXPECT_EQ(obj_legacy.obj_secret_key, "secret");
+    EXPECT_EQ(obj_legacy.obj_session_token, "token");
+    EXPECT_EQ(obj_legacy.obj_bucket_name, "bucket");
+    EXPECT_EQ(obj_legacy.obj_scheme, XFERBENCH_OBJ_SCHEME_HTTPS);
+    EXPECT_EQ(obj_legacy.obj_region, "region");
+    EXPECT_TRUE(obj_legacy.obj_use_virtual_addressing);
+    EXPECT_EQ(obj_legacy.obj_endpoint_override, "endpoint");
+    EXPECT_EQ(obj_legacy.obj_req_checksum, XFERBENCH_OBJ_REQ_CHECKSUM_REQUIRED);
+    EXPECT_EQ(obj_legacy.obj_ca_bundle, "ca.pem");
+    EXPECT_EQ(obj_legacy.obj_crt_min_limit, 55U);
+    EXPECT_TRUE(obj_legacy.obj_accelerated_enable);
+    EXPECT_EQ(obj_legacy.obj_accelerated_type, "vendor");
+}
+
+TEST(BenchmarkConfigAdapterTest, RawValidationAppliesPreRunAdjustments) {
+    xferBenchConfig config;
+    config.backend = XFERBENCH_BACKEND_UCX;
+    config.etcd_endpoints = "";
+    config.total_buffer_size = 12288;
+    config.max_block_size = 1024;
+    config.max_batch_size = 1;
+    config.num_threads = 3;
+    config.num_initiator_dev = 1;
+    config.num_target_dev = 1;
+    config.large_blk_iter_ftr = 2;
+    config.num_iter = 10;
+    config.warmup_iter = 7;
+
+    ASSERT_TRUE(validateRawConfigForRun(config));
+
+    EXPECT_EQ(config.etcd_endpoints, "http://localhost:2379");
+    EXPECT_EQ(config.num_iter, 12);
+    EXPECT_EQ(config.warmup_iter, 12);
+}
+
+TEST(BenchmarkConfigAdapterTest, RawValidationRejectsInvalidPosixApi) {
+    xferBenchConfig config;
+    config.backend = XFERBENCH_BACKEND_POSIX;
+    config.posix_api_type = "bad";
+
+    EXPECT_FALSE(validateRawConfigForRun(config));
 }
 
 } // namespace

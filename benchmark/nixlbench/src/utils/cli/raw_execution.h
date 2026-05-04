@@ -8,7 +8,12 @@
 
 #include "utils/cli/benchmark_requests.h"
 
+class xferBenchConfig;
+
 namespace nixlbench {
+
+bool
+validateRawConfigForRun(xferBenchConfig &config);
 
 int
 runRawRequest(const rawRequest &request);

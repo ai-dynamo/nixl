@@ -7,6 +7,7 @@
 
 #include "config.h"
 #include "utils/scope_guard.h"
+#include "utils/cli/raw_execution.h"
 #include "utils/utils.h"
 #include "worker/nixl/nixl_worker.h"
 #if HAVE_NVSHMEM && HAVE_CUDA
@@ -21,6 +22,57 @@
 #include <memory>
 #include <string_view>
 #include <variant>
+
+namespace {
+
+int
+runBenchmarkLegacyLoop(xferBenchConfig &config) {
+    int num_threads = config.num_threads;
+
+    std::unique_ptr<xferBenchWorker> worker_ptr = createWorker(config);
+    if (!worker_ptr) {
+        return EXIT_FAILURE;
+    }
+
+    std::signal(SIGINT, worker_ptr->signalHandler);
+
+    int ret = worker_ptr->synchronizeStart();
+    if (0 != ret) {
+        std::cerr << "Failed to synchronize all processes" << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    std::vector<std::vector<xferBenchIOV>> iov_lists = worker_ptr->allocateMemory(num_threads);
+    auto mem_guard = make_scope_guard([&] { worker_ptr->deallocateMemory(iov_lists); });
+
+    ret = worker_ptr->exchangeMetadata();
+    if (0 != ret) {
+        return EXIT_FAILURE;
+    }
+
+    if (worker_ptr->isInitiator() && worker_ptr->isMasterRank()) {
+        config.printConfig();
+        xferBenchUtils::printStatsHeader(config);
+    }
+
+    for (size_t block_size = config.start_block_size;
+         !worker_ptr->signaled() && block_size <= config.max_block_size;
+         block_size *= 2) {
+        ret = processBatchSizes(*worker_ptr, config, iov_lists, block_size, num_threads);
+        if (0 != ret) {
+            return EXIT_FAILURE;
+        }
+    }
+
+    ret = worker_ptr->synchronize();
+    if (0 != ret) {
+        return EXIT_FAILURE;
+    }
+
+    return worker_ptr->signaled() ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+} // namespace
 
 std::pair<size_t, size_t>
 getStrideScheme(xferBenchWorker &worker, const xferBenchConfig &config, int num_threads) {
@@ -228,48 +280,15 @@ parse_file_size(const std::string &input) {
 }
 
 int
+runBenchmark(const nixlbench::benchmarkConfig &config) {
+    xferBenchConfig legacy_config = nixlbench::makeLegacyConfigFromBenchmarkConfig(config);
+    if (!nixlbench::validateRawConfigForRun(legacy_config)) {
+        return EXIT_FAILURE;
+    }
+    return runBenchmarkLegacyLoop(legacy_config);
+}
+
+int
 runBenchmark(xferBenchConfig &config) {
-    int num_threads = config.num_threads;
-
-    std::unique_ptr<xferBenchWorker> worker_ptr = createWorker(config);
-    if (!worker_ptr) {
-        return EXIT_FAILURE;
-    }
-
-    std::signal(SIGINT, worker_ptr->signalHandler);
-
-    int ret = worker_ptr->synchronizeStart();
-    if (0 != ret) {
-        std::cerr << "Failed to synchronize all processes" << std::endl;
-        return EXIT_FAILURE;
-    }
-
-    std::vector<std::vector<xferBenchIOV>> iov_lists = worker_ptr->allocateMemory(num_threads);
-    auto mem_guard = make_scope_guard([&] { worker_ptr->deallocateMemory(iov_lists); });
-
-    ret = worker_ptr->exchangeMetadata();
-    if (0 != ret) {
-        return EXIT_FAILURE;
-    }
-
-    if (worker_ptr->isInitiator() && worker_ptr->isMasterRank()) {
-        config.printConfig();
-        xferBenchUtils::printStatsHeader(config);
-    }
-
-    for (size_t block_size = config.start_block_size;
-         !worker_ptr->signaled() && block_size <= config.max_block_size;
-         block_size *= 2) {
-        ret = processBatchSizes(*worker_ptr, config, iov_lists, block_size, num_threads);
-        if (0 != ret) {
-            return EXIT_FAILURE;
-        }
-    }
-
-    ret = worker_ptr->synchronize();
-    if (0 != ret) {
-        return EXIT_FAILURE;
-    }
-
-    return worker_ptr->signaled() ? EXIT_FAILURE : EXIT_SUCCESS;
+    return runBenchmark(nixlbench::makeBenchmarkConfigFromLegacy(config));
 }

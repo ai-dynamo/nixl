@@ -9,8 +9,12 @@
 #include <memory>
 #include <vector>
 
+#include "benchmark_config.h"
 #include "utils/utils.h"
 #include "worker/worker.h"
+
+int
+runBenchmark(const nixlbench::benchmarkConfig &config);
 
 int
 runBenchmark(xferBenchConfig &config);

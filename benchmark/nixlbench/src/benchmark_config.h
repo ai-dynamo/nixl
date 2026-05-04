@@ -94,6 +94,10 @@ makeBenchmarkConfigFromLegacy(const xferBenchConfig &legacy_config);
 benchmarkConfig
 makeBenchmarkConfigFromRawRequest(const rawRequest &request);
 
+// Temporary Phase 4 bridge while runner and workers still consume xferBenchConfig.
+xferBenchConfig
+makeLegacyConfigFromBenchmarkConfig(const benchmarkConfig &config);
+
 } // namespace nixlbench
 
 #endif // NIXLBENCH_BENCHMARK_CONFIG_H

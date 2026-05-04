@@ -34,6 +34,7 @@ utils_sources = [
   'cli/raw_command.h',
   'cli/raw_execution.cpp',
   'cli/raw_execution.h',
+  'cli/raw_validation.cpp',
   'neuron.cpp',
   'neuron.h',
   'utils.cpp',
