@@ -45,6 +45,10 @@ xferOpStr(const nixl_xfer_op_t &op) {
         return "READ";
     case NIXL_WRITE:
         return "WRITE";
+    case NIXL_SEND:
+        return "SEND";
+    case NIXL_RECV:
+        return "RECV";
     }
     return "BAD_OP";
 }

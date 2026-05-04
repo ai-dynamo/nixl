@@ -31,6 +31,22 @@ isReadWrite(const nixl_xfer_op_t operation) noexcept {
     case NIXL_READ:
     case NIXL_WRITE:
         return true;
+    case NIXL_SEND:
+    case NIXL_RECV:
+        return false;
+    }
+    return false;
+}
+
+[[nodiscard]] constexpr bool
+isSendRecv(const nixl_xfer_op_t operation) noexcept {
+    switch (operation) {
+    case NIXL_READ:
+    case NIXL_WRITE:
+        return false;
+    case NIXL_SEND:
+    case NIXL_RECV:
+        return true;
     }
     return false;
 }
@@ -39,8 +55,10 @@ isReadWrite(const nixl_xfer_op_t operation) noexcept {
 localIsSource(const nixl_xfer_op_t operation) noexcept {
     switch (operation) {
     case NIXL_READ:
+    case NIXL_RECV:
         return false;
     case NIXL_WRITE:
+    case NIXL_SEND:
         return true;
     }
     return false;
@@ -50,8 +68,10 @@ localIsSource(const nixl_xfer_op_t operation) noexcept {
 localIsTarget(const nixl_xfer_op_t operation) noexcept {
     switch (operation) {
     case NIXL_READ:
+    case NIXL_RECV:
         return true;
     case NIXL_WRITE:
+    case NIXL_SEND:
         return false;
     }
     return false;
