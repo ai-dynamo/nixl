@@ -76,10 +76,12 @@ load_proxy_context() {
     return g_nixl_proxy_ctx;
 }
 
-static_assert(sizeof(nixlProxyWorkRing::running_op_idx) == 8,
-              "running_op_idx must be 64-bit to avoid wrap-around false completions");
+static_assert(sizeof(*nixlProxyWorkRing{}.producer_idx) == 8,
+              "producer_idx must be 64-bit to avoid wrap-around false completions");
+static_assert(sizeof(*nixlProxyWorkRing{}.consumer_idx) == 8,
+              "consumer_idx must be 64-bit to match producer_idx");
 static_assert(sizeof(nixlProxyCompletionSlot::completed_idx) == 8,
-              "completed_idx must be 64-bit to match running_op_idx");
+              "completed_idx must be 64-bit to match producer_idx");
 
 template<nixl_gpu_level_t level>
 __device__ inline void nixlProxyExecInit(uint32_t &lane_id) {
@@ -112,6 +114,10 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
     // Enqueue a transfer submission into the MPSC work ring for the selected
     // channel, spinning if the ring is full.  Optionally records a completion
     // token in *xfer_status for later polling via pollXferStatus().
+    //
+    // producer_idx lives in device memory and only needs device-scope atomicity.
+    // consumer_idx lives in pinned host memory (accessible from device via
+    // UVA mapped pointer), so full-ring polling uses system-scope atomics.
     __device__ inline nixl_status_t
     enqueue(nixlProxySubmission submission, nixlGpuXferStatusH *xfer_status = nullptr) {
         if (submission.channel_id >= num_channels) {
@@ -121,26 +127,24 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
         nixlProxyChannelView &channel_view = channels[submission.channel_id];
         nixlProxyWorkRing         *ring    = channel_view.work_ring;
 
-        cuda::atomic_ref<uint32_t, cuda::thread_scope_system> prod(*ring->producer_idx);
-        cuda::atomic_ref<uint32_t, cuda::thread_scope_system> cons(*ring->consumer_idx);
+        cuda::atomic_ref<uint64_t, cuda::thread_scope_device> producer_idx(
+            *ring->producer_idx);
+        cuda::atomic_ref<uint64_t, cuda::thread_scope_system> cons(*ring->consumer_idx);
         cuda::atomic_ref<uint32_t, cuda::thread_scope_system> shut(*shutdown_word);
 
         // Atomically claim a unique slot in the ring.
-        uint32_t my_slot = prod.fetch_add(1, cuda::memory_order_relaxed);
+        const uint64_t ticket = producer_idx.fetch_add(1, cuda::memory_order_relaxed);
 
         // Spin until the claimed slot has space (consumer has freed it).
-        while (my_slot - cons.load(cuda::memory_order_acquire) >= ring->depth) {
+        while (ticket - cons.load(cuda::memory_order_acquire) >= ring->depth) {
             if (shut.load(cuda::memory_order_acquire)
                 == static_cast<uint32_t>(nixl_proxy_control_state_t::SHUTDOWN)) {
                 return NIXL_ERR_BACKEND;
             }
         }
 
-        cuda::atomic_ref<uint64_t, cuda::thread_scope_system> running_op_idx(
-            ring->running_op_idx);
-        const uint64_t submission_op_idx =
-            running_op_idx.fetch_add(1, cuda::memory_order_relaxed);
-        const uint32_t slot = my_slot % ring->depth;
+        const uint64_t submission_op_idx = ticket + 1;
+        const uint32_t slot = static_cast<uint32_t>(ticket % ring->depth);
 
         // Signal this slot is ready for the consumer.  The release
         // guarantees the record write above is visible before the

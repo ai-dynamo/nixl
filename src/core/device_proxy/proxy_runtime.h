@@ -17,7 +17,6 @@
 #ifndef NIXL_SRC_CORE_DEVICE_PROXY_PROXY_RUNTIME_H
 #define NIXL_SRC_CORE_DEVICE_PROXY_PROXY_RUNTIME_H
 
-#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -43,16 +42,14 @@ struct alignas(64) nixlProxyChannelState {
     std::deque<nixlProxyRequestState> inflight_requests;
     bool error_latched = false;
 
-    nixlProxyWorkRing        *work_ring_       = nullptr;
-    nixlProxySubmission *records_         = nullptr;
-    /** Mapped pinned host memory; host proxy uses __atomic_* on host alias. */
-    uint32_t        *producer_idx_host_ = nullptr;
-    /** Device-mapped alias of producer_idx_host_ for nixlProxyWorkRing (GPU-writable). */
-    uint32_t        *producer_idx_dev_  = nullptr;
+    nixlProxyWorkRing *work_ring_dev_ = nullptr;
+    nixlProxySubmission *records_host_ = nullptr;
+    /** Device-resident producer index; only the GPU updates it. */
+    uint64_t        *producer_idx_dev_ = nullptr;
     /** Consumer count: host pinned; proxy uses __atomic_* on consumer_idx_host_. */
-    uint32_t        *consumer_idx_host_  = nullptr;
-    /** Same word as consumer_idx_host_, for nixlProxyWorkRing::consumer_idx (GPU-readable). */
-    uint32_t        *consumer_idx_dev_   = nullptr;
+    uint64_t        *consumer_idx_host_  = nullptr;
+    /** Host-side ring depth for the CPU worker; nixlProxyWorkRing itself is device-only. */
+    uint32_t         ring_depth_         = 0;
     /** Mapped pinned host memory; proxy worker writes directly via host alias. */
     nixlProxyCompletionSlot  *completion_slot_host_ = nullptr;
     /** Device-mapped alias of completion_slot_host_ for nixlProxyChannelView. */
@@ -277,7 +274,9 @@ class nixlProxyRuntime {
         channelCount() const { return static_cast<uint32_t>(channels_.size()); }
 
         const nixlProxyChannelView *
-        deviceChannelViews() const { return device_channel_views_; }
+        deviceChannelViews() const {
+            return device_channel_views_.empty() ? nullptr : device_channel_views_.data();
+        }
 
         nixlProxyDeviceContextData *
         deviceContext() const { return device_context_; }
@@ -287,8 +286,9 @@ class nixlProxyRuntime {
         joinWorkerThreads() noexcept;
 
         std::vector<nixlProxyChannelState> channels_;
-        nixlProxyChannelView       *device_channel_views_ = nullptr;
-        nixlProxyDeviceContextData *device_context_       = nullptr;
+        std::vector<nixlProxyChannelView> device_channel_views_;
+        nixlProxyChannelView *device_channel_views_dev_ = nullptr;
+        nixlProxyDeviceContextData *device_context_ = nullptr;
         std::vector<std::unique_ptr<ProxyWorker>> workers_;
         nixlProxyMemViewRegistry memview_registry_;
         std::unique_ptr<nixlDeviceProxyBackendAdapter> backend_;

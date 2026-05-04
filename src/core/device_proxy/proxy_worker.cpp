@@ -42,8 +42,8 @@ void
 ProxyWorker::start(uint32_t worker_idx) {
     thread_ = std::thread([this, worker_idx]() {
         NIXL_INFO << "ProxyWorker thread " << worker_idx << " started";
-        while (__atomic_load_n(shutdown_word_, __ATOMIC_ACQUIRE)
-               == static_cast<uint32_t>(nixl_proxy_control_state_t::RUNNING)) {
+        while (__atomic_load_n(shutdown_word_, __ATOMIC_ACQUIRE) ==
+               static_cast<uint32_t>(nixl_proxy_control_state_t::RUNNING)) {
             runOnce();
             if (pthr_delay_us_ > 0) {
                 std::this_thread::sleep_for(std::chrono::microseconds(pthr_delay_us_));
@@ -78,54 +78,46 @@ ProxyWorker::runOnce() {
 
 bool
 ProxyWorker::tryDequeue(nixlProxyChannelState &channel, nixlProxySubmission &submission) {
-    nixlProxyWorkRing *ring = channel.work_ring_;
     // Sole writer of consumer_idx on host — relaxed load is sufficient.
-    uint32_t local_consumer_idx =
-        __atomic_load_n(channel.consumer_idx_host_, __ATOMIC_RELAXED);
-    uint32_t slot = local_consumer_idx % ring->depth;
+    uint64_t local_consumer_idx = __atomic_load_n(channel.consumer_idx_host_, __ATOMIC_RELAXED);
+    uint32_t slot = static_cast<uint32_t>(local_consumer_idx % channel.ring_depth_);
     // op_idx is the GPU-to-CPU signal that the record is written
-    // (pairs with release store in device enqueue).  No producer_idx
+    // (pairs with release store in device enqueue).  No producer index
     // read on host — it is GPU-internal for slot allocation.
-    const uint64_t op_idx = __atomic_load_n(&ring->records[slot].op_idx, __ATOMIC_ACQUIRE);
+    const uint64_t op_idx = __atomic_load_n(&channel.records_host_[slot].op_idx, __ATOMIC_ACQUIRE);
     if (op_idx == 0) {
         return false;
     }
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
-    submission = ring->records[slot];
+    submission = channel.records_host_[slot];
     submission.op_idx = op_idx;
-    __atomic_store_n(&ring->records[slot].op_idx, 0, __ATOMIC_RELAXED);
-    __atomic_store_n(channel.consumer_idx_host_,
-                     local_consumer_idx + 1,
-                     __ATOMIC_RELEASE);
+    __atomic_store_n(&channel.records_host_[slot].op_idx, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(channel.consumer_idx_host_, local_consumer_idx + 1, __ATOMIC_RELEASE);
     NIXL_DEBUG << "ProxyWorker::tryDequeue: channel=" << channel.device_view.channel_id
                << " consumer=" << local_consumer_idx
                << " opcode=" << static_cast<int>(submission.opcode)
-               << " op_idx=" << submission.op_idx
-               << " size=" << submission.size;
+               << " op_idx=" << submission.op_idx << " size=" << submission.size;
     return true;
 }
 
 void
-ProxyWorker::submitToBackend(nixlProxyChannelState &channel, const nixlProxySubmission &submission) {
+ProxyWorker::submitToBackend(nixlProxyChannelState &channel,
+                             const nixlProxySubmission &submission) {
     nixlBackendProxySubmission prepared_submission;
     nixl_status_t status =
         proxy_memview_registry_->prepareSubmission(submission, prepared_submission);
     if (status != NIXL_SUCCESS) {
         NIXL_DEBUG << "ProxyWorker::submitToBackend: submission preparation failed"
-                   << " op_idx=" << submission.op_idx
-                   << " status=" << status;
-        channel.inflight_requests.push_back(
-            {submission.op_idx, 0, status});
+                   << " op_idx=" << submission.op_idx << " status=" << status;
+        channel.inflight_requests.push_back({submission.op_idx, 0, status});
         // The terminal error is queued for publishCompletions(); the worker handled it.
         return;
     }
 
     NIXL_DEBUG << "ProxyWorker::submitToBackend: op_idx=" << submission.op_idx
                << " opcode=" << static_cast<int>(submission.opcode)
-               << " channel=" << submission.channel_id
-               << " local_addr=0x" << std::hex << prepared_submission.local.desc.addr
-               << " remote_addr=0x" << prepared_submission.remote.desc.addr << std::dec
-               << " size=" << submission.size
+               << " channel=" << submission.channel_id << " local_addr=0x" << std::hex
+               << prepared_submission.local.desc.addr << " remote_addr=0x"
+               << prepared_submission.remote.desc.addr << std::dec << " size=" << submission.size
                << " remote_agent='" << prepared_submission.remote_agent << "'";
 
     uint64_t request_token = 0;
@@ -168,14 +160,12 @@ ProxyWorker::publishCompletions(nixlProxyChannelState &channel) {
                 break;
             }
         }
-        NIXL_DEBUG << "ProxyWorker::publishCompletions: channel="
-                   << channel.device_view.channel_id
-                   << " op_idx=" << front.op_idx
-                   << " status=" << st
+        NIXL_DEBUG << "ProxyWorker::publishCompletions: channel=" << channel.device_view.channel_id
+                   << " op_idx=" << front.op_idx << " status=" << st
                    << " token=" << front.backend_req_token;
         channel.completion_slot_host_->next_status = st;
-        __atomic_store_n(&channel.completion_slot_host_->completed_idx,
-                         front.op_idx, __ATOMIC_RELEASE);
+        __atomic_store_n(
+            &channel.completion_slot_host_->completed_idx, front.op_idx, __ATOMIC_RELEASE);
         channel.inflight_requests.pop_front();
         if (st != NIXL_SUCCESS) {
             channel.error_latched = true;

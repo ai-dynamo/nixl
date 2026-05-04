@@ -54,17 +54,14 @@ static_assert(offsetof(nixlProxySubmission, op_idx) == 0,
               "op_idx must be the first word because it publishes record readiness");
 
 struct nixlProxyWorkRing {
-    /** Host-accessible (e.g. cudaMallocHost); GPU may read via mapped pointer if needed. */
+    /** Mapped host records: GPU writes via device alias; CPU worker reads host alias. */
     nixlProxySubmission *records = nullptr;
-    /** Mapped pinned producer; GPU advances with CUDA atomics; host reads via __atomic_*. */
-    uint32_t *producer_idx = nullptr;
+    /** Device-resident producer index; only the GPU updates it. */
+    uint64_t *producer_idx = nullptr;
     /** Mapped pinned consumer; host proxy uses __atomic_* on host alias (nixlProxyChannelState). */
-    uint32_t *consumer_idx = nullptr;
+    uint64_t *consumer_idx = nullptr;
     /** The depth of the work ring. */
     uint32_t depth = 0;
-    /** Monotonic 64-bit counter; starts at 1 so completed_idx==0 means
-     *  "no operation completed yet" and the first op_idx is never 0. */
-    uint64_t running_op_idx = 1;
 };
 
 struct alignas(16) nixlProxyCompletionSlot {
