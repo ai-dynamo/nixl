@@ -25,6 +25,8 @@ public:
 private:
     g3ScenarioRequest request_;
     std::vector<cliOption> options_;
+
+    bool isRequestValid(const g3ScenarioRequest &request) const;
 };
 
 } // namespace nixlbench

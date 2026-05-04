@@ -13,13 +13,14 @@
 #include "worker/nvshmem/nvshmem_worker.h"
 #endif
 
+#include <charconv>
+#include <cctype>
 #include <csignal>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <string_view>
 #include <variant>
-
-namespace {
 
 std::pair<size_t, size_t>
 getStrideScheme(xferBenchWorker &worker, int num_threads) {
@@ -61,7 +62,8 @@ createTransferDescLists(xferBenchWorker &worker,
                         std::vector<std::vector<xferBenchIOV>> &iov_lists,
                         size_t block_size,
                         size_t batch_size,
-                        int num_threads) {
+                        int num_threads,
+                        bool randomized_read_location) {
     auto [count, stride] = getStrideScheme(worker, num_threads);
     std::vector<std::vector<xferBenchIOV>> xfer_lists;
 
@@ -95,15 +97,13 @@ int
 processBatchSizes(xferBenchWorker &worker,
                   std::vector<std::vector<xferBenchIOV>> &iov_lists,
                   size_t block_size,
-                  int num_threads) {
+                  int num_threads,
+                  bool randomized_read_location) {
     for (size_t batch_size = xferBenchConfig::start_batch_size;
          !worker.signaled() && batch_size <= xferBenchConfig::max_batch_size;
          batch_size *= 2) {
-        auto local_trans_lists = createTransferDescLists(worker,
-                                                         iov_lists,
-                                                         block_size,
-                                                         batch_size,
-                                                         num_threads);
+        auto local_trans_lists =
+            createTransferDescLists(worker, iov_lists, block_size, batch_size, num_threads, randomized_read_location);
 
         if (worker.isTarget()) {
             if (xferBenchConfig::isStorageBackend()) {
@@ -163,7 +163,65 @@ createWorker() {
     }
 }
 
-} // namespace
+size_t
+parse_file_size(const std::string &input) {
+    if (input.empty()) return 0;
+
+    size_t suffix_pos = input.find_first_not_of("0123456789");
+    const char *number_end = suffix_pos == std::string_view::npos ? input.data() + input.size() :
+                                                                    input.data() + suffix_pos;
+
+    size_t value = 0;
+    auto [ptr, ec] = std::from_chars(input.data(), number_end, value);
+
+    if (ec != std::errc{} || ptr != number_end) return 0;
+
+    if (suffix_pos == std::string_view::npos) return value;
+
+    std::string_view suffix(input.data() + suffix_pos, input.size() - suffix_pos);
+    auto to_upper = [](char c) {
+        return static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    };
+
+    size_t multiplier = 1;
+    switch (to_upper(suffix[0])) {
+    case 'K':
+        multiplier = 1000LL;
+        break;
+    case 'M':
+        multiplier = 1000000LL;
+        break;
+    case 'G':
+        multiplier = 1000000000LL;
+        break;
+    case 'T':
+        multiplier = 1000000000000LL;
+        break;
+    default:
+        return value;
+    }
+
+    if (suffix.size() >= 2 && to_upper(suffix[1]) == 'I') {
+        switch (to_upper(suffix[0])) {
+        case 'K':
+            multiplier = 1LL << 10;
+            break;
+        case 'M':
+            multiplier = 1LL << 20;
+            break;
+        case 'G':
+            multiplier = 1LL << 30;
+            break;
+        case 'T':
+            multiplier = 1LL << 40;
+            break;
+        default:
+            break;
+        }
+    }
+
+    return value * multiplier;
+}
 
 int
 runBenchmarkWithCurrentConfig() {

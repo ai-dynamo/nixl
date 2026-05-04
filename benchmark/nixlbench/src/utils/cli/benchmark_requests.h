@@ -64,9 +64,12 @@ struct fileWorkloadRequest {
 };
 
 struct g3ScenarioRequest {
-    std::string file_size;
+    std::string file_size = "1GB";
     int parallel_threads = 1;
-    std::string batch_size;
+    uint64_t block_size_bytes = 4096;
+    uint64_t batch_size = 1;
+    std::string action_mode = "read";
+    bool randomized_read_location = true;
 };
 
 struct g4ScenarioRequest {
