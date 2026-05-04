@@ -955,8 +955,7 @@ infinia_engine::loadRemoteConnInfo(const std::string &remote_agent,
     }
 
     // TODO: Parse and store remote connection information
-    NIXL_DEBUG << absl::StrFormat(
-        "Loading remote connection info for %s: %s", remote_agent, remote_conn_info);
+    NIXL_DEBUG << absl::StrFormat("Ignoring remote connection info for %s", remote_agent);
     return NIXL_SUCCESS;
 }
 
@@ -970,8 +969,8 @@ infinia_engine::loadRemoteMD(const nixlBlobDesc &input,
     }
 
     // TODO: Create remote metadata object
-    NIXL_DEBUG << absl::StrFormat("Loading remote metadata for agent: %s", remote_agent);
-    output = nullptr; // TODO: Create actual remote metadata
+    NIXL_DEBUG << absl::StrFormat("Ignoring remote metadata for %s", remote_agent);
+    output = nullptr;
     return NIXL_SUCCESS;
 }
 

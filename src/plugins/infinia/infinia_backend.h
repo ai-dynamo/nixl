@@ -173,10 +173,11 @@ public:
 
     [[nodiscard]] nixl_status_t
     checkXfer(nixlBackendReqH *handle) const override;
+
     [[nodiscard]] nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
-    // Remote operations (required since supportsRemote() returns true)
+    // Remote operations (not currently supported)
     [[nodiscard]] nixl_status_t
     getPublicData(const nixlBackendMD *meta, std::string &str) const override;
 
