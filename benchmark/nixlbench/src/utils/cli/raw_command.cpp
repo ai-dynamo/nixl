@@ -182,6 +182,9 @@ namespace {
     void
     applyPluginOptions(rawRequest &raw, const southboundPluginBenchmarkCommand &plugin) {
         const auto &options = plugin.metadataOptions();
+        raw.backend.setProvided(std::string(plugin.name()));
+        raw.backend_capabilities = plugin.capabilities();
+        raw.backend_options = options;
         if (plugin.capabilities().canReadWriteFiles) {
             raw.filepath.setProvided(plugin.metadataOptions().at("filepath").value);
             raw.num_files.setProvided(std::stoi(plugin.metadataOptions().at("num_files").value));

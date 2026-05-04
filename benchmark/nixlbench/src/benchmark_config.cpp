@@ -76,6 +76,15 @@ legacyBackendCapabilities(std::string_view backend) {
     return capabilities;
 }
 
+nixlBackendPluginCapabilities
+mergeCapabilities(nixlBackendPluginCapabilities lhs, nixlBackendPluginCapabilities rhs) {
+    lhs.canUseAsStorage = lhs.canUseAsStorage || rhs.canUseAsStorage;
+    lhs.canUseAsNetworkDestination =
+        lhs.canUseAsNetworkDestination || rhs.canUseAsNetworkDestination;
+    lhs.canReadWriteFiles = lhs.canReadWriteFiles || rhs.canReadWriteFiles;
+    return lhs;
+}
+
 template<typename T>
 void
 setOption(metadata_plugin_option_map_t &options, const std::string &name, const providedValue<T> &value) {
@@ -351,7 +360,7 @@ makeBenchmarkConfigFromLegacy(const xferBenchConfig &legacy_config) {
     config.worker.type = legacy_config.worker_type;
     config.worker.num_initiator_dev = legacy_config.num_initiator_dev;
     config.worker.num_target_dev = legacy_config.num_target_dev;
-    config.worker.enable_pt = legacy_config.enable_pt;
+    config.worker.enable_progress_thread = legacy_config.enable_pt;
     config.worker.progress_threads = legacy_config.progress_threads;
     config.worker.device_list = legacy_config.device_list;
     config.worker.enable_vmm = legacy_config.enable_vmm;
@@ -397,13 +406,15 @@ makeBenchmarkConfigFromRawRequest(const rawRequest &request) {
     config.worker.type = request.worker_type.value;
     config.worker.num_initiator_dev = request.num_initiator_dev.value;
     config.worker.num_target_dev = request.num_target_dev.value;
-    config.worker.enable_pt = request.enable_pt.value;
+    config.worker.enable_progress_thread = request.enable_pt.value;
     config.worker.progress_threads = request.progress_threads.value;
     config.worker.device_list = request.device_list.value;
     config.worker.enable_vmm = request.enable_vmm.value;
 
     config.backend.name = request.backend.value;
-    config.backend.capabilities = legacyBackendCapabilities(request.backend.value);
+    config.backend.capabilities = mergeCapabilities(legacyBackendCapabilities(request.backend.value),
+                                                    request.backend_capabilities);
+    config.backend.options = request.backend_options;
     addRawBackendOptions(config, request);
 
     config.storage.filepath = request.filepath.value;
@@ -443,7 +454,7 @@ makeLegacyConfigFromBenchmarkConfig(const benchmarkConfig &config) {
     legacy_config.worker_type = config.worker.type;
     legacy_config.num_initiator_dev = config.worker.num_initiator_dev;
     legacy_config.num_target_dev = config.worker.num_target_dev;
-    legacy_config.enable_pt = config.worker.enable_pt;
+    legacy_config.enable_pt = config.worker.enable_progress_thread;
     legacy_config.progress_threads = config.worker.progress_threads;
     legacy_config.device_list = config.worker.device_list;
     legacy_config.enable_vmm = config.worker.enable_vmm;

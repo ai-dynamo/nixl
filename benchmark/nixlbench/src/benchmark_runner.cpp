@@ -27,7 +27,7 @@ namespace {
 
 int
 runBenchmarkLegacyLoop(const nixlbench::benchmarkConfig &benchmark_config, xferBenchConfig &config) {
-    int num_threads = config.num_threads;
+    int num_threads = benchmark_config.transfer.num_threads;
 
     std::unique_ptr<xferBenchWorker> worker_ptr = createWorker(benchmark_config);
     if (!worker_ptr) {
@@ -55,10 +55,10 @@ runBenchmarkLegacyLoop(const nixlbench::benchmarkConfig &benchmark_config, xferB
         xferBenchUtils::printStatsHeader(config);
     }
 
-    for (size_t block_size = config.start_block_size;
-         !worker_ptr->signaled() && block_size <= config.max_block_size;
+    for (size_t block_size = benchmark_config.transfer.start_block_size;
+         !worker_ptr->signaled() && block_size <= benchmark_config.transfer.max_block_size;
          block_size *= 2) {
-        ret = processBatchSizes(*worker_ptr, config, iov_lists, block_size, num_threads);
+        ret = processBatchSizes(*worker_ptr, benchmark_config, iov_lists, block_size, num_threads);
         if (0 != ret) {
             return EXIT_FAILURE;
         }
@@ -74,50 +74,16 @@ runBenchmarkLegacyLoop(const nixlbench::benchmarkConfig &benchmark_config, xferB
 
 } // namespace
 
-std::pair<size_t, size_t>
-getStrideScheme(xferBenchWorker &worker, const xferBenchConfig &config, int num_threads) {
-    int initiator_device, target_device;
-    size_t buffer_size, count, stride;
-
-    initiator_device = config.num_initiator_dev;
-    target_device = config.num_target_dev;
-
-    count = 1;
-    buffer_size = config.total_buffer_size / (initiator_device * num_threads);
-
-    if (XFERBENCH_SCHEME_ONE_TO_MANY == config.scheme) {
-        if (worker.isInitiator()) {
-            count = target_device;
-        }
-    } else if (XFERBENCH_SCHEME_MANY_TO_ONE == config.scheme) {
-        if (worker.isTarget()) {
-            count = initiator_device;
-        }
-    } else if (XFERBENCH_SCHEME_TP == config.scheme) {
-        if (worker.isInitiator()) {
-            if (initiator_device < target_device) {
-                count = target_device / initiator_device;
-            }
-        } else if (worker.isTarget()) {
-            if (target_device < initiator_device) {
-                count = initiator_device / target_device;
-            }
-        }
-    }
-    stride = buffer_size / count;
-
-    return std::make_pair(count, stride);
-}
-
 std::vector<std::vector<xferBenchIOV>>
 createTransferDescLists(xferBenchWorker &worker,
-                        const xferBenchConfig &config,
+                        const nixlbench::benchmarkConfig &config,
                         std::vector<std::vector<xferBenchIOV>> &iov_lists,
                         size_t block_size,
                         size_t batch_size,
                         int num_threads,
                         bool randomized_read_location) {
-    auto [count, stride] = getStrideScheme(worker, config, num_threads);
+    auto [count, stride] = nixlbench::getStrideScheme(
+        config, worker.isInitiator(), worker.isTarget(), num_threads);
     std::vector<std::vector<xferBenchIOV>> xfer_lists;
 
     for (const auto &iov_list : iov_lists) {
@@ -148,20 +114,22 @@ createTransferDescLists(xferBenchWorker &worker,
 
 int
 processBatchSizes(xferBenchWorker &worker,
-                  const xferBenchConfig &config,
+                  const nixlbench::benchmarkConfig &config,
                   std::vector<std::vector<xferBenchIOV>> &iov_lists,
                   size_t block_size,
                   int num_threads,
                   bool randomized_read_location) {
-    for (size_t batch_size = config.start_batch_size;
-         !worker.signaled() && batch_size <= config.max_batch_size;
+    auto legacy_config = nixlbench::makeLegacyConfigFromBenchmarkConfig(config);
+
+    for (size_t batch_size = config.transfer.start_batch_size;
+         !worker.signaled() && batch_size <= config.transfer.max_batch_size;
          batch_size *= 2) {
         auto local_trans_lists =
             createTransferDescLists(
                 worker, config, iov_lists, block_size, batch_size, num_threads, randomized_read_location);
 
         if (worker.isTarget()) {
-            if (config.isStorageBackend()) {
+            if (nixlbench::isStorageBackend(config.backend)) {
                 std::cerr << "storage backend should be always an initiator" << std::endl;
                 return EXIT_FAILURE;
             }
@@ -170,11 +138,13 @@ processBatchSizes(xferBenchWorker &worker,
             worker.poll(block_size);
 
             if (!xferBenchUtils::validateTransfer(
-                    config, false, local_trans_lists, local_trans_lists)) {
+                    legacy_config, false, local_trans_lists, local_trans_lists)) {
                 return EXIT_FAILURE;
             }
-            if (IS_PAIRWISE_AND_SG(config)) {
-                xferBenchUtils::printStats(config, true, block_size, batch_size, xferBenchStats());
+            if (config.transfer.scheme == XFERBENCH_SCHEME_PAIRWISE &&
+                config.transfer.mode == XFERBENCH_MODE_SG) {
+                xferBenchUtils::printStats(
+                    legacy_config, true, block_size, batch_size, xferBenchStats());
             }
         } else if (worker.isInitiator()) {
             std::vector<std::vector<xferBenchIOV>> remote_trans_lists(
@@ -185,12 +155,13 @@ processBatchSizes(xferBenchWorker &worker,
                 return 1;
             }
 
-            if (!xferBenchUtils::validateTransfer(config, true, local_trans_lists, remote_trans_lists)) {
+            if (!xferBenchUtils::validateTransfer(
+                    legacy_config, true, local_trans_lists, remote_trans_lists)) {
                 return EXIT_FAILURE;
             }
 
             xferBenchUtils::printStats(
-                config, false, block_size, batch_size, std::get<xferBenchStats>(result));
+                legacy_config, false, block_size, batch_size, std::get<xferBenchStats>(result));
         }
     }
 

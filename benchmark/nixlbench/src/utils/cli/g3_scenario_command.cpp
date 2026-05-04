@@ -99,7 +99,8 @@ g3ScenarioCommand::run(southboundPluginBenchmarkCommand &plugin) {
     devices.push_back(std::string(plugin.name()));
     benchmarkConfig benchmark_config;
     benchmark_config.backend.name = std::string(plugin.name());
-    benchmark_config.backend.capabilities.canUseAsStorage = true;
+    benchmark_config.backend.capabilities = plugin.capabilities();
+    benchmark_config.backend.options = plugin.metadataOptions();
     benchmark_config.transfer.num_threads = request_.parallel_threads;
     benchmark_config.transfer.start_block_size = request_.block_size_bytes;
     benchmark_config.transfer.max_block_size = request_.block_size_bytes;
@@ -107,7 +108,6 @@ g3ScenarioCommand::run(southboundPluginBenchmarkCommand &plugin) {
     benchmark_config.transfer.max_batch_size = request_.batch_size;
     benchmark_config.transfer.total_buffer_size = parse_file_size(request_.file_size);
     auto worker_ptr = std::make_unique<xferBenchNixlWorker>(benchmark_config, devices);
-    xferBenchConfig config = makeLegacyConfigFromBenchmarkConfig(benchmark_config);
 
     // create files, return handles
     std::vector<std::vector<xferBenchIOV>> iov_lists =
@@ -115,7 +115,7 @@ g3ScenarioCommand::run(southboundPluginBenchmarkCommand &plugin) {
 
 
     int ret = processBatchSizes(*worker_ptr,
-                                config,
+                                benchmark_config,
                                 iov_lists,
                                 request_.block_size_bytes,
                                 request_.parallel_threads,

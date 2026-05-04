@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "benchmark_config.h"
+#include "benchmark_runner_config.h"
 #include "utils/utils.h"
 #include "worker/worker.h"
 
@@ -24,7 +25,7 @@ createWorker(const nixlbench::benchmarkConfig &config);
 
 int
 processBatchSizes(xferBenchWorker &worker,
-                  const xferBenchConfig &config,
+                  const nixlbench::benchmarkConfig &config,
                   std::vector<std::vector<xferBenchIOV>> &iov_lists,
                   size_t block_size,
                   int num_threads,
@@ -32,7 +33,7 @@ processBatchSizes(xferBenchWorker &worker,
 
 std::vector<std::vector<xferBenchIOV>>
 createTransferDescLists(xferBenchWorker &worker,
-                        const xferBenchConfig &config,
+                        const nixlbench::benchmarkConfig &config,
                         std::vector<std::vector<xferBenchIOV>> &iov_lists,
                         size_t block_size,
                         size_t batch_size,

@@ -69,7 +69,7 @@ TEST(BenchmarkConfigAdapterTest, LegacyConversionMapsCommonTransferAndWorkerFiel
     EXPECT_EQ(config.worker.type, XFERBENCH_WORKER_NIXL);
     EXPECT_EQ(config.worker.num_initiator_dev, 3);
     EXPECT_EQ(config.worker.num_target_dev, 4);
-    EXPECT_TRUE(config.worker.enable_pt);
+    EXPECT_TRUE(config.worker.enable_progress_thread);
     EXPECT_EQ(config.worker.progress_threads, 5U);
     EXPECT_EQ(config.worker.device_list, "mlx5_0,mlx5_1");
     EXPECT_TRUE(config.worker.enable_vmm);
@@ -162,6 +162,19 @@ TEST(BenchmarkConfigAdapterTest, LegacyConversionMapsGusliFieldsWithoutValidatio
     EXPECT_EQ(option(config, "device_security").value, "sec=0x3,sec=0x71");
 }
 
+TEST(BenchmarkConfigAdapterTest, RawRequestPreservesDynamicPluginOptions) {
+    rawRequest request;
+    request.backend.setProvided("NEW_PLUGIN");
+    request.backend_capabilities.canUseAsStorage = true;
+    request.backend_options["custom_param"] = {"custom-value", false, true};
+
+    const benchmarkConfig config = makeBenchmarkConfigFromRawRequest(request);
+
+    EXPECT_EQ(config.backend.name, "NEW_PLUGIN");
+    EXPECT_TRUE(config.backend.capabilities.canUseAsStorage);
+    EXPECT_EQ(option(config, "custom_param").value, "custom-value");
+}
+
 TEST(BenchmarkConfigAdapterTest, StructuredCopyBackMapsCommonTransferWorkerAndStorageFields) {
     benchmarkConfig config;
     config.common.benchmark_group = "group-b";
@@ -186,7 +199,7 @@ TEST(BenchmarkConfigAdapterTest, StructuredCopyBackMapsCommonTransferWorkerAndSt
     config.worker.type = XFERBENCH_WORKER_NIXL;
     config.worker.num_initiator_dev = 2;
     config.worker.num_target_dev = 5;
-    config.worker.enable_pt = true;
+    config.worker.enable_progress_thread = true;
     config.worker.progress_threads = 6;
     config.worker.device_list = "mlx5_2";
     config.worker.enable_vmm = true;

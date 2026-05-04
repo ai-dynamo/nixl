@@ -26,7 +26,7 @@ TEST(BenchmarkConfigTest, DefaultsMatchLegacyFlagDefaults) {
     EXPECT_EQ(config.worker.type, "nixl");
     EXPECT_EQ(config.worker.num_initiator_dev, 1);
     EXPECT_EQ(config.worker.num_target_dev, 1);
-    EXPECT_FALSE(config.worker.enable_pt);
+    EXPECT_FALSE(config.worker.enable_progress_thread);
     EXPECT_EQ(config.worker.progress_threads, 0U);
     EXPECT_EQ(config.worker.device_list, "all");
     EXPECT_FALSE(config.worker.enable_vmm);

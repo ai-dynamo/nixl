@@ -50,7 +50,7 @@ struct workerConfig {
     std::string type = "nixl";
     int num_initiator_dev = 1;
     int num_target_dev = 1;
-    bool enable_pt = false;
+    bool enable_progress_thread = false;
     std::size_t progress_threads = 0;
     std::string device_list = "all";
     bool enable_vmm = false;

@@ -5,6 +5,7 @@
 
 #include "utils/cli/raw_execution.h"
 
+#include "benchmark_config.h"
 #include "benchmark_runner.h"
 #include "utils/utils.h"
 
@@ -76,6 +77,24 @@ applyRawRequestToConfig(const rawRequest &request, xferBenchConfig &config) {
     config.gusli_device_security = request.gusli_device_security.value;
 }
 
+benchmarkConfig
+makeValidatedBenchmarkConfig(const rawRequest &request, const xferBenchConfig &legacy_config) {
+    benchmarkConfig config = makeBenchmarkConfigFromLegacy(legacy_config);
+    config.backend.capabilities.canUseAsStorage =
+        config.backend.capabilities.canUseAsStorage || request.backend_capabilities.canUseAsStorage;
+    config.backend.capabilities.canUseAsNetworkDestination =
+        config.backend.capabilities.canUseAsNetworkDestination ||
+        request.backend_capabilities.canUseAsNetworkDestination;
+    config.backend.capabilities.canReadWriteFiles =
+        config.backend.capabilities.canReadWriteFiles || request.backend_capabilities.canReadWriteFiles;
+    for (const auto &[name, option] : request.backend_options) {
+        if (option.isProvided) {
+            config.backend.options[name] = option;
+        }
+    }
+    return config;
+}
+
 } // namespace
 
 int
@@ -85,7 +104,7 @@ runRawRequest(const rawRequest &request) {
     if (!validateRawConfigForRun(config)) {
         return 1;
     }
-    return runBenchmark(config);
+    return runBenchmark(makeValidatedBenchmarkConfig(request, config));
 }
 
 } // namespace nixlbench

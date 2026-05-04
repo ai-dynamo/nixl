@@ -154,6 +154,7 @@ struct nixlBackendPluginCapabilities {
     bool canUseAsStorage = false;             ///< Backend can be used as storage.
     bool canUseAsNetworkDestination = false;  ///< Backend can be a network destination.
     bool canReadWriteFiles = false;           ///< Backend uses filesystem files for storage.
+    bool requiresDirectStorage = false;       ///< Backend requires direct storage.
 };
 
 /**

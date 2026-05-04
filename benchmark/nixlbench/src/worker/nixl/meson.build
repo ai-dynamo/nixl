@@ -14,6 +14,8 @@
 # limitations under the License.
 
 nixl_worker_sources = [
+  'nixl_backend_params.cpp',
+  'nixl_backend_params.h',
   'nixl_worker.cpp',
   'nixl_worker.h',
 ]

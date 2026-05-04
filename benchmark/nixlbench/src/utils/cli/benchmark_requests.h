@@ -6,6 +6,8 @@
 #ifndef NIXLBENCH_BENCHMARK_REQUESTS_H
 #define NIXLBENCH_BENCHMARK_REQUESTS_H
 
+#include "nixl_types.h"
+
 #include <cstdint>
 #include <unordered_map>
 #include <string>
@@ -142,6 +144,8 @@ struct rawRequest {
     providedValue<std::string> gusli_config_file;
     providedValue<std::string> gusli_device_byte_offsets;
     providedValue<std::string> gusli_device_security;
+    nixlBackendPluginCapabilities backend_capabilities{};
+    metadata_plugin_option_map_t backend_options;
 };
 
 struct posixPluginRequest {
