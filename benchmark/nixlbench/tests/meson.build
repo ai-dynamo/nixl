@@ -8,6 +8,7 @@ if gtest_dep.found()
     'nixlbench_unit_tests',
     [
       'benchmark_config_test.cpp',
+      'benchmark_config_adapter_test.cpp',
       'xfer_bench_config_test.cpp',
     ],
     include_directories: inc_dir,

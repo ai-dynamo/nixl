@@ -14,6 +14,8 @@
 #include <string>
 #include <string_view>
 
+class xferBenchConfig;
+
 namespace nixlbench {
 
 struct benchmarkCommonConfig {
@@ -80,6 +82,17 @@ inline bool
 isStorageBackend(const backendConfig &backend) {
     return backend.capabilities.canUseAsStorage;
 }
+
+inline bool
+isObjStorageBackend(const backendConfig &backend) {
+    return backend.name == "OBJ" || backend.name == "AZURE_BLOB";
+}
+
+benchmarkConfig
+makeBenchmarkConfigFromLegacy(const xferBenchConfig &legacy_config);
+
+benchmarkConfig
+makeBenchmarkConfigFromRawRequest(const rawRequest &request);
 
 } // namespace nixlbench
 

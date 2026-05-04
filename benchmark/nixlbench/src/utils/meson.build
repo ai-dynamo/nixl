@@ -14,6 +14,8 @@
 # limitations under the License.
 
 utils_sources = [
+  '../benchmark_config.cpp',
+  '../benchmark_config.h',
   'cli/benchmark_cli_builder.cpp',
   'cli/benchmark_cli_builder.h',
   'cli/benchmark_command.h',
