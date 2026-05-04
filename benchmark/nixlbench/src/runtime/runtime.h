@@ -48,6 +48,12 @@ class xferBenchRT {
             return true;
         }
 
+        // Check if the keepalive lease is still valid; returns true by default
+        [[nodiscard]] virtual bool
+        checkKeepAlive() {
+            return true;
+        }
+
         // Best-effort cleanup of runtime state (e.g. etcd keys) before a
         // forced exit that bypasses normal destructors.
         virtual void
