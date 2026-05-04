@@ -60,8 +60,8 @@ public:
                    size_t offset,
                    get_object_callback_t callback) override;
 
-    bool
-    checkObjectExists(std::string_view key) override;
+    void
+    checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) override;
 
 protected:
     std::unique_ptr<Aws::S3::S3Client> s3Client_;
