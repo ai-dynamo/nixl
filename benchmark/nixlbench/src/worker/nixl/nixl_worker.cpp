@@ -57,8 +57,8 @@
 
 #define GET_SEG_TYPE(is_initiator)                                                          \
     ({                                                                                      \
-        std::string _seg_type_str = ((is_initiator) ? xferBenchConfig::initiator_seg_type : \
-                                                      xferBenchConfig::target_seg_type);    \
+        std::string _seg_type_str = ((is_initiator) ? config.initiator_seg_type : \
+                                                      config.target_seg_type);    \
         nixl_mem_t _seg_type;                                                               \
         if (0 == _seg_type_str.compare("DRAM")) {                                           \
             _seg_type = DRAM_SEG;                                                           \
@@ -92,15 +92,15 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     return config.str();
 }
 
-xferBenchNixlWorker::xferBenchNixlWorker(std::vector<std::string> devices)
-    : xferBenchWorker() {
+xferBenchNixlWorker::xferBenchNixlWorker(xferBenchConfig &config, std::vector<std::string> devices)
+    : xferBenchWorker(config) {
     seg_type = GET_SEG_TYPE(isInitiator());
 
     int rank;
     std::string backend_name;
     nixl_b_params_t backend_params;
-    bool enable_pt = xferBenchConfig::enable_pt;
-    nixl_thread_sync_t sync_mode = xferBenchConfig::num_threads > 1 ?
+    bool enable_pt = config.enable_pt;
+    nixl_thread_sync_t sync_mode = config.num_threads > 1 ?
         nixl_thread_sync_t::NIXL_THREAD_SYNC_RW :
         nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT;
     char hostname[256];
@@ -117,22 +117,22 @@ xferBenchNixlWorker::xferBenchNixlWorker(std::vector<std::string> devices)
 
     agent->getAvailPlugins(plugins);
 
-    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL) ||
-        xferBenchConfig::isStorageBackend()) {
-        backend_name = xferBenchConfig::backend;
+    if (0 == config.backend.compare(XFERBENCH_BACKEND_UCX) ||
+        0 == config.backend.compare(XFERBENCH_BACKEND_LIBFABRIC) ||
+        0 == config.backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
+        0 == config.backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
+        0 == config.backend.compare(XFERBENCH_BACKEND_UCCL) ||
+        config.isStorageBackend()) {
+        backend_name = config.backend;
     } else {
-        std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
+        std::cerr << "Unsupported NIXLBench backend: " << config.backend << std::endl;
         exit(EXIT_FAILURE);
     }
 
     agent->getPluginParams(backend_name, mems, backend_params);
 
-    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
-        backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
+    if (0 == config.backend.compare(XFERBENCH_BACKEND_UCX)) {
+        backend_params["num_threads"] = std::to_string(config.progress_threads);
 
         // No need to set device_list if all is specified
         // fallback to backend preference
@@ -140,7 +140,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(std::vector<std::string> devices)
             if (isInitiator()) {
                 backend_params["device_list"] = devices[rank];
             } else {
-                backend_params["device_list"] = devices[rank - xferBenchConfig::num_initiator_dev];
+                backend_params["device_list"] = devices[rank - config.num_initiator_dev];
             }
         }
 
@@ -149,12 +149,12 @@ xferBenchNixlWorker::xferBenchNixlWorker(std::vector<std::string> devices)
             exit(EXIT_FAILURE);
         }
 
-        backend_params["num_workers"] = std::to_string(xferBenchConfig::num_threads + 1);
+        backend_params["num_workers"] = std::to_string(config.num_threads + 1);
 
         std::cout << "Init nixl worker, dev "
                   << (("all" == devices[0]) ? "all" : backend_params["device_list"]) << " rank "
                   << rank << ", type " << name << ", hostname " << hostname << std::endl;
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC)) {
+    } else if (0 == config.backend.compare(XFERBENCH_BACKEND_LIBFABRIC)) {
         if (gethostname(hostname, 256)) {
             std::cerr << "Failed to get hostname" << std::endl;
             exit(EXIT_FAILURE);
@@ -168,125 +168,125 @@ xferBenchNixlWorker::xferBenchNixlWorker(std::vector<std::string> devices)
         std::cout << "Init nixl worker, dev " << (("all" == devices[0]) ? "all" : devices[rank])
                   << " rank " << rank << ", type " << name << ", hostname " << hostname
                   << ", nc_count " << nc_count << std::endl;
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS)) {
+    } else if (0 == config.backend.compare(XFERBENCH_BACKEND_GDS)) {
         // Using default param values for GDS backend
         std::cout << "GDS backend" << std::endl;
-        backend_params["batch_pool_size"] = std::to_string(xferBenchConfig::gds_batch_pool_size);
-        backend_params["batch_limit"] = std::to_string(xferBenchConfig::gds_batch_limit);
-        std::cout << "GDS batch pool size: " << xferBenchConfig::gds_batch_pool_size << std::endl;
-        std::cout << "GDS batch limit: " << xferBenchConfig::gds_batch_limit << std::endl;
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS_MT)) {
+        backend_params["batch_pool_size"] = std::to_string(config.gds_batch_pool_size);
+        backend_params["batch_limit"] = std::to_string(config.gds_batch_limit);
+        std::cout << "GDS batch pool size: " << config.gds_batch_pool_size << std::endl;
+        std::cout << "GDS batch limit: " << config.gds_batch_limit << std::endl;
+    } else if (0 == config.backend.compare(XFERBENCH_BACKEND_GDS_MT)) {
         std::cout << "GDS_MT backend" << std::endl;
-        backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
-        std::cout << "GDS MT Num threads: " << xferBenchConfig::gds_mt_num_threads << std::endl;
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
+        backend_params["thread_count"] = std::to_string(config.gds_mt_num_threads);
+        std::cout << "GDS MT Num threads: " << config.gds_mt_num_threads << std::endl;
+    } else if (0 == config.backend.compare(XFERBENCH_BACKEND_POSIX)) {
         // Set API type parameter for POSIX backend
-        if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
+        if (config.posix_api_type == XFERBENCH_POSIX_API_AIO) {
             backend_params["use_aio"] = "true";
             backend_params["use_uring"] = "false";
             backend_params["use_posix_aio"] = "false";
-        } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
+        } else if (config.posix_api_type == XFERBENCH_POSIX_API_URING) {
             backend_params["use_aio"] = "false";
             backend_params["use_uring"] = "true";
             backend_params["use_posix_aio"] = "false";
-        } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_POSIXAIO) {
+        } else if (config.posix_api_type == XFERBENCH_POSIX_API_POSIXAIO) {
             backend_params["use_aio"] = "false";
             backend_params["use_uring"] = "false";
             backend_params["use_posix_aio"] = "true";
         }
-        std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
+        std::cout << "POSIX backend with API type: " << config.posix_api_type
                   << std::endl;
-        backend_params["ios_pool_size"] = std::to_string(xferBenchConfig::posix_ios_pool_size);
+        backend_params["ios_pool_size"] = std::to_string(config.posix_ios_pool_size);
         backend_params["kernel_queue_size"] =
-            std::to_string(xferBenchConfig::posix_kernel_queue_size);
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO)) {
+            std::to_string(config.posix_kernel_queue_size);
+    } else if (0 == config.backend.compare(XFERBENCH_BACKEND_GPUNETIO)) {
         std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device "
-                  << xferBenchConfig::gpunetio_device_list << " OOB interface "
-                  << xferBenchConfig::gpunetio_oob_list << std::endl;
+                  << config.gpunetio_device_list << " OOB interface "
+                  << config.gpunetio_oob_list << std::endl;
         backend_params["network_devices"] = devices[0];
-        backend_params["gpu_devices"] = xferBenchConfig::gpunetio_device_list;
-        backend_params["oob_interface"] = xferBenchConfig::gpunetio_oob_list;
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE)) {
+        backend_params["gpu_devices"] = config.gpunetio_device_list;
+        backend_params["oob_interface"] = config.gpunetio_oob_list;
+    } else if (0 == config.backend.compare(XFERBENCH_BACKEND_MOONCAKE)) {
         std::cout << "Mooncake backend" << std::endl;
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_HF3FS)) {
+    } else if (0 == config.backend.compare(XFERBENCH_BACKEND_HF3FS)) {
         // Using default param values for HF3FS backend
-        std::cout << "HF3FS backend iopool_size " << xferBenchConfig::hf3fs_iopool_size
+        std::cout << "HF3FS backend iopool_size " << config.hf3fs_iopool_size
                   << std::endl;
-        backend_params["iopool_size"] = std::to_string(xferBenchConfig::hf3fs_iopool_size);
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_OBJ)) {
+        backend_params["iopool_size"] = std::to_string(config.hf3fs_iopool_size);
+    } else if (0 == config.backend.compare(XFERBENCH_BACKEND_OBJ)) {
         // Using default param values for OBJ backend
-        backend_params["access_key"] = xferBenchConfig::obj_access_key;
-        backend_params["secret_key"] = xferBenchConfig::obj_secret_key;
-        backend_params["session_token"] = xferBenchConfig::obj_session_token;
-        backend_params["bucket"] = xferBenchConfig::obj_bucket_name;
-        backend_params["scheme"] = xferBenchConfig::obj_scheme;
-        backend_params["region"] = xferBenchConfig::obj_region;
+        backend_params["access_key"] = config.obj_access_key;
+        backend_params["secret_key"] = config.obj_secret_key;
+        backend_params["session_token"] = config.obj_session_token;
+        backend_params["bucket"] = config.obj_bucket_name;
+        backend_params["scheme"] = config.obj_scheme;
+        backend_params["region"] = config.obj_region;
         backend_params["use_virtual_addressing"] =
-            xferBenchConfig::obj_use_virtual_addressing ? "true" : "false";
-        backend_params["req_checksum"] = xferBenchConfig::obj_req_checksum;
+            config.obj_use_virtual_addressing ? "true" : "false";
+        backend_params["req_checksum"] = config.obj_req_checksum;
 
-        if (xferBenchConfig::obj_ca_bundle != "") {
-            backend_params["ca_bundle"] = xferBenchConfig::obj_ca_bundle;
+        if (config.obj_ca_bundle != "") {
+            backend_params["ca_bundle"] = config.obj_ca_bundle;
         }
 
-        if (xferBenchConfig::obj_endpoint_override != "") {
-            backend_params["endpoint_override"] = xferBenchConfig::obj_endpoint_override;
+        if (config.obj_endpoint_override != "") {
+            backend_params["endpoint_override"] = config.obj_endpoint_override;
         }
 
-        if (xferBenchConfig::obj_crt_min_limit > 0) {
+        if (config.obj_crt_min_limit > 0) {
             // Warn if both CRT and accelerated options are set - CRT takes precedence
-            if (xferBenchConfig::obj_accelerated_enable) {
+            if (config.obj_accelerated_enable) {
                 std::cerr << "Warning: Both obj_crt_min_limit and obj_accelerated_enable are set. "
                           << "CRT client will be used (takes precedence over accelerated)."
                           << std::endl;
             }
-            backend_params["crtMinLimit"] = std::to_string(xferBenchConfig::obj_crt_min_limit);
+            backend_params["crtMinLimit"] = std::to_string(config.obj_crt_min_limit);
             std::cout << "OBJ backend with S3 CRT client enabled for objects >= "
-                      << xferBenchConfig::obj_crt_min_limit << " bytes" << std::endl;
-        } else if (xferBenchConfig::obj_accelerated_enable) {
+                      << config.obj_crt_min_limit << " bytes" << std::endl;
+        } else if (config.obj_accelerated_enable) {
             backend_params["accelerated"] = "true";
             std::cout << "OBJ backend with S3 Accelerated client enabled";
-            if (!xferBenchConfig::obj_accelerated_type.empty()) {
-                backend_params["type"] = xferBenchConfig::obj_accelerated_type;
-                std::cout << " (type: " << xferBenchConfig::obj_accelerated_type << ")";
+            if (!config.obj_accelerated_type.empty()) {
+                backend_params["type"] = config.obj_accelerated_type;
+                std::cout << " (type: " << config.obj_accelerated_type << ")";
             }
             std::cout << std::endl;
         } else {
             std::cout << "OBJ backend with standard S3 enabled" << std::endl;
         }
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
+    } else if (0 == config.backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically
-        if (!xferBenchConfig::storage_enable_direct) {
+        if (!config.storage_enable_direct) {
             std::cout
                 << "GUSLI backend: Automatically enabling storage_enable_direct for direct I/O"
                 << std::endl;
-            xferBenchConfig::storage_enable_direct = true;
+            config.storage_enable_direct = true;
         }
 
         // Parse and configure GUSLI devices from general device_list parameter
         int expected_num_devices =
-            isInitiator() ? xferBenchConfig::num_initiator_dev : xferBenchConfig::num_target_dev;
-        gusli_devices = parseGusliDeviceList(xferBenchConfig::device_list,
-                                             xferBenchConfig::gusli_device_security,
-                                             xferBenchConfig::gusli_device_byte_offsets,
+            isInitiator() ? config.num_initiator_dev : config.num_target_dev;
+        gusli_devices = parseGusliDeviceList(config.device_list,
+                                             config.gusli_device_security,
+                                             config.gusli_device_byte_offsets,
                                              expected_num_devices);
 
         // Set GUSLI backend parameters
-        backend_params["client_name"] = xferBenchConfig::gusli_client_name;
+        backend_params["client_name"] = config.gusli_client_name;
         backend_params["max_num_simultaneous_requests"] =
-            std::to_string(xferBenchConfig::gusli_max_simultaneous_requests);
+            std::to_string(config.gusli_max_simultaneous_requests);
 
         // Generate config file if not explicitly provided
-        if (xferBenchConfig::gusli_config_file.empty()) {
+        if (config.gusli_config_file.empty()) {
             backend_params["config_file"] = generateGusliConfigFile(gusli_devices);
         } else {
-            backend_params["config_file"] = xferBenchConfig::gusli_config_file;
+            backend_params["config_file"] = config.gusli_config_file;
         }
 
         std::cout << "GUSLI backend initialized:" << std::endl;
-        std::cout << "  Client name: " << xferBenchConfig::gusli_client_name << std::endl;
+        std::cout << "  Client name: " << config.gusli_client_name << std::endl;
         std::cout << "  Max simultaneous requests: "
-                  << xferBenchConfig::gusli_max_simultaneous_requests << std::endl;
+                  << config.gusli_max_simultaneous_requests << std::endl;
         std::cout << "  Direct I/O: Enabled (required)" << std::endl;
         std::cout << "  Configured devices: " << gusli_devices.size() << std::endl;
         for (const auto &dev : gusli_devices) {
@@ -294,17 +294,17 @@ xferBenchNixlWorker::xferBenchNixlWorker(std::vector<std::string> devices)
                       << "]: " << dev.device_path << " (" << dev.security_flags << ")"
                       << ", offset = " << dev.dev_offset << std::endl;
         }
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
+    } else if (0 == config.backend.compare(XFERBENCH_BACKEND_UCCL)) {
         std::cout << "UCCL backend" << std::endl;
         backend_params["in_python"] = "0";
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_AZURE_BLOB)) {
+    } else if (0 == config.backend.compare(XFERBENCH_BACKEND_AZURE_BLOB)) {
         // Using default param values for AZURE_BLOB backend
-        backend_params["account_url"] = xferBenchConfig::azure_blob_account_url;
-        backend_params["container_name"] = xferBenchConfig::azure_blob_container_name;
-        backend_params["connection_string"] = xferBenchConfig::azure_blob_connection_string;
+        backend_params["account_url"] = config.azure_blob_account_url;
+        backend_params["container_name"] = config.azure_blob_container_name;
+        backend_params["connection_string"] = config.azure_blob_connection_string;
         std::cout << "AZURE_BLOB backend" << std::endl;
     } else {
-        std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
+        std::cerr << "Unsupported NIXLBench backend: " << config.backend << std::endl;
         exit(EXIT_FAILURE);
     }
 
@@ -358,7 +358,7 @@ iovListToNixlXferDlist(const std::vector<xferBenchIOV> &iov_list, nixl_xfer_dlis
 }
 
 static bool
-allocateXferMemory(size_t buffer_size, void **addr) {
+allocateXferMemory(const xferBenchConfig &config, size_t buffer_size, void **addr) {
     if (!addr) {
         std::cerr << "Invalid address" << std::endl;
         return false;
@@ -367,12 +367,12 @@ allocateXferMemory(size_t buffer_size, void **addr) {
         std::cerr << "Invalid buffer size" << std::endl;
         return false;
     }
-    if (xferBenchConfig::page_size == 0) {
+    if (config.page_size == 0) {
         std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
         return false;
     }
 
-    int rc = posix_memalign(addr, xferBenchConfig::page_size, buffer_size);
+    int rc = posix_memalign(addr, config.page_size, buffer_size);
     if (rc != 0 || !*addr) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of page-aligned DRAM memory"
                   << std::endl;
@@ -386,7 +386,7 @@ std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
     void *addr;
 
-    if (!allocateXferMemory(buffer_size, &addr)) {
+    if (!allocateXferMemory(config, buffer_size, &addr)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of DRAM memory" << std::endl;
         return std::nullopt;
     }
@@ -470,7 +470,7 @@ getVramDescNeuron(int devid, size_t buffer_size, uint8_t memset_value) {
 }
 
 static std::optional<xferBenchIOV>
-getVramDesc(int devid, size_t buffer_size, bool isInit) {
+getVramDesc(const xferBenchConfig &config, int devid, size_t buffer_size, bool isInit) {
     uint8_t memset_value =
         isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT : XFERBENCH_TARGET_BUFFER_ELEMENT;
 
@@ -481,7 +481,7 @@ getVramDesc(int devid, size_t buffer_size, bool isInit) {
     }
 
     CHECK_CUDA_ERROR(cudaSetDevice(devid), "Failed to set device");
-    if (xferBenchConfig::enable_vmm) {
+    if (config.enable_vmm) {
         return getVramDescCudaVmm(devid, buffer_size, memset_value);
     } else {
         return getVramDescCuda(devid, buffer_size, memset_value);
@@ -490,11 +490,11 @@ getVramDesc(int devid, size_t buffer_size, bool isInit) {
 
 std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {
-    if (IS_PAIRWISE_AND_SG()) {
+    if (IS_PAIRWISE_AND_SG(config)) {
         int devid = rt->getRank();
 
         if (isTarget()) {
-            devid -= xferBenchConfig::num_initiator_dev;
+            devid -= config.num_initiator_dev;
         }
 
         if (devid != mem_dev_id) {
@@ -502,15 +502,15 @@ xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {
         }
     }
 
-    return getVramDesc(mem_dev_id, buffer_size, isInitiator());
+    return getVramDesc(config, mem_dev_id, buffer_size, isInitiator());
 }
 #endif /* HAVE_CUDA */
 
 // Helper to open a single file with appropriate flags
 static std::optional<xferFileState>
-openFileWithFlags(const std::string &file_name, int flags) {
+openFileWithFlags(const xferBenchConfig &config, const std::string &file_name, int flags) {
     uint64_t file_size = 0;
-    if (XFERBENCH_OP_READ == xferBenchConfig::op_type) {
+    if (XFERBENCH_OP_READ == config.op_type) {
         struct stat st;
         if (::stat(file_name.c_str(), &st) == 0) {
             std::cout << "File " << file_name << " exists, size: " << st.st_size << std::endl;
@@ -532,16 +532,19 @@ openFileWithFlags(const std::string &file_name, int flags) {
 
 // Create file descriptors from explicit filenames or auto-generate
 static std::vector<xferFileState>
-createFileFds(std::string name, int num_files, const std::vector<std::string> &filenames = {}) {
+createFileFds(const xferBenchConfig &config,
+              std::string name,
+              int num_files,
+              const std::vector<std::string> &filenames = {}) {
     std::vector<xferFileState> fds;
     int flags = O_RDWR | O_CREAT | O_LARGEFILE;
 
-    if (!xferBenchConfig::isStorageBackend()) {
-        std::cerr << "Unknown storage backend: " << xferBenchConfig::backend << std::endl;
+    if (!config.isStorageBackend()) {
+        std::cerr << "Unknown storage backend: " << config.backend << std::endl;
         exit(EXIT_FAILURE);
     }
 
-    if (xferBenchConfig::storage_enable_direct) {
+    if (config.storage_enable_direct) {
         flags |= O_DIRECT;
     }
 
@@ -555,7 +558,7 @@ createFileFds(std::string name, int num_files, const std::vector<std::string> &f
 
         for (const auto &file_name : filenames) {
             std::cout << "Opening file: " << file_name << std::endl;
-            auto fstate = openFileWithFlags(file_name, flags);
+            auto fstate = openFileWithFlags(config, file_name, flags);
             if (!fstate) {
                 // Cleanup already opened files
                 for (auto &fd : fds) {
@@ -569,10 +572,10 @@ createFileFds(std::string name, int num_files, const std::vector<std::string> &f
     }
 
     // Auto-generate filenames (backward compatibility)
-    const std::string file_path = xferBenchConfig::filepath != "" ?
-        xferBenchConfig::filepath :
+    const std::string file_path = config.filepath != "" ?
+        config.filepath :
         std::filesystem::current_path().string();
-    std::string file_backend = xferBenchConfig::backend;
+    std::string file_backend = config.backend;
     std::transform(file_backend.begin(), file_backend.end(), file_backend.begin(), ::tolower);
     const std::string file_name_prefix = "/nixlbench_" + file_backend + "_test_file_";
 
@@ -580,7 +583,7 @@ createFileFds(std::string name, int num_files, const std::vector<std::string> &f
         std::string file_name = file_path + file_name_prefix + name + "_" + std::to_string(i);
         std::cout << "Creating file: " << file_name << std::endl;
 
-        auto fstate = openFileWithFlags(file_name, flags);
+        auto fstate = openFileWithFlags(config, file_name, flags);
         if (!fstate) {
             // Cleanup already opened files
             for (int j = 0; j < i; j++) {
@@ -603,13 +606,13 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
     fstate.offset = end_offset;
 
     // If in READ mode, only write if the region is not already present in the file
-    if (XFERBENCH_OP_READ == xferBenchConfig::op_type && end_offset <= fstate.file_size) {
+    if (XFERBENCH_OP_READ == config.op_type && end_offset <= fstate.file_size) {
         return ret;
     }
 
     // Fill up with data
     void *buf;
-    if (!allocateXferMemory(buffer_size, &buf)) {
+    if (!allocateXferMemory(config, buffer_size, &buf)) {
         std::cerr << "Failed to allocate " << buffer_size << " bytes of memory" << std::endl;
         return std::nullopt;
     }
@@ -660,7 +663,7 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
     }
 
     CHECK_CUDA_ERROR(cudaSetDevice(iov.devId), "Failed to set device");
-    if (xferBenchConfig::enable_vmm) {
+    if (config.enable_vmm) {
         CHECK_CUDA_DRIVER_ERROR(cuMemUnmap(iov.addr, iov.len), "Failed to unmap memory");
         CHECK_CUDA_DRIVER_ERROR(cuMemRelease(iov.handle), "Failed to release memory");
         CHECK_CUDA_DRIVER_ERROR(cuMemAddressFree(iov.addr, iov.padded_size),
@@ -688,7 +691,7 @@ xferBenchNixlWorker::cleanupBasicDescFile(xferBenchIOV &iov) {
 
 void
 xferBenchNixlWorker::cleanupBasicDescObj(xferBenchIOV &iov) {
-    if (!xferBenchUtils::rmObj(iov.metaInfo)) {
+    if (!xferBenchUtils::rmObj(config, iov.metaInfo)) {
         std::cerr << "Failed to remove object: " << iov.metaInfo << std::endl;
         exit(EXIT_FAILURE);
     }
@@ -713,7 +716,7 @@ xferBenchNixlWorker::cleanupBasicDescBlk(xferBenchIOV &iov) {
 bool
 xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size) {
     int flags = O_RDWR | O_CREAT | O_LARGEFILE;
-    if (xferBenchConfig::storage_enable_direct) flags |= O_DIRECT;
+    if (config.storage_enable_direct) flags |= O_DIRECT;
 
     int fd = open(device.device_path.c_str(), flags, 0744);
     if (fd < 0) {
@@ -725,9 +728,9 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
     // Sample one page at the offset GUSLI will read from
     void *check_buf;
     bool needs_write = true;
-    if (allocateXferMemory(xferBenchConfig::page_size, &check_buf)) {
-        ssize_t rd = pread(fd, check_buf, xferBenchConfig::page_size, device.dev_offset);
-        if (rd == (ssize_t)xferBenchConfig::page_size) {
+    if (allocateXferMemory(config, config.page_size, &check_buf)) {
+        ssize_t rd = pread(fd, check_buf, config.page_size, device.dev_offset);
+        if (rd == (ssize_t)config.page_size) {
             needs_write = false;
             uint8_t *bytes = static_cast<uint8_t *>(check_buf);
             for (ssize_t i = 0; i < rd; i++) {
@@ -747,7 +750,7 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
                   << std::endl;
 
         void *buf;
-        if (!allocateXferMemory(size, &buf)) {
+        if (!allocateXferMemory(config, size, &buf)) {
             close(fd);
             return false;
         }
@@ -788,25 +791,25 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
     nixl_opt_args_t opt_args;
 
     if (isInitiator()) {
-        num_devices = xferBenchConfig::num_initiator_dev;
+        num_devices = config.num_initiator_dev;
     } else if (isTarget()) {
-        num_devices = xferBenchConfig::num_target_dev;
+        num_devices = config.num_target_dev;
     }
-    buffer_size = xferBenchConfig::total_buffer_size / (num_devices * num_threads);
+    buffer_size = config.total_buffer_size / (num_devices * num_threads);
 
-    if (xferBenchConfig::storage_enable_direct) {
-        if (xferBenchConfig::page_size == 0) {
+    if (config.storage_enable_direct) {
+        if (config.page_size == 0) {
             std::cerr << "Error: Invalid page size returned by sysconf" << std::endl;
             exit(EXIT_FAILURE);
         }
         buffer_size =
-            ((buffer_size + xferBenchConfig::page_size - 1) / xferBenchConfig::page_size) *
-            xferBenchConfig::page_size;
+            ((buffer_size + config.page_size - 1) / config.page_size) *
+            config.page_size;
     }
 
     opt_args.backends.push_back(backend_engine);
 
-    if (xferBenchConfig::isObjStorageBackend()) {
+    if (config.isObjStorageBackend()) {
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -818,8 +821,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                 std::string unique_name = "nixlbench_obj" + std::to_string(list_idx) + "_" +
                     std::to_string(i) + "_" + std::to_string(timestamp);
 
-                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-                    if (!xferBenchUtils::putObj(buffer_size, unique_name)) {
+                if (config.op_type == XFERBENCH_OP_READ) {
+                    if (!xferBenchUtils::putObj(config, buffer_size, unique_name)) {
                         std::cerr << "Failed to put object: " << unique_name << std::endl;
                         continue;
                     }
@@ -836,14 +839,14 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_iovs.push_back(iov_list);
         }
-    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+    } else if (XFERBENCH_BACKEND_GUSLI == config.backend) {
         // GUSLI backend uses block device descriptors
         if (gusli_devices.empty()) {
             std::cerr << "No GUSLI devices configured" << std::endl;
             exit(EXIT_FAILURE);
         }
 
-        if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+        if (config.op_type == XFERBENCH_OP_READ) {
             for (auto &device : gusli_devices) {
                 if (device.device_type == 'F' &&
                     !ensureFileHasConsistencyData(device, buffer_size)) {
@@ -868,9 +871,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_iovs.push_back(iov_list);
         }
-    } else if (xferBenchConfig::isStorageBackend()) {
+    } else if (config.isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
-        int num_files = xferBenchConfig::num_files;
+        int num_files = config.num_files;
         int remainder_buffers = num_buffers % num_files;
 
         if (num_files > num_buffers) {
@@ -888,16 +891,16 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         }
 
         std::vector<std::string> filenames;
-        if (!xferBenchConfig::filenames.empty()) {
+        if (!config.filenames.empty()) {
             std::string filename;
-            std::stringstream ss(xferBenchConfig::filenames);
+            std::stringstream ss(config.filenames);
             while (std::getline(ss, filename, ',')) {
                 filenames.push_back(filename);
             }
         }
-        remote_fds = createFileFds(getName(), num_files, filenames);
+        remote_fds = createFileFds(config, getName(), num_files, filenames);
         if (remote_fds.empty()) {
-            std::cerr << "Failed to create " << xferBenchConfig::backend << " file" << std::endl;
+            std::cerr << "Failed to create " << config.backend << " file" << std::endl;
             exit(EXIT_FAILURE);
         }
 
@@ -928,7 +931,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             switch (seg_type) {
             case DRAM_SEG: {
                 // For GUSLI backend, use device ID from parsed configuration
-                int mem_dev_id = (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend &&
+                int mem_dev_id = (XFERBENCH_BACKEND_GUSLI == config.backend &&
                                   !gusli_devices.empty()) ?
                     gusli_devices[i].device_id :
                     i;
@@ -963,7 +966,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
          * is only needed when validating data. It was moved from the initBasicDescDram function to
          * here to avoid memsetting the memory again.
          */
-        if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
+        if (seg_type == DRAM_SEG && config.check_consistency) {
             for (auto &iov : iov_list) {
                 if (isInitiator()) {
                     memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
@@ -1005,7 +1008,7 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
         }
     }
 
-    if (xferBenchConfig::isObjStorageBackend()) {
+    if (config.isObjStorageBackend()) {
         for (auto &iov_list : remote_iovs) {
             for (auto &iov : iov_list) {
                 cleanupBasicDescObj(iov);
@@ -1014,7 +1017,7 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
+    } else if (config.backend == XFERBENCH_BACKEND_GUSLI) {
         for (auto &iov_list : remote_iovs) {
             for (auto &iov : iov_list) {
                 cleanupBasicDescBlk(iov);
@@ -1023,7 +1026,7 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
-    } else if (xferBenchConfig::isStorageBackend()) {
+    } else if (config.isStorageBackend()) {
         for (auto &iov_list : remote_iovs) {
             for (auto &iov : iov_list) {
                 cleanupBasicDescFile(iov);
@@ -1040,7 +1043,7 @@ xferBenchNixlWorker::exchangeMetadata() {
     int meta_sz, ret = 0;
 
     // Skip metadata exchange for storage backends or when ETCD is not available
-    if (xferBenchConfig::isStorageBackend()) {
+    if (config.isStorageBackend()) {
         return 0;
     }
 
@@ -1054,8 +1057,8 @@ xferBenchNixlWorker::exchangeMetadata() {
         buffer = local_metadata.data();
         meta_sz = local_metadata.size();
 
-        if (IS_PAIRWISE_AND_SG()) {
-            destrank = rt->getRank() - xferBenchConfig::num_target_dev;
+        if (IS_PAIRWISE_AND_SG(config)) {
+            destrank = rt->getRank() - config.num_target_dev;
             // XXX: Fix up the rank, depends on processes distributed on hosts
             // assumes placement is adjacent ranks to same node
         } else {
@@ -1067,8 +1070,8 @@ xferBenchNixlWorker::exchangeMetadata() {
         std::string remote_agent;
         int srcrank;
 
-        if (IS_PAIRWISE_AND_SG()) {
-            srcrank = rt->getRank() + xferBenchConfig::num_initiator_dev;
+        if (IS_PAIRWISE_AND_SG(config)) {
+            srcrank = rt->getRank() + config.num_initiator_dev;
             // XXX: Fix up the rank, depends on processes distributed on hosts
             // assumes placement is adjacent ranks to same node
         } else {
@@ -1105,20 +1108,20 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     std::vector<std::vector<xferBenchIOV>> res;
     int desc_str_sz;
 
-    if (xferBenchConfig::isStorageBackend()) {
+    if (config.isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
         for (auto &iov_list : local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
             int devidx = 0;
             for (auto &iov : iov_list) {
-                if (xferBenchConfig::isObjStorageBackend()) {
+                if (config.isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
                     basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
                     }
-                } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+                } else if (XFERBENCH_BACKEND_GUSLI == config.backend) {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = gusli_devices[devidx++].dev_offset + file_offset;
                     iov_remote.len = block_size;
@@ -1149,8 +1152,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
 
             if (isTarget()) {
                 int destrank;
-                if (IS_PAIRWISE_AND_SG()) {
-                    destrank = rt->getRank() - xferBenchConfig::num_target_dev;
+                if (IS_PAIRWISE_AND_SG(config)) {
+                    destrank = rt->getRank() - config.num_target_dev;
                     // XXX: Fix up the rank, depends on processes distributed on hosts
                     // assumes placement is adjacent ranks to same node
                 } else {
@@ -1164,8 +1167,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 rt->sendChar(desc_str.data(), desc_str.size(), destrank);
             } else if (isInitiator()) {
                 int srcrank;
-                if (IS_PAIRWISE_AND_SG()) {
-                    srcrank = rt->getRank() + xferBenchConfig::num_initiator_dev;
+                if (IS_PAIRWISE_AND_SG(config)) {
+                    srcrank = rt->getRank() + config.num_initiator_dev;
                     // XXX: Fix up the rank, depends on processes distributed on hosts
                     // assumes placement is adjacent ranks to same node
                 } else {
@@ -1212,16 +1215,17 @@ execSingleTransfer(nixlAgent *agent,
 
 // Helper to prepare transfer descriptors based on backend type
 static void
-prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
+prepareTransferDescriptors(const xferBenchConfig &config,
+                           nixl_xfer_dlist_t &local_desc,
                            nixl_xfer_dlist_t &remote_desc,
                            const std::vector<xferBenchIOV> &local_iov,
                            const std::vector<xferBenchIOV> &remote_iov) {
     // Set remote descriptor type based on backend
-    if (xferBenchConfig::isObjStorageBackend()) {
+    if (config.isObjStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
-    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+    } else if (XFERBENCH_BACKEND_GUSLI == config.backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
-    } else if (xferBenchConfig::isStorageBackend()) {
+    } else if (config.isStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(FILE_SEG);
     }
 
@@ -1232,7 +1236,8 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
 // Execute transfers with configurable request lifecycle behavior
 // recreate_per_iteration: true for GUSLI (bug workaround), false for standard backends
 static int
-execTransferIterations(nixlAgent *agent,
+execTransferIterations(const xferBenchConfig &config,
+                       nixlAgent *agent,
                        const nixl_xfer_op_t op,
                        nixl_xfer_dlist_t &local_desc,
                        nixl_xfer_dlist_t &remote_desc,
@@ -1313,7 +1318,8 @@ execTransferIterations(nixlAgent *agent,
 }
 
 static int
-execTransfer(nixlAgent *agent,
+execTransfer(const xferBenchConfig &config,
+             nixlAgent *agent,
              const std::vector<std::vector<xferBenchIOV>> &local_iovs,
              const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
              const nixl_xfer_op_t op,
@@ -1336,17 +1342,18 @@ execTransfer(nixlAgent *agent,
         // Prepare transfer descriptors
         nixl_xfer_dlist_t local_desc(GET_SEG_TYPE(true));
         nixl_xfer_dlist_t remote_desc(GET_SEG_TYPE(false));
-        prepareTransferDescriptors(local_desc, remote_desc, local_iov, remote_iov);
+        prepareTransferDescriptors(config, local_desc, remote_desc, local_iov, remote_iov);
 
         // Setup transfer parameters
         nixl_opt_args_t params;
-        std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
-        if (!xferBenchConfig::isStorageBackend()) {
+        std::string target = config.isStorageBackend() ? "initiator" : "target";
+        if (!config.isStorageBackend()) {
             params.notif = "0xBEEF";
         }
 
         // Execute transfers
-        const int result = execTransferIterations(agent,
+        const int result = execTransferIterations(config,
+                                                  agent,
                                                   op,
                                                   local_desc,
                                                   remote_desc,
@@ -1355,7 +1362,7 @@ execTransfer(nixlAgent *agent,
                                                   num_iter,
                                                   timer,
                                                   thread_stats,
-                                                  xferBenchConfig::recreate_xfer);
+                                                  config.recreate_xfer);
 
         if (__builtin_expect(result != 0, 0)) {
             ret = result;
@@ -1374,22 +1381,22 @@ std::variant<xferBenchStats, int>
 xferBenchNixlWorker::transfer(size_t block_size,
                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
                               const std::vector<std::vector<xferBenchIOV>> &remote_iovs) {
-    int num_iter = xferBenchConfig::num_iter / xferBenchConfig::num_threads;
-    int skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
+    int num_iter = config.num_iter / config.num_threads;
+    int skip = config.warmup_iter / config.num_threads;
     xferBenchStats stats;
     int ret = 0;
-    nixl_xfer_op_t xfer_op = XFERBENCH_OP_READ == xferBenchConfig::op_type ? NIXL_READ : NIXL_WRITE;
+    nixl_xfer_op_t xfer_op = XFERBENCH_OP_READ == config.op_type ? NIXL_READ : NIXL_WRITE;
     // int completion_flag = 1;
 
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
-        skip /= xferBenchConfig::large_blk_iter_ftr;
-        num_iter /= xferBenchConfig::large_blk_iter_ftr;
+        skip /= config.large_blk_iter_ftr;
+        num_iter /= config.large_blk_iter_ftr;
     }
 
     if (skip > 0) {
         ret = execTransfer(
-            agent, local_iovs, remote_iovs, xfer_op, skip, xferBenchConfig::num_threads, stats);
+            config, agent, local_iovs, remote_iovs, xfer_op, skip, config.num_threads, stats);
         if (ret < 0) {
             return std::variant<xferBenchStats, int>(ret);
         }
@@ -1401,7 +1408,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
     stats.clear();
 
     ret = execTransfer(
-        agent, local_iovs, remote_iovs, xfer_op, num_iter, xferBenchConfig::num_threads, stats);
+        config, agent, local_iovs, remote_iovs, xfer_op, num_iter, config.num_threads, stats);
     if (ret < 0) {
         return std::variant<xferBenchStats, int>(ret);
     }
@@ -1416,12 +1423,12 @@ xferBenchNixlWorker::poll(size_t block_size) {
     nixl_status_t status;
     int skip = 0, num_iter = 0, total_iter = 0;
 
-    skip = xferBenchConfig::warmup_iter;
-    num_iter = xferBenchConfig::num_iter;
+    skip = config.warmup_iter;
+    num_iter = config.num_iter;
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
-        skip /= xferBenchConfig::large_blk_iter_ftr;
-        num_iter /= xferBenchConfig::large_blk_iter_ftr;
+        skip /= config.large_blk_iter_ftr;
+        num_iter /= config.large_blk_iter_ftr;
     }
     total_iter = skip + num_iter;
 
@@ -1441,15 +1448,15 @@ xferBenchNixlWorker::poll(size_t block_size) {
 int
 xferBenchNixlWorker::synchronizeStart() {
     // For storage backends without ETCD, no synchronization needed
-    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
+    if (config.isStorageBackend() && config.etcd_endpoints.empty()) {
         std::cout << "Single instance storage backend - no synchronization needed" << std::endl;
         return 0;
     }
 
-    if (IS_PAIRWISE_AND_SG()) {
+    if (IS_PAIRWISE_AND_SG(config)) {
         std::cout << "Waiting for all processes to start... (expecting " << rt->getSize()
-                  << " total: " << xferBenchConfig::num_initiator_dev << " initiators and "
-                  << xferBenchConfig::num_target_dev << " targets)" << std::endl;
+                  << " total: " << config.num_initiator_dev << " initiators and "
+                  << config.num_target_dev << " targets)" << std::endl;
     } else {
         std::cout << "Waiting for all processes to start... (expecting " << rt->getSize()
                   << " total" << std::endl;

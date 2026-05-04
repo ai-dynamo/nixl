@@ -68,25 +68,25 @@ public:
     }
 };
 
-static xferBenchRT *createRT(int *terminate) {
+static xferBenchRT *createRT(const xferBenchConfig &config, int *terminate) {
     // For storage backends without ETCD endpoints, use null runtime
-    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
+    if (config.isStorageBackend() && config.etcd_endpoints.empty()) {
         std::cout << "Using null runtime for storage backend without ETCD" << std::endl;
         return new xferBenchNullRT();
     }
 
 #if HAVE_ETCD
-    if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
+    if (XFERBENCH_RT_ETCD == config.runtime_type) {
         int total = 2;
-        if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
-            total = xferBenchConfig::num_initiator_dev +
-                xferBenchConfig::num_target_dev;
+        if (XFERBENCH_MODE_SG == config.mode) {
+            total = config.num_initiator_dev +
+                config.num_target_dev;
         }
-        if (xferBenchConfig::isStorageBackend()) {
+        if (config.isStorageBackend()) {
             total = 1;
         }
         xferBenchEtcdRT *etcd_rt = new xferBenchEtcdRT(
-            xferBenchConfig::benchmark_group, xferBenchConfig::etcd_endpoints, total, terminate);
+            config.benchmark_group, config.etcd_endpoints, total, terminate);
         if (etcd_rt->setup() != 0) {
             std::cerr << "Failed to setup ETCD runtime" << std::endl;
             delete etcd_rt;
@@ -96,13 +96,13 @@ static xferBenchRT *createRT(int *terminate) {
     }
 #endif
 
-    std::cerr << "Invalid runtime: " << xferBenchConfig::runtime_type << std::endl;
+    std::cerr << "Invalid runtime: " << config.runtime_type << std::endl;
     exit(EXIT_FAILURE);
 }
 
 int xferBenchWorker::synchronize() {
     // For storage backends without ETCD, no synchronization needed
-    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
+    if (config.isStorageBackend() && config.etcd_endpoints.empty()) {
         return 0;
     }
 
@@ -116,10 +116,10 @@ int xferBenchWorker::synchronize() {
     return 0;
 }
 
-xferBenchWorker::xferBenchWorker() {
+xferBenchWorker::xferBenchWorker(xferBenchConfig &config) : config(config) {
     terminate = 0;
 
-    rt = createRT(&terminate);
+    rt = createRT(config, &terminate);
     if (!rt) {
         std::cerr << "Failed to create runtime object" << std::endl;
         exit(EXIT_FAILURE);
@@ -128,15 +128,15 @@ xferBenchWorker::xferBenchWorker() {
     int rank = rt->getRank();
 
     // For storage backends without ETCD, always act as initiator
-    if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
+    if (config.isStorageBackend() && config.etcd_endpoints.empty()) {
         name = "initiator";
-    } else if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
-        if (rank >= 0 && rank < xferBenchConfig::num_initiator_dev) {
+    } else if (XFERBENCH_MODE_SG == config.mode) {
+        if (rank >= 0 && rank < config.num_initiator_dev) {
             name = "initiator";
         } else {
             name = "target";
         }
-    } else if (XFERBENCH_MODE_MG == xferBenchConfig::mode) {
+    } else if (XFERBENCH_MODE_MG == config.mode) {
         if (0 == rank) {
             name = "initiator";
         } else {

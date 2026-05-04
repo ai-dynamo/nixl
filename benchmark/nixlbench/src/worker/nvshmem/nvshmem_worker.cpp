@@ -31,16 +31,16 @@
         }                                                                       \
     } while(0)
 
-xferBenchNvshmemWorker::xferBenchNvshmemWorker(): xferBenchWorker() {
+xferBenchNvshmemWorker::xferBenchNvshmemWorker(xferBenchConfig &config) : xferBenchWorker(config) {
     // Initialize NVSHMEM
-    if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
+    if (XFERBENCH_RT_ETCD == config.runtime_type) {
 	    rank = rt->getRank();
 	    size = rt->getSize();
 
         return;        //NVSHMEM not yet initialized
     }
 
-    std::cout << "Runtime " << xferBenchConfig::runtime_type
+    std::cout << "Runtime " << config.runtime_type
 		      << " not supported for NVSHMEM worker" << std::endl;
     exit(EXIT_FAILURE);
 }
@@ -82,11 +82,11 @@ std::vector<std::vector<xferBenchIOV>> xferBenchNvshmemWorker::allocateMemory(in
     }
 
     if (isInitiator()) {
-        num_devices = xferBenchConfig::num_initiator_dev;
+        num_devices = config.num_initiator_dev;
     } else if (isTarget()) {
-        num_devices = xferBenchConfig::num_target_dev;
+        num_devices = config.num_target_dev;
     }
-    buffer_size = xferBenchConfig::total_buffer_size / (num_devices * num_threads);
+    buffer_size = config.total_buffer_size / (num_devices * num_threads);
 
     for (int list_idx = 0; list_idx < num_threads; list_idx++) {
         std::vector<xferBenchIOV> iov_list;
@@ -126,7 +126,8 @@ xferBenchNvshmemWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>>
 
 // No thread support for NVSHMEM yet
 static int
-execTransfer(const std::vector<std::vector<xferBenchIOV>> &local_iovs,
+execTransfer(const xferBenchConfig &config,
+             const std::vector<std::vector<xferBenchIOV>> &local_iovs,
              const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
              const int num_iter,
              cudaStream_t stream,
@@ -145,10 +146,10 @@ execTransfer(const std::vector<std::vector<xferBenchIOV>> &local_iovs,
         for (size_t i = 0; i < local_iov.size(); i++) {
             auto &local = local_iov[i];
             auto &remote = remote_iov[i];
-            if (XFERBENCH_OP_WRITE == xferBenchConfig::op_type) {
+            if (XFERBENCH_OP_WRITE == config.op_type) {
                 nvshmemx_putmem_on_stream(
                     (void *)remote.addr, (void *)local.addr, local.len, target_rank, stream);
-            } else if (XFERBENCH_OP_READ == xferBenchConfig::op_type) {
+            } else if (XFERBENCH_OP_READ == config.op_type) {
                 nvshmemx_getmem_on_stream(
                     (void *)remote.addr, (void *)local.addr, local.len, target_rank, stream);
             }
@@ -169,8 +170,8 @@ xferBenchNvshmemWorker::transfer(size_t block_size,
                                  const std::vector<std::vector<xferBenchIOV>> &local_trans_lists,
                                  const std::vector<std::vector<xferBenchIOV>> &remote_trans_lists) {
     cudaEvent_t start_event, stop_event;
-    int num_iter = xferBenchConfig::num_iter / xferBenchConfig::num_threads;
-    int skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
+    int num_iter = config.num_iter / config.num_threads;
+    int skip = config.warmup_iter / config.num_threads;
     int ret = 0;
     xferBenchStats stats;
 
@@ -181,12 +182,12 @@ xferBenchNvshmemWorker::transfer(size_t block_size,
     // Here the local_trans_lists is the same as remote_trans_lists
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
-        skip /= xferBenchConfig::large_blk_iter_ftr;
-        num_iter /= xferBenchConfig::large_blk_iter_ftr;
+        skip /= config.large_blk_iter_ftr;
+        num_iter /= config.large_blk_iter_ftr;
     }
 
     if (skip > 0) {
-        ret = execTransfer(local_trans_lists, remote_trans_lists, skip, stream, stats);
+        ret = execTransfer(config, local_trans_lists, remote_trans_lists, skip, stream, stats);
         if (ret < 0) {
             return std::variant<xferBenchStats, int>(ret);
         }
@@ -197,7 +198,7 @@ xferBenchNvshmemWorker::transfer(size_t block_size,
 
     CHECK_CUDA_ERROR(cudaEventRecord(start_event, stream), "Failed to record CUDA event");
 
-    ret = execTransfer(local_trans_lists, remote_trans_lists, num_iter, stream, stats);
+    ret = execTransfer(config, local_trans_lists, remote_trans_lists, num_iter, stream, stats);
 
     CHECK_CUDA_ERROR(cudaEventRecord(stop_event, stream), "Failed to record CUDA event");
 
@@ -224,7 +225,7 @@ int xferBenchNvshmemWorker::synchronizeStart() {
     nvshmemx_init_attr_t attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
     group_id = NVSHMEMX_UNIQUEID_INITIALIZER;
 
-    if (xferBenchConfig::runtime_type == XFERBENCH_RT_ETCD) {
+    if (config.runtime_type == XFERBENCH_RT_ETCD) {
         if (rank == 0 && group_id_initialized == 0) {
             nvshmemx_get_uniqueid(&group_id);
         }

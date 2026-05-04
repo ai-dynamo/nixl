@@ -9,16 +9,18 @@
 #include <memory>
 #include <vector>
 
+#include "utils/utils.h"
 #include "worker/worker.h"
 
 int
-runBenchmarkWithCurrentConfig();
+runBenchmark(xferBenchConfig &config);
 
 std::unique_ptr<xferBenchWorker>
-createWorker();
+createWorker(xferBenchConfig &config);
 
 int
 processBatchSizes(xferBenchWorker &worker,
+                  const xferBenchConfig &config,
                   std::vector<std::vector<xferBenchIOV>> &iov_lists,
                   size_t block_size,
                   int num_threads,
@@ -26,6 +28,7 @@ processBatchSizes(xferBenchWorker &worker,
 
 std::vector<std::vector<xferBenchIOV>>
 createTransferDescLists(xferBenchWorker &worker,
+                        const xferBenchConfig &config,
                         std::vector<std::vector<xferBenchIOV>> &iov_lists,
                         size_t block_size,
                         size_t batch_size,

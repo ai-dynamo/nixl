@@ -23,11 +23,12 @@
 #include "utils/cli/benchmark_cli_builder.h"
 
 static int runConfiguredBenchmark(int argc, char *argv[]) {
-    int ret = xferBenchConfig::parseConfig(argc, argv);
+    xferBenchConfig config;
+    int ret = config.parseConfig(argc, argv);
     if (0 != ret) {
-        return xferBenchConfig::cliHelpRequested() ? EXIT_SUCCESS : EXIT_FAILURE;
+        return config.cliHelpRequested() ? EXIT_SUCCESS : EXIT_FAILURE;
     }
-    return runBenchmarkWithCurrentConfig();
+    return runBenchmark(config);
 }
 
 int main(int argc, char *argv[]) {

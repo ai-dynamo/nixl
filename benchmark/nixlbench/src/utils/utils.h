@@ -121,97 +121,98 @@
 #define XFERBENCH_WORKER_NIXL "nixl"
 #define XFERBENCH_WORKER_NVSHMEM "nvshmem"
 
-#define IS_PAIRWISE_AND_SG()                                 \
-    (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
-     XFERBENCH_MODE_SG == xferBenchConfig::mode)
-#define IS_PAIRWISE_AND_MG()                                 \
-    (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
-     XFERBENCH_MODE_MG == xferBenchConfig::mode)
+#define IS_PAIRWISE_AND_SG(config) \
+    (XFERBENCH_SCHEME_PAIRWISE == (config).scheme && XFERBENCH_MODE_SG == (config).mode)
+#define IS_PAIRWISE_AND_MG(config) \
+    (XFERBENCH_SCHEME_PAIRWISE == (config).scheme && XFERBENCH_MODE_MG == (config).mode)
 
 class xferBenchConfig {
 public:
-    static std::string runtime_type;
-    static std::string worker_type;
-    static std::string backend;
-    static std::string initiator_seg_type;
-    static std::string target_seg_type;
-    static std::string scheme;
-    static std::string mode;
-    static std::string op_type;
-    static bool check_consistency;
-    static size_t total_buffer_size;
-    static bool recreate_xfer;
-    static int num_initiator_dev;
-    static int num_target_dev;
-    static size_t start_block_size;
-    static size_t max_block_size;
-    static size_t start_batch_size;
-    static size_t max_batch_size;
-    static int num_iter;
-    static int large_blk_iter_ftr;
-    static int warmup_iter;
-    static int num_threads;
-    static bool enable_pt;
-    static size_t progress_threads;
-    static std::string device_list;
-    static std::string etcd_endpoints;
-    static std::string benchmark_group;
-    static std::string filepath;
-    static std::string filenames;
-    static bool enable_vmm;
-    static int num_files;
-    static std::string posix_api_type;
-    static int posix_ios_pool_size;
-    static int posix_kernel_queue_size;
-    static bool storage_enable_direct;
-    static int gds_batch_pool_size;
-    static int gds_batch_limit;
-    static int gds_mt_num_threads;
-    static std::string gpunetio_device_list;
-    static std::string gpunetio_oob_list;
-    static long page_size;
-    static std::string obj_access_key;
-    static std::string obj_secret_key;
-    static std::string obj_session_token;
-    static std::string obj_bucket_name;
-    static std::string obj_scheme;
-    static std::string obj_region;
-    static bool obj_use_virtual_addressing;
-    static std::string obj_endpoint_override;
-    static std::string obj_req_checksum;
-    static std::string obj_ca_bundle;
-    static size_t obj_crt_min_limit;
-    static bool obj_accelerated_enable;
-    static std::string obj_accelerated_type;
-    static std::string azure_blob_account_url;
-    static std::string azure_blob_container_name;
-    static std::string azure_blob_connection_string;
-    static int hf3fs_iopool_size;
-    static std::string gusli_client_name;
-    static int gusli_max_simultaneous_requests;
-    static std::string gusli_config_file;
-    static std::string gusli_device_byte_offsets;
-    static std::string gusli_device_security;
+    xferBenchConfig();
 
-    static int
+    std::string runtime_type;
+    std::string worker_type;
+    std::string backend;
+    std::string initiator_seg_type;
+    std::string target_seg_type;
+    std::string scheme;
+    std::string mode;
+    std::string op_type;
+    bool check_consistency;
+    size_t total_buffer_size;
+    bool recreate_xfer;
+    int num_initiator_dev;
+    int num_target_dev;
+    size_t start_block_size;
+    size_t max_block_size;
+    size_t start_batch_size;
+    size_t max_batch_size;
+    int num_iter;
+    int large_blk_iter_ftr;
+    int warmup_iter;
+    int num_threads;
+    bool enable_pt;
+    size_t progress_threads;
+    std::string device_list;
+    std::string etcd_endpoints;
+    std::string benchmark_group;
+    std::string filepath;
+    std::string filenames;
+    bool enable_vmm;
+    int num_files;
+    std::string posix_api_type;
+    int posix_ios_pool_size;
+    int posix_kernel_queue_size;
+    bool storage_enable_direct;
+    int gds_batch_pool_size;
+    int gds_batch_limit;
+    int gds_mt_num_threads;
+    std::string gpunetio_device_list;
+    std::string gpunetio_oob_list;
+    long page_size;
+    std::string obj_access_key;
+    std::string obj_secret_key;
+    std::string obj_session_token;
+    std::string obj_bucket_name;
+    std::string obj_scheme;
+    std::string obj_region;
+    bool obj_use_virtual_addressing;
+    std::string obj_endpoint_override;
+    std::string obj_req_checksum;
+    std::string obj_ca_bundle;
+    size_t obj_crt_min_limit;
+    bool obj_accelerated_enable;
+    std::string obj_accelerated_type;
+    std::string azure_blob_account_url;
+    std::string azure_blob_container_name;
+    std::string azure_blob_connection_string;
+    int hf3fs_iopool_size;
+    std::string gusli_client_name;
+    int gusli_max_simultaneous_requests;
+    std::string gusli_config_file;
+    std::string gusli_device_byte_offsets;
+    std::string gusli_device_security;
+    bool cli_help_requested;
+
+    int
     parseConfig(int argc, char *argv[]);
-    static bool
-    cliHelpRequested();
-    static void
-    printConfig();
-    static void
-    printOption(const std::string &desc, const std::string &value);
-    static void
-    printSeparator(const char sep = '-');
-    static std::vector<std::string>
-    parseDeviceList();
-    static bool
-    isStorageBackend();
-    static bool
-    isObjStorageBackend();
+    bool
+    cliHelpRequested() const;
+    void
+    printConfig() const;
+    void
+    printOption(const std::string &desc, const std::string &value) const;
+    void
+    printSeparator(const char sep = '-') const;
+    std::vector<std::string>
+    parseDeviceList() const;
+    bool
+    isStorageBackend() const;
+    bool
+    isObjStorageBackend() const;
 
 protected:
-    static int
+    int
     loadParams(void);
 };
 
@@ -331,13 +332,13 @@ private:
     static void
     cleanupFile(const int fd, const std::string &filename);
     static bool
-    putObjAzure(size_t buffer_size, const std::string &name);
+    putObjAzure(const xferBenchConfig &config, size_t buffer_size, const std::string &name);
     static bool
-    getObjAzure(const std::string &name);
+    getObjAzure(const xferBenchConfig &config, const std::string &name);
     static bool
-    rmObjAzure(const std::string &name);
+    rmObjAzure(const xferBenchConfig &config, const std::string &name);
     static std::string
-    buildCommonAzCliBlobParams(const std::string &blob_name);
+    buildCommonAzCliBlobParams(const xferBenchConfig &config, const std::string &blob_name);
 
 public:
     static void
@@ -347,30 +348,36 @@ public:
     static std::string
     getDevToUse();
     static std::string
-    buildAwsCredentials();
+    buildAwsCredentials(const xferBenchConfig &config);
     static bool
-    putObj(size_t buffer_size, const std::string &name);
+    putObj(const xferBenchConfig &config, size_t buffer_size, const std::string &name);
     static bool
-    getObj(const std::string &name);
+    getObj(const xferBenchConfig &config, const std::string &name);
     static bool
-    rmObj(const std::string &name);
+    rmObj(const xferBenchConfig &config, const std::string &name);
     static bool
-    putObjS3(size_t buffer_size, const std::string &name);
+    putObjS3(const xferBenchConfig &config, size_t buffer_size, const std::string &name);
     static bool
-    getObjS3(const std::string &name);
+    getObjS3(const xferBenchConfig &config, const std::string &name);
     static bool
-    rmObjS3(const std::string &name);
+    rmObjS3(const xferBenchConfig &config, const std::string &name);
 
     static bool
-    checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
+    checkConsistency(const xferBenchConfig &config,
+                     std::vector<std::vector<xferBenchIOV>> &desc_lists);
     static bool
-    validateTransfer(bool is_initiator,
+    validateTransfer(const xferBenchConfig &config,
+                     bool is_initiator,
                      std::vector<std::vector<xferBenchIOV>> &local_lists,
                      std::vector<std::vector<xferBenchIOV>> &remote_lists);
     static void
-    printStatsHeader();
+    printStatsHeader(const xferBenchConfig &config);
     static void
-    printStats(bool is_target, size_t block_size, size_t batch_size, xferBenchStats stats);
+    printStats(const xferBenchConfig &config,
+               bool is_target,
+               size_t block_size,
+               size_t batch_size,
+               xferBenchStats stats);
 };
 
 #endif // __UTILS_H

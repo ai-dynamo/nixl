@@ -38,7 +38,7 @@ class xferBenchNvshmemWorker: public xferBenchWorker {
         int group_id_initialized = 0;
 
     public:
-        xferBenchNvshmemWorker(int *argc, char ***argv);
+        xferBenchNvshmemWorker(xferBenchConfig &config);
         ~xferBenchNvshmemWorker() override;
 
         // Memory management

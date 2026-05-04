@@ -6,9 +6,13 @@ gtest_dep = dependency('gtest',
 if gtest_dep.found()
   nixlbench_unit_tests = executable(
     'nixlbench_unit_tests',
-    'benchmark_config_test.cpp',
+    [
+      'benchmark_config_test.cpp',
+      'xfer_bench_config_test.cpp',
+    ],
     include_directories: inc_dir,
-    dependencies: [gtest_dep],
+    link_with: [nixlbench_runtimes],
+    dependencies: [gtest_dep, utils_dep],
   )
 
   test('nixlbench_unit_tests', nixlbench_unit_tests)
