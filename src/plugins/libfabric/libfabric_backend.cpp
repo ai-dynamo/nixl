@@ -469,7 +469,7 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
     nixl_status_t status = rail_manager.deserializeConnectionInfo(
         "dest", remote_conn_info, data_endpoints, control_endpoints);
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Rail Manager deserializeConnectionInfo failed";
+        NIXL_ERROR << "Rail Manager deserializeConnectionInfo failed with status: " << status;
         return status;
     }
     // Create connection to remote agent
@@ -905,7 +905,7 @@ nixlLibfabricEngine::loadRemoteMD(const nixlBlobDesc &input,
                                            remote_keys,
                                            remote_addr);
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Rail Manager deserializeMemoryKeys failed";
+        NIXL_ERROR << "Rail Manager deserializeMemoryKeys failed with status: " << status;
         return status;
     }
 
@@ -1627,7 +1627,7 @@ nixlLibfabricEngine::processConnectionRequest(uint16_t agent_idx,
     nixl_status_t status = rail_manager.deserializeConnectionInfo(
         "src", serialized_data, data_endpoints, control_endpoints);
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to deserialize connection info";
+        NIXL_ERROR << "Failed to deserialize connection info with status: " << status;
         return status;
     }
 
