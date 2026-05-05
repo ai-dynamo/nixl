@@ -97,8 +97,7 @@ ucx_vram_memtype_hint_to_string(nixl_ucx_vram_memtype_hint_t t) {
     case nixl_ucx_vram_memtype_hint_t::ZE_DEVICE:
         return ucs_memory_type_names[UCS_MEMORY_TYPE_ZE_DEVICE];
     }
-    throw std::invalid_argument(
-        std::to_string(static_cast<std::underlying_type_t<nixl_ucx_vram_memtype_hint_t>>(t)));
+    throw std::invalid_argument(std::to_string(static_cast<int>(t)));
 }
 
 [[nodiscard]] nixl_ucx_vram_memtype_hint_t
@@ -537,8 +536,7 @@ ucx_policy_to_mem_type(const nixl_ucx_vram_memtype_hint_t policy) {
         return UCS_MEMORY_TYPE_ZE_DEVICE;
     }
 
-    NIXL_FATAL << "Invalid VRAM memtype hint mode: "
-               << static_cast<std::underlying_type_t<nixl_ucx_vram_memtype_hint_t>>(policy);
+    NIXL_FATAL << "Invalid VRAM memtype hint mode: " << static_cast<int>(policy);
     std::terminate();
 }
 
