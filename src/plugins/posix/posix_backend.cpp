@@ -240,10 +240,15 @@ nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
                                               getIOSPoolSize(init_params->customParams),
                                               getKernelQueueSize(init_params->customParams))),
       io_queue_lock_(init_params->syncMode) {
-    if (io_queue_type_.empty() || !io_queue_) {
+    if (io_queue_type_.empty()) {
         initErr = true;
-        NIXL_ERROR << "Failed to initialize POSIX backend - unsupported or unavailable io queue "
-                   << "type requested: " << io_queue_type_;
+        NIXL_ERROR << "Failed to initialize POSIX backend - no supported io queue type found";
+        return;
+    }
+    if (!io_queue_) {
+        initErr = true;
+        NIXL_ERROR << "Failed to initialize POSIX backend - unavailable io queue type requested: "
+                   << io_queue_type_;
         return;
     }
     NIXL_INFO << absl::StrFormat("POSIX backend initialized using io queue type: %s",
@@ -343,8 +348,8 @@ nixlPosixEngine::releaseReqH(nixlBackendReqH *handle) const {
     }
 
     try {
-        auto &posix_handle = castPosixHandle(handle);
-        delete &posix_handle;
+        (void)castPosixHandle(handle);
+        delete handle;
         return NIXL_SUCCESS;
     }
     catch (const nixlPosixBackendReqH::exception &e) {
