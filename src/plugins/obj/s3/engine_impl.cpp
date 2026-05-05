@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <mutex>
 #include <optional>
 #include <vector>
 #include <cstdint>
@@ -60,14 +61,15 @@ public:
     std::vector<bool> appended_; /* which indices already appended to events */
     nixl_status_t firstError_ =
         NIXL_SUCCESS; /* first error seen across all checkXferEvents calls */
+    mutable std::mutex eventsMutex_;
 
     nixl_status_t
     getOverallStatus() {
         nixl_status_t first_error = NIXL_SUCCESS;
-        for (size_t i = 0; i < statusFutures_.size(); ++i) {
-            if (statusFutures_[i].wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        for (const auto &future : statusFutures_) {
+            if (future.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
                 return NIXL_IN_PROG;
-            auto s = statusFutures_[i].get();
+            auto s = future.get();
             if (s != NIXL_SUCCESS && first_error == NIXL_SUCCESS) first_error = s;
         }
         return first_error;
@@ -282,7 +284,8 @@ DefaultObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
     nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
 
     if (opt_args) req_h->trackFlags = opt_args->trackFlags;
-    req_h->appended_.resize(local.descCount(), false);
+    if (req_h->trackFlags)
+        req_h->appended_.resize(local.descCount(), false);
 
     for (int i = 0; i < local.descCount(); ++i) {
         const auto &local_desc = local[i];
@@ -338,8 +341,10 @@ DefaultObjEngineImpl::checkXfer(nixlBackendReqH *handle) const {
 nixl_status_t
 DefaultObjEngineImpl::checkXferEvents(nixlBackendReqH *handle,
                                       nixl_xfer_entry_events_t &events) const {
+    if (!handle) return NIXL_ERR_INVALID_PARAM;
     nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
-    nixl_xfer_track_flags_t flags = req_h->trackFlags;
+    std::lock_guard<std::mutex> lock(req_h->eventsMutex_);
+    const nixl_xfer_track_flags_t flags = req_h->trackFlags;
     if (flags == 0) return NIXL_ERR_NOT_SUPPORTED;
 
     bool any_pending = false;
@@ -352,7 +357,7 @@ DefaultObjEngineImpl::checkXferEvents(nixlBackendReqH *handle,
         }
         nixl_status_t s = req_h->statusFutures_[i].get();
         if (s != NIXL_SUCCESS && req_h->firstError_ == NIXL_SUCCESS) req_h->firstError_ = s;
-        bool include = (s != NIXL_SUCCESS && (flags & NIXL_XFER_TRACK_ERRORS)) ||
+        const bool include = (s != NIXL_SUCCESS && (flags & NIXL_XFER_TRACK_ERRORS)) ||
             (s == NIXL_SUCCESS && (flags & NIXL_XFER_TRACK_SUCCESSES));
         if (include) events.push_back({i, s});
         req_h->appended_[i] = true;

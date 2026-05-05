@@ -72,13 +72,16 @@ enum nixl_status_t {
     NIXL_IN_PROG_WITH_ERR = -13
 };
 
+/** @brief Portable single-bit mask: NIXL_BIT(0) == 1, NIXL_BIT(1) == 2, … */
+#define NIXL_BIT(n) (1u << (n))
+
 /**
  * @brief Per-entry tracking flags (set of properties). Empty (0) = track only summarized status.
  *        Chosen at createXferReq/makeXferReq. Extensible for future modes.
  */
 enum nixl_xfer_track_flag_t : uint32_t {
-    NIXL_XFER_TRACK_ERRORS = 1u << 0,
-    NIXL_XFER_TRACK_SUCCESSES = 1u << 1,
+    NIXL_XFER_TRACK_ERRORS    = NIXL_BIT(0),
+    NIXL_XFER_TRACK_SUCCESSES = NIXL_BIT(1),
 };
 
 using nixl_xfer_track_flags_t = uint32_t;

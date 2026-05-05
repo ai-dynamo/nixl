@@ -84,8 +84,10 @@ pub use bindings::{
     nixl_capi_status_t_NIXL_CAPI_ERROR_BACKEND as NIXL_CAPI_ERROR_BACKEND,
     nixl_capi_status_t_NIXL_CAPI_ERROR_INVALID_PARAM as NIXL_CAPI_ERROR_INVALID_PARAM,
     nixl_capi_status_t_NIXL_CAPI_IN_PROG as NIXL_CAPI_IN_PROG,
+    nixl_capi_status_t_NIXL_CAPI_IN_PROG_WITH_ERR as NIXL_CAPI_IN_PROG_WITH_ERR,
     nixl_capi_status_t_NIXL_CAPI_SUCCESS as NIXL_CAPI_SUCCESS,
-    nixl_capi_status_t_NIXL_CAPI_ERROR_NO_TELEMETRY as NIXL_CAPI_ERROR_NO_TELEMETRY
+    nixl_capi_status_t_NIXL_CAPI_ERROR_NO_TELEMETRY as NIXL_CAPI_ERROR_NO_TELEMETRY,
+    nixl_capi_status_t_NIXL_CAPI_ERROR_NOT_SUPPORTED as NIXL_CAPI_ERROR_NOT_SUPPORTED
 };
 
 mod agent;
@@ -125,6 +127,8 @@ pub enum NixlError {
     FailedToCreateBackend,
     #[error("Telemetry is not enabled or transfer is not complete")]
     NoTelemetry,
+    #[error("Operation not supported by this backend")]
+    NotSupported,
 }
 
 /// A safe wrapper around NIXL memory list
@@ -388,7 +392,7 @@ impl OptArgs {
     }
 
     /// Set per-entry tracking flags for create_xfer_req/make_xfer_req.
-    /// Use NIXL_CAPI_XFER_TRACK_ERRORS and/or NIXL_CAPI_XFER_TRACK_SUCCESSES.
+    /// Use [`XFER_TRACK_ERRORS`] and/or [`XFER_TRACK_SUCCESSES`].
     pub fn set_track_flags(&mut self, track_flags: u32) -> Result<(), NixlError> {
         let status =
             unsafe { nixl_capi_opt_args_set_track_flags(self.inner.as_ptr(), track_flags) };

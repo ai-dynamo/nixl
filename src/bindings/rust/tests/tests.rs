@@ -2280,9 +2280,17 @@ fn test_xfer_entry_events_and_track_flags() {
     assert!(events.iter().next().is_none());
 
     let mut opt_args = OptArgs::new().expect("OptArgs::new");
+    assert_eq!(opt_args.track_flags().unwrap(), 0);
+
+    opt_args.set_track_flags(XFER_TRACK_ERRORS).expect("set_track_flags errors");
+    assert_eq!(opt_args.track_flags().unwrap(), XFER_TRACK_ERRORS);
+
+    opt_args.set_track_flags(XFER_TRACK_SUCCESSES).expect("set_track_flags successes");
+    assert_eq!(opt_args.track_flags().unwrap(), XFER_TRACK_SUCCESSES);
+
     opt_args
         .set_track_flags(XFER_TRACK_ERRORS | XFER_TRACK_SUCCESSES)
-        .expect("set_track_flags");
+        .expect("set_track_flags combined");
     assert_eq!(
         opt_args.track_flags().unwrap(),
         XFER_TRACK_ERRORS | XFER_TRACK_SUCCESSES

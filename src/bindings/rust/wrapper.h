@@ -33,6 +33,9 @@ typedef enum {
     NIXL_CAPI_ERROR_EXCEPTION = -4,
     NIXL_CAPI_IN_PROG = 1,
     NIXL_CAPI_ERROR_NO_TELEMETRY = -5,
+    NIXL_CAPI_ERROR_NOT_SUPPORTED = -6,
+    /** In progress with at least one entry error; mirrors NIXL_IN_PROG_WITH_ERR. */
+    NIXL_CAPI_IN_PROG_WITH_ERR = 2,
 } nixl_capi_status_t;
 
 // Memory types enum (matching nixl's memory types)

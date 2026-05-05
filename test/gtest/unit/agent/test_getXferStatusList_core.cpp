@@ -144,8 +144,9 @@ namespace agent {
                   NIXL_SUCCESS);
         ASSERT_NE(req_hndl, nullptr);
 
-        // Post transfer
-        ASSERT_EQ(local_agent_->postXferReq(req_hndl), NIXL_SUCCESS);
+        // Post transfer — may return NIXL_SUCCESS (inline) or NIXL_IN_PROG (async).
+        nixl_status_t post_status = local_agent_->postXferReq(req_hndl);
+        ASSERT_TRUE(post_status == NIXL_SUCCESS || post_status == NIXL_IN_PROG);
 
         // Try to get per-entry status - mock backend returns NOT_SUPPORTED
         nixl_xfer_entry_events_t events;
@@ -207,8 +208,9 @@ namespace agent {
             NIXL_SUCCESS);
         ASSERT_NE(req_hndl, nullptr);
 
-        // Post transfer
-        ASSERT_EQ(local_agent_->postXferReq(req_hndl), NIXL_SUCCESS);
+        // Post transfer — may return NIXL_SUCCESS (inline) or NIXL_IN_PROG (async).
+        nixl_status_t post_status2 = local_agent_->postXferReq(req_hndl);
+        ASSERT_TRUE(post_status2 == NIXL_SUCCESS || post_status2 == NIXL_IN_PROG);
 
         // Standard getXferStatus should work as before
         nixl_status_t status = local_agent_->getXferStatus(req_hndl);

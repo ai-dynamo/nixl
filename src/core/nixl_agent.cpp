@@ -1197,25 +1197,39 @@ nixlAgent::getXferStatus(nixlXferReqH *req_hndl, nixl_xfer_entry_events_t &event
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
-    if (data->remoteSections.count(req_hndl->remoteAgent) == 0) {
+    // Skip remote-validity check when the request is already complete or errored:
+    // completed requests carry a cached result and don't need metadata anymore.
+    if (req_hndl->status == NIXL_IN_PROG &&
+        data->remoteSections_.count(req_hndl->remoteAgent) == 0) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated during transfer";
         return NIXL_ERR_NOT_FOUND;
     }
 
-    nixl_status_t status = req_hndl->engine->checkXferEvents(req_hndl->backendHandle, events_out);
+    const nixl_status_t status = req_hndl->engine->checkXferEvents(req_hndl->backendHandle, events_out);
 
-    if (status == NIXL_ERR_NOT_SUPPORTED) return status;
-
-    if (status == NIXL_IN_PROG) {
-        req_hndl->status = NIXL_IN_PROG;
-        return NIXL_IN_PROG_WITH_ERR; /* negative so (status < 0) → slow path */
+    switch (status) {
+        case NIXL_ERR_NOT_SUPPORTED:
+            return status;
+        case NIXL_ERR_REMOTE_DISCONNECT:
+            data->invalidateRemoteData(req_hndl->remoteAgent);
+            req_hndl->status = NIXL_ERR_REMOTE_DISCONNECT;
+            return NIXL_ERR_REMOTE_DISCONNECT;
+        case NIXL_IN_PROG:
+            req_hndl->status = NIXL_IN_PROG;
+            // Only signal in-progress-with-errors when at least one entry has actually errored.
+            for (const auto &ev : events_out) {
+                if (ev.status < 0) return NIXL_IN_PROG_WITH_ERR;
+            }
+            return NIXL_IN_PROG;
+        default:
+            break;
     }
 
     req_hndl->status = status;
     if (data->telemetryEnabled) {
         if (status == NIXL_SUCCESS)
-            req_hndl->updateRequestStats(data->telemetry_, NIXL_TELEMETRY_FINISH);
+            req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_FINISH);
         else if (status < 0)
             data->addErrorTelemetry(status);
     }

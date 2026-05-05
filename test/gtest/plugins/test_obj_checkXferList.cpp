@@ -183,11 +183,11 @@ TEST_P(ObjCheckXferListTest, SharedFutureMultipleCalls) {
 
     ASSERT_EQ(overall_status, NIXL_SUCCESS);
 
-    // Call checkXferEvents again - should work with shared_future (no new events)
-    nixl_xfer_entry_events_t events2;
-    auto overall_status2 = localBackendEngine_->checkXferEvents(handle, events2);
+    // Call checkXferEvents again with the same container — no new events should be appended.
+    size_t prev_size = events1.size();
+    auto overall_status2 = localBackendEngine_->checkXferEvents(handle, events1);
     ASSERT_EQ(overall_status2, NIXL_SUCCESS);
-    ASSERT_EQ(events1.size(), events2.size());
+    ASSERT_EQ(events1.size(), prev_size);
 
     // Also verify checkXfer still works
     auto check_status = localBackendEngine_->checkXfer(handle);
@@ -248,11 +248,11 @@ TEST_P(ObjCheckXferListTest, ResultCaching) {
 
     // Verify results are consistent on subsequent calls (no new events)
     for (int call = 0; call < 5; ++call) {
-        nixl_xfer_entry_events_t cached_events;
-        auto cached_overall = localBackendEngine_->checkXferEvents(handle, cached_events);
+        const auto prev_size = events.size();
+        auto cached_overall = localBackendEngine_->checkXferEvents(handle, events);
 
         EXPECT_EQ(cached_overall, NIXL_SUCCESS);
-        EXPECT_EQ(cached_events.size(), events.size());
+        EXPECT_EQ(events.size(), prev_size);
     }
 
     localBackendEngine_->releaseReqH(handle);
@@ -358,14 +358,14 @@ TEST_P(ObjCheckXferListTest, CheckXferCompatibility) {
         overall_status_events = localBackendEngine_->checkXferEvents(handle, events);
         overall_status_single = localBackendEngine_->checkXfer(handle);
 
-        EXPECT_EQ(overall_status_events, overall_status_single);
-
         if (isInProgress(overall_status_events)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             poll_count++;
         }
     } while (isInProgress(overall_status_events) && poll_count < max_polls);
 
+    // Compare final states only — checking on every poll is race-prone since completion
+    // can occur between the two calls.
     ASSERT_EQ(overall_status_events, NIXL_SUCCESS);
     ASSERT_EQ(overall_status_single, NIXL_SUCCESS);
 

@@ -257,10 +257,12 @@ PYBIND11_MODULE(_bindings, m) {
              })
         .def(
             "__iter__",
-            [](const nixlXferEntryEvents &v) {
-                return py::make_iterator(v.events().begin(), v.events().end());
-            },
-            py::keep_alive<0, 1>())
+            [](const nixlXferEntryEvents &v) -> py::iterator {
+                py::list result;
+                for (const auto &e : v.events())
+                    result.append(py::make_tuple(e.index, static_cast<int>(e.status)));
+                return py::iter(result);
+            })
         .def(
             "to_list",
             [](const nixlXferEntryEvents &v) {
@@ -803,7 +805,7 @@ PYBIND11_MODULE(_bindings, m) {
         .def(
             "getXferStatus",
             [](nixlAgent &agent, uintptr_t reqh, nixlXferEntryEvents &events) -> nixl_status_t {
-                py::gil_scoped_release release;
+                // GIL must be held: C++ appends to events.data_ which Python may concurrently read.
                 return agent.getXferStatus((nixlXferReqH *)reqh, events.events());
             },
             py::arg("reqh"),
@@ -813,7 +815,8 @@ PYBIND11_MODULE(_bindings, m) {
                 a nixl_status_t so the caller can inspect per-entry (index, status) pairs
                 even when the overall status indicates partial failure.
                 NIXL_SUCCESS: complete, no errors.
-                NIXL_IN_PROG / NIXL_IN_PROG_WITH_ERR: still running; poll again.
+                NIXL_IN_PROG: still running, no errors observed yet; poll again.
+                NIXL_IN_PROG_WITH_ERR: still running, but at least one entry has errored; poll again.
                 Other negative value: transfer finished with errors; inspect events.
                 Requires trackFlags != 0.
             )pbdoc")

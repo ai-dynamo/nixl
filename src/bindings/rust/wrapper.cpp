@@ -1669,9 +1669,11 @@ nixl_capi_get_xfer_status_with_events(nixl_capi_agent_t agent,
     }
     try {
         nixl_status_t ret = agent->inner->getXferStatus(req_hndl->req, events->events);
-        if (ret == NIXL_SUCCESS) return NIXL_CAPI_SUCCESS;
-        if (ret == NIXL_IN_PROG || ret == NIXL_IN_PROG_WITH_ERR) return NIXL_CAPI_IN_PROG;
+        if (ret == NIXL_SUCCESS)           return NIXL_CAPI_SUCCESS;
+        if (ret == NIXL_IN_PROG)           return NIXL_CAPI_IN_PROG;
+        if (ret == NIXL_IN_PROG_WITH_ERR)  return NIXL_CAPI_IN_PROG_WITH_ERR;
         if (ret == NIXL_ERR_INVALID_PARAM) return NIXL_CAPI_ERROR_INVALID_PARAM;
+        if (ret == NIXL_ERR_NOT_SUPPORTED) return NIXL_CAPI_ERROR_NOT_SUPPORTED;
         return NIXL_CAPI_ERROR_BACKEND;
     }
     catch (...) {

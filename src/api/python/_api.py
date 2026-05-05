@@ -648,7 +648,7 @@ class nixl_agent:
         status = self.agent.getXferStatus(handle._handle)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
-        elif status == nixlBind.NIXL_IN_PROG:
+        elif status == nixlBind.NIXL_IN_PROG or status == nixlBind.NIXL_IN_PROG_WITH_ERR:
             return "PROC"
         else:
             return "ERR"

@@ -154,9 +154,7 @@ class nixlBackendEngine {
          * Default returns NIXL_ERR_NOT_SUPPORTED. Track mode is stored in handle from prep/post.
          */
         virtual nixl_status_t
-        checkXferEvents(nixlBackendReqH *handle, nixl_xfer_entry_events_t &events) const {
-            (void)handle;
-            (void)events;
+        checkXferEvents(nixlBackendReqH *, nixl_xfer_entry_events_t &) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 

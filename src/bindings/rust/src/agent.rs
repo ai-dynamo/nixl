@@ -40,6 +40,8 @@ pub struct Agent {
 pub enum XferStatus {
     Success,
     InProgress,
+    /// In progress, but at least one entry has already errored (mirrors `NIXL_IN_PROG_WITH_ERR`).
+    InProgressWithErr,
 }
 
 impl XferStatus {
@@ -1003,7 +1005,9 @@ impl Agent {
         match status {
             NIXL_CAPI_SUCCESS => Ok(XferStatus::Success),
             NIXL_CAPI_IN_PROG => Ok(XferStatus::InProgress),
+            NIXL_CAPI_IN_PROG_WITH_ERR => Ok(XferStatus::InProgressWithErr),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_SUPPORTED => Err(NixlError::NotSupported),
             _ => Err(NixlError::BackendError),
         }
     }
