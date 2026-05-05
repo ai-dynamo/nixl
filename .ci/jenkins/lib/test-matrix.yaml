@@ -86,6 +86,15 @@ taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
 
 steps:
+  # TEMP: force nixl-ci-gpu to fail fast so the triagebot catch-block
+  # actually fires on this PR. REVERT BEFORE MERGE.
+  - name: TEMP force-fail to exercise triagebot
+    containerSelector: "{name: 'build_helper'}"
+    parallel: false
+    run: |
+      echo "intentional failure on PR triagebot-ci-integration to exercise the catch-block"
+      exit 1
+
   - name: Compiling NIXL Docker Image
     containerSelector: "{name: 'build_helper'}"
     credentialsId: "nixl_harbor_credentials"
