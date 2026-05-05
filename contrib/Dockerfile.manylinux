@@ -148,7 +148,7 @@ RUN cd /workspace && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=20 -DCMAKE_CXX_STANDARD=20 && \
-    make -j$(nproc) && make install
+    make -j${NPROC:-$(nproc)} && make install
 
 # The base image libcurl is linked against openssl 1.x, so we need to build from source
 # in order to use openssl 3.x. This is needed to build aws-sdk-cpp.

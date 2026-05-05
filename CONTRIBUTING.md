@@ -17,7 +17,7 @@ limitations under the License.
 
 # Contribution Guidelines
 
-Welcome to NIXL! This document provides guidelines for contributing to our modern C++17 project. Please read through these guidelines carefully before submitting your contribution.
+Welcome to NIXL! This document provides guidelines for contributing to our modern C++20 project. Please read through these guidelines carefully before submitting your contribution.
 
 ## Table of Contents
 
@@ -100,9 +100,9 @@ pre-commit install
 
 ## Code Standards
 
-### C++17 Guidelines
+### C++20 Guidelines
 
-NIXL is a modern C++17 project. We adhere to the [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines) where appropriate. Key principles:
+NIXL is a modern C++20 project. We adhere to the [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines) where appropriate. Key principles:
 
 1. **Use modern C++ features**: Prefer `auto`, range-based loops, structured bindings, `std::optional`, etc.
 2. **RAII everywhere**: Resource management through constructors/destructors
