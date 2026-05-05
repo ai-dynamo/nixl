@@ -14,14 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __BACKEND_ENGINE_H
-#define __BACKEND_ENGINE_H
+#ifndef NIXL_SRC_API_CPP_BACKEND_BACKEND_ENGINE_H
+#define NIXL_SRC_API_CPP_BACKEND_BACKEND_ENGINE_H
 
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
-#include <mutex>
 
 #include "nixl_types.h"
 #include "backend_aux.h"
@@ -108,6 +108,11 @@ class nixlBackendEngine {
         // pure virtual, and return errors, as parent shouldn't call if supportsNotif is false.
         virtual bool supportsNotif() const = 0;
 
+    // Determine whether a backend supports send and recv operations
+    virtual bool supportsSendRecv() const {
+        return false;
+    }
+
         virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?
 
 
@@ -145,6 +150,30 @@ class nixlBackendEngine {
                                         nixlBackendReqH* &handle,
                                         const nixl_opt_b_args_t* opt_args=nullptr
                                        ) const = 0;
+
+    // Preparing a request, which populates the async handle as desired
+    virtual nixl_status_t
+    prepTagXfer(nixl_xfer_op_t operation,
+                const nixl_meta_dlist_t &local,
+                const std::string &tag,
+                const std::string &remote_agent,
+                nixlBackendReqH* &handle,
+                const nixl_opt_b_args_t* opt_args = nullptr
+                ) const {
+        return NIXL_ERR_BACKEND;
+    }
+
+    // Posting a request, which completes the async handle creation and posts it
+    virtual nixl_status_t
+    postTagXfer(nixl_xfer_op_t operation,
+                const nixl_meta_dlist_t &local,
+                const std::string &tag,
+                const std::string &remote_agent,
+                nixlBackendReqH* &handle,
+                const nixl_opt_b_args_t* opt_args = nullptr
+                ) const {
+        std::terminate();
+    }
 
         // Use a handle to progress backend engine and see if a transfer is completed or not
         virtual nixl_status_t checkXfer(nixlBackendReqH* handle) const = 0;

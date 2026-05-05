@@ -844,6 +844,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
 
     auto &uw = uws.front();
     workerAddr = uw->epAddr();
+    uw->regAmCallback(nixl::ucx::am_cb_op_t::SEND_RECV, recvAmCb, this);
     uw->regAmCallback(nixl::ucx::am_cb_op_t::NOTIF_STR, notifAmCb, this);
 }
 
@@ -1307,6 +1308,137 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     return ret;
 }
 
+nixl_status_t
+nixlUcxEngine::prepTagSend(const nixl_meta_dlist_t &local,
+                           const std::string &tag,
+                           const std::string &remote_agent,
+                           nixlBackendReqH* &nixl_handle,
+                           const nixl_opt_b_args_t *opt_args
+                           ) const {
+    NIXL_ASSERT(!tag.empty());
+    NIXL_ASSERT(local.descCount() == 1 );
+
+    const auto worker_id = getWorkerId(opt_args);
+
+    nixl_handle = new nixlUcxBackendH(getWorker(worker_id).get(), worker_id);
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::prepTagRecv(const nixl_meta_dlist_t &local,
+                           const std::string &tag,
+                           const std::string &remote_agent,
+                           nixlBackendReqH* &nixl_handle,
+                           const nixl_opt_b_args_t *opt_args
+                           ) const {
+    NIXL_ASSERT(!tag.empty());
+    NIXL_ASSERT(local.descCount() == 1 );
+
+    nixl_handle = new nixlUcxBackendRecvH(local);
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::prepTagXfer(const nixl_xfer_op_t operation,
+                           const nixl_meta_dlist_t &local,
+                           const std::string &tag,
+                           const std::string &remote_agent,
+                           nixlBackendReqH* &handle,
+                           const nixl_opt_b_args_t *opt_args
+                           ) const {
+    if (tag.empty()) {
+        NIXL_ERROR << "Non-empty tag required for send or recv";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (local.descCount() != 1) {
+        NIXL_ERROR << "TODO: Generalize to multiple descs";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    switch (operation) {
+    case NIXL_SEND:
+        return prepTagSend(local, tag, remote_agent, handle, opt_args);
+    case NIXL_RECV:
+        return prepTagRecv(local, tag, remote_agent, handle, opt_args);
+    case NIXL_READ:
+    case NIXL_WRITE:
+        break;
+    }
+    return NIXL_ERR_INVALID_PARAM;
+}
+
+nixl_status_t
+nixlUcxEngine::postTagSend(const nixl_meta_dlist_t &local,
+                           const std::string &tag,
+                           const std::string &remote_agent,
+                           nixlBackendReqH* &nixl_handle,
+                           const nixl_opt_b_args_t *opt_args
+                           ) const {
+    NIXL_ASSERT(local.descCount() == 1); // TODO: Generalize
+
+    const auto ucx_handle = static_cast<nixlUcxBackendH *>(nixl_handle);
+
+    nixlSerDes ser_des;
+    ser_des.addStr("name", localAgent);
+    ser_des.addStr("tag", tag);
+    const std::string header = ser_des.exportStr();
+
+    const auto conn = getConnection(remote_agent);
+    const auto &ep = conn->getEp(ucx_handle->getWorkerId());
+
+    // TODO: Need a cleanup for sendAm()?
+
+    nixlUcxReq request;
+    const auto status = ep->sendAm(nixl::ucx::am_cb_op_t::SEND_RECV,
+                                   const_cast<char *>(header.data()),
+                                   header.size(),
+                                   reinterpret_cast<void *>(local[0].addr),
+                                   local[0].len,
+                                   // TODO: Remove FLAG_EAGER once recvAmCb can handle RNDV
+                                   UCP_AM_SEND_FLAG_COPY_HEADER | UCP_AM_SEND_FLAG_EAGER,
+                                   &request);
+
+    if (ucx_handle->append(status, request, conn) != NIXL_SUCCESS) {
+        return status;
+    }
+
+    return ucx_handle->status();
+}
+
+nixl_status_t
+nixlUcxEngine::postTagRecv(const nixl_meta_dlist_t &local,
+                           const std::string &tag,
+                           const std::string &remote_agent,
+                           nixlBackendReqH* &nixl_handle,
+                           const nixl_opt_b_args_t *opt_args
+                           ) const {
+    const auto ucx_handle = dynamic_cast<nixlUcxBackendRecvH *>(nixl_handle);
+    return recvMap_.postRecv(remote_agent, tag, ucx_handle);
+}
+
+nixl_status_t
+nixlUcxEngine::postTagXfer(const nixl_xfer_op_t operation,
+                           const nixl_meta_dlist_t &local,
+                           const std::string &tag,
+                           const std::string &remote_agent,
+                           nixlBackendReqH* &handle,
+                           const nixl_opt_b_args_t *opt_args
+                           ) const {
+    switch (operation) {
+    case NIXL_SEND:
+        return postTagSend(local, tag, remote_agent, handle, opt_args);
+    case NIXL_RECV:
+        return postTagRecv(local, tag, remote_agent, handle, opt_args);
+    case NIXL_READ:
+    case NIXL_WRITE:
+        break;
+    }
+    return NIXL_ERR_INVALID_PARAM;
+}
+
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
@@ -1341,6 +1473,8 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
+    // TODO: Detect nixlUcxBackendRecvH and also remove from recvMap_;
+
     nixlUcxBackendH *intHandle = (nixlUcxBackendH *)handle;
     nixl_status_t status = intHandle->release();
 
@@ -1364,6 +1498,37 @@ void
 nixlUcxEngine::progressLoop() {
     while (progress() != 0)
         ;
+}
+
+void
+nixlUcxEngine::recvAmEager(const std::string &remote,
+                           const std::string &tag,
+                           const void *data,
+                           const std::size_t size) {
+    recvMap_.recvEager(remote, tag, {static_cast<const char *>(data), size});
+}
+
+ucs_status_t
+nixlUcxEngine::recvAmCb(void *arg, const void *header,
+                        size_t header_length, void *data,
+                        size_t length,
+                        const ucp_am_recv_param_t *param) {
+    nixlSerDes ser_des;
+    const std::string ser_str(static_cast<const char *>(header), header_length);
+    ser_des.importStr(ser_str);
+    const std::string remote = ser_des.getStr("name");
+    const std::string tag = ser_des.getStr("tag");
+
+    const auto engine = static_cast<nixlUcxEngine *>(arg);
+
+    if (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV) {
+        // TODO: Rendezvous, recv posted
+        // TODO: Rendezvous, recv not posted
+        std::terminate();
+    } else {
+        engine->recvAmEager(remote, tag, data, length);
+    }
+    return UCS_OK;
 }
 
 /****************************************
