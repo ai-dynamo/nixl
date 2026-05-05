@@ -12,6 +12,9 @@ jobs:
     runs-on: xpu-build
     timeout-minutes: 120
 
+    env:
+      IMAGE_TAG: nixl-xpu:sha-${{ github.sha }}
+
     permissions:
       contents: read
 
@@ -27,7 +30,8 @@ jobs:
         with:
           context: .
           file: .ci/dockerfiles/Dockerfile.xpu
+          load: true
           push: false
-          tags: nixl-xpu:${{ github.event_name }}-${{ github.sha }}
+          tags: ${{ env.IMAGE_TAG }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
