@@ -380,9 +380,9 @@ nixlUcxThreadEngine::~nixlUcxThreadEngine() {
 }
 
 void
-nixlUcxThreadEngine::appendNotif(std::string &&remote_name, std::string &&msg) {
+nixlUcxThreadEngine::appendNotif(const std::string_view remote_name, const std::string_view msg) {
     const std::lock_guard lock(notifMutex_);
-    notifList_.emplace_back(std::move(remote_name), std::move(msg));
+    notifList_.emplace_back(remote_name, msg);
 }
 
 nixl_status_t
@@ -760,9 +760,9 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 }
 
 void
-nixlUcxThreadPoolEngine::appendNotif(std::string &&remote_name, std::string &&msg) {
+nixlUcxThreadPoolEngine::appendNotif(const std::string_view remote_name, const std::string_view msg) {
     const std::lock_guard lock(notifMutex_);
-    notifList_.emplace_back(std::move(remote_name), std::move(msg));
+    notifList_.emplace_back(remote_name, msg);
 }
 
 nixl_status_t
@@ -1371,8 +1371,8 @@ nixlUcxEngine::progressLoop() {
 nixlNotifCallbacks
 nixlUcxEngine::setDefaultCallback(nixlNotifCallbacks callbacks) {
     if (!callbacks.hasDefaultCallback()) {
-        callbacks.setDefaultCallback([engine = this](nixlNotifCallbackArgs &&args) {
-            engine->appendNotif(std::move(args.remoteAgent), std::move(args.notifMessage));
+        callbacks.setDefaultCallback([engine = this](const nixlNotifCallbackArgs &args) {
+            engine->appendNotif(args.remoteAgent, args.notifMessage);
         });
     }
     return callbacks;
@@ -1416,9 +1416,9 @@ nixlUcxEngine::getConnection(const std::string &remote_agent) const {
 }
 
 void
-nixlUcxEngine::appendNotif(std::string &&remote_name, std::string &&msg) {
+nixlUcxEngine::appendNotif(const std::string_view remote_name, const std::string_view msg) {
     // In the "no progress thread" case the lock in nixlAgent is sufficient.
-    notifList_.emplace_back(std::move(remote_name), std::move(msg));
+    notifList_.emplace_back(remote_name, msg);
 }
 
 ucs_status_t
@@ -1437,8 +1437,9 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
     ser_des.importStr(ser_str);
-    // List initialization evaluates in order.
-    engine->notifCallbacks_.call({ser_des.getStr("name"), ser_des.getStr("msg")});
+    const std::string remote_agent = ser_des.getStr("name");
+    const std::string notif_message = ser_des.getStr("msg");
+    engine->notifCallbacks_.call({remote_agent, notif_message});
     return UCS_OK;
 }
 

@@ -19,6 +19,7 @@
 
 #include <vector>
 #include <string>
+#include <string_view>
 #include <functional>
 #include <unordered_map>
 #include <optional>
@@ -310,8 +311,8 @@ extern const std::string nixl_null_agent;
  * @brief The arguments passed to notification callbacks.
  */
 struct nixlNotifCallbackArgs {
-    std::string remoteAgent;
-    std::string notifMessage;
+    std::string_view remoteAgent;
+    std::string_view notifMessage;
 };
 
 /**
@@ -323,6 +324,6 @@ struct nixlNotifCallbackArgs {
  *        functions on any NIXL agent, and MUST NOT call functions on the agent that
  *        received the notif for which they were called.
  */
-using nixl_notif_callback_t = std::function<void(nixlNotifCallbackArgs &&)>;
+using nixl_notif_callback_t = std::function<void(const nixlNotifCallbackArgs &)>;
 
 #endif

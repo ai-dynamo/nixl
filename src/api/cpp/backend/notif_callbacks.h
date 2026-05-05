@@ -23,7 +23,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
-#include <utility>
+#include <string_view>
 #include <vector>
 
 #include "nixl_types.h"
@@ -92,12 +92,12 @@ public:
     }
 
     void
-    call(nixlNotifCallbackArgs &&args) const {
+    call(const nixlNotifCallbackArgs &args) const {
         const iterator iter = findCallback(args.notifMessage);
         if (iter != callbacks_.end()) {
-            iter->callback(std::move(args));
+            iter->callback(args);
         } else if (default_) {
-            default_(std::move(args));
+            default_(args);
         }
     }
 
@@ -121,7 +121,7 @@ private:
     }
 
     [[nodiscard]] static bool
-    isPrefixOf(const std::string &prefix, const std::string &string) noexcept {
+    isPrefixOf(const std::string &prefix, const std::string_view string) noexcept {
         return (string.size() >= prefix.size()) &&
             (std::memcmp(prefix.data(), string.data(), prefix.size()) == 0);
     }
@@ -137,7 +137,7 @@ private:
     }
 
     [[nodiscard]] iterator
-    findCallback(const std::string &message) const {
+    findCallback(const std::string_view message) const {
         if (callbacks_.empty()) {
             return callbacks_.end();
         }
@@ -153,7 +153,7 @@ private:
     }
 
     [[nodiscard]] iterator
-    findBinarySearch(const std::string &message) const {
+    findBinarySearch(const std::string_view message) const {
         if (message.size() < commonPrefixSize_) {
             return callbacks_.end();
         }
@@ -172,7 +172,7 @@ private:
     }
 
     [[nodiscard]] iterator
-    findLinearScan(const std::string &message) const {
+    findLinearScan(const std::string_view message) const {
         return std::find_if(callbacks_.begin(), callbacks_.end(), [&](const nixlNotifCallback &cb) {
             return isPrefixOf(cb.prefix, message);
         });

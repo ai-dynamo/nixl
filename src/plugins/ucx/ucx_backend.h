@@ -23,6 +23,8 @@
 #include <thread>
 #include <mutex>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <condition_variable>
 #include <atomic>
 #include <chrono>
@@ -232,7 +234,7 @@ protected:
     }
 
     virtual void
-    appendNotif(std::string &&remote_name, std::string &&msg);
+    appendNotif(std::string_view remote_name, std::string_view msg);
 
     virtual nixl_status_t
     sendXferRange(const nixl_xfer_op_t &operation,
@@ -323,7 +325,7 @@ public:
 
 protected:
     void
-    appendNotif(std::string &&remote_name, std::string &&msg) override;
+    appendNotif(std::string_view remote_name, std::string_view msg) override;
 
 private:
     std::unique_ptr<nixlUcxThread> thread_;
@@ -357,7 +359,7 @@ public:
 
 protected:
     void
-    appendNotif(std::string &&remote_name, std::string &&msg) override;
+    appendNotif(std::string_view remote_name, std::string_view msg) override;
 
     nixl_status_t
     sendXferRange(const nixl_xfer_op_t &operation,
