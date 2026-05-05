@@ -1315,7 +1315,7 @@ nixlUcxEngine::prepTagSend(const nixl_meta_dlist_t &local,
 
     const auto worker_id = getWorkerId(opt_args);
 
-    nixl_handle = new nixlUcxBackendH(getWorker(worker_id).get(), worker_id);
+    nixl_handle = new nixlUcxBackendReqH(getWorker(worker_id).get(), worker_id);
 
     return NIXL_SUCCESS;
 }
@@ -1374,7 +1374,7 @@ nixlUcxEngine::postTagSend(const nixl_meta_dlist_t &local,
                            ) const {
     NIXL_ASSERT(local.descCount() == 1); // TODO: Generalize
 
-    const auto ucx_handle = static_cast<nixlUcxBackendH *>(nixl_handle);
+    const auto ucx_handle = static_cast<nixlUcxBackendReqH *>(nixl_handle);
 
     nixlSerDes ser_des;
     ser_des.addStr("name", localAgent);

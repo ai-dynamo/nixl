@@ -55,8 +55,22 @@ registerMemory(nixlUcxEngine *engine, void *data, const std::size_t size) {
     return result;
 }
 
-struct testStruct {
-    testStruct(const std::string &name, const char data)
+struct testRequest {
+    testRequest(const nixl_xfer_op_t op, const std::string &tag, const std::string &remote_agent)
+        : op(op),
+          tag(tag),
+          remote_agent(remote_agent),
+          dlist(DRAM_SEG) {}
+
+    nixl_xfer_op_t op;
+    std::string tag;
+    std::string remote_agent;
+    nixlBackendReqH *req = nullptr;
+    nixl_meta_dlist_t dlist;
+};
+
+struct testEngine {
+    testEngine(const std::string &name, const char data)
         : name(name),
           engine(makeTestEngine(name)),
           conn(localConnInfo(engine.get())),
@@ -64,8 +78,42 @@ struct testStruct {
           reg(registerMemory(engine.get(), buffer.data(), buffer.size()))
     {}
 
-    ~testStruct() {
+    ~testEngine() {
         engine->deregisterMem(reg);
+    }
+
+    [[nodiscard]] testRequest
+    prepXfer(const nixl_xfer_op_t operation,
+             const std::string &tag,
+             const std::string &remote_agent) {
+        testRequest result(operation, tag, remote_agent);
+        nixlMetaDesc desc;
+        desc.addr = uintptr_t(buffer.data());
+        desc.len = buffer.size();
+        result.dlist.addDesc(desc);
+        EXPECT_EQ(engine->prepTagXfer(operation,
+                                      result.dlist,
+                                      tag,
+                                      remote_agent,
+                                      result.req), NIXL_SUCCESS);
+        return result;
+    }
+
+    [[nodiscard]] bool
+    postXfer(testRequest &req) {
+        const auto status = engine->postTagXfer(req.op,
+                                                req.dlist,
+                                                req.tag,
+                                                req.remote_agent,
+                                                req.req);
+        if (status == NIXL_SUCCESS) {
+            return true;
+        }
+
+        if (status == NIXL_IN_PROG) {
+            return false;
+        }
+        throw std::runtime_error("TODO: Better error message");
     }
 
     const std::string name;
@@ -78,61 +126,58 @@ struct testStruct {
 
 } // namespace
 
-TEST(UcxSendRecv, Basic) {
-    testStruct t1("agent", 'a');
-    testStruct t2("guard", 'b');
+TEST(UcxSendRecv, Basic1) {
+    testEngine t1("agent", 'a');
+    testEngine t2("guard", 'b');
 
     EXPECT_EQ(t1.engine->loadRemoteConnInfo(t2.name, t2.conn), NIXL_SUCCESS);
     EXPECT_EQ(t2.engine->loadRemoteConnInfo(t1.name, t1.conn), NIXL_SUCCESS);
 
     const std::string tag = "tag";
 
-    nixlBackendReqH *req1 = nullptr;
-    nixl_meta_dlist_t dlist1(DRAM_SEG);
-    nixlMetaDesc desc1;
-    desc1.addr = uintptr_t(t1.buffer.data());
-    desc1.len = t1.buffer.size();
-    dlist1.addDesc(desc1);
+    testRequest req1 = t1.prepXfer(NIXL_SEND, tag, t2.name);
+    testRequest req2 = t2.prepXfer(NIXL_RECV, tag, t1.name);
 
-    EXPECT_EQ(t1.engine->prepTagXfer(NIXL_SEND,
-                                     dlist1,
-                                     tag,
-                                     t2.name,
-                                     req1), NIXL_SUCCESS);
-
-    nixlBackendReqH *req2 = nullptr;
-    nixl_meta_dlist_t dlist2(DRAM_SEG);
-    nixlMetaDesc desc2;
-    desc2.addr = uintptr_t(t2.buffer.data());
-    desc2.len = t2.buffer.size();
-    dlist2.addDesc(desc2);
-
-    EXPECT_EQ(t2.engine->prepTagXfer(NIXL_RECV,
-                                     dlist2,
-                                     tag,
-                                     t1.name,
-                                     req2), NIXL_SUCCESS);
-
-
-    EXPECT_EQ(t1.engine->postTagXfer(NIXL_SEND,
-                                     dlist1,
-                                     tag,
-                                     t2.name,
-                                     req1), NIXL_IN_PROG);
+    EXPECT_FALSE(t1.postXfer(req1));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
 
     EXPECT_NE(t1.buffer, t2.buffer);
 
-    EXPECT_EQ(t2.engine->postTagXfer(NIXL_RECV,
-                                     dlist2,
-                                     tag,
-                                     t1.name,
-                                     req2), NIXL_SUCCESS);
+    EXPECT_TRUE(t2.postXfer(req2));
 
     EXPECT_EQ(t1.buffer, t2.buffer);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
 
-    EXPECT_EQ(t1.engine->checkXfer(req1), NIXL_SUCCESS);
+    EXPECT_EQ(t1.engine->checkXfer(req1.req), NIXL_SUCCESS);
+}
+
+TEST(UcxSendRecv, Basic2) {
+    testEngine t1("agent", 'a');
+    testEngine t2("guard", 'b');
+
+    EXPECT_EQ(t1.engine->loadRemoteConnInfo(t2.name, t2.conn), NIXL_SUCCESS);
+    EXPECT_EQ(t2.engine->loadRemoteConnInfo(t1.name, t1.conn), NIXL_SUCCESS);
+
+    const std::string tag = "tag";
+
+    testRequest req1 = t1.prepXfer(NIXL_SEND, tag, t2.name);
+    testRequest req2 = t2.prepXfer(NIXL_RECV, tag, t1.name);
+
+    EXPECT_FALSE(t2.postXfer(req2));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+    EXPECT_NE(t1.buffer, t2.buffer);
+
+    EXPECT_TRUE(t1.postXfer(req1));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+    // TODO: Do this "officially":
+    const auto r = dynamic_cast<nixlUcxBackendRecvH *>(req2.req);
+    EXPECT_EQ(r->status, NIXL_SUCCESS);
+
+    EXPECT_EQ(t1.buffer, t2.buffer);
 }
