@@ -94,7 +94,7 @@ struct agentPair {
 const std::string prefix1 = "notif";
 const std::string message1 = prefix1 + "ication_message_1";
 
-const nixl_notif_callback_t dummy_callback([](nixlNotifCallbackArgs &&) {});
+const nixl_notif_callback_t dummy_callback([](const nixlNotifCallbackArgs &) {});
 
 using namespace std::chrono_literals;
 
@@ -141,7 +141,7 @@ TEST(NotifCallbacks, DefaultWithProgressThread) {
 
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    cfg.notifCallbacks.try_emplace("", [&](nixlNotifCallbackArgs &&args) {
+    cfg.notifCallbacks.try_emplace("", [&](const nixlNotifCallbackArgs &args) {
         EXPECT_EQ(args.remoteAgent, name1);
         EXPECT_EQ(args.notifMessage, message1);
         promise.set_value(true);
@@ -159,13 +159,13 @@ TEST(NotifCallbacks, PrefixBinarySearchWithProgressThread) {
 
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    cfg.notifCallbacks.try_emplace(prefix1, [&](nixlNotifCallbackArgs &&args) {
+    cfg.notifCallbacks.try_emplace(prefix1, [&](const nixlNotifCallbackArgs &args) {
         EXPECT_EQ(args.remoteAgent, name1);
         EXPECT_EQ(args.notifMessage, message1);
         promise.set_value(true);
     });
-    cfg.notifCallbacks.try_emplace("aaaaa", [](nixlNotifCallbackArgs &&) { ADD_FAILURE(); });
-    cfg.notifCallbacks.try_emplace("zzzzz", [](nixlNotifCallbackArgs &&) { ADD_FAILURE(); });
+    cfg.notifCallbacks.try_emplace("aaaaa", [](const nixlNotifCallbackArgs &) { ADD_FAILURE(); });
+    cfg.notifCallbacks.try_emplace("zzzzz", [](const nixlNotifCallbackArgs &) { ADD_FAILURE(); });
 
     agentPair agents(cfg);
     agents.genNotif(message1);
@@ -179,13 +179,13 @@ TEST(NotifCallbacks, PrefixLinearScanWithProgressThread) {
 
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
-    cfg.notifCallbacks.try_emplace("aaa", [](nixlNotifCallbackArgs &&) { ADD_FAILURE(); });
-    cfg.notifCallbacks.try_emplace(prefix1, [&](nixlNotifCallbackArgs &&args) {
+    cfg.notifCallbacks.try_emplace("aaa", [](const nixlNotifCallbackArgs &) { ADD_FAILURE(); });
+    cfg.notifCallbacks.try_emplace(prefix1, [&](const nixlNotifCallbackArgs &args) {
         EXPECT_EQ(args.remoteAgent, name1);
         EXPECT_EQ(args.notifMessage, message1);
         promise.set_value(true);
     });
-    cfg.notifCallbacks.try_emplace("zzzzzzz", [](nixlNotifCallbackArgs &&) { ADD_FAILURE(); });
+    cfg.notifCallbacks.try_emplace("zzzzzzz", [](const nixlNotifCallbackArgs &) { ADD_FAILURE(); });
 
     agentPair agents(cfg);
     agents.genNotif(message1);
