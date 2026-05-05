@@ -220,7 +220,10 @@
               jjb_proj={jjb_proj}-gpu
     description: Do NOT edit this job through the Web GUI !
     concurrent: true
-    sandbox: true
+    # sandbox: false so the catch-block can call rawBuild.getLog() for the
+    # triagebot dispatch (rejected under script sandbox). Other nixl-ci-*
+    # keep sandbox: true — their JOB_BASE_NAME guard skips this path.
+    sandbox: false
     # Test job parameters
     parameters:
         - string:
@@ -487,6 +490,55 @@
                     parent-credentials: true
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
+# Generic single-matrix pipeline job template. Project entry supplies the
+# full job name (jjb_proj), the matrix yaml (jjb_conf_file), and a
+# description. Prefer this for new conf-driven jobs over per-job templates.
+- job-template:
+    name: "{jjb_proj}"
+    folder: "{jjb_folder}"
+    project-type: pipeline
+    disabled: false
+    properties:
+        - github:
+            url: "{jjb_gh_url}"
+        - build-discarder:
+            days-to-keep: 14
+            num-to-keep: 500
+        - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}
+              conf_file={jjb_conf_file}
+    description: "{jjb_description}"
+    concurrent: true
+    sandbox: true
+    parameters:
+        - string: {name: "sha1",            default: "{jjb_branch}"}
+        - string: {name: "githubData",      default: ""}
+        - string: {name: "source_job",      default: ""}
+        - string: {name: "source_build",    default: ""}
+        - string: {name: "source_url",      default: ""}
+        - text:   {name: "failure_excerpt", default: ""}
+        - bool:   {name: "build_dockers",   default: false}
+        - string: {name: "DEBUG",           default: 0}
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                credentials-id: 'svc-nixl-ssh_key'
+                branches: ['$sha1']
+                shallow-clone: false
+                do-not-fetch-tags: false
+                refspec: "{jjb_gh_refspec}"
+                browser: githubweb
+                browser-url: "{jjb_git}"
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_jenkinsfile}"
+
 # Project definition that instantiates the job templates
 # This section defines the actual jobs that will be created
 - project:
@@ -504,3 +556,19 @@
         - "{jjb_proj}-gpu"        # Create gpu job
         - "{jjb_proj}-dl-gpu"   # Create dl-gpu job for dlcluster.nvidia.com
         - "{jjb_proj}-build-wheel"  # Create build wheel job
+
+# Triagebot: failure-triggered triage job. Invoked from the Jenkinsfile
+# catch-block on nixl-ci-gpu failure; logic lives in the matrix yaml.
+- project:
+    name: nixl-ci-triagebot
+    jjb_proj: 'nixl-ci-triagebot'
+    jjb_folder: 'Devops'
+    jjb_conf_file: '.ci/jenkins/lib/triagebot-matrix.yaml'
+    jjb_description: 'Automated triage of failed NIXL CI runs. Do NOT edit via Web GUI!'
+    jjb_git: 'git@github.com:ai-dynamo/nixl.git'
+    jjb_jenkinsfile: '.ci/jenkins/pipeline/Jenkinsfile'
+    jjb_branch: 'main'
+    jjb_gh_url: 'https://github.com/ai-dynamo/nixl'
+    jjb_gh_refspec: '+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*'
+    jobs:
+        - "{jjb_proj}"

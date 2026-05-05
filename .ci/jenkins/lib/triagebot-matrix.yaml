@@ -1,0 +1,74 @@
+---
+# Triagebot job — invoked from a parent's catch-block on failure.
+
+job: nixl-ci-triagebot
+
+failFast: true
+# Deep-tournament path can run 15+ min; 30 gives headroom.
+timeout_minutes: 30
+
+# Pull-only: harbor creds, nothing pushed.
+registry_auth: nixl_harbor_credentials
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: "{memory: 4Gi, cpu: 2000m}"
+  requests: "{memory: 2Gi, cpu: 1000m}"
+
+# Bot's full .env — bound per-step via credentialsId.
+credentials:
+  - {credentialsId: 'triagebot_env', type: 'file', variable: 'ENV_FILE'}
+
+env:
+  ANTHROPIC_BASE_URL: "https://inference-api.nvidia.com"  # NV LLM gateway, per company policy
+  TRIAGEBOT_AGENT_MODEL: "azure/anthropic/claude-opus-4-7"
+  TRIAGEBOT_CLASSIFIER_MODEL: "azure/anthropic/claude-haiku-4-5"
+  JENKINS_NIXL_URL: "https://nbuprod.blsm.nvidia.com/nbu-swx-nixl-main"
+  JIRA_BASE_URL: "https://jirasw.nvidia.com"
+  CONFLUENCE_BASE_URL: "https://nvidia.atlassian.net/wiki"
+
+matrix:
+  axes:
+    arch:
+      - x86_64
+
+# `url:` alone (no `file:`) skips ci-demo's build path; k8s pulls fresh each run.
+runs_on_dockers:
+  - {
+      url: 'harbor.mellanox.com/nixl/triagebot:latest',
+      name: 'triagebot-runner',
+      arch: x86_64,
+    }
+
+steps:
+  - name: Build complaint
+    containerSelector: "{name: 'triagebot-runner'}"
+    parallel: false
+    run: |
+      set -e
+      {
+        printf 'Parent CI job: %s build #%s\n' "${source_job}" "${source_build}"
+        printf 'Parent URL:    %s\n\n' "${source_url}"
+        printf -- '----- failure excerpt (parent console) -----\n'
+        printf '%s\n' "${failure_excerpt}"
+      } > complaint.txt
+      echo "complaint.txt: $(wc -c < complaint.txt) bytes"
+
+  # Isolated stage — parent's description links here for one-click navigation.
+  - name: Triagebot Output
+    containerSelector: "{name: 'triagebot-runner'}"
+    parallel: false
+    timeout: 25
+    credentialsId: ['triagebot_env']
+    run: |
+      set -e
+      /app/.venv/bin/triagebot-cli --env-file "$ENV_FILE" nixl --ci - < complaint.txt | tee triage.txt
+      test -s triage.txt || { echo "ERROR: triage.txt is empty"; exit 1; }
+
+  - name: Archive
+    parallel: false
+    shell: action
+    module: groovy
+    run: |
+      archiveArtifacts artifacts: 'triage.txt', allowEmptyArchive: false, fingerprint: false

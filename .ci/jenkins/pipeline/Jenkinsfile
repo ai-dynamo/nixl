@@ -48,15 +48,36 @@ try {
 } catch (Exception ex) {
     currentBuild.result = 'FAILURE'
     println ex
+    // Post FAILURE before bot dispatch — keeps the PR check from sitting
+    // PENDING while the bot thinks.
+    if (params.githubData) {
+        githubHelper.updateCommitStatus(blueOceanUrl, "Test completed", GitHubCommitState.FAILURE, env.JOB_BASE_NAME)
+    }
+    // propagate: false so bot outcome doesn't mask the parent's failure.
+    if (env.JOB_BASE_NAME == 'nixl-ci-gpu') {
+        try {
+            def excerpt = currentBuild.rawBuild.getLog(400).join('\n')
+            def t = build job: 'Devops/nixl-ci-triagebot', parameters: [
+                string(name: 'source_job',      value: env.JOB_NAME),
+                string(name: 'source_build',    value: env.BUILD_NUMBER),
+                string(name: 'source_url',      value: env.BUILD_URL),
+                text(  name: 'failure_excerpt', value: excerpt),
+                string(name: 'sha1',            value: params.sha1 ?: 'main'),
+                string(name: 'githubData',      value: params.githubData ?: ''),
+            ], propagate: false, wait: true
+            echo "Triagebot completed: ${t.absoluteUrl}"
+            currentBuild.description = (currentBuild.description ?: '') +
+                "<br/>Triagebot: <a href='${t.absoluteUrl}'>#${t.number}</a>"
+        } catch (Exception tex) {
+            echo "Triagebot invocation failed: ${tex.message}"
+        }
+    }
     throw ex
 } finally {
     if (params.githubData) {
-        githubHelper.updateCommitStatus(
-            blueOceanUrl,
-            "Test completed",
-            currentBuild.resultIsBetterOrEqualTo('SUCCESS') ? GitHubCommitState.SUCCESS : GitHubCommitState.FAILURE,
-            env.JOB_BASE_NAME
-        )
+        if (currentBuild.result != 'FAILURE') {
+            githubHelper.updateCommitStatus(blueOceanUrl, "Test completed", GitHubCommitState.SUCCESS, env.JOB_BASE_NAME)
+        }
         githubHelper.uploadLogs(this, env.JOB_NAME, env.BUILD_NUMBER, null, null)
     }
 }
