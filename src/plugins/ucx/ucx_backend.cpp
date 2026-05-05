@@ -760,7 +760,8 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 }
 
 void
-nixlUcxThreadPoolEngine::appendNotif(const std::string_view remote_name, const std::string_view msg) {
+nixlUcxThreadPoolEngine::appendNotif(const std::string_view remote_name,
+                                     const std::string_view msg) {
     const std::lock_guard lock(notifMutex_);
     notifList_.emplace_back(remote_name, msg);
 }
