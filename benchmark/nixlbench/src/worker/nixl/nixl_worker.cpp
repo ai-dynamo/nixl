@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include <unordered_set>
 #include "utils/neuron.h"
 #include "utils/utils.h"
 #include <unistd.h>
@@ -1019,8 +1020,14 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             nixl_reg_dlist_t desc_list(FILE_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+        }
+        // Close each backing fd exactly once, after all deregistrations complete.
+        std::unordered_set<int> closed_fds;
+        for (auto &iov_list : remote_iovs) {
             for (auto &iov : iov_list) {
-                cleanupBasicDescFile(iov);
+                if (closed_fds.insert(iov.devId).second) {
+                    cleanupBasicDescFile(iov);
+                }
             }
         }
     }
