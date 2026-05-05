@@ -991,6 +991,11 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
 
     opt_args.backends.push_back(backend_engine);
 
+    // Ordering invariants:
+    // 1. Deregister remote IOVs before local IOVs
+    //    (remote registrations may reference local buffers).
+    // 2. Call deregisterMem() before each IOV cleanup
+    //    (cleanup destroys resources that backends need).
     if (xferBenchConfig::isObjStorageBackend()) {
         for (auto &iov_list : remote_iovs) {
             nixl_reg_dlist_t desc_list(OBJ_SEG);
