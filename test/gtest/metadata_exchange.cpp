@@ -790,5 +790,139 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
     }
 }
 
+// =========================================================================
+// Retry-path convergence tests (GitHub issue #1159)
+//
+// The robustness changes on fix/metadata-robustness intentionally introduce
+// previously-impossible partial states so that metadata load can retry
+// rather than fail permanently during disaggregated-inference startup.
+// These tests cover the three invariants ColinNV asked us to prove:
+//
+//   1. Partial metadata load → retry → successful convergence
+//      A first loadRemoteMD arrives before the producer has finished
+//      registering its buffers. A second loadRemoteMD (after the producer
+//      catches up) must succeed and expose the now-complete view.
+//
+//   2. Empty descriptor skip doesn't leave stale/invalid state downstream
+//      getLocalPartialMD with an empty descriptor list must not produce
+//      metadata that poisons subsequent valid loads. After the empty push,
+//      a full getLocalMD / loadRemoteMD pair must still work end-to-end.
+//
+//   3. Failed loadRemoteData preserves previously-cached valid metadata
+//      After a successful load, a subsequent loadRemoteMD("invalid" blob)
+//      must leave the previous remote MD usable and NOT evict the cache.
+// =========================================================================
+
+// Invariant 1: partial → retry → converges.
+TEST_F(MetadataExchangeTestFixture, RetryConvergenceAfterPartialLoad) {
+    initAgentsDefault();
+
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    std::string remote_name;
+    nixl_blob_t md;
+
+    // First push: partial view — only the first half of src's buffers.
+    nixl_reg_dlist_t partial(DRAM_SEG);
+    for (size_t i = 0; i < src.buffers.size() / 2; i++) {
+        partial.addDesc(src.buffers[i].getBlobDesc());
+    }
+    ASSERT_EQ(src.agent->getLocalPartialMD(partial, md, nullptr), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+    ASSERT_EQ(remote_name, src.name);
+
+    // The buffers that were NOT yet registered must report NOT_FOUND.
+    nixl_xfer_dlist_t later(DRAM_SEG);
+    for (size_t i = src.buffers.size() / 2; i < src.buffers.size(); i++) {
+        later.addDesc(src.buffers[i].getBasicDesc());
+    }
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, later), NIXL_ERR_NOT_FOUND);
+
+    // Retry: producer catches up and publishes the FULL view. Load must
+    // succeed, and the formerly-missing buffers must now be resolvable.
+    ASSERT_EQ(src.agent->getLocalMD(md), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, later), NIXL_SUCCESS);
+
+    ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
+}
+
+// Invariant 2: empty-descriptor push does not poison a later valid load.
+TEST_F(MetadataExchangeTestFixture, EmptyDescriptorSkipNoStaleState) {
+    initAgentsDefault();
+
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    std::string remote_name;
+    nixl_blob_t md;
+
+    // First push: empty descriptor list (mimics "KV cache not yet allocated").
+    const nixl_reg_dlist_t empty(DRAM_SEG);
+
+    // The robustness fix makes empty-descriptor loads tolerable during
+    // startup. The call may succeed with a "connection-only" view or fail
+    // with an explicit invalid-param error, but it must not leave behind
+    // a poisoned cache for this remote agent.
+    const nixl_status_t empty_status = src.agent->getLocalPartialMD(empty, md, nullptr);
+    if (empty_status == NIXL_SUCCESS) {
+        // Connection-only metadata accepted; the remote must load it
+        // without surfacing any buffer descriptors.
+        (void)dst.agent->loadRemoteMD(md, remote_name);
+    }
+
+    // Regardless of which path the empty push took, a subsequent FULL
+    // getLocalMD must land cleanly and the remote view must be complete.
+    ASSERT_EQ(src.agent->getLocalMD(md), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+    ASSERT_EQ(remote_name, src.name);
+
+    nixl_xfer_dlist_t all_buffers(DRAM_SEG);
+    for (const auto &buffer : src.buffers) {
+        all_buffers.addDesc(buffer.getBasicDesc());
+    }
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, all_buffers), NIXL_SUCCESS);
+
+    ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
+}
+
+// Invariant 3: a failed loadRemoteMD must not evict a valid cached view.
+TEST_F(MetadataExchangeTestFixture, FailedLoadPreservesCachedMetadata) {
+    initAgentsDefault();
+
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    std::string remote_name;
+    nixl_blob_t md;
+
+    // Establish a valid cache entry on dst.
+    ASSERT_EQ(src.agent->getLocalMD(md), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+    ASSERT_EQ(remote_name, src.name);
+
+    nixl_xfer_dlist_t all_buffers(DRAM_SEG);
+    for (const auto &buffer : src.buffers) {
+        all_buffers.addDesc(buffer.getBasicDesc());
+    }
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, all_buffers), NIXL_SUCCESS);
+
+    // Now inject a corrupted/invalid blob. The load must fail WITHOUT
+    // evicting the previously-successful view — that is the whole point
+    // of not caching failures on this path.
+    {
+        std::string evicted_name;
+        const LogIgnoreGuard lig1("Deserialization failed, missing nixlSerDes tag");
+        const LogIgnoreGuard lig2("loadRemoteMD: failed to deserialize remote metadata");
+
+        ASSERT_NE(dst.agent->loadRemoteMD("invalid", evicted_name), NIXL_SUCCESS);
+    }
+
+    // Prior cache entry must still be resolvable.
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, all_buffers), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
+}
+
 } // namespace metadata_exchange
 } // namespace gtest
