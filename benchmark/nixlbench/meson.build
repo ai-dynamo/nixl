@@ -97,8 +97,7 @@ endif
 
 cuda_fabric_available = false
 if cuda_available
-    if cpp.has_header_symbol('cuda.h', 'CU_MEM_HANDLE_TYPE_FABRIC',
-                             args: cuda_inc_path != '' ? '-I' + cuda_inc_path : [])
+    if cpp.has_header_symbol('cuda.h', 'CU_MEM_HANDLE_TYPE_FABRIC', dependencies: cuda_dep)
         cuda_fabric_available = true
     endif
 endif

@@ -67,6 +67,7 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 | `region` | AWS region for the S3 service | `us-east-1` | No |
 | `use_virtual_addressing` | Use virtual-hosted-style addressing (`true`/`false`) | `false` | No |
 | `req_checksum` | Request checksum validation (`required`/`supported`) | - | No |
+| `resp_checksum` | Response checksum validation (`required`/`supported`) | - | No |
 | `ca_bundle` | path to a custom certificate bundle | - | No |
 | `crtMinLimit` | Minimum object size (bytes) to use S3 CRT client for high-performance transfers | Disabled**** | No |
 

@@ -21,7 +21,7 @@ import torch
 
 import nixl._bindings as bindings
 import nixl._utils as utils
-from nixl._api import nixl_agent, nixl_agent_config
+from nixl._api import nixl_agent, nixl_agent_config, nixl_thread_sync_t
 
 # NIXL pytest fixtures
 
@@ -99,6 +99,32 @@ def test_instantiate_all():
     agent1 = nixl_agent("test", nixl_conf=None, instantiate_all=True)
 
     assert len(agent1.plugin_list) == len(agent1.backends)
+
+
+@pytest.mark.parametrize("sync_mode", [None] + list(nixl_thread_sync_t))
+@pytest.mark.parametrize("enable_listen", [True, False])
+def test_sync_mode_agent(monkeypatch, sync_mode, enable_listen):
+    captured = {}
+    real_ctor = bindings.nixlAgent
+
+    def spy_ctor(agent_name, agent_config):
+        captured["syncMode"] = agent_config.syncMode
+        return real_ctor(agent_name, agent_config)
+
+    monkeypatch.setattr(bindings, "nixlAgent", spy_ctor)
+    config = nixl_agent_config(sync_mode=sync_mode, enable_listen_thread=enable_listen)
+    nixl_agent(str(uuid.uuid4()), nixl_conf=config)
+    if sync_mode is not None:
+        assert captured["syncMode"] == sync_mode.value
+    elif enable_listen:
+        assert captured["syncMode"] == nixl_thread_sync_t.NIXL_THREAD_SYNC_STRICT.value
+    else:
+        assert captured["syncMode"] == nixl_thread_sync_t.NIXL_THREAD_SYNC_NONE.value
+
+
+def test_nixl_conf_bad_sync_mode():
+    with pytest.raises(TypeError, match="sync_mode must be a nixl_thread_sync_t"):
+        nixl_agent_config(sync_mode=1)
 
 
 def test_make_invalid_op(one_empty_agent, two_xfer_lists):

@@ -21,9 +21,5 @@ COPY . /tmp/nixl-wheels
 
 RUN set -eux; \
     ls -lah /tmp/nixl-wheels/*.whl ; \
-    pip install --no-cache-dir --no-deps --force-reinstall /tmp/nixl-wheels/nixl-*.whl /tmp/nixl-wheels/nixl_cu12*cp312*.whl; \
-    CUDA_MAJOR="${CUDA_VERSION%%.*}"; \
-    if [ "${CUDA_MAJOR}" = "13" ]; then \
-      pip install --no-cache-dir --no-deps --force-reinstall /tmp/nixl-wheels/nixl_cu13*cp312*.whl; \
-    fi; \
+    pip install --no-cache-dir --no-deps --force-reinstall /tmp/nixl-wheels/*.whl; \
     rm -rf /tmp/nixl-wheels

@@ -26,6 +26,7 @@ extern "C" {
 
 #include <nixl_types.h>
 
+#include "rkey.h"
 #include "ucx_enums.h"
 
 #include "absl/status/statusor.h"
@@ -57,9 +58,6 @@ nixl_b_params_get(const nixl_b_params_t *custom_params, const std::string &key, 
 
 using nixlUcxReq = void *;
 
-namespace nixl::ucx {
-class rkey;
-}
 class nixlUcxMem;
 
 class nixlUcxEp {
