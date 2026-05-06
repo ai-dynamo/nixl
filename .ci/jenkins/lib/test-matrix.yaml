@@ -50,7 +50,7 @@ env:
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260414-3"
+  CI_IMAGE_TAG: "20260426-1"
 
 empty_volumes:
   - {mountPath: /root, memory: false}
@@ -80,7 +80,7 @@ matrix:
       - x86_64
     ucx_version:
       - master
-      - v1.20.x
+      - v1.21.x
 
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 

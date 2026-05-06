@@ -21,7 +21,7 @@ COPY . /tmp/nixl-wheels
 
 RUN set -eux; \
     ls /tmp/nixl-wheels/*.whl >/dev/null; \
-    uv pip install --system --no-deps --force-reinstall /tmp/nixl-wheels/nixl-*.whl /tmp/nixl-wheels/nixl_cu12*cp312*.whl; \
+    uv pip install --system --no-deps --force-reinstall /tmp/nixl-wheels/*.whl; \
     uv pip install --system quart; \
     rm -rf /tmp/nixl-wheels
 

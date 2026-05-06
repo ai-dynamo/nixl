@@ -26,9 +26,9 @@ extern "C" {
 
 #include <nixl_types.h>
 
+#include "rkey.h"
 #include "ucx_enums.h"
 
-#include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
@@ -57,9 +57,6 @@ nixl_b_params_get(const nixl_b_params_t *custom_params, const std::string &key, 
 
 using nixlUcxReq = void *;
 
-namespace nixl::ucx {
-class rkey;
-}
 class nixlUcxMem;
 
 class nixlUcxEp {
@@ -220,7 +217,7 @@ public:
     /* Connection */
     [[nodiscard]] std::string
     epAddr();
-    absl::StatusOr<std::unique_ptr<nixlUcxEp>>
+    [[nodiscard]] std::unique_ptr<nixlUcxEp>
     connect(void *addr, size_t size);
 
     /* Active message handling */

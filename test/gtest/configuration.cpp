@@ -17,6 +17,7 @@
 
 #include "common/configuration.h"
 #include "gtest/gtest.h"
+#include "common.h"
 
 #include <limits>
 #include <stdlib.h>
@@ -34,27 +35,27 @@ namespace nixl::config {
 TEST(Config, EnvWrapper) {
     const std::string value = "foo";
     ASSERT_EQ(::setenv(variable.c_str(), value.c_str(), 1), 0);
-    ASSERT_EQ(getenvOptional(variable), value);
+    ASSERT_EQ(internal::getenvOptional(variable), value);
     const std::string fallback = "bar";
-    ASSERT_EQ(getenvDefaulted(variable, fallback), value);
-    ASSERT_FALSE(getenvOptional(undefined).has_value());
-    ASSERT_EQ(getenvDefaulted(undefined, fallback), fallback);
+    ASSERT_EQ(internal::getenvDefaulted(variable, fallback), value);
+    ASSERT_FALSE(internal::getenvOptional(undefined).has_value());
+    ASSERT_EQ(internal::getenvDefaulted(undefined, fallback), fallback);
 }
 
 TEST(Config, Undefined) {
     ASSERT_EQ(getValueOptional<bool>(undefined), std::nullopt);
-    ASSERT_EQ(getValueOptional<char>(undefined), std::nullopt);
+    ASSERT_EQ(getValueOptional<short>(undefined), std::nullopt);
     ASSERT_EQ(getValueOptional<std::string>(undefined), std::nullopt);
 
     ASSERT_EQ(getValueDefaulted<bool>(undefined, true), true);
     ASSERT_EQ(getValueDefaulted<bool>(undefined, false), false);
-    ASSERT_EQ(getValueDefaulted<char>(undefined, 42), 42);
+    ASSERT_EQ(getValueDefaulted<short>(undefined, 42), 42);
     const std::string value = "foo";
     ASSERT_EQ(getValueDefaulted<std::string>(undefined, value), value);
 
     bool b;
     ASSERT_EQ(getValueWithStatus(b, undefined), NIXL_ERR_NOT_FOUND);
-    char c;
+    short c;
     ASSERT_EQ(getValueWithStatus(c, undefined), NIXL_ERR_NOT_FOUND);
     std::string s;
     ASSERT_EQ(getValueWithStatus(s, undefined), NIXL_ERR_NOT_FOUND);
@@ -213,6 +214,58 @@ TEST(Config, ConvertUnsigned) {
     testUnsigned<std::uint16_t>();
     testUnsigned<std::uint32_t>();
     testUnsigned<std::uint64_t>();
+}
+
+namespace {
+
+    const std::string pid = std::to_string(::getpid());
+    const std::string bool_name = "bool" + pid;
+    const std::string number_name = "number" + pid;
+    const std::string string_name = "string" + pid;
+    const std::string env1name = "env" + pid + "var1";
+    const std::string env1value = "value" + pid;
+    const std::string env2name = "env" + pid + "var2";
+    const std::string env2value = "not_an_int";
+
+} // namespace
+
+TEST(Config, ReadConfigFile) {
+    const auto pid = ::getpid();
+    const auto file = "nixl_test_" + std::to_string(pid) + ".cfg";
+    const auto path = std::filesystem::temp_directory_path() / file;
+    {
+        std::ofstream ofs(path, std::ios::out | std::ios::trunc);
+        ofs << bool_name << " = true\n";
+        ofs << number_name << " = 42\n";
+        ofs << string_name << " = \"hello\"\n";
+        ofs << env1name << " = \"dummy\"\n";
+        ofs << env2name << " = 0\n";
+    }
+    gtest::ScopedEnv vars;
+    vars.addVar("NIXL_CONFIG_FILE", path.native());
+    vars.addVar(env1name, env1value);
+    vars.addVar(env2name, env2value);
+    {
+        const auto value = nixl::config::getValue<bool>(bool_name);
+        EXPECT_TRUE(value);
+    }
+    {
+        const auto value = nixl::config::getValue<unsigned>(number_name);
+        EXPECT_EQ(value, 42);
+    }
+    {
+        const auto value = nixl::config::getValue<std::string>(string_name);
+        EXPECT_EQ(value, "hello");
+    }
+    {
+        // Check that environment wins against config file.
+        const auto value = nixl::config::getValue<std::string>(env1name);
+        EXPECT_EQ(value, env1value);
+    }
+    {
+        // Check that conversion failure on env var does not trigger lookup in config file.
+        EXPECT_THROW((void)nixl::config::getValue<int>(env2name), std::runtime_error);
+    }
 }
 
 } // namespace nixl::config

@@ -78,22 +78,18 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
 // A public metadata has to implement put, and only has the remote metadata
 class nixlUcxPublicMetadata : public nixlBackendMD {
 public:
-    nixlUcxPublicMetadata() : nixlBackendMD(false) {}
+    nixlUcxPublicMetadata() = delete;
+    nixlUcxPublicMetadata(const ucx_connection_ptr_t &conn, std::vector<nixl::ucx::rkey> &&rkeys);
 
     [[nodiscard]] const nixl::ucx::rkey &
-    getRkey(size_t id) const {
-        return *rkeys_[id];
+    getRkey(const size_t id) const {
+        return rkeys_[id];
     }
 
-    void
-    addRkey(const nixlUcxEp &ep, const void *rkey_buffer) {
-        rkeys_.emplace_back(std::make_unique<nixl::ucx::rkey>(ep, rkey_buffer));
-    }
-
-    ucx_connection_ptr_t conn;
+    const ucx_connection_ptr_t conn;
 
 private:
-    std::vector<std::unique_ptr<nixl::ucx::rkey>> rkeys_;
+    const std::vector<nixl::ucx::rkey> rkeys_;
 };
 
 class nixlUcxEngine : public nixlBackendEngine {
