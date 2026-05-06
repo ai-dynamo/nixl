@@ -145,10 +145,6 @@ vmm_region::vmm_region(size_t size) {
         const CUresult mem_create_status = cuMemCreate(&handle_, size_, &ctx.prop, 0);
         if (mem_create_status != CUDA_SUCCESS) {
             handle_ = 0;
-            warn_cu_api(
-                mem_create_status,
-                k_vmm_ctx,
-                "cuMemCreate (falling back to cuMemAlloc; e.g. check IMEX service if applicable)");
             ctx.fabric_supported = false;
         } else {
             if (cuMemAddressReserve(&ptr_, size_, 0, 0, 0) != CUDA_SUCCESS) {
