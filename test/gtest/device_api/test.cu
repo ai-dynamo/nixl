@@ -16,6 +16,7 @@
  */
 
 #include "agent.h"
+#include "common.h"
 #include "mem_buffer.h"
 
 #include "nixl.h"
@@ -73,12 +74,12 @@ putOffsetKernel(void *src_mvh, void *dst_mvh) {
 
 __global__ void
 putChannelKernel(void *src_mvh, void *dst_mvh) {
-    assert(threadIdx.x < 2);
-    const size_t dst_index = threadIdx.x;
-    const unsigned channel_id = threadIdx.x;
+    assert(threadIdx.x == 0);
     const nixlMemViewElem src{src_mvh, 0, 0};
-    const nixlMemViewElem dst{dst_mvh, dst_index, 0};
-    putAndWait(src, dst, size, channel_id);
+    for (unsigned channel_id = 0; channel_id < 2; ++channel_id) {
+        const nixlMemViewElem dst{dst_mvh, channel_id, 0};
+        putAndWait(src, dst, size, channel_id);
+    }
 }
 } // namespace
 
@@ -98,6 +99,9 @@ protected:
             FAIL() << "Failed to set CUDA device 0";
         }
 
+        lig_ = std::make_unique<gtest::LogIgnoreGuard>(
+            "IB device\\(s\\) were detected, but accelerated IB support was not found");
+
         senderAgent_ = std::make_unique<agent>(sender_agent_name);
         receiverAgent_ = std::make_unique<agent>(receiver_agent_name);
     }
@@ -115,6 +119,7 @@ protected:
     }
 
 private:
+    std::unique_ptr<gtest::LogIgnoreGuard> lig_;
     std::unique_ptr<agent> senderAgent_;
     std::unique_ptr<agent> receiverAgent_;
 };
@@ -128,7 +133,8 @@ TEST_F(deviceApiTest, atomicAdd) {
     atomicAddKernel<<<1, 1>>>(counter_mvh);
 
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
-    EXPECT_EQ(counters[0], &test_value);
+    const memBuffer expected{size, &test_value};
+    EXPECT_EQ(counters[0], expected);
 }
 
 TEST_F(deviceApiTest, putOffset) {
@@ -156,7 +162,7 @@ TEST_F(deviceApiTest, putChannel) {
     void *src_mvh = prepLocalMemView(src_mbs);
     void *dst_mvh = prepRemoteMemView(dst_mbs);
 
-    putChannelKernel<<<1, 2>>>(src_mvh, dst_mvh);
+    putChannelKernel<<<1, 1>>>(src_mvh, dst_mvh);
 
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
     EXPECT_EQ(src_mbs[0], dst_mbs[0]);

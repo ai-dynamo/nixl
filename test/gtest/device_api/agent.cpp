@@ -42,7 +42,7 @@ void
 agent::registerMem(const std::vector<memBuffer> &mbs) {
     nixlDescList<nixlBlobDesc> blob_desc_list{VRAM_SEG};
     for (const auto &mb : mbs) {
-        blob_desc_list.addDesc(nixlBlobDesc{mb, mb.size(), 0});
+        blob_desc_list.addDesc(nixlBlobDesc{mb.ptr(), mb.size(), 0});
     }
     if (agent_.registerMem(blob_desc_list) != NIXL_SUCCESS) {
         throw std::runtime_error("Failed to register memory");
@@ -81,7 +81,7 @@ agent::prepRemoteMemView(const std::vector<memBuffer> &mbs) {
 
     nixlDescList<nixlRemoteDesc> remote_desc_list{VRAM_SEG};
     for (const auto &mb : mbs) {
-        remote_desc_list.addDesc(nixlRemoteDesc{mb, mb.size(), 0, *remoteAgentName_});
+        remote_desc_list.addDesc(nixlRemoteDesc{mb.ptr(), mb.size(), 0, *remoteAgentName_});
     }
     nixlMemViewH mvh;
     if (agent_.prepMemView(remote_desc_list, mvh) != NIXL_SUCCESS) {
@@ -95,7 +95,7 @@ void *
 agent::prepLocalMemView(const std::vector<memBuffer> &mbs) {
     nixlDescList<nixlBasicDesc> basic_desc_list{VRAM_SEG};
     for (const auto &mb : mbs) {
-        basic_desc_list.addDesc(nixlBasicDesc{mb, mb.size(), 0});
+        basic_desc_list.addDesc(nixlBasicDesc{mb.ptr(), mb.size(), 0});
     }
     nixlMemViewH mvh;
     if (agent_.prepMemView(basic_desc_list, mvh) != NIXL_SUCCESS) {

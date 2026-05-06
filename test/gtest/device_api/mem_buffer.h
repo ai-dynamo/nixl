@@ -20,9 +20,13 @@
 
 #include <cuda_runtime.h>
 
+#include <cstdint>
 #include <cstring>
+#include <iomanip>
 #include <memory>
+#include <ostream>
 #include <stdexcept>
+#include <vector>
 
 namespace nixl::gpu {
 class memBuffer {
@@ -46,15 +50,9 @@ public:
         return size_;
     }
 
-    [[nodiscard]] operator uintptr_t() const {
+    [[nodiscard]] uintptr_t
+    ptr() const {
         return reinterpret_cast<uintptr_t>(ptr_.get());
-    }
-
-    [[nodiscard]] bool
-    operator==(const void *rhs) const {
-        const auto host_buffer = std::make_unique<std::byte[]>(size_);
-        copyToHost(host_buffer.get());
-        return std::memcmp(host_buffer.get(), rhs, size_) == 0;
     }
 
     [[nodiscard]] bool
@@ -86,8 +84,44 @@ private:
         }
     }
 
+    friend void
+    PrintTo(const memBuffer &mb, std::ostream *os);
+
+    [[nodiscard]] bool
+    operator==(const void *rhs) const {
+        const auto host_buffer = std::make_unique<std::byte[]>(size_);
+        copyToHost(host_buffer.get());
+        return std::memcmp(host_buffer.get(), rhs, size_) == 0;
+    }
+
     size_t size_;
     std::unique_ptr<void, void (*)(void *)> ptr_;
 };
+
+inline void
+PrintTo(const memBuffer &mb, std::ostream *os) {
+    const size_t n = mb.size();
+    *os << "memBuffer{" << n << " bytes, ";
+    try {
+        const size_t num_u64 = (n + sizeof(uint64_t) - 1U) / sizeof(uint64_t);
+        std::vector<uint64_t> host(num_u64, 0U);
+        if (n > 0) {
+            mb.copyToHost(static_cast<void *>(host.data()));
+        }
+        *os << "u64={";
+        *os << std::hex << std::setfill('0');
+        for (size_t i = 0; i < host.size(); ++i) {
+            if (i > 0) {
+                *os << ',';
+            }
+            *os << "0x" << std::setw(16) << host[i];
+        }
+        *os << std::dec << '}';
+    }
+    catch (const std::exception &e) {
+        *os << "u64=<copyToHost failed: " << e.what() << ">";
+    }
+    *os << '}';
+}
 } // namespace nixl::gpu
 #endif // NIXL_TEST_GTEST_DEVICE_API_MEM_BUFFER_CUH
