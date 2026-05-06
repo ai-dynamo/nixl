@@ -18,20 +18,36 @@ import os
 import signal
 import sys
 import time
+from dataclasses import dataclass
 from functools import partial
+from typing import Callable, Optional
 
+import nixl_ep
 import torch
 
 # Add tests directory to path to import shared utils package
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import nixl_ep  # noqa: E402
 
 from utils import rank_server, store_group  # noqa: E402
 from utils.utils import CudaTimer, stats, tcp_store_barrier  # noqa: E402
 
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
+
+# Delay between disconnect and reconnect of same ranks (MD invalidation race)
+MD_INVALIDATION_DELAY = 5
+
+CYCLE_OPS = ("init", "connect", "disconnect", "reconnect", "destroy")
+
+
+@dataclass
+class BufferConfig:
+    rank: int
+    disable_ll_nvlink: bool
+    tcp_store: object
+    num_ranks: int
+    num_experts_per_rank: int
+    num_rdma_bytes: int
 
 
 def handle_sigterm(signum, frame, rank_client):
@@ -44,222 +60,189 @@ def handle_sigterm(signum, frame, rank_client):
     sys.exit(1)
 
 
-def create_buffer(
-    rank, disable_ll_nvlink, tcp_store, num_ranks, num_experts_per_rank, num_rdma_bytes
-):
+def timed_op(fn, guard=True):
+    if not guard:
+        return 0.0
+    with CudaTimer() as t:
+        fn()
+    return t.elapsed_s
+
+
+def create_buffer(cfg: BufferConfig):
     buf = nixl_ep.Buffer(
-        rank=rank,
-        disable_ll_nvlink=disable_ll_nvlink,
+        rank=cfg.rank,
+        disable_ll_nvlink=cfg.disable_ll_nvlink,
         explicitly_destroy=True,
-        tcp_store_group=tcp_store,
+        tcp_store_group=cfg.tcp_store,
     )
     buf.update_memory_buffers(
-        num_ranks=num_ranks,
-        num_experts_per_rank=num_experts_per_rank,
-        num_rdma_bytes=num_rdma_bytes,
+        num_ranks=cfg.num_ranks,
+        num_experts_per_rank=cfg.num_experts_per_rank,
+        num_rdma_bytes=cfg.num_rdma_bytes,
     )
     return buf
 
 
-def bench_init(
-    rank, disable_ll_nvlink, tcp_store, num_ranks, num_experts_per_rank, num_rdma_bytes
+def bench_init(cfg: BufferConfig, buf_out: list):
+    with CudaTimer() as t:
+        buf_out[0] = create_buffer(cfg)
+    return t.elapsed_s
+
+
+def measure_loop(
+    warmup: int,
+    iters: int,
+    barrier_fn: Callable,
+    bench_fn: Callable,
+    setup_fn: Optional[Callable] = None,
+    teardown_fn: Optional[Callable] = None,
 ):
-    with CudaTimer() as t:
-        buffer = create_buffer(
-            rank,
-            disable_ll_nvlink,
-            tcp_store,
-            num_ranks,
-            num_experts_per_rank,
-            num_rdma_bytes,
-        )
-    return buffer, t.elapsed_s
+    latencies = []
+    for i in range(warmup + iters):
+        if setup_fn:
+            setup_fn()
+        barrier_fn()
+        elapsed = bench_fn()
+        if i >= warmup:
+            latencies.append(elapsed)
+        if teardown_fn:
+            teardown_fn()
+    return latencies
 
 
-def bench_connect(buffer, other_ranks):
-    if not other_ranks:
-        return 0.0
-    with CudaTimer() as t:
-        buffer.connect_ranks(other_ranks)
-    return t.elapsed_s
+def run_cycle(cfg: BufferConfig, other_ranks: list, warmup: int, iters: int):
+    def barrier():
+        tcp_store_barrier(cfg.tcp_store, cfg.rank, cfg.num_ranks)
 
+    buf: list = [None]
 
-def bench_disconnect(buffer, other_ranks):
-    if not other_ranks:
-        return 0.0
-    with CudaTimer() as t:
-        buffer.disconnect_ranks(other_ranks)
-    return t.elapsed_s
+    steps = [
+        ("init", lambda: bench_init(cfg, buf), None),
+        (
+            "connect",
+            lambda: timed_op(
+                lambda: buf[0].connect_ranks(other_ranks), guard=other_ranks
+            ),
+            None,
+        ),
+        (
+            "disconnect",
+            lambda: timed_op(
+                lambda: buf[0].disconnect_ranks(other_ranks), guard=other_ranks
+            ),
+            lambda: time.sleep(MD_INVALIDATION_DELAY),
+        ),
+        (
+            "reconnect",
+            lambda: timed_op(
+                lambda: buf[0].connect_ranks(other_ranks), guard=other_ranks
+            ),
+            None,
+        ),
+        ("destroy", lambda: timed_op(buf[0].destroy), None),
+    ]
 
-
-def bench_destroy(buffer):
-    with CudaTimer() as t:
-        buffer.destroy()
-    return t.elapsed_s
-
-
-def run_cycle(
-    rank,
-    num_ranks,
-    other_ranks,
-    tcp_store,
-    disable_ll_nvlink,
-    num_experts_per_rank,
-    num_rdma_bytes,
-    warmup,
-    iters,
-):
-    init_times, connect_times, disconnect_times = [], [], []
-    reconnect_times, destroy_times = [], []
+    results: dict[str, list[float]] = {op_name: [] for op_name, _, _ in steps}
 
     for i in range(warmup + iters):
         is_measure = i >= warmup
+        for op_name, bench_fn, post_fn in steps:
+            barrier()
+            elapsed = bench_fn()
+            if is_measure:
+                results[op_name].append(elapsed)
+            if post_fn:
+                post_fn()
 
-        tcp_store_barrier(tcp_store, rank, num_ranks)
-        buffer, elapsed = bench_init(
-            rank,
-            disable_ll_nvlink,
-            tcp_store,
-            num_ranks,
-            num_experts_per_rank,
-            num_rdma_bytes,
-        )
-        if is_measure:
-            init_times.append(elapsed)
-
-        tcp_store_barrier(tcp_store, rank, num_ranks)
-        elapsed = bench_connect(buffer, other_ranks)
-        if is_measure:
-            connect_times.append(elapsed)
-
-        tcp_store_barrier(tcp_store, rank, num_ranks)
-        elapsed = bench_disconnect(buffer, other_ranks)
-        if is_measure:
-            disconnect_times.append(elapsed)
-        time.sleep(
-            5
-        )  # required to avoid race between MD invalidation and readdition of same ranks
-
-        tcp_store_barrier(tcp_store, rank, num_ranks)
-        elapsed = bench_connect(buffer, other_ranks)
-        if is_measure:
-            reconnect_times.append(elapsed)
-
-        tcp_store_barrier(tcp_store, rank, num_ranks)
-        elapsed = bench_destroy(buffer)
-        if is_measure:
-            destroy_times.append(elapsed)
-
-    return {
-        "init": stats(init_times),
-        "connect": stats(connect_times),
-        "disconnect": stats(disconnect_times),
-        "reconnect": stats(reconnect_times),
-        "destroy": stats(destroy_times),
-    }
+    return {op_name: stats(times) for op_name, times in results.items()}
 
 
 def run_single_op(
-    mode,
-    rank,
-    num_ranks,
-    other_ranks,
-    tcp_store,
-    disable_ll_nvlink,
-    num_experts_per_rank,
-    num_rdma_bytes,
-    warmup,
-    iters,
+    mode: str, cfg: BufferConfig, other_ranks: list, warmup: int, iters: int
 ):
+    def barrier():
+        tcp_store_barrier(cfg.tcp_store, cfg.rank, cfg.num_ranks)
+
     latencies = []
 
     if mode == "init":
-        for i in range(warmup + iters):
-            tcp_store_barrier(tcp_store, rank, num_ranks)
-            buffer, elapsed = bench_init(
-                rank,
-                disable_ll_nvlink,
-                tcp_store,
-                num_ranks,
-                num_experts_per_rank,
-                num_rdma_bytes,
-            )
-            if i >= warmup:
-                latencies.append(elapsed)
-            buffer.destroy()
+        buf: list = [None]
+
+        latencies = measure_loop(
+            warmup,
+            iters,
+            barrier,
+            bench_fn=lambda: bench_init(cfg, buf),
+            teardown_fn=lambda: buf[0].destroy(),
+        )
 
     elif mode == "connect":
-        for i in range(warmup + iters):
-            buffer = create_buffer(
-                rank,
-                disable_ll_nvlink,
-                tcp_store,
-                num_ranks,
-                num_experts_per_rank,
-                num_rdma_bytes,
-            )
-            tcp_store_barrier(tcp_store, rank, num_ranks)
-            elapsed = bench_connect(buffer, other_ranks)
-            if i >= warmup:
-                latencies.append(elapsed)
-            buffer.destroy()
+        buf = [None]
+
+        def setup():
+            buf[0] = create_buffer(cfg)
+
+        latencies = measure_loop(
+            warmup,
+            iters,
+            barrier,
+            bench_fn=lambda: timed_op(
+                lambda: buf[0].connect_ranks(other_ranks), guard=other_ranks
+            ),
+            setup_fn=setup,
+            teardown_fn=lambda: buf[0].destroy(),
+        )
 
     elif mode == "disconnect":
-        buffer = create_buffer(
-            rank,
-            disable_ll_nvlink,
-            tcp_store,
-            num_ranks,
-            num_experts_per_rank,
-            num_rdma_bytes,
+        buffer = create_buffer(cfg)
+        latencies = measure_loop(
+            warmup,
+            iters,
+            barrier,
+            bench_fn=lambda: timed_op(
+                lambda: buffer.disconnect_ranks(other_ranks), guard=other_ranks
+            ),
+            setup_fn=lambda: buffer.connect_ranks(other_ranks) if other_ranks else None,
+            teardown_fn=lambda: time.sleep(MD_INVALIDATION_DELAY),
         )
-        for i in range(warmup + iters):
-            if other_ranks:
-                buffer.connect_ranks(other_ranks)
-            tcp_store_barrier(tcp_store, rank, num_ranks)
-            elapsed = bench_disconnect(buffer, other_ranks)
-            if i >= warmup:
-                latencies.append(elapsed)
-            time.sleep(5)
         buffer.destroy()
 
     elif mode == "reconnect":
-        buffer = create_buffer(
-            rank,
-            disable_ll_nvlink,
-            tcp_store,
-            num_ranks,
-            num_experts_per_rank,
-            num_rdma_bytes,
-        )
+        buffer = create_buffer(cfg)
         if other_ranks:
             buffer.connect_ranks(other_ranks)
-        for i in range(warmup + iters):
+
+        def reconnect_setup():
             if other_ranks:
                 buffer.disconnect_ranks(other_ranks)
-            time.sleep(5)
-            tcp_store_barrier(tcp_store, rank, num_ranks)
-            elapsed = bench_connect(buffer, other_ranks)
-            if i >= warmup:
-                latencies.append(elapsed)
+            time.sleep(MD_INVALIDATION_DELAY)
+
+        latencies = measure_loop(
+            warmup,
+            iters,
+            barrier,
+            bench_fn=lambda: timed_op(
+                lambda: buffer.connect_ranks(other_ranks), guard=other_ranks
+            ),
+            setup_fn=reconnect_setup,
+        )
         buffer.destroy()
 
     elif mode == "destroy":
-        for i in range(warmup + iters):
-            buffer = create_buffer(
-                rank,
-                disable_ll_nvlink,
-                tcp_store,
-                num_ranks,
-                num_experts_per_rank,
-                num_rdma_bytes,
-            )
+        buf = [None]
+
+        def destroy_setup():
+            buf[0] = create_buffer(cfg)
             if other_ranks:
-                buffer.connect_ranks(other_ranks)
-            tcp_store_barrier(tcp_store, rank, num_ranks)
-            elapsed = bench_destroy(buffer)
-            if i >= warmup:
-                latencies.append(elapsed)
+                buf[0].connect_ranks(other_ranks)
+
+        latencies = measure_loop(
+            warmup,
+            iters,
+            barrier,
+            bench_fn=lambda: timed_op(buf[0].destroy),
+            setup_fn=destroy_setup,
+        )
 
     return {mode: stats(latencies)}
 
@@ -300,82 +283,69 @@ def worker(torch_rank: int, args: argparse.Namespace):
     if local_rank == 0:
         print(f"Allocating buffer size: {num_rdma_bytes / 1e6} MB ...", flush=True)
 
-    other_ranks = [r for r in range(num_ranks) if r != global_rank]
-
-    common_kwargs = dict(
+    cfg = BufferConfig(
         rank=global_rank,
-        num_ranks=num_ranks,
-        other_ranks=other_ranks,
-        tcp_store=tcp_store,
         disable_ll_nvlink=args.disable_ll_nvlink,
+        tcp_store=tcp_store,
+        num_ranks=num_ranks,
         num_experts_per_rank=args.num_experts_per_rank,
         num_rdma_bytes=num_rdma_bytes,
-        warmup=args.warmup,
-        iters=args.iters,
     )
+    other_ranks = [r for r in range(num_ranks) if r != global_rank]
 
-    if args.mode == "cycle":
+    common_kwargs = {
+        "cfg": cfg,
+        "other_ranks": other_ranks,
+        "warmup": args.warmup,
+        "iters": args.iters,
+    }
+
+    is_cycle = args.mode == "cycle"
+
+    if is_cycle:
         results = run_cycle(**common_kwargs)
-        total_avg = sum(v[0] for v in results.values())
-        print(f"[rank {global_rank}] Control plane cycle:", flush=True)
-        for op in ("init", "connect", "disconnect", "reconnect", "destroy"):
-            avg_t, min_t, max_t = results[op]
-            print(
-                f"[rank {global_rank}]   {op:12s}: "
-                f"avg_t={avg_t * 1e3:.2f} ms, "
-                f"min_t={min_t * 1e3:.2f} ms, "
-                f"max_t={max_t * 1e3:.2f} ms",
-                flush=True,
-            )
-        print(
-            f"[rank {global_rank}]   {'total':12s}: " f"avg_t={total_avg * 1e3:.2f} ms",
-            flush=True,
-        )
-        for op in ("init", "connect", "disconnect", "reconnect", "destroy"):
-            tcp_store.set(f"result/{global_rank}/{op}", str(results[op][0]))
     else:
         results = run_single_op(mode=args.mode, **common_kwargs)
-        avg_t, min_t, max_t = results[args.mode]
+
+    ops = list(results.keys())
+
+    print(f"[rank {global_rank}] mode={args.mode}:", flush=True)
+    for op in ops:
+        avg_t, min_t, max_t = results[op]
         print(
-            f"[rank {global_rank}] {args.mode}: "
+            f"[rank {global_rank}]   {op:12s}: "
             f"avg_t={avg_t * 1e3:.2f} ms, "
             f"min_t={min_t * 1e3:.2f} ms, "
             f"max_t={max_t * 1e3:.2f} ms",
             flush=True,
         )
-        tcp_store.set(f"result/{global_rank}/{args.mode}", str(avg_t))
+    if is_cycle:
+        # Sum of per-op averages = average total cycle time
+        total_avg = sum(v[0] for v in results.values())
+        print(
+            f"[rank {global_rank}]   {'total':12s}: " f"avg_t={total_avg * 1e3:.2f} ms",
+            flush=True,
+        )
+
+    for op in ops:
+        tcp_store.set(f"result/{global_rank}/{op}", str(results[op][0]))
 
     print(f"global_rank={global_rank}, local_rank={local_rank} -> done", flush=True)
 
     tcp_store_barrier(tcp_store, global_rank, num_ranks)
 
+    # Rank 0 collects and prints cross-rank averages
     if global_rank == 0:
-        if args.mode == "cycle":
-            ops = ("init", "connect", "disconnect", "reconnect", "destroy")
-            print("Cross-rank average:", flush=True)
-            cross_total = 0.0
-            for op in ops:
-                vals = [
-                    float(tcp_store.get(f"result/{r}/{op}")) for r in range(num_ranks)
-                ]
-                cross_avg = sum(vals) / len(vals)
-                cross_total += cross_avg
-                print(
-                    f"  {op:12s}: avg_t={cross_avg * 1e3:.2f} ms",
-                    flush=True,
-                )
+        cross_total = 0.0
+        print("Cross-rank average:", flush=True)
+        for op in ops:
+            vals = [float(tcp_store.get(f"result/{r}/{op}")) for r in range(num_ranks)]
+            cross_avg = sum(vals) / len(vals)
+            cross_total += cross_avg
+            print(f"  {op:12s}: avg_t={cross_avg * 1e3:.2f} ms", flush=True)
+        if is_cycle:
             print(
                 f"  {'total':12s}: avg_t={cross_total * 1e3:.2f} ms",
-                flush=True,
-            )
-        else:
-            vals = [
-                float(tcp_store.get(f"result/{r}/{args.mode}"))
-                for r in range(num_ranks)
-            ]
-            cross_avg = sum(vals) / len(vals)
-            print(
-                f"Cross-rank average {args.mode}: avg_t={cross_avg * 1e3:.2f} ms",
                 flush=True,
             )
 
@@ -391,7 +361,7 @@ def main():
         "--mode",
         type=str,
         default="cycle",
-        choices=["cycle", "init", "connect", "disconnect", "reconnect", "destroy"],
+        choices=["cycle", *CYCLE_OPS],
         help="Operation to benchmark (default: cycle)",
     )
     parser.add_argument(
