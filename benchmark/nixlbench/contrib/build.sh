@@ -25,7 +25,6 @@ DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
 UCX_SRC=""
 UCX_BUILD_CONTEXT_ARGS=""
 BUILD_TYPE="release"
-. "${NIXL_SRC}/.ci/scripts/common.sh"
 commit_id=$(git rev-parse --short HEAD)
 
 # Get latest TAG and add COMMIT_ID for dev
@@ -42,7 +41,26 @@ ARCH=$(uname -m)
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
-NPROC=${NPROC:-$(nproc)}
+# In containers, derive NPROC from the cgroup memory limit so make/ninja
+# don't spawn $(nproc) host CPUs and OOM-kill cc1plus on gRPC/protobuf.
+if [ -z "$NPROC" ]; then
+    if [ -f /.dockerenv ] || [ -f /run/.containerenv ] || [ -n "${KUBERNETES_SERVICE_HOST}" ]; then
+        if [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+            mem_limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
+        elif [ -f /sys/fs/cgroup/memory.max ]; then
+            mem_limit=$(cat /sys/fs/cgroup/memory.max)
+            [ "$mem_limit" = "max" ] && mem_limit=$((4 * 1024 * 1024 * 1024))
+        else
+            mem_limit=$((4 * 1024 * 1024 * 1024))
+        fi
+        # 1 process per GB, capped at 16
+        NPROC=$((mem_limit / (1024 * 1024 * 1024)))
+        NPROC=$((NPROC > 16 ? 16 : NPROC))
+        NPROC=$((NPROC < 1 ? 1 : NPROC))
+    else
+        NPROC=$(nproc --all)
+    fi
+fi
 
 get_options() {
     while :; do
