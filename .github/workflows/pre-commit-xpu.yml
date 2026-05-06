@@ -37,3 +37,7 @@ jobs:
       - name: Inspect built image
         shell: bash
         run: docker image inspect "${IMAGE_TAG}" > /dev/null
+
+  xpu-gtest:
+    needs: build-xpu-dockerfile
+    uses: ./.github/workflows/xpu-gtest.yml

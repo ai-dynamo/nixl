@@ -1,16 +1,12 @@
 name: Run XPU GTest
 
 "on":
-  workflow_run:
-    workflows:
-      - Run Pre-Commit Hooks XPU
-    types:
-      - completed
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
   xpu-gtest:
     name: Run gtest in Dockerfile.xpu container
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: xpu-build
     timeout-minutes: 180
 
@@ -18,14 +14,14 @@ jobs:
       contents: read
 
     env:
-      IMAGE_TAG: nixl-xpu:sha-${{ github.event.workflow_run.head_sha }}
+      IMAGE_TAG: nixl-xpu:sha-${{ github.sha }}
       CONTAINER_NAME: nixl-xpu-gtest-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
 
       - name: Verify XPU image is available locally
         shell: bash
