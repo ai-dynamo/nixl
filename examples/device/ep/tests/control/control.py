@@ -263,10 +263,9 @@ def worker(torch_rank: int, args: argparse.Namespace):
         partial(handle_sigterm, rank_client=rank_client),
     )
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(local_rank % 8)
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
-    torch.cuda.set_device(0)
+    torch.cuda.set_device(local_rank % 8)
 
     tcp_store = store_group.create_client_store(
         master_addr=server_addr,
