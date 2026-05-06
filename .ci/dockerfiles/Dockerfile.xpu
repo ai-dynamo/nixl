@@ -1,0 +1,134 @@
+# Copyright (C) 2025 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+
+# ======== Base Stage ========
+ARG BASE_IMAGE=intel/deep-learning-essentials:2025.3.2-0-devel-ubuntu24.04
+FROM ${BASE_IMAGE} AS vllm-base
+
+ARG ONEAPI_CT_VERSION=2025.3.1-18
+
+ARG UCX_REPO_URL=https://github.com/openucx/ucx.git
+ARG UCX_BRANCH=master
+ARG UCX_SRC_DIR=/tmp/ucx_source
+ARG UCX_INSTALL_DIR=/usr
+
+ARG NIXL_SRC_DIR=/workspace/nixl
+
+# Prerequisites for adding external apt repositories
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends ca-certificates gnupg software-properties-common wget && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Add Intel oneAPI repo and PPA for GPU support
+RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && \
+    echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list && \
+    add-apt-repository -y ppa:kobuk-team/intel-graphics
+
+# Install dependencies and Python 3.12
+RUN apt-get update -y && \
+    apt-get install -y python3.12 python3.12-dev python3-pip && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 && \
+    apt-get install -y --no-install-recommends --fix-missing \
+        curl \
+        ffmpeg \
+        git \
+        libsndfile1 \
+        libsm6 \
+        libxext6 \
+        libgl1 \
+        lsb-release \
+        numactl \
+        wget \
+        vim \
+        linux-libc-dev \
+        libaio-dev && \
+    # Install Intel GPU runtime packages
+    apt-get install -y intel-oneapi-dpcpp-ct=${ONEAPI_CT_VERSION} && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Additional libs to support RDMA over Ethernet (RoCE) / Infiniband
+RUN apt-get update -y && \
+    apt-get install -y librdmacm-dev ibverbs-utils libibverbs-dev libibverbs1 librdmacm1 rdma-core rdmacm-utils && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update -y && \
+    apt-get install -y build-essential cmake pkg-config autoconf libtool libcjson-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# B70 XPUs require a newer version of following packages than what may be available in the base image.
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends --fix-missing libze1 libze-dev libze-intel-gpu1 intel-opencl-icd libze-intel-gpu-raytracing \
+    intel-ocloc intel-oneapi-compiler-dpcpp-cpp-2025.3 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install xpu-smi
+RUN wget https://github.com/intel/xpumanager/releases/download/v1.3.6/xpu-smi_1.3.6_20260206.143628.1004f6cb.u24.04_amd64.deb -O /tmp/xpu-smi.deb && \
+    apt-get update -y && \
+    apt-get install -y --no-install-recommends /tmp/xpu-smi.deb && \
+    rm /tmp/xpu-smi.deb && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Set environment variables early
+ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/lib/"
+ENV VLLM_TARGET_DEVICE=xpu
+ENV VLLM_WORKER_MULTIPROC_METHOD=spawn
+
+# suppress the python externally managed environment error
+RUN python3 -m pip config set global.break-system-packages true
+
+# Install UCX and dependencies
+RUN git clone ${UCX_REPO_URL} -b ${UCX_BRANCH} ${UCX_SRC_DIR} && \
+    cd ${UCX_SRC_DIR} && \
+    ./autogen.sh && \
+    ./configure --prefix=${UCX_INSTALL_DIR} --with-mlx5=no --with-ze=yes --enable-examples --enable-mt && \
+    make -j$(nproc) && \
+    make -j install-strip && \
+    ldconfig
+
+WORKDIR ${NIXL_SRC_DIR}
+COPY . .
+
+RUN set -eux; \
+    pwd; \
+    pip install meson ninja pybind11; \
+    meson setup build -Dinstall_headers=true -Ddisable_gds_backend=false; \
+    cd build; \
+    ninja; \
+    ninja install; \
+    test -f /opt/nvidia/nvda_nixl/lib/x86_64-linux-gnu/libnixl.so
+
+# Set env variables to capture libs and python packages from default installation path
+RUN if [ -d /opt/nvidia/nvda_nixl/lib/python3/dist-packages/nixl_cu12 ]; then \
+        ln -sfn /opt/nvidia/nvda_nixl/lib/python3/dist-packages/nixl_cu12 /opt/nvidia/nvda_nixl/lib/python3/dist-packages/nixl; \
+    fi
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/nvidia/nvda_nixl/lib/x86_64-linux-gnu/
+ENV PYTHONPATH=$PYTHONPATH:/opt/nvidia/nvda_nixl/lib/python3/dist-packages
+
+# Install pypi dependencies
+RUN pip install bigdl-core==2.4.0b2
+
+# install additional dependencies for openai api server
+RUN pip install accelerate hf_transfer 'modelscope!=1.15.0'
+
+# Pin transformers version to avoid conflict in vLLM
+RUN pip install "transformers==4.57.0" && \
+    pip install librosa soundfile decord
+
+# Set additional environment for production usage
+ENV VLLM_QUANTIZE_Q40_LIB="/usr/local/lib/python3.12/dist-packages/vllm_int4_for_multi_arc.so"
+ENV VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT=1
+ENV VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+ENV UR_L0_USE_IMMEDIATE_COMMANDLISTS=0
+
+RUN pip uninstall oneccl oneccl-devel -y
+
+# Cleanup tmp files
+RUN rm -rf /tmp/*
+
+# Configure environment to source oneAPI
+RUN echo "source /opt/intel/oneapi/setvars.sh --force" >> /root/.bashrc
+
+ENTRYPOINT ["/bin/bash", "-c", "exec \"$@\"", "--"]
+# Default command
+CMD ["/bin/bash"]
