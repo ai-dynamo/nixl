@@ -1272,7 +1272,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
 
 size_t
 nixlLibfabricRail::getMRCacheSize() const {
-    std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+    const std::lock_guard<std::mutex> lock(mr_cache_mutex_);
     return mr_cache_.size();
 }
 
@@ -1296,7 +1296,7 @@ nixlLibfabricRail::registerMemory(void *buffer,
     // MRRC: Check cache first for existing registration
     uintptr_t buf_addr = reinterpret_cast<uintptr_t>(buffer);
     {
-        std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+        const std::lock_guard<std::mutex> lock(mr_cache_mutex_);
         auto it = mr_cache_.find(buf_addr);
         if (it != mr_cache_.end()) {
             MRCacheEntry &entry = it->second;
@@ -1313,9 +1313,31 @@ nixlLibfabricRail::registerMemory(void *buffer,
                            << " ref_count=" << entry.ref_count.load() << " key=" << entry.key;
                 return NIXL_SUCCESS;
             }
-            // Parameters don't match - this is unusual, log and proceed with new registration
-            NIXL_WARN << "MRRC cache entry mismatch: rail=" << rail_id << " buffer=" << buffer
-                      << " cached_len=" << entry.length << " requested_len=" << length;
+            // Parameters don't match the cached entry. If no one is holding a
+            // reference, evict the stale entry so the later try_emplace can
+            // actually insert the freshly-registered MR. Otherwise fail
+            // loudly: re-registering the same address with different length
+            // while an active reference exists means the caller has the old
+            // MR mapped but is asking us to pretend it has a new size.
+            if (entry.ref_count.load(std::memory_order_acquire) == 0) {
+                const int close_ret = fi_close(&entry.mr->fid);
+                if (close_ret != 0) {
+                    NIXL_ERROR << "MRRC: fi_close failed while evicting stale entry on rail "
+                               << rail_id << ": " << fi_strerror(-close_ret);
+                    // Keep the stale entry rather than leaking it silently.
+                    return NIXL_ERR_BACKEND;
+                }
+                NIXL_WARN << "MRRC: evicted stale entry on rail " << rail_id
+                          << " buffer=" << buffer << " cached_len=" << entry.length
+                          << " requested_len=" << length;
+                mr_cache_.erase(it);
+            } else {
+                NIXL_ERROR << "MRRC: cache entry mismatch with active ref on rail " << rail_id
+                           << " buffer=" << buffer << " cached_len=" << entry.length
+                           << " requested_len=" << length
+                           << " ref_count=" << entry.ref_count.load();
+                return NIXL_ERR_INVALID_PARAM;
+            }
         }
     }
 
@@ -1431,13 +1453,32 @@ nixlLibfabricRail::registerMemory(void *buffer,
 
     // MRRC: Add to cache with ref_count=1
     {
-        std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+        const std::lock_guard<std::mutex> lock(mr_cache_mutex_);
 
         // Cache size limit and eviction logic
         constexpr size_t NIXL_MR_CACHE_MAX_ENTRIES_DEFAULT = 1024;
-        static size_t max_cache_entries = []() {
+        // Parse NIXL_MR_CACHE_MAX_ENTRIES once on first call; fall back to
+        // the default on any parse failure. Using a noexcept helper keeps
+        // the magic-static initializer from throwing into registerMemory.
+        static const size_t max_cache_entries = []() noexcept -> size_t {
             const char *max_str = std::getenv("NIXL_MR_CACHE_MAX_ENTRIES");
-            return max_str ? std::stoul(max_str) : NIXL_MR_CACHE_MAX_ENTRIES_DEFAULT;
+            if (!max_str || !*max_str) {
+                return NIXL_MR_CACHE_MAX_ENTRIES_DEFAULT;
+            }
+            try {
+                const unsigned long parsed = std::stoul(max_str);
+                if (parsed == 0) {
+                    NIXL_WARN << "NIXL_MR_CACHE_MAX_ENTRIES=0 is invalid; "
+                                 "falling back to default";
+                    return NIXL_MR_CACHE_MAX_ENTRIES_DEFAULT;
+                }
+                return parsed;
+            } catch (const std::exception &e) {
+                NIXL_WARN << "NIXL_MR_CACHE_MAX_ENTRIES='" << max_str
+                          << "' could not be parsed (" << e.what()
+                          << "); falling back to default";
+                return NIXL_MR_CACHE_MAX_ENTRIES_DEFAULT;
+            }
         }();
 
         // Check if cache is full and evict if needed
@@ -1445,30 +1486,37 @@ nixlLibfabricRail::registerMemory(void *buffer,
             NIXL_DEBUG << "MRRC: Cache at capacity (" << mr_cache_.size()
                        << " entries), attempting eviction";
 
-            // Find and evict an entry with ref_count == 0
+            // Find and evict an entry with ref_count == 0. Only erase the
+            // cache slot if fi_close actually succeeds — otherwise we'd lose
+            // our only handle to the libfabric resource and leak pinned GDR
+            // memory. On close failure, try the next eligible entry.
             bool evicted = false;
-            for (auto it = mr_cache_.begin(); it != mr_cache_.end(); ++it) {
+            for (auto it = mr_cache_.begin(); it != mr_cache_.end();) {
                 if (it->second.ref_count.load(std::memory_order_acquire) == 0) {
-                    // Close the MR
-                    int ret = fi_close(&it->second.mr->fid);
+                    const int ret = fi_close(&it->second.mr->fid);
                     if (ret != 0) {
-                        NIXL_ERROR << "MRRC: fi_close failed during eviction: "
-                                   << fi_strerror(-ret);
+                        NIXL_ERROR << "MRRC: fi_close failed during eviction on rail "
+                                   << rail_id << ": " << fi_strerror(-ret)
+                                   << " — preserving cache entry to avoid leak";
+                        ++it;
+                        continue;
                     }
-
                     NIXL_DEBUG << "MRRC: Evicted entry with key " << it->first
                                << " to make room for new registration";
                     mr_cache_.erase(it);
                     evicted = true;
                     break;
                 }
+                ++it;
             }
 
-            // If couldn't evict (all entries in use), return error
+            // If couldn't evict (all entries in use or all close calls failed),
+            // return error so the caller knows registration didn't take effect.
             if (!evicted) {
                 NIXL_ERROR << "MRRC: Cache full (" << mr_cache_.size()
-                           << " entries) and all entries have active references. "
+                           << " entries) and no entry could be evicted. "
                            << "Consider increasing NIXL_MR_CACHE_MAX_ENTRIES.";
+                fi_close(&mr->fid);
                 return NIXL_ERR_BACKEND;
             }
         }
@@ -1500,7 +1548,7 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
     bool found_in_cache = false;
     bool should_close = false;
     {
-        std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+        const std::lock_guard<std::mutex> lock(mr_cache_mutex_);
         for (auto it = mr_cache_.begin(); it != mr_cache_.end(); ++it) {
             if (it->second.mr == mr) {
                 found_in_cache = true;
