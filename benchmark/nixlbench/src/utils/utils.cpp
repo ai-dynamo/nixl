@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include "benchmark_config.h"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -1114,6 +1115,95 @@ xferBenchUtils::printStatsHeader(const xferBenchConfig &config) {
         // clang-format on
     }
     config.printSeparator('-');
+}
+
+
+void
+xferBenchUtils::printStats(const nixlbench::benchmarkConfig &config,
+                           bool is_target,
+                           size_t block_size,
+                           size_t batch_size,
+                           xferBenchStats stats) {
+    size_t total_data_transferred = 0;
+    double avg_latency = 0, throughput_gb = 0;
+    double totalbw = 0;
+
+    int num_iter = config.common.num_iter;
+
+    if (block_size > LARGE_BLOCK_SIZE) {
+        num_iter /= config.common.large_blk_iter_ftr;
+    }
+
+    // Targets don't participate in reduction - they have no throughput to contribute
+    if (is_target && config.transfer.scheme == XFERBENCH_SCHEME_PAIRWISE && config.transfer.mode == XFERBENCH_MODE_SG && rt->getSize() > 2) {
+        return;
+    }
+
+    double total_duration = stats.total_duration.avg();
+
+    total_data_transferred = ((block_size * batch_size) * num_iter); // In Bytes
+    avg_latency = (total_duration / (num_iter * batch_size)); // In microsec
+    if (config.transfer.scheme == XFERBENCH_SCHEME_PAIRWISE && config.transfer.mode == XFERBENCH_MODE_MG) {
+        total_data_transferred *= config.worker.num_initiator_dev; // In Bytes
+        avg_latency /= config.worker.num_initiator_dev; // In microsec
+    }
+
+    throughput_gb = (((double)total_data_transferred / (1000 * 1000 * 1000)) /
+                     (total_duration / 1e6)); // In GB/Sec
+
+    if (config.transfer.scheme == XFERBENCH_SCHEME_PAIRWISE && config.transfer.mode == XFERBENCH_MODE_SG && rt->getSize() > 2) {
+        rt->reduceSumDouble(&throughput_gb, &totalbw, 0);
+    } else {
+        totalbw = throughput_gb;
+    }
+
+    if (config.transfer.scheme == XFERBENCH_SCHEME_PAIRWISE && config.transfer.mode == XFERBENCH_MODE_SG && rt->getRank() != 0) {
+        return;
+    }
+
+    double prepare_duration = stats.prepare_duration.avg();
+    double prepare_p99_duration = stats.prepare_duration.p99();
+    double post_duration = stats.post_duration.avg();
+    double post_p99_duration = stats.post_duration.p99();
+    double transfer_duration = stats.transfer_duration.avg();
+    double transfer_p99_duration = stats.transfer_duration.p99();
+
+    // Tabulate print with fixed width for each string
+    if (config.transfer.scheme == XFERBENCH_SCHEME_PAIRWISE && config.transfer.mode == XFERBENCH_MODE_SG && rt->getSize() > 2) {
+        // clang-format off
+        std::cout << std::left << std::fixed << std::setprecision(6)
+                  << std::setw(20) << block_size
+                  << std::setw(15) << batch_size
+                  << std::setw(15) << throughput_gb
+                  << std::setw(25) << totalbw
+                  << std::setw(20) << (totalbw / (rt->getSize() / 2 * MAXBW)) * 100
+                  << std::setprecision(1)
+                  << std::setw(15) << avg_latency
+                  << std::setw(15) << prepare_duration
+                  << std::setw(15) << prepare_p99_duration
+                  << std::setw(15) << post_duration
+                  << std::setw(15) << post_p99_duration
+                  << std::setw(15) << transfer_duration
+                  << std::setw(15) << transfer_p99_duration
+                  << std::endl;
+        // clang-format on
+    } else {
+        // clang-format off
+        std::cout << std::left << std::fixed << std::setprecision(6)
+                  << std::setw(20) << block_size
+                  << std::setw(15) << batch_size
+                  << std::setw(15) << throughput_gb
+                  << std::setprecision(1)
+                  << std::setw(15) << avg_latency
+                  << std::setw(15) << prepare_duration
+                  << std::setw(15) << prepare_p99_duration
+                  << std::setw(15) << post_duration
+                  << std::setw(15) << post_p99_duration
+                  << std::setw(15) << transfer_duration
+                  << std::setw(15) << transfer_p99_duration
+                  << std::endl;
+        // clang-format on
+    }
 }
 
 void

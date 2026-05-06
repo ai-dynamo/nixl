@@ -106,22 +106,82 @@ g3ScenarioCommand::run(southboundPluginBenchmarkCommand &plugin) {
     benchmark_config.transfer.max_block_size = request_.block_size_bytes;
     benchmark_config.transfer.start_batch_size = request_.batch_size;
     benchmark_config.transfer.max_batch_size = request_.batch_size;
+    benchmark_config.transfer.op_type = request_.action_mode == "read" ? "READ" : "WRITE";
     benchmark_config.transfer.total_buffer_size = parse_file_size(request_.file_size);
+    benchmark_config.storage.filepath = plugin.metadataOptions().at("filepath").value;
+    benchmark_config.storage.filenames = plugin.metadataOptions().at("filenames").value;
+    benchmark_config.storage.num_files =
+        request_.parallel_threads * std::stoi(plugin.metadataOptions().at("num_files").value);
+    benchmark_config.storage.enable_direct = plugin.metadataOptions().at("enable_direct").boolValue;
     auto worker_ptr = std::make_unique<xferBenchNixlWorker>(benchmark_config, devices);
 
     // create files, return handles
     std::vector<std::vector<xferBenchIOV>> iov_lists =
-        worker_ptr->allocateMemory(request_.parallel_threads);
+        worker_ptr->allocateMemory(request_.parallel_threads,
+                                   worker_ptr->getAgent(),
+                                   benchmark_config.storage,
+                                   benchmark_config.transfer,
+                                   benchmark_config.backend);
+
+    for (size_t batch_size = benchmark_config.transfer.start_batch_size;
+         !worker_ptr->signaled() && batch_size <= benchmark_config.transfer.max_batch_size;
+         batch_size *= 2) {
+        auto local_trans_lists = createTransferDescLists(*worker_ptr,
+                                                         benchmark_config,
+                                                         iov_lists,
+                                                         request_.block_size_bytes,
+                                                         batch_size,
+                                                         request_.parallel_threads,
+                                                         request_.randomized_read_location);
+
+        // std::vector<std::vector<xferBenchIOV>> remote_trans_lists(
+        //     worker.exchangeIOV(local_trans_lists, block_size));
+        std::vector<std::vector<xferBenchIOV>> res;
+
+        // if (benchmark_config.backend.capabilities.canUseAsStorage) {
+        //     size_t fd_idx = 0;
+        //     uint64_t file_offset = 0;
+        //     for (auto &iov_list : local_trans_lists) {
+        //         std::vector<xferBenchIOV> remote_iov_list;
+        //         int devidx = 0;
+        //         for (auto &iov : iov_list) {
+        //             {
+        //                 xferBenchIOV iov_remote(iov);
+        //                 iov_remote.addr = file_offset;
+        //                 iov_remote.len = request_.block_size_bytes;
+        //                 iov_remote.devId = remote_fds[fd_idx].fd;
+        //                 remote_iov_list.push_back(iov_remote);
+        //                 fd_idx++;
+        //                 if (fd_idx >= remote_fds.size()) {
+        //                     file_offset += block_size;
+        //                     fd_idx = 0;
+        //                 }
+        //             }
+        //         }
+        //         res.push_back(remote_iov_list);
+        //         file_offset += request_.block_size_bytes;
+        //     }
+        // }
+        // Ensure all processes have completed the exchange with a barrier/sync
+        worker_ptr->synchronize();
 
 
-    int ret = processBatchSizes(*worker_ptr,
-                                benchmark_config,
-                                iov_lists,
-                                request_.block_size_bytes,
-                                request_.parallel_threads,
-                                request_.randomized_read_location);
-    if (ret != 0) {
-        return ret;
+        // auto result =
+        //     worker_ptr->transfer(request_.block_size_bytes, local_trans_lists, remote_trans_lists);
+        // if (std::holds_alternative<int>(result)) {
+        //     return 1;
+        // }
+
+        // if (!xferBenchUtils::validateTransfer(
+        //         legacy_config, true, local_trans_lists, remote_trans_lists)) {
+        //     return EXIT_FAILURE;
+        // }
+
+        // xferBenchUtils::printStats(benchmark_config,
+        //                            false,
+        //                            request_.block_size_bytes,
+        //                            batch_size,
+        //                            std::get<xferBenchStats>(result));
     }
 
     // clean up

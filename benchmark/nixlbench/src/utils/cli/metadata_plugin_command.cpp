@@ -13,7 +13,7 @@ namespace {
         options.push_back(cliOption::option(
             "filepath", "Storage file path", &file_workload.filepath));
         options.push_back(
-            cliOption::option("filenames", "Storage filenames", &file_workload.filenames));
+            cliOption::option("filenames", "Comma seperated list of filenames to use for storage", &file_workload.filenames));
         options.push_back(cliOption::option(
             "num_files", "Storage file count", &file_workload.num_files));
         options.push_back(cliOption::flag("enable_direct",

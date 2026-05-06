@@ -37,61 +37,80 @@ struct xferFileState {
 
 // Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
 
-class xferBenchNixlWorker: public xferBenchWorker {
-    private:
-        nixlAgent* agent;
-        nixlBackendH* backend_engine;
-        nixl_mem_t seg_type;
-        std::vector<xferFileState> remote_fds;
-        std::vector<std::vector<xferBenchIOV>> remote_iovs;
-        std::vector<GusliDeviceConfig> gusli_devices;
+class xferBenchNixlWorker : public xferBenchWorker {
+private:
+    nixlAgent *agent;
+    nixlBackendH *backend_engine;
+    nixl_mem_t seg_type;
+    std::vector<xferFileState> remote_fds;
+    std::vector<std::vector<xferBenchIOV>> remote_iovs;
+    std::vector<GusliDeviceConfig> gusli_devices;
 
-    public:
-        xferBenchNixlWorker(const nixlbench::benchmarkConfig &benchmark_config,
-                            std::vector<std::string> devices);
-        ~xferBenchNixlWorker();  // Custom destructor to clean up resources
+public:
+    xferBenchNixlWorker(const nixlbench::benchmarkConfig &benchmark_config,
+                        std::vector<std::string> devices);
+    ~xferBenchNixlWorker(); // Custom destructor to clean up resources
 
-        // Memory management
-        std::vector<std::vector<xferBenchIOV>> allocateMemory(int num_threads) override;
-        void deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) override;
+    nixlAgent *getAgent() const { return agent; }
+    // Memory management
+    std::vector<std::vector<xferBenchIOV>>
+    allocateMemory(int num_threads) override;
 
-        // Communication and synchronization
-        int exchangeMetadata() override;
-        std::vector<std::vector<xferBenchIOV>>
-        exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
-                    size_t block_size) override;
-        void
-        poll(size_t block_size) override;
-        int
-        synchronizeStart() override;
+    static std::vector<std::vector<xferBenchIOV>>
+    allocateMemory(int num_threads,
+                   nixlAgent *agent,
+                   const nixlbench::storageConfig &storage_config,
+                   const nixlbench::transferConfig &transfer_config,
+                   const nixlbench::backendConfig &backend);
 
-        // Data operations
-        std::variant<xferBenchStats, int>
-        transfer(size_t block_size,
-                 const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
-                 const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+    void
+    deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) override;
 
-    private:
-        std::optional<xferBenchIOV>
-        initBasicDescDram(size_t buffer_size, int mem_dev_id);
-        void cleanupBasicDescDram(xferBenchIOV &basic_desc);
+    // Communication and synchronization
+    int
+    exchangeMetadata() override;
+    std::vector<std::vector<xferBenchIOV>>
+    exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                size_t block_size) override;
+    void
+    poll(size_t block_size) override;
+    int
+    synchronizeStart() override;
+
+    // Data operations
+    std::variant<xferBenchStats, int>
+    transfer(size_t block_size,
+             const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+             const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+
+private:
+    std::optional<xferBenchIOV>
+    initBasicDescDram(size_t buffer_size, int mem_dev_id);
+    static std::optional<xferBenchIOV>
+    initBasicDescDram(size_t page_size, size_t buffer_size, int mem_dev_id);
+
+    void
+    cleanupBasicDescDram(xferBenchIOV &basic_desc);
 #if HAVE_CUDA
-        std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);
-        void cleanupBasicDescVram(xferBenchIOV &basic_desc);
+    std::optional<xferBenchIOV>
+    initBasicDescVram(size_t buffer_size, int mem_dev_id);
+    void
+    cleanupBasicDescVram(xferBenchIOV &basic_desc);
 #endif
-        std::optional<xferBenchIOV>
-        initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
-        void cleanupBasicDescFile(xferBenchIOV &basic_desc);
-        std::optional<xferBenchIOV>
-        initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
-        void
-        cleanupBasicDescObj(xferBenchIOV &basic_desc);
-        std::optional<xferBenchIOV>
-        initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
-        void
-        cleanupBasicDescBlk(xferBenchIOV &basic_desc);
-        bool
-        ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
+    static std::optional<xferBenchIOV>
+    initBasicDescFile(std::string op_type,size_t page_size, size_t buffer_size, xferFileState &fstate, int mem_dev_id);
+    void
+    cleanupBasicDescFile(xferBenchIOV &basic_desc);
+    std::optional<xferBenchIOV>
+    initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
+    void
+    cleanupBasicDescObj(xferBenchIOV &basic_desc);
+    std::optional<xferBenchIOV>
+    initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
+    void
+    cleanupBasicDescBlk(xferBenchIOV &basic_desc);
+    bool
+    ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
 };
 
 #endif // __NIXL_WORKER_H

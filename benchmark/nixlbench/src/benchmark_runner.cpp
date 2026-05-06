@@ -10,6 +10,8 @@
 #include "utils/cli/raw_execution.h"
 #include "utils/utils.h"
 #include "worker/nixl/nixl_worker.h"
+#include <numeric>
+#include <random>
 #if HAVE_NVSHMEM && HAVE_CUDA
 #include "worker/nvshmem/nvshmem_worker.h"
 #endif
@@ -81,7 +83,7 @@ createTransferDescLists(xferBenchWorker &worker,
                         size_t block_size,
                         size_t batch_size,
                         int num_threads,
-                        bool randomized_read_location) {
+                        bool randomized_rw_location) {
     auto [count, stride] = nixlbench::getStrideScheme(
         config, worker.isInitiator(), worker.isTarget(), num_threads);
     std::vector<std::vector<xferBenchIOV>> xfer_lists;
@@ -90,8 +92,16 @@ createTransferDescLists(xferBenchWorker &worker,
         std::vector<xferBenchIOV> xfer_list;
 
         for (const auto &iov : iov_list) {
+            std::vector<size_t> indices(count);
+            std::iota(indices.begin(), indices.end(), 0);
+            if (randomized_rw_location) {
+                std::random_device rd;
+                std::mt19937 g(rd());
+                std::shuffle(indices.begin(), indices.end(), g);
+            }
+       
             for (size_t i = 0; i < count; i++) {
-                size_t dev_offset = ((i * stride) % iov.len);
+                size_t dev_offset = ((indices[i] * stride) % iov.len);
 
                 for (size_t j = 0; j < batch_size; j++) {
                     size_t block_offset = ((j * block_size) % iov.len);
