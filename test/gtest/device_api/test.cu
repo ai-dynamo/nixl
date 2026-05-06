@@ -33,7 +33,7 @@ const std::string sender_agent_name{"sender"};
 const std::string receiver_agent_name{"receiver"};
 
 __device__ void
-waitCompletion(nixl_status_t status, nixlGpuXferStatusH &xfer_status) {
+waitPosted(nixl_status_t status, nixlGpuXferStatusH &xfer_status) {
     size_t polls = 0;
     while ((status == NIXL_IN_PROG) && (polls++ < max_polls)) {
         status = nixlGpuGetXferStatus(xfer_status);
@@ -41,12 +41,18 @@ waitCompletion(nixl_status_t status, nixlGpuXferStatusH &xfer_status) {
     assert(status == NIXL_SUCCESS);
 }
 
+__device__ void
+waitPostedWithSystemFence(nixl_status_t status, nixlGpuXferStatusH &xfer_status) {
+    waitPosted(status, xfer_status);
+    __threadfence_system();
+}
+
 __global__ void
 atomicAddKernel(void *counter_mvh) {
     nixlMemViewElem counter{counter_mvh, 0, 0};
     nixlGpuXferStatusH xfer_status;
     nixl_status_t status = nixlAtomicAdd(test_value, counter, 0, 0, &xfer_status);
-    waitCompletion(status, xfer_status);
+    waitPostedWithSystemFence(status, xfer_status);
 }
 
 __device__ void
@@ -56,7 +62,7 @@ putAndWait(const nixlMemViewElem &src,
            unsigned channel_id = 0) {
     nixlGpuXferStatusH xfer_status;
     nixl_status_t status = nixlPut(src, dst, size, channel_id, 0, &xfer_status);
-    waitCompletion(status, xfer_status);
+    waitPostedWithSystemFence(status, xfer_status);
 }
 
 __global__ void
