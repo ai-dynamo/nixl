@@ -364,6 +364,20 @@ nixlUcxMtLevelIsSupported(const nixl::ucx::mt_mode_t mt_type) noexcept {
     std::terminate();
 }
 
+std::optional<bool>
+nixlUcpContextSupportsMemoryType(ucp_context_h ctx, ucs_memory_type_t mem_type) noexcept {
+    ucp_context_attr_t attr = {
+        .field_mask = UCP_ATTR_FIELD_MEMORY_TYPES,
+    };
+    const auto status = ucp_context_query(ctx, &attr);
+    if (status != UCS_OK) {
+        NIXL_DEBUG << "Failed to query UCX context: " << ucs_status_string(status);
+        return std::nullopt;
+    }
+
+    return UCS_BIT_GET(attr.memory_types, mem_type) != 0;
+}
+
 namespace {
 
 [[nodiscard]] unsigned
@@ -452,11 +466,24 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         }
     }
 
-    const auto status = ucp_init(&ucp_params, config.getUcpConfig(), &ctx);
+    config.validateTlsEnvironment();
+
+    ucp_context_h new_ctx = nullptr;
+    const auto status = ucp_init(&ucp_params, config.getUcpConfig(), &new_ctx);
     if (status != UCS_OK) {
         throw std::runtime_error("Failed to create UCX context: " +
                                  std::string(ucs_status_string(status)));
     }
+
+    try {
+        config.validateTlsCudaSupport(new_ctx);
+    }
+    catch (...) {
+        ucp_cleanup(new_ctx);
+        throw;
+    }
+
+    ctx = new_ctx;
 }
 
 nixlUcxContext::~nixlUcxContext() {
@@ -601,26 +628,30 @@ nixlUcxContext::memDereg(nixlUcxMem &mem) {
 
 void
 nixlUcxContext::warnAboutHardwareSupportMismatch() const {
-    ucp_context_attr_t attr = {
-        .field_mask = UCP_ATTR_FIELD_MEMORY_TYPES,
-    };
-    const auto status = ucp_context_query(ctx, &attr);
-    if (status != UCS_OK) {
-        NIXL_WARN << "Failed to query UCX context: " << ucs_status_string(status) << ", "
+    const auto cuda_supported = nixlUcpContextSupportsMemoryType(ctx, UCS_MEMORY_TYPE_CUDA);
+    if (!cuda_supported) {
+        NIXL_WARN << "Failed to query UCX context, "
                   << "hardware support mismatch check will be skipped";
         return;
     }
 
     const auto &hw_info = nixl::hwInfo::instance();
 
-    if (hw_info.numNvidiaGpus > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_CUDA)) {
+    if (hw_info.numNvidiaGpus > 0 && !*cuda_supported) {
         NIXL_WARN << hw_info.numNvidiaGpus
                   << " NVIDIA GPU(s) were detected, but UCX CUDA support was not found! "
                   << "GPU memory is not supported.";
     }
 
     if (ucpVersion_ >= ucp_version_mem_type_rdma) {
-        if (hw_info.numIbDevices > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_RDMA)) {
+        const auto rdma_supported = nixlUcpContextSupportsMemoryType(ctx, UCS_MEMORY_TYPE_RDMA);
+        if (!rdma_supported) {
+            NIXL_WARN << "Failed to query UCX context, "
+                      << "hardware support mismatch check will be skipped";
+            return;
+        }
+
+        if (hw_info.numIbDevices > 0 && !*rdma_supported) {
             NIXL_WARN << hw_info.numIbDevices
                       << " IB device(s) were detected, but accelerated IB support was not found! "
                          "Performance may be degraded.";
