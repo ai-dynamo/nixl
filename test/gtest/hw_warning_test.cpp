@@ -45,6 +45,50 @@ protected:
     }
 };
 
+class UcxTlsValidationTest : public ::testing::Test {
+protected:
+    gtest::ScopedEnv envHelper_;
+
+    void
+    SetUp() override {
+        if (std::getenv("NIXL_CI_NON_GPU") != nullptr ||
+            nixl::hwInfo::instance().numNvidiaGpus == 0) {
+            GTEST_SKIP() << "No available NVIDIA GPUs, skipping GPU UCX_TLS validation test";
+        }
+    }
+
+    void
+    expectCudaTlsValidationFailure(const std::string &tls) {
+        envHelper_.addVar("UCX_TLS", tls);
+
+        const std::string tls_regex = tls.starts_with('^') ? "\\" + tls : tls;
+
+        const gtest::LogIgnoreGuard lig_tls(
+            "Invalid UCX_TLS=" + tls_regex +
+            ".*Add cuda_copy for basic GPU support, or cuda to also include NVLink support");
+        const gtest::LogIgnoreGuard lig_backend("backend creation failed for 'UCX'");
+
+        nixlAgent agent("TlsTestAgent", nixlAgentConfig(true));
+        nixlBackendH *backend = nullptr;
+        EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_ERR_BACKEND);
+        EXPECT_GE(lig_tls.getIgnoredCount(), 1);
+        EXPECT_EQ(lig_backend.getIgnoredCount(), 1);
+
+        envHelper_.popVar();
+    }
+
+    void
+    expectCudaTlsValidationSuccess(const std::string &tls) {
+        envHelper_.addVar("UCX_TLS", tls);
+
+        nixlAgent agent("TlsTestAgent", nixlAgentConfig(true));
+        nixlBackendH *backend = nullptr;
+        EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
+
+        envHelper_.popVar();
+    }
+};
+
 /**
  * Test that a warning is logged when NVIDIA GPUs are present but UCX
  * CUDA support is not available.
@@ -117,6 +161,28 @@ TEST_F(HardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
     ctx.warnAboutHardwareSupportMismatch();
 
     envHelper_.popVar();
+}
+
+TEST_F(UcxTlsValidationTest, MissingCudaTlsFailsWhenCudaIsAvailable) {
+    expectCudaTlsValidationFailure("sm,tcp");
+}
+
+TEST_F(UcxTlsValidationTest, CudaDenyListFailsWhenCudaIsAvailable) {
+    expectCudaTlsValidationFailure("^cuda");
+    expectCudaTlsValidationFailure("^tcp,cuda");
+}
+
+TEST_F(UcxTlsValidationTest, CudaCopyDenyListFailsWhenCudaIsAvailable) {
+    expectCudaTlsValidationFailure("^cuda_copy");
+    expectCudaTlsValidationFailure("^tcp,cuda_copy");
+}
+
+TEST_F(UcxTlsValidationTest, CudaIpcDenyListSucceedsWhenCudaIsAvailable) {
+    expectCudaTlsValidationSuccess("^cuda_ipc");
+}
+
+TEST_F(UcxTlsValidationTest, AllTlsSucceedsWhenCudaIsAvailable) {
+    expectCudaTlsValidationSuccess("all");
 }
 
 /**
