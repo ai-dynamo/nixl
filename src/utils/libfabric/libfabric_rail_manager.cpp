@@ -743,7 +743,7 @@ nixlLibfabricRailManager::deserializeMemoryKeys(const std::string &serialized_da
                                                 std::vector<uint64_t> &keys_out,
                                                 uint64_t &remote_addr_out) const {
     nixlSerDes ser_des;
-    nixl_status_t import_status = ser_des.importStr(serialized_data);
+    const nixl_status_t import_status = ser_des.importStr(serialized_data);
     if (import_status != NIXL_SUCCESS) {
         return import_status;
     }
@@ -796,7 +796,7 @@ nixlLibfabricRailManager::deserializeConnectionInfo(
     std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &control_endpoints_out) const {
 
     nixlSerDes ser_des;
-    nixl_status_t import_status = ser_des.importStr(serialized_data);
+    const nixl_status_t import_status = ser_des.importStr(serialized_data);
     if (import_status != NIXL_SUCCESS) {
         return import_status;
     }
