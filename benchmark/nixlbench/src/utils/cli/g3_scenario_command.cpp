@@ -134,34 +134,6 @@ g3ScenarioCommand::run(southboundPluginBenchmarkCommand &plugin) {
                                                          request_.parallel_threads,
                                                          request_.randomized_read_location);
 
-        // std::vector<std::vector<xferBenchIOV>> remote_trans_lists(
-        //     worker.exchangeIOV(local_trans_lists, block_size));
-        std::vector<std::vector<xferBenchIOV>> res;
-
-        // if (benchmark_config.backend.capabilities.canUseAsStorage) {
-        //     size_t fd_idx = 0;
-        //     uint64_t file_offset = 0;
-        //     for (auto &iov_list : local_trans_lists) {
-        //         std::vector<xferBenchIOV> remote_iov_list;
-        //         int devidx = 0;
-        //         for (auto &iov : iov_list) {
-        //             {
-        //                 xferBenchIOV iov_remote(iov);
-        //                 iov_remote.addr = file_offset;
-        //                 iov_remote.len = request_.block_size_bytes;
-        //                 iov_remote.devId = remote_fds[fd_idx].fd;
-        //                 remote_iov_list.push_back(iov_remote);
-        //                 fd_idx++;
-        //                 if (fd_idx >= remote_fds.size()) {
-        //                     file_offset += block_size;
-        //                     fd_idx = 0;
-        //                 }
-        //             }
-        //         }
-        //         res.push_back(remote_iov_list);
-        //         file_offset += request_.block_size_bytes;
-        //     }
-        // }
         // Ensure all processes have completed the exchange with a barrier/sync
         worker_ptr->synchronize();
 
