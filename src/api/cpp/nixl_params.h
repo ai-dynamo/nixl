@@ -37,6 +37,8 @@ struct nixlAgentConfig {
     static constexpr uint64_t kDefaultLthrDelayUs = 100000;
     static constexpr std::chrono::microseconds kDefaultEtcdWatchTimeout =
         std::chrono::microseconds(5000000);
+    static constexpr std::chrono::milliseconds kDefaultHeartbeatInterval =
+        std::chrono::milliseconds(2000);
 
     /** @var Enable progress thread */
     bool useProgThread = kDefaultUseProgThread;

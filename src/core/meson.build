@@ -53,14 +53,24 @@ if libtransfer_engine.found() and not disable_mooncake_backend and 'Mooncake' in
     nixl_lib_deps += [ mooncake_backend_interface, cuda_dep ]
 endif
 
+nixl_lib_sources = [
+    'nixl_agent.cpp',
+    'nixl_enum_strings.cpp',
+    'nixl_plugin_manager.cpp',
+    'nixl_listener.cpp',
+    'nixl_metadata_manager.cpp',
+    'backends/p2p_metadata_backend.cpp',
+    'telemetry/telemetry.cpp',
+    'telemetry/buffer_exporter.cpp',
+    'telemetry/buffer_plugin.cpp',
+]
+
+if etcd_dep.found()
+    nixl_lib_sources += ['backends/etcd_metadata_backend.cpp']
+endif
+
 nixl_lib = library('nixl',
-                   'nixl_agent.cpp',
-                   'nixl_enum_strings.cpp',
-                   'nixl_plugin_manager.cpp',
-                   'nixl_listener.cpp',
-                   'telemetry/telemetry.cpp',
-                   'telemetry/buffer_exporter.cpp',
-                   'telemetry/buffer_plugin.cpp',
+                   nixl_lib_sources,
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
                    link_args: ['-lstdc++fs'],
                    dependencies: nixl_lib_deps,
