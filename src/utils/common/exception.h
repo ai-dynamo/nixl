@@ -28,7 +28,7 @@ template<typename... Ts>
 [[noreturn]] void
 throwRuntimeError(Ts &&...ts) {
     std::ostringstream oss;
-    (void)(oss << ... << ts);
+    (oss << ... << ts);
     throw std::runtime_error(std::move(oss).str());
 }
 
