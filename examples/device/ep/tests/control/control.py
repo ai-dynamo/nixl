@@ -247,6 +247,56 @@ def run_single_op(
     return {mode: stats(latencies)}
 
 
+def report_results(
+    results: dict,
+    mode: str,
+    is_cycle: bool,
+    global_rank: int,
+    local_rank: int,
+    tcp_store,
+    num_ranks: int,
+):
+    ops = list(results.keys())
+
+    print(f"[rank {global_rank}] mode={mode}:", flush=True)
+    for op in ops:
+        avg_t, min_t, max_t = results[op]
+        print(
+            f"[rank {global_rank}]   {op:12s}: "
+            f"avg_t={avg_t * 1e3:.2f} ms, "
+            f"min_t={min_t * 1e3:.2f} ms, "
+            f"max_t={max_t * 1e3:.2f} ms",
+            flush=True,
+        )
+    if is_cycle:
+        total_avg = sum(v[0] for v in results.values())
+        print(
+            f"[rank {global_rank}]   {'total':12s}: " f"avg_t={total_avg * 1e3:.2f} ms",
+            flush=True,
+        )
+
+    for op in ops:
+        tcp_store.set(f"result/{global_rank}/{op}", str(results[op][0]))
+
+    print(f"global_rank={global_rank}, local_rank={local_rank} -> done", flush=True)
+
+    tcp_store_barrier(tcp_store, global_rank, num_ranks)
+
+    if global_rank == 0:
+        cross_total = 0.0
+        print("Cross-rank average:", flush=True)
+        for op in ops:
+            vals = [float(tcp_store.get(f"result/{r}/{op}")) for r in range(num_ranks)]
+            cross_avg = sum(vals) / len(vals)
+            cross_total += cross_avg
+            print(f"  {op:12s}: avg_t={cross_avg * 1e3:.2f} ms", flush=True)
+        if is_cycle:
+            print(
+                f"  {'total':12s}: avg_t={cross_total * 1e3:.2f} ms",
+                flush=True,
+            )
+
+
 def worker(torch_rank: int, args: argparse.Namespace):
     server_addr = args.tcp_server if args.tcp_server else "127.0.0.1"
     rank_client = rank_server.RankClient(server_addr, RANK_SERVER_PORT)
@@ -306,47 +356,9 @@ def worker(torch_rank: int, args: argparse.Namespace):
     else:
         results = run_single_op(mode=args.mode, **common_kwargs)
 
-    ops = list(results.keys())
-
-    print(f"[rank {global_rank}] mode={args.mode}:", flush=True)
-    for op in ops:
-        avg_t, min_t, max_t = results[op]
-        print(
-            f"[rank {global_rank}]   {op:12s}: "
-            f"avg_t={avg_t * 1e3:.2f} ms, "
-            f"min_t={min_t * 1e3:.2f} ms, "
-            f"max_t={max_t * 1e3:.2f} ms",
-            flush=True,
-        )
-    if is_cycle:
-        # Sum of per-op averages = average total cycle time
-        total_avg = sum(v[0] for v in results.values())
-        print(
-            f"[rank {global_rank}]   {'total':12s}: " f"avg_t={total_avg * 1e3:.2f} ms",
-            flush=True,
-        )
-
-    for op in ops:
-        tcp_store.set(f"result/{global_rank}/{op}", str(results[op][0]))
-
-    print(f"global_rank={global_rank}, local_rank={local_rank} -> done", flush=True)
-
-    tcp_store_barrier(tcp_store, global_rank, num_ranks)
-
-    # Rank 0 collects and prints cross-rank averages
-    if global_rank == 0:
-        cross_total = 0.0
-        print("Cross-rank average:", flush=True)
-        for op in ops:
-            vals = [float(tcp_store.get(f"result/{r}/{op}")) for r in range(num_ranks)]
-            cross_avg = sum(vals) / len(vals)
-            cross_total += cross_avg
-            print(f"  {op:12s}: avg_t={cross_avg * 1e3:.2f} ms", flush=True)
-        if is_cycle:
-            print(
-                f"  {'total':12s}: avg_t={cross_total * 1e3:.2f} ms",
-                flush=True,
-            )
+    report_results(
+        results, args.mode, is_cycle, global_rank, local_rank, tcp_store, num_ranks
+    )
 
 
 def run_server():
