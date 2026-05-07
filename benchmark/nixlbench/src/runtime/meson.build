@@ -14,6 +14,8 @@
 # limitations under the License.
 
 runtime_sources = [
+  'null_rt.cpp',
+  'null_rt.h',
   'runtime.cpp',
   'runtime.h',
 ]

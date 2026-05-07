@@ -1079,6 +1079,19 @@ xferBenchUtils::validateTransfer(const xferBenchConfig &config,
     return true;
 }
 
+bool
+xferBenchUtils::validateTransfer(const nixlbench::benchmarkConfig &config,
+                                 bool is_initiator,
+                                 std::vector<std::vector<xferBenchIOV>> &local_lists,
+                                 std::vector<std::vector<xferBenchIOV>> &remote_lists) {
+    if (!config.common.check_consistency) {
+        return true;
+    }
+
+    xferBenchConfig legacy_config = nixlbench::makeLegacyConfigFromBenchmarkConfig(config);
+    return validateTransfer(legacy_config, is_initiator, local_lists, remote_lists);
+}
+
 void
 xferBenchUtils::printStatsHeader(const xferBenchConfig &config) {
     if (IS_PAIRWISE_AND_SG(config) && rt->getSize() > 2) {
@@ -1115,6 +1128,47 @@ xferBenchUtils::printStatsHeader(const xferBenchConfig &config) {
         // clang-format on
     }
     config.printSeparator('-');
+}
+
+void
+xferBenchUtils::printStatsHeader(const nixlbench::benchmarkConfig &config) {
+    if (config.transfer.scheme == XFERBENCH_SCHEME_PAIRWISE &&
+        config.transfer.mode == XFERBENCH_MODE_SG && rt->getSize() > 2) {
+        // clang-format off
+        std::cout << std::left
+                  << std::setw(20) << "Block Size (B)"
+                  << std::setw(15) << "Batch Size"
+                  << std::setw(15) << "B/W (GB/Sec)"
+                  << std::setw(25) << "Aggregate B/W (GB/Sec)"
+                  << std::setw(20) << "Network Util (%)"
+                  << std::setw(15) << "Avg Lat. (us)"
+                  << std::setw(15) << "Avg Prep (us)"
+                  << std::setw(15) << "P99 Prep (us)"
+                  << std::setw(15) << "Avg Post (us)"
+                  << std::setw(15) << "P99 Post (us)"
+                  << std::setw(15) << "Avg Tx (us)"
+                  << std::setw(15) << "P99 Tx (us)"
+                  << std::endl;
+        // clang-format on
+    } else {
+        // clang-format off
+        std::cout << std::left
+                  << std::setw(20) << "Block Size (B)"
+                  << std::setw(15) << "Batch Size"
+                  << std::setw(15) << "B/W (GB/Sec)"
+                  << std::setw(15) << "Avg Lat. (us)"
+                  << std::setw(15) << "Avg Prep (us)"
+                  << std::setw(15) << "P99 Prep (us)"
+                  << std::setw(15) << "Avg Post (us)"
+                  << std::setw(15) << "P99 Post (us)"
+                  << std::setw(15) << "Avg Tx (us)"
+                  << std::setw(15) << "P99 Tx (us)"
+                  << std::endl;
+        // clang-format on
+    }
+
+    constexpr size_t separator_width = 160;
+    std::cout << std::string(separator_width, '-') << std::endl;
 }
 
 

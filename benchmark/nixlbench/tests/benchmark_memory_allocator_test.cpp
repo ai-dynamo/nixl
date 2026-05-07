@@ -36,13 +36,11 @@ TEST(BenchmarkMemoryAllocatorTest, DramLocalStrategyAllocatesAndCleansUpPerThrea
 }
 
 TEST(BenchmarkMemoryAllocatorTest, FileRemoteStrategyCreatesFileAndTransferIovs) {
-    storageFileConfig config;
-    config.backend_name = "POSIX";
-    config.op_type = XFERBENCH_OP_WRITE;
+    storageConfig config;
     config.filepath = std::filesystem::temp_directory_path().string();
     config.num_files = 1;
 
-    fileRemoteIovStrategy strategy(config);
+    fileRemoteIovStrategy strategy(config, "POSIX", XFERBENCH_OP_WRITE);
     auto create_result = strategy.create(2, 4096);
     ASSERT_FALSE(std::holds_alternative<int>(create_result));
     auto storage_iovs = std::get<std::vector<std::vector<xferBenchIOV>>>(std::move(create_result));
@@ -66,7 +64,7 @@ TEST(BenchmarkMemoryAllocatorTest, FileRemoteStrategyCreatesFileAndTransferIovs)
     ASSERT_EQ(transfer_iovs.size(), 2U);
     EXPECT_EQ(transfer_iovs[0][0].addr, 0U);
     EXPECT_EQ(transfer_iovs[0][0].len, 1024U);
-    EXPECT_EQ(transfer_iovs[1][0].addr, 2048U);
+    EXPECT_EQ(transfer_iovs[1][0].addr, 0U);
     EXPECT_EQ(transfer_iovs[1][0].len, 1024U);
     EXPECT_EQ(transfer_iovs[0][0].devId, storage_iovs[0][0].devId);
 

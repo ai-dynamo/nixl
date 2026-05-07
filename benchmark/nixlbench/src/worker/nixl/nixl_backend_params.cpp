@@ -4,10 +4,10 @@
  */
 
 #include "worker/nixl/nixl_backend_params.h"
+#include "nixl_types.h"
 
 #include <iostream>
 #include <sstream>
-#include <stdexcept>
 #include <unistd.h>
 #include <utility>
 
@@ -17,15 +17,6 @@ namespace {
 std::string
 optionStringValue(const metadataPluginOptionValue &option) {
     return option.value.empty() ? (option.boolValue ? "true" : "false") : option.value;
-}
-
-void
-applyPluginOptions(const metadata_plugin_option_map_t &options, nixl_b_params_t &backend_params) {
-    for (const auto &[name, option] : options) {
-        if (option.isProvided) {
-            backend_params[name] = optionStringValue(option);
-        }
-    }
 }
 
 void
@@ -123,9 +114,7 @@ applyBenchmarkOverrides(const benchmarkConfig &config,
                         nixl_b_params_t &backend_params) {
     if (config.backend.name == XFERBENCH_BACKEND_UCX) {
         applyUcxBenchmarkOverrides(config, devices, rank, backend_params);
-    } else if (config.backend.name == XFERBENCH_BACKEND_POSIX) {
-        applyPosixCompatibility(backend_params);
-    } else if (config.backend.name == XFERBENCH_BACKEND_GPUNETIO) {
+    }  else if (config.backend.name == XFERBENCH_BACKEND_GPUNETIO) {
         applyGpuNetIoBenchmarkOverrides(config, devices, backend_params);
     } else if (config.backend.name == XFERBENCH_BACKEND_OBJ) {
         applyObjBenchmarkOverrides(config, backend_params);
@@ -139,6 +128,18 @@ applyBenchmarkOverrides(const benchmarkConfig &config,
 }
 
 } // namespace
+
+nixl_b_params_t
+applyPluginOptions(const metadata_plugin_option_map_t &options, nixl_b_params_t &backend_params) {
+    for (const auto &[name, option] : options) {
+        if (option.isProvided) {
+            backend_params[name] = optionStringValue(option);
+        }
+    }
+    applyPosixCompatibility(backend_params);
+
+    return backend_params;
+}
 
 std::vector<GusliDeviceConfig>
 buildGusliDeviceConfigs(const benchmarkConfig &config, bool is_initiator) {

@@ -7,6 +7,7 @@
 #define NIXL_BENCHMARK_NIXLBENCH_SRC_BENCHMARK_BENCHMARK_RUN_COMPONENTS_H
 
 #include "benchmark/benchmark_runtime_sync.h"
+#include "benchmark_config.h"
 #include "utils/utils.h"
 
 #include <variant>
@@ -32,6 +33,7 @@ public:
     virtual void
     deallocate(benchmarkAllocation &allocation) = 0;
 };
+
 
 class transferDescriptorStrategy {
 public:

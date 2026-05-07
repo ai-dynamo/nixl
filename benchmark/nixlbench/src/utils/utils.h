@@ -371,8 +371,16 @@ public:
                      bool is_initiator,
                      std::vector<std::vector<xferBenchIOV>> &local_lists,
                      std::vector<std::vector<xferBenchIOV>> &remote_lists);
+    static bool
+    validateTransfer(const nixlbench::benchmarkConfig &config,
+                     bool is_initiator,
+                     std::vector<std::vector<xferBenchIOV>> &local_lists,
+                     std::vector<std::vector<xferBenchIOV>> &remote_lists);
     static void
     printStatsHeader(const xferBenchConfig &config);
+
+    static void
+    printStatsHeader(const nixlbench::benchmarkConfig &config);
 
     static void
     printStats(const nixlbench::benchmarkConfig &config,

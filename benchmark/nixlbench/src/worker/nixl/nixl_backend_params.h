@@ -22,6 +22,9 @@ std::string
 generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices);
 
 nixl_b_params_t
+applyPluginOptions(const metadata_plugin_option_map_t &options, nixl_b_params_t &backend_params);
+
+nixl_b_params_t
 buildNixlBackendParams(const benchmarkConfig &config,
                        nixl_b_params_t backend_params,
                        const std::vector<std::string> &devices,

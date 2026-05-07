@@ -391,8 +391,13 @@ makeLocalIovStrategy(const std::string &segment_type, std::size_t page_size, boo
     return nullptr;
 }
 
-fileRemoteIovStrategy::fileRemoteIovStrategy(storageFileConfig config)
-    : config_(std::move(config)) {
+fileRemoteIovStrategy::fileRemoteIovStrategy(storageConfig storage_config, std::string backend_name, std::string op_type) {
+    config_.backend_name = backend_name;
+    config_.op_type = op_type;
+    config_.filepath = storage_config.filepath;
+    config_.filenames = storage_config.filenames;
+    config_.num_files = storage_config.num_files;
+    config_.enable_direct = storage_config.enable_direct;
     if (config_.page_size == 0) {
         config_.page_size = defaultPageSize();
     }
@@ -485,25 +490,27 @@ fileRemoteIovStrategy::createTransferIovs(const std::vector<std::vector<xferBenc
 
     std::vector<std::vector<xferBenchIOV>> remote_iovs;
     remote_iovs.reserve(local_iovs.size());
-    std::size_t fd_idx = 0;
-    std::uint64_t file_offset = 0;
+    std::size_t list_idx = 0;
     for (const auto &iov_list : local_iovs) {
         std::vector<xferBenchIOV> remote_iov_list;
         remote_iov_list.reserve(iov_list.size());
+        const auto min_iov = std::min_element(iov_list.begin(),
+                                              iov_list.end(),
+                                              [](const xferBenchIOV &lhs,
+                                                 const xferBenchIOV &rhs) {
+                                                  return lhs.addr < rhs.addr;
+                                              });
+        const uintptr_t base_addr = min_iov == iov_list.end() ? 0 : min_iov->addr;
+        const std::size_t fd_idx = list_idx % files_.size();
         for (const auto &iov : iov_list) {
             xferBenchIOV remote_iov(iov);
-            remote_iov.addr = file_offset;
+            remote_iov.addr = iov.addr - base_addr;
             remote_iov.len = block_size;
             remote_iov.devId = files_[fd_idx].fd;
             remote_iov_list.push_back(remote_iov);
-            fd_idx++;
-            if (fd_idx >= files_.size()) {
-                file_offset += block_size;
-                fd_idx = 0;
-            }
         }
         remote_iovs.push_back(remote_iov_list);
-        file_offset += block_size;
+        ++list_idx;
     }
 
     return remote_iovs;

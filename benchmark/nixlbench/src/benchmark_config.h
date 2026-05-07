@@ -57,7 +57,7 @@ struct workerConfig {
 };
 
 struct backendConfig {
-    std::string name = "UCX";
+    std::string name = "";
     nixlBackendPluginCapabilities capabilities{};
     metadata_plugin_option_map_t options;
 };

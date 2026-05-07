@@ -7,6 +7,7 @@
 #define NIXL_BENCHMARK_NIXLBENCH_SRC_BENCHMARK_NIXL_STORAGE_ALLOCATOR_H
 
 #include "benchmark/benchmark_run_components.h"
+#include "benchmark_config.h"
 
 #include <nixl.h>
 
@@ -123,7 +124,7 @@ public:
     };
 
     explicit
-    fileRemoteIovStrategy(storageFileConfig config);
+    fileRemoteIovStrategy(storageConfig storage_config, std::string backend_name, std::string op_type);
 
     std::variant<std::vector<std::vector<xferBenchIOV>>, int>
     create(int num_threads, std::size_t buffer_size) override;

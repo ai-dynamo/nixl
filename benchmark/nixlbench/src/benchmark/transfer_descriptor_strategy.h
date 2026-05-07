@@ -69,7 +69,7 @@ createTransferDescLists(const transferDescriptorConfig &config,
                         const std::vector<std::vector<xferBenchIOV>> &iov_lists,
                         bool randomized_rw_location,
                         std::mt19937 *rng = nullptr);
-
+                            
 class offsetTransferDescriptorStrategy : public transferDescriptorStrategy {
 public:
     offsetTransferDescriptorStrategy(transferDescriptorConfig config,
