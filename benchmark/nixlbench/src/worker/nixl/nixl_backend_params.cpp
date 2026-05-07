@@ -16,7 +16,16 @@ namespace {
 
 std::string
 optionStringValue(const metadataPluginOptionValue &option) {
-    return option.value.empty() ? (option.boolValue ? "true" : "false") : option.value;
+    if (option.boolValue) {
+        return "true";
+    }
+    return option.value.empty() ? "false" : option.value;
+}
+
+bool
+isFileWorkloadOption(const std::string &name) {
+    return name == "filepath" || name == "filenames" || name == "num_files" ||
+           name == "enable_direct";
 }
 
 void
@@ -132,7 +141,7 @@ applyBenchmarkOverrides(const benchmarkConfig &config,
 nixl_b_params_t
 applyPluginOptions(const metadata_plugin_option_map_t &options, nixl_b_params_t &backend_params) {
     for (const auto &[name, option] : options) {
-        if (option.isProvided) {
+        if (option.isProvided && !isFileWorkloadOption(name)) {
             backend_params[name] = optionStringValue(option);
         }
     }

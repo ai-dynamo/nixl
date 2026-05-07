@@ -186,10 +186,10 @@ namespace {
         raw.backend_capabilities = plugin.capabilities();
         raw.backend_options = options;
         if (plugin.capabilities().canReadWriteFiles) {
-            raw.filepath.setProvided(plugin.metadataOptions().at("filepath").value);
-            raw.num_files.setProvided(std::stoi(plugin.metadataOptions().at("num_files").value));
-            raw.filenames.setProvided(plugin.metadataOptions().at("filenames").value);
-            raw.storage_enable_direct.setProvided(plugin.metadataOptions().at("enable_direct").boolValue);
+            setStringOption(raw.filepath, options, "filepath");
+            setIntOption(raw.num_files, options, "num_files");
+            setStringOption(raw.filenames, options, "filenames");
+            setBoolOption(raw.storage_enable_direct, options, "enable_direct");
         }
         if (plugin.name() == kBackendPosix) {
             raw.backend.setProvided(kBackendPosix);
@@ -331,7 +331,7 @@ rawCommand::scenarioType() const {
 }
 
 bool
-rawCommand::supportsPlugin(nixlBackendPluginCapabilities pluginCapabilities) const {
+rawCommand::supportsPlugin(nixlBackendPluginCapabilities) const {
     return true;
 }
 

@@ -8,41 +8,73 @@
 namespace nixlbench {
 namespace {
 
+    metadataPluginOptionValue
+    makeOptionValue(const std::string &default_value,
+                    nixl_backend_option_type_t type) {
+        return {default_value,
+                type == nixl_backend_option_type_t::BOOL &&
+                    (default_value == "true" || default_value == "1"),
+                false};
+    }
+
     void
-    appendFileWorkloadOptions(std::vector<cliOption> &options, fileWorkloadRequest &file_workload) {
-        options.push_back(cliOption::option(
-            "filepath", "Storage file path", &file_workload.filepath));
-        options.push_back(
-            cliOption::option("filenames", "Comma seperated list of filenames to use for storage", &file_workload.filenames));
-        options.push_back(cliOption::option(
-            "num_files", "Storage file count", &file_workload.num_files));
-        options.push_back(cliOption::flag("enable_direct",
-                                          "Enable direct storage I/O (O_DIRECT)",
-                                          &file_workload.enable_direct));
+    appendFileWorkloadOptions(std::vector<cliOption> &options,
+                              metadata_plugin_option_map_t &option_values) {
+        auto &filepath = option_values["filepath"];
+        filepath = {"", false, false};
+        options.push_back({"filepath",
+                           "Storage file path",
+                           option_kind_t::VALUE,
+                           &filepath,
+                           false,
+                           &filepath.isProvided});
+
+        auto &filenames = option_values["filenames"];
+        filenames = {"", false, false};
+        options.push_back({"filenames",
+                           "Comma seperated list of filenames to use for storage",
+                           option_kind_t::VALUE,
+                           &filenames,
+                           false,
+                           &filenames.isProvided});
+
+        auto &num_files = option_values["num_files"];
+        num_files = {"1", false, false};
+        options.push_back({"num_files",
+                           "Storage file count",
+                           option_kind_t::VALUE,
+                           &num_files,
+                           false,
+                           &num_files.isProvided});
+
+        auto &enable_direct = option_values["enable_direct"];
+        enable_direct = {"false", false, false};
+        options.push_back({"enable_direct",
+                           "Enable direct storage I/O (O_DIRECT)",
+                           option_kind_t::FLAG,
+                           &enable_direct,
+                           false,
+                           &enable_direct.isProvided});
     }
 
     std::vector<cliOption>
     buildOptions(const nixl_backend_option_list_t &option_specs,
                  metadata_plugin_option_map_t &option_values,
-                 nixlBackendPluginCapabilities capabilities,
-                 fileWorkloadRequest &file_workload) {
+                 nixlBackendPluginCapabilities capabilities) {
         std::vector<cliOption> options;
         options.reserve(option_specs.size() + (capabilities.canReadWriteFiles ? 4 : 0));
+        option_values.reserve(options.capacity());
         for (const auto &spec : option_specs) {
             const auto kind = spec.type == nixl_backend_option_type_t::BOOL ? option_kind_t::FLAG :
                                                                                option_kind_t::VALUE;
             auto &value = option_values[spec.name];
-            if (spec.type == nixl_backend_option_type_t::BOOL) {
-                value.boolValue = spec.defaultValue == "true" || spec.defaultValue == "1";
-            } else {
-                value.value = spec.defaultValue;
-            }
+            value = makeOptionValue(spec.defaultValue, spec.type);
 
             options.push_back(
                 {spec.name, spec.help, kind, &value, spec.required, &value.isProvided});
         }
         if (capabilities.canReadWriteFiles) {
-            appendFileWorkloadOptions(options, file_workload);
+            appendFileWorkloadOptions(options, option_values);
         }
         return options;
     }
@@ -57,23 +89,7 @@ metadataPluginCommand::metadataPluginCommand(std::string backend_name,
       optionSpecs_(std::move(option_specs))
 {
     // convert the optionSpecs_ to optionValues_
-    optionValues_.reserve(optionSpecs_.size());
-    options_ = buildOptions(optionSpecs_, optionValues_, capabilities_, fileWorkload_);
-    for (const auto &spec : optionSpecs_) {
-        optionValues_[spec.name] = {
-            spec.defaultValue, spec.type == nixl_backend_option_type_t::BOOL ? true : false, false};
-    }
-
-    if (capabilities.canReadWriteFiles) {
-        optionValues_["filepath"] = {
-            fileWorkload_.filepath.value, false, false};
-        optionValues_["filenames"] = {
-            fileWorkload_.filenames.value, false, false};
-        optionValues_["num_files"] = {
-            std::to_string(fileWorkload_.num_files.value), false, false};
-        optionValues_["enable_direct"] = {
-            fileWorkload_.enable_direct.value ? "true" : "false", true, false};
-    }
+    options_ = buildOptions(optionSpecs_, optionValues_, capabilities_);
 
 }
 

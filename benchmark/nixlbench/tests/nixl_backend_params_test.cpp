@@ -95,6 +95,24 @@ TEST(NixlBackendParamsTest, StorageBackendParamsPassThroughByDefault) {
     EXPECT_EQ(params.at("iopool_size"), "96");
 }
 
+TEST(NixlBackendParamsTest, FileWorkloadOptionsAreNotBackendInitParams) {
+    benchmarkConfig config;
+    config.backend.name = XFERBENCH_BACKEND_POSIX;
+    setOption(config, "filepath", "/images/containerSpace/");
+    setOption(config, "filenames", "a.bin,b.bin");
+    setOption(config, "num_files", "2");
+    setOption(config, "enable_direct", true);
+    config.backend.options["use_posix_aio"] = {"false", true, true};
+
+    const nixl_b_params_t params = buildNixlBackendParams(config, {}, {"all"}, true, 0);
+
+    EXPECT_EQ(params.count("filepath"), 0U);
+    EXPECT_EQ(params.count("filenames"), 0U);
+    EXPECT_EQ(params.count("num_files"), 0U);
+    EXPECT_EQ(params.count("enable_direct"), 0U);
+    EXPECT_EQ(params.at("use_posix_aio"), "true");
+}
+
 TEST(NixlBackendParamsTest, DefaultsFromPluginArePreservedWhenOptionNotProvided) {
     benchmarkConfig config;
     config.backend.name = "NEW_PLUGIN";

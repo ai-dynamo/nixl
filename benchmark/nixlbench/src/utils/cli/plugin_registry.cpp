@@ -7,7 +7,7 @@
 
 #include "utils/cli/metadata_plugin_command.h"
 
-#include <algorithm>
+#include <nixl.h>
 
 namespace nixlbench {
 // namespace {

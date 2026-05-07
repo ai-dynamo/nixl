@@ -4,10 +4,14 @@
  */
 
 #include "benchmark_config.h"
+#include "utils/cli/metadata_plugin_command.h"
 #include "utils/cli/raw_execution.h"
 #include "utils/utils.h"
 
 #include <gtest/gtest.h>
+
+#include <type_traits>
+#include <variant>
 
 namespace nixlbench {
 namespace {
@@ -15,6 +19,67 @@ namespace {
 const metadataPluginOptionValue &
 option(const benchmarkConfig &config, const std::string &name) {
     return config.backend.options.at(name);
+}
+
+void
+provideStringOption(southboundPluginBenchmarkCommand &command,
+                    const std::string &name,
+                    const std::string &value) {
+    bool found = false;
+    for (const auto &option : command.getOptions()) {
+        if (option.name != name) {
+            continue;
+        }
+
+        std::visit(
+            [&](auto *target) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(*target)>,
+                                             metadataPluginOptionValue>) {
+                    target->value = value;
+                } else if constexpr (std::is_same_v<std::decay_t<decltype(*target)>,
+                                                    std::string>) {
+                    *target = value;
+                } else {
+                    ADD_FAILURE() << "Unexpected non-string option target for " << name;
+                }
+            },
+            option.target);
+        if (option.provided != nullptr) {
+            *option.provided = true;
+        }
+        found = true;
+        break;
+    }
+    ASSERT_TRUE(found) << "Missing option " << name;
+}
+
+void
+provideFlagOption(southboundPluginBenchmarkCommand &command, const std::string &name) {
+    bool found = false;
+    for (const auto &option : command.getOptions()) {
+        if (option.name != name) {
+            continue;
+        }
+
+        std::visit(
+            [&](auto *target) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(*target)>,
+                                             metadataPluginOptionValue>) {
+                    target->boolValue = true;
+                } else if constexpr (std::is_same_v<std::decay_t<decltype(*target)>, bool>) {
+                    *target = true;
+                } else {
+                    ADD_FAILURE() << "Unexpected non-flag option target for " << name;
+                }
+            },
+            option.target);
+        if (option.provided != nullptr) {
+            *option.provided = true;
+        }
+        found = true;
+        break;
+    }
+    ASSERT_TRUE(found) << "Missing option " << name;
 }
 
 TEST(BenchmarkConfigAdapterTest, LegacyConversionMapsCommonTransferAndWorkerFields) {
@@ -173,6 +238,31 @@ TEST(BenchmarkConfigAdapterTest, RawRequestPreservesDynamicPluginOptions) {
     EXPECT_EQ(config.backend.name, "NEW_PLUGIN");
     EXPECT_TRUE(config.backend.capabilities.canUseAsStorage);
     EXPECT_EQ(option(config, "custom_param").value, "custom-value");
+}
+
+TEST(BenchmarkConfigAdapterTest, MetadataPluginStoresProvidedFileWorkloadOptions) {
+    nixlBackendPluginCapabilities capabilities;
+    capabilities.canUseAsStorage = true;
+    capabilities.canReadWriteFiles = true;
+    nixl_backend_option_list_t option_specs{
+        {"use_posix_aio",
+         "Use Linux native AIO queue",
+         nixl_backend_option_type_t::BOOL,
+         false,
+         "false"},
+    };
+    metadataPluginCommand plugin(XFERBENCH_BACKEND_POSIX, capabilities, option_specs);
+    provideStringOption(plugin, "filepath", "/images/containerSpace/");
+    provideFlagOption(plugin, "enable_direct");
+    provideFlagOption(plugin, "use_posix_aio");
+
+    const auto &options = plugin.metadataOptions();
+
+    EXPECT_EQ(options.at("filepath").value, "/images/containerSpace/");
+    EXPECT_TRUE(options.at("filepath").isProvided);
+    EXPECT_TRUE(options.at("enable_direct").boolValue);
+    EXPECT_TRUE(options.at("enable_direct").isProvided);
+    EXPECT_TRUE(options.at("use_posix_aio").boolValue);
 }
 
 TEST(BenchmarkConfigAdapterTest, StructuredCopyBackMapsCommonTransferWorkerAndStorageFields) {

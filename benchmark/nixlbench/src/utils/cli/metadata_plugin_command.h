@@ -8,8 +8,6 @@
 
 #include "utils/cli/benchmark_command.h"
 
-#include "nixl.h"
-
 namespace nixlbench {
 
 class metadataPluginCommand : public southboundPluginBenchmarkCommand {
@@ -39,7 +37,6 @@ private:
     nixlBackendPluginCapabilities capabilities_;
     nixl_backend_option_list_t optionSpecs_;
     metadata_plugin_option_map_t optionValues_;
-    fileWorkloadRequest fileWorkload_;
     std::vector<cliOption> options_;
 };
 
