@@ -36,7 +36,7 @@ static_assert(sizeof(ProxyXferStatus) <= sizeof(nixlGpuXferStatusH),
 
 // Defined in nixl_device_proxy.cu and read by device kernels through
 // load_proxy_context().
-extern __device__ ProxyDeviceContext *g_nixl_proxy_ctx;
+extern __device__ __constant__ ProxyDeviceContext *g_nixl_proxy_ctx;
 
 // Host-callable helpers. Keeping these inline in CUDA translation units avoids
 // cross-DSO symbol ownership issues for g_nixl_proxy_ctx.
@@ -66,12 +66,12 @@ nixlProxyClearContext() {
     return err;
 }
 
-__device__ inline uint64_t
+__device__ __forceinline__  uint64_t
 proxyMemViewIdFromHandle(nixlMemViewH mvh) {
     return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(mvh));
 }
 
-__device__ inline ProxyDeviceContext *
+__device__ __forceinline__  ProxyDeviceContext *
 load_proxy_context() {
     return g_nixl_proxy_ctx;
 }
@@ -174,11 +174,10 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
             pxs->slot->completed_idx);
 
         const uint64_t completed_idx = comp_idx.load(cuda::memory_order_acquire);
-        const nixl_status_t current_status = pxs->slot->next_status;
-
         if (completed_idx > pxs->op_idx) {
             return NIXL_SUCCESS;
         }
+        const nixl_status_t current_status = pxs->slot->next_status;
         if (completed_idx == pxs->op_idx) {
             return current_status;
         }

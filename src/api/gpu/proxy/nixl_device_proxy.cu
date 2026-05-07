@@ -19,4 +19,4 @@
 // through load_proxy_context().
 #include "nixl_device_proxy.cuh"
 
-__device__ ProxyDeviceContext *g_nixl_proxy_ctx = nullptr;
+__device__ __constant__ ProxyDeviceContext *g_nixl_proxy_ctx = nullptr;
