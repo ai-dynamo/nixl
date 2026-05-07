@@ -122,7 +122,7 @@ static int processBatchSizes(xferBenchWorker &worker,
 
 #if HAVE_UCX_DEVICE_KERNEL
             if (xferBenchConfig::use_device_api) {
-                if (auto *nixl_worker = dynamic_cast<xferBenchNixlWorker *>(&worker)) {
+                if (auto nixl_worker = dynamic_cast<xferBenchNixlWorker *>(&worker)) {
                     nixl_worker->prepareGPULocalView(local_trans_lists);
                 }
             }

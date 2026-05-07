@@ -1029,6 +1029,10 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 #if HAVE_UCX_DEVICE_KERNEL
     if (xferBenchConfig::use_device_api && seg_type == VRAM_SEG) {
         completion_counter_iov = initCompletionCounterVram();
+        if (isTarget() && !completion_counter_iov.has_value()) {
+            std::cerr << "NIXL: failed to allocate completion counter for Device API" << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
         if (completion_counter_iov.has_value()) {
             std::vector<xferBenchIOV> cc_list{completion_counter_iov.value()};
             nixl_reg_dlist_t cc_desc(VRAM_SEG);
@@ -1868,11 +1872,8 @@ xferBenchNixlWorker::prepareGPULocalView(
     const std::vector<std::vector<xferBenchIOV>> &local_iov_lists) {
     nixl_xfer_dlist_t local_list(VRAM_SEG);
     for (const auto &local_iov_list : local_iov_lists) {
-        nixlBasicDesc localDesc;
         for (const auto &iov : local_iov_list) {
-            localDesc.addr = iov.addr;
-            localDesc.len = iov.len;
-            localDesc.devId = iov.devId;
+            const nixlBasicDesc localDesc{iov.addr, iov.len, iov.devId};
             local_list.addDesc(localDesc);
         }
     }
@@ -1886,21 +1887,16 @@ xferBenchNixlWorker::prepareGPURemoteView(
     if (!remote_agent_name.empty()) {
         nixl_remote_dlist_t remote_list(VRAM_SEG);
         for (const auto &remote_iov_list : remote_iov_lists) {
-            nixlRemoteDesc remoteDesc;
             for (const auto &iov : remote_iov_list) {
-                remoteDesc.addr = iov.addr;
-                remoteDesc.len = iov.len;
-                remoteDesc.devId = iov.devId;
-                remoteDesc.remoteAgent = remote_agent_name;
+                const nixlRemoteDesc remoteDesc{iov.addr, iov.len, iov.devId, remote_agent_name};
                 remote_list.addDesc(remoteDesc);
             }
         }
         if (completion_counter_iov.has_value()) {
-            nixlRemoteDesc remoteDesc;
-            remoteDesc.addr = completion_counter_iov->addr;
-            remoteDesc.len = completion_counter_iov->len;
-            remoteDesc.devId = completion_counter_iov->devId;
-            remoteDesc.remoteAgent = remote_agent_name;
+            const nixlRemoteDesc remoteDesc{completion_counter_iov.value().addr,
+                                            completion_counter_iov.value().len,
+                                            completion_counter_iov.value().devId,
+                                            remote_agent_name};
             remote_list.addDesc(remoteDesc);
         }
         CHECK_NIXL_ERROR(agent->prepMemView(remote_list, remote_mvh),
@@ -1909,17 +1905,19 @@ xferBenchNixlWorker::prepareGPURemoteView(
 }
 
 void
-xferBenchNixlWorker::releaseGPULocalView() {
-    if (local_mvh != nullptr) {
-        agent->releaseMemView(local_mvh);
-        local_mvh = nullptr;
+xferBenchNixlWorker::releaseMemView(nixlMemViewH &mvh) {
+    if (mvh != nullptr) {
+        agent->releaseMemView(mvh);
+        mvh = nullptr;
     }
 }
 
 void
+xferBenchNixlWorker::releaseGPULocalView() {
+    releaseMemView(local_mvh);
+}
+
+void
 xferBenchNixlWorker::releaseGPURemoteView() {
-    if (remote_mvh != nullptr) {
-        agent->releaseMemView(remote_mvh);
-        remote_mvh = nullptr;
-    }
+    releaseMemView(remote_mvh);
 }

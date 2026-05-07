@@ -89,6 +89,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
         releaseGPURemoteView();
 
     private:
+        void
+        releaseMemView(nixlMemViewH &mvh);
         std::optional<xferBenchIOV>
         initBasicDescDram(size_t buffer_size, int mem_dev_id);
         void

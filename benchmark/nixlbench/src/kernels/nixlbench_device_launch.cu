@@ -25,7 +25,7 @@ constexpr unsigned nixlbench_max_warps = 32u;
 
 template<nixl_gpu_level_t Level>
 __device__ bool
-nixlbenchPutLevel(nixlbenchDeviceXferParams params,
+nixlbenchPutLevel(const nixlbenchDeviceXferParams &params,
                   size_t region_idx,
                   nixlGpuXferStatusH &xfer_status) {
     const nixlMemViewElem src{params.localMvh, region_idx, 0};
@@ -62,7 +62,7 @@ nixlbenchPutLevel(nixlbenchDeviceXferParams params,
 
 template<nixl_gpu_level_t Level>
 __device__ bool
-nixlbenchSignalCounter(nixlbenchDeviceXferParams params,
+nixlbenchSignalCounter(const nixlbenchDeviceXferParams &params,
                        size_t counter_offset,
                        uint64_t value,
                        const char *counter_name) {
@@ -70,7 +70,7 @@ nixlbenchSignalCounter(nixlbenchDeviceXferParams params,
         return true;
     }
     const nixlMemViewElem counter{params.remoteMvh, params.numRegions, counter_offset};
-    nixlGpuXferStatusH xfer_status{};
+    nixlGpuXferStatusH xfer_status;
     nixl_status_t status = nixlAtomicAdd<Level>(value, counter, 0, 0, &xfer_status);
     if (status != NIXL_IN_PROG) {
         printf(
@@ -91,17 +91,16 @@ nixlbenchSignalCounter(nixlbenchDeviceXferParams params,
     return true;
 }
 
-template<nixl_gpu_level_t Level>
 __device__ bool
 nixlbenchSignalCompletion(nixlbenchDeviceXferParams params) {
-    return nixlbenchSignalCounter<Level>(
+    return nixlbenchSignalCounter<nixl_gpu_level_t::THREAD>(
         params, params.completionCounterOffsetBytes, 1ull, "completion");
 }
 
-template<nixl_gpu_level_t Level>
 __device__ bool
 nixlbenchSignalError(nixlbenchDeviceXferParams params) {
-    return nixlbenchSignalCounter<Level>(params, params.errorCounterOffsetBytes, 1ull, "error");
+    return nixlbenchSignalCounter<nixl_gpu_level_t::THREAD>(
+        params, params.errorCounterOffsetBytes, 1ull, "error");
 }
 
 /**
@@ -137,7 +136,7 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
             atomicAdd(&put_fail_count, 1u);
         }
     } else {
-        nixlGpuXferStatusH xfer_status{};
+        nixlGpuXferStatusH xfer_status;
         bool put_failed = false;
         for (size_t region_idx = group_id; region_idx < params.numRegions;
              region_idx += num_groups) {
@@ -166,15 +165,15 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
 
     if (threadIdx.x == 0) {
         if (put_fail_count > 0) {
-            if (!nixlbenchSignalError<nixl_gpu_level_t::THREAD>(params)) {
+            if (!nixlbenchSignalError(params)) {
                 printf("[nixlbenchPutKernel] error nixlAtomicAdd failed\n");
             }
             return;
         }
 
-        if (!nixlbenchSignalCompletion<nixl_gpu_level_t::THREAD>(params)) {
+        if (!nixlbenchSignalCompletion(params)) {
             printf("[nixlbenchPutKernel] completion nixlAtomicAdd failed\n");
-            if (!nixlbenchSignalError<nixl_gpu_level_t::THREAD>(params)) {
+            if (!nixlbenchSignalError(params)) {
                 printf("[nixlbenchPutKernel] error nixlAtomicAdd failed\n");
             }
         }
