@@ -13,6 +13,7 @@ if gtest_dep.found()
       'benchmark_runner_config_test.cpp',
       'benchmark_executor_test.cpp',
       'benchmark_memory_allocator_test.cpp',
+      'transfer_descriptor_strategy_test.cpp',
       'worker_config_test.cpp',
       'xfer_bench_config_test.cpp',
     ],

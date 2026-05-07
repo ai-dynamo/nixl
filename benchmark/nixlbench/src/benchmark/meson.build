@@ -9,6 +9,8 @@ benchmark_framework_sources = [
   'benchmark_runtime_sync.h',
   'nixl_storage_allocator.cpp',
   'nixl_storage_allocator.h',
+  'transfer_descriptor_strategy.cpp',
+  'transfer_descriptor_strategy.h',
 ]
 
 benchmark_framework_deps = [

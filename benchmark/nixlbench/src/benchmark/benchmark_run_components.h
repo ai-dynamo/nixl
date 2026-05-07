@@ -57,6 +57,9 @@ public:
     ~iterationPolicy() = default;
 
     virtual bool
+    allocateOnce() const = 0;
+
+    virtual bool
     hasNext() const = 0;
 
     virtual void

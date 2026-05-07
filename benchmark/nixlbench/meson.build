@@ -157,6 +157,7 @@ endif
 # Subprojects
 subdir('src/utils')
 subdir('src/runtime')
+subdir('src/benchmark')
 subdir('src/worker')
 subdir('tests')
 
@@ -245,7 +246,7 @@ if nvshmem_available
 else
     executable('nixlbench', ['src/main.cpp', 'src/benchmark_runner.cpp'],
                 include_directories: inc_dir,
-                link_with: [nixlbench_runtimes, utils_lib, worker_libs],
+                link_with: [nixlbench_runtimes, utils_lib, benchmark_framework_lib, worker_libs],
                 dependencies: deps,
                 link_args: args,
                 install: true,

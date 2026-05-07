@@ -10,8 +10,6 @@
 #include "utils/cli/raw_execution.h"
 #include "utils/utils.h"
 #include "worker/nixl/nixl_worker.h"
-#include <numeric>
-#include <random>
 #if HAVE_NVSHMEM && HAVE_CUDA
 #include "worker/nvshmem/nvshmem_worker.h"
 #endif
@@ -77,6 +75,18 @@ runBenchmarkLegacyLoop(const nixlbench::benchmarkConfig &benchmark_config, xferB
 } // namespace
 
 std::vector<std::vector<xferBenchIOV>>
+createTransferDescLists(const nixlbench::transferDescriptorConfig &config,
+                        std::vector<std::vector<xferBenchIOV>> &iov_lists,
+                        bool randomized_rw_location) {
+    auto result = nixlbench::createTransferDescLists(config, iov_lists, randomized_rw_location);
+    if (std::holds_alternative<int>(result)) {
+        return {};
+    }
+
+    return std::get<std::vector<std::vector<xferBenchIOV>>>(std::move(result));
+}
+
+std::vector<std::vector<xferBenchIOV>>
 createTransferDescLists(xferBenchWorker &worker,
                         const nixlbench::benchmarkConfig &config,
                         std::vector<std::vector<xferBenchIOV>> &iov_lists,
@@ -84,42 +94,14 @@ createTransferDescLists(xferBenchWorker &worker,
                         size_t batch_size,
                         int num_threads,
                         bool randomized_rw_location) {
-    auto [count, stride] = nixlbench::getStrideScheme(
-        config, worker.isInitiator(), worker.isTarget(), num_threads);
-    std::vector<std::vector<xferBenchIOV>> xfer_lists;
-
-    for (const auto &iov_list : iov_lists) {
-        std::vector<xferBenchIOV> xfer_list;
-
-        for (const auto &iov : iov_list) {
-            std::vector<size_t> indices(count);
-            std::iota(indices.begin(), indices.end(), 0);
-            if (randomized_rw_location) {
-                std::random_device rd;
-                std::mt19937 g(rd());
-                std::shuffle(indices.begin(), indices.end(), g);
-            }
-       
-            for (size_t i = 0; i < count; i++) {
-                size_t dev_offset = ((indices[i] * stride) % iov.len);
-
-                for (size_t j = 0; j < batch_size; j++) {
-                    size_t block_offset = ((j * block_size) % iov.len);
-                    if (block_offset + block_size > iov.len) {
-                        block_offset = 0;
-                    }
-                    xfer_list.push_back(xferBenchIOV((iov.addr + dev_offset) + block_offset,
-                                                     block_size,
-                                                     iov.devId,
-                                                     iov.metaInfo));
-                }
-            }
-        }
-
-        xfer_lists.push_back(xfer_list);
-    }
-
-    return xfer_lists;
+    nixlbench::benchmarkConfig descriptor_benchmark_config = config;
+    descriptor_benchmark_config.transfer.num_threads = num_threads;
+    auto descriptor_config = nixlbench::makeTransferDescriptorConfig(descriptor_benchmark_config,
+                                                                     block_size,
+                                                                     batch_size,
+                                                                     worker.isInitiator(),
+                                                                     worker.isTarget());
+    return createTransferDescLists(descriptor_config, iov_lists, randomized_rw_location);
 }
 
 int

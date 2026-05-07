@@ -9,8 +9,8 @@
 #include <memory>
 #include <vector>
 
+#include "benchmark/transfer_descriptor_strategy.h"
 #include "benchmark_config.h"
-#include "benchmark_runner_config.h"
 #include "utils/utils.h"
 #include "worker/worker.h"
 
@@ -30,6 +30,11 @@ processBatchSizes(xferBenchWorker &worker,
                   size_t block_size,
                   int num_threads,
                   bool randomized_read_location = false);
+
+std::vector<std::vector<xferBenchIOV>>
+createTransferDescLists(const nixlbench::transferDescriptorConfig &config,
+                        std::vector<std::vector<xferBenchIOV>> &iov_lists,
+                        bool randomized_read_location = false);
 
 std::vector<std::vector<xferBenchIOV>>
 createTransferDescLists(xferBenchWorker &worker,

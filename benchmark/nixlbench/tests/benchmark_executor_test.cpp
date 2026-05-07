@@ -133,8 +133,14 @@ private:
 class fixedIterationPolicy : public iterationPolicy {
 public:
     explicit
-    fixedIterationPolicy(int iterations)
-        : remaining_(iterations) {}
+    fixedIterationPolicy(int iterations, bool allocate_once = true)
+        : remaining_(iterations),
+          allocate_once_(allocate_once) {}
+
+    bool
+    allocateOnce() const override {
+        return allocate_once_;
+    }
 
     bool
     hasNext() const override {
@@ -148,6 +154,7 @@ public:
 
 private:
     int remaining_;
+    bool allocate_once_;
 };
 
 class recordingResultSink : public benchmarkResultSink {
@@ -213,6 +220,42 @@ TEST(BenchmarkExecutorTest, RunsLifecycleInOrder) {
     EXPECT_EQ(results.record_count, 2);
     EXPECT_EQ(transfer.descriptor_count, 1U);
     EXPECT_EQ(allocator.deallocated_iov_count, 1U);
+}
+
+TEST(BenchmarkExecutorTest, PerIterationAllocationPolicyWrapsFullTransferLifecycle) {
+    std::vector<std::string> events;
+    recordingSync sync(events);
+    recordingAllocator allocator(events);
+    recordingDescriptorStrategy descriptors(events);
+    recordingTransferStrategy transfer(events);
+    fixedIterationPolicy iterations(2, false);
+    recordingResultSink results(events);
+    benchmarkRunComponents components =
+        makeComponents(sync, allocator, descriptors, transfer, iterations, results);
+
+    benchmarkExecutor executor;
+    EXPECT_EQ(executor.run(components), EXIT_SUCCESS);
+
+    const std::vector<std::string> expected_events{
+        "sync_start",
+        "allocate",
+        "before_transfer",
+        "descriptors",
+        "transfer",
+        "record",
+        "after_transfer",
+        "deallocate",
+        "allocate",
+        "before_transfer",
+        "descriptors",
+        "transfer",
+        "record",
+        "after_transfer",
+        "deallocate",
+        "finish",
+    };
+    EXPECT_EQ(events, expected_events);
+    EXPECT_EQ(results.record_count, 2);
 }
 
 TEST(BenchmarkExecutorTest, DeallocatesAfterTransferFailure) {

@@ -12,15 +12,61 @@
 #include <variant>
 
 namespace nixlbench {
+namespace {
 
 int
-benchmarkExecutor::run(benchmarkRunComponents &components) {
-    int ret = components.sync.synchronizeStart();
+runTransferIteration(benchmarkRunComponents &components, const benchmarkAllocation &allocation) {
+    int ret = components.sync.beforeTransfer();
     if (ret != 0) {
         return ret;
     }
 
-    {
+    auto descriptor_result = components.descriptorStrategy.create(allocation);
+    if (std::holds_alternative<int>(descriptor_result)) {
+        return std::get<int>(descriptor_result);
+    }
+
+    auto transfer_result = components.transferStrategy.execute(
+        std::get<std::vector<std::vector<xferBenchIOV>>>(descriptor_result));
+    if (std::holds_alternative<int>(transfer_result)) {
+        return std::get<int>(transfer_result);
+    }
+
+    components.results.record(std::get<xferBenchStats>(transfer_result));
+
+    ret = components.sync.afterTransfer();
+    if (ret != 0) {
+        return ret;
+    }
+
+    return EXIT_SUCCESS;
+}
+
+int
+runAllocateOnceIterations(benchmarkRunComponents &components) {
+    auto allocation_result = components.allocator.allocate();
+    if (std::holds_alternative<int>(allocation_result)) {
+        return std::get<int>(allocation_result);
+    }
+
+    benchmarkAllocation allocation = std::move(std::get<benchmarkAllocation>(allocation_result));
+    auto allocation_guard = make_scope_guard([&] {
+        components.allocator.deallocate(allocation);
+    });
+
+    for (; components.iterations.hasNext(); components.iterations.advance()) {
+        int ret = runTransferIteration(components, allocation);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+
+    return EXIT_SUCCESS;
+}
+
+int
+runAllocatePerIteration(benchmarkRunComponents &components) {
+    for (; components.iterations.hasNext(); components.iterations.advance()) {
         auto allocation_result = components.allocator.allocate();
         if (std::holds_alternative<int>(allocation_result)) {
             return std::get<int>(allocation_result);
@@ -31,30 +77,28 @@ benchmarkExecutor::run(benchmarkRunComponents &components) {
             components.allocator.deallocate(allocation);
         });
 
-        for (; components.iterations.hasNext(); components.iterations.advance()) {
-            ret = components.sync.beforeTransfer();
-            if (ret != 0) {
-                return ret;
-            }
-
-            auto descriptor_result = components.descriptorStrategy.create(allocation);
-            if (std::holds_alternative<int>(descriptor_result)) {
-                return std::get<int>(descriptor_result);
-            }
-
-            auto transfer_result = components.transferStrategy.execute(
-                std::get<std::vector<std::vector<xferBenchIOV>>>(descriptor_result));
-            if (std::holds_alternative<int>(transfer_result)) {
-                return std::get<int>(transfer_result);
-            }
-
-            components.results.record(std::get<xferBenchStats>(transfer_result));
-
-            ret = components.sync.afterTransfer();
-            if (ret != 0) {
-                return ret;
-            }
+        int ret = runTransferIteration(components, allocation);
+        if (ret != 0) {
+            return ret;
         }
+    }
+
+    return EXIT_SUCCESS;
+}
+
+} // namespace
+
+int
+benchmarkExecutor::run(benchmarkRunComponents &components) {
+    int ret = components.sync.synchronizeStart();
+    if (ret != 0) {
+        return ret;
+    }
+
+    ret = components.iterations.allocateOnce() ? runAllocateOnceIterations(components) :
+                                                runAllocatePerIteration(components);
+    if (ret != 0) {
+        return ret;
     }
 
     ret = components.sync.finish();
