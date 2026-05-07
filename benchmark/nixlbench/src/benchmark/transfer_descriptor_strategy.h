@@ -10,6 +10,7 @@
 #include "benchmark_config.h"
 
 #include <cstddef>
+#include <memory>
 #include <random>
 #include <string>
 #include <variant>
@@ -63,6 +64,13 @@ makeTransferDescriptorConfig(const benchmarkConfig &config,
                              std::size_t batch_size,
                              bool is_initiator,
                              bool is_target);
+
+std::unique_ptr<transferDescriptorStrategy>
+makeTransferDescriptorStrategy(const benchmarkConfig &config,
+                               bool randomized_rw_location,
+                               remoteIovStrategy *remote_strategy = nullptr,
+                               bool is_initiator = true,
+                               bool is_target = false);
 
 std::variant<std::vector<std::vector<xferBenchIOV>>, int>
 createTransferDescLists(const transferDescriptorConfig &config,

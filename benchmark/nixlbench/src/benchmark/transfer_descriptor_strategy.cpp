@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <numeric>
 #include <random>
 #include <string>
@@ -94,6 +95,27 @@ makeTransferDescriptorConfig(const benchmarkConfig &config,
     descriptor_config.is_initiator = is_initiator;
     descriptor_config.is_target = is_target;
     return descriptor_config;
+}
+
+std::unique_ptr<transferDescriptorStrategy>
+makeTransferDescriptorStrategy(const benchmarkConfig &config,
+                               bool randomized_rw_location,
+                               remoteIovStrategy *remote_strategy,
+                               bool is_initiator,
+                               bool is_target) {
+    auto descriptor_config = makeTransferDescriptorConfig(config,
+                                                          config.transfer.start_block_size,
+                                                          config.transfer.start_batch_size,
+                                                          is_initiator,
+                                                          is_target);
+    if (remote_strategy != nullptr) {
+        return std::make_unique<remoteOffsetTransferDescriptorStrategy>(descriptor_config,
+                                                                        *remote_strategy,
+                                                                        randomized_rw_location);
+    }
+
+    return std::make_unique<offsetTransferDescriptorStrategy>(descriptor_config,
+                                                              randomized_rw_location);
 }
 
 std::variant<std::vector<std::vector<xferBenchIOV>>, int>

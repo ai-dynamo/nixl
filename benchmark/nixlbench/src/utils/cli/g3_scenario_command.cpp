@@ -543,25 +543,14 @@ g3ScenarioCommand::run(southboundPluginBenchmarkCommand &plugin) {
                                    local_iovs,
                                    &remote_iovs);
 
-    transferDescriptorConfig descriptor_config;
-    descriptor_config.block_size = benchmark_config.transfer.start_block_size;
-    descriptor_config.batch_size = benchmark_config.transfer.start_batch_size;
-    descriptor_config.num_threads = benchmark_config.transfer.num_threads;
-    descriptor_config.num_initiator_dev = benchmark_config.worker.num_initiator_dev;
-    descriptor_config.num_target_dev = benchmark_config.worker.num_target_dev;
-    descriptor_config.total_buffer_size = benchmark_config.transfer.total_buffer_size;
-    descriptor_config.scheme = benchmark_config.transfer.scheme;
-    descriptor_config.mode = benchmark_config.transfer.mode;
-    descriptor_config.is_initiator = true;
-    descriptor_config.is_target = false;
-    offsetTransferDescriptorStrategy descriptors(descriptor_config,
-                                                 request_.randomized_read_location);
+    auto descriptors = makeTransferDescriptorStrategy(benchmark_config,
+                                                      request_.randomized_read_location);
     g3NixlTransferStrategy transfer(agent, benchmark_config, remote_iovs);
     fixedIterationPolicy iterations(1, benchmarkAllocationLifecycle::AllocateOnce);
     g3StatsResultSink results(benchmark_config);
 
     xferBenchUtils::printStatsHeader(benchmark_config);
-    benchmarkRunComponents components{sync, allocator, descriptors, transfer, iterations, results};
+    benchmarkRunComponents components{sync, allocator, *descriptors, transfer, iterations, results};
     benchmarkExecutor executor;
     int ret = executor.run(components);
     if (g3Signaled()) {

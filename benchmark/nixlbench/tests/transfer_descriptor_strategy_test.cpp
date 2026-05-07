@@ -4,12 +4,14 @@
  */
 
 #include "benchmark/transfer_descriptor_strategy.h"
+#include "benchmark/nixl_storage_allocator.h"
 
 #include <gtest/gtest.h>
 
 #include <cstdlib>
 #include <algorithm>
 #include <random>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -36,6 +38,42 @@ std::vector<std::vector<xferBenchIOV>>
 makeIovLists() {
     return {{xferBenchIOV(1000, 400, 7, "meta")}};
 }
+
+class fakeRemoteIovStrategy : public remoteIovStrategy {
+public:
+    std::variant<std::vector<std::vector<xferBenchIOV>>, int>
+    create(int num_threads, std::size_t buffer_size) override {
+        (void)num_threads;
+        (void)buffer_size;
+        return std::vector<std::vector<xferBenchIOV>>{};
+    }
+
+    std::variant<std::vector<std::vector<xferBenchIOV>>, int>
+    createTransferIovs(const std::vector<std::vector<xferBenchIOV>> &local_iovs,
+                       std::size_t block_size) const override {
+        std::vector<std::vector<xferBenchIOV>> remote_iovs;
+        remote_iovs.reserve(local_iovs.size());
+        for (const auto &iov_list : local_iovs) {
+            std::vector<xferBenchIOV> remote_iov_list;
+            remote_iov_list.reserve(iov_list.size());
+            for (const auto &iov : iov_list) {
+                remote_iov_list.emplace_back(iov.addr + 5000, block_size, iov.devId, "remote");
+            }
+            remote_iovs.push_back(std::move(remote_iov_list));
+        }
+        return remote_iovs;
+    }
+
+    void
+    cleanup(std::vector<std::vector<xferBenchIOV>> &iov_lists) override {
+        iov_lists.clear();
+    }
+
+    nixl_mem_t
+    segmentType() const override {
+        return FILE_SEG;
+    }
+};
 
 TEST(TransferDescriptorStrategyTest, SequentialGenerationUsesStrideAndBatchOffsets) {
     auto config = makeConfig();
@@ -100,6 +138,56 @@ TEST(TransferDescriptorStrategyTest, StrategyUsesAllocationLocalIovs) {
     ASSERT_EQ(descriptors.size(), 1U);
     ASSERT_EQ(descriptors[0].size(), 8U);
     EXPECT_EQ(descriptors[0][0].addr, 1000U);
+}
+
+TEST(TransferDescriptorStrategyTest, FactoryCreatesLocalOffsetStrategyByDefault) {
+    benchmarkConfig config;
+    config.transfer.start_block_size = 10;
+    config.transfer.start_batch_size = 2;
+    config.transfer.num_threads = 1;
+    config.transfer.total_buffer_size = 400;
+    config.transfer.scheme = XFERBENCH_SCHEME_ONE_TO_MANY;
+    config.transfer.mode = XFERBENCH_MODE_SG;
+    config.worker.num_initiator_dev = 1;
+    config.worker.num_target_dev = 4;
+    benchmarkAllocation allocation;
+    allocation.local_iovs = makeIovLists();
+
+    auto strategy = makeTransferDescriptorStrategy(config, false);
+    auto result = strategy->create(allocation);
+
+    ASSERT_FALSE(std::holds_alternative<int>(result));
+    auto descriptors = std::get<std::vector<std::vector<xferBenchIOV>>>(std::move(result));
+    ASSERT_EQ(descriptors.size(), 1U);
+    ASSERT_EQ(descriptors[0].size(), 8U);
+    EXPECT_EQ(descriptors[0][0].addr, 1000U);
+    EXPECT_EQ(descriptors[0][0].metaInfo, "meta");
+}
+
+TEST(TransferDescriptorStrategyTest, FactoryUsesRemoteStrategyWhenProvided) {
+    benchmarkConfig config;
+    config.transfer.start_block_size = 10;
+    config.transfer.start_batch_size = 2;
+    config.transfer.num_threads = 1;
+    config.transfer.total_buffer_size = 400;
+    config.transfer.scheme = XFERBENCH_SCHEME_ONE_TO_MANY;
+    config.transfer.mode = XFERBENCH_MODE_SG;
+    config.worker.num_initiator_dev = 1;
+    config.worker.num_target_dev = 4;
+    benchmarkAllocation allocation;
+    allocation.local_iovs = makeIovLists();
+    fakeRemoteIovStrategy remote_strategy;
+
+    auto strategy = makeTransferDescriptorStrategy(config, false, &remote_strategy);
+    auto result = strategy->create(allocation);
+
+    ASSERT_FALSE(std::holds_alternative<int>(result));
+    auto descriptors = std::get<std::vector<std::vector<xferBenchIOV>>>(std::move(result));
+    ASSERT_EQ(descriptors.size(), 1U);
+    ASSERT_EQ(descriptors[0].size(), 8U);
+    EXPECT_EQ(descriptors[0][0].addr, 6000U);
+    EXPECT_EQ(descriptors[0][0].len, 10U);
+    EXPECT_EQ(descriptors[0][0].metaInfo, "remote");
 }
 
 TEST(TransferDescriptorStrategyTest, FixedIterationPolicyEncodesAllocationLifecycle) {
