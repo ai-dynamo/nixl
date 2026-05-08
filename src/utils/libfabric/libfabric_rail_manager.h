@@ -213,7 +213,9 @@ public:
                              uint16_t agent_idx,
                              uint16_t xfer_id,
                              std::function<void()> completion_callback,
-                             size_t &submitted_count_out);
+                             size_t &submitted_count_out,
+                             int desc_idx = 0,
+                             int desc_count = 1);
     /** Determine if striping should be used for given transfer size
      * @param transfer_size Size of the transfer in bytes
      * @return true if striping should be used, false for round-robin

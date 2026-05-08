@@ -373,7 +373,9 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     uint16_t agent_idx,
     uint16_t xfer_id,
     std::function<void()> completion_callback,
-    size_t &submitted_count_out) {
+    size_t &submitted_count_out,
+    int desc_idx,
+    int desc_count) {
     // Initialize output parameter
     submitted_count_out = 0;
 
@@ -386,11 +388,25 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     bool use_striping = shouldUseStriping(transfer_size) && selected_rails.size() > 1;
     NIXL_DEBUG << "use_striping=" << use_striping;
     if (!use_striping) {
-        // Round-robin: use one rail for entire transfer
-        const auto counter_value = round_robin_counter.fetch_add(1);
-        const size_t rail_id = selected_rails[counter_value % selected_rails.size()];
+        // Round-robin with FI_MORE batching: group 16 consecutive descs to same rail
+        // then rotate. This ensures doorbell flush every 16 ops on the same rail.
+        // Use atomic counter as base offset so concurrent postXfer calls distribute
+        // across rails instead of all starting from rail 0.
+        constexpr int FI_MORE_BATCH_SIZE = 16;
+        const size_t base_offset =
+            (desc_idx == 0) ? round_robin_counter.fetch_add(1) : round_robin_counter.load();
+        const size_t group_idx = base_offset + desc_idx / FI_MORE_BATCH_SIZE;
+        const int pos_in_group = desc_idx % FI_MORE_BATCH_SIZE;
+        bool is_last_in_group =
+            (pos_in_group == FI_MORE_BATCH_SIZE - 1) || (desc_idx == desc_count - 1);
+
+        // Use group_idx for rail selection (same rail for 16 consecutive descs)
+        const size_t rail_id = selected_rails[group_idx % selected_rails.size()];
         const size_t remote_ep_id =
-            remote_selected_endpoints[counter_value % remote_selected_endpoints.size()];
+            remote_selected_endpoints[group_idx % remote_selected_endpoints.size()];
+
+        // FI_MORE: defer doorbell for first 15, flush on 16th or last desc
+        uint64_t fi_flags = is_last_in_group ? 0 : FI_MORE;
         NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
         nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
@@ -432,7 +448,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                                 dest_addrs.at(rail_id)[remote_ep_id],
                                                 req->remote_addr,
                                                 req->remote_key,
-                                                req);
+                                                req,
+                                                fi_flags);
         } else {
             status = rails_[rail_id]->postRead(req->local_addr,
                                                req->chunk_size,
@@ -440,7 +457,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                                dest_addrs.at(rail_id)[remote_ep_id],
                                                req->remote_addr,
                                                req->remote_key,
-                                               req);
+                                               req,
+                                               fi_flags);
         }
         if (status != NIXL_SUCCESS) {
             // Release the allocated request back to pool on failure
@@ -458,7 +476,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                    << transfer_size << " bytes, XFER_ID=" << req->xfer_id;
 
     } else {
-        // Striping: distribute across multiple rails
+        // Striping: distribute across multiple rails (no FI_MORE for striped transfers)
+        uint64_t fi_flags = 0;
         size_t num_rails = selected_rails.size();
         size_t chunk_size = transfer_size / num_rails;
         size_t remainder = transfer_size % num_rails;
@@ -512,7 +531,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                                     dest_addrs.at(rail_id)[remote_ep_id],
                                                     req->remote_addr,
                                                     req->remote_key,
-                                                    req);
+                                                    req,
+                                                    fi_flags);
             } else {
                 status = rails_[rail_id]->postRead(req->local_addr,
                                                    req->chunk_size,
@@ -520,7 +540,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                                    dest_addrs.at(rail_id)[remote_ep_id],
                                                    req->remote_addr,
                                                    req->remote_key,
-                                                   req);
+                                                   req,
+                                                   fi_flags);
             }
             if (status != NIXL_SUCCESS) {
                 // This request failed to submit - release it immediately
