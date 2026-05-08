@@ -358,6 +358,11 @@ nixlLibfabricRailManager::shouldUseStriping(size_t transfer_size) const {
     return transfer_size >= striping_threshold_;
 }
 
+size_t
+nixlLibfabricRailManager::reserveBaseOffset() {
+    return round_robin_counter.fetch_add(1);
+}
+
 nixl_status_t
 nixlLibfabricRailManager::prepareAndSubmitTransfer(
     nixlLibfabricReq::OpType op_type,
@@ -375,7 +380,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     std::function<void()> completion_callback,
     size_t &submitted_count_out,
     int desc_idx,
-    int desc_count) {
+    int desc_count,
+    size_t base_offset) {
     // Initialize output parameter
     submitted_count_out = 0;
 
@@ -393,8 +399,9 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         // Use atomic counter as base offset so concurrent postXfer calls distribute
         // across rails instead of all starting from rail 0.
         constexpr int FI_MORE_BATCH_SIZE = 16;
-        const size_t base_offset =
-            (desc_idx == 0) ? round_robin_counter.fetch_add(1) : round_robin_counter.load();
+        // base_offset is reserved once per transfer by the caller (postXfer)
+        // and passed in, ensuring all descriptors in a transfer see a stable
+        // value even under concurrent postXfer calls.
         const size_t group_idx = base_offset + desc_idx / FI_MORE_BATCH_SIZE;
         const int pos_in_group = desc_idx % FI_MORE_BATCH_SIZE;
         bool is_last_in_group =

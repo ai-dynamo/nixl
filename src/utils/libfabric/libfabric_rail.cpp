@@ -1124,8 +1124,16 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
     int ret = -FI_EAGAIN;
     int attempt = 0;
 
-    struct iovec iov = {.iov_base = const_cast<void *>(local_buffer), .iov_len = length};
-    struct fi_rma_iov rma_iov = {.addr = remote_addr, .len = length, .key = remote_key};
+    struct iovec iov{};
+
+    iov.iov_base = const_cast<void *>(local_buffer);
+    iov.iov_len = length;
+
+    struct fi_rma_iov rma_iov{};
+
+    rma_iov.addr = remote_addr;
+    rma_iov.len = length;
+    rma_iov.key = remote_key;
     struct fi_msg_rma msg = {};
     msg.msg_iov = &iov;
     msg.desc = &local_desc;
@@ -1212,8 +1220,16 @@ nixlLibfabricRail::postRead(void *local_buffer,
     int ret = -FI_EAGAIN;
     int attempt = 0;
 
-    struct iovec iov = {.iov_base = local_buffer, .iov_len = length};
-    struct fi_rma_iov rma_iov = {.addr = remote_addr, .len = length, .key = remote_key};
+    struct iovec iov{};
+
+    iov.iov_base = local_buffer;
+    iov.iov_len = length;
+
+    struct fi_rma_iov rma_iov{};
+
+    rma_iov.addr = remote_addr;
+    rma_iov.len = length;
+    rma_iov.key = remote_key;
     struct fi_msg_rma msg = {};
     msg.msg_iov = &iov;
     msg.desc = &local_desc;
