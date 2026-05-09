@@ -1888,15 +1888,17 @@ xferBenchNixlWorker::prepareGPURemoteView(
         nixl_remote_dlist_t remote_list(VRAM_SEG);
         for (const auto &remote_iov_list : remote_iov_lists) {
             for (const auto &iov : remote_iov_list) {
-                const nixlRemoteDesc remoteDesc{iov.addr, iov.len, static_cast<uint64_t>(iov.devId), remote_agent_name};
+                const nixlRemoteDesc remoteDesc{
+                    iov.addr, iov.len, static_cast<uint64_t>(iov.devId), remote_agent_name};
                 remote_list.addDesc(remoteDesc);
             }
         }
         if (completion_counter_iov.has_value()) {
-            const nixlRemoteDesc remoteDesc{completion_counter_iov.value().addr,
-                                            completion_counter_iov.value().len,
-                                            static_cast<uint64_t>(completion_counter_iov.value().devId),
-                                            remote_agent_name};
+            const nixlRemoteDesc remoteDesc{
+                completion_counter_iov.value().addr,
+                completion_counter_iov.value().len,
+                static_cast<uint64_t>(completion_counter_iov.value().devId),
+                remote_agent_name};
             remote_list.addDesc(remoteDesc);
         }
         CHECK_NIXL_ERROR(agent->prepMemView(remote_list, remote_mvh),
