@@ -1873,7 +1873,7 @@ xferBenchNixlWorker::prepareGPULocalView(
     nixl_xfer_dlist_t local_list(VRAM_SEG);
     for (const auto &local_iov_list : local_iov_lists) {
         for (const auto &iov : local_iov_list) {
-            const nixlBasicDesc localDesc{iov.addr, iov.len, iov.devId};
+            const nixlBasicDesc localDesc{iov.addr, iov.len, static_cast<uint64_t>(iov.devId)};
             local_list.addDesc(localDesc);
         }
     }
@@ -1888,14 +1888,14 @@ xferBenchNixlWorker::prepareGPURemoteView(
         nixl_remote_dlist_t remote_list(VRAM_SEG);
         for (const auto &remote_iov_list : remote_iov_lists) {
             for (const auto &iov : remote_iov_list) {
-                const nixlRemoteDesc remoteDesc{iov.addr, iov.len, iov.devId, remote_agent_name};
+                const nixlRemoteDesc remoteDesc{iov.addr, iov.len, static_cast<uint64_t>(iov.devId), remote_agent_name};
                 remote_list.addDesc(remoteDesc);
             }
         }
         if (completion_counter_iov.has_value()) {
             const nixlRemoteDesc remoteDesc{completion_counter_iov.value().addr,
                                             completion_counter_iov.value().len,
-                                            completion_counter_iov.value().devId,
+                                            static_cast<uint64_t>(completion_counter_iov.value().devId),
                                             remote_agent_name};
             remote_list.addDesc(remoteDesc);
         }
