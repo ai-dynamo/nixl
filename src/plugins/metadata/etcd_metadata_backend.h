@@ -24,8 +24,8 @@
  *   - LEGACY_AGENT_NAME_KEYS: `{ns}/{name}/{label}` for agent-name-key
  *                              compatibility
  */
-#ifndef NIXL_SRC_CORE_BACKENDS_ETCD_METADATA_BACKEND_H
-#define NIXL_SRC_CORE_BACKENDS_ETCD_METADATA_BACKEND_H
+#ifndef NIXL_SRC_PLUGINS_METADATA_ETCD_METADATA_BACKEND_H
+#define NIXL_SRC_PLUGINS_METADATA_ETCD_METADATA_BACKEND_H
 
 #include <chrono>
 #include <memory>
@@ -33,7 +33,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "backend/nixl_metadata_backend.h"
+#include "metadata/metadata_backend.h"
 #include "nixl_md.h"
 #include "nixl_types.h"
 
@@ -143,4 +143,4 @@ private:
 
 #endif // HAVE_ETCD
 
-#endif // NIXL_SRC_CORE_BACKENDS_ETCD_METADATA_BACKEND_H
+#endif // NIXL_SRC_PLUGINS_METADATA_ETCD_METADATA_BACKEND_H

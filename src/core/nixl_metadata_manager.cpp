@@ -22,10 +22,10 @@
 #include <utility>
 
 #include "agent_data.h"
-#include "backends/etcd_metadata_backend.h"
-#include "backends/p2p_metadata_backend.h"
 #include "common/nixl_log.h"
 #include "common/nixl_time.h"
+#include "metadata/etcd_metadata_backend.h"
+#include "metadata/p2p_metadata_backend.h"
 #include "nixl.h"
 
 const std::string default_metadata_label = "metadata";

@@ -15,15 +15,15 @@
  * limitations under the License.
  */
 /**
- * @file nixl_metadata_backend.h
+ * @file metadata_backend.h
  * @brief Southbound contract for metadata transports used by nixlMetadataManager.
  *
  * The interface is intentionally key/value-shaped. ETCD fits naturally, and
  * the P2P backend models destinations as keys after the manager resolves agent
  * names to peer addresses.
  */
-#ifndef NIXL_SRC_API_CPP_BACKEND_NIXL_METADATA_BACKEND_H
-#define NIXL_SRC_API_CPP_BACKEND_NIXL_METADATA_BACKEND_H
+#ifndef NIXL_SRC_API_CPP_METADATA_METADATA_BACKEND_H
+#define NIXL_SRC_API_CPP_METADATA_METADATA_BACKEND_H
 
 #include "nixl_md.h"
 #include "nixl_types.h"
@@ -104,4 +104,4 @@ public:
                std::vector<nixl_status_t> &per_key_status) = 0;
 };
 
-#endif // NIXL_SRC_API_CPP_BACKEND_NIXL_METADATA_BACKEND_H
+#endif // NIXL_SRC_API_CPP_METADATA_METADATA_BACKEND_H

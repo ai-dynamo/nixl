@@ -59,19 +59,19 @@ nixl_lib_sources = [
     'nixl_plugin_manager.cpp',
     'nixl_listener.cpp',
     'nixl_metadata_manager.cpp',
-    'backends/p2p_metadata_backend.cpp',
+    '../plugins/metadata/p2p_metadata_backend.cpp',
     'telemetry/telemetry.cpp',
     'telemetry/buffer_exporter.cpp',
     'telemetry/buffer_plugin.cpp',
 ]
 
 if etcd_dep.found()
-    nixl_lib_sources += ['backends/etcd_metadata_backend.cpp']
+    nixl_lib_sources += ['../plugins/metadata/etcd_metadata_backend.cpp']
 endif
 
 nixl_lib = library('nixl',
                    nixl_lib_sources,
-                   include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
+                   include_directories: [ nixl_inc_dirs, utils_inc_dirs, plugins_inc_dirs ],
                    link_args: ['-lstdc++fs'],
                    dependencies: nixl_lib_deps,
                    install: true,

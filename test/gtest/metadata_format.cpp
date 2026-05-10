@@ -28,7 +28,7 @@
 #include "serdes/serdes.h"
 
 #if HAVE_ETCD
-#include "backends/etcd_metadata_backend.h"
+#include "metadata/etcd_metadata_backend.h"
 #endif
 
 namespace gtest {

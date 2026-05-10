@@ -18,8 +18,8 @@
  * @file p2p_metadata_backend.h
  * @brief Direct (TCP socket) metadata backend.
  */
-#ifndef NIXL_SRC_CORE_BACKENDS_P2P_METADATA_BACKEND_H
-#define NIXL_SRC_CORE_BACKENDS_P2P_METADATA_BACKEND_H
+#ifndef NIXL_SRC_PLUGINS_METADATA_P2P_METADATA_BACKEND_H
+#define NIXL_SRC_PLUGINS_METADATA_P2P_METADATA_BACKEND_H
 
 #include <map>
 #include <memory>
@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-#include "backend/nixl_metadata_backend.h"
+#include "metadata/metadata_backend.h"
 #include "nixl_types.h"
 #include "stream/metadata_stream.h"
 
@@ -137,4 +137,4 @@ private:
     nixl::md::socket_map_t sockets_;
 };
 
-#endif // NIXL_SRC_CORE_BACKENDS_P2P_METADATA_BACKEND_H
+#endif // NIXL_SRC_PLUGINS_METADATA_P2P_METADATA_BACKEND_H
