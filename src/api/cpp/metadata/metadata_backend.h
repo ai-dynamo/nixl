@@ -16,7 +16,8 @@
  */
 /**
  * @file metadata_backend.h
- * @brief Southbound contract for metadata transports used by nixlMetadataManager.
+ * @brief Southbound contract for metadata transports used by
+ *        nixl::metadata::nixlMetadataManager.
  *
  * The interface is intentionally key/value-shaped. ETCD fits naturally, and
  * the P2P backend models destinations as keys after the manager resolves agent
@@ -28,10 +29,13 @@
 #include "nixl_md.h"
 #include "nixl_types.h"
 
+#include <cstddef>
 #include <functional>
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace nixl::metadata {
 
 /**
  * @brief Watch callback signature.
@@ -46,10 +50,10 @@ using nixl_md_watch_cb_t =
  * @class nixlMetadataBackend
  * @brief Abstract metadata transport.
  *
- * Lifetime: created and owned by `nixlMetadataManager`. All methods may be
- * called from the manager tick thread; implementations must be safe under that
- * single-threaded caller plus any backend-internal threads they own (watchers,
- * keep-alive threads).
+ * Lifetime: created and owned by `nixl::metadata::nixlMetadataManager`. All
+ * methods may be called from the manager tick thread; implementations must be
+ * safe under that single-threaded caller plus any backend-internal threads they
+ * own (watchers, keep-alive threads).
  */
 class nixlMetadataBackend {
 public:
@@ -86,22 +90,30 @@ public:
     watch(const std::string &prefix, nixl_md_watch_cb_t cb) = 0;
 
     /**
-     * @brief Liveness check for the backend itself (transport reachable, etc.).
-     */
-    [[nodiscard]] virtual bool
-    isHealthy() const noexcept = 0;
-
-    /**
      * @brief Bulk fetch.
      *
-     * @p out has the same size as @p keys; entries for missing keys are left
-     * as the provided default (empty string) and the per-key status is
-     * returned in @p per_key_status (also same size as @p keys).
+     * @p out and @p per_key_status have the same size as @p keys. Each
+     * @p per_key_status entry is the authoritative result for the
+     * corresponding key; entries for unsuccessful keys are left as the
+     * provided default (empty string).
      */
-    [[nodiscard]] virtual nixl_status_t
+    virtual void
     fetchBatch(const std::vector<std::string> &keys,
                std::vector<nixl_blob_t> &out,
-               std::vector<nixl_status_t> &per_key_status) = 0;
+               std::vector<nixl_status_t> &per_key_status) {
+        out.assign(keys.size(), nixl_blob_t{});
+        per_key_status.resize(keys.size());
+        for (std::size_t i = 0; i < keys.size(); ++i) {
+            nixl_blob_t value;
+            const nixl_status_t status = fetch(keys[i], value);
+            per_key_status[i] = status;
+            if (status == NIXL_SUCCESS) {
+                out[i] = std::move(value);
+            }
+        }
+    }
 };
+
+} // namespace nixl::metadata
 
 #endif // NIXL_SRC_API_CPP_METADATA_METADATA_BACKEND_H

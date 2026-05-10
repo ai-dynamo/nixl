@@ -26,6 +26,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <exception>
 #include <memory>
 #include <mutex>
@@ -39,48 +40,50 @@
 
 class nixlAgent;
 class nixlAgentData;
-class nixlMetadataBackend;
-class nixlP2PMetadataBackend;
-#if HAVE_ETCD
-class nixlEtcdMetadataBackend;
-#endif
 
-namespace nixl::md {
+namespace nixl::metadata {
+class nixlMetadataStrategy;
 
 /**
- * @brief Internal manager request types.
+ * @brief Metadata operation requested by the agent.
  */
-enum class request_kind {
-    p2p_send,
-    p2p_fetch,
-    p2p_inval,
-    etcd_send,
-    etcd_fetch,
-    etcd_inval,
+enum class request_op {
+    send,
+    fetch,
+    invalidate,
+};
+
+/**
+ * @brief Manager strategy selected by the agent-facing legacy API.
+ */
+enum class request_backend {
+    p2p,
+    etcd,
+};
+
+/**
+ * @brief Backend-specific routing data for a manager request.
+ */
+struct request_target {
+    request_backend backend{};
+    std::string peer_ip;
+    std::uint16_t peer_port = 0;
+    std::string remote_agent;
+    std::string metadata_label;
 };
 
 /**
  * @brief Single unit of work the agent posts to the manager.
- *
- * The fields are deliberately overloaded across kinds so current single-peer
- * requests and ETCD requests can share one queue:
- *   - p2p_*:     `str1`=ip, `port`=port, `blob`=metadata (send only)
- *   - etcd_send:  `str1`=metadata_label, `blob`=metadata
- *   - etcd_fetch: `str1`=metadata_label, `blob`=remote_agent_name
- *   - etcd_inval: all empty
  */
 struct request {
-    request_kind kind{};
-    std::string str1;
-    int port = 0;
+    request_op op{};
+    request_target target;
     nixl_blob_t blob;
 };
 
-} // namespace nixl::md
-
 /**
  * @class nixlMetadataManager
- * @brief Owns the metadata worker thread and the backend instances.
+ * @brief Owns the metadata worker thread and manager strategy instances.
  *
  * Lifecycle:
  *   1. `nixlAgentData` constructs a manager during agent construction.
@@ -109,7 +112,7 @@ public:
 
     /** @brief Post a unit of work for the worker thread. */
     void
-    enqueue(nixl::md::request req);
+    enqueue(request req);
 
     /** @brief Record the UUID observed for an Agent name. */
     void
@@ -117,7 +120,7 @@ public:
 
 private:
     void
-    drainInto(std::vector<nixl::md::request> &out);
+    drainInto(std::vector<request> &out);
 
     void
     runLoop(nixlAgent &agent);
@@ -132,7 +135,7 @@ private:
 
     // Manager-internal command queue.
     mutable std::mutex queue_lock_;
-    std::vector<nixl::md::request> queue_;
+    std::vector<request> queue_;
 
     std::atomic<bool> stop_{false};
     std::atomic<bool> shutdown_{false};
@@ -140,14 +143,10 @@ private:
     std::thread worker_;
     std::exception_ptr worker_exception_;
 
-    // Backends owned by the manager. P2P is created when the agent has a
+    // Strategies owned by the manager. P2P is created when the agent has a
     // listen thread (used as both publisher and acceptor); ETCD is created
     // when `NIXL_ETCD_ENDPOINTS` is set.
-    std::vector<std::unique_ptr<nixlMetadataBackend>> backends_;
-    nixlP2PMetadataBackend *p2p_ = nullptr;
-#if HAVE_ETCD
-    nixlEtcdMetadataBackend *etcd_ = nullptr;
-#endif
+    std::vector<std::unique_ptr<nixlMetadataStrategy>> strategies_;
 
     // Manager-owned state used by list operations and watch deliveries.
     mutable std::mutex cache_lock_;
@@ -162,5 +161,7 @@ private:
 
     std::unordered_map<std::string, in_flight_op> in_flight_;
 };
+
+} // namespace nixl::metadata
 
 #endif // NIXL_SRC_CORE_NIXL_METADATA_MANAGER_H

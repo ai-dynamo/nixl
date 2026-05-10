@@ -18,9 +18,12 @@
 
 #if HAVE_ETCD
 
+#include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <future>
 #include <sstream>
+#include <unordered_map>
 #include <utility>
 
 #include <etcd/SyncClient.hpp>
@@ -57,7 +60,17 @@ cancelWatcher(const std::unique_ptr<etcd::Watcher> &watcher) noexcept {
     }
 }
 
+std::string
+rangeEndForInclusiveKey(const std::string &key) {
+    // etcd ranges are half-open; appending NUL includes the exact max key.
+    std::string range_end = key;
+    range_end.push_back('\0');
+    return range_end;
+}
+
 } // namespace
+
+namespace nixl::metadata {
 
 struct nixlEtcdMetadataBackend::GenericWatcherState {
     explicit GenericWatcherState(nixl_md_watch_cb_t callback)
@@ -82,13 +95,7 @@ nixlEtcdMetadataBackend::nixlEtcdMetadataBackend(std::string my_agent_name,
       invalidation_state_(std::make_shared<InvalidationWatcherState>()) {
     const auto endpoints = nixl::config::getNonEmptyString("NIXL_ETCD_ENDPOINTS");
 
-    try {
-        etcd_ = std::make_unique<etcd::SyncClient>(endpoints);
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Error creating etcd client: " << e.what();
-        return;
-    }
+    etcd_ = std::make_unique<etcd::SyncClient>(endpoints);
 
     NIXL_DEBUG << "Created etcd client to endpoints: " << endpoints;
     NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix_;
@@ -100,7 +107,6 @@ nixlEtcdMetadataBackend::nixlEtcdMetadataBackend(std::string my_agent_name,
                                  " prefix key in etcd: " + response.error_message());
     }
 
-    healthy_ = true;
 }
 
 nixlEtcdMetadataBackend::~nixlEtcdMetadataBackend() {
@@ -128,13 +134,9 @@ nixlEtcdMetadataBackend::shutdownWatchers() noexcept {
     generic_watcher_states_.clear();
 }
 
-bool
-nixlEtcdMetadataBackend::isHealthy() const noexcept {
-    return healthy_;
-}
-
 nixl_status_t
-nixlEtcdMetadataBackend::watch(const std::string &prefix, nixl_md_watch_cb_t cb) {
+nixlEtcdMetadataBackend::watch(const std::string &prefix,
+                               nixl_md_watch_cb_t cb) {
     if (!etcd_) {
         NIXL_ERROR << "ETCD client not available";
         return NIXL_ERR_NOT_SUPPORTED;
@@ -174,21 +176,64 @@ nixlEtcdMetadataBackend::watch(const std::string &prefix, nixl_md_watch_cb_t cb)
     }
 }
 
-nixl_status_t
+void
 nixlEtcdMetadataBackend::fetchBatch(const std::vector<std::string> &keys,
                                     std::vector<nixl_blob_t> &out,
                                     std::vector<nixl_status_t> &per_key_status) {
     out.assign(keys.size(), nixl_blob_t{});
-    per_key_status.assign(keys.size(), NIXL_SUCCESS);
-    nixl_status_t worst = NIXL_SUCCESS;
-    for (size_t i = 0; i < keys.size(); ++i) {
-        const nixl_status_t s = fetch(keys[i], out[i]);
-        per_key_status[i] = s;
-        if (s != NIXL_SUCCESS && s != NIXL_ERR_NOT_FOUND) {
-            worst = s;
+    per_key_status.assign(keys.size(), NIXL_ERR_NOT_FOUND);
+
+    if (!etcd_) {
+        NIXL_ERROR << "ETCD client not available";
+        std::fill(per_key_status.begin(), per_key_status.end(), NIXL_ERR_NOT_SUPPORTED);
+        return;
+    }
+    if (keys.empty()) {
+        return;
+    }
+    if (keys.size() == 1) {
+        per_key_status[0] = fetch(keys[0], out[0]);
+        return;
+    }
+
+    std::vector<std::string> sorted_keys = keys;
+    std::sort(sorted_keys.begin(), sorted_keys.end());
+    sorted_keys.erase(std::unique(sorted_keys.begin(), sorted_keys.end()), sorted_keys.end());
+
+    std::unordered_map<std::string, std::vector<std::size_t>> requested;
+    requested.reserve(keys.size());
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        requested[keys[i]].push_back(i);
+    }
+
+    try {
+        etcd::Response response =
+            etcd_->ls(sorted_keys.front(), rangeEndForInclusiveKey(sorted_keys.back()));
+        if (!response.is_ok()) {
+            if (isEtcdKeyNotFound(response)) {
+                return;
+            }
+            NIXL_ERROR << "Failed to batch fetch " << keys.size()
+                       << " keys from etcd: " << response.error_message();
+            std::fill(per_key_status.begin(), per_key_status.end(), NIXL_ERR_BACKEND);
+            return;
+        }
+
+        for (const auto &value : response.values()) {
+            auto it = requested.find(value.key());
+            if (it == requested.end()) {
+                continue;
+            }
+            for (const std::size_t index : it->second) {
+                out[index] = value.as_string();
+                per_key_status[index] = NIXL_SUCCESS;
+            }
         }
     }
-    return worst;
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Error batch fetching " << keys.size() << " keys from etcd: " << e.what();
+        std::fill(per_key_status.begin(), per_key_status.end(), NIXL_ERR_UNKNOWN);
+    }
 }
 
 std::string
@@ -446,5 +491,7 @@ nixlEtcdMetadataBackend::processInvalidatedAgents(nixlAgent &agent) {
         }
     }
 }
+
+} // namespace nixl::metadata
 
 #endif // HAVE_ETCD

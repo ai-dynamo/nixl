@@ -170,10 +170,10 @@ namespace metadata_format {
             GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS not set; skipping ETCD key-shape test";
         }
 
-        std::unique_ptr<nixlEtcdMetadataBackend> backend;
+        std::unique_ptr<nixl::metadata::nixlEtcdMetadataBackend> backend;
         try {
-            backend = std::make_unique<nixlEtcdMetadataBackend>("agent_x",
-                                                                std::chrono::microseconds(100000));
+            backend = std::make_unique<nixl::metadata::nixlEtcdMetadataBackend>(
+                "agent_x", std::chrono::microseconds(100000));
         }
         catch (const std::exception &e) {
             GTEST_SKIP() << "ETCD backend construction failed: " << e.what();

@@ -20,6 +20,7 @@
 #include <iomanip>
 #include <random>
 #include <sstream>
+#include <utility>
 
 namespace nixl {
 
@@ -81,7 +82,7 @@ UUIDv7::toString() const {
         }
         oss << std::setw(2) << static_cast<int>(data_[i]);
     }
-    return oss.str();
+    return std::move(oss).str();
 }
 
 } // namespace nixl

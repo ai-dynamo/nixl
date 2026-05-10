@@ -37,6 +37,8 @@
 
 namespace {
 
+namespace metadata = nixl::metadata;
+
 const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
 };
@@ -101,6 +103,14 @@ nixlDlistH::nixlDlistH(const std::string &remote_agent, descs_t &&descs)
 
 namespace {
 
+[[nodiscard]] const std::string &
+requireNonEmptyAgentName(const std::string &name) {
+    if (name.empty()) {
+        throw std::invalid_argument("Agent needs a non-empty name");
+    }
+    return name;
+}
+
 [[nodiscard]] bool
 detectEtcd() {
 #if HAVE_ETCD
@@ -123,24 +133,29 @@ effectiveSyncMode(nixl_thread_sync_t requested, bool needs_comm_thread) {
     return requested;
 }
 
+[[nodiscard]] std::unique_ptr<nixl::metadata::nixlMetadataManager>
+makeMetadataManager(nixlAgentData &agent_data, bool needed) {
+    if (!needed) {
+        return nullptr;
+    }
+    return std::make_unique<nixl::metadata::nixlMetadataManager>(agent_data);
+}
+
 } // namespace
 
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
-    : name_(name),
+    : name_(requireNonEmptyAgentName(name)),
       agent_uuid_(nixl::UUIDv7().toString()),
       config_(config),
       useEtcd_(detectEtcd()),
       needsCommThread_(useEtcd_ || config.useListenThread),
-      lock(effectiveSyncMode(config.syncMode, needsCommThread_)) {
+      lock(effectiveSyncMode(config.syncMode, needsCommThread_)),
+      metadataManager_(makeMetadataManager(*this, needsCommThread_)) {
 #if HAVE_ETCD
     NIXL_DEBUG << "NIXL ETCD is " << (useEtcd_ ? "enabled" : "disabled");
 #else
     NIXL_DEBUG << "NIXL ETCD is excluded";
 #endif
-    if (name.empty()) {
-        throw std::invalid_argument("Agent needs a non-empty name");
-    }
-
     const auto telemetry_enabled = nixl::config::getValueOptional<bool>("NIXL_TELEMETRY_ENABLE");
 
     if (telemetry_enabled) {
@@ -159,12 +174,6 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
         NIXL_DEBUG << "Capturing NIXL telemetry based on config (without an output file)";
     }
 
-    if (needsCommThread_) {
-        // Manager construction sets up the P2P listener (throwing on
-        // bind/listen failure) and the ETCD client. The worker thread is
-        // started later from `nixlAgent::nixlAgent` once `*this` exists.
-        mdMgr_ = std::make_unique<nixlMetadataManager>(*this);
-    }
 }
 
 nixlAgentData::~nixlAgentData() = default;
@@ -172,15 +181,14 @@ nixlAgentData::~nixlAgentData() = default;
 /*** nixlAgent implementation ***/
 nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
     : data(std::make_unique<nixlAgentData>(name, cfg)) {
-    if (data->mdMgr_) {
-        data->mdMgr_->start(*this);
+    if (data->metadataManager_) {
+        data->metadataManager_->start(*this);
     }
 }
 
 nixlAgent::~nixlAgent() {
-    if (data->mdMgr_) {
-        data->mdMgr_->stop();
-        data->mdMgr_.reset();
+    if (data->metadataManager_) {
+        data->metadataManager_->stop();
     }
 }
 
@@ -1571,8 +1579,8 @@ nixlAgent::loadRemoteMD(const nixl_blob_t &remote_metadata, std::string &agent_n
             NIXL_ERROR_FUNC << "remote agent identity mismatch";
             return NIXL_ERR_MISMATCH;
         }
-        if (data->mdMgr_) {
-            data->mdMgr_->recordPeerUuid(remote_agent, remote_uuid);
+        if (data->metadataManager_) {
+            data->metadataManager_->recordPeerUuid(remote_agent, remote_uuid);
         }
     }
 
@@ -1623,25 +1631,31 @@ nixlAgent::sendLocalMD(const nixl_opt_args_t *extra_params) const {
     }
 
     if (extra_params && !extra_params->ipAddr.empty()) {
-        if (!data->mdMgr_) {
+        if (!data->metadataManager_) {
             NIXL_ERROR_FUNC << "manager is not configured for P2P send";
             return NIXL_ERR_INVALID_PARAM;
         }
-        data->mdMgr_->enqueue({nixl::md::request_kind::p2p_send,
-                               extra_params->ipAddr,
-                               extra_params->port,
-                               std::move(myMD)});
+        data->metadataManager_->enqueue({metadata::request_op::send,
+                                          {metadata::request_backend::p2p,
+                                           extra_params->ipAddr,
+                                           extra_params->port},
+                                          std::move(myMD)});
         return NIXL_SUCCESS;
     }
 
 #if HAVE_ETCD
     if (data->useEtcd_) {
-        if (!data->mdMgr_) {
+        if (!data->metadataManager_) {
             NIXL_ERROR_FUNC << "manager is not configured for ETCD send";
             return NIXL_ERR_INVALID_PARAM;
         }
-        data->mdMgr_->enqueue(
-            {nixl::md::request_kind::etcd_send, default_metadata_label, 0, std::move(myMD)});
+        data->metadataManager_->enqueue({metadata::request_op::send,
+                                          {metadata::request_backend::etcd,
+                                           "",
+                                           0,
+                                           "",
+                                           default_metadata_label},
+                                          std::move(myMD)});
         return NIXL_SUCCESS;
     }
     NIXL_ERROR_FUNC << "invalid parameters to be used for either socket or ETCD";
@@ -1664,20 +1678,21 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
     }
 
     if (extra_params && !extra_params->ipAddr.empty()) {
-        if (!data->mdMgr_) {
+        if (!data->metadataManager_) {
             NIXL_ERROR_FUNC << "manager is not configured for P2P send";
             return NIXL_ERR_INVALID_PARAM;
         }
-        data->mdMgr_->enqueue({nixl::md::request_kind::p2p_send,
-                               extra_params->ipAddr,
-                               extra_params->port,
-                               std::move(myMD)});
+        data->metadataManager_->enqueue({metadata::request_op::send,
+                                          {metadata::request_backend::p2p,
+                                           extra_params->ipAddr,
+                                           extra_params->port},
+                                          std::move(myMD)});
         return NIXL_SUCCESS;
     }
 
 #if HAVE_ETCD
     if (data->useEtcd_) {
-        if (!data->mdMgr_) {
+        if (!data->metadataManager_) {
             NIXL_ERROR_FUNC << "manager is not configured for ETCD send";
             return NIXL_ERR_INVALID_PARAM;
         }
@@ -1685,8 +1700,13 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
             NIXL_ERROR_FUNC << "metadata label is required for etcd send of local partial metadata";
             return NIXL_ERR_INVALID_PARAM;
         }
-        data->mdMgr_->enqueue(
-            {nixl::md::request_kind::etcd_send, extra_params->metadataLabel, 0, std::move(myMD)});
+        data->metadataManager_->enqueue({metadata::request_op::send,
+                                          {metadata::request_backend::etcd,
+                                           "",
+                                           0,
+                                           "",
+                                           extra_params->metadataLabel},
+                                          std::move(myMD)});
         return NIXL_SUCCESS;
     }
     NIXL_ERROR_FUNC << "invalid parameters to be used for either socket or ETCD";
@@ -1700,28 +1720,34 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlAgent::fetchRemoteMD(const std::string remote_name, const nixl_opt_args_t *extra_params) {
     if (extra_params && !extra_params->ipAddr.empty()) {
-        if (!data->mdMgr_) {
+        if (!data->metadataManager_) {
             NIXL_ERROR_FUNC << "manager is not configured for P2P fetch";
             return NIXL_ERR_INVALID_PARAM;
         }
-        data->mdMgr_->enqueue({nixl::md::request_kind::p2p_fetch,
-                               extra_params->ipAddr,
-                               extra_params->port,
-                               nixl_blob_t{}});
+        data->metadataManager_->enqueue({metadata::request_op::fetch,
+                                          {metadata::request_backend::p2p,
+                                           extra_params->ipAddr,
+                                           extra_params->port},
+                                          nixl_blob_t{}});
         return NIXL_SUCCESS;
     }
 
 #if HAVE_ETCD
     if (data->useEtcd_) {
-        if (!data->mdMgr_) {
+        if (!data->metadataManager_) {
             NIXL_ERROR_FUNC << "manager is not configured for ETCD fetch";
             return NIXL_ERR_INVALID_PARAM;
         }
         std::string metadata_label = extra_params && !extra_params->metadataLabel.empty() ?
             extra_params->metadataLabel :
             default_metadata_label;
-        data->mdMgr_->enqueue(
-            {nixl::md::request_kind::etcd_fetch, std::move(metadata_label), 0, remote_name});
+        data->metadataManager_->enqueue({metadata::request_op::fetch,
+                                          {metadata::request_backend::etcd,
+                                           "",
+                                           0,
+                                           remote_name,
+                                           std::move(metadata_label)},
+                                          nixl_blob_t{}});
         return NIXL_SUCCESS;
     }
     NIXL_ERROR_FUNC << "invalid parameters to be used for either socket or ETCD";
@@ -1735,24 +1761,27 @@ nixlAgent::fetchRemoteMD(const std::string remote_name, const nixl_opt_args_t *e
 nixl_status_t
 nixlAgent::invalidateLocalMD(const nixl_opt_args_t *extra_params) const {
     if (extra_params && !extra_params->ipAddr.empty()) {
-        if (!data->mdMgr_) {
+        if (!data->metadataManager_) {
             NIXL_ERROR_FUNC << "manager is not configured for P2P invalidation";
             return NIXL_ERR_INVALID_PARAM;
         }
-        data->mdMgr_->enqueue({nixl::md::request_kind::p2p_inval,
-                               extra_params->ipAddr,
-                               extra_params->port,
-                               nixl_blob_t{}});
+        data->metadataManager_->enqueue({metadata::request_op::invalidate,
+                                          {metadata::request_backend::p2p,
+                                           extra_params->ipAddr,
+                                           extra_params->port},
+                                          nixl_blob_t{}});
         return NIXL_SUCCESS;
     }
 
 #if HAVE_ETCD
     if (data->useEtcd_) {
-        if (!data->mdMgr_) {
+        if (!data->metadataManager_) {
             NIXL_ERROR_FUNC << "manager is not configured for ETCD invalidation";
             return NIXL_ERR_INVALID_PARAM;
         }
-        data->mdMgr_->enqueue({nixl::md::request_kind::etcd_inval, "", 0, nixl_blob_t{}});
+        data->metadataManager_->enqueue({metadata::request_op::invalidate,
+                                          {metadata::request_backend::etcd},
+                                          nixl_blob_t{}});
         return NIXL_SUCCESS;
     }
     NIXL_ERROR_FUNC << "invalid parameters to be used for either socket or ETCD";

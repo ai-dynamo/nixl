@@ -21,6 +21,7 @@
 #ifndef NIXL_SRC_PLUGINS_METADATA_P2P_METADATA_BACKEND_H
 #define NIXL_SRC_PLUGINS_METADATA_P2P_METADATA_BACKEND_H
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
@@ -33,12 +34,34 @@
 
 class nixlAgent;
 
-namespace nixl::md {
+namespace nixl::metadata {
 
-using socket_peer_t = std::pair<std::string, int>;
-using socket_map_t = std::map<socket_peer_t, int>;
+class socket_fd {
+public:
+    socket_fd() noexcept = default;
+    explicit socket_fd(int fd) noexcept;
+    ~socket_fd();
 
-} // namespace nixl::md
+    socket_fd(socket_fd &&other) noexcept;
+    socket_fd &
+    operator=(socket_fd &&other) noexcept;
+
+    socket_fd(const socket_fd &) = delete;
+    socket_fd &
+    operator=(const socket_fd &) = delete;
+
+    [[nodiscard]] int
+    get() const noexcept;
+
+    [[nodiscard]] explicit
+    operator bool() const noexcept;
+
+private:
+    int fd_ = -1;
+};
+
+using socket_peer_t = std::pair<std::string, std::uint16_t>;
+using socket_map_t = std::map<socket_peer_t, socket_fd>;
 
 /**
  * @class nixlP2PMetadataBackend
@@ -54,7 +77,7 @@ public:
      * @param listen_port  Port to listen on; passing 0 selects
      *                     `default_comm_port`.
      */
-    nixlP2PMetadataBackend(int listen_port, std::string my_agent_name);
+    nixlP2PMetadataBackend(std::uint16_t listen_port, std::string my_agent_name);
     ~nixlP2PMetadataBackend() override;
 
     nixlP2PMetadataBackend(nixlP2PMetadataBackend &&) = delete;
@@ -84,27 +107,21 @@ public:
     [[nodiscard]] nixl_status_t
     watch(const std::string &prefix, nixl_md_watch_cb_t cb) override;
 
-    [[nodiscard]] bool
-    isHealthy() const noexcept override;
-
-    [[nodiscard]] nixl_status_t
-    fetchBatch(const std::vector<std::string> &keys,
-               std::vector<nixl_blob_t> &out,
-               std::vector<nixl_status_t> &per_key_status) override;
-
     /*** Single-peer request helpers (called from the manager tick) ***/
 
     /** @brief Send my metadata blob to (ip, port) as NIXLCOMM:LOAD. */
     [[nodiscard]] nixl_status_t
-    sendToPeer(const std::string &ip, int port, const nixl_blob_t &blob);
+    sendToPeer(const std::string &ip, std::uint16_t port, const nixl_blob_t &blob);
 
     /** @brief Ask peer at (ip, port) for its metadata via NIXLCOMM:SEND. */
     [[nodiscard]] nixl_status_t
-    requestMetadataFromPeer(const std::string &ip, int port);
+    requestMetadataFromPeer(const std::string &ip, std::uint16_t port);
 
     /** @brief Tell peer at (ip, port) to invalidate via NIXLCOMM:INVL. */
     [[nodiscard]] nixl_status_t
-    invalidatePeerMetadata(const std::string &ip, int port, const std::string &my_agent_name);
+    invalidatePeerMetadata(const std::string &ip,
+                           std::uint16_t port,
+                           const std::string &my_agent_name);
 
     /**
      * @brief Per-tick driver work: accept new connections, then drain
@@ -114,27 +131,25 @@ public:
     processOnce(nixlAgent &agent);
 
     /** @brief Move open sockets out of the backend (for owner-driven cleanup). */
-    nixl::md::socket_map_t
+    socket_map_t
     detachSockets();
-
-    /** @brief Set up the listener; throws on bind/listen failure. */
-    void
-    setupListener();
 
 private:
     [[nodiscard]] nixl_status_t
-    ensureSocket(const std::string &ip, int port);
+    ensureSocket(const std::string &ip, std::uint16_t port);
     [[nodiscard]] int
-    socketFor(const std::string &ip, int port) const;
+    socketFor(const std::string &ip, std::uint16_t port) const;
     void
-    forgetSocket(const std::string &ip, int port);
+    forgetSocket(const std::string &ip, std::uint16_t port);
     void
-    forgetSocket(nixl::md::socket_map_t::iterator it);
+    forgetSocket(socket_map_t::iterator it);
 
-    const int listen_port_;
+    const std::uint16_t listen_port_;
     const std::string my_agent_name_;
     std::unique_ptr<nixlMDStreamListener> listener_;
-    nixl::md::socket_map_t sockets_;
+    socket_map_t sockets_;
 };
+
+} // namespace nixl::metadata
 
 #endif // NIXL_SRC_PLUGINS_METADATA_P2P_METADATA_BACKEND_H

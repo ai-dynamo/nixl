@@ -27,7 +27,9 @@
 #define NIXL_ETCD_NAMESPACE_DEFAULT "/nixl/agents/"
 #endif // HAVE_ETCD
 
+namespace nixl::metadata {
 class nixlMetadataManager;
+} // namespace nixl::metadata
 
 using backend_list_t = std::vector<nixlBackendEngine *>;
 
@@ -69,7 +71,7 @@ class nixlAgentData {
         // and the P2P / ETCD backends. Declared LAST so its destructor runs
         // FIRST and joins the worker thread before the agent state above is
         // torn down. Created when `useEtcd_ || config.useListenThread`.
-        std::unique_ptr<nixlMetadataManager> mdMgr_;
+        const std::unique_ptr<nixl::metadata::nixlMetadataManager> metadataManager_;
 
         nixl_status_t
         loadConnInfo(const std::string &remote_name,

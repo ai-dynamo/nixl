@@ -46,6 +46,8 @@ class Watcher;
 
 class nixlAgent;
 
+namespace nixl::metadata {
+
 /**
  * @class nixlEtcdMetadataBackend
  * @brief ETCD implementation of the southbound metadata contract.
@@ -79,10 +81,7 @@ public:
     [[nodiscard]] nixl_status_t
     watch(const std::string &prefix, nixl_md_watch_cb_t cb) override;
 
-    [[nodiscard]] bool
-    isHealthy() const noexcept override;
-
-    [[nodiscard]] nixl_status_t
+    void
     fetchBatch(const std::vector<std::string> &keys,
                std::vector<nixl_blob_t> &out,
                std::vector<nixl_status_t> &per_key_status) override;
@@ -138,8 +137,9 @@ private:
     std::unique_ptr<etcd::SyncClient> etcd_;
     std::unordered_map<std::string, std::unique_ptr<etcd::Watcher>> agent_watchers_;
     std::vector<std::unique_ptr<etcd::Watcher>> generic_watchers_;
-    bool healthy_ = false;
 };
+
+} // namespace nixl::metadata
 
 #endif // HAVE_ETCD
 

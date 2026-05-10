@@ -33,6 +33,8 @@
 
 #include "nixl_types.h"
 
+namespace nixl::metadata {
+
 /**
  * @struct nixl_md_peer_addr_t
  * @brief Reachable address of a peer for P2P metadata exchange.
@@ -52,7 +54,7 @@ struct nixl_md_peer_addr_t {
  * - UUID_BACKED:            New shape `{ns}/agents/[{label}/]{src_uuid}/{dst|null_agent}`.
  * - LEGACY_AGENT_NAME_KEYS: Agent-name-key compatibility shape `{ns}/{name}/{label}`.
  */
-enum class nixl_md_identity_mode {
+enum class nixl_md_identity_mode : std::uint8_t {
     UUID_BACKED,
     LEGACY_AGENT_NAME_KEYS,
 };
@@ -61,7 +63,7 @@ enum class nixl_md_identity_mode {
  * @enum nixl_watch_event_t
  * @brief Events delivered by `nixlMetadataBackend::watch` callbacks.
  */
-enum class nixl_watch_event_t {
+enum class nixl_watch_event_t : std::uint8_t {
     PUT,
     DELETE,
 };
@@ -112,5 +114,7 @@ using nixl_on_new_metadata_available_cb_t =
 using nixl_on_replacement_cb_t = std::function<void(const std::string &remote_agent_name,
                                                     const std::string &old_remote_agent_uuid,
                                                     const std::string &new_remote_agent_uuid)>;
+
+} // namespace nixl::metadata
 
 #endif // NIXL_SRC_API_CPP_NIXL_MD_H

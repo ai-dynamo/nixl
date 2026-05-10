@@ -17,6 +17,7 @@
 #ifndef __METADATA_STREAM_H
 #define __METADATA_STREAM_H
 
+#include <cstdint>
 #include <cstring>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -33,7 +34,7 @@
 
 class nixlMetadataStream {
     protected:
-        int                 port;
+        std::uint16_t       port;
         int                 socketFd;
         std::string         listenerAddress;
         struct sockaddr_in  listenerAddr;
@@ -42,7 +43,7 @@ class nixlMetadataStream {
         void closeStream();
 
     public:
-        nixlMetadataStream(int port);
+        nixlMetadataStream(std::uint16_t port);
         ~nixlMetadataStream();
 };
 
@@ -56,7 +57,7 @@ class nixlMDStreamListener: public nixlMetadataStream {
         void            recvFromClients(int clientSocket);
 
     public:
-        nixlMDStreamListener(int port);
+        nixlMDStreamListener(std::uint16_t port);
         ~nixlMDStreamListener();
 
         int         acceptClient();
@@ -73,7 +74,7 @@ class nixlMDStreamClient: public nixlMetadataStream {
         bool setupClient();
 
     public:
-        nixlMDStreamClient(const std::string& listenerAddress, int port);
+        nixlMDStreamClient(const std::string& listenerAddress, std::uint16_t port);
         ~nixlMDStreamClient();
 
         bool connectListener();
