@@ -38,26 +38,7 @@ WHL_PYTHON_VERSIONS="3.12"
 UCX_REF=${UCX_REF:-v1.21.x}
 BUILD_NIXL_EP="true"
 OS="ubuntu24"
-# In containers, derive NPROC from the cgroup memory limit so make/ninja
-# don't spawn $(nproc) host CPUs and OOM-kill cc1plus on gRPC/protobuf.
-if [ -z "$NPROC" ]; then
-    if [ -f /.dockerenv ] || [ -f /run/.containerenv ] || [ -n "${KUBERNETES_SERVICE_HOST}" ]; then
-        if [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
-            mem_limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
-        elif [ -f /sys/fs/cgroup/memory.max ]; then
-            mem_limit=$(cat /sys/fs/cgroup/memory.max)
-            [ "$mem_limit" = "max" ] && mem_limit=$((4 * 1024 * 1024 * 1024))
-        else
-            mem_limit=$((4 * 1024 * 1024 * 1024))
-        fi
-        # 1 process per GB, capped at 16
-        NPROC=$((mem_limit / (1024 * 1024 * 1024)))
-        NPROC=$((NPROC > 16 ? 16 : NPROC))
-        NPROC=$((NPROC < 1 ? 1 : NPROC))
-    else
-        NPROC=$(nproc --all)
-    fi
-fi
+NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
 
