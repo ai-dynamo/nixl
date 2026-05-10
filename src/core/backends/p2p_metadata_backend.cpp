@@ -115,7 +115,14 @@ sendCommMessage(int fd, const std::string &msg) {
                           iov[i].iov_len - offset,
                           MSG_NOSIGNAL);
         if (bytes < 0) {
-            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                struct pollfd pfd{};
+                pfd.fd = fd;
+                pfd.events = POLLOUT;
+                (void)poll(&pfd, 1, kSocketRetryPollMs);
                 continue;
             }
             throw std::runtime_error(
@@ -221,8 +228,7 @@ nixlP2PMetadataBackend::publish(const std::string &key, const nixl_blob_t &value
         NIXL_ERROR << "P2P publish: malformed key (expected ip:port): " << key;
         return NIXL_ERR_INVALID_PARAM;
     }
-    sendToPeer(ip, port, value);
-    return NIXL_SUCCESS;
+    return sendToPeer(ip, port, value);
 }
 
 nixl_status_t
@@ -238,8 +244,7 @@ nixlP2PMetadataBackend::remove(const std::string &key) {
         NIXL_ERROR << "P2P remove: malformed key (expected ip:port): " << key;
         return NIXL_ERR_INVALID_PARAM;
     }
-    invalidatePeerMetadata(ip, port, my_agent_name_);
-    return NIXL_SUCCESS;
+    return invalidatePeerMetadata(ip, port, my_agent_name_);
 }
 
 bool
@@ -263,17 +268,18 @@ nixlP2PMetadataBackend::fetchBatch(const std::vector<std::string> &keys,
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
-void
+nixl_status_t
 nixlP2PMetadataBackend::ensureSocket(const std::string &ip, int port) {
     if (socketFor(ip, port) != -1) {
-        return;
+        return NIXL_SUCCESS;
     }
     const int fd = connectToIP(ip, port);
     if (fd == -1) {
         NIXL_ERROR << "Listener thread could not connect to IP " << ip << " and port " << port;
-        return;
+        return NIXL_ERR_BACKEND;
     }
     sockets_[{ip, port}] = fd;
+    return NIXL_SUCCESS;
 }
 
 int
@@ -303,56 +309,71 @@ nixlP2PMetadataBackend::forgetSocket(nixl::md::socket_map_t::iterator it) {
     sockets_.erase(it);
 }
 
-void
+nixl_status_t
 nixlP2PMetadataBackend::sendToPeer(const std::string &ip, int port, const nixl_blob_t &blob) {
-    ensureSocket(ip, port);
+    const nixl_status_t ret = ensureSocket(ip, port);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
     const int fd = socketFor(ip, port);
     if (fd == -1) {
-        return;
+        return NIXL_ERR_BACKEND;
     }
 
     try {
         sendCommMessage(fd, "NIXLCOMM:LOAD" + blob);
+        return NIXL_SUCCESS;
     }
     catch (const std::runtime_error &e) {
         NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
         forgetSocket(ip, port);
+        return NIXL_ERR_BACKEND;
     }
 }
 
-void
+nixl_status_t
 nixlP2PMetadataBackend::requestMetadataFromPeer(const std::string &ip, int port) {
-    ensureSocket(ip, port);
+    const nixl_status_t ret = ensureSocket(ip, port);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
     const int fd = socketFor(ip, port);
     if (fd == -1) {
-        return;
+        return NIXL_ERR_BACKEND;
     }
 
     try {
         sendCommMessage(fd, "NIXLCOMM:SEND");
+        return NIXL_SUCCESS;
     }
     catch (const std::runtime_error &e) {
         NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
         forgetSocket(ip, port);
+        return NIXL_ERR_BACKEND;
     }
 }
 
-void
+nixl_status_t
 nixlP2PMetadataBackend::invalidatePeerMetadata(const std::string &ip,
                                                int port,
                                                const std::string &my_agent_name) {
-    ensureSocket(ip, port);
+    const nixl_status_t ret = ensureSocket(ip, port);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
     const int fd = socketFor(ip, port);
     if (fd == -1) {
-        return;
+        return NIXL_ERR_BACKEND;
     }
 
     try {
         sendCommMessage(fd, "NIXLCOMM:INVL" + my_agent_name);
+        return NIXL_SUCCESS;
     }
     catch (const std::runtime_error &e) {
         NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
         forgetSocket(ip, port);
+        return NIXL_ERR_BACKEND;
     }
 }
 
@@ -369,8 +390,9 @@ nixlP2PMetadataBackend::processOnce(nixlAgent &agent) {
             sockaddr_in client_address{};
             socklen_t client_addrlen = sizeof(client_address);
             if (getpeername(new_fd, (sockaddr *)&client_address, &client_addrlen) != 0) {
+                NIXL_PERROR << "getpeername failed for accepted client";
                 close(new_fd);
-                throw std::runtime_error("getpeername failed");
+                continue;
             }
 
             char client_ip[INET_ADDRSTRLEN]{};
@@ -378,15 +400,17 @@ nixlP2PMetadataBackend::processOnce(nixlAgent &agent) {
                 nullptr) {
                 NIXL_PERROR << "inet_ntop failed for client address";
                 close(new_fd);
-                throw std::runtime_error("inet_ntop failed for client address");
+                continue;
+            }
+
+            const int cur_flags = fcntl(new_fd, F_GETFL, 0);
+            if (cur_flags == -1 || fcntl(new_fd, F_SETFL, cur_flags | O_NONBLOCK) == -1) {
+                NIXL_PERROR << "fcntl on accepted client failed";
+                close(new_fd);
+                continue;
             }
 
             sockets_[{std::string(client_ip), ntohs(client_address.sin_port)}] = new_fd;
-
-            const int new_flags = fcntl(new_fd, F_GETFL, 0) | O_NONBLOCK;
-            if (fcntl(new_fd, F_SETFL, new_flags) == -1) {
-                throw std::runtime_error("fcntl accept");
-            }
         }
     }
 

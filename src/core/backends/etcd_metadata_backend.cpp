@@ -18,6 +18,7 @@
 
 #if HAVE_ETCD
 
+#include <atomic>
 #include <future>
 #include <sstream>
 #include <utility>
@@ -39,14 +40,46 @@ isEtcdKeyNotFound(const etcd::Response &response) {
     return response.error_code() == kEtcdKeyNotFound;
 }
 
+void
+cancelWatcher(const std::unique_ptr<etcd::Watcher> &watcher) noexcept {
+    if (!watcher) {
+        return;
+    }
+
+    try {
+        watcher->Cancel();
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Error cancelling etcd watcher: " << e.what();
+    }
+    catch (...) {
+        NIXL_ERROR << "Unknown error cancelling etcd watcher";
+    }
+}
+
 } // namespace
+
+struct nixlEtcdMetadataBackend::GenericWatcherState {
+    explicit GenericWatcherState(nixl_md_watch_cb_t callback)
+        : cb(std::move(callback)) {}
+
+    std::atomic<bool> shutting_down{false};
+    nixl_md_watch_cb_t cb;
+};
+
+struct nixlEtcdMetadataBackend::InvalidationWatcherState {
+    std::atomic<bool> shutting_down{false};
+    std::mutex invalidated_mutex;
+    std::vector<std::string> invalidated_agents;
+};
 
 nixlEtcdMetadataBackend::nixlEtcdMetadataBackend(std::string my_agent_name,
                                                  std::chrono::microseconds watch_timeout)
     : my_agent_name_(std::move(my_agent_name)),
       namespace_prefix_(nixl::config::getValueDefaulted<std::string>("NIXL_ETCD_NAMESPACE",
                                                                      NIXL_ETCD_NAMESPACE_DEFAULT)),
-      watch_timeout_(watch_timeout) {
+      watch_timeout_(watch_timeout),
+      invalidation_state_(std::make_shared<InvalidationWatcherState>()) {
     const auto endpoints = nixl::config::getNonEmptyString("NIXL_ETCD_ENDPOINTS");
 
     try {
@@ -70,7 +103,30 @@ nixlEtcdMetadataBackend::nixlEtcdMetadataBackend(std::string my_agent_name,
     healthy_ = true;
 }
 
-nixlEtcdMetadataBackend::~nixlEtcdMetadataBackend() = default;
+nixlEtcdMetadataBackend::~nixlEtcdMetadataBackend() {
+    shutdownWatchers();
+}
+
+void
+nixlEtcdMetadataBackend::shutdownWatchers() noexcept {
+    if (invalidation_state_) {
+        invalidation_state_->shutting_down.store(true, std::memory_order_release);
+    }
+    for (const auto &state : generic_watcher_states_) {
+        state->shutting_down.store(true, std::memory_order_release);
+    }
+
+    for (const auto &agent_watcher : agent_watchers_) {
+        cancelWatcher(agent_watcher.second);
+    }
+    for (const auto &watcher : generic_watchers_) {
+        cancelWatcher(watcher);
+    }
+
+    agent_watchers_.clear();
+    generic_watchers_.clear();
+    generic_watcher_states_.clear();
+}
 
 bool
 nixlEtcdMetadataBackend::isHealthy() const noexcept {
@@ -85,21 +141,31 @@ nixlEtcdMetadataBackend::watch(const std::string &prefix, nixl_md_watch_cb_t cb)
     }
 
     try {
+        auto state = std::make_shared<GenericWatcherState>(std::move(cb));
+        std::weak_ptr<GenericWatcherState> weak_state = state;
         auto watcher = std::make_unique<etcd::Watcher>(
-            *etcd_, prefix, [cb = std::move(cb)](etcd::Response response) {
+            *etcd_, prefix, [weak_state](etcd::Response response) {
+                auto state = weak_state.lock();
+                if (!state || state->shutting_down.load(std::memory_order_acquire)) {
+                    return;
+                }
                 if (!response.is_ok()) {
                     NIXL_ERROR << "ETCD watch failed: " << response.error_message();
                     return;
                 }
                 for (const auto &event : response.events()) {
+                    if (state->shutting_down.load(std::memory_order_acquire)) {
+                        return;
+                    }
                     const nixl_watch_event_t event_type =
                         event.event_type() == etcd::Event::EventType::DELETE_ ?
                         nixl_watch_event_t::DELETE :
                         nixl_watch_event_t::PUT;
-                    cb(event.kv().key(), event_type, event.kv().as_string());
+                    state->cb(event.kv().key(), event_type, event.kv().as_string());
                 }
             });
         generic_watchers_.push_back(std::move(watcher));
+        generic_watcher_states_.push_back(std::move(state));
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
@@ -250,28 +316,38 @@ nixlEtcdMetadataBackend::fetchOrWait(const std::string &agent_name,
         }
 
         const int64_t watch_index = response.index();
-        std::promise<nixl_status_t> ret_prom;
-        auto future = ret_prom.get_future();
-        std::atomic<bool> promise_set{false};
+        struct FetchOrWaitState {
+            explicit FetchOrWaitState(std::string watched_key)
+                : key(std::move(watched_key)) {}
 
-        auto watcher_callback = [&](etcd::Response r) -> void {
-            if (promise_set.exchange(true)) {
-                NIXL_DEBUG << "Ignoring subsequent watch event for key: " << key;
+            std::atomic<bool> done{false};
+            std::promise<nixl_status_t> result;
+            std::string key;
+            nixl_blob_t value;
+        };
+
+        auto state = std::make_shared<FetchOrWaitState>(key);
+        auto future = state->result.get_future();
+
+        auto watcher_callback = [state](etcd::Response r) -> void {
+            if (state->done.exchange(true, std::memory_order_acq_rel)) {
+                NIXL_DEBUG << "Ignoring subsequent watch event for key: " << state->key;
                 return;
             }
             if (!r.is_ok()) {
-                NIXL_ERROR << "Watch failed for key: " << key << " : " << r.error_message();
-                ret_prom.set_value(NIXL_ERR_BACKEND);
+                NIXL_ERROR << "Watch failed for key: " << state->key << " : "
+                           << r.error_message();
+                state->result.set_value(NIXL_ERR_BACKEND);
                 return;
             }
             if (r.action() == "delete") {
-                NIXL_ERROR << "Watch response: metadata key deleted: " << key;
-                ret_prom.set_value(NIXL_ERR_INVALID_PARAM);
+                NIXL_ERROR << "Watch response: metadata key deleted: " << state->key;
+                state->result.set_value(NIXL_ERR_INVALID_PARAM);
                 return;
             }
-            value = r.value().as_string();
-            NIXL_DEBUG << "Watch response: metadata key fetched: " << key;
-            ret_prom.set_value(NIXL_SUCCESS);
+            state->value = r.value().as_string();
+            NIXL_DEBUG << "Watch response: metadata key fetched: " << state->key;
+            state->result.set_value(NIXL_SUCCESS);
         };
 
         auto watcher = etcd::Watcher(*etcd_, key, watch_index, watcher_callback);
@@ -279,11 +355,16 @@ nixlEtcdMetadataBackend::fetchOrWait(const std::string &agent_name,
         const auto status = future.wait_for(watch_timeout_);
         if (status == std::future_status::timeout) {
             NIXL_ERROR << "Watch timed out for key: " << key;
+            state->done.store(true, std::memory_order_release);
             watcher.Cancel();
             return NIXL_ERR_BACKEND;
         }
         watcher.Cancel();
-        return future.get();
+        const nixl_status_t ret = future.get();
+        if (ret == NIXL_SUCCESS) {
+            value = std::move(state->value);
+        }
+        return ret;
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "Error watching etcd for key: " << key << " : " << e.what();
@@ -301,7 +382,12 @@ nixlEtcdMetadataBackend::setupAgentInvalWatcher(const std::string &agent_name) {
         return;
     }
 
-    auto process_response = [this, agent_name](etcd::Response response) -> void {
+    std::weak_ptr<InvalidationWatcherState> weak_state = invalidation_state_;
+    auto process_response = [weak_state, agent_name](etcd::Response response) -> void {
+        auto state = weak_state.lock();
+        if (!state || state->shutting_down.load(std::memory_order_acquire)) {
+            return;
+        }
         if (!response.is_ok()) {
             NIXL_ERROR << "Watcher failed to watch agent " << agent_name
                        << " from etcd: " << response.error_message();
@@ -318,8 +404,8 @@ nixlEtcdMetadataBackend::setupAgentInvalWatcher(const std::string &agent_name) {
         if (event.event_type() == etcd::Event::EventType::DELETE_) {
             NIXL_DEBUG << "Watcher DELETE: " << event.kv().key() << " (rev "
                        << event.kv().modified_index() << ")";
-            std::lock_guard<std::mutex> lock(invalidated_mutex_);
-            invalidated_agents_.push_back(agent_name);
+            std::lock_guard<std::mutex> lock(state->invalidated_mutex);
+            state->invalidated_agents.push_back(agent_name);
         } else {
             NIXL_ERROR << "Watcher for " << event.kv().key()
                        << " received unexpected event from etcd: "
@@ -334,14 +420,23 @@ nixlEtcdMetadataBackend::setupAgentInvalWatcher(const std::string &agent_name) {
 
 void
 nixlEtcdMetadataBackend::processInvalidatedAgents(nixlAgent &agent) {
+    auto state = invalidation_state_;
+    if (!state || state->shutting_down.load(std::memory_order_acquire)) {
+        return;
+    }
+
     std::vector<std::string> tmp_invalidated;
     {
-        std::lock_guard<std::mutex> lock(invalidated_mutex_);
-        tmp_invalidated = std::move(invalidated_agents_);
+        std::lock_guard<std::mutex> lock(state->invalidated_mutex);
+        tmp_invalidated = std::move(state->invalidated_agents);
     }
     for (const auto &agent_name : tmp_invalidated) {
         NIXL_DEBUG << "Invalidated agent: " << agent_name;
-        agent_watchers_.erase(agent_name);
+        const auto watcher = agent_watchers_.find(agent_name);
+        if (watcher != agent_watchers_.end()) {
+            cancelWatcher(watcher->second);
+            agent_watchers_.erase(watcher);
+        }
         const nixl_status_t ret = agent.invalidateRemoteMD(agent_name);
         if (ret != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to invalidate remote metadata for agent: " << agent_name << ": "

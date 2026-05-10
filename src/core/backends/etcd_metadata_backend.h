@@ -29,7 +29,6 @@
 
 #include <chrono>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -121,18 +120,24 @@ public:
     processInvalidatedAgents(nixlAgent &agent);
 
 private:
+    struct GenericWatcherState;
+    struct InvalidationWatcherState;
+
     [[nodiscard]] std::string
     namespaceForAgent() const;
+
+    void
+    shutdownWatchers() noexcept;
 
     const std::string my_agent_name_;
     const std::string namespace_prefix_;
     const std::chrono::microseconds watch_timeout_;
 
+    std::shared_ptr<InvalidationWatcherState> invalidation_state_;
+    std::vector<std::shared_ptr<GenericWatcherState>> generic_watcher_states_;
     std::unique_ptr<etcd::SyncClient> etcd_;
     std::unordered_map<std::string, std::unique_ptr<etcd::Watcher>> agent_watchers_;
     std::vector<std::unique_ptr<etcd::Watcher>> generic_watchers_;
-    std::vector<std::string> invalidated_agents_;
-    std::mutex invalidated_mutex_;
     bool healthy_ = false;
 };
 

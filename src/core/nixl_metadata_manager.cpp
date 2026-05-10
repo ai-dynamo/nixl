@@ -141,17 +141,30 @@ nixlMetadataManager::runLoop(nixlAgent &agent) {
             switch (req.kind) {
             case nixl::md::request_kind::p2p_send:
                 if (p2p_) {
-                    p2p_->sendToPeer(req.str1, req.port, req.blob);
+                    const nixl_status_t ret = p2p_->sendToPeer(req.str1, req.port, req.blob);
+                    if (ret != NIXL_SUCCESS) {
+                        NIXL_ERROR << "Failed to send P2P metadata to " << req.str1 << ":"
+                                   << req.port << ": " << ret;
+                    }
                 }
                 break;
             case nixl::md::request_kind::p2p_fetch:
                 if (p2p_) {
-                    p2p_->requestMetadataFromPeer(req.str1, req.port);
+                    const nixl_status_t ret = p2p_->requestMetadataFromPeer(req.str1, req.port);
+                    if (ret != NIXL_SUCCESS) {
+                        NIXL_ERROR << "Failed to request P2P metadata from " << req.str1 << ":"
+                                   << req.port << ": " << ret;
+                    }
                 }
                 break;
             case nixl::md::request_kind::p2p_inval:
                 if (p2p_) {
-                    p2p_->invalidatePeerMetadata(req.str1, req.port, agent_data_.name());
+                    const nixl_status_t ret =
+                        p2p_->invalidatePeerMetadata(req.str1, req.port, agent_data_.name());
+                    if (ret != NIXL_SUCCESS) {
+                        NIXL_ERROR << "Failed to invalidate P2P metadata on " << req.str1 << ":"
+                                   << req.port << ": " << ret;
+                    }
                 }
                 break;
 #if HAVE_ETCD

@@ -95,15 +95,15 @@ public:
     /*** Single-peer request helpers (called from the manager tick) ***/
 
     /** @brief Send my metadata blob to (ip, port) as NIXLCOMM:LOAD. */
-    void
+    [[nodiscard]] nixl_status_t
     sendToPeer(const std::string &ip, int port, const nixl_blob_t &blob);
 
     /** @brief Ask peer at (ip, port) for its metadata via NIXLCOMM:SEND. */
-    void
+    [[nodiscard]] nixl_status_t
     requestMetadataFromPeer(const std::string &ip, int port);
 
     /** @brief Tell peer at (ip, port) to invalidate via NIXLCOMM:INVL. */
-    void
+    [[nodiscard]] nixl_status_t
     invalidatePeerMetadata(const std::string &ip, int port, const std::string &my_agent_name);
 
     /**
@@ -122,7 +122,7 @@ public:
     setupListener();
 
 private:
-    void
+    [[nodiscard]] nixl_status_t
     ensureSocket(const std::string &ip, int port);
     [[nodiscard]] int
     socketFor(const std::string &ip, int port) const;
