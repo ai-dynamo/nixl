@@ -6,6 +6,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: xpu-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build-xpu-dockerfile:
     name: Build .ci/dockerfiles/Dockerfile.xpu
@@ -21,6 +25,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
