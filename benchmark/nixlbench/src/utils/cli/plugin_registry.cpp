@@ -79,8 +79,9 @@ southboundPluginRegistry::createForAvailableMetadataPlugins() const {
         if (agent->getPluginCapabilities(plugin_name, capabilities) != NIXL_SUCCESS) {
             capabilities = {};
         }
+
         plugins.push_back(
-            std::make_unique<metadataPluginCommand>(plugin_name, capabilities, params));
+            std::make_unique<metadataPluginCommand>(plugin_name, capabilities, params, mems));
     }
 
 

@@ -80,13 +80,12 @@ applyRawRequestToConfig(const rawRequest &request, xferBenchConfig &config) {
 benchmarkConfig
 makeValidatedBenchmarkConfig(const rawRequest &request, const xferBenchConfig &legacy_config) {
     benchmarkConfig config = makeBenchmarkConfigFromLegacy(legacy_config);
-    config.backend.capabilities.canUseAsStorage =
-        config.backend.capabilities.canUseAsStorage || request.backend_capabilities.canUseAsStorage;
-    config.backend.capabilities.canUseAsNetworkDestination =
-        config.backend.capabilities.canUseAsNetworkDestination ||
-        request.backend_capabilities.canUseAsNetworkDestination;
-    config.backend.capabilities.canReadWriteFiles =
-        config.backend.capabilities.canReadWriteFiles || request.backend_capabilities.canReadWriteFiles;
+    if (request.backend_capabilities.requiresDirectStorage) {
+        config.backend.capabilities.requiresDirectStorage = true;
+    }
+    if (!request.backend_memory_types.empty()) {
+        config.backend.memory_types = request.backend_memory_types;
+    }
     for (const auto &[name, option] : request.backend_options) {
         if (option.isProvided) {
             config.backend.options[name] = option;

@@ -24,7 +24,7 @@
  
 nixlBackendPluginCapabilities
 buildGdsCapabilities() {
-    return {true, false, true};
+    return {false};
 }
 
  #ifdef STATIC_PLUGIN_GDS

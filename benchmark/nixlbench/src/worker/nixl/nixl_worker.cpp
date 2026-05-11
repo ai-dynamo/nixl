@@ -792,68 +792,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads,
         buffer_size = ((buffer_size + page_size - 1) / page_size) * page_size;
     }
 
-    // if (backend.capabilities.canUseAsStorage && !backend.capabilities.canReadWriteFiles) {
-    //     struct timeval tv;
-    //     gettimeofday(&tv, nullptr);
-    //     uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
-
-    //     for (int list_idx = 0; list_idx < num_threads; list_idx++) {
-    //         std::vector<xferBenchIOV> iov_list;
-    //         std::optional<xferBenchIOV> basic_desc;
-    //         std::string unique_name = "nixlbench_obj" + std::to_string(list_idx) + "_" +
-    //             std::to_string(i) + "_" + std::to_string(timestamp);
-
-    //         if (transfer_config.op_type == XFERBENCH_OP_READ) {
-    //             if (!xferBenchUtils::putObj(config, buffer_size, unique_name)) {
-    //                 std::cerr << "Failed to put object: " << unique_name << std::endl;
-    //                 continue;
-    //             }
-    //         }
-
-    //         basic_desc = initBasicDescObj(buffer_size, i, unique_name);
-    //         if (basic_desc) {
-    //             std::cout << "Creating obj: " << unique_name << std::endl;
-    //             iov_list.push_back(basic_desc.value());
-    //         }
-
-    //         nixl_reg_dlist_t desc_list(OBJ_SEG);
-    //         iovListToNixlRegDlist(iov_list, desc_list);
-    //         CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-    //         remote_iovs.push_back(iov_list);
-    //     }
-    // } else if (XFERBENCH_BACKEND_GUSLI == config.backend) {
-    //     // GUSLI backend uses block device descriptors
-    //     if (gusli_devices.empty()) {
-    //         std::cerr << "No GUSLI devices configured" << std::endl;
-    //         exit(EXIT_FAILURE);
-    //     }
-
-    //     if (config.op_type == XFERBENCH_OP_READ) {
-    //         for (auto &device : gusli_devices) {
-    //             if (device.device_type == 'F' &&
-    //                 !ensureFileHasConsistencyData(device, buffer_size)) {
-    //                 exit(EXIT_FAILURE);
-    //             }
-    //         }
-    //     }
-
-    //     for (int list_idx = 0; list_idx < num_threads; list_idx++) {
-    //         std::vector<xferBenchIOV> iov_list;
-    //         for (i = 0; i < num_devices; i++) {
-    //             std::optional<xferBenchIOV> basic_desc;
-    //             // Use device IDs from parsed configuration (num_devices == gusli_devices.size())
-    //             basic_desc = initBasicDescBlk(
-    //                 buffer_size, gusli_devices[i].device_id, gusli_devices[i].dev_offset);
-    //             if (basic_desc) {
-    //                 iov_list.push_back(basic_desc.value());
-    //             }
-    //         }
-    //         nixl_reg_dlist_t desc_list(BLK_SEG);
-    //         iovListToNixlRegDlist(iov_list, desc_list);
-    //         CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-    //         remote_iovs.push_back(iov_list);
-    //     }
-    if (backend.capabilities.canReadWriteFiles) {
+    bool canReadWriteFiles = std::find(backend.memory_types.begin(), backend.memory_types.end(), FILE_SEG) != backend.memory_types.end();
+    if (canReadWriteFiles) {
         // int num_buffers = num_threads;
         int num_files = storage_config.num_files;
         // int remainder_buffers = num_buffers % num_files;

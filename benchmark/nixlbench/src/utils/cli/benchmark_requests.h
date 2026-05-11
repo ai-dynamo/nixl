@@ -145,6 +145,7 @@ struct rawRequest {
     providedValue<std::string> gusli_device_byte_offsets;
     providedValue<std::string> gusli_device_security;
     nixlBackendPluginCapabilities backend_capabilities{};
+    nixl_mem_list_t backend_memory_types;
     metadata_plugin_option_map_t backend_options;
 };
 

@@ -14,7 +14,8 @@ class metadataPluginCommand : public southboundPluginBenchmarkCommand {
 public:
     metadataPluginCommand(std::string backend_name,
                           nixlBackendPluginCapabilities capabilities,
-                          nixl_b_params_t option_specs);
+                          nixl_b_params_t option_specs,
+                          nixl_mem_list_t supported_memory_types);
 
     std::string_view
     name() const override;
@@ -31,11 +32,15 @@ public:
     const metadata_plugin_option_map_t &
     metadataOptions() const override;
 
+    const nixl_mem_list_t &
+    supportedMemoryTypes() const override;
+
 private:
     std::string name_;
     std::string description_;
     nixlBackendPluginCapabilities capabilities_;
     nixl_b_params_t optionSpecs_;
+    nixl_mem_list_t supportedMemoryTypes_;
     metadata_plugin_option_map_t optionValues_;
     std::vector<cliOption> options_;
 };

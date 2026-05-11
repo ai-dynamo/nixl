@@ -37,7 +37,7 @@ public:
     scenarioType() const = 0;
 
     virtual bool
-    supportsPlugin(nixlBackendPluginCapabilities pluginCapabilities) const = 0;
+    supportsPlugin(nixl_mem_list_t supportedMemoryTypes, nixlBackendPluginCapabilities pluginCapabilities) const = 0;
 
     virtual int
     run(southboundPluginBenchmarkCommand &plugin) = 0;
@@ -45,6 +45,9 @@ public:
 
 class southboundPluginBenchmarkCommand : public benchmarkCommand {
 public:
+    virtual const nixl_mem_list_t &
+    supportedMemoryTypes() const = 0;
+
     virtual const metadata_plugin_option_map_t &
     metadataOptions() const = 0;
 

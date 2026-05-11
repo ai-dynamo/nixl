@@ -39,7 +39,7 @@ TEST(WorkerConfigTest, MultiGroupRuntimeUsesTwoRanksWithRankZeroInitiating) {
 TEST(WorkerConfigTest, StorageBackendWithoutEtcdUsesNullRuntimeInitiatorRole) {
     benchmarkConfig config;
     config.backend.name = XFERBENCH_BACKEND_POSIX;
-    config.backend.capabilities.canUseAsStorage = true;
+    config.backend.memory_types = {FILE_SEG};
     config.runtime.etcd_endpoints = "";
     config.transfer.mode = XFERBENCH_MODE_SG;
     config.worker.num_initiator_dev = 3;

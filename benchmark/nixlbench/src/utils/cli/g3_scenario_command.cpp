@@ -386,6 +386,7 @@ makeG3BenchmarkConfig(const g3ScenarioRequest &request,
     benchmarkConfig config;
     config.backend.name = std::string(plugin.name());
     config.backend.capabilities = plugin.capabilities();
+    config.backend.memory_types = plugin.supportedMemoryTypes();
     config.backend.options = metadata;
     config.transfer.num_threads = request.parallel_threads;
     config.transfer.start_block_size = request.block_size_bytes;
@@ -460,8 +461,11 @@ g3ScenarioCommand::scenarioType() const {
 }
 
 bool
-g3ScenarioCommand::supportsPlugin(nixlBackendPluginCapabilities pluginCapabilities) const {
-    return pluginCapabilities.canReadWriteFiles;
+g3ScenarioCommand::supportsPlugin(nixl_mem_list_t supportedMemoryTypes, nixlBackendPluginCapabilities pluginCapabilities) const {
+    if (std::find(supportedMemoryTypes.begin(), supportedMemoryTypes.end(), FILE_SEG) == supportedMemoryTypes.end()) {
+        return false;
+    }
+    return true;
 }
 
 bool
@@ -490,7 +494,7 @@ g3ScenarioCommand::isRequestValid(const g3ScenarioRequest &request) const {
 int
 g3ScenarioCommand::run(southboundPluginBenchmarkCommand &plugin) {
     // this should  never occur as the CLI should only present things that have the proper capabilities, but this is here just in case...
-    if (!supportsPlugin(plugin.capabilities())) {
+    if (!supportsPlugin(plugin.supportedMemoryTypes(), plugin.capabilities())) {
         std::cerr << "G3 requires a plugin that can read and write files" << std::endl;
         return 1;
     }

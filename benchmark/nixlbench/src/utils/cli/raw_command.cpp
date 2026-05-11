@@ -13,6 +13,7 @@
 #include <cctype>
 #include <memory>
 #include <sstream>
+#include <algorithm>
 
 namespace nixlbench {
 namespace {
@@ -182,10 +183,15 @@ namespace {
     void
     applyPluginOptions(rawRequest &raw, const southboundPluginBenchmarkCommand &plugin) {
         const auto &options = plugin.metadataOptions();
+        const auto &supported_memory_types = plugin.supportedMemoryTypes();
         raw.backend.setProvided(std::string(plugin.name()));
         raw.backend_capabilities = plugin.capabilities();
+        raw.backend_memory_types = supported_memory_types;
         raw.backend_options = options;
-        if (plugin.capabilities().canReadWriteFiles) {
+        const bool can_read_write_files =
+            std::find(supported_memory_types.begin(), supported_memory_types.end(), FILE_SEG) !=
+            supported_memory_types.end();
+        if (can_read_write_files) {
             setStringOption(raw.filepath, options, "filepath");
             setIntOption(raw.num_files, options, "num_files");
             setStringOption(raw.filenames, options, "filenames");
@@ -331,7 +337,7 @@ rawCommand::scenarioType() const {
 }
 
 bool
-rawCommand::supportsPlugin(nixlBackendPluginCapabilities) const {
+rawCommand::supportsPlugin(nixl_mem_list_t supportedMemoryTypes, nixlBackendPluginCapabilities pluginCapabilities) const {
     return true;
 }
 

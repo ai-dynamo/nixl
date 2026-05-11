@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <algorithm>
 
 class xferBenchConfig;
 
@@ -60,6 +61,7 @@ struct backendConfig {
     std::string name = "";
     nixlBackendPluginCapabilities capabilities{};
     metadata_plugin_option_map_t options;
+    nixl_mem_list_t memory_types;
 };
 
 struct storageConfig {
@@ -80,7 +82,11 @@ struct benchmarkConfig {
 
 inline bool
 isStorageBackend(const backendConfig &backend) {
-    return backend.capabilities.canUseAsStorage;
+    // check whether the backend supports FILE_SEG, OBJ_SEG, or BLK_SEG, any of those are considered storage backends
+
+    return std::find(backend.memory_types.begin(), backend.memory_types.end(), FILE_SEG) != backend.memory_types.end() ||
+           std::find(backend.memory_types.begin(), backend.memory_types.end(), OBJ_SEG) != backend.memory_types.end() ||
+           std::find(backend.memory_types.begin(), backend.memory_types.end(), BLK_SEG) != backend.memory_types.end();
 }
 
 inline bool

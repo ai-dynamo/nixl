@@ -24,7 +24,7 @@
 
  nixlBackendPluginCapabilities
  buildPosixCapabilities() {
-     return {true, false, true};
+     return {false};
  }
  
  

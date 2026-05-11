@@ -148,6 +148,7 @@ TEST(BenchmarkConfigAdapterTest, RawRequestConversionMapsStorageAndGdsFields) {
     request.filenames.setProvided("a.bin,b.bin");
     request.num_files.setProvided(2);
     request.storage_enable_direct.setProvided(true);
+    request.backend_memory_types = {FILE_SEG};
     request.gds_batch_pool_size.setProvided(7);
     request.gds_batch_limit.setProvided(11);
 
@@ -155,7 +156,6 @@ TEST(BenchmarkConfigAdapterTest, RawRequestConversionMapsStorageAndGdsFields) {
 
     EXPECT_EQ(config.backend.name, XFERBENCH_BACKEND_GDS);
     EXPECT_TRUE(isStorageBackend(config.backend));
-    EXPECT_TRUE(config.backend.capabilities.canReadWriteFiles);
     EXPECT_EQ(config.storage.filepath, "/data");
     EXPECT_EQ(config.storage.filenames, "a.bin,b.bin");
     EXPECT_EQ(config.storage.num_files, 2);
@@ -183,7 +183,6 @@ TEST(BenchmarkConfigAdapterTest, LegacyConversionMapsObjBackendOptions) {
 
     const benchmarkConfig config = makeBenchmarkConfigFromLegacy(legacy);
 
-    EXPECT_TRUE(isStorageBackend(config.backend));
     EXPECT_TRUE(isObjStorageBackend(config.backend));
     EXPECT_EQ(option(config, "access_key").value, "access");
     EXPECT_EQ(option(config, "secret_key").value, "secret");
@@ -216,7 +215,6 @@ TEST(BenchmarkConfigAdapterTest, LegacyConversionMapsGusliFieldsWithoutValidatio
     const benchmarkConfig config = makeBenchmarkConfigFromLegacy(legacy);
 
     EXPECT_EQ(config.backend.name, XFERBENCH_BACKEND_GUSLI);
-    EXPECT_TRUE(isStorageBackend(config.backend));
     EXPECT_EQ(config.storage.filepath, "/gusli");
     EXPECT_EQ(config.storage.filenames, "dev0");
     EXPECT_EQ(config.storage.num_files, 1);
@@ -231,25 +229,26 @@ TEST(BenchmarkConfigAdapterTest, LegacyConversionMapsGusliFieldsWithoutValidatio
 TEST(BenchmarkConfigAdapterTest, RawRequestPreservesDynamicPluginOptions) {
     rawRequest request;
     request.backend.setProvided("NEW_PLUGIN");
-    request.backend_capabilities.canUseAsStorage = true;
+    request.backend_capabilities.requiresDirectStorage = true;
+    request.backend_memory_types = {FILE_SEG, DRAM_SEG};
     request.backend_options["custom_param"] = {"custom-value", false, true};
 
     const benchmarkConfig config = makeBenchmarkConfigFromRawRequest(request);
 
     EXPECT_EQ(config.backend.name, "NEW_PLUGIN");
-    EXPECT_TRUE(config.backend.capabilities.canUseAsStorage);
+    EXPECT_TRUE(config.backend.capabilities.requiresDirectStorage);
+    EXPECT_EQ(config.backend.memory_types, (nixl_mem_list_t{FILE_SEG, DRAM_SEG}));
     EXPECT_EQ(option(config, "custom_param").value, "custom-value");
 }
 
 TEST(BenchmarkConfigAdapterTest, MetadataPluginStoresProvidedFileWorkloadOptions) {
     nixlBackendPluginCapabilities capabilities;
-    capabilities.canUseAsStorage = true;
-    capabilities.canReadWriteFiles = true;
     nixl_b_params_t option_specs{
         {"use_posix_aio",
          "true"},
     };
-    metadataPluginCommand plugin(XFERBENCH_BACKEND_POSIX, capabilities, option_specs);
+    metadataPluginCommand plugin(
+        XFERBENCH_BACKEND_POSIX, capabilities, option_specs, {FILE_SEG, DRAM_SEG});
     provideStringOption(plugin, "filepath", "/images/containerSpace/");
     provideFlagOption(plugin, "enable_direct");
     provideFlagOption(plugin, "use_posix_aio");

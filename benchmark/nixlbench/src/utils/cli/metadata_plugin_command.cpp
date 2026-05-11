@@ -5,6 +5,7 @@
 
 #include "utils/cli/metadata_plugin_command.h"
 #include "cli/cli_option.h"
+#include <algorithm>
 
 namespace nixlbench {
 namespace {
@@ -61,9 +62,9 @@ namespace {
     std::vector<cliOption>
     buildOptions(const nixl_b_params_t &option_specs,
                  metadata_plugin_option_map_t &option_values,
-                 nixlBackendPluginCapabilities capabilities) {
+                 const bool canReadWriteFiles) {
         std::vector<cliOption> options;
-        options.reserve(option_specs.size() + (capabilities.canReadWriteFiles ? 4 : 0));
+        options.reserve(option_specs.size() + (canReadWriteFiles ? 4 : 0));
         option_values.reserve(options.capacity());
         for (const auto &spec : option_specs) {
             // const auto kind = spec.type == nixl_backend_option_type_t::BOOL ? option_kind_t::FLAG :
@@ -74,7 +75,7 @@ namespace {
             options.push_back(
                 {spec.first, "", option_kind_t::VALUE, &value, false, &value.isProvided});
         }
-        if (capabilities.canReadWriteFiles) {
+        if (canReadWriteFiles) {
             appendFileWorkloadOptions(options, option_values);
         }
         return options;
@@ -84,13 +85,16 @@ namespace {
 
 metadataPluginCommand::metadataPluginCommand(std::string backend_name,
                                              nixlBackendPluginCapabilities capabilities,
-                                             nixl_b_params_t option_specs)
+                                             nixl_b_params_t option_specs,
+                                             nixl_mem_list_t supportedMemoryTypes)
     : name_(std::move(backend_name)),
       capabilities_(capabilities),
-      optionSpecs_(std::move(option_specs))
+      optionSpecs_(std::move(option_specs)),
+      supportedMemoryTypes_(supportedMemoryTypes)
 {
+    bool canReadWriteFiles = std::find(supportedMemoryTypes.begin(), supportedMemoryTypes.end(), FILE_SEG) != supportedMemoryTypes.end();
     // convert the optionSpecs_ to optionValues_
-    options_ = buildOptions(optionSpecs_, optionValues_, capabilities_);
+    options_ = buildOptions(optionSpecs_, optionValues_, canReadWriteFiles);
 
 }
 
@@ -117,6 +121,11 @@ metadataPluginCommand::capabilities() const {
 const metadata_plugin_option_map_t &
 metadataPluginCommand::metadataOptions() const {
     return optionValues_;
+}
+
+const nixl_mem_list_t &
+metadataPluginCommand::supportedMemoryTypes() const {
+    return supportedMemoryTypes_;
 }
 
 } // namespace nixlbench

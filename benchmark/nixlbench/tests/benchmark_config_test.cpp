@@ -44,9 +44,8 @@ TEST(BenchmarkConfigTest, DefaultsLeaveBackendUnselected) {
     EXPECT_EQ(config.transfer.num_threads, 1);
 
     EXPECT_TRUE(config.backend.name.empty());
-    EXPECT_FALSE(config.backend.capabilities.canUseAsStorage);
-    EXPECT_FALSE(config.backend.capabilities.canUseAsNetworkDestination);
-    EXPECT_FALSE(config.backend.capabilities.canReadWriteFiles);
+    EXPECT_FALSE(config.backend.capabilities.requiresDirectStorage);
+    EXPECT_TRUE(config.backend.memory_types.empty());
     EXPECT_TRUE(config.backend.options.empty());
 
     EXPECT_TRUE(config.storage.filepath.empty());
@@ -55,11 +54,17 @@ TEST(BenchmarkConfigTest, DefaultsLeaveBackendUnselected) {
     EXPECT_FALSE(config.storage.enable_direct);
 }
 
-TEST(BenchmarkConfigTest, IdentifiesStorageBackendsByCapabilities) {
+TEST(BenchmarkConfigTest, IdentifiesStorageBackendsByMemoryTypes) {
     benchmarkConfig config;
     config.backend.name = "CUSTOM_STORAGE";
-    config.backend.capabilities.canUseAsStorage = true;
 
+    config.backend.memory_types = {FILE_SEG};
+    EXPECT_TRUE(isStorageBackend(config.backend));
+
+    config.backend.memory_types = {OBJ_SEG};
+    EXPECT_TRUE(isStorageBackend(config.backend));
+
+    config.backend.memory_types = {BLK_SEG};
     EXPECT_TRUE(isStorageBackend(config.backend));
 }
 

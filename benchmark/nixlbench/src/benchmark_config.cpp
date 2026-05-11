@@ -45,43 +45,18 @@ setOption(metadata_plugin_option_map_t &options, const std::string &name, std::u
     options[name] = makeStringOption(std::to_string(value));
 }
 
-bool
-isLegacyStorageBackend(std::string_view backend) {
-    return backend == XFERBENCH_BACKEND_GDS || backend == XFERBENCH_BACKEND_GDS_MT ||
-           backend == XFERBENCH_BACKEND_HF3FS || backend == XFERBENCH_BACKEND_POSIX ||
-           backend == XFERBENCH_BACKEND_OBJ || backend == XFERBENCH_BACKEND_GUSLI ||
-           backend == XFERBENCH_BACKEND_AZURE_BLOB;
-}
-
-bool
-isLegacyFileWorkloadBackend(std::string_view backend) {
-    return backend == XFERBENCH_BACKEND_GDS || backend == XFERBENCH_BACKEND_GDS_MT ||
-           backend == XFERBENCH_BACKEND_HF3FS || backend == XFERBENCH_BACKEND_POSIX ||
-           backend == XFERBENCH_BACKEND_GUSLI;
-}
-
-bool
-isLegacyNetworkDestinationBackend(std::string_view backend) {
-    return backend == XFERBENCH_BACKEND_UCX || backend == XFERBENCH_BACKEND_LIBFABRIC ||
-           backend == XFERBENCH_BACKEND_GPUNETIO || backend == XFERBENCH_BACKEND_MOONCAKE ||
-           backend == XFERBENCH_BACKEND_UCCL;
-}
-
 nixlBackendPluginCapabilities
 legacyBackendCapabilities(std::string_view backend) {
     nixlBackendPluginCapabilities capabilities;
-    capabilities.canUseAsStorage = isLegacyStorageBackend(backend);
-    capabilities.canUseAsNetworkDestination = isLegacyNetworkDestinationBackend(backend);
-    capabilities.canReadWriteFiles = isLegacyFileWorkloadBackend(backend);
+    if (backend == XFERBENCH_BACKEND_GUSLI) {
+        capabilities.requiresDirectStorage = true;
+    }
     return capabilities;
 }
 
 nixlBackendPluginCapabilities
 mergeCapabilities(nixlBackendPluginCapabilities lhs, nixlBackendPluginCapabilities rhs) {
-    lhs.canUseAsStorage = lhs.canUseAsStorage || rhs.canUseAsStorage;
-    lhs.canUseAsNetworkDestination =
-        lhs.canUseAsNetworkDestination || rhs.canUseAsNetworkDestination;
-    lhs.canReadWriteFiles = lhs.canReadWriteFiles || rhs.canReadWriteFiles;
+    lhs.requiresDirectStorage = lhs.requiresDirectStorage || rhs.requiresDirectStorage;
     return lhs;
 }
 
@@ -414,6 +389,7 @@ makeBenchmarkConfigFromRawRequest(const rawRequest &request) {
     config.backend.name = request.backend.value;
     config.backend.capabilities = mergeCapabilities(legacyBackendCapabilities(request.backend.value),
                                                     request.backend_capabilities);
+    config.backend.memory_types = request.backend_memory_types;
     config.backend.options = request.backend_options;
     addRawBackendOptions(config, request);
 

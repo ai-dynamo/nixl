@@ -26,7 +26,7 @@
  
 nixlBackendPluginCapabilities
 buildGdsMtCapabilities() {
-    return {true, false, true};
+    return {false};
 }
 
 

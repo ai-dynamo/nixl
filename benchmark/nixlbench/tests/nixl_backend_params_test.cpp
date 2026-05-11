@@ -116,7 +116,6 @@ TEST(NixlBackendParamsTest, FileWorkloadOptionsAreNotBackendInitParams) {
 TEST(NixlBackendParamsTest, DefaultsFromPluginArePreservedWhenOptionNotProvided) {
     benchmarkConfig config;
     config.backend.name = "NEW_PLUGIN";
-    config.backend.capabilities.canUseAsStorage = true;
     config.backend.options["new_option"] = {"from-cli-default", false, false};
     nixl_b_params_t defaults{{"new_option", "from-plugin-default"}};
 

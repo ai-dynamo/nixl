@@ -6,6 +6,7 @@
 #ifndef NIXLBENCH_G3_SCENARIO_COMMAND_H
 #define NIXLBENCH_G3_SCENARIO_COMMAND_H
 
+#include "nixl_types.h"
 #include "utils/cli/benchmark_command.h"
 
 namespace nixlbench {
@@ -18,7 +19,7 @@ public:
     std::string_view description() const override;
     const std::vector<cliOption> &getOptions() const override;
     scenario_type_t scenarioType() const override;
-    bool supportsPlugin(nixlBackendPluginCapabilities pluginCapabilities) const override;
+    bool supportsPlugin(nixl_mem_list_t supportedMemoryTypes, nixlBackendPluginCapabilities pluginCapabilities) const override;
     int run(southboundPluginBenchmarkCommand &plugin) override;
     const g3ScenarioRequest &request() const;
 
