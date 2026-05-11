@@ -29,7 +29,13 @@ import torch
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils import rank_server, store_group  # noqa: E402
-from utils.utils import CudaTimer, stats, tcp_store_barrier  # noqa: E402
+from utils.utils import (  # noqa: E402
+    CudaTimer,
+    non_negative_int,
+    positive_int,
+    stats,
+    tcp_store_barrier,
+)
 
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
@@ -89,7 +95,7 @@ def bench_init(cfg: BufferConfig, buf_out: list):
     return t.elapsed_s
 
 
-def measure_loop(
+def measure_single_op_iters(
     warmup: int,
     iters: int,
     barrier_fn: Callable,
@@ -145,11 +151,10 @@ def run_cycle(cfg: BufferConfig, other_ranks: list, warmup: int, iters: int):
     results: dict[str, list[float]] = {op_name: [] for op_name, _, _ in steps}
 
     for i in range(warmup + iters):
-        is_measure = i >= warmup
         for op_name, bench_fn, post_fn in steps:
             barrier()
             elapsed = bench_fn()
-            if is_measure:
+            if i >= warmup:
                 results[op_name].append(elapsed)
             if post_fn:
                 post_fn()
@@ -168,7 +173,7 @@ def run_single_op(
     if mode == "init":
         buf: list = [None]
 
-        latencies = measure_loop(
+        latencies = measure_single_op_iters(
             warmup,
             iters,
             barrier,
@@ -182,7 +187,7 @@ def run_single_op(
         def setup():
             buf[0] = create_buffer(cfg)
 
-        latencies = measure_loop(
+        latencies = measure_single_op_iters(
             warmup,
             iters,
             barrier,
@@ -195,7 +200,7 @@ def run_single_op(
 
     elif mode == "disconnect":
         buffer = create_buffer(cfg)
-        latencies = measure_loop(
+        latencies = measure_single_op_iters(
             warmup,
             iters,
             barrier,
@@ -217,7 +222,7 @@ def run_single_op(
                 buffer.disconnect_ranks(other_ranks)
             time.sleep(MD_INVALIDATION_DELAY)
 
-        latencies = measure_loop(
+        latencies = measure_single_op_iters(
             warmup,
             iters,
             barrier,
@@ -236,7 +241,7 @@ def run_single_op(
             if other_ranks:
                 buf[0].connect_ranks(other_ranks)
 
-        latencies = measure_loop(
+        latencies = measure_single_op_iters(
             warmup,
             iters,
             barrier,
@@ -315,7 +320,7 @@ def worker(torch_rank: int, args: argparse.Namespace):
 
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
-    torch.cuda.set_device(local_rank % 8)
+    torch.cuda.set_device(local_rank % torch.cuda.device_count())
 
     tcp_store = store_group.create_client_store(
         master_addr=server_addr,
@@ -419,13 +424,13 @@ def main():
     )
     parser.add_argument(
         "--warmup",
-        type=int,
+        type=non_negative_int,
         default=0,
         help="Warmup iterations before measurement",
     )
     parser.add_argument(
         "--iters",
-        type=int,
+        type=positive_int,
         default=1,
         help="Measurement iterations",
     )
