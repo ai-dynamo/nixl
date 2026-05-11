@@ -42,21 +42,13 @@ from utils.utils import (  # noqa: E402
     bench_kineto,
     calc_diff,
     hash_tensor,
+    non_negative_int,
     per_token_cast_back,
+    positive_int,
 )
 
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
-
-
-def non_negative_int(value: str) -> int:
-    try:
-        int_value = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("must be a non-negative integer") from exc
-    if int_value < 0:
-        raise argparse.ArgumentTypeError("must be a non-negative integer")
-    return int_value
 
 
 def handle_sigterm(
@@ -489,7 +481,7 @@ def worker(torch_rank: int, args: argparse.Namespace):
     # Initialize torch
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
-    torch.cuda.set_device(local_rank % 8)
+    torch.cuda.set_device(local_rank % torch.cuda.device_count())
 
     tcp_store = store_group.create_client_store(
         master_addr=server_addr,
@@ -656,19 +648,19 @@ def main():
     )
     parser.add_argument(
         "--warmup",
-        type=int,
+        type=non_negative_int,
         default=50,
         help="Warmup iterations before measurement",
     )
     parser.add_argument(
         "--iters",
-        type=int,
+        type=positive_int,
         default=50,
         help="Measurement iterations",
     )
     parser.add_argument(
         "--kineto-iters",
-        type=int,
+        type=positive_int,
         default=30,
         help="Kineto profiling iterations",
     )

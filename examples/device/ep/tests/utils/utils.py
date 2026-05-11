@@ -18,6 +18,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import inspect
 import json
 import os
@@ -30,6 +31,26 @@ from typing import Callable, Optional, Union
 import numpy as np
 import torch
 import torch.distributed as dist
+
+
+def non_negative_int(value: str) -> int:
+    try:
+        int_value = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a non-negative integer") from exc
+    if int_value < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return int_value
+
+
+def positive_int(value: str) -> int:
+    try:
+        int_value = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if int_value <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return int_value
 
 
 def init_dist(local_rank: int, num_local_ranks: int):
