@@ -482,7 +482,7 @@ def worker(torch_rank: int, args: argparse.Namespace):
     # Initialize torch
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
-    torch.cuda.set_device(local_rank % 8)
+    torch.cuda.set_device(local_rank % torch.cuda.device_count())
 
     tcp_store = store_group.create_client_store(
         master_addr=server_addr,
