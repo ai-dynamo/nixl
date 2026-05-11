@@ -20,13 +20,13 @@ RUN apt-get update -y && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Add Intel oneAPI repo and PPA for GPU support
-RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && \
+RUN bash -o pipefail -c 'wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null' && \
     echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list && \
     add-apt-repository -y ppa:kobuk-team/intel-graphics
 
 # Install dependencies and Python 3.12
 RUN apt-get update -y && \
-    apt-get install -y python3.12 python3.12-dev python3-pip && \
+    apt-get install -y --no-install-recommends python3.12 python3.12-dev python3-pip && \
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
     update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 && \
     apt-get install -y --no-install-recommends --fix-missing \
@@ -44,16 +44,16 @@ RUN apt-get update -y && \
         linux-libc-dev \
         libaio-dev && \
     # Install Intel GPU runtime packages
-    apt-get install -y intel-oneapi-dpcpp-ct=${ONEAPI_CT_VERSION} && \
+    apt-get install -y --no-install-recommends intel-oneapi-dpcpp-ct=${ONEAPI_CT_VERSION} && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Additional libs to support RDMA over Ethernet (RoCE) / Infiniband
 RUN apt-get update -y && \
-    apt-get install -y librdmacm-dev ibverbs-utils libibverbs-dev libibverbs1 librdmacm1 rdma-core rdmacm-utils && \
+    apt-get install -y --no-install-recommends librdmacm-dev ibverbs-utils libibverbs-dev libibverbs1 librdmacm1 rdma-core rdmacm-utils && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update -y && \
-    apt-get install -y build-essential cmake pkg-config autoconf libtool libcjson-dev && \
+    apt-get install -y --no-install-recommends build-essential cmake pkg-config autoconf libtool libcjson-dev && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # B70 XPUs require a newer version of following packages than what may be available in the base image.
@@ -91,7 +91,7 @@ COPY . .
 
 RUN set -eux; \
     pwd; \
-    pip install meson ninja pybind11; \
+    pip install --no-cache-dir meson ninja pybind11; \
     meson setup build -Dinstall_headers=true -Ddisable_gds_backend=false; \
     cd build; \
     ninja; \
@@ -106,14 +106,14 @@ ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/nvidia/nvda_nixl/lib/x86_64-linux-gnu/
 ENV PYTHONPATH=$PYTHONPATH:/opt/nvidia/nvda_nixl/lib/python3/dist-packages
 
 # Install pypi dependencies
-RUN pip install bigdl-core==2.4.0b2
+RUN pip install --no-cache-dir bigdl-core==2.4.0b2
 
 # install additional dependencies for openai api server
-RUN pip install accelerate hf_transfer 'modelscope!=1.15.0'
+RUN pip install --no-cache-dir accelerate hf_transfer 'modelscope!=1.15.0'
 
 # Pin transformers version to avoid conflict in vLLM
-RUN pip install "transformers==4.57.0" && \
-    pip install librosa soundfile decord
+RUN pip install --no-cache-dir "transformers==4.57.0" && \
+    pip install --no-cache-dir librosa soundfile decord
 
 # Set additional environment for production usage
 ENV VLLM_QUANTIZE_Q40_LIB="/usr/local/lib/python3.12/dist-packages/vllm_int4_for_multi_arc.so"
