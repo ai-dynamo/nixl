@@ -107,7 +107,7 @@ static uint32_t
 getIOSPoolSize(const nixl_b_params_t *custom_params) {
     uint32_t ios_pool_size = 0;
     if (custom_params) {
-        if (custom_params->count("ios_pool_size") > 0) {
+        if (custom_params->count("ios_pool_size") > 0 && custom_params->at("ios_pool_size") != "") {
             const auto &value = custom_params->at("ios_pool_size");
             ios_pool_size = std::stoi(value);
         }
@@ -119,7 +119,7 @@ static uint32_t
 getKernelQueueSize(const nixl_b_params_t *custom_params) {
     int kernel_queue_size = 0;
     if (custom_params) {
-        if (custom_params->count("kernel_queue_size") > 0) {
+        if (custom_params->count("kernel_queue_size") > 0 && custom_params->at("kernel_queue_size") != "") {
             const auto &value = custom_params->at("kernel_queue_size");
             kernel_queue_size = std::stoi(value);
         }

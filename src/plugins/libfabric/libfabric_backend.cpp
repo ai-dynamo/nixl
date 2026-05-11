@@ -329,7 +329,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
     std::string threshold_str;
     striping_threshold_ = NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD;
 
-    if (getInitParam("striping_threshold", threshold_str) == NIXL_SUCCESS) {
+    if (getInitParam("striping_threshold", threshold_str) == NIXL_SUCCESS && !threshold_str.empty()) {
         try {
             striping_threshold_ = std::stoull(threshold_str);
             NIXL_DEBUG << "Using custom striping threshold: " << striping_threshold_ << " bytes";

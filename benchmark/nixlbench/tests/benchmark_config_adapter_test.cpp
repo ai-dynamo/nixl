@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <type_traits>
 #include <variant>
 
@@ -245,13 +246,13 @@ TEST(BenchmarkConfigAdapterTest, MetadataPluginStoresProvidedFileWorkloadOptions
     nixlBackendPluginCapabilities capabilities;
     nixl_b_params_t option_specs{
         {"use_posix_aio",
-         "true"},
+         ""},
     };
     metadataPluginCommand plugin(
         XFERBENCH_BACKEND_POSIX, capabilities, option_specs, {FILE_SEG, DRAM_SEG});
     provideStringOption(plugin, "filepath", "/images/containerSpace/");
     provideFlagOption(plugin, "enable_direct");
-    provideFlagOption(plugin, "use_posix_aio");
+    provideStringOption(plugin, "use_posix_aio", "true");
 
     const auto &options = plugin.metadataOptions();
 
@@ -259,7 +260,31 @@ TEST(BenchmarkConfigAdapterTest, MetadataPluginStoresProvidedFileWorkloadOptions
     EXPECT_TRUE(options.at("filepath").isProvided);
     EXPECT_TRUE(options.at("enable_direct").boolValue);
     EXPECT_TRUE(options.at("enable_direct").isProvided);
-    EXPECT_TRUE(options.at("use_posix_aio").boolValue);
+    EXPECT_EQ(options.at("use_posix_aio").value, "true");
+    EXPECT_TRUE(options.at("use_posix_aio").isProvided);
+}
+
+TEST(BenchmarkConfigAdapterTest, MetadataPluginTreatsBackendOptionsAsValueOptions) {
+    nixlBackendPluginCapabilities capabilities;
+    nixl_b_params_t option_specs{{"use_virtual_addressing", ""},
+                                 {"accelerated", ""},
+                                 {"num_threads", ""}};
+    metadataPluginCommand plugin(XFERBENCH_BACKEND_OBJ, capabilities, option_specs, {DRAM_SEG});
+
+    const auto &cli_options = plugin.getOptions();
+    const auto find_kind = [&](const std::string &name) {
+        const auto iter = std::find_if(cli_options.begin(),
+                                       cli_options.end(),
+                                       [&](const cliOption &option) {
+                                           return option.name == name;
+                                       });
+        EXPECT_NE(iter, cli_options.end());
+        return iter == cli_options.end() ? option_kind_t::VALUE : iter->kind;
+    };
+
+    EXPECT_EQ(find_kind("use_virtual_addressing"), option_kind_t::VALUE);
+    EXPECT_EQ(find_kind("accelerated"), option_kind_t::VALUE);
+    EXPECT_EQ(find_kind("num_threads"), option_kind_t::VALUE);
 }
 
 TEST(BenchmarkConfigAdapterTest, StructuredCopyBackMapsCommonTransferWorkerAndStorageFields) {

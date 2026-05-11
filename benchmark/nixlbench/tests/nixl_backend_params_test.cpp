@@ -39,6 +39,19 @@ TEST(NixlBackendParamsTest, UcxAddsBenchmarkComputedOptions) {
     EXPECT_EQ(params.at("device_list"), "mlx5_1");
 }
 
+TEST(NixlBackendParamsTest, UcxPreservesPluginThreadDefaultsWhenBenchThreadsAreUnset) {
+    benchmarkConfig config;
+    config.backend.name = XFERBENCH_BACKEND_UCX;
+    config.worker.progress_threads = 0;
+    config.transfer.num_threads = 0;
+    nixl_b_params_t defaults{{"num_threads", "0"}, {"num_workers", "1"}};
+
+    const nixl_b_params_t params = buildNixlBackendParams(config, defaults, {"all"}, true, 0);
+
+    EXPECT_EQ(params.at("num_threads"), "0");
+    EXPECT_EQ(params.at("num_workers"), "1");
+}
+
 TEST(NixlBackendParamsTest, PosixConvertsCompatibilityApiOption) {
     benchmarkConfig config;
     config.backend.name = XFERBENCH_BACKEND_POSIX;
@@ -83,6 +96,38 @@ TEST(NixlBackendParamsTest, ObjPassesProvidedPluginOptions) {
     EXPECT_EQ(params.at("ca_bundle"), "ca.pem");
     EXPECT_EQ(params.at("accelerated"), "true");
     EXPECT_EQ(params.at("type"), "vendor");
+}
+
+TEST(NixlBackendParamsTest, ObjPassesExecutorAndCrtOptions) {
+    benchmarkConfig config;
+    config.backend.name = XFERBENCH_BACKEND_OBJ;
+    setOption(config, "crtMinLimit", "4096");
+    setOption(config, "num_threads", "6");
+
+    const nixl_b_params_t params = buildNixlBackendParams(config, {}, {"all"}, true, 0);
+
+    EXPECT_EQ(params.at("crtMinLimit"), "4096");
+    EXPECT_EQ(params.at("num_threads"), "6");
+}
+
+TEST(NixlBackendParamsTest, GusliConfigGenerationIgnoresUnprovidedDynamicDeviceOptions) {
+    benchmarkConfig config;
+    config.backend.name = XFERBENCH_BACKEND_GUSLI;
+    config.worker.device_list = "11:F:dev0";
+    config.worker.num_target_dev = 1;
+    config.backend.options["device_security"] = {"sec=0x3", false, false};
+    config.backend.options["device_byte_offsets"] = {"1048576", false, false};
+    const auto devices = buildGusliDeviceConfigs(config, false);
+
+    nixl_b_params_t defaults{{"config_file", ""},
+                             {"device_security", ""},
+                             {"device_byte_offsets", ""}};
+    const nixl_b_params_t params =
+        buildNixlBackendParams(config, defaults, {"all"}, false, 0, devices);
+
+    EXPECT_EQ(params.at("device_security"), "");
+    EXPECT_EQ(params.at("device_byte_offsets"), "");
+    EXPECT_NE(params.at("config_file").find("dev0"), std::string::npos);
 }
 
 TEST(NixlBackendParamsTest, StorageBackendParamsPassThroughByDefault) {

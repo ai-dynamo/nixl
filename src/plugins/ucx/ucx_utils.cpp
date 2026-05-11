@@ -36,7 +36,13 @@ using namespace std;
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
-    nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
+    nixl_b_params_t params = {{"ucx_devices", ""},
+                              {"device_list", ""},
+                              {"num_workers", "1"},
+                              {"num_threads", "0"},
+                              {"split_batch_size", "1024"},
+                              {"ucx_num_device_channels", "4"},
+                              {"engine_config", ""}};
 
     params.emplace(nixl_ucx_err_handling_param_name,
                    ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_PEER));

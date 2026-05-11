@@ -10,14 +10,14 @@
 namespace nixlbench {
 namespace {
 
-    metadataPluginOptionValue
-    makeOptionValue(const std::string &default_value,
-                    option_kind_t type) {
-        return {default_value,
-                type == option_kind_t::FLAG &&
-                    (default_value == "true" || default_value == "1"),
-                false};
-    }
+metadataPluginOptionValue
+makeOptionValue(const std::string &default_value,
+    option_kind_t type) {
+return {default_value,
+type == option_kind_t::FLAG &&
+    (default_value == "true" || default_value == "1"),
+false};
+}
 
     void
     appendFileWorkloadOptions(std::vector<cliOption> &options,
@@ -67,8 +67,6 @@ namespace {
         options.reserve(option_specs.size() + (canReadWriteFiles ? 4 : 0));
         option_values.reserve(options.capacity());
         for (const auto &spec : option_specs) {
-            // const auto kind = spec.type == nixl_backend_option_type_t::BOOL ? option_kind_t::FLAG :
-            //                                                                    option_kind_t::VALUE;
             auto &value = option_values[spec.first];
             value = makeOptionValue(spec.second, option_kind_t::VALUE);
 

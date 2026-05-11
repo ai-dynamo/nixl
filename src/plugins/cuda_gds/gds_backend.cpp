@@ -45,7 +45,7 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
     nixl_b_params_t* custom_params = init_params->customParams;
     if (custom_params) {
         // Configure batch_pool_size
-        if (custom_params->count("batch_pool_size") > 0) {
+        if (custom_params->count("batch_pool_size") > 0 && custom_params->at("batch_pool_size") != "") {
             try {
                 batch_pool_size = std::stoi((*custom_params)["batch_pool_size"]);
             } catch (const std::exception& e) {
@@ -56,7 +56,7 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
         }
 
         // Configure batch_limit
-        if (custom_params->count("batch_limit") > 0) {
+        if (custom_params->count("batch_limit") > 0 && custom_params->at("batch_limit") != "") {
             try {
                 batch_limit = std::stoi((*custom_params)["batch_limit"]);
             } catch (const std::exception& e) {
@@ -67,7 +67,7 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
         }
 
         // Configure max_request_size
-        if (custom_params->count("max_request_size") > 0) {
+        if (custom_params->count("max_request_size") > 0 && custom_params->at("max_request_size") != "") {
             try {
                 max_request_size = std::stoul((*custom_params)["max_request_size"]);
             } catch (const std::exception& e) {

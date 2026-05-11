@@ -9,6 +9,7 @@ if gtest_dep.found()
     [
       'benchmark_config_test.cpp',
       'benchmark_config_adapter_test.cpp',
+      'backend_option_inventory_test.cpp',
       'nixl_backend_params_test.cpp',
       'benchmark_runner_config_test.cpp',
       'benchmark_executor_test.cpp',

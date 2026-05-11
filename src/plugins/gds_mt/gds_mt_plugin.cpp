@@ -15,14 +15,23 @@
  * limitations under the License.
  */
 
- #include "backend/backend_plugin.h"
- #include "gds_mt_backend.h"
- #include "common/nixl_log.h"
- #include <exception>
+#include "backend/backend_plugin.h"
+#include "common/nixl_log.h"
+#include "gds_mt_backend.h"
+#include <exception>
  
  
- // Plugin type alias for convenience
- using gds_mt_plugin_t = nixlBackendPluginCreator<nixlGdsMtEngine>;
+// Plugin type alias for convenience
+using gds_mt_plugin_t = nixlBackendPluginCreator<nixlGdsMtEngine>;
+
+namespace {
+
+nixl_b_params_t
+getGdsMtBackendOptions() {
+    return {{"thread_count", "0"}};
+}
+
+} // namespace
  
 nixlBackendPluginCapabilities
 buildGdsMtCapabilities() {
@@ -30,20 +39,28 @@ buildGdsMtCapabilities() {
 }
 
 
- #ifdef STATIC_PLUGIN_GDS_MT
- nixlBackendPlugin *
- createStaticGDS_MTPlugin() {
-     return gds_mt_plugin_t::create(
-         NIXL_PLUGIN_API_VERSION, "GDS_MT", "0.1.0", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG}, buildGdsMtCapabilities());
- }
- #else
- extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
- nixl_plugin_init() {
-     return gds_mt_plugin_t::create(
-         NIXL_PLUGIN_API_VERSION, "GDS_MT", "0.1.0", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG}, buildGdsMtCapabilities());
- }
- 
- extern "C" NIXL_PLUGIN_EXPORT void
- nixl_plugin_fini() {}
- #endif
+#ifdef STATIC_PLUGIN_GDS_MT
+nixlBackendPlugin *
+createStaticGDS_MTPlugin() {
+    return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                   "GDS_MT",
+                                   "0.1.0",
+                                   getGdsMtBackendOptions(),
+                                   {DRAM_SEG, VRAM_SEG, FILE_SEG},
+                                   buildGdsMtCapabilities());
+}
+#else
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
+    return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                   "GDS_MT",
+                                   "0.1.0",
+                                   getGdsMtBackendOptions(),
+                                   {DRAM_SEG, VRAM_SEG, FILE_SEG},
+                                   buildGdsMtCapabilities());
+}
+
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {}
+#endif
  

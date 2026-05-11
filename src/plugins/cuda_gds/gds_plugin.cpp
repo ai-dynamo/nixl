@@ -15,32 +15,48 @@
  * limitations under the License.
  */
 
- #include "backend/backend_plugin.h"
- #include "gds_backend.h"
+#include "backend/backend_plugin.h"
+#include "gds_backend.h"
  
  
- // Plugin type alias for convenience
- using gds_plugin_t = nixlBackendPluginCreator<nixlGdsEngine>;
+// Plugin type alias for convenience
+using gds_plugin_t = nixlBackendPluginCreator<nixlGdsEngine>;
+
+namespace {
+
+nixl_b_params_t
+getGdsBackendOptions() {
+    return {{"batch_pool_size", ""}, {"batch_limit", ""}, {"max_request_size", ""}};
+}
+
+} // namespace
  
 nixlBackendPluginCapabilities
 buildGdsCapabilities() {
     return {false};
 }
 
- #ifdef STATIC_PLUGIN_GDS
- nixlBackendPlugin *
- createStaticGDSPlugin() {
-     return gds_plugin_t::create(
-         NIXL_PLUGIN_API_VERSION, "GDS", "0.1.1", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG}, buildGdsCapabilities());
- }
- #else
- extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
- nixl_plugin_init() {
-     return gds_plugin_t::create(
-         NIXL_PLUGIN_API_VERSION, "GDS", "0.1.1", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
- }
- 
- extern "C" NIXL_PLUGIN_EXPORT void
- nixl_plugin_fini() {}
- #endif
+#ifdef STATIC_PLUGIN_GDS
+nixlBackendPlugin *
+createStaticGDSPlugin() {
+    return gds_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                "GDS",
+                                "0.1.1",
+                                getGdsBackendOptions(),
+                                {DRAM_SEG, VRAM_SEG, FILE_SEG},
+                                buildGdsCapabilities());
+}
+#else
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
+    return gds_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                "GDS",
+                                "0.1.1",
+                                getGdsBackendOptions(),
+                                {DRAM_SEG, VRAM_SEG, FILE_SEG});
+}
+
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {}
+#endif
  

@@ -243,7 +243,7 @@ getCustomStringParam(const nixl_b_params_t &custom_params,
     }
 
     nixl_b_params_t::const_iterator itr = custom_params.find(key);
-    if (itr != custom_params.end()) {
+    if (itr != custom_params.end() && !itr->second.empty()) {
         value = itr->second;
         return NIXL_SUCCESS;
     }

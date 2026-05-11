@@ -15,33 +15,53 @@
  * limitations under the License.
  */
 
- #include <memory>
- #include "posix_backend.h"
- #include "backend/backend_plugin.h"
+#include <memory>
+#include "backend/backend_plugin.h"
+#include "posix_backend.h"
  
- // Plugin type alias for convenience
- using posix_plugin_t = nixlBackendPluginCreator<nixlPosixEngine>;
+// Plugin type alias for convenience
+using posix_plugin_t = nixlBackendPluginCreator<nixlPosixEngine>;
 
- nixlBackendPluginCapabilities
- buildPosixCapabilities() {
-     return {false};
- }
+namespace {
+
+nixl_b_params_t
+getPosixBackendOptions() {
+    return {{"use_aio", "false"},
+            {"use_uring", "false"},
+            {"use_posix_aio", "false"},
+            {"ios_pool_size", ""},
+            {"kernel_queue_size", ""}};
+}
+
+} // namespace
+
+nixlBackendPluginCapabilities
+buildPosixCapabilities() {
+    return {false};
+}
  
  
- #ifdef STATIC_PLUGIN_POSIX
- nixlBackendPlugin *
- createStaticPOSIXPlugin() {
-     return posix_plugin_t::create(
-         NIXL_PLUGIN_API_VERSION, "POSIX", "0.1.0", {}, {DRAM_SEG, FILE_SEG}, buildPosixCapabilities());
- }
- #else
- extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
- nixl_plugin_init() {
-     return posix_plugin_t::create(
-         NIXL_PLUGIN_API_VERSION, "POSIX", "0.1.0", {}, {DRAM_SEG, FILE_SEG});
- }
- 
- extern "C" NIXL_PLUGIN_EXPORT void
- nixl_plugin_fini() {}
- #endif
+#ifdef STATIC_PLUGIN_POSIX
+nixlBackendPlugin *
+createStaticPOSIXPlugin() {
+    return posix_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                  "POSIX",
+                                  "0.1.0",
+                                  getPosixBackendOptions(),
+                                  {DRAM_SEG, FILE_SEG},
+                                  buildPosixCapabilities());
+}
+#else
+extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+nixl_plugin_init() {
+    return posix_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                  "POSIX",
+                                  "0.1.0",
+                                  getPosixBackendOptions(),
+                                  {DRAM_SEG, FILE_SEG});
+}
+
+extern "C" NIXL_PLUGIN_EXPORT void
+nixl_plugin_fini() {}
+#endif
  

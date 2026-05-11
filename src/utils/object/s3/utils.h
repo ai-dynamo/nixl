@@ -59,11 +59,11 @@ configureClientCommon(ConfigType &config, nixl_b_params_t *custom_params) {
     if (!custom_params) return;
 
     auto endpoint_override_it = custom_params->find("endpoint_override");
-    if (endpoint_override_it != custom_params->end())
+    if (endpoint_override_it != custom_params->end() && !endpoint_override_it->second.empty())
         config.endpointOverride = endpoint_override_it->second;
 
     auto scheme_it = custom_params->find("scheme");
-    if (scheme_it != custom_params->end()) {
+    if (scheme_it != custom_params->end() && !scheme_it->second.empty()) {
         if (scheme_it->second == "http")
             config.scheme = Aws::Http::Scheme::HTTP;
         else if (scheme_it->second == "https")
@@ -73,10 +73,11 @@ configureClientCommon(ConfigType &config, nixl_b_params_t *custom_params) {
     }
 
     auto region_it = custom_params->find("region");
-    if (region_it != custom_params->end()) config.region = region_it->second;
+    if (region_it != custom_params->end() && !region_it->second.empty())
+        config.region = region_it->second;
 
     auto req_checksum_it = custom_params->find("req_checksum");
-    if (req_checksum_it != custom_params->end()) {
+    if (req_checksum_it != custom_params->end() && !req_checksum_it->second.empty()) {
         if (req_checksum_it->second == "required")
             config.checksumConfig.requestChecksumCalculation =
                 Aws::Client::RequestChecksumCalculation::WHEN_REQUIRED;
@@ -89,7 +90,8 @@ configureClientCommon(ConfigType &config, nixl_b_params_t *custom_params) {
     }
 
     auto ca_bundle_it = custom_params->find("ca_bundle");
-    if (ca_bundle_it != custom_params->end()) config.caFile = ca_bundle_it->second;
+    if (ca_bundle_it != custom_params->end() && !ca_bundle_it->second.empty())
+        config.caFile = ca_bundle_it->second;
 }
 
 } // namespace nixl_s3_utils

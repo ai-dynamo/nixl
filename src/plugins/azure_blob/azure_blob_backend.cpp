@@ -32,7 +32,7 @@ namespace {
 
 std::size_t
 getNumThreads(nixl_b_params_t *custom_params) {
-    return custom_params && custom_params->count("num_threads") > 0 ?
+    return custom_params && custom_params->count("num_threads") > 0 && custom_params->at("num_threads") != "" ?
         std::stoul(custom_params->at("num_threads")) :
         std::max(1u, std::thread::hardware_concurrency() / 2);
 }
