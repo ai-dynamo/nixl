@@ -1,0 +1,88 @@
+name: Run XPU GTest
+
+"on":
+  workflow_call:
+    inputs:
+      image_tag:
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Docker image tag to test
+        required: false
+        type: string
+
+jobs:
+  xpu-gtest:
+    name: Run gtest in Dockerfile.xpu container
+    runs-on: xpu-nixl-test
+    timeout-minutes: 180
+
+    permissions:
+      contents: read
+
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag || format('nixl-xpu:sha-{0}', github.sha) }}
+      CONTAINER_NAME: nixl-xpu-gtest-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify XPU image is available locally
+        shell: bash
+        run: docker image inspect "${IMAGE_TAG}" > /dev/null
+
+      - name: Start XPU container
+        shell: bash
+        run: |
+          docker run -itd \
+            --name "${CONTAINER_NAME}" \
+            --privileged \
+            --net=host \
+            --shm-size="32g" \
+            --device=/dev/dri \
+            -v "${GITHUB_WORKSPACE}:/workspace/nixl" \
+            -w /workspace/nixl \
+            "${IMAGE_TAG}" \
+            bash
+
+      - name: Install test dependency
+        shell: bash
+        run: docker exec "${CONTAINER_NAME}" bash -lc 'apt update && apt install -y libgtest-dev'
+
+      - name: Configure Meson build
+        shell: bash
+        run: |
+          docker exec "${CONTAINER_NAME}" bash -lc '
+            meson setup build \
+              -Dinstall_headers=true \
+              -Ddisable_gds_backend=false \
+              --buildtype=debug \
+              -Denable_plugins=UCX \
+              -Dbuild_tests=true \
+              -Dbuild_examples=true
+          '
+
+      - name: Compile gtest target
+        shell: bash
+        run: docker exec "${CONTAINER_NAME}" bash -lc 'meson compile -C build gtest'
+
+      - name: Run gtest target
+        shell: bash
+        run: |
+          docker exec "${CONTAINER_NAME}" bash -lc '
+            meson test -C build gtest \
+              --verbose \
+              --print-errorlogs \
+              --timeout-multiplier 10 \
+              --test-args="--gtest_filter=UcxBackendParams.*:*/TestErrorHandling.*"
+          '
+
+      - name: Remove XPU container
+        if: always()
+        shell: bash
+        run: docker rm -f "${CONTAINER_NAME}"
