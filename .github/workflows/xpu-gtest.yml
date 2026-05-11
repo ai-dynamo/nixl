@@ -25,13 +25,9 @@ jobs:
     env:
       IMAGE_TAG: ${{ inputs.image_tag || format('nixl-xpu:sha-{0}', github.sha) }}
       CONTAINER_NAME: nixl-xpu-gtest-${{ github.run_id }}-${{ github.run_attempt }}
+      BUILD_DIR: /tmp/nixl-build
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-
       - name: Verify XPU image is available locally
         shell: bash
         run: docker image inspect "${IMAGE_TAG}" > /dev/null
@@ -43,7 +39,6 @@ jobs:
             --name "${CONTAINER_NAME}" \
             --shm-size="32g" \
             --device=/dev/dri \
-            -v "${GITHUB_WORKSPACE}:/workspace/nixl" \
             -w /workspace/nixl \
             "${IMAGE_TAG}" \
             bash
@@ -62,7 +57,7 @@ jobs:
         shell: bash
         run: |
           docker exec "${CONTAINER_NAME}" bash -lc '
-            meson setup build \
+            meson setup "${BUILD_DIR}" /workspace/nixl \
               -Dinstall_headers=true \
               -Ddisable_gds_backend=false \
               --buildtype=debug \
@@ -73,13 +68,13 @@ jobs:
 
       - name: Compile gtest target
         shell: bash
-        run: docker exec "${CONTAINER_NAME}" bash -lc 'meson compile -C build gtest'
+        run: docker exec "${CONTAINER_NAME}" bash -lc 'meson compile -C "${BUILD_DIR}" gtest'
 
       - name: Run gtest target
         shell: bash
         run: |
           docker exec "${CONTAINER_NAME}" bash -lc '
-            meson test -C build gtest \
+            meson test -C "${BUILD_DIR}" gtest \
               --verbose \
               --print-errorlogs \
               --timeout-multiplier 10 \
