@@ -22,10 +22,6 @@
 #include <memory>
 #include <gtest/gtest.h>
 
-#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
-#include <nixl_device_proxy.cuh>
-#endif
-
 namespace gtest::nixl::gpu::single_write {
 struct putParams {
     nixlMemViewElem src;
@@ -448,8 +444,7 @@ TEST_P(SingleWriteTest, MultipleWorkersPut) {
     GTEST_LOG_(WARNING)
         << "Proxy backend caps worker threads at " << kProxyPostXferWorkerLimit
         << " until the UCX postXfer path is validated for concurrent proxy workers; "
-        << "this test exercises explicit channel selection across "
-        << numWorkers << " channels";
+        << "this test exercises explicit channel selection across " << numWorkers << " channels";
 #endif
     constexpr size_t size = 4 * 1024;
     constexpr nixl_mem_t mem_type = VRAM_SEG;
@@ -505,8 +500,8 @@ TEST_P(SingleWriteTest, MultipleWorkersPut) {
         put_params.channelId = static_cast<unsigned>(worker_id);
 #endif
         constexpr size_t num_iters = 1;
-        const auto status = launchPutKernel<nixl_gpu_level_t::THREAD>(
-            put_params, num_iters, nullptr, 1);
+        const auto status =
+            launchPutKernel<nixl_gpu_level_t::THREAD>(put_params, num_iters, nullptr, 1);
         ASSERT_EQ(status, NIXL_SUCCESS) << "Kernel launch failed for worker " << worker_id;
     }
 
@@ -592,13 +587,13 @@ TEST_P(SingleWriteTest, SingleWorkerPutGap) {
 using gtest::nixl::gpu::single_write::SingleWriteTest;
 
 #ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
-INSTANTIATE_TEST_SUITE_P(
-    proxyDeviceApi,
-    SingleWriteTest,
-    testing::ValuesIn(gtest::gpu::_test_levels),
-    [](const testing::TestParamInfo<nixl_gpu_level_t> &info) {
-        return std::string("Proxy_") + gtest::gpu::GetGpuXferLevelStr(info.param);
-    });
+INSTANTIATE_TEST_SUITE_P(proxyDeviceApi,
+                         SingleWriteTest,
+                         testing::ValuesIn(gtest::gpu::_test_levels),
+                         [](const testing::TestParamInfo<nixl_gpu_level_t> &info) {
+                             return std::string("Proxy_") +
+                                 gtest::gpu::GetGpuXferLevelStr(info.param);
+                         });
 #else
 INSTANTIATE_TEST_SUITE_P(
     ucxDeviceApi,
