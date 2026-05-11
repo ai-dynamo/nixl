@@ -15,56 +15,42 @@
  * limitations under the License.
  */
 
-#include "backend/backend_plugin.h"
-#include "uccl_backend.h"
-
-namespace {
-nixl_b_params_t
-getUcclOptions() {
-    nixl_b_params_t params;
-    params["in_python"] = "";
-    params["num_cpus"] = "";
-    return params;
-}
-
-nixl_backend_option_list_t
-buildUcclOptionSpecs() {
-    return {{"in_python", "Run UCCL in Python mode", nixl_backend_option_type_t::INT, false, "1"},
-            {"num_cpus", "UCCL CPU count", nixl_backend_option_type_t::INT, false, "4"}};
-}
-
+ #include "backend/backend_plugin.h"
+ #include "uccl_backend.h"
+ 
+ namespace {
+ nixl_b_params_t
+ get_uccl_options() {
+     nixl_b_params_t params;
+     params["in_python"] = "";
+     params["num_cpus"] = "";
+     return params;
+ }
+ 
 nixlBackendPluginCapabilities
 buildUcclCapabilities() {
     return {false, true, false};
 }
+
 } // namespace
-
-// Plugin type alias for convenience
-using uccl_plugin_t = nixlBackendPluginCreator<nixlUcclEngine>;
-
-#ifdef STATIC_PLUGIN_UCCL
-nixlBackendPlugin *
-createStaticUCCLPlugin() {
-    return uccl_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                 "UCCL",
-                                 "0.1.0",
-                                 getUcclOptions(),
-                                 {DRAM_SEG, VRAM_SEG},
-                                 buildUcclOptionSpecs(),
-                                 buildUcclCapabilities());
-}
-#else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return uccl_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                 "UCCL",
-                                 "0.1.0",
-                                 getUcclOptions(),
-                                 {DRAM_SEG, VRAM_SEG},
-                                 buildUcclOptionSpecs(),
-                                 buildUcclCapabilities());
-}
-
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
-#endif
+ 
+ // Plugin type alias for convenience
+ using uccl_plugin_t = nixlBackendPluginCreator<nixlUcclEngine>;
+ 
+ #ifdef STATIC_PLUGIN_UCCL
+ nixlBackendPlugin *
+ createStaticUCCLPlugin() {
+     return uccl_plugin_t::create(
+         NIXL_PLUGIN_API_VERSION, "UCCL", "0.1.0", get_uccl_options(), {DRAM_SEG, VRAM_SEG}, buildUcclCapabilities());
+ }
+ #else
+ extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+ nixl_plugin_init() {
+     return uccl_plugin_t::create(
+         NIXL_PLUGIN_API_VERSION, "UCCL", "0.1.0", get_uccl_options(), {DRAM_SEG, VRAM_SEG}, buildUcclCapabilities());
+ }
+ 
+ extern "C" NIXL_PLUGIN_EXPORT void
+ nixl_plugin_fini() {}
+ #endif
+ 

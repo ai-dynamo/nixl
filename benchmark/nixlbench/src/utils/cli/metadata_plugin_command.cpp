@@ -4,15 +4,16 @@
  */
 
 #include "utils/cli/metadata_plugin_command.h"
+#include "cli/cli_option.h"
 
 namespace nixlbench {
 namespace {
 
     metadataPluginOptionValue
     makeOptionValue(const std::string &default_value,
-                    nixl_backend_option_type_t type) {
+                    option_kind_t type) {
         return {default_value,
-                type == nixl_backend_option_type_t::BOOL &&
+                type == option_kind_t::FLAG &&
                     (default_value == "true" || default_value == "1"),
                 false};
     }
@@ -58,20 +59,20 @@ namespace {
     }
 
     std::vector<cliOption>
-    buildOptions(const nixl_backend_option_list_t &option_specs,
+    buildOptions(const nixl_b_params_t &option_specs,
                  metadata_plugin_option_map_t &option_values,
                  nixlBackendPluginCapabilities capabilities) {
         std::vector<cliOption> options;
         options.reserve(option_specs.size() + (capabilities.canReadWriteFiles ? 4 : 0));
         option_values.reserve(options.capacity());
         for (const auto &spec : option_specs) {
-            const auto kind = spec.type == nixl_backend_option_type_t::BOOL ? option_kind_t::FLAG :
-                                                                               option_kind_t::VALUE;
-            auto &value = option_values[spec.name];
-            value = makeOptionValue(spec.defaultValue, spec.type);
+            // const auto kind = spec.type == nixl_backend_option_type_t::BOOL ? option_kind_t::FLAG :
+            //                                                                    option_kind_t::VALUE;
+            auto &value = option_values[spec.first];
+            value = makeOptionValue(spec.second, option_kind_t::VALUE);
 
             options.push_back(
-                {spec.name, spec.help, kind, &value, spec.required, &value.isProvided});
+                {spec.first, "", option_kind_t::VALUE, &value, false, &value.isProvided});
         }
         if (capabilities.canReadWriteFiles) {
             appendFileWorkloadOptions(options, option_values);
@@ -83,7 +84,7 @@ namespace {
 
 metadataPluginCommand::metadataPluginCommand(std::string backend_name,
                                              nixlBackendPluginCapabilities capabilities,
-                                             nixl_backend_option_list_t option_specs)
+                                             nixl_b_params_t option_specs)
     : name_(std::move(backend_name)),
       capabilities_(capabilities),
       optionSpecs_(std::move(option_specs))

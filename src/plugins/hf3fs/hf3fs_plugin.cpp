@@ -15,61 +15,34 @@
  * limitations under the License.
  */
 
-#include "backend/backend_plugin.h"
-#include "hf3fs_backend.h"
-#include <iostream>
-
-
-// Plugin type alias for convenience
-using hf3fs_plugin_t = nixlBackendPluginCreator<nixlHf3fsEngine>;
-
-namespace {
-
-nixl_backend_option_list_t
-buildHf3fsOptionSpecs() {
-    return {{"mount_point",
-             "HF3FS mount point",
-             nixl_backend_option_type_t::STRING,
-             false,
-             "/mnt/3fs/"},
-            {"mem_config",
-             "HF3FS memory configuration",
-             nixl_backend_option_type_t::STRING,
-             false,
-             "auto"},
-            {"iopool_size", "HF3FS IO pool size", nixl_backend_option_type_t::INT, false, "64"}};
-}
-
+ #include "backend/backend_plugin.h"
+ #include "hf3fs_backend.h"
+ #include <iostream>
+ 
+ 
+ // Plugin type alias for convenience
+ using hf3fs_plugin_t = nixlBackendPluginCreator<nixlHf3fsEngine>;
+ 
 nixlBackendPluginCapabilities
 buildHf3fsCapabilities() {
     return {true, false, true};
 }
 
-} // namespace
 
-#ifdef STATIC_PLUGIN_HF3FS
-nixlBackendPlugin *
-createStaticHF3FSPlugin() {
-    return hf3fs_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                  "HF3FS",
-                                  "0.1.0",
-                                  {},
-                                  {FILE_SEG, DRAM_SEG},
-                                  buildHf3fsOptionSpecs(),
-                                  buildHf3fsCapabilities());
-}
-#else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return hf3fs_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                  "HF3FS",
-                                  "0.1.0",
-                                  {},
-                                  {FILE_SEG, DRAM_SEG},
-                                  buildHf3fsOptionSpecs(),
-                                  buildHf3fsCapabilities());
-}
-
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
-#endif
+ #ifdef STATIC_PLUGIN_HF3FS
+ nixlBackendPlugin *
+ createStaticHF3FSPlugin() {
+     return hf3fs_plugin_t::create(
+         NIXL_PLUGIN_API_VERSION, "HF3FS", "0.1.0", {}, {FILE_SEG, DRAM_SEG}, buildHf3fsCapabilities());
+ }
+ #else
+ extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+ nixl_plugin_init() {
+     return hf3fs_plugin_t::create(
+         NIXL_PLUGIN_API_VERSION, "HF3FS", "0.1.0", {}, {FILE_SEG, DRAM_SEG}, buildHf3fsCapabilities());
+ }
+ 
+ extern "C" NIXL_PLUGIN_EXPORT void
+ nixl_plugin_fini() {}
+ #endif
+ 

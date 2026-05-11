@@ -15,62 +15,33 @@
  * limitations under the License.
  */
 
-#include <memory>
-#include "posix_backend.h"
-#include "backend/backend_plugin.h"
+ #include <memory>
+ #include "posix_backend.h"
+ #include "backend/backend_plugin.h"
+ 
+ // Plugin type alias for convenience
+ using posix_plugin_t = nixlBackendPluginCreator<nixlPosixEngine>;
 
-// Plugin type alias for convenience
-using posix_plugin_t = nixlBackendPluginCreator<nixlPosixEngine>;
-
-namespace {
-
-nixl_backend_option_list_t
-buildPosixOptionSpecs() {
-    return {{"use_aio", "Use POSIX AIO queue", nixl_backend_option_type_t::BOOL, false, "false"},
-            {"use_uring", "Use io_uring queue", nixl_backend_option_type_t::BOOL, false, "false"},
-            {"use_posix_aio",
-             "Use Linux native AIO queue",
-             nixl_backend_option_type_t::BOOL,
-             false,
-             "false"},
-            {"ios_pool_size", "POSIX IO pool size", nixl_backend_option_type_t::INT, false, "0"},
-            {"kernel_queue_size",
-             "POSIX kernel queue size",
-             nixl_backend_option_type_t::INT,
-             false,
-             "0"}};
-}
-
-nixlBackendPluginCapabilities
-buildPosixCapabilities() {
-    return {true, false, true};
-}
-
-} // namespace
-
-#ifdef STATIC_PLUGIN_POSIX
-nixlBackendPlugin *
-createStaticPOSIXPlugin() {
-    return posix_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                  "POSIX",
-                                  "0.1.0",
-                                  {},
-                                  {DRAM_SEG, FILE_SEG},
-                                  buildPosixOptionSpecs(),
-                                  buildPosixCapabilities());
-}
-#else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return posix_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                  "POSIX",
-                                  "0.1.0",
-                                  {},
-                                  {DRAM_SEG, FILE_SEG},
-                                  buildPosixOptionSpecs(),
-                                  buildPosixCapabilities());
-}
-
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
-#endif
+ nixlBackendPluginCapabilities
+ buildPosixCapabilities() {
+     return {true, false, true};
+ }
+ 
+ 
+ #ifdef STATIC_PLUGIN_POSIX
+ nixlBackendPlugin *
+ createStaticPOSIXPlugin() {
+     return posix_plugin_t::create(
+         NIXL_PLUGIN_API_VERSION, "POSIX", "0.1.0", {}, {DRAM_SEG, FILE_SEG}, buildPosixCapabilities());
+ }
+ #else
+ extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
+ nixl_plugin_init() {
+     return posix_plugin_t::create(
+         NIXL_PLUGIN_API_VERSION, "POSIX", "0.1.0", {}, {DRAM_SEG, FILE_SEG});
+ }
+ 
+ extern "C" NIXL_PLUGIN_EXPORT void
+ nixl_plugin_fini() {}
+ #endif
+ 

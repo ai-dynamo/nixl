@@ -4,6 +4,7 @@
  */
 
 #include "benchmark_config.h"
+#include "nixl_types.h"
 #include "utils/cli/metadata_plugin_command.h"
 #include "utils/cli/raw_execution.h"
 #include "utils/utils.h"
@@ -244,12 +245,9 @@ TEST(BenchmarkConfigAdapterTest, MetadataPluginStoresProvidedFileWorkloadOptions
     nixlBackendPluginCapabilities capabilities;
     capabilities.canUseAsStorage = true;
     capabilities.canReadWriteFiles = true;
-    nixl_backend_option_list_t option_specs{
+    nixl_b_params_t option_specs{
         {"use_posix_aio",
-         "Use Linux native AIO queue",
-         nixl_backend_option_type_t::BOOL,
-         false,
-         "false"},
+         "true"},
     };
     metadataPluginCommand plugin(XFERBENCH_BACKEND_POSIX, capabilities, option_specs);
     provideStringOption(plugin, "filepath", "/images/containerSpace/");

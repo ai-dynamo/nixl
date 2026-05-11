@@ -14,330 +14,305 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _NIXL_TYPES_H
-#define _NIXL_TYPES_H
-#include <vector>
-#include <string>
-#include <unordered_map>
-#include <optional>
-#include <chrono>
-
-
-/*** Forward declarations ***/
-class nixlSerDes;
-class nixlDlistH;
-class nixlBackendH;
-class nixlXferReqH;
-class nixlAgentData;
-
-
-/*** NIXL memory type, operation and status enums ***/
-
-/**
- * @enum   nixl_mem_t
- * @brief  An enumeration of segment types for NIXL
- *         FILE_SEG must be last
- */
-enum nixl_mem_t {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG};
-
-/**
- * @enum   nixl_xfer_op_t
- * @brief  An enumeration of different transfer types for NIXL
- */
-enum nixl_xfer_op_t {NIXL_READ, NIXL_WRITE};
-
-/**
- * @enum   nixl_status_t
- * @brief  An enumeration of status values and error codes for NIXL
- */
-enum nixl_status_t {
-    NIXL_IN_PROG = 1,
-    NIXL_SUCCESS = 0,
-    NIXL_ERR_NOT_POSTED = -1,
-    NIXL_ERR_INVALID_PARAM = -2,
-    NIXL_ERR_BACKEND = -3,
-    NIXL_ERR_NOT_FOUND = -4,
-    NIXL_ERR_MISMATCH = -5,
-    NIXL_ERR_NOT_ALLOWED = -6,
-    NIXL_ERR_REPOST_ACTIVE = -7,
-    NIXL_ERR_UNKNOWN = -8,
-    NIXL_ERR_NOT_SUPPORTED = -9,
-    NIXL_ERR_REMOTE_DISCONNECT = -10,
-    NIXL_ERR_CANCELED = -11,
-    NIXL_ERR_NO_TELEMETRY = -12
-};
-
-/**
- * @enum nixl_thread_sync_t
- * @brief An enumeration of supported synchronization modes for NIXL
- */
-enum class nixl_thread_sync_t {
-    NIXL_THREAD_SYNC_NONE,
-    NIXL_THREAD_SYNC_STRICT,
-    NIXL_THREAD_SYNC_RW,
-    NIXL_THREAD_SYNC_DEFAULT = NIXL_THREAD_SYNC_NONE,
-};
-
-/**
- * @namespace nixlEnumStrings
- * @brief     This namespace to get string representation
- *            of different enums
- */
-namespace nixlEnumStrings {
-    std::string memTypeStr(const nixl_mem_t &mem);
-    std::string xferOpStr (const nixl_xfer_op_t &op);
-    std::string statusStr (const nixl_status_t &status);
-}
-
-
-/*** NIXL typedefs and defines used in the API ***/
-
-/**
- * @brief A typedef for a std::string to identify nixl backends
- */
-using nixl_backend_t = std::string;
-
-/**
- * @brief A typedef for a std::string to identify nixl telemetry plugins
- */
-using nixl_telemetry_plugin_t = std::string;
-
-/**
- * @brief A typedef for a std::string as nixl blob
- *        std::string supports \0 natively, so it can be looked as a void* of data,
- *        with specified length. Giving it a new name to be clear in the API and
- *        preventing users to think it's a string and call c_str().
- */
-using nixl_blob_t = std::string;
-
-/**
- * @brief A typedef for a std::vector<nixl_mem_t> to create nixl_mem_list_t objects.
- */
-using nixl_mem_list_t = std::vector<nixl_mem_t>;
-
-/**
- * @brief A typedef for a  std::unordered_map<std::string, std::string>
- *        to hold nixl_b_params_t .
- */
-using nixl_b_params_t = std::unordered_map<std::string, std::string>;
-
-/**
- * @brief Backend initialization option value types for static plugin metadata.
- */
-enum class nixl_backend_option_type_t {
-    BOOL,   ///< Boolean value represented as a string in nixl_b_params_t.
-    INT,    ///< Signed integer value represented as a string in nixl_b_params_t.
-    UINT64, ///< Unsigned 64-bit integer represented as a string in nixl_b_params_t.
-    STRING, ///< String value.
-};
-
-/**
- * @brief Describes one backend init-time custom parameter accepted by createBackend().
- */
-struct nixlBackendOptionSpec {
-    std::string name;                       ///< Backend init parameter name.
-    std::string help;                       ///< User-facing description of the parameter.
-    nixl_backend_option_type_t type;        ///< Parameter value type.
-    bool required = false;                  ///< Whether the parameter is required.
-    std::string defaultValue;               ///< Default value represented as a string.
-};
-
-/**
- * @brief A list of backend init-time option specifications.
- */
-using nixl_backend_option_list_t = std::vector<nixlBackendOptionSpec>;
-
-/**
- * @brief Static backend role capabilities exposed by a plugin.
- */
-struct nixlBackendPluginCapabilities {
-    bool canUseAsStorage = false;             ///< Backend can be used as storage.
-    bool canUseAsNetworkDestination = false;  ///< Backend can be a network destination.
-    bool canReadWriteFiles = false;           ///< Backend uses filesystem files for storage.
-    bool requiresDirectStorage = false;       ///< Backend requires direct storage.
-};
-
-/**
- * @brief A typedef for a  std::unordered_map<std::string, std::vector<nixl_blob_t>>
- *        to hold nixl_notifs_t (nixl notifications)
- */
-using nixl_notifs_t = std::unordered_map<std::string, std::vector<nixl_blob_t>>;
-
-/**
- * @brief A constant to define the default communication port.
- */
-constexpr int default_comm_port = 8888;
-
-/**
- * @brief A constant to define the default metadata label for ETCD server key.
- *        Appended to the agent's key prefix to form the full key for metadata.
- */
-extern const std::string default_metadata_label;
-
-/**
- * @brief A constant to define the default partial metadata label for ETCD server key.
- *        Appended to the agent's key prefix to form the full key for partial metadata.
- */
-extern const std::string default_partial_metadata_label;
-
-
-/**
- * @enum nixl_cost_t
- * @brief An enumeration of cost types for transfer cost estimation.
- */
-enum class nixl_cost_t {
-    ANALYTICAL_BACKEND = 0, // Analytical backend cost estimate
-};
-
-/**
- * @brief A typedef for std::optional<nixl_b_params_t> for querying memory results
- *        Validity of a nixl_query_resp_t can be checked by has_value() method,
- *        and if true, the dictionary can be accessed by value() method.
- */
-using nixl_query_resp_t = std::optional<nixl_b_params_t>;
-
-
-/**
- * @struct nixlAgentOptionalArgs
- * @brief A structure for optional argument that can be provided to relevant agent methods.
- */
-struct nixlAgentOptionalArgs {
-    /**
-     * @var backends vector to specify a list of backend handles, to limit the list
-     *      of backends to be considered. Used in registerMem / deregisterMem
-     *      makeConnection / prepXferDlist / makeXferReq / createXferReq / GetNotifs / GenNotif
-     */
-    std::vector<nixlBackendH*> backends;
-
-    /**
-     * @var notif Optional notification message used in createXferReq / makeXferReq / postXferReq.
-     *            If set, notification is enabled even for empty-string messages.
-     *            This is the preferred field for new API users.
-     */
-    std::optional<nixl_blob_t> notif;
-
-    /**
-     * @var notifMsg Legacy notification payload kept for backward compatibility.
-     *               Deprecated in favor of @ref notif.
-     */
-    nixl_blob_t notifMsg;
-
-    /**
-     * @var hasNotif Legacy notification flag kept for backward compatibility.
-     *      Deprecated in favor of @ref notif.
-     */
-    bool hasNotif = false;
-
-    /**
-     * @var skipDescMerge Legacy flag to skip merging consecutive descriptors.
-     *      Deprecated. Kept for backward compatibility.
-     */
-    bool skipDescMerge = false;
-
-    /**
-     * @var includeConnInfo legacy flag to include connection information in partial metadata.
-     *                      Deprecated, but still supported for backward compatibility.
-     */
-    bool includeConnInfo = false;
-
-    /**
-     * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
-     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
-     */
-    std::string ipAddr;
-
-    /**
-     * @var port Used to specify the port of a remote peer, ipAddr must also be set
-     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
-     */
-    int port = default_comm_port;
-
-    /**
-     * @var metadataLabel Used to specify the label of the metadata to be sent/fetched
-     *                    when working with ETCD metadata server. The label will be appended to the
-     *                    agent's key prefix, and the full key will be used to store/fetch
-     *                    the metadata key-value pair from the server.
-     *                    Used in fetchRemoteMD, sendLocalPartialMD.
-     *                    Note that sendLocalMD always uses default_metadata_label and ignores this parameter.
-     *                    Note that invalidateLocalMD invalidates all labels and ignores this parameter.
-     */
-    std::string metadataLabel;
-
-    /**
-     * @var Backend custom parameter
-     */
-    nixl_blob_t customParam;
-};
-/**
- * @brief A typedef for a nixlAgentOptionalArgs
- *        for providing extra optional arguments
- */
-using nixl_opt_args_t = nixlAgentOptionalArgs;
-
-/**
- * @brief An alias for a nixlMemViewH
- *        Represents a memory view handle
- */
-using nixlMemViewH = void *;
-
-/**
- * @brief A typedefs for a point in time
- */
-using chrono_point_t = std::chrono::steady_clock::time_point;
-
-/**
- * @brief A typedefs for a period of time in microseconds
- */
-using chrono_period_us_t = std::chrono::microseconds;
-
-/**
- * @struct nixlXferTelemetry
- * @brief A structure for telemetry output from agent API
- */
-struct nixlXferTelemetry {
-    /**
-     * @var startTime Time that the transfer was posted
-     */
-    chrono_point_t startTime;
-
-    /**
-     * @var postDuration Time it took to do the post operation
-     */
-    chrono_period_us_t postDuration;
-
-    /**
-     * @var xferDuration Time it took to complete the transfer
-     *      if checkXferReq is called late, that might impact this result
-     */
-    chrono_period_us_t xferDuration;
-
-    /**
-     * @var totalBytes Amount of bytes transferred in the request
-     */
-    size_t totalBytes;
-
-    /**
-     * @var descCount Number of descriptors in the transfer request.
-     *      If any merging of descriptors were performed, it will be reflected here.
-     */
-    size_t descCount;
-};
-
-/**
- * @brief A typedef for a nixlXferTelemetry
- *        for telemetry output.
- */
-using nixl_xfer_telem_t = nixlXferTelemetry;
-
-/**
- * @brief A define for an empty string, that indicates the descriptor list is being
- *        prepared for the local agent as an initiator in prepXferDlist method.
- */
-#define NIXL_INIT_AGENT ""
-
-/**
- * @brief A constant for an invalid agent name.
- */
-extern const std::string nixl_null_agent;
-
-#endif
+ #ifndef _NIXL_TYPES_H
+ #define _NIXL_TYPES_H
+ #include <vector>
+ #include <string>
+ #include <unordered_map>
+ #include <optional>
+ #include <chrono>
+ 
+ 
+ /*** Forward declarations ***/
+ class nixlSerDes;
+ class nixlDlistH;
+ class nixlBackendH;
+ class nixlXferReqH;
+ class nixlAgentData;
+ 
+ 
+ /*** NIXL memory type, operation and status enums ***/
+ 
+ /**
+  * @enum   nixl_mem_t
+  * @brief  An enumeration of segment types for NIXL
+  *         FILE_SEG must be last
+  */
+ enum nixl_mem_t {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG};
+ 
+ /**
+  * @enum   nixl_xfer_op_t
+  * @brief  An enumeration of different transfer types for NIXL
+  */
+ enum nixl_xfer_op_t {NIXL_READ, NIXL_WRITE};
+ 
+ /**
+  * @enum   nixl_status_t
+  * @brief  An enumeration of status values and error codes for NIXL
+  */
+ enum nixl_status_t {
+     NIXL_IN_PROG = 1,
+     NIXL_SUCCESS = 0,
+     NIXL_ERR_NOT_POSTED = -1,
+     NIXL_ERR_INVALID_PARAM = -2,
+     NIXL_ERR_BACKEND = -3,
+     NIXL_ERR_NOT_FOUND = -4,
+     NIXL_ERR_MISMATCH = -5,
+     NIXL_ERR_NOT_ALLOWED = -6,
+     NIXL_ERR_REPOST_ACTIVE = -7,
+     NIXL_ERR_UNKNOWN = -8,
+     NIXL_ERR_NOT_SUPPORTED = -9,
+     NIXL_ERR_REMOTE_DISCONNECT = -10,
+     NIXL_ERR_CANCELED = -11,
+     NIXL_ERR_NO_TELEMETRY = -12
+ };
+ 
+ /**
+  * @enum nixl_thread_sync_t
+  * @brief An enumeration of supported synchronization modes for NIXL
+  */
+ enum class nixl_thread_sync_t {
+     NIXL_THREAD_SYNC_NONE,
+     NIXL_THREAD_SYNC_STRICT,
+     NIXL_THREAD_SYNC_RW,
+     NIXL_THREAD_SYNC_DEFAULT = NIXL_THREAD_SYNC_NONE,
+ };
+ 
+ /**
+  * @namespace nixlEnumStrings
+  * @brief     This namespace to get string representation
+  *            of different enums
+  */
+ namespace nixlEnumStrings {
+     std::string memTypeStr(const nixl_mem_t &mem);
+     std::string xferOpStr (const nixl_xfer_op_t &op);
+     std::string statusStr (const nixl_status_t &status);
+ }
+ 
+ 
+ /*** NIXL typedefs and defines used in the API ***/
+ 
+ /**
+  * @brief A typedef for a std::string to identify nixl backends
+  */
+ using nixl_backend_t = std::string;
+ 
+ /**
+  * @brief A typedef for a std::string to identify nixl telemetry plugins
+  */
+ using nixl_telemetry_plugin_t = std::string;
+ 
+ /**
+  * @brief A typedef for a std::string as nixl blob
+  *        std::string supports \0 natively, so it can be looked as a void* of data,
+  *        with specified length. Giving it a new name to be clear in the API and
+  *        preventing users to think it's a string and call c_str().
+  */
+ using nixl_blob_t = std::string;
+ 
+ /**
+  * @brief A typedef for a std::vector<nixl_mem_t> to create nixl_mem_list_t objects.
+  */
+ using nixl_mem_list_t = std::vector<nixl_mem_t>;
+ 
+ /**
+  * @brief A typedef for a  std::unordered_map<std::string, std::string>
+  *        to hold nixl_b_params_t .
+  */
+ using nixl_b_params_t = std::unordered_map<std::string, std::string>;
+ 
+ /**
+  * @brief Static backend role capabilities exposed by a plugin.
+  */
+ struct nixlBackendPluginCapabilities {
+     bool canUseAsStorage = false;             ///< Backend can be used as storage.
+     bool canUseAsNetworkDestination = false;  ///< Backend can be a network destination.
+     bool canReadWriteFiles = false;           ///< Backend uses filesystem files for storage.
+     bool requiresDirectStorage = false;       ///< Backend requires direct storage.
+ };
+ 
+ /**
+  * @brief A typedef for a  std::unordered_map<std::string, std::vector<nixl_blob_t>>
+  *        to hold nixl_notifs_t (nixl notifications)
+  */
+ using nixl_notifs_t = std::unordered_map<std::string, std::vector<nixl_blob_t>>;
+ 
+ /**
+  * @brief A constant to define the default communication port.
+  */
+ constexpr int default_comm_port = 8888;
+ 
+ /**
+  * @brief A constant to define the default metadata label for ETCD server key.
+  *        Appended to the agent's key prefix to form the full key for metadata.
+  */
+ extern const std::string default_metadata_label;
+ 
+ /**
+  * @brief A constant to define the default partial metadata label for ETCD server key.
+  *        Appended to the agent's key prefix to form the full key for partial metadata.
+  */
+ extern const std::string default_partial_metadata_label;
+ 
+ 
+ /**
+  * @enum nixl_cost_t
+  * @brief An enumeration of cost types for transfer cost estimation.
+  */
+ enum class nixl_cost_t {
+     ANALYTICAL_BACKEND = 0, // Analytical backend cost estimate
+ };
+ 
+ /**
+  * @brief A typedef for std::optional<nixl_b_params_t> for querying memory results
+  *        Validity of a nixl_query_resp_t can be checked by has_value() method,
+  *        and if true, the dictionary can be accessed by value() method.
+  */
+ using nixl_query_resp_t = std::optional<nixl_b_params_t>;
+ 
+ 
+ /**
+  * @struct nixlAgentOptionalArgs
+  * @brief A structure for optional argument that can be provided to relevant agent methods.
+  */
+ struct nixlAgentOptionalArgs {
+     /**
+      * @var backends vector to specify a list of backend handles, to limit the list
+      *      of backends to be considered. Used in registerMem / deregisterMem
+      *      makeConnection / prepXferDlist / makeXferReq / createXferReq / GetNotifs / GenNotif
+      */
+     std::vector<nixlBackendH*> backends;
+ 
+     /**
+      * @var notif Optional notification message used in createXferReq / makeXferReq / postXferReq.
+      *            If set, notification is enabled even for empty-string messages.
+      *            This is the preferred field for new API users.
+      */
+     std::optional<nixl_blob_t> notif;
+ 
+     /**
+      * @var notifMsg Legacy notification payload kept for backward compatibility.
+      *               Deprecated in favor of @ref notif.
+      */
+     nixl_blob_t notifMsg;
+ 
+     /**
+      * @var hasNotif Legacy notification flag kept for backward compatibility.
+      *      Deprecated in favor of @ref notif.
+      */
+     bool hasNotif = false;
+ 
+     /**
+      * @var skipDescMerge Legacy flag to skip merging consecutive descriptors.
+      *      Deprecated. Kept for backward compatibility.
+      */
+     bool skipDescMerge = false;
+ 
+     /**
+      * @var includeConnInfo legacy flag to include connection information in partial metadata.
+      *                      Deprecated, but still supported for backward compatibility.
+      */
+     bool includeConnInfo = false;
+ 
+     /**
+      * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
+      *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+      */
+     std::string ipAddr;
+ 
+     /**
+      * @var port Used to specify the port of a remote peer, ipAddr must also be set
+      *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+      */
+     int port = default_comm_port;
+ 
+     /**
+      * @var metadataLabel Used to specify the label of the metadata to be sent/fetched
+      *                    when working with ETCD metadata server. The label will be appended to the
+      *                    agent's key prefix, and the full key will be used to store/fetch
+      *                    the metadata key-value pair from the server.
+      *                    Used in fetchRemoteMD, sendLocalPartialMD.
+      *                    Note that sendLocalMD always uses default_metadata_label and ignores this parameter.
+      *                    Note that invalidateLocalMD invalidates all labels and ignores this parameter.
+      */
+     std::string metadataLabel;
+ 
+     /**
+      * @var Backend custom parameter
+      */
+     nixl_blob_t customParam;
+ };
+ /**
+  * @brief A typedef for a nixlAgentOptionalArgs
+  *        for providing extra optional arguments
+  */
+ using nixl_opt_args_t = nixlAgentOptionalArgs;
+ 
+ /**
+  * @brief An alias for a nixlMemViewH
+  *        Represents a memory view handle
+  */
+ using nixlMemViewH = void *;
+ 
+ /**
+  * @brief A typedefs for a point in time
+  */
+ using chrono_point_t = std::chrono::steady_clock::time_point;
+ 
+ /**
+  * @brief A typedefs for a period of time in microseconds
+  */
+ using chrono_period_us_t = std::chrono::microseconds;
+ 
+ /**
+  * @struct nixlXferTelemetry
+  * @brief A structure for telemetry output from agent API
+  */
+ struct nixlXferTelemetry {
+     /**
+      * @var startTime Time that the transfer was posted
+      */
+     chrono_point_t startTime;
+ 
+     /**
+      * @var postDuration Time it took to do the post operation
+      */
+     chrono_period_us_t postDuration;
+ 
+     /**
+      * @var xferDuration Time it took to complete the transfer
+      *      if checkXferReq is called late, that might impact this result
+      */
+     chrono_period_us_t xferDuration;
+ 
+     /**
+      * @var totalBytes Amount of bytes transferred in the request
+      */
+     size_t totalBytes;
+ 
+     /**
+      * @var descCount Number of descriptors in the transfer request.
+      *      If any merging of descriptors were performed, it will be reflected here.
+      */
+     size_t descCount;
+ };
+ 
+ /**
+  * @brief A typedef for a nixlXferTelemetry
+  *        for telemetry output.
+  */
+ using nixl_xfer_telem_t = nixlXferTelemetry;
+ 
+ /**
+  * @brief A define for an empty string, that indicates the descriptor list is being
+  *        prepared for the local agent as an initiator in prepXferDlist method.
+  */
+ #define NIXL_INIT_AGENT ""
+ 
+ /**
+  * @brief A constant for an invalid agent name.
+  */
+ extern const std::string nixl_null_agent;
+ 
+ #endif
+ 

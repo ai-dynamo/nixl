@@ -10,7 +10,7 @@
 namespace nixlbench {
 namespace {
 
-TEST(BenchmarkConfigTest, DefaultsMatchLegacyFlagDefaults) {
+TEST(BenchmarkConfigTest, DefaultsLeaveBackendUnselected) {
     const benchmarkConfig config;
 
     EXPECT_EQ(config.common.benchmark_group, "default");
@@ -43,7 +43,7 @@ TEST(BenchmarkConfigTest, DefaultsMatchLegacyFlagDefaults) {
     EXPECT_EQ(config.transfer.max_batch_size, 1U);
     EXPECT_EQ(config.transfer.num_threads, 1);
 
-    EXPECT_EQ(config.backend.name, "UCX");
+    EXPECT_TRUE(config.backend.name.empty());
     EXPECT_FALSE(config.backend.capabilities.canUseAsStorage);
     EXPECT_FALSE(config.backend.capabilities.canUseAsNetworkDestination);
     EXPECT_FALSE(config.backend.capabilities.canReadWriteFiles);
