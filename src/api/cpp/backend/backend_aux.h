@@ -27,11 +27,10 @@
 // level direction or so.
 typedef std::vector<std::pair<std::string, std::string>> notif_list_t;
 
-
 struct nixlBackendOptionalArgs {
     // During postXfer, user might ask for a notification if supported
     nixl_blob_t notifMsg;
-    bool        hasNotif = false;
+    bool hasNotif = false;
     nixl_blob_t customParam;
     /** Per-entry tracking mode for this transfer. Default 0 = no per-entry events.
      *  Set NIXL_XFER_TRACK_ERRORS to append error events, NIXL_XFER_TRACK_SUCCESSES
@@ -42,43 +41,42 @@ struct nixlBackendOptionalArgs {
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
 
-
 // A base class to point to backend initialization data
 // User doesn't know about fields such as local_agent but can access it
 // after the backend is initialized by agent. If we needed to make it private
 // from the user, we should make nixlBackendEngine/nixlAgent friend classes.
 class nixlBackendInitParams {
-    public:
-        std::string       localAgent;
+public:
+    std::string localAgent;
 
-        nixl_backend_t    type;
-        nixl_b_params_t*  customParams;
+    nixl_backend_t type;
+    nixl_b_params_t *customParams;
 
-        bool              enableProgTh;
-        nixlTime::us_t    pthrDelay;
-        nixl_thread_sync_t syncMode;
-        bool enableTelemetry_;
+    bool enableProgTh;
+    nixlTime::us_t pthrDelay;
+    nixl_thread_sync_t syncMode;
+    bool enableTelemetry_;
 };
 
 // Pure virtual class to have a common pointer type
 class nixlBackendReqH {
 public:
-    nixlBackendReqH() { }
-    virtual ~nixlBackendReqH() { }
+    nixlBackendReqH() {}
+
+    virtual ~nixlBackendReqH() {}
 };
 
 // Pure virtual class to have a common pointer type for different backendMD.
 class nixlBackendMD {
-    protected:
-        bool isPrivateMD;
+protected:
+    bool isPrivateMD;
 
-    public:
-        nixlBackendMD(bool isPrivate){
-            isPrivateMD = isPrivate;
-        }
+public:
+    nixlBackendMD(bool isPrivate) {
+        isPrivateMD = isPrivate;
+    }
 
-        virtual ~nixlBackendMD(){
-        }
+    virtual ~nixlBackendMD() {}
 };
 
 // Each backend can have different connection requirement
@@ -86,38 +84,40 @@ class nixlBackendMD {
 // a connection to a remote node. Note that local information
 // is passed during the constructor and through BackendInitParams
 class nixlBackendConnMD {
-  public:
+public:
     // And some other details
     std::string dstIpAddress;
-    uint16_t    dstPort;
+    uint16_t dstPort;
 };
 
 // A pointer required to a metadata object for backends next to each BasicDesc
 class nixlMetaDesc : public nixlBasicDesc {
-  public:
-        // To be able to point to any object
-        nixlBackendMD* metadataP;
+public:
+    // To be able to point to any object
+    nixlBackendMD *metadataP;
 
-        // Reuse parent constructor without the metadata pointer
-        using nixlBasicDesc::nixlBasicDesc;
+    // Reuse parent constructor without the metadata pointer
+    using nixlBasicDesc::nixlBasicDesc;
 
-        nixlMetaDesc() : nixlBasicDesc() { metadataP = nullptr; }
+    nixlMetaDesc() : nixlBasicDesc() {
+        metadataP = nullptr;
+    }
 
-        nixlMetaDesc(uintptr_t addr, size_t len, uint64_t dev_id, nixlBackendMD *metadata)
-            : nixlBasicDesc(addr, len, dev_id),
-              metadataP(metadata) {}
+    nixlMetaDesc(uintptr_t addr, size_t len, uint64_t dev_id, nixlBackendMD *metadata)
+        : nixlBasicDesc(addr, len, dev_id),
+          metadataP(metadata) {}
 
-        // No serializer or deserializer, using parent not to expose the metadata
+    // No serializer or deserializer, using parent not to expose the metadata
 
-        inline friend bool operator==(const nixlMetaDesc &lhs, const nixlMetaDesc &rhs) {
-            return (((nixlBasicDesc)lhs == (nixlBasicDesc)rhs) &&
-                          (lhs.metadataP == rhs.metadataP));
-        }
+    inline friend bool
+    operator==(const nixlMetaDesc &lhs, const nixlMetaDesc &rhs) {
+        return (((nixlBasicDesc)lhs == (nixlBasicDesc)rhs) && (lhs.metadataP == rhs.metadataP));
+    }
 
-        inline void print(const std::string &suffix) const {
-            nixlBasicDesc::print(", Backend ptr val: " +
-                                 std::to_string((uintptr_t)metadataP) + suffix);
-        }
+    inline void
+    print(const std::string &suffix) const {
+        nixlBasicDesc::print(", Backend ptr val: " + std::to_string((uintptr_t)metadataP) + suffix);
+    }
 };
 
 struct nixlRemoteMetaDesc : public nixlMetaDesc {

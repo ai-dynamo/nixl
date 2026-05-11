@@ -53,7 +53,9 @@ public:
 
     const nixl_xfer_entry_event_t &
     get(size_t i) const {
-        if (i >= data_.size()) throw std::out_of_range("index out of range");
+        if (i >= data_.size()) {
+            throw std::out_of_range("index out of range");
+        }
         return data_[i];
     }
 
@@ -251,24 +253,27 @@ PYBIND11_MODULE(_bindings, m) {
         .def("__len__", &nixlXferEntryEvents::size)
         .def("__getitem__",
              [](const nixlXferEntryEvents &v, size_t i) {
-                 if (i >= v.size()) throw py::index_error("index out of range");
+                 if (i >= v.size()) {
+                     throw py::index_error("index out of range");
+                 }
                  const auto &e = v.get(i);
                  return py::make_tuple(e.index, static_cast<int>(e.status));
              })
-        .def(
-            "__iter__",
-            [](const nixlXferEntryEvents &v) -> py::iterator {
-                py::list result;
-                for (const auto &e : v.events())
-                    result.append(py::make_tuple(e.index, static_cast<int>(e.status)));
-                return py::iter(result);
-            })
+        .def("__iter__",
+             [](const nixlXferEntryEvents &v) -> py::iterator {
+                 py::list result;
+                 for (const auto &e : v.events()) {
+                     result.append(py::make_tuple(e.index, static_cast<int>(e.status)));
+                 }
+                 return py::iter(result);
+             })
         .def(
             "to_list",
             [](const nixlXferEntryEvents &v) {
                 py::list result;
-                for (const auto &e : v.events())
+                for (const auto &e : v.events()) {
                     result.append(py::make_tuple(e.index, static_cast<int>(e.status)));
+                }
                 return result;
             },
             "Convert to a Python list of (index, status) tuples");
@@ -292,12 +297,14 @@ PYBIND11_MODULE(_bindings, m) {
                  static_assert(sizeof(nixlBasicDesc) == 3 * sizeof(uint64_t),
                                "nixlBasicDesc size mismatch");
                  // Check array shape and dtype
-                 if (descs.ndim() != 2 || descs.shape(1) != 3)
+                 if (descs.ndim() != 2 || descs.shape(1) != 3) {
                      throw std::invalid_argument("descs must be a Nx3 numpy array");
+                 }
                  if (!py::dtype::of<uint64_t>().equal(descs.dtype()) &&
-                     !py::dtype::of<int64_t>().equal(descs.dtype()))
+                     !py::dtype::of<int64_t>().equal(descs.dtype())) {
                      throw std::invalid_argument(
                          "descs must be a Nx3 numpy array of uint64 or int64");
+                 }
                  if (!(descs.flags() & py::array::c_style)) {
                      throw std::invalid_argument("descs must be a C-contiguous numpy array");
                  }
@@ -360,7 +367,9 @@ PYBIND11_MODULE(_bindings, m) {
              [](nixl_xfer_dlist_t &list, const py::tuple &desc) {
                  int ret = (nixl_status_t)list.getIndex(nixlBasicDesc(
                      desc[0].cast<uintptr_t>(), desc[1].cast<size_t>(), desc[2].cast<uint64_t>()));
-                 if (ret < 0) throw_nixl_exception((nixl_status_t)ret);
+                 if (ret < 0) {
+                     throw_nixl_exception((nixl_status_t)ret);
+                 }
                  return (int)ret;
              })
         .def("remDesc", &nixl_xfer_dlist_t::remDesc)
@@ -382,11 +391,13 @@ PYBIND11_MODULE(_bindings, m) {
     py::class_<nixl_reg_dlist_t>(m, "nixlRegDList")
         .def(py::init<nixl_mem_t, int>(), py::arg("type"), py::arg("init_size") = 0)
         .def(py::init([](nixl_mem_t mem, py::array descs) {
-            if (descs.ndim() != 2 || descs.shape(1) != 3)
+            if (descs.ndim() != 2 || descs.shape(1) != 3) {
                 throw std::invalid_argument("descs must be a Nx3 numpy array");
+            }
             if (!py::dtype::of<uint64_t>().equal(descs.dtype()) &&
-                !py::dtype::of<int64_t>().equal(descs.dtype()))
+                !py::dtype::of<int64_t>().equal(descs.dtype())) {
                 throw std::invalid_argument("descs must be a Nx3 numpy array of uint64 or int64");
+            }
             if (!(descs.flags() & py::array::c_style)) {
                 throw std::invalid_argument("descs must be a C-contiguous numpy array");
             }
@@ -464,7 +475,9 @@ PYBIND11_MODULE(_bindings, m) {
                                                       desc[1].cast<size_t>(),
                                                       desc[2].cast<uint64_t>(),
                                                       desc[3].cast<std::string>()));
-                 if (ret < 0) throw_nixl_exception((nixl_status_t)ret);
+                 if (ret < 0) {
+                     throw_nixl_exception((nixl_status_t)ret);
+                 }
                  return ret;
              })
         .def("trim", &nixl_reg_dlist_t::trim)
@@ -522,8 +535,9 @@ PYBIND11_MODULE(_bindings, m) {
                  nixl_mem_list_t mems;
                  std::vector<std::string> mems_vec;
                  throw_nixl_exception(agent.getPluginParams(type, mems, params));
-                 for (const auto &elm : mems)
+                 for (const auto &elm : mems) {
                      mems_vec.push_back(nixlEnumStrings::memTypeStr(elm));
+                 }
                  return std::make_pair(params, mems_vec);
              })
         .def("getBackendParams",
@@ -534,8 +548,9 @@ PYBIND11_MODULE(_bindings, m) {
                  std::vector<std::string> mems_vec;
                  throw_nixl_exception(
                      agent.getBackendParams((nixlBackendH *)backend, mems, params));
-                 for (const auto &elm : mems)
+                 for (const auto &elm : mems) {
                      mems_vec.push_back(nixlEnumStrings::memTypeStr(elm));
+                 }
                  return std::make_pair(params, mems_vec);
              })
         .def(
@@ -555,8 +570,9 @@ PYBIND11_MODULE(_bindings, m) {
                const std::vector<uintptr_t> &backends) -> nixl_status_t {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
-                for (uintptr_t backend : backends)
+                for (uintptr_t backend : backends) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                }
 
                 ret = agent.registerMem(descs, &extra_params);
                 throw_nixl_exception(ret);
@@ -572,8 +588,9 @@ PYBIND11_MODULE(_bindings, m) {
                const std::vector<uintptr_t> &backends) -> nixl_status_t {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
-                for (uintptr_t backend : backends)
+                for (uintptr_t backend : backends) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                }
 
                 ret = agent.deregisterMem(descs, &extra_params);
                 throw_nixl_exception(ret);
@@ -606,8 +623,9 @@ PYBIND11_MODULE(_bindings, m) {
                const std::vector<uintptr_t> &backends) {
                 nixl_opt_args_t extra_params;
 
-                for (uintptr_t backend : backends)
+                for (uintptr_t backend : backends) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                }
 
                 nixl_status_t ret = agent.makeConnection(remote_agent, &extra_params);
                 throw_nixl_exception(ret);
@@ -623,8 +641,9 @@ PYBIND11_MODULE(_bindings, m) {
                 nixlDlistH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
-                for (uintptr_t backend : backends)
+                for (uintptr_t backend : backends) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                }
 
                 throw_nixl_exception(agent.prepXferDlist(agent_name, descs, handle, &extra_params));
 
@@ -642,8 +661,9 @@ PYBIND11_MODULE(_bindings, m) {
                 nixlDlistH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
-                for (uintptr_t backend : backends)
+                for (uintptr_t backend : backends) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                }
 
                 throw_nixl_exception(agent.prepXferDlist(descs, handle, &extra_params));
 
@@ -667,8 +687,9 @@ PYBIND11_MODULE(_bindings, m) {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
-                for (uintptr_t backend : backends)
+                for (uintptr_t backend : backends) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                }
 
                 if (notif_msg.size() > 0) {
                     extra_params.notif = notif_msg;
@@ -681,14 +702,17 @@ PYBIND11_MODULE(_bindings, m) {
                 auto init_indices_lambda = [](py::object &indices) -> std::vector<int> {
                     if (py::isinstance<py::array>(indices)) {
                         auto indices_array = indices.cast<py::array_t<uint32_t>>();
-                        if (indices_array.ndim() != 1)
+                        if (indices_array.ndim() != 1) {
                             throw std::invalid_argument("indices numpy array must be 1D");
+                        }
                         if (!py::dtype::of<uint32_t>().equal(indices_array.dtype()) &&
-                            !py::dtype::of<int32_t>().equal(indices_array.dtype()))
+                            !py::dtype::of<int32_t>().equal(indices_array.dtype())) {
                             throw std::invalid_argument(
                                 "indices numpy array must be 1D of uint32 or int32");
-                        if (!(indices_array.flags() & py::array::c_style))
+                        }
+                        if (!(indices_array.flags() & py::array::c_style)) {
                             throw std::invalid_argument("indices numpy array must be C-contiguous");
+                        }
                         // We assume that the indices array matches the nixlBasicDesc layout so we
                         // can simply memcpy
                         std::vector<int> ret(indices_array.size());
@@ -736,8 +760,9 @@ PYBIND11_MODULE(_bindings, m) {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
-                for (uintptr_t backend : backends)
+                for (uintptr_t backend : backends) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                }
 
                 if (notif_msg.size() > 0) {
                     extra_params.notif = notif_msg;
@@ -800,7 +825,9 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("reqh"),
             R"pbdoc(
                 Get aggregate transfer status. Raises an exception on error.
-                Returns NIXL_SUCCESS when complete or NIXL_IN_PROG while running.
+                Returns NIXL_SUCCESS when complete, NIXL_IN_PROG while running with no
+                aggregate failure yet, or NIXL_IN_PROG_WITH_ERR while running but at least
+                one entry has failed (use getXferStatus(reqh, events) for per-entry detail).
             )pbdoc")
         .def(
             "getXferStatus",
@@ -857,8 +884,9 @@ PYBIND11_MODULE(_bindings, m) {
 
                 {
                     py::gil_scoped_release release;
-                    for (uintptr_t backend : backends)
+                    for (uintptr_t backend : backends) {
                         extra_params.backends.push_back((nixlBackendH *)backend);
+                    }
 
                     nixl_status_t ret = agent.getNotifs(new_notifs, &extra_params);
 
@@ -866,8 +894,9 @@ PYBIND11_MODULE(_bindings, m) {
                 }
 
                 for (const auto &pair : new_notifs) {
-                    for (const auto &str : pair.second)
+                    for (const auto &str : pair.second) {
                         notif_map[pair.first].push_back(py::bytes(str));
+                    }
                 }
                 return notif_map;
             },
@@ -882,8 +911,9 @@ PYBIND11_MODULE(_bindings, m) {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
 
-                for (uintptr_t backend : backends)
+                for (uintptr_t backend : backends) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                }
 
 
                 ret = agent.genNotif(remote_agent, msg, &extra_params);
@@ -912,8 +942,9 @@ PYBIND11_MODULE(_bindings, m) {
 
                 nixl_opt_args_t extra_params;
 
-                for (uintptr_t backend : backends)
+                for (uintptr_t backend : backends) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                }
                 extra_params.includeConnInfo = inc_conn_info;
 
                 throw_nixl_exception(agent.getLocalPartialMD(descs, ret_str, &extra_params));
@@ -959,8 +990,9 @@ PYBIND11_MODULE(_bindings, m) {
 
                 nixl_opt_args_t extra_params;
 
-                for (uintptr_t backend : backends)
+                for (uintptr_t backend : backends) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                }
                 extra_params.includeConnInfo = inc_conn_info;
                 extra_params.ipAddr = ip_addr;
                 extra_params.port = port;

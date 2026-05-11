@@ -30,11 +30,12 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
         return false;
     }
 
-    if (remote_agent != local_agent)
+    if (remote_agent != local_agent) {
         NIXL_WARN << absl::StrFormat(
             "Warning: Remote agent doesn't match the requesting agent (%s). Got %s",
             local_agent,
             remote_agent);
+    }
 
     if (local.getType() != DRAM_SEG) {
         NIXL_ERROR << absl::StrFormat("Error: Local memory type must be DRAM_SEG, got %d",
@@ -67,10 +68,13 @@ public:
     getOverallStatus() {
         nixl_status_t first_error = NIXL_SUCCESS;
         for (const auto &future : statusFutures_) {
-            if (future.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            if (future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
                 return NIXL_IN_PROG;
+            }
             auto s = future.get();
-            if (s != NIXL_SUCCESS && first_error == NIXL_SUCCESS) first_error = s;
+            if (s != NIXL_SUCCESS && first_error == NIXL_SUCCESS) {
+                first_error = s;
+            }
         }
         return first_error;
     }
@@ -115,7 +119,9 @@ DefaultObjEngineImpl::DefaultObjEngineImpl(const nixlBackendInitParams *init_par
     // The s3_client_crt parameter is accepted for API consistency with derived
     // engine implementations (e.g., S3CrtObjEngineImpl) but is intentionally unused here.
     (void)s3_client_crt;
-    if (s3Client_) s3Client_->setExecutor(executor_);
+    if (s3Client_) {
+        s3Client_->setExecutor(executor_);
+    }
     NIXL_INFO << "Object storage backend initialized with injected S3 clients";
 }
 
@@ -128,8 +134,9 @@ DefaultObjEngineImpl::registerMem(const nixlBlobDesc &mem,
                                   const nixl_mem_t &nixl_mem,
                                   nixlBackendMD *&out) {
     nixl_mem_list_t supported_mems = {OBJ_SEG, DRAM_SEG};
-    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end())
+    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end()) {
         return NIXL_ERR_NOT_SUPPORTED;
+    }
 
     if (nixl_mem == OBJ_SEG) {
         std::unique_ptr<nixlObjMetadata> obj_md = std::make_unique<nixlObjMetadata>(
@@ -189,7 +196,9 @@ DefaultObjEngineImpl::queryMem(const nixl_reg_dlist_t &descs,
                 desc.metaInfo,
                 [&resp, &has_error, i, promise = state.promise, completed = state.completed](
                     std::optional<bool> exists) {
-                    if (completed->exchange(true)) return;
+                    if (completed->exchange(true)) {
+                        return;
+                    }
                     if (!exists.has_value()) {
                         resp[i] = std::nullopt;
                         has_error.store(true, std::memory_order_relaxed);
@@ -223,8 +232,9 @@ DefaultObjEngineImpl::queryMem(const nixl_reg_dlist_t &descs,
         // Wait for all callbacks to complete their writes to resp/has_error
         // to avoid use-after-free if a callback passed the exchange check
         // but was preempted before writing.
-        for (size_t j = 0; j < futures.size(); ++j)
+        for (size_t j = 0; j < futures.size(); ++j) {
             futures[j].wait();
+        }
         NIXL_ERROR << "Failed to query memory: " << e.what();
         return NIXL_ERR_BACKEND;
     }
@@ -262,8 +272,9 @@ DefaultObjEngineImpl::prepXfer(const nixl_xfer_op_t &operation,
                                const std::string &local_agent,
                                nixlBackendReqH *&handle,
                                const nixl_opt_b_args_t *opt_args) const {
-    if (!isValidPrepXferParams(operation, local, remote, remote_agent, local_agent))
+    if (!isValidPrepXferParams(operation, local, remote, remote_agent, local_agent)) {
         return NIXL_ERR_INVALID_PARAM;
+    }
 
     auto req_h = std::make_unique<nixlObjBackendReqH>();
     handle = req_h.release();
@@ -283,9 +294,12 @@ DefaultObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
     }
     nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
 
-    if (opt_args) req_h->trackFlags = opt_args->trackFlags;
-    if (req_h->trackFlags)
+    if (opt_args) {
+        req_h->trackFlags = opt_args->trackFlags;
+    }
+    if (req_h->trackFlags) {
         req_h->appended_.resize(local.descCount(), false);
+    }
 
     for (int i = 0; i < local.descCount(); ++i) {
         const auto &local_desc = local[i];
@@ -317,12 +331,13 @@ DefaultObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
             status_promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
         };
 
-        if (operation == NIXL_WRITE)
+        if (operation == NIXL_WRITE) {
             client->putObjectAsync(
                 obj_key_search->second, data_ptr, data_len, offset, status_callback);
-        else
+        } else {
             client->getObjectAsync(
                 obj_key_search->second, data_ptr, data_len, offset, status_callback);
+        }
     }
 
     return NIXL_IN_PROG;
@@ -341,25 +356,35 @@ DefaultObjEngineImpl::checkXfer(nixlBackendReqH *handle) const {
 nixl_status_t
 DefaultObjEngineImpl::checkXferEvents(nixlBackendReqH *handle,
                                       nixl_xfer_entry_events_t &events) const {
-    if (!handle) return NIXL_ERR_INVALID_PARAM;
+    if (!handle) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
     std::lock_guard<std::mutex> lock(req_h->eventsMutex_);
     const nixl_xfer_track_flags_t flags = req_h->trackFlags;
-    if (flags == 0) return NIXL_ERR_NOT_SUPPORTED;
+    if (flags == 0) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
 
     bool any_pending = false;
     for (size_t i = 0; i < req_h->statusFutures_.size(); ++i) {
-        if (req_h->appended_[i]) continue;
+        if (req_h->appended_[i]) {
+            continue;
+        }
         if (req_h->statusFutures_[i].wait_for(std::chrono::seconds(0)) !=
             std::future_status::ready) {
             any_pending = true;
             continue;
         }
         nixl_status_t s = req_h->statusFutures_[i].get();
-        if (s != NIXL_SUCCESS && req_h->firstError_ == NIXL_SUCCESS) req_h->firstError_ = s;
+        if (s != NIXL_SUCCESS && req_h->firstError_ == NIXL_SUCCESS) {
+            req_h->firstError_ = s;
+        }
         const bool include = (s != NIXL_SUCCESS && (flags & NIXL_XFER_TRACK_ERRORS)) ||
             (s == NIXL_SUCCESS && (flags & NIXL_XFER_TRACK_SUCCESSES));
-        if (include) events.push_back({i, s});
+        if (include) {
+            events.push_back({i, s});
+        }
         req_h->appended_[i] = true;
     }
     return any_pending ? NIXL_IN_PROG : req_h->firstError_;

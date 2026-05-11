@@ -648,10 +648,31 @@ class nixl_agent:
         status = self.agent.getXferStatus(handle._handle)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
-        elif status == nixlBind.NIXL_IN_PROG or status == nixlBind.NIXL_IN_PROG_WITH_ERR:
+        elif (
+            status == nixlBind.NIXL_IN_PROG or status == nixlBind.NIXL_IN_PROG_WITH_ERR
+        ):
             return "PROC"
         else:
             return "ERR"
+
+    def get_xfer_status_with_events(
+        self,
+        handle: nixl_xfer_handle,
+        events: nixlBind.nixlXferEntryEvents,
+    ) -> int:
+        """
+        @brief Poll per-entry transfer status for requests created with track_flags.
+
+        Pass the same ``nixlXferEntryEvents`` instance on each poll to avoid per-call
+        allocations (append-only event list). Does not raise for in-progress statuses.
+
+        @param handle Transfer handle from make_prepped_xfer or initialize_xfer (must have been
+               created with non-zero track_flags).
+        @param events Container created once (e.g. ``nixlBind.nixlXferEntryEvents()``) and reused.
+        @return Raw status code (nixl_status_t), e.g. NIXL_SUCCESS, NIXL_IN_PROG,
+                NIXL_IN_PROG_WITH_ERR, or an error code.
+        """
+        return self.agent.getXferStatus(handle._handle, events)
 
     """
     @brief Get telemetry information of a transfer request.

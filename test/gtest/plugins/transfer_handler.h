@@ -61,7 +61,9 @@ public:
                 std::make_unique<memoryHandler<dstMemType>>(bufferSize_, dstDevId_ + i));
         }
 
-        if (dstBackendEngine_->supportsNotif()) setupNotifs("Test");
+        if (dstBackendEngine_->supportsNotif()) {
+            setupNotifs("Test");
+        }
 
         registerMems();
         prepMems(split_buf, remote_xfer);
@@ -81,20 +83,23 @@ public:
 
     void
     setLocalMem() {
-        for (size_t i = 0; i < srcMem_.size(); i++)
+        for (size_t i = 0; i < srcMem_.size(); i++) {
             srcMem_[i]->setIncreasing(LOCAL_BUF_BYTE + i);
+        }
     }
 
     void
     resetLocalMem() {
-        for (const auto &mem : srcMem_)
+        for (const auto &mem : srcMem_) {
             mem->reset();
+        }
     }
 
     void
     checkLocalMem() {
-        for (size_t i = 0; i < srcMem_.size(); i++)
+        for (size_t i = 0; i < srcMem_.size(); i++) {
             EXPECT_TRUE(srcMem_[i]->checkIncreasing(LOCAL_BUF_BYTE + i));
+        }
     }
 
     const nixl_meta_dlist_t &

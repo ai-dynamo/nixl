@@ -64,7 +64,9 @@ namespace agent {
         getAndLoadRemoteMd(nixlAgent *remote_agent, std::string &remote_agent_name_out) {
             std::string remote_metadata;
             nixl_status_t status = remote_agent->getLocalMD(remote_metadata);
-            if (status != NIXL_SUCCESS) return status;
+            if (status != NIXL_SUCCESS) {
+                return status;
+            }
             return agent_->loadRemoteMD(remote_metadata, remote_agent_name_out);
         }
     };

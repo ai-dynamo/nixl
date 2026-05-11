@@ -99,6 +99,7 @@ struct nixl_capi_notif_map_s { /* empty */ };
 struct nixl_capi_xfer_dlist_handle_s { /* empty */ };
 struct nixl_capi_query_resp_list_s { /* empty */ };
 struct nixl_capi_xfer_entry_events_s { /* empty */ };
+
 // clang-format on
 
 // ---- Core agent functions ----

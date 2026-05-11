@@ -511,7 +511,9 @@ TEST_P(ObjCheckXferListTest, PartialFailureOnRead) {
     // Build index->status map from events (order may vary)
     std::vector<nixl_status_t> entry_status(num_buffers, NIXL_IN_PROG);
     for (const auto &e : events) {
-        if (e.index < num_buffers) entry_status[e.index] = e.status;
+        if (e.index < num_buffers) {
+            entry_status[e.index] = e.status;
+        }
     }
 
     EXPECT_EQ(entry_status[0], NIXL_SUCCESS) << "Entry 0 should have succeeded";

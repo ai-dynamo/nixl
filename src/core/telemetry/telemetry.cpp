@@ -38,6 +38,7 @@ nixlTelemetryEventTypeForStatus(nixl_status_t s) {
     switch (s) {
     case NIXL_SUCCESS:
     case NIXL_IN_PROG:
+    case NIXL_IN_PROG_WITH_ERR:
         NIXL_ASSERT_ALWAYS(false)
             << "nixlTelemetryEventTypeForStatus expects a negative nixl_status_t error code";
     case NIXL_ERR_NOT_POSTED:
