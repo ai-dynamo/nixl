@@ -17,10 +17,12 @@
 #ifndef _NIXL_TYPES_H
 #define _NIXL_TYPES_H
 #include <vector>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <optional>
 #include <chrono>
+#include <cstdint>
 
 
 /*** Forward declarations ***/
@@ -30,7 +32,6 @@ class nixlBackendH;
 class nixlXferReqH;
 class nixlAgentData;
 
-
 /*** NIXL memory type, operation and status enums ***/
 
 /**
@@ -38,13 +39,13 @@ class nixlAgentData;
  * @brief  An enumeration of segment types for NIXL
  *         FILE_SEG must be last
  */
-enum nixl_mem_t {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG};
+enum nixl_mem_t { DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG };
 
 /**
  * @enum   nixl_xfer_op_t
  * @brief  An enumeration of different transfer types for NIXL
  */
-enum nixl_xfer_op_t {NIXL_READ, NIXL_WRITE};
+enum nixl_xfer_op_t { NIXL_READ, NIXL_WRITE };
 
 /**
  * @enum   nixl_status_t
@@ -64,8 +65,38 @@ enum nixl_status_t {
     NIXL_ERR_NOT_SUPPORTED = -9,
     NIXL_ERR_REMOTE_DISCONNECT = -10,
     NIXL_ERR_CANCELED = -11,
-    NIXL_ERR_NO_TELEMETRY = -12
+    NIXL_ERR_NO_TELEMETRY = -12,
+    /** In progress on the per-entry events path. Kept negative so (status < 0) implies need to
+       check. */
+    NIXL_IN_PROG_WITH_ERR = -13
 };
+
+/** @brief Portable single-bit mask: NIXL_BIT(0) == 1, NIXL_BIT(1) == 2, … */
+#define NIXL_BIT(n) (1u << (n))
+
+/**
+ * @brief Per-entry tracking flags (set of properties). Empty (0) = track only summarized status.
+ *        Chosen at createXferReq/makeXferReq. Extensible for future modes.
+ */
+enum nixl_xfer_track_flag_t : uint32_t {
+    NIXL_XFER_TRACK_ERRORS = NIXL_BIT(0),
+    NIXL_XFER_TRACK_SUCCESSES = NIXL_BIT(1),
+};
+
+using nixl_xfer_track_flags_t = uint32_t;
+
+/**
+ * @struct nixl_xfer_entry_event_t
+ * @brief One (index, status) event from checkXferEvents. Events are appended over time;
+ *        user compares event list length to previous call to see new completions.
+ */
+struct nixl_xfer_entry_event_t {
+    size_t index; /**< Descriptor index in the transfer. */
+    nixl_status_t status; /**< NIXL_SUCCESS or an error code; never NIXL_IN_PROG (entries are only
+                             appended once complete). */
+};
+
+using nixl_xfer_entry_events_t = std::deque<nixl_xfer_entry_event_t>;
 
 /**
  * @enum nixl_thread_sync_t
@@ -84,11 +115,13 @@ enum class nixl_thread_sync_t {
  *            of different enums
  */
 namespace nixlEnumStrings {
-    std::string memTypeStr(const nixl_mem_t &mem);
-    std::string xferOpStr (const nixl_xfer_op_t &op);
-    std::string statusStr (const nixl_status_t &status);
-}
-
+std::string
+memTypeStr(const nixl_mem_t &mem);
+std::string
+xferOpStr(const nixl_xfer_op_t &op);
+std::string
+statusStr(const nixl_status_t &status);
+} // namespace nixlEnumStrings
 
 /*** NIXL typedefs and defines used in the API ***/
 
@@ -160,7 +193,6 @@ enum class nixl_cost_t {
  */
 using nixl_query_resp_t = std::optional<nixl_b_params_t>;
 
-
 /**
  * @struct nixlAgentOptionalArgs
  * @brief A structure for optional argument that can be provided to relevant agent methods.
@@ -171,7 +203,7 @@ struct nixlAgentOptionalArgs {
      *      of backends to be considered. Used in registerMem / deregisterMem
      *      makeConnection / prepXferDlist / makeXferReq / createXferReq / GetNotifs / GenNotif
      */
-    std::vector<nixlBackendH*> backends;
+    std::vector<nixlBackendH *> backends;
 
     /**
      * @var notif Optional notification message used in createXferReq / makeXferReq / postXferReq.
@@ -199,6 +231,13 @@ struct nixlAgentOptionalArgs {
     bool skipDescMerge = false;
 
     /**
+     * @var trackFlags Per-entry tracking for this transfer (createXferReq/makeXferReq).
+     *      Empty (0): getXferStatus(req, events) returns NIXL_ERR_INVALID_PARAM.
+     *      NIXL_XFER_TRACK_ERRORS and/or NIXL_XFER_TRACK_SUCCESSES: append-only event list.
+     */
+    nixl_xfer_track_flags_t trackFlags = 0;
+
+    /**
      * @var includeConnInfo legacy flag to include connection information in partial metadata.
      *                      Deprecated, but still supported for backward compatibility.
      */
@@ -206,13 +245,15 @@ struct nixlAgentOptionalArgs {
 
     /**
      * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
-     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD,
+     * sendLocalPartialMD.
      */
     std::string ipAddr;
 
     /**
      * @var port Used to specify the port of a remote peer, ipAddr must also be set
-     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD,
+     * sendLocalPartialMD.
      */
     int port = default_comm_port;
 
@@ -222,8 +263,8 @@ struct nixlAgentOptionalArgs {
      *                    agent's key prefix, and the full key will be used to store/fetch
      *                    the metadata key-value pair from the server.
      *                    Used in fetchRemoteMD, sendLocalPartialMD.
-     *                    Note that sendLocalMD always uses default_metadata_label and ignores this parameter.
-     *                    Note that invalidateLocalMD invalidates all labels and ignores this parameter.
+     *                    Note that sendLocalMD always uses default_metadata_label and ignores this
+     * parameter. Note that invalidateLocalMD invalidates all labels and ignores this parameter.
      */
     std::string metadataLabel;
 
@@ -232,6 +273,7 @@ struct nixlAgentOptionalArgs {
      */
     nixl_blob_t customParam;
 };
+
 /**
  * @brief A typedef for a nixlAgentOptionalArgs
  *        for providing extra optional arguments

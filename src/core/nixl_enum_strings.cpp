@@ -54,6 +54,8 @@ statusStr(const nixl_status_t &status) {
     switch (status) {
     case NIXL_IN_PROG:
         return "NIXL_IN_PROG";
+    case NIXL_IN_PROG_WITH_ERR:
+        return "NIXL_IN_PROG_WITH_ERR";
     case NIXL_SUCCESS:
         return "NIXL_SUCCESS";
     case NIXL_ERR_NOT_POSTED:

@@ -45,6 +45,8 @@ public:
     nixl_status_t
     checkXfer(nixlBackendReqH *handle) const override;
     nixl_status_t
+    checkXferEvents(nixlBackendReqH *handle, nixl_xfer_entry_events_t &events) const override;
+    nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
 protected:

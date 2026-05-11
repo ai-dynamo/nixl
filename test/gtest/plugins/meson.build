@@ -37,6 +37,14 @@ if not aws_s3_crt.found()
     subdir_done()
 endif
 
+# plugin_deps is set by the POSIX plugin subdir; OBJ-only builds still need link deps.
+if not is_variable('plugin_deps')
+    plugin_deps = [nixl_infra, nixl_common_dep, obj_utils_interface, dependency('asio', required: true)]
+    if cuobj_dep.found()
+        plugin_deps += [cuobj_dep]
+    endif
+endif
+
 plugins_gtest_cpp_flags = []
 plugins_gtest_cuda_deps = []
 if cuda_dep.found()
@@ -44,7 +52,7 @@ if cuda_dep.found()
     plugins_gtest_cuda_deps = [cuda_dep]
 endif
 
-plugins_gtest_sources = ['../main.cpp', '../common.cpp', 'obj_plugin.cpp']
+plugins_gtest_sources = ['../main.cpp', '../common.cpp', 'obj_plugin.cpp', 'test_obj_checkXferList.cpp']
 if cuobj_dep.found()
     plugins_gtest_sources += 'obj_cuobj_plugin.cpp'
 endif
