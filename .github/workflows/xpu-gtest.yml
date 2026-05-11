@@ -41,8 +41,6 @@ jobs:
         run: |
           docker run -itd \
             --name "${CONTAINER_NAME}" \
-            --privileged \
-            --net=host \
             --shm-size="32g" \
             --device=/dev/dri \
             -v "${GITHUB_WORKSPACE}:/workspace/nixl" \
@@ -52,7 +50,13 @@ jobs:
 
       - name: Install test dependency
         shell: bash
-        run: docker exec "${CONTAINER_NAME}" bash -lc 'apt update && apt install -y libgtest-dev'
+        run: |
+          docker exec "${CONTAINER_NAME}" bash -lc '
+            set -euo pipefail
+            apt-get update -y &&
+            apt-get install -y --no-install-recommends libgtest-dev &&
+            apt-get clean && rm -rf /var/lib/apt/lists/*
+          '
 
       - name: Configure Meson build
         shell: bash
