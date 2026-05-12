@@ -29663,7 +29663,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/pypa/packaging
 
 
-## pathspec (1.0.4)
+## pathspec (1.1.0)
 
 ### Licenses
 License: `Mozilla Public License 2.0 (MPL 2.0)`
