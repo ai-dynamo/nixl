@@ -39,7 +39,7 @@ export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
 export NIXL_DEBUG_LOGGING=yes
-# Force eager protocol; UCX skips GPU-direct rendezvous (dmabuf/rc_gda).
+# Force eager protocol; UCX skips GPU-direct RNDV path.
 export UCX_RNDV_THRESH=inf
 
 echo "==== Show system info ===="
@@ -85,7 +85,7 @@ run_elastic_test() {
     (
         unset NIXL_ETCD_ENDPOINTS NIXL_ETCD_PEER_URLS NIXL_ETCD_NAMESPACE
         unset UCX_NET_DEVICES  # let UCX auto-select GPU-capable transport
-        # NVLink leg: avoid IB mds (broken dmabuf MR on DL host).
+        # Force NVLink-only transports.
         if [[ "$extra_flags" != *--disable-ll-nvlink* ]]; then
             export UCX_TLS=cuda_copy,cuda_ipc,sm,self
         fi
