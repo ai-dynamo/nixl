@@ -16,6 +16,7 @@
  */
 #ifndef _NIXL_TYPES_H
 #define _NIXL_TYPES_H
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -130,7 +131,7 @@ using nixl_notifs_t = std::unordered_map<std::string, std::vector<nixl_blob_t>>;
 /**
  * @brief A constant to define the default communication port.
  */
-constexpr int default_comm_port = 8888;
+constexpr std::uint16_t default_comm_port = 8888;
 
 /**
  * @brief A constant to define the default metadata label for ETCD server key.
@@ -214,7 +215,7 @@ struct nixlAgentOptionalArgs {
      * @var port Used to specify the port of a remote peer, ipAddr must also be set
      *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
      */
-    int port = default_comm_port;
+    std::uint16_t port = default_comm_port;
 
     /**
      * @var metadataLabel Used to specify the label of the metadata to be sent/fetched

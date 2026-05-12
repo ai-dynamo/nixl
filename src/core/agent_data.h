@@ -19,51 +19,25 @@
 
 #include "mem_section.h"
 #include "telemetry.h"
-#include "stream/metadata_stream.h"
 #include "sync.h"
 
 #include <memory>
 
 #if HAVE_ETCD
-#include <etcd/SyncClient.hpp>
-
-namespace etcd {
-class SyncClient;
-}
-
 #define NIXL_ETCD_NAMESPACE_DEFAULT "/nixl/agents/"
 #endif // HAVE_ETCD
 
-using backend_list_t = std::vector<nixlBackendEngine*>;
+namespace nixl::metadata {
+class nixlMetadataManager;
+} // namespace nixl::metadata
 
-//Internal typedef to define metadata communication request types
-//To be extended with ETCD operations
-enum nixl_comm_t {
-    SOCK_SEND,
-    SOCK_FETCH,
-    SOCK_INVAL,
-    SOCK_MAX,
-#if HAVE_ETCD
-    ETCD_SEND,
-    ETCD_FETCH,
-    ETCD_INVAL
-#endif // HAVE_ETCD
-};
-
-//Command to be sent to listener thread from NIXL API
-// 1) Command type
-// 2) IP Address
-// 3) Port
-// 4) Metadata to send (for sendLocalMD calls)
-using nixl_comm_req_t = std::tuple<nixl_comm_t, std::string, int, nixl_blob_t>;
-
-using nixl_socket_peer_t = std::pair<std::string, int>;
-
-using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
+using backend_list_t = std::vector<nixlBackendEngine *>;
 
 class nixlAgentData {
     private:
         const std::string name_;
+        // UUIDv7 generated at construction; identifies this agent across restarts.
+        const std::string agent_uuid_;
         const nixlAgentConfig config_;
         const bool useEtcd_;
         const bool needsCommThread_;
@@ -84,16 +58,6 @@ class nixlAgentData {
         std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
             remoteBackends_;
 
-        // State/methods for listener thread
-        std::unique_ptr<nixlMDStreamListener> listener;
-        nixl_socket_map_t remoteSockets;
-        std::thread commThread;
-        std::vector<nixl_comm_req_t> commQueue;
-        std::mutex commLock;
-        std::atomic<bool> commThreadStop;
-        std::atomic<bool> agentShutdown;
-        std::exception_ptr commThreadException_;
-
         // The order of the following data members is crucial for destruction.
         // Bookkeeping for local connection metadata and user handles per backend
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
@@ -103,12 +67,12 @@ class nixlAgentData {
         std::unique_ptr<nixlTelemetry> telemetry_;
         nixlLocalSection localSection_;
 
-        void
-        commWorker(nixlAgent &myAgent) noexcept;
-        void
-        commWorkerInternal(nixlAgent *myAgent);
-        void enqueueCommWork(nixl_comm_req_t request);
-        void getCommWork(std::vector<nixl_comm_req_t> &req_list);
+        // Metadata manager owns the worker thread, command queue, listener,
+        // and the P2P / ETCD backends. Declared LAST so its destructor runs
+        // FIRST and joins the worker thread before the agent state above is
+        // torn down. Created when `useEtcd_ || config.useListenThread`.
+        const std::unique_ptr<nixl::metadata::nixlMetadataManager> metadataManager_;
+
         nixl_status_t
         loadConnInfo(const std::string &remote_name,
                      const nixl_backend_t &backend,
@@ -126,6 +90,22 @@ class nixlAgentData {
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &config);
+        ~nixlAgentData();
+
+        [[nodiscard]] const std::string &
+        name() const noexcept {
+            return name_;
+        }
+
+        [[nodiscard]] const nixlAgentConfig &
+        config() const noexcept {
+            return config_;
+        }
+
+        [[nodiscard]] bool
+        useEtcd() const noexcept {
+            return useEtcd_;
+        }
 
         void
         addErrorTelemetry(nixl_status_t err_status) {

@@ -66,6 +66,7 @@ gtest_sources = [
     'error_handling.cpp',
     'test_transfer.cpp',
     'metadata_exchange.cpp',
+    'metadata_format.cpp',
     'common.cpp',
     'query_mem.cpp',
     'telemetry_test.cpp',
@@ -91,7 +92,7 @@ endif
 
 test_exe = executable('gtest',
     sources : gtest_sources,
-    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, plugins_inc_dirs, device_api_inc],
     cpp_args : cpp_flags,
     dependencies : [nixl_dep, nixl_common_dep, cuda_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface],
     link_with: [nixl_build_lib],

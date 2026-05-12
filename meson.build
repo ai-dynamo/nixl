@@ -361,7 +361,7 @@ if get_option('buildtype') == 'debug'
     run_command('truncate', '-s 0', plugfile, check: true)
 endif
 
-nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core', 'src/core/telemetry')
+nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/api/cpp/metadata', 'src/infra', 'src/core', 'src/core/telemetry')
 nixl_gpu_inc_dirs = include_directories('src/api/gpu/ucx')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
@@ -388,6 +388,7 @@ if get_option('install_headers')
   install_headers('src/api/cpp/backend/backend_engine.h', install_dir: prefix_inc + '/backend')
   install_headers('src/api/cpp/backend/backend_aux.h', install_dir: prefix_inc + '/backend')
   install_headers('src/api/cpp/backend/backend_plugin.h', install_dir: prefix_inc + '/backend')
+  install_headers('src/api/cpp/metadata/metadata_backend.h', install_dir: prefix_inc + '/metadata')
   install_headers('src/core/transfer_request.h', install_dir: prefix_inc)
   install_headers('src/core/agent_data.h', install_dir: prefix_inc)
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)

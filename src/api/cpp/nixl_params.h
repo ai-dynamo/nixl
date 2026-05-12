@@ -29,7 +29,7 @@
 struct nixlAgentConfig {
     static constexpr bool kDefaultUseProgThread = false;
     static constexpr bool kDefaultUseListenThread = false;
-    static constexpr int kDefaultListenPort = 0;
+    static constexpr std::uint16_t kDefaultListenPort = 0;
     static constexpr nixl_thread_sync_t kDefaultSyncMode =
         nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT;
     static constexpr bool kDefaultCaptureTelemetry = false;
@@ -37,13 +37,15 @@ struct nixlAgentConfig {
     static constexpr uint64_t kDefaultLthrDelayUs = 100000;
     static constexpr std::chrono::microseconds kDefaultEtcdWatchTimeout =
         std::chrono::microseconds(5000000);
+    static constexpr std::chrono::milliseconds kDefaultHeartbeatInterval =
+        std::chrono::milliseconds(2000);
 
     /** @var Enable progress thread */
     bool useProgThread = kDefaultUseProgThread;
     /** @var Enable listener thread */
     bool useListenThread = kDefaultUseListenThread;
     /** @var Port for listener thread to use */
-    int listenPort = kDefaultListenPort;
+    std::uint16_t listenPort = kDefaultListenPort;
     /** @var synchronization mode for multi-threaded environment execution */
     nixl_thread_sync_t syncMode = kDefaultSyncMode;
     /** @var Capture telemetry info regardless of environment variables*/
@@ -88,7 +90,7 @@ struct nixlAgentConfig {
     explicit nixlAgentConfig(
         const bool use_prog_thread,
         const bool use_listen_thread = kDefaultUseListenThread,
-        int port = kDefaultListenPort,
+        std::uint16_t port = kDefaultListenPort,
         nixl_thread_sync_t sync_mode = kDefaultSyncMode,
         unsigned int num_workers = 1,
         uint64_t pthr_delay_us = kDefaultPthrDelayUs,

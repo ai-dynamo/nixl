@@ -23,7 +23,7 @@
 #include <arpa/inet.h>
 #include "common/nixl_log.h"
 
-nixlMetadataStream::nixlMetadataStream(int port): port(port), socketFd(-1) {
+nixlMetadataStream::nixlMetadataStream(std::uint16_t port): port(port), socketFd(-1) {
     memset(&listenerAddr, 0, sizeof(listenerAddr));
 }
 
@@ -54,7 +54,7 @@ void nixlMetadataStream::closeStream() {
 }
 
 
-nixlMDStreamListener::nixlMDStreamListener(int port) :
+nixlMDStreamListener::nixlMDStreamListener(std::uint16_t port) :
         nixlMetadataStream(port) {}
 
 nixlMDStreamListener::~nixlMDStreamListener() {
@@ -100,11 +100,11 @@ int nixlMDStreamListener::acceptClient() {
     if (socketFd < 0) {
         return -1;
     }
-    csock = accept(socketFd, nullptr, nullptr);
-    if (csock < 0 && errno != EAGAIN) {
+    const int client_socket = accept(socketFd, nullptr, nullptr);
+    if (client_socket < 0 && errno != EAGAIN) {
         NIXL_PERROR << "Cannot accept client connection";
     }
-    return csock;
+    return client_socket;
 }
 
 void nixlMDStreamListener::acceptClientsAsync() {
@@ -157,7 +157,7 @@ void nixlMDStreamListener::recvFromClients(int clientSocket) {
 
 void nixlMDStreamListener::startListenerForClient() {
     setupListener();
-    acceptClient();
+    csock = acceptClient();
 }
 
 
@@ -168,7 +168,7 @@ void nixlMDStreamListener::startListenerForClients() {
 }
 
 nixlMDStreamClient::nixlMDStreamClient(const std::string &listenerAddress,
-                                       int port) : nixlMetadataStream(port),
+                                       std::uint16_t port) : nixlMetadataStream(port),
                                        listenerAddress(listenerAddress) {}
 
 nixlMDStreamClient::~nixlMDStreamClient() {
