@@ -17,6 +17,8 @@
 wqskv_sources = [
     'wqskv_backend.cpp',
     'wqskv_backend.h',
+    'wqskv_helpers.cpp',
+    'wqskv_helpers.h',
     'wqskv_plugin.cpp',
 ]
 

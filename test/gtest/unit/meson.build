@@ -39,6 +39,11 @@ if enabled_plugins.get('AZURE_BLOB') and azure_storage_blobs.found()
     unit_test_deps += [azure_blob_unit_test_dep]
 endif
 
+if enabled_plugins.get('WQSKV') and is_variable('wqskv_backend_lib')
+    subdir('wqskv')
+    unit_test_deps += [wqskv_unit_test_dep]
+endif
+
 unit_test_exe = executable('unit',
     sources : [
         'main.cpp',
