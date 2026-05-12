@@ -394,26 +394,19 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     bool use_striping = shouldUseStriping(transfer_size) && selected_rails.size() > 1;
     NIXL_DEBUG << "use_striping=" << use_striping;
     if (!use_striping) {
-        // Round-robin with FI_MORE batching: group 16 consecutive descs to same rail
-        // then rotate. This ensures doorbell flush every 16 ops on the same rail.
-        // Use atomic counter as base offset so concurrent postXfer calls distribute
-        // across rails instead of all starting from rail 0.
+        // WRITE: group 16 consecutive descs to same rail for FI_MORE batching.
+        // READ: per-descriptor round-robin (FI_MORE has no benefit for reads).
         constexpr int FI_MORE_BATCH_SIZE = 16;
-        // base_offset is reserved once per transfer by the caller (postXfer)
-        // and passed in, ensuring all descriptors in a transfer see a stable
-        // value even under concurrent postXfer calls.
-        const size_t group_idx = base_offset + desc_idx / FI_MORE_BATCH_SIZE;
-        const int pos_in_group = desc_idx % FI_MORE_BATCH_SIZE;
-        bool is_last_in_group =
-            (pos_in_group == FI_MORE_BATCH_SIZE - 1) || (desc_idx == desc_count - 1);
-
-        // Use group_idx for rail selection (same rail for 16 consecutive descs)
-        const size_t rail_id = selected_rails[group_idx % selected_rails.size()];
+        const bool batch_write = (op_type == nixlLibfabricReq::WRITE);
+        const size_t rr_idx =
+            batch_write ? (base_offset + desc_idx / FI_MORE_BATCH_SIZE) : (base_offset + desc_idx);
+        const size_t rail_id = selected_rails[rr_idx % selected_rails.size()];
         const size_t remote_ep_id =
-            remote_selected_endpoints[group_idx % remote_selected_endpoints.size()];
-
-        // FI_MORE: defer doorbell for first 15, flush on 16th or last desc
-        uint64_t fi_flags = is_last_in_group ? 0 : FI_MORE;
+            remote_selected_endpoints[rr_idx % remote_selected_endpoints.size()];
+        const int pos_in_group = desc_idx % FI_MORE_BATCH_SIZE;
+        const bool is_last_in_group =
+            (pos_in_group == FI_MORE_BATCH_SIZE - 1) || (desc_idx == desc_count - 1);
+        const uint64_t fi_flags = (batch_write && !is_last_in_group) ? FI_MORE : 0;
         NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
         nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
@@ -464,8 +457,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                                dest_addrs.at(rail_id)[remote_ep_id],
                                                req->remote_addr,
                                                req->remote_key,
-                                               req,
-                                               fi_flags);
+                                               req);
         }
         if (status != NIXL_SUCCESS) {
             // Release the allocated request back to pool on failure
@@ -547,8 +539,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                                    dest_addrs.at(rail_id)[remote_ep_id],
                                                    req->remote_addr,
                                                    req->remote_key,
-                                                   req,
-                                                   fi_flags);
+                                                   req);
             }
             if (status != NIXL_SUCCESS) {
                 // This request failed to submit - release it immediately

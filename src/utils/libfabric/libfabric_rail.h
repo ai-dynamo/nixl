@@ -325,8 +325,7 @@ public:
              fi_addr_t dest_addr,
              uint64_t remote_addr,
              uint64_t remote_key,
-             nixlLibfabricReq *req,
-             uint64_t fi_flags = 0) const;
+             nixlLibfabricReq *req) const;
 
     /** Process completion queue with batching support */
     nixl_status_t

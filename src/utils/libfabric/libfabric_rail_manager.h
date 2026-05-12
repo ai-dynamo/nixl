@@ -217,9 +217,9 @@ public:
                              uint16_t xfer_id,
                              std::function<void()> completion_callback,
                              size_t &submitted_count_out,
-                             int desc_idx = 0,
-                             int desc_count = 1,
-                             size_t base_offset = 0);
+                             int desc_idx,
+                             int desc_count,
+                             size_t base_offset);
 
     /** Reserve a base offset for a transfer to ensure stable rail assignment
      *  across all descriptors in the transfer. Call once per postXfer. */
