@@ -1105,6 +1105,86 @@ fn test_reg_desc_list_print_after_add() {
     assert!(dlist.print().is_ok());
 }
 
+// Helper for metadata tests: a descriptor that carries opaque metadata bytes.
+#[derive(Debug)]
+struct MetadataDescriptor {
+    data: Vec<u8>,
+    meta: Option<Vec<u8>>,
+}
+
+impl MetadataDescriptor {
+    fn new(size: usize, meta: Option<&[u8]>) -> Self {
+        Self { data: vec![0u8; size], meta: meta.map(|m| m.to_vec()) }
+    }
+}
+
+impl MemoryRegion for MetadataDescriptor {
+    unsafe fn as_ptr(&self) -> *const u8 { self.data.as_ptr() }
+    fn size(&self) -> usize { self.data.len() }
+}
+
+impl NixlDescriptor for MetadataDescriptor {
+    fn mem_type(&self) -> MemType { MemType::Dram }
+    fn device_id(&self) -> u64 { 0 }
+    fn metadata(&self) -> Option<Vec<u8>> { self.meta.clone() }
+}
+
+#[test]
+fn test_add_descriptor_with_metadata_none() {
+    let desc = MetadataDescriptor::new(1024, None);
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+    dlist.add_descriptor_with_metadata(&desc, None).unwrap();
+    assert_eq!(dlist.len().unwrap(), 1);
+    assert_eq!(dlist.get(0).unwrap().metadata, Vec::<u8>::new());
+}
+
+#[test]
+fn test_add_descriptor_with_metadata_some() {
+    let desc = MetadataDescriptor::new(1024, None);
+    let key = b"s3://bucket/object-key";
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+    dlist.add_descriptor_with_metadata(&desc, Some(key)).unwrap();
+    assert_eq!(dlist.get(0).unwrap().metadata, key.to_vec());
+}
+
+#[test]
+fn test_add_storage_desc_with_metadata_default_is_empty() {
+    // metadata() returns None -> stored as empty vec
+    let desc = MetadataDescriptor::new(1024, None);
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+    dlist.add_storage_desc_with_metadata(&desc).unwrap();
+    assert_eq!(dlist.get(0).unwrap().metadata, Vec::<u8>::new());
+}
+
+#[test]
+fn test_add_storage_desc_with_metadata_from_descriptor() {
+    let key = b"gcs://bucket/key";
+    let desc = MetadataDescriptor::new(1024, Some(key));
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+    dlist.add_storage_desc_with_metadata(&desc).unwrap();
+    assert_eq!(dlist.get(0).unwrap().metadata, key.to_vec());
+}
+
+#[test]
+fn test_add_descriptor_with_metadata_multiple() {
+    let desc = MetadataDescriptor::new(1024, None);
+    let mut dlist = RegDescList::new(MemType::Dram).unwrap();
+    dlist.add_descriptor_with_metadata(&desc, Some(b"key-a")).unwrap();
+    dlist.add_descriptor_with_metadata(&desc, Some(b"key-b")).unwrap();
+    dlist.add_descriptor_with_metadata(&desc, None).unwrap();
+    assert_eq!(dlist.len().unwrap(), 3);
+    assert_eq!(dlist.get(0).unwrap().metadata, b"key-a".to_vec());
+    assert_eq!(dlist.get(1).unwrap().metadata, b"key-b".to_vec());
+    assert_eq!(dlist.get(2).unwrap().metadata, Vec::<u8>::new());
+}
+
+#[test]
+fn test_register_memory_with_metadata() {
+    let agent = Agent::new("test_agent_metadata").unwrap();
+    let desc = MetadataDescriptor::new(1024, Some(b"object-key-xyz"));
+    let _handle = agent.register_memory_with_metadata(&desc, None).unwrap();
+}
+
 #[test]
 fn test_query_mem_with_files() {
     use std::fs::File;

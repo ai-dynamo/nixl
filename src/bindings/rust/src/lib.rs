@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -501,6 +501,28 @@ pub trait NixlDescriptor: MemoryRegion {
 
     /// Get the device ID for this memory region
     fn device_id(&self) -> u64;
+
+    /// Get optional metadata for this descriptor.
+    ///
+    /// Metadata is used by some backends (e.g., OBJ for object storage keys).
+    /// Returns `None` by default to avoid unnecessary heap allocation.
+    /// Override this when the implementing type carries associated metadata.
+    fn metadata(&self) -> Option<Vec<u8>> {
+        None
+    }
+}
+
+/// Trait for objects that carry both descriptor information AND associated metadata.
+///
+/// This is distinct from [`NixlDescriptor`] because some descriptor types (e.g., a
+/// `BlockId` in a Layout) have no concept of their own metadata. Only higher-level
+/// objects that own their metadata (e.g., an `ImmutableBlock` that wraps a
+/// `NixlMetadata`) should implement this trait.
+///
+/// This mirrors the C++ side where `nixlBlobDesc` is a `nixlBasicDesc` with `metaInfo`.
+pub trait NixlObjectMetadata: NixlDescriptor {
+    /// Returns the metadata associated with this object, or `None` if not applicable.
+    fn nixl_metadata(&self) -> Option<Vec<u8>>;
 }
 
 /// A trait for types that can be registered with NIXL
