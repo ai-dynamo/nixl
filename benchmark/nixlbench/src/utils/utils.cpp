@@ -1079,7 +1079,9 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                             exit(EXIT_FAILURE);
                         }
                         int oflags = O_RDONLY;
-                        if (xferBenchConfig::storage_enable_direct) oflags |= O_DIRECT;
+                        if (xferBenchConfig::storage_enable_direct) {
+                            oflags |= O_DIRECT;
+                        }
                         int fd = open(it->device_path.c_str(), oflags);
                         if (fd < 0) {
                             std::cerr << "Failed to open GUSLI device path: " << it->device_path
@@ -1108,7 +1110,9 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                             exit(EXIT_FAILURE);
                         }
                         int oflags = O_RDONLY;
-                        if (xferBenchConfig::storage_enable_direct) oflags |= O_DIRECT;
+                        if (xferBenchConfig::storage_enable_direct) {
+                            oflags |= O_DIRECT;
+                        }
                         int fd = open(it->device_path.c_str(), oflags);
                         if (fd < 0) {
                             std::cerr << "Failed to open LIBBLKIO device path: " << it->device_path
