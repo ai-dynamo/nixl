@@ -110,9 +110,15 @@ namespace libblkio {
         void
         TearDown() override {
             if (agent_) {
-                if (write_dlist_) agent_->deregisterMem(*write_dlist_);
-                if (read_dlist_) agent_->deregisterMem(*read_dlist_);
-                if (blk_dlist_) agent_->deregisterMem(*blk_dlist_);
+                if (write_dlist_) {
+                    agent_->deregisterMem(*write_dlist_);
+                }
+                if (read_dlist_) {
+                    agent_->deregisterMem(*read_dlist_);
+                }
+                if (blk_dlist_) {
+                    agent_->deregisterMem(*blk_dlist_);
+                }
             }
             delete write_dlist_;
             delete read_dlist_;

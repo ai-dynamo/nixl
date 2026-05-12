@@ -159,17 +159,17 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
     for (const auto &mem : mem_elms) {
         // TODO: For now trusting the user, but there can be a more checks mode
         //       where we find overlaps and split the memories or warn the user
-        ret = backend->registerMem(mem_elms[i], nixl_mem, local_sec.metadataP);
+        ret = backend->registerMem(mem, nixl_mem, local_sec.metadataP);
         if (ret != NIXL_SUCCESS) {
-            NIXL_INFO << "addDescList: registerMem failed for desc " << i << " type=" << nixl_mem
-                      << " devId=" << mem_elms[i].devId << " with error " << ret;
+            NIXL_INFO << "addDescList: registerMem failed for desc type=" << nixl_mem
+                      << " devId=" << mem.devId << " with error " << ret;
             break;
         }
 
         if (backend->supportsLocal()) {
             ret = backend->loadLocalMD(local_sec.metadataP, self_sec.metadataP);
             if (ret != NIXL_SUCCESS) {
-                NIXL_INFO << "addDescList: loadLocalMD failed for desc " << i << " with error "
+                NIXL_INFO << "addDescList: loadLocalMD failed with error "
                           << ret;
                 backend->deregisterMem(local_sec.metadataP);
                 break;

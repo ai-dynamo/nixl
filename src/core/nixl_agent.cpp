@@ -919,14 +919,14 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // preference list or more exhaustive search.
     for (auto &backend : backend_set) {
         // If populate fails, it clears the resp before return
-        ret1 = data->localSection_.populate(local_descs, backend, *handle->initiatorDescs);
+        ret1 = data->localSection_.populate(local_descs, backend, handle->initiatorDescs);
 
         if (is_local_transfer) {
             // For local transfers, populate from local memory section
-            ret2 = data->localSection_.populate(remote_descs, backend, *handle->targetDescs);
+            ret2 = data->localSection_.populate(remote_descs, backend, handle->targetDescs);
         } else {
             ret2 = data->remoteSections_.at(remote_agent)
-                       .populate(remote_descs, backend, *handle->targetDescs);
+                       .populate(remote_descs, backend, handle->targetDescs);
         }
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
@@ -979,8 +979,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     ret1 = handle->engine->prepXfer (handle->backendOp,
-                                     *handle->initiatorDescs,
-                                     *handle->targetDescs,
+                                     handle->initiatorDescs,
+                                     handle->targetDescs,
                                      handle->remoteAgent,
                                      handle->backendHandle,
                                      &opt_args);

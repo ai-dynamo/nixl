@@ -70,7 +70,9 @@ constexpr char default_test_files_dir_path[] = "tmp/testfiles";
 struct PosixMemalignDeleter {
     void
     operator()(void *ptr) const {
-        if (ptr) free(ptr);
+        if (ptr) {
+            free(ptr);
+        }
     }
 };
 
@@ -611,8 +613,12 @@ test_basic_io(const TestConfig &config) {
         status = agent.registerMem(blk_reg_list);
         if (status != NIXL_SUCCESS) {
             std::cerr << "Failed to register BLK memory: " << status << std::endl;
-            if (write_registered) agent.deregisterMem(write_desc_list);
-            if (read_registered) agent.deregisterMem(read_desc_list);
+            if (write_registered) {
+                agent.deregisterMem(write_desc_list);
+            }
+            if (read_registered) {
+                agent.deregisterMem(read_desc_list);
+            }
             return false;
         }
         blk_registered = true;
@@ -637,9 +643,15 @@ test_basic_io(const TestConfig &config) {
         status = agent.createXferReq(NIXL_WRITE, write_list, blk_list, "", req, &opt_args);
         if (status != NIXL_SUCCESS) {
             std::cerr << "Failed to create write request: " << status << std::endl;
-            if (blk_registered) agent.deregisterMem(blk_reg_list);
-            if (write_registered) agent.deregisterMem(write_desc_list);
-            if (read_registered) agent.deregisterMem(read_desc_list);
+            if (blk_registered) {
+                agent.deregisterMem(blk_reg_list);
+            }
+            if (write_registered) {
+                agent.deregisterMem(write_desc_list);
+            }
+            if (read_registered) {
+                agent.deregisterMem(read_desc_list);
+            }
             // Note: nixlAgent destructor handles backend cleanup
             return false;
         }
@@ -648,9 +660,15 @@ test_basic_io(const TestConfig &config) {
         if (status != NIXL_SUCCESS) {
             std::cerr << "Failed to post write request: " << status << std::endl;
             agent.releaseXferReq(req);
-            if (blk_registered) agent.deregisterMem(blk_reg_list);
-            if (write_registered) agent.deregisterMem(write_desc_list);
-            if (read_registered) agent.deregisterMem(read_desc_list);
+            if (blk_registered) {
+                agent.deregisterMem(blk_reg_list);
+            }
+            if (write_registered) {
+                agent.deregisterMem(write_desc_list);
+            }
+            if (read_registered) {
+                agent.deregisterMem(read_desc_list);
+            }
             // Note: nixlAgent destructor handles backend cleanup
             return false;
         }
@@ -659,9 +677,15 @@ test_basic_io(const TestConfig &config) {
         if (status != NIXL_SUCCESS) {
             std::cerr << "Write operation failed: " << status << std::endl;
             agent.releaseXferReq(req);
-            if (blk_registered) agent.deregisterMem(blk_reg_list);
-            if (write_registered) agent.deregisterMem(write_desc_list);
-            if (read_registered) agent.deregisterMem(read_desc_list);
+            if (blk_registered) {
+                agent.deregisterMem(blk_reg_list);
+            }
+            if (write_registered) {
+                agent.deregisterMem(write_desc_list);
+            }
+            if (read_registered) {
+                agent.deregisterMem(read_desc_list);
+            }
             // Note: nixlAgent destructor handles backend cleanup
             return false;
         }
@@ -686,9 +710,15 @@ test_basic_io(const TestConfig &config) {
         status = agent.createXferReq(NIXL_READ, read_list, blk_list, "", req, &opt_args);
         if (status != NIXL_SUCCESS) {
             std::cerr << "Failed to create read request: " << status << std::endl;
-            if (blk_registered) agent.deregisterMem(blk_reg_list);
-            if (write_registered) agent.deregisterMem(write_desc_list);
-            if (read_registered) agent.deregisterMem(read_desc_list);
+            if (blk_registered) {
+                agent.deregisterMem(blk_reg_list);
+            }
+            if (write_registered) {
+                agent.deregisterMem(write_desc_list);
+            }
+            if (read_registered) {
+                agent.deregisterMem(read_desc_list);
+            }
             // Note: nixlAgent destructor handles backend cleanup
             return false;
         }
@@ -697,9 +727,15 @@ test_basic_io(const TestConfig &config) {
         if (status != NIXL_SUCCESS) {
             std::cerr << "Failed to post read request: " << status << std::endl;
             agent.releaseXferReq(req);
-            if (blk_registered) agent.deregisterMem(blk_reg_list);
-            if (write_registered) agent.deregisterMem(write_desc_list);
-            if (read_registered) agent.deregisterMem(read_desc_list);
+            if (blk_registered) {
+                agent.deregisterMem(blk_reg_list);
+            }
+            if (write_registered) {
+                agent.deregisterMem(write_desc_list);
+            }
+            if (read_registered) {
+                agent.deregisterMem(read_desc_list);
+            }
             // Note: nixlAgent destructor handles backend cleanup
             return false;
         }
@@ -708,9 +744,15 @@ test_basic_io(const TestConfig &config) {
         if (status != NIXL_SUCCESS) {
             std::cerr << "Read operation failed: " << status << std::endl;
             agent.releaseXferReq(req);
-            if (blk_registered) agent.deregisterMem(blk_reg_list);
-            if (write_registered) agent.deregisterMem(write_desc_list);
-            if (read_registered) agent.deregisterMem(read_desc_list);
+            if (blk_registered) {
+                agent.deregisterMem(blk_reg_list);
+            }
+            if (write_registered) {
+                agent.deregisterMem(write_desc_list);
+            }
+            if (read_registered) {
+                agent.deregisterMem(read_desc_list);
+            }
             // Note: nixlAgent destructor handles backend cleanup
             return false;
         }
@@ -730,9 +772,15 @@ test_basic_io(const TestConfig &config) {
         // Verify data integrity
         if (memcmp(write_buffer.get(), read_buffer.get(), config.transfer_size) != 0) {
             std::cerr << "✗ Data integrity check failed" << std::endl;
-            if (blk_registered) agent.deregisterMem(blk_reg_list);
-            if (write_registered) agent.deregisterMem(write_desc_list);
-            if (read_registered) agent.deregisterMem(read_desc_list);
+            if (blk_registered) {
+                agent.deregisterMem(blk_reg_list);
+            }
+            if (write_registered) {
+                agent.deregisterMem(write_desc_list);
+            }
+            if (read_registered) {
+                agent.deregisterMem(read_desc_list);
+            }
             // Note: nixlAgent destructor handles backend cleanup
             return false;
         }
