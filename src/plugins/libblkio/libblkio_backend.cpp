@@ -90,8 +90,9 @@ nixlLibblkioBackendReqH::registerBlkioBuf(struct blkio *handle, void *buf, size_
 
 void
 nixlLibblkioBackendReqH::unregisterBlkioBufs() {
-    for (auto &[handle, region] : registered_regions_)
+    for (auto &[handle, region] : registered_regions_) {
         blkio_unmap_mem_region(handle, &region);
+    }
     registered_regions_.clear();
 }
 

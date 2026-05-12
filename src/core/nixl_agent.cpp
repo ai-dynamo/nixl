@@ -157,12 +157,13 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 }
 
 /*** nixlAgent implementation ***/
-nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
-    data(std::make_unique<nixlAgentData>(name, cfg))
-{
-    if(cfg.useListenThread) {
+nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
+    : data(std::make_unique<nixlAgentData>(name, cfg)) {
+    if (cfg.useListenThread) {
         int my_port = cfg.listenPort;
-        if(my_port == 0) my_port = default_comm_port;
+        if (my_port == 0) {
+            my_port = default_comm_port;
+        }
         data->listener = std::make_unique<nixlMDStreamListener>(my_port);
         data->listener->setupListener(); // throws on bind/listen failure
     }
@@ -182,7 +183,9 @@ nixlAgent::~nixlAgent() {
         }
 
         data->commThreadStop = true;
-        if(data->commThread.joinable()) data->commThread.join();
+        if (data->commThread.joinable()) {
+            data->commThread.join();
+        }
 
         try {
             if (data->commThreadException_) {
@@ -204,27 +207,27 @@ nixlAgent::~nixlAgent() {
 }
 
 nixl_status_t
-nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
-    auto& plugin_manager = nixlPluginManager::getInstance();
+nixlAgent::getAvailPlugins(std::vector<nixl_backend_t> &plugins) {
+    auto &plugin_manager = nixlPluginManager::getInstance();
     plugins = plugin_manager.getAvailBackendPluginNames();
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlAgent::getPluginParams (const nixl_backend_t &type,
-                            nixl_mem_list_t &mems,
-                            nixl_b_params_t &params) const {
+nixlAgent::getPluginParams(const nixl_backend_t &type,
+                           nixl_mem_list_t &mems,
+                           nixl_b_params_t &params) const {
 
     // TODO: unify to uppercase/lowercase and do ltrim/rtrim for type
 
     // First try to get options from a loaded plugin
-    auto& plugin_manager = nixlPluginManager::getInstance();
+    auto &plugin_manager = nixlPluginManager::getInstance();
     auto plugin_handle = plugin_manager.getBackendPlugin(type);
 
     if (plugin_handle) {
-      // If the plugin is already loaded, get options directly
+        // If the plugin is already loaded, get options directly
         params = plugin_handle->getBackendOptions();
-        mems   = plugin_handle->getBackendMems();
+        mems = plugin_handle->getBackendMems();
         return NIXL_SUCCESS;
     }
 
@@ -232,7 +235,7 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
     plugin_handle = plugin_manager.loadBackendPlugin(type);
     if (plugin_handle) {
         params = plugin_handle->getBackendOptions();
-        mems   = plugin_handle->getBackendMems();
+        mems = plugin_handle->getBackendMems();
 
         NIXL_LOCK_GUARD(data->lock);
 
@@ -248,16 +251,16 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
 }
 
 nixl_status_t
-nixlAgent::getBackendParams (const nixlBackendH* backend,
-                             nixl_mem_list_t &mems,
-                             nixl_b_params_t &params) const {
+nixlAgent::getBackendParams(const nixlBackendH *backend,
+                            nixl_mem_list_t &mems,
+                            nixl_b_params_t &params) const {
     if (!backend) {
         NIXL_ERROR_FUNC << "backend handle is not provided";
         return NIXL_ERR_INVALID_PARAM;
     }
 
     NIXL_LOCK_GUARD(data->lock);
-    mems   = backend->engine->getSupportedMems();
+    mems = backend->engine->getSupportedMems();
     params = backend->engine->getCustomParams();
     return NIXL_SUCCESS;
 }
@@ -283,7 +286,7 @@ nixlAgentData::warnAboutEfaHardwareMismatch() {
 nixl_status_t
 nixlAgent::createBackend(const nixl_backend_t &type,
                          const nixl_b_params_t &params,
-                         nixlBackendH* &bknd_hndl) {
+                         nixlBackendH *&bknd_hndl) {
 
     NIXL_LOCK_GUARD(data->lock);
     // Registering same type of backend is not supported, unlikely and prob error
@@ -316,7 +319,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
 
     // First, try to load the backend as a plugin
-    auto& plugin_manager = nixlPluginManager::getInstance();
+    auto &plugin_manager = nixlPluginManager::getInstance();
     auto plugin_handle = plugin_manager.loadBackendPlugin(type);
 
     if (!plugin_handle) {
@@ -405,11 +408,10 @@ nixlAgent::queryMem(const nixl_reg_dlist_t &descs,
 }
 
 nixl_status_t
-nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
-                       const nixl_opt_args_t* extra_params) {
+nixlAgent::registerMem(const nixl_reg_dlist_t &descs, const nixl_opt_args_t *extra_params) {
 
-    backend_list_t* backend_list;
-    unsigned int    count = 0;
+    backend_list_t *backend_list;
+    unsigned int count = 0;
 
     NIXL_LOCK_GUARD(data->lock);
 
@@ -423,14 +425,15 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
         }
     } else {
         backend_list = new backend_list_t();
-        for (auto & elm : extra_params->backends)
+        for (auto &elm : extra_params->backends) {
             backend_list->push_back(elm->engine);
+        }
     }
 
     // Best effort, if at least one succeeds NIXL_SUCCESS is returned
     // Can become more sophisticated to have a soft error case
-    for (size_t i=0; i<backend_list->size(); ++i) {
-        nixlBackendEngine* backend = (*backend_list)[i];
+    for (size_t i = 0; i < backend_list->size(); ++i) {
+        nixlBackendEngine *backend = (*backend_list)[i];
         // meta_descs use to be passed to loadLocalData
         nixl_sec_dlist_t sec_descs(descs.getType());
         nixl_status_t ret = data->localSection_.addDescList(descs, backend, sec_descs);
@@ -451,8 +454,9 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
         } // a bad_ret can be saved in an else
     }
 
-    if (extra_params && extra_params->backends.size() > 0)
+    if (extra_params && extra_params->backends.size() > 0) {
         delete backend_list;
+    }
 
     if (count > 0) {
         // sum all the sizes of the descriptors using std::accumulate
@@ -471,8 +475,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
 }
 
 nixl_status_t
-nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
-                         const nixl_opt_args_t* extra_params) {
+nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs, const nixl_opt_args_t *extra_params) {
 
 
     backend_set_t backend_set;
@@ -488,8 +491,9 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
         // Make a copy as we might change it in remDescList
         backend_set = *avail_backends;
     } else {
-        for (auto & elm : extra_params->backends)
+        for (auto &elm : extra_params->backends) {
             backend_set.insert(elm->engine);
+        }
     }
 
     // Doing best effort, and returning err if any
@@ -522,8 +526,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
 }
 
 nixl_status_t
-nixlAgent::makeConnection(const std::string &remote_agent,
-                          const nixl_opt_args_t* extra_params) {
+nixlAgent::makeConnection(const std::string &remote_agent, const nixl_opt_args_t *extra_params) {
     std::set<nixl_backend_t> backend_set;
     int count = 0;
 
@@ -539,16 +542,18 @@ nixlAgent::makeConnection(const std::string &remote_agent,
                             << remote_agent << "'";
             return NIXL_ERR_NOT_FOUND;
         }
-        for (auto &[r_bknd, conn_info] : data->remoteBackends_[remote_agent])
+        for (auto &[r_bknd, conn_info] : data->remoteBackends_[remote_agent]) {
             backend_set.insert(r_bknd);
+        }
     } else {
-        for (auto & elm : extra_params->backends)
+        for (auto &elm : extra_params->backends) {
             backend_set.insert(elm->engine->getType());
+        }
     }
 
     // For now trying to make all the connections, can become best effort,
     nixl_status_t ret = NIXL_SUCCESS;
-    for (auto & backend: backend_set) {
+    for (auto &backend : backend_set) {
         const auto iter = data->backendEngines_.find(backend);
         if (iter != data->backendEngines_.end()) {
             nixlBackendEngine *eng = iter->second.get();
@@ -575,10 +580,10 @@ nixlAgent::makeConnection(const std::string &remote_agent,
 }
 
 nixl_status_t
-nixlAgent::prepXferDlist (const std::string &agent_name,
-                          const nixl_xfer_dlist_t &descs,
-                          nixlDlistH* &dlist_hndl,
-                          const nixl_opt_args_t* extra_params) const {
+nixlAgent::prepXferDlist(const std::string &agent_name,
+                         const nixl_xfer_dlist_t &descs,
+                         nixlDlistH *&dlist_hndl,
+                         const nixl_opt_args_t *extra_params) const {
 
     // Using a set as order is not important to revert the operation
     backend_set_t *backend_set;
@@ -648,18 +653,18 @@ nixlAgent::prepXferDlist(const nixl_xfer_dlist_t &descs,
 }
 
 nixl_status_t
-nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
-                        const nixlDlistH* local_side,
-                        const std::vector<int> &local_indices,
-                        const nixlDlistH* remote_side,
-                        const std::vector<int> &remote_indices,
-                        nixlXferReqH* &req_hndl,
-                        const nixl_opt_args_t* extra_params) const {
+nixlAgent::makeXferReq(const nixl_xfer_op_t &operation,
+                       const nixlDlistH *local_side,
+                       const std::vector<int> &local_indices,
+                       const nixlDlistH *remote_side,
+                       const std::vector<int> &remote_indices,
+                       nixlXferReqH *&req_hndl,
+                       const nixl_opt_args_t *extra_params) const {
 
-    nixl_opt_b_args_t  opt_args;
-    nixl_status_t      ret;
-    int                desc_count = (int) local_indices.size();
-    nixlBackendEngine* backend    = nullptr;
+    nixl_opt_b_args_t opt_args;
+    nixl_status_t ret;
+    int desc_count = (int)local_indices.size();
+    nixlBackendEngine *backend = nullptr;
 
     req_hndl = nullptr;
 
@@ -685,7 +690,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     }
 
     if (extra_params && extra_params->backends.size() > 0) {
-        for (auto & elm : extra_params->backends) {
+        for (auto &elm : extra_params->backends) {
             if ((local_side->descs.count(elm->engine) > 0) &&
                 (remote_side->descs.count(elm->engine) > 0)) {
                 backend = elm->engine;
@@ -693,15 +698,16 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
             }
         }
     } else {
-        for (auto & loc_bknd : local_side->descs) {
-            for (auto & rem_bknd : remote_side->descs) {
+        for (auto &loc_bknd : local_side->descs) {
+            for (auto &rem_bknd : remote_side->descs) {
                 if (loc_bknd.first == rem_bknd.first) {
                     backend = loc_bknd.first;
                     break;
                 }
             }
-            if (backend)
+            if (backend) {
                 break;
+            }
         }
     }
 
@@ -722,7 +728,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    for (int i=0; i<desc_count; ++i) {
+    for (int i = 0; i < desc_count; ++i) {
         if ((local_indices[i] >= local_descs.descCount()) || (local_indices[i] < 0)) {
             NIXL_ERROR_FUNC << "local index out of range at index " << i << " with value "
                             << local_indices[i];
@@ -764,17 +770,17 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                                                  desc_count);
 
     if (extra_params && extra_params->skipDescMerge) {
-        for (int i=0; i<desc_count; ++i) {
+        for (int i = 0; i < desc_count; ++i) {
             handle->initiatorDescs[i] = local_descs[local_indices[i]];
             handle->targetDescs[i] = remote_descs[remote_indices[i]];
         }
     } else {
-        int i = 0, j = 0; //final list size
-        while (i<(desc_count)) {
+        int i = 0, j = 0; // final list size
+        while (i < (desc_count)) {
             nixlMetaDesc local_desc1 = local_descs[local_indices[i]];
             nixlMetaDesc remote_desc1 = remote_descs[remote_indices[i]];
 
-            if(i != (desc_count-1) ) {
+            if (i != (desc_count - 1)) {
                 const nixlMetaDesc *local_desc2 = &(local_descs[local_indices[i + 1]]);
                 const nixlMetaDesc *remote_desc2 = &(remote_descs[remote_indices[i + 1]]);
 
@@ -789,7 +795,9 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                     remote_desc1.len += remote_desc2->len;
 
                     i++;
-                    if(i == (desc_count-1)) break;
+                    if (i == (desc_count - 1)) {
+                        break;
+                    }
 
                     local_desc2 = &(local_descs[local_indices[i + 1]]);
                     remote_desc2 = &(remote_descs[remote_indices[i + 1]]);
@@ -837,8 +845,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                          const nixl_xfer_dlist_t &local_descs,
                          const nixl_xfer_dlist_t &remote_descs,
                          const std::string &remote_agent,
-                         nixlXferReqH* &req_hndl,
-                         const nixl_opt_args_t* extra_params) const {
+                         nixlXferReqH *&req_hndl,
+                         const nixl_opt_args_t *extra_params) const {
     nixl_status_t ret1, ret2;
     nixl_opt_b_args_t opt_args;
     backend_set_t backend_set;
@@ -891,10 +899,11 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             return NIXL_ERR_NOT_FOUND;
         }
 
-        for (auto *elm : *local_set)
+        for (auto *elm : *local_set) {
             if (remote_set->count(elm) != 0 && (!is_local_transfer || elm->supportsLocal())) {
                 backend_set.insert(elm);
             }
+        }
 
         if (backend_set.empty()) {
             NIXL_ERROR_FUNC << "no potential backend found to be able to do the transfer";
@@ -952,8 +961,9 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             opt_args.hasNotif = true;
         }
 
-        if (extra_params->customParam.length() > 0)
+        if (extra_params->customParam.length() > 0) {
             opt_args.customParam = extra_params->customParam;
+        }
     }
 
     if (opt_args.hasNotif && (!handle->engine->supportsNotif())) {
@@ -978,12 +988,12 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    ret1 = handle->engine->prepXfer (handle->backendOp,
-                                     handle->initiatorDescs,
-                                     handle->targetDescs,
-                                     handle->remoteAgent,
-                                     handle->backendHandle,
-                                     &opt_args);
+    ret1 = handle->engine->prepXfer(handle->backendOp,
+                                    handle->initiatorDescs,
+                                    handle->targetDescs,
+                                    handle->remoteAgent,
+                                    handle->backendHandle,
+                                    &opt_args);
     if (ret1 != NIXL_SUCCESS) {
         NIXL_ERROR_FUNC << "backend '" << handle->engine->getType()
                         << "' failed to prepare the transfer request with status " << ret1;
@@ -1000,8 +1010,7 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
                             std::chrono::microseconds &duration,
                             std::chrono::microseconds &err_margin,
                             nixl_cost_t &method,
-                            const nixl_opt_args_t* extra_params) const
-{
+                            const nixl_opt_args_t *extra_params) const {
     nixl_status_t ret;
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
@@ -1038,8 +1047,7 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
 }
 
 nixl_status_t
-nixlAgent::postXferReq(nixlXferReqH *req_hndl,
-                       const nixl_opt_args_t* extra_params) const {
+nixlAgent::postXferReq(nixlXferReqH *req_hndl, const nixl_opt_args_t *extra_params) const {
     nixl_opt_b_args_t opt_args;
 
     opt_args.hasNotif = false;
@@ -1066,8 +1074,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     // We can't repost while a request is in progress
     if (req_hndl->status == NIXL_IN_PROG) {
-        req_hndl->status = req_hndl->engine->checkXfer(
-                                     req_hndl->backendHandle);
+        req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
         if (req_hndl->status == NIXL_IN_PROG) {
             NIXL_ERROR_FUNC << "transfer request is still in progress and cannot be reposted";
             return NIXL_ERR_REPOST_ACTIVE;
@@ -1149,7 +1156,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 }
 
 nixl_status_t
-nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
+nixlAgent::getXferStatus(nixlXferReqH *req_hndl) const {
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // If the status is done, no need to recheck and no state changes.
@@ -1205,8 +1212,7 @@ nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &tel
 }
 
 nixl_status_t
-nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
-                            nixlBackendH* &backend) const {
+nixlAgent::queryXferBackend(const nixlXferReqH *req_hndl, nixlBackendH *&backend) const {
     NIXL_LOCK_GUARD(data->lock);
     backend = data->backendHandles_[req_hndl->engine->getType()].get();
     return NIXL_SUCCESS;
@@ -1216,15 +1222,13 @@ nixl_status_t
 nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
-    //attempt to cancel request
-    if(req_hndl->status == NIXL_IN_PROG) {
-        req_hndl->status = req_hndl->engine->checkXfer(
-                                     req_hndl->backendHandle);
+    // attempt to cancel request
+    if (req_hndl->status == NIXL_IN_PROG) {
+        req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
 
-        if(req_hndl->status == NIXL_IN_PROG) {
+        if (req_hndl->status == NIXL_IN_PROG) {
 
-            req_hndl->status = req_hndl->engine->releaseReqH(
-                                         req_hndl->backendHandle);
+            req_hndl->status = req_hndl->engine->releaseReqH(req_hndl->backendHandle);
 
             if (req_hndl->status < 0) {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
@@ -1242,18 +1246,17 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 }
 
 nixl_status_t
-nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
+nixlAgent::releasedDlistH(nixlDlistH *dlist_hndl) const {
     NIXL_LOCK_GUARD(data->lock);
     delete dlist_hndl;
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlAgent::getNotifs(nixl_notifs_t &notif_map,
-                     const nixl_opt_args_t* extra_params) {
-    notif_list_t    bknd_notif_list;
-    nixl_status_t   ret, bad_ret=NIXL_SUCCESS;
-    backend_list_t* backend_list;
+nixlAgent::getNotifs(nixl_notifs_t &notif_map, const nixl_opt_args_t *extra_params) {
+    notif_list_t bknd_notif_list;
+    nixl_status_t ret, bad_ret = NIXL_SUCCESS;
+    backend_list_t *backend_list;
 
     NIXL_LOCK_GUARD(data->lock);
     if (!extra_params || extra_params->backends.size() == 0) {
@@ -1264,9 +1267,11 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
         }
     } else {
         backend_list = new backend_list_t();
-        for (auto & elm : extra_params->backends)
-            if (elm->engine->supportsNotif())
+        for (auto &elm : extra_params->backends) {
+            if (elm->engine->supportsNotif()) {
                 backend_list->push_back(elm->engine);
+            }
+        }
 
         if (backend_list->empty()) {
             NIXL_ERROR_FUNC << "none of specified backends support notifications";
@@ -1278,28 +1283,31 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
     // Doing best effort, if any backend errors out we return
     // error but proceed with the rest. We can add metadata about
     // the backend to the msg, but user could put it themselves.
-    for (auto & eng: *backend_list) {
+    for (auto &eng : *backend_list) {
         bknd_notif_list.clear();
         ret = eng->getNotifs(bknd_notif_list);
         if (ret < 0) {
             NIXL_ERROR_FUNC << "backend '" << eng->getType() << "' returned error status " << ret
                             << " while getting notifications";
-            bad_ret=ret;
+            bad_ret = ret;
         }
 
-        if (bknd_notif_list.size() == 0)
+        if (bknd_notif_list.size() == 0) {
             continue;
+        }
 
-        for (auto & elm: bknd_notif_list) {
-            if (notif_map.count(elm.first) == 0)
+        for (auto &elm : bknd_notif_list) {
+            if (notif_map.count(elm.first) == 0) {
                 notif_map[elm.first] = std::vector<nixl_blob_t>();
+            }
 
             notif_map[elm.first].push_back(elm.second);
         }
     }
 
-    if (extra_params && extra_params->backends.size() > 0)
+    if (extra_params && extra_params->backends.size() > 0) {
         delete backend_list;
+    }
 
     // If any backend had an error, it was already logged
     return bad_ret;
@@ -1367,7 +1375,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
 }
 
 nixl_status_t
-nixlAgent::getLocalMD (nixl_blob_t &str) const {
+nixlAgent::getLocalMD(nixl_blob_t &str) const {
     size_t conn_cnt;
     nixl_backend_t nixl_backend;
     nixl_status_t ret;
@@ -1384,22 +1392,34 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
     nixlSerDes sd;
     ret = sd.addStr("Agent", data->name_);
     // Always returns SUCCESS, serdes class logs errors if necessary
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     ret = sd.addBuf("Conns", &conn_cnt, sizeof(conn_cnt));
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     for (auto &c : data->connMd_) {
         nixl_backend = c.first;
         ret = sd.addStr("t", nixl_backend);
-        if (ret) break;
+        if (ret) {
+            break;
+        }
         ret = sd.addStr("c", c.second);
-        if (ret) break;
+        if (ret) {
+            break;
+        }
     }
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     ret = sd.addStr("", "MemSection");
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     ret = data->localSection_.serialize(&sd);
     if (ret) {
@@ -1414,7 +1434,7 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
 nixl_status_t
 nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
                              nixl_blob_t &str,
-                             const nixl_opt_args_t* extra_params) const {
+                             const nixl_opt_args_t *extra_params) const {
     backend_list_t tmp_list;
     backend_list_t *backend_list;
     nixl_status_t ret;
@@ -1449,7 +1469,9 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     std::vector<typename decltype(data->connMd_)::iterator> found_iters;
     for (const auto &backend : *backend_list) {
         auto it = data->connMd_.find(backend->getType());
-        if (it == data->connMd_.end()) continue;
+        if (it == data->connMd_.end()) {
+            continue;
+        }
         found_iters.push_back(it);
         selected_engines.insert(backend);
     }
@@ -1462,24 +1484,37 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     nixlSerDes sd;
     ret = sd.addStr("Agent", data->name_);
     // Always returns SUCCESS, serdes class logs errors if necessary
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     // Only add connection info if requested via extra_params or empty dlist
     size_t conn_cnt = ((extra_params && extra_params->includeConnInfo) || descs.descCount() == 0) ?
-                      found_iters.size() : 0;
+        found_iters.size() :
+        0;
     ret = sd.addBuf("Conns", &conn_cnt, sizeof(conn_cnt));
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     for (size_t i = 0; i < conn_cnt; i++) {
         ret = sd.addStr("t", found_iters[i]->first);
-        if (ret) break;
+        if (ret) {
+            break;
+        }
         ret = sd.addStr("c", found_iters[i]->second);
-        if (ret) break;
+        if (ret) {
+            break;
+        }
     }
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     ret = sd.addStr("", "MemSection");
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     ret = data->localSection_.serializePartial(&sd, selected_engines, descs);
     if (ret) {
@@ -1492,8 +1527,7 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
 }
 
 nixl_status_t
-nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
-                         std::string &agent_name) {
+nixlAgent::loadRemoteMD(const nixl_blob_t &remote_metadata, std::string &agent_name) {
     nixlSerDes sd;
     nixl_blob_t conn_info;
     nixl_backend_t nixl_backend;
@@ -1591,16 +1625,17 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
         ret = NIXL_SUCCESS;
     }
 
-    if (ret == NIXL_ERR_NOT_FOUND)
+    if (ret == NIXL_ERR_NOT_FOUND) {
         NIXL_INFO << "remote metadata for agent '" << remote_agent << "' not found.";
-    else if (ret != NIXL_SUCCESS)
+    } else if (ret != NIXL_SUCCESS) {
         NIXL_ERROR_FUNC << "error invalidating remote metadata for agent '" << remote_agent
                         << "' with status " << ret;
+    }
     return ret;
 }
 
 nixl_status_t
-nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
+nixlAgent::sendLocalMD(const nixl_opt_args_t *extra_params) const {
     nixl_blob_t myMD;
     nixl_status_t ret = getLocalMD(myMD);
     if (ret < 0) {
@@ -1610,14 +1645,16 @@ nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
 
     // If IP is provided, use socket-based communication
     if (extra_params && !extra_params->ipAddr.empty()) {
-        data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, std::move(myMD)));
+        data->enqueueCommWork(
+            std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, std::move(myMD)));
         return NIXL_SUCCESS;
     }
 
 #if HAVE_ETCD
     // If no IP is provided, use etcd (now via thread)
     if (data->useEtcd_) {
-        data->enqueueCommWork(std::make_tuple(ETCD_SEND, default_metadata_label, 0, std::move(myMD)));
+        data->enqueueCommWork(
+            std::make_tuple(ETCD_SEND, default_metadata_label, 0, std::move(myMD)));
         return NIXL_SUCCESS;
     }
     NIXL_ERROR_FUNC << "invalid parameters to be used for either socket or ETCD";
@@ -1631,7 +1668,7 @@ nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
 
 nixl_status_t
 nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
-                              const nixl_opt_args_t* extra_params) const {
+                              const nixl_opt_args_t *extra_params) const {
     nixl_blob_t myMD;
     nixl_status_t ret = getLocalPartialMD(descs, myMD, extra_params);
     if (ret < 0) {
@@ -1641,7 +1678,8 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
 
     // If IP is provided, use socket-based communication
     if (extra_params && !extra_params->ipAddr.empty()) {
-        data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, std::move(myMD)));
+        data->enqueueCommWork(
+            std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, std::move(myMD)));
         return NIXL_SUCCESS;
     }
 
@@ -1652,7 +1690,8 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
             NIXL_ERROR_FUNC << "metadata label is required for etcd send of local partial metadata";
             return NIXL_ERR_INVALID_PARAM;
         }
-        data->enqueueCommWork(std::make_tuple(ETCD_SEND, extra_params->metadataLabel, 0, std::move(myMD)));
+        data->enqueueCommWork(
+            std::make_tuple(ETCD_SEND, extra_params->metadataLabel, 0, std::move(myMD)));
         return NIXL_SUCCESS;
     }
     NIXL_ERROR_FUNC << "invalid parameters to be used for either socket or ETCD";
@@ -1664,11 +1703,11 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
 }
 
 nixl_status_t
-nixlAgent::fetchRemoteMD (const std::string remote_name,
-                          const nixl_opt_args_t* extra_params) {
+nixlAgent::fetchRemoteMD(const std::string remote_name, const nixl_opt_args_t *extra_params) {
     // If IP is provided, use socket-based communication
     if (extra_params && !extra_params->ipAddr.empty()) {
-        data->enqueueCommWork(std::make_tuple(SOCK_FETCH, extra_params->ipAddr, extra_params->port, ""));
+        data->enqueueCommWork(
+            std::make_tuple(SOCK_FETCH, extra_params->ipAddr, extra_params->port, ""));
         return NIXL_SUCCESS;
     }
 
@@ -1676,9 +1715,10 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
     // If no IP is provided, use etcd via thread with watch capability
     if (data->useEtcd_) {
         std::string metadata_label = extra_params && !extra_params->metadataLabel.empty() ?
-                                     extra_params->metadataLabel :
-                                     default_metadata_label;
-        data->enqueueCommWork(std::make_tuple(ETCD_FETCH, std::move(metadata_label), 0, remote_name));
+            extra_params->metadataLabel :
+            default_metadata_label;
+        data->enqueueCommWork(
+            std::make_tuple(ETCD_FETCH, std::move(metadata_label), 0, remote_name));
         return NIXL_SUCCESS;
     }
     NIXL_ERROR_FUNC << "invalid parameters to be used for either socket or ETCD";
@@ -1690,10 +1730,11 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
 }
 
 nixl_status_t
-nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
+nixlAgent::invalidateLocalMD(const nixl_opt_args_t *extra_params) const {
     // If IP is provided, use socket-based communication
     if (extra_params && !extra_params->ipAddr.empty()) {
-        data->enqueueCommWork(std::make_tuple(SOCK_INVAL, extra_params->ipAddr, extra_params->port, ""));
+        data->enqueueCommWork(
+            std::make_tuple(SOCK_INVAL, extra_params->ipAddr, extra_params->port, ""));
         return NIXL_SUCCESS;
     }
 
@@ -1712,8 +1753,7 @@ nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
 }
 
 nixl_status_t
-nixlAgent::checkRemoteMD (const std::string remote_name,
-                          const nixl_xfer_dlist_t &descs) const {
+nixlAgent::checkRemoteMD(const std::string remote_name, const nixl_xfer_dlist_t &descs) const {
     NIXL_LOCK_GUARD(data->lock);
     const auto rem_sec_it = data->remoteSections_.find(remote_name);
     if (data->remoteSections_.end() == rem_sec_it) {
