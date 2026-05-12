@@ -40,12 +40,14 @@
 #define ROUND_UP(value, granularity) \
     ((((value) + (granularity) - 1) / (granularity)) * (granularity))
 
-#define CHECK_NIXL_ERROR(result, message)                                                       \
-    do {                                                                                        \
-        if (0 != result) {                                                                      \
-            std::cerr << "NIXL: " << message << " (Error code: " << result << ")" << std::endl; \
-            exit(EXIT_FAILURE);                                                                 \
-        }                                                                                       \
+#define CHECK_NIXL_ERROR(result, message)                                                     \
+    do {                                                                                      \
+        const nixl_status_t _r = (result);                                                    \
+        if (0 != _r) {                                                                        \
+            std::cerr << "NIXL: " << message << " (" << nixlEnumStrings::statusStr(_r) << ")" \
+                      << std::endl;                                                           \
+            exit(EXIT_FAILURE);                                                               \
+        }                                                                                     \
     } while (0)
 
 static nixl_mem_t
@@ -1404,6 +1406,11 @@ xferBenchNixlWorker::transfer(size_t block_size,
     nixl_xfer_op_t xfer_op = XFERBENCH_OP_READ == xferBenchConfig::op_type ? NIXL_READ : NIXL_WRITE;
     // int completion_flag = 1;
 
+    if (!rt->checkKeepAlive()) { // also refreshes the lease internally.
+        std::cerr << "nixlbench: keepalive failed before transfer — aborting" << std::endl;
+        return std::variant<xferBenchStats, int>(-1);
+    }
+
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
         skip /= xferBenchConfig::large_blk_iter_ftr;
@@ -1464,8 +1471,8 @@ xferBenchNixlWorker::poll(size_t block_size) {
     // Fires at most once every liveness_check_interval to avoid
     // saturating etcd with get() calls during tight polling loops.
     using namespace std::chrono_literals;
-    auto last_liveness_check = std::chrono::steady_clock::now();
     constexpr auto liveness_check_interval = 5s;
+    auto last_liveness_check = std::chrono::steady_clock::time_point::min(); // never done before.
     auto checkLiveness = [&]() {
         const auto now = std::chrono::steady_clock::now();
         if (now - last_liveness_check >= liveness_check_interval) {
