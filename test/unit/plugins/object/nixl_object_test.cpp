@@ -215,6 +215,7 @@ main(int argc, char *argv[]) {
     int ret_code = 0;
     nixlXferReqH *write_req = nullptr;
     nixlXferReqH *read_req = nullptr;
+    char *expected_buffer = nullptr;
     bool obj_registered = false;
     bool dram_registered = false;
 
@@ -561,7 +562,7 @@ main(int argc, char *argv[]) {
     std::cout << "\n============================================================" << std::endl;
     std::cout << "PHASE 6: Validating read data" << std::endl;
     std::cout << "============================================================" << std::endl;
-    char *expected_buffer = (char *)malloc(transfer_size);
+    expected_buffer = (char *)malloc(transfer_size);
 
     for (i = 0; i < num_transfers; i++) {
         if (!expected_buffer) {
