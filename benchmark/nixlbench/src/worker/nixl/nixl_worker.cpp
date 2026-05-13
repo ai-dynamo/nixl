@@ -836,7 +836,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     }
                 }
 
-                basic_desc = initBasicDescObj(buffer_size, i, unique_name);
+                int obj_dev_id = list_idx * num_devices + i;
+                basic_desc = initBasicDescObj(buffer_size, obj_dev_id, unique_name);
                 if (basic_desc) {
                     std::cout << "Creating obj: " << unique_name << std::endl;
                     iov_list.push_back(basic_desc.value());
@@ -1115,13 +1116,17 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
+        size_t list_idx = 0;
         for (auto &iov_list : local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
             int devidx = 0;
             for (auto &iov : iov_list) {
                 if (xferBenchConfig::isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
-                    basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
+                    size_t num_devices = iov_list.size();
+                    int obj_dev_id = list_idx * num_devices + devidx;
+                    basic_desc = initBasicDescObj(iov.len, obj_dev_id, iov.metaInfo);
+                    devidx++;
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
                     }
@@ -1148,6 +1153,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
                 file_offset += block_size;
             }
+            list_idx++;
         }
     } else {
         for (const auto &local_iov : local_iovs) {
