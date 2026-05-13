@@ -70,6 +70,7 @@ gtest_sources = [
     'common.cpp',
     'query_mem.cpp',
     'telemetry_test.cpp',
+    'telemetry_prometheus_test.cpp',
     'configuration.cpp'
     ]
 
