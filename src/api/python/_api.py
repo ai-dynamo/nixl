@@ -151,7 +151,7 @@ class nixl_agent_config:
         self,
         enable_prog_thread: bool = True,
         enable_listen_thread: bool = False,
-        listen_port: int = 0,
+        listen_port: int = DEFAULT_COMM_PORT,
         capture_telemetry: bool = False,
         num_threads: int = 0,
         backends: list[str] = ["UCX"],

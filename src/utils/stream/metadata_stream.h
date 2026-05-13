@@ -33,7 +33,7 @@
 
 class nixlMetadataStream {
     protected:
-        int                 port;
+        uint16_t port;
         int                 socketFd;
         std::string         listenerAddress;
         struct sockaddr_in  listenerAddr;
@@ -42,7 +42,7 @@ class nixlMetadataStream {
         void closeStream();
 
     public:
-        nixlMetadataStream(int port);
+        explicit nixlMetadataStream(uint16_t port) noexcept;
         ~nixlMetadataStream();
 };
 
@@ -56,7 +56,7 @@ class nixlMDStreamListener: public nixlMetadataStream {
         void            recvFromClients(int clientSocket);
 
     public:
-        nixlMDStreamListener(int port);
+        explicit nixlMDStreamListener(uint16_t port) noexcept;
         ~nixlMDStreamListener();
 
         int         acceptClient();
@@ -73,7 +73,7 @@ class nixlMDStreamClient: public nixlMetadataStream {
         bool setupClient();
 
     public:
-        nixlMDStreamClient(const std::string& listenerAddress, int port);
+        nixlMDStreamClient(const std::string &listenerAddress, uint16_t port);
         ~nixlMDStreamClient();
 
         bool connectListener();

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,7 +94,7 @@ typedef enum {
 typedef struct nixl_capi_agent_config_s {
     bool enable_prog_thread;
     bool enable_listen_thread;
-    int listen_port;
+    int listen_port; // TODO: change to uint16_t on next API update
     nixl_capi_thread_sync_t thread_sync;
     unsigned int num_workers;
     uint64_t pthr_delay_us;
