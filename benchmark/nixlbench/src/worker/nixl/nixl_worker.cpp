@@ -792,6 +792,7 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
     return true;
 }
 
+/** Allocate and register memory descriptors for each thread. */
 std::vector<std::vector<xferBenchIOV>>
 xferBenchNixlWorker::allocateMemory(int num_threads) {
     std::vector<std::vector<xferBenchIOV>> iov_lists;
