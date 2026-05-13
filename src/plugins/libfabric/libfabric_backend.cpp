@@ -1029,6 +1029,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     size_t total_submitted = 0;
 
     // Core transfer submission to process each descriptor with direct submission
+    // Reserve base_offset once per transfer so all descriptors see a stable rail assignment
+    const size_t xfer_base_offset = rail_manager.reserveBaseOffset();
     for (int desc_idx = 0; desc_idx < desc_count; ++desc_idx) {
         auto *local_md = static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP);
         auto *remote_md = static_cast<nixlLibfabricPublicMetadata *>(remote[desc_idx].metadataP);
@@ -1077,7 +1079,10 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             [backend_handle]() {
                 backend_handle->increment_completed_requests();
             }, // Completion callback
-            submitted_count);
+            submitted_count,
+            desc_idx,
+            desc_count,
+            xfer_base_offset);
 
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx
