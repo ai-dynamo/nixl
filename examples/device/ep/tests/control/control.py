@@ -15,11 +15,9 @@
 
 import argparse
 import os
-import signal
 import sys
 import time
 from dataclasses import dataclass
-from functools import partial
 from typing import Callable, Optional
 
 import nixl_ep
@@ -54,16 +52,6 @@ class BufferConfig:
     num_ranks: int
     num_experts_per_rank: int
     num_rdma_bytes: int
-
-
-def handle_sigterm(signum, frame, rank_client):
-    print(
-        f"SIGTERM ({signum}) received for process {os.getpid()}! "
-        f"releasing rank and exiting...",
-        flush=True,
-    )
-    rank_client.release_rank()
-    sys.exit(1)
 
 
 def timed_op(fn, guard=True):
@@ -311,11 +299,6 @@ def worker(torch_rank: int, args: argparse.Namespace):
     print(
         f"Process {torch_rank} -> global_rank={global_rank}, local_rank={local_rank}",
         flush=True,
-    )
-
-    signal.signal(
-        signal.SIGTERM,
-        partial(handle_sigterm, rank_client=rank_client),
     )
 
     torch.set_default_dtype(torch.bfloat16)
