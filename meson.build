@@ -207,7 +207,7 @@ if cuda_dep.found()
     nvcc_flags = []
     nvcc_flags_link = []
     nvcc_ptx_arch_num = 0
-    selected_cuda_arches = []
+    selected_cuda_archs = []
     foreach cuda_arch : cuda_arch_list.split(',')
         cuda_arch = cuda_arch.strip()
         if cuda_arch == ''
@@ -226,10 +226,10 @@ if cuda_dep.found()
         cuda_sm_arch = 'sm_' + cuda_arch
         nvcc_flags += ['-gencode', 'arch=' + cuda_compute_arch + ',code=' + cuda_sm_arch]
         nvcc_flags_link += ['-gencode=arch=' + cuda_compute_arch + ',code=' + cuda_sm_arch]
-        selected_cuda_arches += [cuda_sm_arch]
+        selected_cuda_archs += [cuda_sm_arch]
     endforeach
 
-    if selected_cuda_arches.length() == 0
+    if selected_cuda_archs.length() == 0
         error('No CUDA targets selected')
     endif
 
@@ -245,7 +245,7 @@ if cuda_dep.found()
 
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
     message('nvcc version: ' + nvcc.version())
-    message('CUDA targets: ' + ', '.join(selected_cuda_arches) + ' + ' + nvcc_ptx_arch)
+    message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
     if nvcc.version().version_compare('>=12.8')
         doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
