@@ -32,8 +32,6 @@ enum nixl_telemetry_stat_status_t {
     NIXL_TELEMETRY_FINISH = 2
 };
 
-// Contains pointers to corresponding backend engine and its handler, and populated
-// and verified DescLists, and other state and metadata needed for a NIXL transfer
 class nixlXferReqH {
 public:
     const std::string remoteAgent;
@@ -47,13 +45,24 @@ public:
     void
     operator=(const nixlXferReqH &) = delete;
 
+    friend class nixlAgent;
+
 protected:
     nixlXferReqH(const std::string &remote_agent,
                  const nixl_xfer_op_t operation)
         : remoteAgent(remote_agent),
           operation(operation) {}
 
-    ~nixlXferReqH() = default;
+    virtual ~nixlXferReqH() {
+        if ((backendHandle != nullptr) && (engine != nullptr)) {
+            engine->releaseReqH(backendHandle);
+        }
+    }
+
+    nixlBackendEngine *engine = nullptr;
+    nixlBackendReqH *backendHandle = nullptr;
+
+    nixl_status_t status = NIXL_ERR_NOT_POSTED;
 };
 
 class nixlXferReqRW
@@ -61,16 +70,12 @@ class nixlXferReqRW
 public:
 
     nixlXferReqRW(const std::string &remote_agent,
-                  const nixl_xfer_op_t backend_op,
+                  const nixl_xfer_op_t operation,
                   const nixl_mem_t local_type,
                   const nixl_mem_t remote_type,
-                  const size_t desc_count = 0);
+                  const std::size_t desc_count = 0);
 
-    ~nixlXferReqRW() {
-        if ((backendHandle != nullptr) && (engine != nullptr)) {
-            engine->releaseReqH(backendHandle);
-        }
-    }
+    ~nixlXferReqRW() = default;
 
     void
     updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
@@ -78,11 +83,6 @@ public:
     friend class nixlAgent;
 
 private:
-    nixl_status_t status = NIXL_ERR_NOT_POSTED;
-
-    nixlBackendEngine *engine = nullptr;
-    nixlBackendReqH *backendHandle = nullptr;
-
     nixl_meta_dlist_t initiatorDescs;
     nixl_meta_dlist_t targetDescs;
 
@@ -90,6 +90,22 @@ private:
     bool hasNotif = false;
 
     nixl_xfer_telem_t telemetry;
+};
+
+class nixlXferReqSR
+    : public nixlXferReqH {
+public:
+    const std::string tag;
+
+    nixlXferReqSR(const std::string &remote_agent,
+                  const nixl_xfer_op_t operation,
+                  const nixl_mem_t local_type,
+                  const std::size_t desc_count = 0);
+
+    friend class nixlAgent;
+
+private:
+    nixl_meta_dlist_t initiatorDescs;
 };
 
 struct nixlDlistH {

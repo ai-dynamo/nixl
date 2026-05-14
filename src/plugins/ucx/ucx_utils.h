@@ -222,7 +222,7 @@ public:
 
     /* Active message handling */
     int
-    regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg);
+    regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg, unsigned flags = 0);
 
     /* Data access */
     unsigned

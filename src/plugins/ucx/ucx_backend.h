@@ -23,9 +23,7 @@
 #include <iostream>
 #include <thread>
 #include <mutex>
-#include <map>
 #include <memory>
-#include <tuple>
 #include <condition_variable>
 #include <atomic>
 #include <chrono>
@@ -39,129 +37,10 @@
 #include "common/nixl_time.h"
 
 #include "mem_list.h"
+#include "recv_map.h"
 #include "rkey.h"
 #include "ucx_enums.h"
 #include "ucx_utils.h"
-
-struct nixlUcxBackendRecvH : public nixlBackendReqH {
-    const nixl_meta_dlist_t &local;
-
-    nixl_status_t status = NIXL_ERR_NOT_POSTED;
-
-    nixlUcxBackendRecvH(const nixl_meta_dlist_t &local)
-        : local(local) {}
-};
-
-struct nixlUcxRecvKey {
-    std::string remoteAgent;
-    std::string sendRecvTag;
-
-    [[nodiscard]] auto
-    tie() const noexcept {
-        return std::tie(remoteAgent, sendRecvTag);
-    }
-};
-
-[[nodiscard]] bool inline
-operator<(const nixlUcxRecvKey &l, const nixlUcxRecvKey &r) noexcept {
-    return l.tie() < r.tie();
-}
-
-[[nodiscard]] bool inline
-operator==(const nixlUcxRecvKey &l, const nixlUcxRecvKey &r) noexcept {
-    return l.tie() == r.tie();
-}
-
-struct nixlUcxRecvValue {
-    nixlUcxBackendRecvH *handle = nullptr;
-    std::optional<std::string> eager;
-
-    nixlUcxRecvValue() noexcept = default;
-};
-
-class nixlUcxRecvMap {
-public:
-    nixlUcxRecvMap() = default;
-
-    [[nodiscard]] nixl_status_t
-    postRecv(const std::string &remote,
-             const std::string &tag,
-             nixlUcxBackendRecvH *handle) {
-        NIXL_ASSERT(handle);
-        NIXL_ASSERT(handle->local.descCount() == 1); // TODO: Generalize
-
-        const std::lock_guard lg(mutex_);
-        const auto [iter, inserted] = map_.try_emplace({remote, tag});
-
-        if (inserted) {
-            iter->second.handle = handle;
-            handle->status = NIXL_IN_PROG;
-            return handle->status;
-        }
-
-        if (iter->second.handle) {
-            // TODO: Handle repost
-            handle->status = NIXL_ERR_REPOST_ACTIVE;
-            return handle->status;
-        }
-
-        if (!iter->second.eager) {
-            // TODO: Handle rndv
-            std::terminate();
-        }
-
-        if (iter->second.eager->size() != handle->local[0].len) {
-            handle->status = NIXL_ERR_MISMATCH;
-            return handle->status;
-        }
-
-        // TODO: Handle device memory etc.
-        // TODO: Move copy outside of lock
-        memcpy(handle->local[0], *iter->second.eager);
-        handle->status = NIXL_SUCCESS;
-        map_.erase(iter);
-        return handle->status;
-    }
-
-    void
-    recvEager(const std::string &remote,
-              const std::string &tag,
-              const std::string_view payload) {
-        const std::lock_guard lg(mutex_);
-        const auto [iter, inserted] = map_.try_emplace({remote, tag});
-
-        if (inserted) {
-            iter->second.eager.emplace(payload);
-            return;
-        }
-
-        NIXL_ASSERT(iter->second.handle != nullptr);
-        NIXL_ASSERT(iter->second.handle->local.descCount() == 1); // TODO: Generalise
-
-        if (payload.size() != iter->second.handle->local[0].len) {
-            iter->second.handle->status = NIXL_ERR_MISMATCH;
-            // TODO: Log error?
-            // TODO: Make progress how?
-            return;
-        }
-
-        // TODO: Handle device memory etc.
-        // TODO: Move copy outside of lock
-        memcpy(iter->second.handle->local[0], payload);
-        iter->second.handle->status = NIXL_SUCCESS;
-        map_.erase(iter);
-        // TODO: Make progress how?
-    }
-
-private:
-    std::mutex mutex_;
-    std::map<nixlUcxRecvKey, nixlUcxRecvValue, std::less<void>> map_;
-
-    static void
-    memcpy(const nixlMetaDesc &desc, const std::string_view view) {
-        std::memcpy(reinterpret_cast<void *>(desc.addr), view.data(), view.size());
-    }
-};
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
@@ -394,12 +273,12 @@ private:
     nixl_status_t
     internalMDHelper(const nixl_blob_t &blob, const std::string &agent, nixlBackendMD *&output);
 
-    // TOOD: virtual for locking in derived classes
-    void
-    recvAmEager(const std::string &remote,
-                const std::string &tag,
-                const void *data,
-                std::size_t size);
+    // TOOD: Do derived classes need locking here?
+    [[nodiscard]] ucs_status_t
+    recvAmImpl(const std::string &remote,
+               const std::string &tag,
+               void *data,
+               std::size_t size);
 
     static ucs_status_t
     recvAmCb(void *arg,
@@ -487,7 +366,7 @@ private:
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
 
-    mutable nixlUcxRecvMap recvMap_;
+    mutable nixl::ucx::recvMap recvMap_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
