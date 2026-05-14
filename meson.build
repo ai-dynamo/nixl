@@ -195,27 +195,52 @@ if cuda_dep.found()
     cuda = import('unstable-cuda')
     nvcc = meson.get_compiler('cuda')
 
-    # Please extend with your arch if not present in the list
-    nvcc_flags = []
-    # nixl ep cannot be built with sm_80
-    if not get_option('build_nixl_ep')
-        nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
+    cuda_arch_list = get_option('nixl_cuda_arch_list').strip()
+    if cuda_arch_list == 'auto'
+        if get_option('build_nixl_ep')
+            cuda_arch_list = '90,100,103,120'
+        else
+            cuda_arch_list = '80,86,89,90,100,103,120'
+        endif
     endif
-    nvcc_flags += ['-gencode', 'arch=compute_90,code=sm_90']
+
+    nvcc_flags = []
+    nvcc_flags_link = []
+    nvcc_ptx_arch = ''
+    selected_cuda_arches = []
+    foreach cuda_arch : cuda_arch_list.split(',')
+        cuda_arch = cuda_arch.strip()
+        if cuda_arch == ''
+            continue
+        endif
+        if cuda_arch.startswith('sm_')
+            cuda_arch = cuda_arch.replace('sm_', '')
+        endif
+
+        cuda_compute_arch = 'compute_' + cuda_arch
+        cuda_sm_arch = 'sm_' + cuda_arch
+        nvcc_flags += ['-gencode', 'arch=' + cuda_compute_arch + ',code=' + cuda_sm_arch]
+        nvcc_flags_link += ['-gencode=arch=' + cuda_compute_arch + ',code=' + cuda_sm_arch]
+        nvcc_ptx_arch = cuda_compute_arch
+        selected_cuda_arches += [cuda_sm_arch]
+    endforeach
+
+    if selected_cuda_arches.length() == 0
+        error('No CUDA targets selected')
+    endif
+
+    nvcc_flags += ['-gencode', 'arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch]
+    nvcc_flags_link += ['-gencode=arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch]
+
     add_project_arguments(nvcc_flags, language: 'cuda')
 
     # Refer to https://mesonbuild.com/Cuda-module.html
     add_project_arguments('-forward-unknown-to-host-compiler', language: 'cuda')
     add_project_arguments('-rdc=true', language: 'cuda')
 
-    nvcc_flags_link = []
-    # nixl ep cannot be built with sm_80
-    if not get_option('build_nixl_ep')
-        nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
-    endif
-    nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
     message('nvcc version: ' + nvcc.version())
+    message('CUDA targets: ' + ', '.join(selected_cuda_arches) + ' + ' + nvcc_ptx_arch)
     if nvcc.version().version_compare('>=12.8')
         doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
