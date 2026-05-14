@@ -157,6 +157,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 }
 
 /*** nixlAgent implementation ***/
+<<<<<<< pravinb
 nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
     : data(std::make_unique<nixlAgentData>(name, cfg)) {
     if (cfg.useListenThread) {
@@ -165,6 +166,13 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
             my_port = default_comm_port;
         }
         data->listener = std::make_unique<nixlMDStreamListener>(my_port);
+=======
+nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
+    data(std::make_unique<nixlAgentData>(name, cfg))
+{
+    if(cfg.useListenThread) {
+        data->listener = std::make_unique<nixlMDStreamListener>(cfg.listenPort);
+>>>>>>> main
         data->listener->setupListener(); // throws on bind/listen failure
     }
 
