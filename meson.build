@@ -206,7 +206,7 @@ if cuda_dep.found()
 
     nvcc_flags = []
     nvcc_flags_link = []
-    nvcc_ptx_arch = ''
+    nvcc_ptx_arch_num = 0
     selected_cuda_arches = []
     foreach cuda_arch : cuda_arch_list.split(',')
         cuda_arch = cuda_arch.strip()
@@ -217,11 +217,15 @@ if cuda_dep.found()
             cuda_arch = cuda_arch.replace('sm_', '')
         endif
 
+        cuda_arch_num = cuda_arch.to_int()
+        if cuda_arch_num > nvcc_ptx_arch_num
+            nvcc_ptx_arch_num = cuda_arch_num
+        endif
+
         cuda_compute_arch = 'compute_' + cuda_arch
         cuda_sm_arch = 'sm_' + cuda_arch
         nvcc_flags += ['-gencode', 'arch=' + cuda_compute_arch + ',code=' + cuda_sm_arch]
         nvcc_flags_link += ['-gencode=arch=' + cuda_compute_arch + ',code=' + cuda_sm_arch]
-        nvcc_ptx_arch = cuda_compute_arch
         selected_cuda_arches += [cuda_sm_arch]
     endforeach
 
@@ -229,6 +233,7 @@ if cuda_dep.found()
         error('No CUDA targets selected')
     endif
 
+    nvcc_ptx_arch = 'compute_' + nvcc_ptx_arch_num.to_string()
     nvcc_flags += ['-gencode', 'arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch]
     nvcc_flags_link += ['-gencode=arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch]
 
