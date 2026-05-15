@@ -136,7 +136,9 @@ splitTenantSubtenant(const char *s,
                      const char *&tenant_ptr,
                      const char *&subtenant_ptr,
                      std::string &backing_storage) {
-    if (!s) return false;
+    if (!s) {
+        return false;
+    }
     const char *slash = std::strchr(s, '/');
     if (!slash || slash == s || *(slash + 1) == '\0') {
         return false; // require non-empty tenant and subtenant
@@ -193,16 +195,24 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
 
                 // Read configuration parameters
                 auto it = config.find("cluster");
-                if (it != config.end()) infinia_cluster_ = it->second;
+                if (it != config.end()) {
+                    infinia_cluster_ = it->second;
+                }
 
                 it = config.find("tenant");
-                if (it != config.end()) infinia_tenant_ = it->second;
+                if (it != config.end()) {
+                    infinia_tenant_ = it->second;
+                }
 
                 it = config.find("subtenant");
-                if (it != config.end()) infinia_subtenant_ = it->second;
+                if (it != config.end()) {
+                    infinia_subtenant_ = it->second;
+                }
 
                 it = config.find("dataset");
-                if (it != config.end()) infinia_dataset_ = it->second;
+                if (it != config.end()) {
+                    infinia_dataset_ = it->second;
+                }
 
                 it = config.find("sthreads");
                 if (it != config.end()) {
