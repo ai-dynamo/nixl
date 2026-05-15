@@ -23,6 +23,7 @@ UCX_PLUGINS_DIR="/usr/lib64/ucx"
 NIXL_PLUGINS_DIR="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins"
 OUTPUT_DIR="dist"
 BUILD_NIXL_EP="false"
+TORCH_VERSIONS=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -69,6 +70,11 @@ while [[ $# -gt 0 ]]; do
             BUILD_NIXL_EP="true"
             shift
             ;;
+        --torch-versions)
+            TORCH_VERSIONS=$2
+            shift
+            shift
+            ;;
         *)
             echo "Unknown argument: $1"
             exit 1
@@ -88,21 +94,83 @@ if [ "$CUDA_MAJOR" -ne 12 ] && [ "$CUDA_MAJOR" -ne 13 ]; then
     echo "Invalid CUDA_MAJOR: '$CUDA_MAJOR'"
     exit 1
 fi
+AUDITWHEEL_EXCLUDES="--exclude libcuda* --exclude libcufile* --exclude libssl* --exclude libcrypto* --exclude libefa* --exclude libhwloc* --exclude libfabric* --exclude libtorch* --exclude libc10* --exclude libdoca*"
+
 PKG_NAME="nixl-cu${CUDA_MAJOR}"
 ./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
-if [ "$BUILD_NIXL_EP" = "true" ]; then
-    uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION \
-        -Csetup-args=-Dbuild_nixl_ep=true \
-        -Csetup-args=-Dbuild_examples=true
-else
-    uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
-fi
 
-# Bundle libraries
-mkdir $TMP_DIR/dist
-auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' --exclude 'libefa*' --exclude 'libhwloc*' --exclude 'libfabric*' --exclude 'libtorch*' --exclude 'libc10*' --exclude 'libdoca*' $TMP_DIR/nixl*.whl --plat $WHL_PLATFORM --wheel-dir $TMP_DIR/dist
-./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR $TMP_DIR/dist/*.whl
-cp $TMP_DIR/dist/*.whl $OUTPUT_DIR
+install_torch() {
+    local VER=$1
+    uv pip install --pre "torch==${VER}.*"
+}
+
+build_wheel() {
+    local OUT_DIR=$1
+    if [ "$BUILD_NIXL_EP" = "true" ]; then
+        uv build --wheel --out-dir "$OUT_DIR" --python $PYTHON_VERSION \
+            -Csetup-args=-Dbuild_nixl_ep=true \
+            -Csetup-args=-Dbuild_examples=true
+    else
+        uv build --wheel --out-dir "$OUT_DIR" --python $PYTHON_VERSION
+    fi
+}
+
+repair_wheel() {
+    local IN_DIR=$1
+    local OUT_DIR=$2
+    mkdir -p "$OUT_DIR"
+    auditwheel repair $AUDITWHEEL_EXCLUDES "$IN_DIR"/nixl*.whl --plat $WHL_PLATFORM --wheel-dir "$OUT_DIR"
+    ./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR "$OUT_DIR"/*.whl
+}
+
+if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
+    # Multi-torch: build full wheel with first torch, then merge extra .so from others.
+    IFS=',' read -ra TV_ARRAY <<< "$TORCH_VERSIONS"
+
+    FIRST_TORCH="${TV_ARRAY[0]}"
+    echo "=== Building wheel with torch ${FIRST_TORCH} ==="
+    install_torch "$FIRST_TORCH"
+    build_wheel "$TMP_DIR"
+    repair_wheel "$TMP_DIR" "$TMP_DIR/dist"
+    BASE_WHL=$(ls "$TMP_DIR"/dist/*.whl)
+
+    for ((i=1; i<${#TV_ARRAY[@]}; i++)); do
+        TV="${TV_ARRAY[$i]}"
+        echo "=== Building nixl_ep .so for torch ${TV} ==="
+        install_torch "$TV"
+
+        EP_TMP=$(mktemp -d)
+        build_wheel "$EP_TMP"
+
+        # Extract torch-versioned .so from new wheel, inject into base wheel
+        EP_EXTRACT=$(mktemp -d)
+        unzip -o "$EP_TMP"/nixl*.whl -d "$EP_EXTRACT"
+        BASE_EXTRACT=$(mktemp -d)
+        unzip -o "$BASE_WHL" -d "$BASE_EXTRACT"
+
+        TORCH_MM=$(echo "$TV" | tr -d '.')
+        find "$EP_EXTRACT" -name "nixl_ep_cpp_torch${TORCH_MM}*" -exec cp {} "$BASE_EXTRACT"/nixl_ep_cu${CUDA_MAJOR}/ \;
+
+        # Regenerate RECORD
+        DIST_INFO=$(ls -d "$BASE_EXTRACT"/*.dist-info)
+        (cd "$BASE_EXTRACT" && find . -type f ! -name RECORD -printf '%P\n' | while read f; do
+            hash=$(python3 -c "import hashlib,base64; d=open('$f','rb').read(); print('sha256=' + base64.urlsafe_b64encode(hashlib.sha256(d).digest()).rstrip(b'=').decode())")
+            size=$(stat -c%s "$f")
+            echo "$f,$hash,$size"
+        done > "$DIST_INFO/RECORD"
+        echo "$(basename $DIST_INFO)/RECORD,," >> "$DIST_INFO/RECORD")
+
+        rm -f "$BASE_WHL"
+        (cd "$BASE_EXTRACT" && zip -r "$BASE_WHL" .)
+        rm -rf "$EP_TMP" "$EP_EXTRACT" "$BASE_EXTRACT"
+    done
+
+    cp "$BASE_WHL" "$OUTPUT_DIR"
+else
+    build_wheel "$TMP_DIR"
+    repair_wheel "$TMP_DIR" "$TMP_DIR/dist"
+    cp "$TMP_DIR"/dist/*.whl "$OUTPUT_DIR"
+fi
 
 # Clean up
 rm -rf "$TMP_DIR"

@@ -135,9 +135,18 @@ nixl_ep_install_rpath = join_paths(get_option('prefix'), get_option('libdir'))
 nixl_ep_install_rpath += ':' + join_paths(get_option('prefix'), get_option('libdir'), 'plugins')
 nixl_ep_install_rpath += ':' + torch_lib_dir
 
-nixl_ep_ext = py.extension_module('nixl_ep_cpp',
+# CUDA-versioned install dir so cu12 and cu13 wheels don't collide.
+nixl_ep_install_dir = 'nixl_ep_' + cuda_wheel_dir.split('_')[-1]  # nixl_ep_cu12 or nixl_ep_cu13
+
+# Torch-versioned .so name so multiple torch ABIs coexist in a single wheel.
+torch_ver = run_command(py, '-c',
+    'import torch; print("".join(torch.__version__.split(".")[:2]))',
+    check: true).stdout().strip()
+nixl_ep_ext_name = 'nixl_ep_cpp_torch' + torch_ver
+
+nixl_ep_ext = py.extension_module(nixl_ep_ext_name,
     nixl_ep_sources,
-    subdir: 'nixl_ep',
+    subdir: nixl_ep_install_dir,
     dependencies: [
         nixl_dep,
         pybind_dep,
@@ -165,11 +174,12 @@ custom_target('nixl_ep_py_copy',
     input: nixl_ep_py_files,
     command: [
         'bash', '-c',
-        'cp -r @0@/nixl_ep @1@/ && cp @2@ @1@/nixl_ep/ && touch @3@'.format(
+        'mkdir -p @1@/@4@ && cp @0@/nixl_ep/*.py @1@/@4@/ && cp @2@ @1@/@4@/ && touch @3@'.format(
             meson.current_source_dir(),
             meson.current_build_dir(),
             nixl_ep_ext.full_path(),
-            join_paths(meson.current_build_dir(), 'nixl_ep_py.stamp')
+            join_paths(meson.current_build_dir(), 'nixl_ep_py.stamp'),
+            nixl_ep_install_dir,
         )
     ],
     depends: nixl_ep_ext,
@@ -180,6 +190,6 @@ py.install_sources(
     'nixl_ep/__init__.py',
     'nixl_ep/buffer.py',
     'nixl_ep/utils.py',
-    subdir: 'nixl_ep',
+    subdir: nixl_ep_install_dir,
     pure: false,
 )

@@ -18,9 +18,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
+
 import torch
 
-from . import nixl_ep_cpp as _nixl_ep_cpp
+_torch_mm = "".join(torch.__version__.split(".")[:2])
+_nixl_ep_cpp = importlib.import_module(f".nixl_ep_cpp_torch{_torch_mm}", __package__)
+
 from .buffer import Buffer
 from .utils import EventOverlap
 
