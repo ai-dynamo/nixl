@@ -25,8 +25,10 @@ import torch
 _torch_mm = "".join(torch.__version__.split(".")[:2])
 _nixl_ep_cpp = importlib.import_module(f".nixl_ep_cpp_torch{_torch_mm}", __package__)
 
-from .buffer import Buffer
-from .utils import EventOverlap
+# The submodules below import names from `_nixl_ep_cpp`, so the dynamic
+# import above must run first; that's why these aren't at the top.
+from .buffer import Buffer  # noqa: E402
+from .utils import EventOverlap  # noqa: E402
 
 topk_idx_t = getattr(_nixl_ep_cpp, "topk_idx_t", torch.int64)
 Config = _nixl_ep_cpp.Config
