@@ -117,8 +117,9 @@ BUILD_DEPS=(
     "setuptools>=80.9.0"
 )
 
-# Channel cache for repeated lookups within a single script run.
-declare -A TORCH_CHANNEL_CACHE
+# Classification cache for repeated lookups within a single script run.
+# Values: "stable" | "nightly" | "unavailable".
+declare -A TORCH_CLASS_CACHE
 
 # Slugify a dotted version (e.g. "2.13" -> "213", "3.10" -> "310") so it can
 # be used unambiguously as a path component.
@@ -137,30 +138,41 @@ venv_path() {
     fi
 }
 
-# Determine whether torch==${VER}.* has a stable release on the stable cu
-# index for the target Python version. Echoes "stable" or "nightly".
-# A torch version is treated as stable iff a non-pre-release wheel resolves
-# from the stable cu index alone (no nightly index, no --pre).
-torch_channel() {
+# Classify a requested torch version for the target Python: does
+# `torch==${VER}.*` resolve from the stable cu index alone, only from the
+# nightly index (with --pre), or from neither? Echoes one of:
+#   stable       — resolvable from $TORCH_STABLE_INDEX without --pre
+#   nightly      — resolvable from $TORCH_NIGHTLY_INDEX with --pre
+#   unavailable  — not in either index for this Python
+# Result is cached so each (PYTHON_VERSION, VER) probe runs at most once
+# across the script's filter and build phases.
+torch_classify() {
     local VER=$1
-    if [ -n "${TORCH_CHANNEL_CACHE[$VER]:-}" ]; then
-        echo "${TORCH_CHANNEL_CACHE[$VER]}"
+    if [ -n "${TORCH_CLASS_CACHE[$VER]:-}" ]; then
+        echo "${TORCH_CLASS_CACHE[$VER]}"
         return
     fi
-    local CHANNEL="nightly"
-    local CHECK_VENV="/workspace/venv-probe-py$(slug "$PYTHON_VERSION")"
-    rm -rf "$CHECK_VENV"
-    if uv venv "$CHECK_VENV" --python "$PYTHON_VERSION" >/dev/null 2>&1; then
+    local CLASS="unavailable"
+    local PROBE="/workspace/venv-probe-py$(slug "$PYTHON_VERSION")"
+    rm -rf "$PROBE"
+    if uv venv "$PROBE" --python "$PYTHON_VERSION" >/dev/null 2>&1; then
         if uv pip install --dry-run \
-            --python "$CHECK_VENV/bin/python" \
+            --python "$PROBE/bin/python" \
             --index-url "$TORCH_STABLE_INDEX" \
             "torch==${VER}.*" >/dev/null 2>&1; then
-            CHANNEL="stable"
+            CLASS="stable"
+        elif uv pip install --dry-run --pre \
+            --python "$PROBE/bin/python" \
+            --extra-index-url "$TORCH_STABLE_INDEX" \
+            --extra-index-url "$TORCH_NIGHTLY_INDEX" \
+            --index-strategy unsafe-best-match \
+            "torch==${VER}.*" >/dev/null 2>&1; then
+            CLASS="nightly"
         fi
     fi
-    rm -rf "$CHECK_VENV"
-    TORCH_CHANNEL_CACHE[$VER]="$CHANNEL"
-    echo "$CHANNEL"
+    rm -rf "$PROBE"
+    TORCH_CLASS_CACHE[$VER]="$CLASS"
+    echo "$CLASS"
 }
 
 # Echo the torch requirement spec for the given (version, channel). Stable
@@ -197,25 +209,6 @@ torch_uv_flags() {
     fi
 }
 
-# Check whether torch==${VER}.* is resolvable from any configured index
-# (stable or nightly) for the target Python version. Echoes "yes" on
-# success, nothing otherwise.
-torch_available() {
-    local VER=$1
-    local CHECK_VENV="/workspace/venv-probe-py$(slug "$PYTHON_VERSION")"
-    rm -rf "$CHECK_VENV"
-    uv venv "$CHECK_VENV" --python "$PYTHON_VERSION" >/dev/null 2>&1 || return
-    if uv pip install --dry-run --pre \
-        --python "$CHECK_VENV/bin/python" \
-        --extra-index-url "$TORCH_STABLE_INDEX" \
-        --extra-index-url "$TORCH_NIGHTLY_INDEX" \
-        --index-strategy unsafe-best-match \
-        "torch==${VER}.*" >/dev/null 2>&1; then
-        echo "yes"
-    fi
-    rm -rf "$CHECK_VENV"
-}
-
 # Build the wheel for the current PYTHON_VERSION (and optional torch VER).
 # Creates a fresh venv at venv_path, installs build deps + torch with the
 # channel-appropriate flags, runs `uv build --no-build-isolation`, and
@@ -230,7 +223,7 @@ build_wheel() {
     local VENV_PATH
     VENV_PATH=$(venv_path "$VER")
     local CHANNEL="stable"
-    [ -n "$VER" ] && CHANNEL=$(torch_channel "$VER")
+    [ -n "$VER" ] && CHANNEL=$(torch_classify "$VER")
 
     local UV_FLAGS=()
     while IFS= read -r f; do UV_FLAGS+=("$f"); done < <(torch_uv_flags "$CHANNEL")
@@ -290,10 +283,10 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
     TORCH_ARRAY=()
     SKIPPED=()
     for TORCH in "${TORCH_REQUESTED[@]}"; do
-        if [ -n "$(torch_available "$TORCH")" ]; then
-            TORCH_ARRAY+=("$TORCH")
-        else
+        if [ "$(torch_classify "$TORCH")" = "unavailable" ]; then
             SKIPPED+=("$TORCH")
+        else
+            TORCH_ARRAY+=("$TORCH")
         fi
     done
 
