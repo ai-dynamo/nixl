@@ -14,8 +14,6 @@
 # limitations under the License.
 
 fs = import('fs')
-# Return values are captured so the meta-wheel custom_target in the parent
-# meson.build can depend on them and ninja runs the copies before `uv build`.
-nixl_init_copy = fs.copyfile('__init__.py')
-nixl_api_copy = fs.copyfile('_api.py')
-nixl_logging_copy = fs.copyfile('logging.py')
+# Return value is captured so the meta-wheel custom_target in the parent
+# meson.build can depend on it and ninja runs the copy before `uv build`.
+nixl_ep_init_copy = fs.copyfile('__init__.py')
