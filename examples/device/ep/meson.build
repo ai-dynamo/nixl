@@ -118,15 +118,10 @@ nixl_ep_rpath += ':' + nixl_lib_dir
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'core')
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'plugins')
 
-# Torch >=2.13 ships public C10 headers (e.g. c10/core/AutogradState.h)
-# that use C++20 features (default member initializers for bit-fields), so
-# the nixl_ep extension must be compiled as C++20. C++20 is backwards-
-# compatible with the project's default cpp_std=c++17, so older torch
-# versions keep building.
-nixl_ep_override_options = ['cpp_std=c++20', 'cuda_std=c++20']
 # For now, nixl ep cannot be built with -G due to register usage limits
+nixl_ep_override_options = []
 if get_option('buildtype') == 'debug'
-    nixl_ep_override_options += ['optimization=3']
+    nixl_ep_override_options = ['optimization=3']
     nixl_ep_cpp_args += ['-g']
 endif
 
