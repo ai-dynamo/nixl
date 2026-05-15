@@ -294,11 +294,9 @@ RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install python dependencies
 RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click setuptools tabulate auditwheel tomlkit
-# Install PyTorch (default version for meson setup; wheel builds may reinstall other versions)
-ARG TORCH_VERSIONS="2.11,2.12,2.13"
+# Install PyTorch
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
-    FIRST_TORCH=$(echo "$TORCH_VERSIONS" | cut -d, -f1) && \
-    uv pip install "torch==${FIRST_TORCH}.*"
+    uv pip install 'torch==2.11.*'
 # Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
@@ -355,15 +353,12 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
+ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13"
 ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
-    CU_TAG="cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
-    export UV_EXTRA_INDEX_URL="https://download.pytorch.org/whl/nightly/${CU_TAG}" && \
-    export UV_INDEX="https://download.pytorch.org/whl/${CU_TAG}" && \
-    export UV_INDEX_STRATEGY=unsafe-best-match && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \
-        EP_BUILD_FLAG="--build-nixl-ep --torch-versions $TORCH_VERSIONS"; \
+        EP_BUILD_FLAG="--build-nixl-ep --torch-versions $WHL_TORCH_VERSIONS"; \
     else \
         EP_BUILD_FLAG=""; \
     fi && \

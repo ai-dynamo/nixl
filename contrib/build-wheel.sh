@@ -105,11 +105,8 @@ CU_TAG="cu$(nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2 |
 TORCH_STABLE_INDEX="https://download.pytorch.org/whl/${CU_TAG}"
 TORCH_NIGHTLY_INDEX="https://download.pytorch.org/whl/nightly/${CU_TAG}"
 
-# Build deps every wheel build needs in its venv. Mirrors pyproject.toml's
-# `build-system.requires` minus torch (which is added per-iteration with
-# channel-appropriate constraints). pytest/build are not strictly needed by
-# meson-python at build time but are kept in sync with pyproject.toml so
-# nothing breaks if a backend hook decides to import them.
+# Build deps installed into the per-iteration venv (torch is added
+# separately with channel-appropriate constraints).
 BUILD_DEPS=(
     "meson"
     "meson-python"
@@ -154,12 +151,7 @@ torch_channel() {
     local CHECK_VENV="/workspace/venv-probe-py$(slug "$PYTHON_VERSION")"
     rm -rf "$CHECK_VENV"
     if uv venv "$CHECK_VENV" --python "$PYTHON_VERSION" >/dev/null 2>&1; then
-        # Unset UV_*INDEX* env vars (the wheel-build loop in
-        # Dockerfile.manylinux exports them with the nightly index, which
-        # would otherwise let `torch==X.Y.*` resolve from nightly and make
-        # us mis-classify a nightly-only release as stable).
-        if env -u UV_INDEX -u UV_EXTRA_INDEX_URL -u UV_INDEX_STRATEGY -u UV_DEFAULT_INDEX \
-            uv pip install --dry-run \
+        if uv pip install --dry-run \
             --python "$CHECK_VENV/bin/python" \
             --index-url "$TORCH_STABLE_INDEX" \
             "torch==${VER}.*" >/dev/null 2>&1; then
@@ -292,40 +284,40 @@ repair_wheel() {
 
 if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
     # Multi-torch: build full wheel with first torch, then merge extra .so from others.
-    IFS=',' read -ra TV_REQUESTED <<< "$TORCH_VERSIONS"
+    IFS=',' read -ra TORCH_REQUESTED <<< "$TORCH_VERSIONS"
 
     # Filter to torch versions actually resolvable for this (Python, CUDA) combo.
-    TV_ARRAY=()
+    TORCH_ARRAY=()
     SKIPPED=()
-    for TV in "${TV_REQUESTED[@]}"; do
-        if [ -n "$(torch_available "$TV")" ]; then
-            TV_ARRAY+=("$TV")
+    for TORCH in "${TORCH_REQUESTED[@]}"; do
+        if [ -n "$(torch_available "$TORCH")" ]; then
+            TORCH_ARRAY+=("$TORCH")
         else
-            SKIPPED+=("$TV")
+            SKIPPED+=("$TORCH")
         fi
     done
 
     if [ ${#SKIPPED[@]} -gt 0 ]; then
         echo "=== Skipping torch versions (no wheel on index for Python ${PYTHON_VERSION} + ${CU_TAG}): ${SKIPPED[*]} ==="
     fi
-    if [ ${#TV_ARRAY[@]} -eq 0 ]; then
-        echo "ERROR: none of the requested torch versions (${TV_REQUESTED[*]}) are available for Python ${PYTHON_VERSION} + ${CU_TAG}"
+    if [ ${#TORCH_ARRAY[@]} -eq 0 ]; then
+        echo "ERROR: none of the requested torch versions (${TORCH_REQUESTED[*]}) are available for Python ${PYTHON_VERSION} + ${CU_TAG}"
         exit 1
     fi
-    echo "=== Building for torch versions: ${TV_ARRAY[*]} ==="
+    echo "=== Building for torch versions: ${TORCH_ARRAY[*]} ==="
 
-    FIRST_TORCH="${TV_ARRAY[0]}"
+    FIRST_TORCH="${TORCH_ARRAY[0]}"
     echo "=== Building wheel with torch ${FIRST_TORCH} ==="
     build_wheel "$TMP_DIR" "$FIRST_TORCH"
     repair_wheel "$TMP_DIR" "$TMP_DIR/dist"
     BASE_WHL=$(ls "$TMP_DIR"/dist/*.whl)
 
-    for ((i=1; i<${#TV_ARRAY[@]}; i++)); do
-        TV="${TV_ARRAY[$i]}"
-        echo "=== Building nixl_ep .so for torch ${TV} ==="
+    for ((i=1; i<${#TORCH_ARRAY[@]}; i++)); do
+        TORCH="${TORCH_ARRAY[$i]}"
+        echo "=== Building nixl_ep .so for torch ${TORCH} ==="
 
         EP_TMP=$(mktemp -d)
-        build_wheel "$EP_TMP" "$TV"
+        build_wheel "$EP_TMP" "$TORCH"
         # Repair so the .so passes auditwheel for the manylinux tag before we extract it
         repair_wheel "$EP_TMP" "$EP_TMP/dist"
 
@@ -335,7 +327,7 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
         BASE_EXTRACT=$(mktemp -d)
         unzip -o "$BASE_WHL" -d "$BASE_EXTRACT"
 
-        TORCH_MM=$(echo "$TV" | tr -d '.')
+        TORCH_MM=$(echo "$TORCH" | tr -d '.')
         find "$EP_EXTRACT" -name "nixl_ep_cpp_torch${TORCH_MM}*" -exec cp {} "$BASE_EXTRACT"/nixl_ep_cu${CUDA_MAJOR}/ \;
 
         # Regenerate RECORD
