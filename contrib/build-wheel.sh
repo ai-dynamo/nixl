@@ -193,10 +193,12 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
 
         EP_TMP=$(mktemp -d)
         build_wheel "$EP_TMP"
+        # Repair so the .so passes auditwheel for the manylinux tag before we extract it
+        repair_wheel "$EP_TMP" "$EP_TMP/dist"
 
-        # Extract torch-versioned .so from new wheel, inject into base wheel
+        # Extract torch-versioned .so from repaired wheel, inject into base wheel
         EP_EXTRACT=$(mktemp -d)
-        unzip -o "$EP_TMP"/nixl*.whl -d "$EP_EXTRACT"
+        unzip -o "$EP_TMP"/dist/*.whl -d "$EP_EXTRACT"
         BASE_EXTRACT=$(mktemp -d)
         unzip -o "$BASE_WHL" -d "$BASE_EXTRACT"
 
