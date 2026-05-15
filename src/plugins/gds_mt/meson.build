@@ -13,6 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+if get_option('use_rocm')
+    message('GDS_MT plugin skipped: GPUDirect Storage is NVIDIA-only (use_rocm=true)')
+    cufile_dep = declare_dependency()
+    subdir_done()
+endif
+
 gds_path = get_option('gds_path')
 if gds_path != ''
     gds_lib_path = gds_path + '/lib64'
