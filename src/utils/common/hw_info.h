@@ -1,5 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +29,7 @@ namespace nixl {
 class hwInfo {
 public:
     unsigned numNvidiaGpus = 0;
+    unsigned numAmdGpus = 0;
     unsigned numIbDevices = 0;
     unsigned numEfaDevices = 0;
 

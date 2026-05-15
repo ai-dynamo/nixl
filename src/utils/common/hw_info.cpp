@@ -1,5 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +36,7 @@ namespace {
 
     constexpr unsigned long kPciVendorMellanox = 0x15b3;
     constexpr unsigned long kPciVendorNvidia = 0x10de;
+    constexpr unsigned long kPciVendorAmd = 0x1002;
     constexpr unsigned long kPciVendorAmazon = 0x1d0f;
 
     constexpr unsigned long kPciClassIb = 0x0207;
@@ -119,7 +121,14 @@ hwInfo::hwInfo() {
         if ((*vendor_id == kPciVendorNvidia) &&
             ((*class_id == kPciClassGpuDisplay) || (*class_id == kPciClassGpu3d))) {
             numNvidiaGpus++;
-            NIXL_DEBUG << "Found GPU #" << numNvidiaGpus << ": " << device_name << " vendor=0x"
+            NIXL_DEBUG << "Found NVIDIA GPU #" << numNvidiaGpus << ": " << device_name
+                       << " vendor=0x" << std::hex << *vendor_id << " class=0x" << *class_id
+                       << std::dec;
+        }
+        if ((*vendor_id == kPciVendorAmd) &&
+            ((*class_id == kPciClassGpuDisplay) || (*class_id == kPciClassGpu3d))) {
+            numAmdGpus++;
+            NIXL_DEBUG << "Found AMD GPU #" << numAmdGpus << ": " << device_name << " vendor=0x"
                        << std::hex << *vendor_id << " class=0x" << *class_id << std::dec;
         }
 
@@ -137,6 +146,7 @@ hwInfo::hwInfo() {
 
     NIXL_DEBUG << "hwInfo { "
                << "numNvidiaGpus=" << numNvidiaGpus << ", "
+               << "numAmdGpus=" << numAmdGpus << ", "
                << "numIbDevices=" << numIbDevices << ", "
                << "numEfaDevices=" << numEfaDevices << " }";
 }
