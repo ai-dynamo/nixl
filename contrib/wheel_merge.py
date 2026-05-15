@@ -79,9 +79,7 @@ def merge(
             merged[new_name] = (new_info, zsrc.read(info))
 
     if not merged:
-        raise SystemExit(
-            f"no files matched {pattern!r} in {source_wheel}"
-        )
+        raise SystemExit(f"no files matched {pattern!r} in {source_wheel}")
 
     # Read base wheel; pull out RECORD path so we can regenerate it.
     by_name: dict[str, tuple[zipfile.ZipInfo, bytes]] = {}
