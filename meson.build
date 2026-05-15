@@ -190,13 +190,15 @@ if use_rocm
     add_project_arguments('-D__HIP_PLATFORM_AMD__', language: 'cpp')
     add_project_link_arguments(['-L' + rocm_lib, '-lamdhip64', '-lhiprtc'], language: 'cpp')
 
-    # All CUDA-conditional code (libfabric CUDA support, cuda_dep.found() guards
-    # in plugin meson.build files, add_languages('CUDA'), etc.) sees a missing
-    # cuda_dep on ROCm builds and skips itself. CUDA-only plugins
-    # (cuda_gds, gds_mt, gpunetio, libfabric) still need their own subdir_done()
-    # early-out at the top of their meson.build to skip header includes that
-    # would otherwise drag in cuda.h.
-    cuda_dep = disabler()
+    # cuda_dep is set to an empty-but-found dependency so that plugins
+    # which list it defensively (e.g. UCX, which has zero CUDA usage in
+    # source but lists cuda_dep in its deps array) still build cleanly.
+    # CUDA-only plugins (cuda_gds, gds_mt, gpunetio, libfabric) have
+    # explicit subdir_done() guards at the top of their meson.build files
+    # to short-circuit before any cuda.h include or CUDA flag is touched.
+    # Using disabler() here would cascade through the UCX plugin's dep
+    # list and silently nullify its shared_library() call.
+    cuda_dep = declare_dependency()
     cuda_wheel_dir = 'nixl_rocm'
     summary({'GPU vendor': 'AMD ROCm', 'ROCm path': rocm_path}, section: 'Build')
 elif cuda_lib_path == ''
@@ -229,7 +231,7 @@ else
     include_directories : include_directories(cuda_inc_path))
 endif
 
-if cuda_dep.found()
+if cuda_dep.found() and not use_rocm
     add_languages('CUDA')
     cuda = import('unstable-cuda')
     nvcc = meson.get_compiler('cuda')
