@@ -21,6 +21,11 @@ import tomlkit
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--wheel-name", type=str, help="Set the project name")
+parser.add_argument(
+    "--torch-version",
+    type=str,
+    help="Pin the torch build dep to this major.minor (e.g. '2.13')",
+)
 parser.add_argument("file", type=str, help="The toml file to modify")
 args = parser.parse_args()
 
@@ -28,13 +33,14 @@ with open(args.file) as f:
     doc = tomlkit.parse(f.read())
 
 if args.wheel_name:
-    # Set the wheel name
-    # Example:
-    # ```toml
-    # [project]
-    # name = "<wheel_name>"
-    # ```
     doc["project"]["name"] = args.wheel_name
+
+if args.torch_version:
+    # Replace any existing "torch" or "torch==X.*" entry in build requires
+    requires = doc["build-system"]["requires"]
+    new_requires = [r for r in requires if not r.split("==")[0].strip() == "torch"]
+    new_requires.append(f"torch=={args.torch_version}.*")
+    doc["build-system"]["requires"] = new_requires
 
 with open(args.file, "w") as f:
     f.write(tomlkit.dumps(doc))

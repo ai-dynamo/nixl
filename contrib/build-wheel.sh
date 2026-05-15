@@ -97,21 +97,33 @@ fi
 AUDITWHEEL_EXCLUDES="--exclude libcuda* --exclude libcufile* --exclude libssl* --exclude libcrypto* --exclude libefa* --exclude libhwloc* --exclude libfabric* --exclude libtorch* --exclude libc10* --exclude libdoca*"
 
 PKG_NAME="nixl-cu${CUDA_MAJOR}"
+CU_TAG="cu$(nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2 | tr -d .)"
 ./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
 
-install_torch() {
+# Pin the torch build dep in pyproject.toml so uv build's isolated env resolves it.
+pin_torch() {
     local VER=$1
-    uv pip install --pre "torch==${VER}.*"
+    ./contrib/tomlutil.py --torch-version "$VER" pyproject.toml
 }
+
+# uv build's isolated build env needs access to the nightly index too.
+UV_BUILD_INDEX_FLAGS=(
+    --index-url "https://download.pytorch.org/whl/${CU_TAG}"
+    --extra-index-url "https://download.pytorch.org/whl/nightly/${CU_TAG}"
+    --index-strategy unsafe-best-match
+    --prerelease allow
+)
 
 build_wheel() {
     local OUT_DIR=$1
     if [ "$BUILD_NIXL_EP" = "true" ]; then
         uv build --wheel --out-dir "$OUT_DIR" --python $PYTHON_VERSION \
+            "${UV_BUILD_INDEX_FLAGS[@]}" \
             -Csetup-args=-Dbuild_nixl_ep=true \
             -Csetup-args=-Dbuild_examples=true
     else
-        uv build --wheel --out-dir "$OUT_DIR" --python $PYTHON_VERSION
+        uv build --wheel --out-dir "$OUT_DIR" --python $PYTHON_VERSION \
+            "${UV_BUILD_INDEX_FLAGS[@]}"
     fi
 }
 
@@ -129,7 +141,7 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
 
     FIRST_TORCH="${TV_ARRAY[0]}"
     echo "=== Building wheel with torch ${FIRST_TORCH} ==="
-    install_torch "$FIRST_TORCH"
+    pin_torch "$FIRST_TORCH"
     build_wheel "$TMP_DIR"
     repair_wheel "$TMP_DIR" "$TMP_DIR/dist"
     BASE_WHL=$(ls "$TMP_DIR"/dist/*.whl)
@@ -137,7 +149,7 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
     for ((i=1; i<${#TV_ARRAY[@]}; i++)); do
         TV="${TV_ARRAY[$i]}"
         echo "=== Building nixl_ep .so for torch ${TV} ==="
-        install_torch "$TV"
+        pin_torch "$TV"
 
         EP_TMP=$(mktemp -d)
         build_wheel "$EP_TMP"
