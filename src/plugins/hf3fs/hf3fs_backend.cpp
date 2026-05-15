@@ -24,6 +24,7 @@
 #include "hf3fs_backend.h"
 #include "hf3fs_log.h"
 #include "common/nixl_log.h"
+#include "file/file_path_mode.h"
 #include "file/file_utils.h"
 
 #define NUM_CQES 1024
@@ -185,14 +186,33 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
         break;
     }
     case FILE_SEG: {
-        int fd = mem.devId;
+        // Path-mode: backend opens/closes; falls through to fd-in-devId.
+        int fd = -1;
+        bool owned = false;
+        std::string owned_path;
+        if (const auto spec = nixl::parsePathMeta(mem.metaInfo)) {
+            fd = ::open(spec->path.c_str(), spec->flags, spec->mode);
+            if (fd < 0) {
+                HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,
+                                 absl::StrFormat("HF3FS path-mode open(\"%s\") failed: errno=%d",
+                                                 spec->path,
+                                                 errno));
+            }
+            owned = true;
+            owned_path = spec->path;
+        } else {
+            fd = mem.devId;
+        }
 
         // if the same file is reused - no need to re-register
-        auto it = hf3fs_file_set.find(fd);
+        const auto it = hf3fs_file_set.find(fd);
         if (it == hf3fs_file_set.end()) {
             int ret = 0;
             status = hf3fs_utils->registerFileHandle(fd, &ret);
             if (status != NIXL_SUCCESS) {
+                if (owned) {
+                    ::close(fd);
+                }
                 HF3FS_LOG_RETURN(status,
                                  absl::StrFormat("Error - failed to register file handle %d", fd));
             }
@@ -203,6 +223,8 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
         md->handle.fd = fd;
         md->handle.size = mem.len;
         md->handle.metadata = mem.metaInfo;
+        md->owned = owned;
+        md->path = std::move(owned_path);
         out = (nixlBackendMD *)md;
         break;
     }
@@ -220,6 +242,9 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
         nixlHf3fsFileMetadata *file_md = (nixlHf3fsFileMetadata *)md;
         hf3fs_file_set.erase(file_md->handle.fd);
         hf3fs_utils->deregisterFileHandle(file_md->handle.fd);
+        if (file_md->owned && file_md->handle.fd >= 0) {
+            ::close(file_md->handle.fd); // path-mode: backend owns the close
+        }
     } else if (md->type != NIXL_HF3FS_MEM_TYPE_DRAM && md->type != NIXL_HF3FS_MEM_TYPE_DRAM_ZC) {
         HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error - invalid metadata type");
     }
@@ -299,8 +324,9 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
 
     for (int i = 0; i < file_cnt; i++) {
-        // Get file descriptor from the proper list
-        int file_descriptor = (*file_list)[i].devId;
+        // Read fd from metadataP; in path-mode devId is 0 (path is in metaInfo).
+        auto file_md = (nixlHf3fsFileMetadata *)(*file_list)[i].metadataP;
+        int file_descriptor = file_md->handle.fd;
         addr = (void*) (*mem_list)[i].addr;
         size = (*mem_list)[i].len;
         offset = (size_t) (*file_list)[i].addr;  // Offset in file

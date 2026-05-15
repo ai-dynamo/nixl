@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,9 +16,11 @@
  */
 #include <cassert>
 #include <cufile.h>
+#include <absl/strings/str_format.h>
 #include "gds_backend.h"
 #include "gds_utils.h"
 #include "common/nixl_log.h"
+#include "file/file_path_mode.h"
 #include "file/file_utils.h"
 #include <unordered_map>
 #include <memory>
@@ -102,8 +104,22 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
 
     switch (nixl_mem) {
         case FILE_SEG: {
-            // Check if we already have a file handle for this devId
-            auto it = gds_file_map.find(mem.devId);
+            // Path-mode: backend opens/closes; falls through to fd-in-devId.
+            int fd = mem.devId;
+            if (auto spec = nixl::parsePathMeta(mem.metaInfo)) {
+                fd = ::open(spec->path.c_str(), spec->flags, spec->mode);
+                if (fd < 0) {
+                    NIXL_ERROR << absl::StrFormat(
+                        "GDS path-mode open(\"%s\") failed: errno=%d", spec->path, errno);
+                    delete md;
+                    return NIXL_ERR_BACKEND;
+                }
+                md->owned = true;
+                md->path = spec->path;
+            }
+
+            // Check if we already have a file handle for this fd
+            auto it = gds_file_map.find(fd);
             if (it != gds_file_map.end()) {
                 md->handle = it->second;
                 md->handle.size = mem.len;
@@ -111,10 +127,11 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
                 break;
             }
 
-            status = gds_utils->registerFileHandle(mem.devId, mem.len,
-                                                   mem.metaInfo, md->handle);
+            status = gds_utils->registerFileHandle(fd, mem.len, mem.metaInfo, md->handle);
             if (status == NIXL_SUCCESS) {
-                gds_file_map[mem.devId] = md->handle;
+                gds_file_map[fd] = md->handle;
+            } else if (md->owned) {
+                ::close(fd);
             }
             break;
         }
@@ -164,7 +181,9 @@ nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
     if (md->type == FILE_SEG) {
         gds_utils->deregisterFileHandle(md->handle);
         gds_file_map.erase(md->handle.fd);
-        // No need to close fd since we're not opening files
+        if (md->owned && md->handle.fd >= 0) {
+            ::close(md->handle.fd); // path-mode: backend owns the close
+        }
     } else {
         gds_utils->deregisterBufHandle(md->buf.base);
     }
@@ -203,6 +222,26 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
     // Determine if local is the file segment
     bool is_local_file = (local.getType() == FILE_SEG);
 
+    // Resolve via metadataP (path-mode opens fd inside registerMem, so the
+    // xfer-time devId doesn't match gds_file_map's fd key); fall back to
+    // devId lookup for fd-mode descriptors.
+    auto resolve_fh = [&](const nixlMetaDesc &d, gdsFileHandle &fh) -> nixl_status_t {
+        if (d.metadataP) {
+            auto *md = static_cast<const nixlGdsMetadata *>(d.metadataP);
+            if (md->type == FILE_SEG) {
+                fh = md->handle;
+                return NIXL_SUCCESS;
+            }
+        }
+        const auto it = gds_file_map.find(d.devId);
+        if (it == gds_file_map.end()) {
+            NIXL_ERROR << "File handle not found";
+            return NIXL_ERR_NOT_FOUND;
+        }
+        fh = it->second;
+        return NIXL_SUCCESS;
+    };
+
     // Create list of all transfer requests
     for (size_t i = 0; i < buf_cnt; i++) {
         void* base_addr;
@@ -220,13 +259,10 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
             total_size = remote[i].len;
             base_offset = (size_t)local[i].addr;
 
-            auto it = gds_file_map.find(local[i].devId);
-            if (it == gds_file_map.end()) {
-                NIXL_ERROR << "File handle not found";
+            if (resolve_fh(local[i], fh) != NIXL_SUCCESS) {
                 delete gds_handle;
                 return NIXL_ERR_NOT_FOUND;
             }
-            fh = it->second;
         } else {
             base_addr = (void*)local[i].addr;
             if (!base_addr) {
@@ -236,13 +272,10 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
             total_size = local[i].len;
             base_offset = (size_t)remote[i].addr;
 
-            auto it = gds_file_map.find(remote[i].devId);
-            if (it == gds_file_map.end()) {
-                NIXL_ERROR << "File handle not found";
+            if (resolve_fh(remote[i], fh) != NIXL_SUCCESS) {
                 delete gds_handle;
                 return NIXL_ERR_NOT_FOUND;
             }
-            fh = it->second;
         }
 
         // Split large transfers into multiple requests

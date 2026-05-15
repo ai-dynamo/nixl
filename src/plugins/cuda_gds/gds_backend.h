@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,8 @@ class nixlGdsMetadata : public nixlBackendMD {
         gdsFileHandle handle;
         gdsMemBuf buf;
         nixl_mem_t type;
+        bool owned = false; // path-mode: backend opened the fd, close on dereg
+        std::string path;
 
         nixlGdsMetadata() : nixlBackendMD(true) { }
         ~nixlGdsMetadata() { }

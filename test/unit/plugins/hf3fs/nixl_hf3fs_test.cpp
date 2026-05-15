@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <getopt.h>
 #include "common/nixl_time.h"
+#include "path_mode_common.h"
 #include "temp_file.h"
 
 namespace {
@@ -138,10 +139,24 @@ namespace {
         }
     };
 
+    // Path-mode smoke: DRAM<->file roundtrip; probe path overridable via env (3FS-only).
+    int
+    runPathModeSmoke() {
+        const char *probe_path = std::getenv("NIXL_HF3FS_PROBE_PATH");
+        if (!probe_path) {
+            probe_path = "/mnt/3fs/nixl_hf3fs_path_mode_smoke.bin";
+        }
+        return nixl_test::runPathModeSmoke("HF3FSPathModeSmoke", "HF3FS", probe_path, 4096);
+    }
 }
 
 int main(int argc, char *argv[])
 {
+    // Path-mode smoke runs first; failure short-circuits the binary.
+    if (int rc = runPathModeSmoke(); rc != 0) {
+        return rc;
+    }
+
     // Defaults
     int num_transfers = default_num_transfers;
     size_t transfer_size = default_transfer_size;

@@ -18,7 +18,12 @@
 #include <iostream>
 #include <cmath>
 #include <errno.h>
+#include <fcntl.h>
+#include <memory>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <unistd.h>
 #include "posix_backend.h"
 #include <absl/log/log.h>
 #include <absl/strings/str_format.h>
@@ -203,10 +208,21 @@ nixl_status_t
 nixlPosixBackendReqH::postXfer() {
     num_confirmed_ios_ = 0;
 
+    // Resolve fd: path-mode (metadataP installed by registerMem) wins over devId.
+    auto resolve_fd = [](const nixlMetaDesc &d) -> int {
+        if (d.metadataP) {
+            if (auto *md = dynamic_cast<nixlPosixFileMD *>(d.metadataP)) {
+                return md->fd;
+            }
+        }
+        return static_cast<int>(d.devId);
+    };
+
     for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
          local_it != local.end() && remote_it != remote.end();
          ++local_it, ++remote_it) {
-        nixl_status_t status = io_queue_->enqueue(remote_it->devId,
+        int fd = resolve_fd(*remote_it);
+        nixl_status_t status = io_queue_->enqueue(fd,
                                                   reinterpret_cast<void *>(local_it->addr),
                                                   remote_it->len,
                                                   remote_it->addr,
@@ -249,14 +265,38 @@ nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
                              const nixl_mem_t &nixl_mem,
                              nixlBackendMD *&out) {
     auto supported_mems = getSupportedMems();
-    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) != supported_mems.end())
-        return NIXL_SUCCESS;
+    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end()) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
 
-    return NIXL_ERR_NOT_SUPPORTED;
+    out = nullptr;
+
+    // Path-mode FILE_SEG: backend opens/closes; otherwise falls through to fd-in-devId.
+    if (nixl_mem == FILE_SEG) {
+        if (const auto spec = nixl::parsePathMeta(mem.metaInfo)) {
+            // Allocate owning MD before open() so bad_alloc can't strand an fd.
+            auto md = std::make_unique<nixlPosixFileMD>();
+            md->path = spec->path;
+
+            int fd = ::open(spec->path.c_str(), spec->flags, spec->mode);
+            if (fd < 0) {
+                NIXL_ERROR << absl::StrFormat(
+                    "POSIX path-mode open(\"%s\") failed: errno=%d", spec->path, errno);
+                return NIXL_ERR_BACKEND;
+            }
+            md->fd = fd;
+            md->owned = true;
+            out = md.release();
+        }
+    }
+
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlPosixEngine::deregisterMem(nixlBackendMD *) {
+nixlPosixEngine::deregisterMem(nixlBackendMD *meta) {
+    delete meta; // delete-on-nullptr is the fd-mode case
+
     return NIXL_SUCCESS;
 }
 

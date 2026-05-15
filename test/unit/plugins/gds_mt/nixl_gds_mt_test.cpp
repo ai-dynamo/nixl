@@ -25,11 +25,16 @@
 #include <sstream>
 #include <cerrno>
 #include <cstring>
+#include <cstdio>
+#include <filesystem>
 #include <getopt.h>
 #include "nixl_descriptors.h"
 #include "nixl_params.h"
 #include "nixl.h"
 #include "common/nixl_time.h"
+#include "path_mode_common.h"
+
+namespace fs = std::filesystem;
 
 // Default values
 #define DEFAULT_NUM_TRANSFERS 250
@@ -219,6 +224,13 @@ format_duration (nixlTime::us_t us) {
     return ss.str();
 }
 
+// Path-mode smoke: DRAM<->file roundtrip; SKIPs if backend unavailable.
+static int
+runPathModeSmoke() {
+    return nixl_test::runPathModeSmoke(
+        "GDSMTPathModeSmoke", "GDS_MT", "/tmp/nixl_gds_mt_path_mode_smoke.bin", 4096);
+}
+
 int
 main (int argc, char *argv[]) {
     nixl_status_t ret = NIXL_SUCCESS;
@@ -242,6 +254,11 @@ main (int argc, char *argv[]) {
     bool use_direct = false;
     unsigned int iterations = DEFAULT_ITERATIONS;
     unsigned int num_gpus = DEFAULT_NUM_GPUS;
+
+    // Path-mode smoke runs first; failure short-circuits the binary.
+    if (int rc = runPathModeSmoke(); rc != 0) {
+        return rc;
+    }
 
     // Parse command line options
     static struct option long_options[] = {{"dram", no_argument, 0, 'd'},

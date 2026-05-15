@@ -30,6 +30,7 @@
 #include "nixl_params.h"
 #include "nixl.h"
 #include "common/nixl_time.h"
+#include "path_mode_common.h"
 
 // Default values
 #define DEFAULT_NUM_TRANSFERS 250
@@ -195,8 +196,20 @@ std::string format_duration(nixlTime::us_t us) {
     return ss.str();
 }
 
+// Path-mode smoke: VRAM<->file roundtrip via shared helper.
+static int
+runPathModeSmoke() {
+    return nixl_test::runPathModeSmoke(
+        "GDSPathModeSmoke", "GDS", "/tmp/nixl_gds_path_mode_smoke.bin", 4096);
+}
+
 int main(int argc, char *argv[])
 {
+    // Path-mode smoke runs first. If smoke fails -> exit non-zero.
+    if (int rc = runPathModeSmoke(); rc != 0) {
+        return rc;
+    }
+
     nixl_status_t               ret = NIXL_SUCCESS;
     void                        **vram_addr = NULL;
     void                        **dram_addr = NULL;
