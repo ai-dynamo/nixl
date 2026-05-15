@@ -49,18 +49,19 @@ jobs:
           docker exec "${CONTAINER_NAME}" bash -lc '
             set -euo pipefail
             apt-get update -y &&
-            apt-get install -y --no-install-recommends libgtest-dev &&
+            apt-get install -y --no-install-recommends libgtest-dev libgmock-dev &&
             apt-get clean && rm -rf /var/lib/apt/lists/*
           '
 
       - name: Configure Meson build
         shell: bash
         run: |
-          docker exec "${CONTAINER_NAME}" bash -lc '
-            meson setup "${BUILD_DIR}" /workspace/nixl \
+          docker exec -e BUILD_DIR="${BUILD_DIR}" "${CONTAINER_NAME}" bash -lc '
+            meson setup --reconfigure "${BUILD_DIR}" /workspace/nixl \
               -Dinstall_headers=true \
               -Ddisable_gds_backend=false \
               --buildtype=debug \
+              -Ducx_path=/usr \
               -Denable_plugins=UCX \
               -Dbuild_tests=true \
               -Dbuild_examples=true
@@ -68,16 +69,14 @@ jobs:
 
       - name: Compile gtest target
         shell: bash
-        run: docker exec "${CONTAINER_NAME}" bash -lc 'meson compile -C "${BUILD_DIR}" gtest'
+        run: docker exec -e BUILD_DIR="${BUILD_DIR}" "${CONTAINER_NAME}" bash -lc 'meson compile -C "${BUILD_DIR}" gtest'
 
       - name: Run gtest target
         shell: bash
         run: |
-          docker exec "${CONTAINER_NAME}" bash -lc '
-            meson test -C "${BUILD_DIR}" gtest \
-              --verbose \
-              --print-errorlogs \
-              --timeout-multiplier 10 \
+          docker exec -e BUILD_DIR="${BUILD_DIR}" "${CONTAINER_NAME}" bash -lc '
+            meson test -C "${BUILD_DIR}" nixl:gtest \
+              --verbose --print-errorlogs --timeout-multiplier 10 \
               --test-args="--gtest_filter=UcxBackendParams.*:*/TestErrorHandling.*"
           '
 

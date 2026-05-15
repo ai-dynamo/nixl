@@ -2,13 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # ======== Base Stage ========
-ARG BASE_IMAGE=intel/deep-learning-essentials:2025.3.2-0-devel-ubuntu24.04
-FROM ${BASE_IMAGE} AS vllm-base
-
-ARG ONEAPI_CT_VERSION=2025.3.1-18
+ARG BASE_IMAGE=intel/deep-learning-essentials:2026.0.0-devel-ubuntu24.04
+FROM ${BASE_IMAGE}
 
 ARG UCX_REPO_URL=https://github.com/openucx/ucx.git
-ARG UCX_BRANCH=master
+ARG UCX_BRANCH=36333b9b1f263c82b2893fc8f05ad1596f325237     # v1.20.1 is broken
 ARG UCX_SRC_DIR=/tmp/ucx_source
 ARG UCX_INSTALL_DIR=/usr
 
@@ -19,8 +17,9 @@ RUN apt-get update -y && \
     apt-get install -y --no-install-recommends ca-certificates gnupg software-properties-common wget && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Add Intel oneAPI repo and PPA for GPU support
-RUN bash -o pipefail -c 'wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null' && \
+RUN apt-get update && apt-get install -y curl gnupg && \
+    curl -fsSL https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+    | gpg --dearmor -o /usr/share/keyrings/oneapi-archive-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list && \
     add-apt-repository -y ppa:kobuk-team/intel-graphics
 
@@ -43,8 +42,6 @@ RUN apt-get update -y && \
         vim \
         linux-libc-dev \
         libaio-dev && \
-    # Install Intel GPU runtime packages
-    apt-get install -y --no-install-recommends intel-oneapi-dpcpp-ct=${ONEAPI_CT_VERSION} && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Additional libs to support RDMA over Ethernet (RoCE) / Infiniband
@@ -53,13 +50,7 @@ RUN apt-get update -y && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends build-essential cmake pkg-config autoconf libtool libcjson-dev && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# B70 XPUs require a newer version of following packages than what may be available in the base image.
-RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends --fix-missing libze1 libze-dev libze-intel-gpu1 intel-opencl-icd libze-intel-gpu-raytracing \
-    intel-ocloc intel-oneapi-compiler-dpcpp-cpp-2025.3 && \
+    apt-get install -y --no-install-recommends build-essential cmake pkg-config autoconf automake libtool m4 libcjson-dev && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install xpu-smi
@@ -71,17 +62,17 @@ RUN wget https://github.com/intel/xpumanager/releases/download/v1.3.6/xpu-smi_1.
 
 # Set environment variables early
 ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/lib/"
-ENV VLLM_TARGET_DEVICE=xpu
-ENV VLLM_WORKER_MULTIPROC_METHOD=spawn
 
 # suppress the python externally managed environment error
 RUN python3 -m pip config set global.break-system-packages true
 
 # Install UCX and dependencies
-RUN git clone ${UCX_REPO_URL} -b ${UCX_BRANCH} ${UCX_SRC_DIR} && \
+RUN git clone ${UCX_REPO_URL} ${UCX_SRC_DIR} && \
     cd ${UCX_SRC_DIR} && \
+    git checkout ${UCX_BRANCH} && \
     ./autogen.sh && \
-    ./configure --prefix=${UCX_INSTALL_DIR} --with-mlx5=no --with-ze=yes --enable-examples --enable-mt && \
+    ./configure --prefix=${UCX_INSTALL_DIR} --with-ze=yes --enable-examples --enable-shared --disable-static \
+        --disable-doxygen-doc --enable-optimizations --enable-cma --enable-mt --with-verbs --with-rdmacm --with-dm && \
     make -j$(nproc) && \
     make -j install-strip && \
     ldconfig
@@ -103,23 +94,10 @@ RUN if [ -d /opt/nvidia/nvda_nixl/lib/python3/dist-packages/nixl_cu12 ]; then \
         ln -sfn /opt/nvidia/nvda_nixl/lib/python3/dist-packages/nixl_cu12 /opt/nvidia/nvda_nixl/lib/python3/dist-packages/nixl; \
     fi
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/nvidia/nvda_nixl/lib/x86_64-linux-gnu/
-ENV PYTHONPATH=$PYTHONPATH:/opt/nvidia/nvda_nixl/lib/python3/dist-packages
+ENV PYTHONPATH=${PYTHONPATH:+$PYTHONPATH:}/opt/nvidia/nvda_nixl/lib/python3/dist-packages
 
 # Install pypi dependencies
 RUN pip install --no-cache-dir bigdl-core==2.4.0b2
-
-# install additional dependencies for openai api server
-RUN pip install --no-cache-dir accelerate hf_transfer 'modelscope!=1.15.0'
-
-# Pin transformers version to avoid conflict in vLLM
-RUN pip install --no-cache-dir "transformers==4.57.0" && \
-    pip install --no-cache-dir librosa soundfile decord
-
-# Set additional environment for production usage
-ENV VLLM_QUANTIZE_Q40_LIB="/usr/local/lib/python3.12/dist-packages/vllm_int4_for_multi_arc.so"
-ENV VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT=1
-ENV VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
-ENV UR_L0_USE_IMMEDIATE_COMMANDLISTS=0
 
 RUN pip uninstall oneccl oneccl-devel -y
 
