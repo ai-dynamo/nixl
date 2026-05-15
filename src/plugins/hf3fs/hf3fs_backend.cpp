@@ -482,12 +482,6 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
 
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
 
-    // Check if IOR is initialized
-    if (&hf3fs_handle->ior == nullptr) {
-        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
-            "Error: IOR is not initialized in checkXfer");
-    }
-
     if (hf3fs_handle->io_status.thread == nullptr) {
         HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
             "Error: io thread is not initialized in checkXfer");
