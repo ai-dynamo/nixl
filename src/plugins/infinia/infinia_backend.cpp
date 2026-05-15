@@ -995,24 +995,22 @@ nixlInfiniaBackendReqH::nixlInfiniaBackendReqH(const nixl_xfer_op_t &operation,
                                                const nixl_meta_dlist_t &remote,
                                                const std::string &remote_agent,
                                                const nixl_opt_b_args_t *opt_args,
-                                               std::shared_ptr<InfiniaClient> client,
+                                               const std::shared_ptr<InfiniaClient> &client,
                                                const red_async::rae_batch_config_t &batch_config)
     : operation_(operation),
       local_(local),
       remote_(remote),
       remote_agent_(remote_agent),
-      opt_args_(opt_args),
       transfer_prepared_(false),
       transfer_posted_(false),
       transfer_completed_(false),
       transfer_status_(RED_SUCCESS),
-      operation_count_(0),
       client_(client),
       batch_config_(batch_config),
       batch_task_(client->getConfig(), &batch_config) {
 
     NIXL_DEBUG << absl::StrFormat("Created Infinia request handle for %s operation",
-                                  (operation == NIXL_READ) ? "READ" : "WRITE");
+                                  (operation_ == NIXL_READ) ? "READ" : "WRITE");
 }
 
 nixlInfiniaBackendReqH::~nixlInfiniaBackendReqH() {
@@ -1084,7 +1082,6 @@ nixlInfiniaBackendReqH::addOperation(red_async::red_async_op_type_t op_type,
     op.version_out = nullptr;
 
     batch_task_.add_operation(std::move(op));
-    operation_count_++;
 }
 
 nixl_status_t
@@ -1121,9 +1118,9 @@ nixlInfiniaBackendReqH::postTransfer() {
         transfer_status_ = RED_SUCCESS;
     }
 
-    NIXL_DEBUG << absl::StrFormat("Posting Infinia transfer with %zu operations", operation_count_);
+    NIXL_DEBUG << absl::StrFormat("Posting Infinia transfer with %zu operations", keys_.size());
 
-    if (operation_count_ == 0) {
+    if (keys_.empty()) {
         transfer_posted_ = true;
         transfer_completed_ = true;
         transfer_status_ = RED_SUCCESS;

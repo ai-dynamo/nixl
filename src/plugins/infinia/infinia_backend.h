@@ -231,18 +231,16 @@ public:
  */
 class nixlInfiniaBackendReqH : public nixlBackendReqH {
 private:
-    const nixl_xfer_op_t &operation_;
+    const nixl_xfer_op_t operation_;
     const nixl_meta_dlist_t &local_;
     const nixl_meta_dlist_t &remote_;
     const std::string &remote_agent_;
-    const nixl_opt_b_args_t *opt_args_;
 
     // Infinia-specific transfer state
     bool transfer_prepared_;
     bool transfer_posted_;
     bool transfer_completed_;
     red_status_t transfer_status_;
-    size_t operation_count_; // Track number of operations for reserve()
 
     std::shared_ptr<InfiniaClient> client_;
 
@@ -264,7 +262,7 @@ public:
                            const nixl_meta_dlist_t &remote,
                            const std::string &remote_agent,
                            const nixl_opt_b_args_t *opt_args,
-                           std::shared_ptr<InfiniaClient> client,
+                           const std::shared_ptr<InfiniaClient> &client,
                            const red_async::rae_batch_config_t &batch_config);
 
     ~nixlInfiniaBackendReqH() override;
@@ -300,7 +298,7 @@ public:
 
     [[nodiscard]] size_t
     getOperationCount() const noexcept {
-        return operation_count_;
+        return keys_.size();
     }
 
     // Operation building methods
