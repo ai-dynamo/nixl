@@ -175,7 +175,31 @@ cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
 
-if cuda_lib_path == ''
+use_rocm = get_option('use_rocm')
+
+if use_rocm
+    rocm_path = get_option('rocm_path')
+    hipcc_prog = find_program(rocm_path + '/bin/hipcc', required: false)
+    if not hipcc_prog.found()
+        error('use_rocm=true but hipcc not found at ' + rocm_path + '/bin/hipcc. ' +
+              'Install ROCm or set -Drocm_path=<path>.')
+    endif
+
+    rocm_inc = rocm_path + '/include'
+    rocm_lib = rocm_path + '/lib'
+    add_project_arguments('-D__HIP_PLATFORM_AMD__', language: 'cpp')
+    add_project_link_arguments(['-L' + rocm_lib, '-lamdhip64', '-lhiprtc'], language: 'cpp')
+
+    # All CUDA-conditional code (libfabric CUDA support, cuda_dep.found() guards
+    # in plugin meson.build files, add_languages('CUDA'), etc.) sees a missing
+    # cuda_dep on ROCm builds and skips itself. CUDA-only plugins
+    # (cuda_gds, gds_mt, gpunetio, libfabric) still need their own subdir_done()
+    # early-out at the top of their meson.build to skip header includes that
+    # would otherwise drag in cuda.h.
+    cuda_dep = disabler()
+    cuda_wheel_dir = 'nixl_rocm'
+    summary({'GPU vendor': 'AMD ROCm', 'ROCm path': rocm_path}, section: 'Build')
+elif cuda_lib_path == ''
     cuda_dep = dependency('cuda', required : false, modules : [ 'cudart', 'cuda' ])
     if not cuda_dep.found()
         # Meson is not detecting CUDA reliably on ARM, fallback to default
@@ -277,6 +301,10 @@ if cuda_dep.found()
     else
         error('Unsupported CUDA version: ' + cuda_version_major)
     endif
+elif use_rocm
+    # ROCm path: cuda_wheel_dir already set above, GPUNETIO already disabled
+    # by its own meson.build (depends on cuda_dep), no warning needed.
+    doca_gpunetio_dep = disabler()
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
