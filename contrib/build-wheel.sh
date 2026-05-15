@@ -106,13 +106,33 @@ pin_torch() {
     ./contrib/tomlutil.py --torch-version "$VER" pyproject.toml
 }
 
-# uv build's isolated build env needs access to the nightly index too.
+# PyPI stays primary (for meson-python etc); PyTorch indexes are extras for torch.
 UV_BUILD_INDEX_FLAGS=(
-    --index-url "https://download.pytorch.org/whl/${CU_TAG}"
+    --extra-index-url "https://download.pytorch.org/whl/${CU_TAG}"
     --extra-index-url "https://download.pytorch.org/whl/nightly/${CU_TAG}"
     --index-strategy unsafe-best-match
     --prerelease allow
 )
+
+# Check whether torch==${VER}.* is resolvable from the configured indexes
+# for the target Python version. Echoes "yes" on success, nothing otherwise.
+torch_available() {
+    local VER=$1
+    local CHECK_VENV
+    CHECK_VENV=$(mktemp -d)/venv
+    uv venv "$CHECK_VENV" --python "$PYTHON_VERSION" >/dev/null 2>&1 || return
+    # shellcheck disable=SC1090
+    source "$CHECK_VENV/bin/activate"
+    if uv pip install --dry-run --pre \
+        --extra-index-url "https://download.pytorch.org/whl/${CU_TAG}" \
+        --extra-index-url "https://download.pytorch.org/whl/nightly/${CU_TAG}" \
+        --index-strategy unsafe-best-match \
+        "torch==${VER}.*" >/dev/null 2>&1; then
+        echo "yes"
+    fi
+    deactivate
+    rm -rf "$(dirname "$CHECK_VENV")"
+}
 
 build_wheel() {
     local OUT_DIR=$1
@@ -137,7 +157,27 @@ repair_wheel() {
 
 if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
     # Multi-torch: build full wheel with first torch, then merge extra .so from others.
-    IFS=',' read -ra TV_ARRAY <<< "$TORCH_VERSIONS"
+    IFS=',' read -ra TV_REQUESTED <<< "$TORCH_VERSIONS"
+
+    # Filter to torch versions actually resolvable for this (Python, CUDA) combo.
+    TV_ARRAY=()
+    SKIPPED=()
+    for TV in "${TV_REQUESTED[@]}"; do
+        if [ -n "$(torch_available "$TV")" ]; then
+            TV_ARRAY+=("$TV")
+        else
+            SKIPPED+=("$TV")
+        fi
+    done
+
+    if [ ${#SKIPPED[@]} -gt 0 ]; then
+        echo "=== Skipping torch versions (no wheel on index for Python ${PYTHON_VERSION} + ${CU_TAG}): ${SKIPPED[*]} ==="
+    fi
+    if [ ${#TV_ARRAY[@]} -eq 0 ]; then
+        echo "ERROR: none of the requested torch versions (${TV_REQUESTED[*]}) are available for Python ${PYTHON_VERSION} + ${CU_TAG}"
+        exit 1
+    fi
+    echo "=== Building for torch versions: ${TV_ARRAY[*]} ==="
 
     FIRST_TORCH="${TV_ARRAY[0]}"
     echo "=== Building wheel with torch ${FIRST_TORCH} ==="
