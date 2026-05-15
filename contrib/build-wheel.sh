@@ -321,27 +321,20 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
         # Repair so the .so passes auditwheel for the manylinux tag before we extract it
         repair_wheel "$EP_TMP" "$EP_TMP/dist"
 
-        # Extract torch-versioned .so from repaired wheel, inject into base wheel
-        EP_EXTRACT=$(mktemp -d)
-        unzip -o "$EP_TMP"/dist/*.whl -d "$EP_EXTRACT"
-        BASE_EXTRACT=$(mktemp -d)
-        unzip -o "$BASE_WHL" -d "$BASE_EXTRACT"
-
+        # Merge the torch-versioned .so from the freshly-built wheel into
+        # the base wheel and regenerate RECORD. Both wheels were built
+        # against the same outer C++ build, so the .so's DT_NEEDED entries
+        # (libucp-<hash>.so etc.) match the libs already bundled in
+        # $BASE_WHL by auditwheel.
         TORCH_MM=$(echo "$TORCH" | tr -d '.')
-        find "$EP_EXTRACT" -name "nixl_ep_cpp_torch${TORCH_MM}*" -exec cp {} "$BASE_EXTRACT"/nixl_ep_cu${CUDA_MAJOR}/ \;
+        EP_WHL=$(ls "$EP_TMP"/dist/*.whl)
+        ./contrib/wheel_merge.py \
+            --base-wheel "$BASE_WHL" \
+            --source-wheel "$EP_WHL" \
+            --pattern "nixl_ep_cpp_torch${TORCH_MM}.*" \
+            --target-dir "nixl_ep_cu${CUDA_MAJOR}"
 
-        # Regenerate RECORD
-        DIST_INFO=$(ls -d "$BASE_EXTRACT"/*.dist-info)
-        (cd "$BASE_EXTRACT" && find . -type f ! -name RECORD -printf '%P\n' | while read f; do
-            hash=$(python3 -c "import hashlib,base64; d=open('$f','rb').read(); print('sha256=' + base64.urlsafe_b64encode(hashlib.sha256(d).digest()).rstrip(b'=').decode())")
-            size=$(stat -c%s "$f")
-            echo "$f,$hash,$size"
-        done > "$DIST_INFO/RECORD"
-        echo "$(basename $DIST_INFO)/RECORD,," >> "$DIST_INFO/RECORD")
-
-        rm -f "$BASE_WHL"
-        (cd "$BASE_EXTRACT" && zip -r "$BASE_WHL" .)
-        rm -rf "$EP_TMP" "$EP_EXTRACT" "$BASE_EXTRACT"
+        rm -rf "$EP_TMP"
     done
 
     cp "$BASE_WHL" "$OUTPUT_DIR"
