@@ -131,8 +131,7 @@ nixlTelemetryPrometheusExporter::initializeMetrics() {
 }
 
 void
-nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
-                                                 const std::string &help) {
+nixlTelemetryPrometheusExporter::registerCounter(const std::string &name, const std::string &help) {
     auto &family = prometheus::BuildCounter().Name(name + "_total").Help(help).Register(*registry_);
     auto &metric = family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}});
     const auto inserted = counters_.try_emplace(name, &family, &metric).second;
@@ -143,8 +142,7 @@ nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
 }
 
 void
-nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
-                                               const std::string &help) {
+nixlTelemetryPrometheusExporter::registerGauge(const std::string &name, const std::string &help) {
     auto &family = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
     auto &metric = family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}});
     const auto inserted = gauges_.try_emplace(name, &family, &metric).second;
