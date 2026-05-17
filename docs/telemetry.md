@@ -79,7 +79,7 @@ Following sections applied specifically for configuration and usage of cyclic bu
 
 Telemetry data is stored in shared memory files with the agent name passed when creating the agent.
 
-`TELEMETRY_VERSION` is the binary layout version of `nixlTelemetryEvent` as serialized in the shared-memory cyclic buffer. Bump it whenever the struct's size, field offsets, or enum widths change. Readers exact-match this value and unlink the file on mismatch; there is no backward-compatibility path.
+`TELEMETRY_VERSION` is the binary layout version of `nixlTelemetryEvent` as serialized in the shared-memory cyclic buffer. Bump it whenever the struct's size, field offsets, or enum widths change. Readers exact-match this value; the C++ shared-ring-buffer path unlinks the file on mismatch, while the Python example raises a `RuntimeError`. There is no backward-compatibility path.
 
 ### Using Telemetry Readers
 
