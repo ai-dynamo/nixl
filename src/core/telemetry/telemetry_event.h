@@ -18,7 +18,6 @@
 #define NIXL_SRC_CORE_TELEMETRY_TELEMETRY_EVENT_H
 
 #include <cstdint>
-#include <string>
 #include <string_view>
 
 #include "nixl_types.h"
@@ -26,22 +25,7 @@
 constexpr char TELEMETRY_BUFFER_SIZE_VAR[] = "NIXL_TELEMETRY_BUFFER_SIZE";
 constexpr char TELEMETRY_RUN_INTERVAL_VAR[] = "NIXL_TELEMETRY_RUN_INTERVAL";
 
-constexpr inline int TELEMETRY_VERSION = 2;
-
-/**
- * @enum nixl_telemetry_category_t
- * @brief An enumeration of main telemetry event categories for easy filtering and aggregation
- */
-enum class nixl_telemetry_category_t {
-    NIXL_TELEMETRY_MEMORY = 0, // Memory operations (register, deregister, allocation)
-    NIXL_TELEMETRY_TRANSFER = 1, // Data transfer operations (read, write)
-    NIXL_TELEMETRY_CONNECTION = 2, // Connection management (connect, disconnect)
-    NIXL_TELEMETRY_BACKEND = 3, // Backend-specific operations
-    NIXL_TELEMETRY_ERROR = 4, // Error events
-    NIXL_TELEMETRY_PERFORMANCE = 5, // Performance metrics
-    NIXL_TELEMETRY_SYSTEM = 6, // System-level events
-    NIXL_TELEMETRY_CUSTOM = 7, // Custom/user-defined events
-};
+constexpr inline int TELEMETRY_VERSION = 3;
 
 /**
  * @enum nixl_telemetry_event_type_t
@@ -74,9 +58,6 @@ enum class nixl_telemetry_event_type_t : uint32_t {
 nixlTelemetryEventTypeForStatus(nixl_status_t s);
 
 namespace nixlEnumStrings {
-std::string
-telemetryCategoryStr(const nixl_telemetry_category_t &category);
-
 [[nodiscard]] constexpr std::string_view
 telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
     switch (type) {
@@ -130,17 +111,13 @@ telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
  * @brief A structure to hold individual telemetry event data for cyclic buffer storage
  */
 struct nixlTelemetryEvent {
-    nixl_telemetry_category_t category_; // Main event category for filtering
     nixl_telemetry_event_type_t eventType_; // Detailed event type/identifier
     uint64_t value_; // Numeric value associated with the event
 
     nixlTelemetryEvent() noexcept = default;
 
-    nixlTelemetryEvent(nixl_telemetry_category_t category,
-                       nixl_telemetry_event_type_t event_type,
-                       uint64_t value) noexcept
-        : category_(category),
-          eventType_(event_type),
+    nixlTelemetryEvent(nixl_telemetry_event_type_t event_type, uint64_t value) noexcept
+        : eventType_(event_type),
           value_(value) {}
 };
 
