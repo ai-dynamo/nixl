@@ -92,7 +92,7 @@ run_elastic_test() {
         PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
         timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
             --plan "$plan_file" \
-            --num-processes 4 --num-topk 4 --validate-plan $extra_flags
+            --num-processes 4 --num-topk 4 --validate-phase-failures $extra_flags
     )
 }
 
