@@ -240,6 +240,19 @@ repair_wheel() {
     ./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR "$OUT_DIR"/*.whl
 }
 
+# Echo the path of the single .whl in $1, or exit if the count is not 1.
+single_wheel() {
+    local dir=$1 wheels
+    shopt -s nullglob
+    wheels=("$dir"/*.whl)
+    shopt -u nullglob
+    if [ ${#wheels[@]} -ne 1 ]; then
+        echo "expected 1 wheel in $dir, got ${#wheels[@]}: ${wheels[*]}" >&2
+        exit 1
+    fi
+    echo "${wheels[0]}"
+}
+
 if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
     # Multi-torch: build the full wheel with the first torch, then merge
     # the per-torch .so from the others into it.
@@ -269,7 +282,7 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
     echo "=== Building wheel with torch ${FIRST_TORCH} ==="
     build_wheel "$TMP_DIR" "$FIRST_TORCH"
     repair_wheel "$TMP_DIR" "$TMP_DIR/dist"
-    BASE_WHL=$(ls "$TMP_DIR"/dist/*.whl)
+    BASE_WHL=$(single_wheel "$TMP_DIR/dist")
 
     for ((i=1; i<${#TORCH_ARRAY[@]}; i++)); do
         TORCH="${TORCH_ARRAY[$i]}"
@@ -284,7 +297,7 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
         # (libucp-<hash>.so etc.) match what auditwheel already bundled
         # into $BASE_WHL.
         TORCH_MM=$(echo "$TORCH" | tr -d '.')
-        EP_WHL=$(ls "$EP_TMP"/dist/*.whl)
+        EP_WHL=$(single_wheel "$EP_TMP/dist")
         ./contrib/wheel_merge.py \
             --base-wheel "$BASE_WHL" \
             --source-wheel "$EP_WHL" \
