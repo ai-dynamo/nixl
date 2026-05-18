@@ -411,7 +411,7 @@ makeG3BenchmarkConfig(const g3ScenarioRequest &request,
 
 g3ScenarioCommand::g3ScenarioCommand()
     : options_{
-          cliOption::option("file_size",
+          cliOption::option("file-size",
                             "File size, can be shorthand (5M, 10G ...)",
                             &request_.file_size,
                             false),
