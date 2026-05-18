@@ -27,7 +27,7 @@ def _get_torch_cuda_major() -> int | None:
     return int(_torch_cuda_ver.split(".")[0]) if _torch_cuda_ver else None
 
 
-def _load_ep_backend() -> str:
+def _load_ep_module() -> str:
     cuda_major = _get_torch_cuda_major()
     if cuda_major is not None:
         pip_name = f"nixl-cu{cuda_major}"
@@ -51,7 +51,7 @@ def _load_ep_backend() -> str:
     raise ImportError("No nixl_ep CUDA backend found")
 
 
-_pkg = sys.modules[_load_ep_backend()]
+_pkg = sys.modules[_load_ep_module()]
 
 submodules = ["buffer", "utils"]
 for sub_name in submodules:
