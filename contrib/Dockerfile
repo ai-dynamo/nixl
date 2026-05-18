@@ -50,7 +50,6 @@ RUN apt-get update -y && \
     libgflags-dev \
     libprotobuf-dev \
     libaio-dev \
-    liburing-dev \
     libcpprest-dev \
     etcd-server \
     etcd-client \
