@@ -4,80 +4,90 @@
  */
 
 #include "utils/cli/metadata_plugin_command.h"
+
 #include "cli/cli_option.h"
+
 #include <algorithm>
+#include <string>
 
 namespace nixlbench {
 namespace {
 
 metadataPluginOptionValue
-makeOptionValue(const std::string &default_value,
-    option_kind_t type) {
-return {default_value,
-type == option_kind_t::FLAG &&
-    (default_value == "true" || default_value == "1"),
-false};
+makeOptionValue(const std::string &default_value, option_kind_t type) {
+    return {default_value,
+            type == option_kind_t::FLAG && (default_value == "true" || default_value == "1"),
+            false,
+            type == option_kind_t::FLAG};
 }
 
-    void
-    appendFileWorkloadOptions(std::vector<cliOption> &options,
-                              metadata_plugin_option_map_t &option_values) {
-        auto &filepath = option_values["filepath"];
-        filepath = {"", false, false};
-        options.push_back({"filepath",
-                           "Storage file path",
-                           option_kind_t::VALUE,
-                           &filepath,
-                           false,
-                           &filepath.isProvided});
+void
+appendFileWorkloadOptions(std::vector<cliOption> &options,
+                          metadata_plugin_option_map_t &option_values) {
+    auto &filepath = option_values["filepath"];
+    filepath = {"", false, false, false};
+    options.push_back({"filepath",
+                       "Storage file path",
+                       option_kind_t::VALUE,
+                       &filepath,
+                       false,
+                       &filepath.isProvided});
 
-        auto &filenames = option_values["filenames"];
-        filenames = {"", false, false};
-        options.push_back({"filenames",
-                           "Comma seperated list of filenames to use for storage",
-                           option_kind_t::VALUE,
-                           &filenames,
-                           false,
-                           &filenames.isProvided});
+    auto &filenames = option_values["filenames"];
+    filenames = {"", false, false, false};
+    options.push_back({"filenames",
+                       "Comma seperated list of filenames to use for storage",
+                       option_kind_t::VALUE,
+                       &filenames,
+                       false,
+                       &filenames.isProvided});
 
-        auto &num_files = option_values["num_files"];
-        num_files = {"1", false, false};
-        options.push_back({"num_files",
-                           "Storage file count",
-                           option_kind_t::VALUE,
-                           &num_files,
-                           false,
-                           &num_files.isProvided});
+    auto &num_files = option_values["num_files"];
+    num_files = {"1", false, false, false};
+    options.push_back({"num_files",
+                       "Storage file count",
+                       option_kind_t::VALUE,
+                       &num_files,
+                       false,
+                       &num_files.isProvided});
 
-        auto &enable_direct = option_values["enable_direct"];
-        enable_direct = {"false", false, false};
-        options.push_back({"enable_direct",
-                           "Enable direct storage I/O (O_DIRECT)",
-                           option_kind_t::FLAG,
-                           &enable_direct,
-                           false,
-                           &enable_direct.isProvided});
+    auto &enable_direct = option_values["enable_direct"];
+    enable_direct = {"", false, false, true};
+    options.push_back({"enable_direct",
+                       "Enable direct storage I/O (O_DIRECT)",
+                       option_kind_t::FLAG,
+                       &enable_direct,
+                       false,
+                       &enable_direct.isProvided});
+}
+
+std::vector<cliOption>
+buildOptions(const nixl_b_params_t &option_specs,
+             metadata_plugin_option_map_t &option_values,
+             const bool canReadWriteFiles) {
+    std::vector<cliOption> options;
+    options.reserve(option_specs.size() + (canReadWriteFiles ? 4 : 0));
+    option_values.reserve(options.capacity());
+    for (const auto &spec : option_specs) {
+        auto &value = option_values[spec.first];
+        value = makeOptionValue(spec.second, option_kind_t::VALUE);
+
+        options.push_back(
+            {spec.first, "", option_kind_t::VALUE, &value, false, &value.isProvided});
     }
-
-    std::vector<cliOption>
-    buildOptions(const nixl_b_params_t &option_specs,
-                 metadata_plugin_option_map_t &option_values,
-                 const bool canReadWriteFiles) {
-        std::vector<cliOption> options;
-        options.reserve(option_specs.size() + (canReadWriteFiles ? 4 : 0));
-        option_values.reserve(options.capacity());
-        for (const auto &spec : option_specs) {
-            auto &value = option_values[spec.first];
-            value = makeOptionValue(spec.second, option_kind_t::VALUE);
-
-            options.push_back(
-                {spec.first, "", option_kind_t::VALUE, &value, false, &value.isProvided});
-        }
-        if (canReadWriteFiles) {
-            appendFileWorkloadOptions(options, option_values);
-        }
-        return options;
+    if (canReadWriteFiles) {
+        appendFileWorkloadOptions(options, option_values);
     }
+    return options;
+}
+
+std::string
+optionStringValue(const metadataPluginOptionValue &option) {
+    if (option.isFlag) {
+        return option.boolValue ? "true" : "false";
+    }
+    return option.value;
+}
 
 } // namespace
 
@@ -90,10 +100,11 @@ metadataPluginCommand::metadataPluginCommand(std::string backend_name,
       optionSpecs_(std::move(option_specs)),
       supportedMemoryTypes_(supportedMemoryTypes)
 {
-    bool canReadWriteFiles = std::find(supportedMemoryTypes.begin(), supportedMemoryTypes.end(), FILE_SEG) != supportedMemoryTypes.end();
+    bool canReadWriteFiles =
+        std::find(supportedMemoryTypes.begin(), supportedMemoryTypes.end(), FILE_SEG) !=
+        supportedMemoryTypes.end();
     // convert the optionSpecs_ to optionValues_
     options_ = buildOptions(optionSpecs_, optionValues_, canReadWriteFiles);
-
 }
 
 std::string_view
@@ -124,6 +135,25 @@ metadataPluginCommand::metadataOptions() const {
 const nixl_mem_list_t &
 metadataPluginCommand::supportedMemoryTypes() const {
     return supportedMemoryTypes_;
+}
+
+request_key_value_pairs_t
+metadataPluginCommand::requestKeyValues() const {
+    request_key_value_pairs_t values;
+    values.emplace_back("backend", name_);
+
+    std::vector<std::string> names;
+    names.reserve(optionValues_.size());
+    for (const auto &[name, option] : optionValues_) {
+        names.push_back(name);
+    }
+
+    std::sort(names.begin(), names.end());
+    for (const auto &name : names) {
+        values.emplace_back(name, optionStringValue(optionValues_.at(name)));
+    }
+
+    return values;
 }
 
 } // namespace nixlbench

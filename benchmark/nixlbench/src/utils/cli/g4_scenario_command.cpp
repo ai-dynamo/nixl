@@ -40,7 +40,7 @@ g4ScenarioCommand::scenarioType() const {
 
 bool
 g4ScenarioCommand::supportsPlugin(nixl_mem_list_t supportedMemoryTypes,
-                                  nixlBackendPluginCapabilities pluginCapabilities) const {
+                                   nixlBackendPluginCapabilities pluginCapabilities) const {
     if (std::find(supportedMemoryTypes.begin(), supportedMemoryTypes.end(), FILE_SEG) ==
             supportedMemoryTypes.end() &&
         std::find(supportedMemoryTypes.begin(), supportedMemoryTypes.end(), OBJ_SEG) ==
@@ -48,6 +48,11 @@ g4ScenarioCommand::supportsPlugin(nixl_mem_list_t supportedMemoryTypes,
         return false;
     }
     return true;
+}
+
+request_key_value_pairs_t
+g4ScenarioCommand::requestKeyValues() const {
+    return request_.toKeyValuePairs();
 }
 
 int

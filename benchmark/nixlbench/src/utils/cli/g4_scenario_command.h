@@ -18,7 +18,9 @@ public:
     std::string_view description() const override;
     const std::vector<cliOption> &getOptions() const override;
     scenario_type_t scenarioType() const override;
-    bool supportsPlugin(nixl_mem_list_t supportedMemoryTypes, nixlBackendPluginCapabilities pluginCapabilities) const override;
+    bool supportsPlugin(nixl_mem_list_t supportedMemoryTypes,
+                        nixlBackendPluginCapabilities pluginCapabilities) const override;
+    request_key_value_pairs_t requestKeyValues() const override;
     int run(southboundPluginBenchmarkCommand &plugin) override;
     const g4ScenarioRequest &request() const;
 

@@ -133,7 +133,10 @@ namespace {
 
     std::string
     optionStringValue(const metadataPluginOptionValue &option) {
-        return option.value.empty() ? (option.boolValue ? "true" : "false") : option.value;
+        if (option.isFlag) {
+            return option.boolValue ? "true" : "false";
+        }
+        return option.value;
     }
 
     void
@@ -337,8 +340,16 @@ rawCommand::scenarioType() const {
 }
 
 bool
-rawCommand::supportsPlugin(nixl_mem_list_t supportedMemoryTypes, nixlBackendPluginCapabilities pluginCapabilities) const {
+rawCommand::supportsPlugin(nixl_mem_list_t supportedMemoryTypes,
+                           nixlBackendPluginCapabilities pluginCapabilities) const {
+    (void)supportedMemoryTypes;
+    (void)pluginCapabilities;
     return true;
+}
+
+request_key_value_pairs_t
+rawCommand::requestKeyValues() const {
+    return request_.toKeyValuePairs();
 }
 
 int

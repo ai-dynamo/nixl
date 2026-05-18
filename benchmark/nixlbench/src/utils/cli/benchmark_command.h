@@ -37,7 +37,15 @@ public:
     scenarioType() const = 0;
 
     virtual bool
-    supportsPlugin(nixl_mem_list_t supportedMemoryTypes, nixlBackendPluginCapabilities pluginCapabilities) const = 0;
+    supportsPlugin(nixl_mem_list_t supportedMemoryTypes,
+                   nixlBackendPluginCapabilities pluginCapabilities) const = 0;
+
+    /**
+     * @brief Return scenario request values for display before execution.
+     * @return Ordered key/value pairs representing the resolved scenario request.
+     */
+    virtual request_key_value_pairs_t
+    requestKeyValues() const = 0;
 
     virtual int
     run(southboundPluginBenchmarkCommand &plugin) = 0;
@@ -53,6 +61,13 @@ public:
 
     virtual const nixlBackendPluginCapabilities &
     capabilities() const = 0;
+
+    /**
+     * @brief Return plugin request values for display before execution.
+     * @return Ordered key/value pairs representing the selected plugin request.
+     */
+    virtual request_key_value_pairs_t
+    requestKeyValues() const = 0;
 };
 
 } // namespace nixlbench

@@ -139,7 +139,10 @@ pluginBoolOption(const metadata_plugin_option_map_t &options,
                  const std::string &name,
                  bool default_value = false) {
     const auto *option = findPluginOption(options, name);
-    return option == nullptr ? default_value : option->boolValue;
+    if (option == nullptr) {
+        return default_value;
+    }
+    return option->boolValue || option->value == "true" || option->value == "1";
 }
 
 int
@@ -434,7 +437,7 @@ g3ScenarioCommand::g3ScenarioCommand()
               false),
           cliOption::option(
               "randomized-read-location",
-              "Whether to read / write in random locations or sequentially (default true)",
+              "Whether to read / write in random locations or sequentially",
               &request_.randomized_read_location,
               false)} {}
 
@@ -461,11 +464,20 @@ g3ScenarioCommand::scenarioType() const {
 }
 
 bool
-g3ScenarioCommand::supportsPlugin(nixl_mem_list_t supportedMemoryTypes, nixlBackendPluginCapabilities pluginCapabilities) const {
-    if (std::find(supportedMemoryTypes.begin(), supportedMemoryTypes.end(), FILE_SEG) == supportedMemoryTypes.end()) {
+g3ScenarioCommand::supportsPlugin(
+    nixl_mem_list_t supportedMemoryTypes,
+    nixlBackendPluginCapabilities pluginCapabilities) const {
+    (void)pluginCapabilities;
+    if (std::find(supportedMemoryTypes.begin(), supportedMemoryTypes.end(), FILE_SEG) ==
+        supportedMemoryTypes.end()) {
         return false;
     }
     return true;
+}
+
+request_key_value_pairs_t
+g3ScenarioCommand::requestKeyValues() const {
+    return request_.toKeyValuePairs();
 }
 
 bool

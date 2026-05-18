@@ -9,10 +9,14 @@
 #include "nixl_types.h"
 
 #include <cstdint>
-#include <unordered_map>
 #include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace nixlbench {
+
+using request_key_value_pairs_t = std::vector<std::pair<std::string, std::string>>;
 
 template <typename T>
 struct providedValue {
@@ -54,6 +58,7 @@ struct metadataPluginOptionValue {
     std::string value;
     bool boolValue = false;
     bool isProvided = false;
+    bool isFlag = false;
 };
 
 using metadata_plugin_option_map_t = std::unordered_map<std::string, metadataPluginOptionValue>;
@@ -72,6 +77,16 @@ struct g3ScenarioRequest {
     uint64_t batch_size = 1;
     std::string action_mode = "read";
     bool randomized_read_location = true;
+
+    request_key_value_pairs_t
+    toKeyValuePairs() const {
+        return {{"file_size", file_size},
+                {"parallel_threads", std::to_string(parallel_threads)},
+                {"block_size_bytes", std::to_string(block_size_bytes)},
+                {"batch_size", std::to_string(batch_size)},
+                {"action_mode", action_mode},
+                {"randomized_read_location", randomized_read_location ? "true" : "false"}};
+    }
 };
 
 struct g4ScenarioRequest {
@@ -79,6 +94,14 @@ struct g4ScenarioRequest {
     int num_kvs = 0;
     int parallel_threads = 1;
     std::string batch_size;
+
+    request_key_value_pairs_t
+    toKeyValuePairs() const {
+        return {{"file_size", file_size},
+                {"num_kvs", std::to_string(num_kvs)},
+                {"parallel_threads", std::to_string(parallel_threads)},
+                {"batch_size", batch_size}};
+    }
 };
 
 struct rawRequest {
@@ -147,6 +170,74 @@ struct rawRequest {
     nixlBackendPluginCapabilities backend_capabilities{};
     nixl_mem_list_t backend_memory_types;
     metadata_plugin_option_map_t backend_options;
+
+    request_key_value_pairs_t
+    toKeyValuePairs() const {
+        return {{"config_file", config_file.value},
+                {"benchmark_group", benchmark_group.value},
+                {"runtime_type", runtime_type.value},
+                {"worker_type", worker_type.value},
+                {"backend", backend.value},
+                {"initiator_seg_type", initiator_seg_type.value},
+                {"target_seg_type", target_seg_type.value},
+                {"scheme", scheme.value},
+                {"mode", mode.value},
+                {"op_type", op_type.value},
+                {"check_consistency", check_consistency.value ? "true" : "false"},
+                {"total_buffer_size", std::to_string(total_buffer_size.value)},
+                {"start_block_size", std::to_string(start_block_size.value)},
+                {"max_block_size", std::to_string(max_block_size.value)},
+                {"start_batch_size", std::to_string(start_batch_size.value)},
+                {"max_batch_size", std::to_string(max_batch_size.value)},
+                {"num_iter", std::to_string(num_iter.value)},
+                {"recreate_xfer", recreate_xfer.value ? "true" : "false"},
+                {"large_blk_iter_ftr", std::to_string(large_blk_iter_ftr.value)},
+                {"warmup_iter", std::to_string(warmup_iter.value)},
+                {"num_threads", std::to_string(num_threads.value)},
+                {"num_initiator_dev", std::to_string(num_initiator_dev.value)},
+                {"num_target_dev", std::to_string(num_target_dev.value)},
+                {"enable_pt", enable_pt.value ? "true" : "false"},
+                {"progress_threads", std::to_string(progress_threads.value)},
+                {"enable_vmm", enable_vmm.value ? "true" : "false"},
+                {"filepath", filepath.value},
+                {"filenames", filenames.value},
+                {"num_files", std::to_string(num_files.value)},
+                {"storage_enable_direct", storage_enable_direct.value ? "true" : "false"},
+                {"gds_batch_pool_size", std::to_string(gds_batch_pool_size.value)},
+                {"gds_batch_limit", std::to_string(gds_batch_limit.value)},
+                {"gds_mt_num_threads", std::to_string(gds_mt_num_threads.value)},
+                {"device_list", device_list.value},
+                {"etcd_endpoints", etcd_endpoints.value},
+                {"posix_api_type", posix_api_type.value},
+                {"posix_ios_pool_size", std::to_string(posix_ios_pool_size.value)},
+                {"posix_kernel_queue_size", std::to_string(posix_kernel_queue_size.value)},
+                {"gpunetio_device_list", gpunetio_device_list.value},
+                {"gpunetio_oob_list", gpunetio_oob_list.value},
+                {"obj_access_key", obj_access_key.value},
+                {"obj_secret_key", obj_secret_key.value},
+                {"obj_session_token", obj_session_token.value},
+                {"obj_bucket_name", obj_bucket_name.value},
+                {"obj_scheme", obj_scheme.value},
+                {"obj_region", obj_region.value},
+                {"obj_use_virtual_addressing",
+                 obj_use_virtual_addressing.value ? "true" : "false"},
+                {"obj_endpoint_override", obj_endpoint_override.value},
+                {"obj_req_checksum", obj_req_checksum.value},
+                {"obj_ca_bundle", obj_ca_bundle.value},
+                {"obj_crt_min_limit", std::to_string(obj_crt_min_limit.value)},
+                {"obj_accelerated_enable", obj_accelerated_enable.value ? "true" : "false"},
+                {"obj_accelerated_type", obj_accelerated_type.value},
+                {"azure_blob_account_url", azure_blob_account_url.value},
+                {"azure_blob_container_name", azure_blob_container_name.value},
+                {"azure_blob_connection_string", azure_blob_connection_string.value},
+                {"hf3fs_iopool_size", std::to_string(hf3fs_iopool_size.value)},
+                {"gusli_client_name", gusli_client_name.value},
+                {"gusli_max_simultaneous_requests",
+                 std::to_string(gusli_max_simultaneous_requests.value)},
+                {"gusli_config_file", gusli_config_file.value},
+                {"gusli_device_byte_offsets", gusli_device_byte_offsets.value},
+                {"gusli_device_security", gusli_device_security.value}};
+    }
 };
 
 struct posixPluginRequest {

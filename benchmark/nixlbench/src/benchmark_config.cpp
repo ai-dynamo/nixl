@@ -17,12 +17,12 @@ namespace {
 
 metadataPluginOptionValue
 makeStringOption(std::string value) {
-    return metadataPluginOptionValue{std::move(value), false, true};
+    return metadataPluginOptionValue{std::move(value), false, true, false};
 }
 
 metadataPluginOptionValue
 makeBoolOption(bool value) {
-    return metadataPluginOptionValue{value ? "true" : "false", value, true};
+    return metadataPluginOptionValue{value ? "true" : "false", value, true, true};
 }
 
 void

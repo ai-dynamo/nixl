@@ -35,6 +35,9 @@ public:
     const nixl_mem_list_t &
     supportedMemoryTypes() const override;
 
+    request_key_value_pairs_t
+    requestKeyValues() const override;
+
 private:
     std::string name_;
     std::string description_;
