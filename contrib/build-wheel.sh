@@ -59,6 +59,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --ucx-plugins-dir: Directory to find UCX plugins in (default: $UCX_PLUGINS_DIR)"
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
             echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires CUDA sm90-compatible environment)"
+            echo "  --torch-versions: Comma-separated list of torch versions to build the wheel for (default: $TORCH_VERSIONS)"
             echo "  --help: Show this help message"
             echo ""
             echo "Must be executed from the root of the NIXL repository."
@@ -227,7 +228,7 @@ build_wheel() {
 
     deactivate
     # torch + nvidia-* in each venv is several GB; tear down so the docker
-    # layer doesnt blow up across the (python, torch) matrix.
+    # layer does not get too large across the (python, torch) matrix.
     rm -rf "$VENV_PATH"
 }
 
