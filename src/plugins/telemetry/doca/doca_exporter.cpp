@@ -66,7 +66,7 @@ docaTimestamp() noexcept {
     return ts;
 }
 
-[[nodiscard]] bool
+[[nodiscard]] constexpr bool
 isCounterEvent(nixl_telemetry_event_type_t event_type) noexcept {
     switch (event_type) {
     case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
@@ -95,7 +95,7 @@ isCounterEvent(nixl_telemetry_event_type_t event_type) noexcept {
     return false;
 }
 
-[[nodiscard]] bool
+[[nodiscard]] constexpr bool
 isGaugeEvent(nixl_telemetry_event_type_t event_type) noexcept {
     switch (event_type) {
     case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
@@ -309,9 +309,7 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
                 NIXL_ERROR << "Failed to add counter: " << result;
                 return NIXL_ERR_UNKNOWN;
             }
-        }
-
-        if (isGaugeEvent(event.eventType_)) {
+        } else if (isGaugeEvent(event.eventType_)) {
             const auto result = registerGauge(event, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add gauge: " << result;
