@@ -41,7 +41,7 @@ namespace {
 
 /**
  * @brief Simple request handle for MOCKKV
- * 
+ *
  * Since MOCKKV operations are synchronous, we don't need to track
  * async operations. This handle is minimal - just a placeholder.
  */
@@ -53,7 +53,7 @@ public:
 
 /**
  * @brief Metadata for MOCKKV memory descriptors
- * 
+ *
  * Stores the mapping between devId and key for later lookups.
  */
 class nixlMockKVMetadata : public nixlBackendMD {
@@ -71,12 +71,12 @@ public:
 
 /**
  * @brief Validate transfer preparation parameters
- * 
+ *
  * Checks that:
  * - Operation is valid (WRITE or READ)
  * - Local memory is DRAM_SEG
  * - Remote memory is DRAM_SEG (for MOCKKV)
- * 
+ *
  * @param operation Transfer operation type
  * @param local Local memory descriptors
  * @param remote Remote memory descriptors
@@ -197,32 +197,32 @@ nixlMockKVEngine::deregisterMem(nixlBackendMD *meta) {
 
 /**
  * @brief Query if memory descriptors exist
- * 
+ *
  * Checks if keys exist in in-memory store.
- * 
+ *
  * @param descs Descriptors to query
  * @param resp Output responses
  * @return NIXL_SUCCESS
  */
 nixl_status_t
-nixlMockKVEngine::queryMem(const nixl_reg_dlist_t &descs, 
+nixlMockKVEngine::queryMem(const nixl_reg_dlist_t &descs,
                            std::vector<nixl_query_resp_t> &resp) const {
     resp.reserve(descs.descCount());
-    
+
     for (auto &desc : descs) {
         // Check if key exists in store
         std::string key = desc.metaInfo.empty() ? std::to_string(desc.devId) : desc.metaInfo;
-        
+
         // Same pattern as nixlObjEngine::queryMem: no lock; S3 uses network, we use local map
         // with serialized agent/backend calls (devIdToKey_ is also unprotected).
         const bool exists = kv_store_.find(key) != kv_store_.end();
-        
+
         NIXL_DEBUG << "queryMem: key=" << key << ", exists=" << exists;
-        
+
         // Return empty optional if key doesn't exist, otherwise return empty params
         resp.emplace_back(exists ? nixl_query_resp_t{nixl_b_params_t{}} : std::nullopt);
     }
-    
+
     return NIXL_SUCCESS;
 }
 
@@ -324,31 +324,31 @@ nixlMockKVEngine::postXfer(const nixl_xfer_op_t &operation,
             // ============================================================
             // WRITE Operation: Copy data from local buffer to storage
             // ============================================================
-            NIXL_INFO << "postXfer:   WRITE: Copying " << data_len 
+            NIXL_INFO << "postXfer:   WRITE: Copying " << data_len
                      << " bytes from buffer to key=" << key;
-            
+
             // ========================================================
             // Local WRITE: Write to in-memory store
             // ========================================================
             // Resize vector to hold the data
             kv_store_[key].resize(data_len);
-            
+
             // Copy data from user buffer to map
-            std::memcpy(kv_store_[key].data(), 
-                       reinterpret_cast<const void *>(data_ptr), 
+            std::memcpy(kv_store_[key].data(),
+                       reinterpret_cast<const void *>(data_ptr),
                        data_len);
-            
+
             NIXL_INFO << "postXfer:   WRITE: Successfully stored " << data_len
                      << " bytes in key=" << key;
             NIXL_INFO << "postXfer:   WRITE: kv_store_ now has "
                       << kv_store_.size() << " keys";
-            
+
         } else {
             // ============================================================
             // READ Operation: Copy data from storage to local buffer
             // ============================================================
             NIXL_INFO << "postXfer:   READ: Retrieving data from key=" << key;
-            
+
             // ========================================================
             // Local READ: Read from in-memory store
             // ========================================================
@@ -358,21 +358,21 @@ nixlMockKVEngine::postXfer(const nixl_xfer_op_t &operation,
                 NIXL_ERROR << "postXfer:   READ: Key not found: " << key;
                 return NIXL_ERR_BACKEND;
             }
-            
+
             // Check if data size matches
             size_t stored_len = it->second.size();
             if (stored_len < data_len) {
-                NIXL_WARN << "postXfer:   READ: Stored data size (" << stored_len 
+                NIXL_WARN << "postXfer:   READ: Stored data size (" << stored_len
                          << ") < requested size (" << data_len << ")";
                 data_len = stored_len;  // Read only what's available
             }
-            
+
             // Copy data from map to user buffer
             std::memcpy(reinterpret_cast<void *>(data_ptr),
                        it->second.data(),
                        data_len);
-            
-            NIXL_INFO << "postXfer:   READ: Successfully retrieved " << data_len 
+
+            NIXL_INFO << "postXfer:   READ: Successfully retrieved " << data_len
                      << " bytes from key=" << key;
         }
     }
@@ -430,9 +430,9 @@ nixlMockKVEngine::connect(const std::string &remote_agent) {
 
 /**
  * @brief Disconnect from remote agent
- * 
+ *
  * local-only backend: no-op.
- * 
+ *
  * @param remote_agent Remote agent name
  * @return NIXL_SUCCESS
  */

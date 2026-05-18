@@ -49,16 +49,16 @@
 /**
  * @class nixlMockKVEngine
  * @brief Simple in-memory key-value store backend for NIXL
- * 
+ *
  * This backend implements a synchronous, in-memory key-value store using std::map.
  * It's designed to be simple and easy to understand, making it perfect for learning
  * how NIXL plugins work.
- * 
+ *
  * Architecture:
  * - Storage: std::unordered_map<std::string, std::vector<uint8_t>>
  * - Operations: Synchronous (no async complexity)
  * - Thread Safety: Like nixlObjEngine, no internal locking; assume serialized backend calls
- * 
+ *
  * Supported Operations:
  * - registerMem: Register memory descriptors with keys
  * - prepXfer: Prepare transfer operations
@@ -276,7 +276,7 @@ private:
 
     /**
      * @brief In-memory key-value store
-     * 
+     *
      * Key: std::string (from metaInfo or devId)
      * Value: std::vector<uint8_t> (binary data)
      */

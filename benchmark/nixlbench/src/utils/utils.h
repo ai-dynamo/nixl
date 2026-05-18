@@ -31,6 +31,10 @@
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
 
+#ifndef NIXLBENCH_ENABLE_MOCKKV
+#define NIXLBENCH_ENABLE_MOCKKV 0
+#endif
+
 #if HAVE_CUDA
 #include <cuda.h>
 #include <cuda_runtime.h>

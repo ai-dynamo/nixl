@@ -18,17 +18,15 @@
 /**
  * @file mockkv_plugin.cpp
  * @brief MOCKKV Plugin Registration
- * 
- * This file registers the MOCKKV backend as a NIXL plugin.
+ *
+ * This file registers the MOCKKV backend as a dynamic NIXL example plugin.
  * It provides the plugin entry point that NIXL uses to discover and load the backend.
- * 
+ *
  * Plugin Registration:
- * - Static plugin: Built into libnixl.so (when STATIC_PLUGIN_MOCKKV is defined)
- * - Dynamic plugin: Built as shared library (libplugin_MOCKKV.so)
- * 
+ * - Dynamic plugin only: built as shared library (libplugin_MOCKKV.so)
+ *
  * Usage:
- * - Static: Compile with -Dstatic_plugins=MOCKKV
- * - Dynamic: Load libplugin_MOCKKV.so at runtime
+ * - Load libplugin_MOCKKV.so at runtime from the example plugin build directory.
  */
 
 #include "nixl_types.h"
@@ -39,31 +37,11 @@
 // Plugin type alias for convenience
 using mockkv_plugin_t = nixlBackendPluginCreator<nixlMockKVEngine>;
 
-#ifdef STATIC_PLUGIN_MOCKKV
-/**
- * @brief Create static MOCKKV plugin
- * 
- * This function is called during static plugin registration.
- * It's linked into libnixl.so when MOCKKV is built as a static plugin.
- * 
- * @return Pointer to plugin object
- */
-nixlBackendPlugin *
-createStaticMOCKKVPlugin() {
-    return mockkv_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION,  // Plugin API version
-        "MOCKKV",                  // Plugin name
-        "0.1.0",                   // Plugin version
-        {},                        // Required parameters (none)
-        {DRAM_SEG}                // Supported memory types
-    );
-}
-#else
 /**
  * @brief Plugin initialization function (dynamic plugin)
- * 
+ *
  * This is called by NIXL when loading the plugin dynamically.
- * 
+ *
  * @return Pointer to plugin object
  */
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
@@ -79,9 +57,8 @@ nixl_plugin_init() {
 
 /**
  * @brief Plugin cleanup function (dynamic plugin)
- * 
+ *
  * Called when unloading the plugin. For MOCKKV, no cleanup needed.
  */
 extern "C" NIXL_PLUGIN_EXPORT void
 nixl_plugin_fini() {}
-#endif

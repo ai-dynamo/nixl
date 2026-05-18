@@ -98,34 +98,6 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     return config.str();
 }
 
-// True when --backend is MOCKKV (trim + case-insensitive); keeps allocate/exchangeIOV in sync.
-static bool
-ci_equal_asciiz(const std::string &s, const char *lit) {
-    const size_t n = std::strlen(lit);
-    if (s.size() != n) {
-        return false;
-    }
-    for (size_t i = 0; i < n; i++) {
-        if (std::tolower(static_cast<unsigned char>(s[i])) !=
-            std::tolower(static_cast<unsigned char>(lit[i]))) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool
-backendEqualsMockkv(const std::string &b) {
-    std::string s = b;
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) {
-        s.erase(0, 1);
-    }
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) {
-        s.pop_back();
-    }
-    return (XFERBENCH_BACKEND_MOCKKV == s) || ci_equal_asciiz(s, "MOCKKV");
-}
-
 xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
     : xferBenchWorker() {
     seg_type = GET_SEG_TYPE(isInitiator());
@@ -156,20 +128,20 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL) ||
-        xferBenchConfig::isStorageBackend() || backendEqualsMockkv(xferBenchConfig::backend)) {
-        backend_name = backendEqualsMockkv(xferBenchConfig::backend) ?
-            XFERBENCH_BACKEND_MOCKKV : xferBenchConfig::backend;
+        xferBenchConfig::isStorageBackend()) {
+        backend_name = xferBenchConfig::backend;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
     }
 
-    agent->getPluginParams(backend_name, mems, backend_params);
+    const nixl_status_t plugin_status = agent->getPluginParams(backend_name, mems, backend_params);
+    if (plugin_status != NIXL_SUCCESS) {
+        std::cerr << "Failed to get plugin params for backend: " << backend_name << std::endl;
+        exit(EXIT_FAILURE);
+    }
 
-    // Check MOCKKV first so storage backend is always recognized regardless of build order
-    if (backendEqualsMockkv(xferBenchConfig::backend)) {
-        std::cout << "MOCKKV backend configured (simple in-memory key-value store)" << std::endl;
-    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
+    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
         backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
 
         // No need to set device_list if all is specified
@@ -879,7 +851,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_iovs.push_back(iov_list);
         }
-    } else if (backendEqualsMockkv(xferBenchConfig::backend)) {
+#if NIXLBENCH_ENABLE_MOCKKV
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_MOCKKV) {
         // MOCKKV backend: create DRAM_SEG descriptors with keys in metaInfo
         // Similar to REDIS, but simpler (no external dependencies)
         struct timeval tv;
@@ -891,7 +864,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             for (i = 0; i < num_devices; i++) {
                 std::string unique_name = "nixlbench_mockkv" + std::to_string(list_idx) + "_" +
                     std::to_string(i) + "_" + std::to_string(timestamp);
-                
+
                 // Create a DRAM_SEG descriptor with key in metaInfo
                 xferBenchIOV mockkv_desc(0, buffer_size, i, unique_name);
                 std::cout << "Creating MOCKKV key: " << unique_name << std::endl;
@@ -903,6 +876,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_iovs.push_back(iov_list);
         }
+#endif
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         // GUSLI backend uses block device descriptors
         if (gusli_devices.empty()) {
@@ -1077,13 +1051,15 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
-    } else if (backendEqualsMockkv(xferBenchConfig::backend)) {
+#if NIXLBENCH_ENABLE_MOCKKV
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_MOCKKV) {
         // MOCKKV backend cleanup: deregister DRAM_SEG descriptors (same as REDIS)
         for (auto &iov_list : remote_iovs) {
             nixl_reg_dlist_t desc_list(DRAM_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
+#endif
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
         for (auto &iov_list : remote_iovs) {
             for (auto &iov : iov_list) {
@@ -1175,9 +1151,10 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     std::vector<std::vector<xferBenchIOV>> res;
     int desc_str_sz;
 
+#if NIXLBENCH_ENABLE_MOCKKV
     // MOCKKV never uses remote_fds; handle it outside isStorageBackend() so we cannot
     // reach remote_fds[fd_idx] with an empty vector (see GDB stack in exchangeIOV).
-    if (backendEqualsMockkv(xferBenchConfig::backend)) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_MOCKKV) {
         for (auto &iov_list : local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
             for (auto &iov : iov_list) {
@@ -1188,7 +1165,9 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             }
             res.push_back(remote_iov_list);
         }
-    } else if (xferBenchConfig::isStorageBackend()) {
+    } else
+#endif
+    if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
         for (auto &iov_list : local_iovs) {
@@ -1310,8 +1289,10 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
-    } else if (backendEqualsMockkv(xferBenchConfig::backend)) {
+#if NIXLBENCH_ENABLE_MOCKKV
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_MOCKKV) {
         remote_desc = nixl_xfer_dlist_t(DRAM_SEG);
+#endif
     } else if (xferBenchConfig::isStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(FILE_SEG);
     }
