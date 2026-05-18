@@ -15,7 +15,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Parse arguments
 PYTHON_VERSION="3.12"
 ARCH=$(uname -m)
 WHL_PLATFORM="manylinux_2_39_$ARCH"
@@ -25,7 +24,6 @@ OUTPUT_DIR="dist"
 BUILD_NIXL_EP="false"
 TORCH_VERSIONS=""
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         --python-version)
@@ -85,7 +83,6 @@ done
 set -e
 set -x
 
-# Build the wheel
 TMP_DIR=$(mktemp -d)
 
 CUDA_MAJOR=$(nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2 | cut -d'.' -f1)
@@ -100,13 +97,10 @@ PKG_NAME="nixl-cu${CUDA_MAJOR}"
 CU_TAG="cu$(nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2 | tr -d .)"
 ./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
 
-# Index URLs for the resolved CUDA tag. Stable cu index hosts released
-# wheels; nightly index hosts dev/pre-release wheels.
 TORCH_STABLE_INDEX="https://download.pytorch.org/whl/${CU_TAG}"
 TORCH_NIGHTLY_INDEX="https://download.pytorch.org/whl/nightly/${CU_TAG}"
 
-# Build deps installed into the per-iteration venv (torch is added
-# separately with channel-appropriate constraints).
+# Build deps for the per-iteration venv; torch is installed separately.
 BUILD_DEPS=(
     "meson"
     "meson-python"
@@ -138,14 +132,9 @@ venv_path() {
     fi
 }
 
-# Classify a requested torch version for the target Python: does
-# `torch==${VER}.*` resolve from the stable cu index alone, only from the
-# nightly index (with --pre), or from neither? Echoes one of:
-#   stable       — resolvable from $TORCH_STABLE_INDEX without --pre
-#   nightly      — resolvable from $TORCH_NIGHTLY_INDEX with --pre
-#   unavailable  — not in either index for this Python
-# Result is cached so each (PYTHON_VERSION, VER) probe runs at most once
-# across the script's filter and build phases.
+# Echo "stable", "nightly", or "unavailable" depending on whether
+# torch==${VER}.* resolves from the stable cu index, the nightly cu
+# index (with --pre), or neither. Cached.
 torch_classify() {
     local VER=$1
     if [ -n "${TORCH_CLASS_CACHE[$VER]:-}" ]; then
@@ -175,47 +164,33 @@ torch_classify() {
     echo "$CLASS"
 }
 
-# Echo the torch requirement spec for the given (version, channel). Stable
-# stays as `torch==X.Y.*`; nightly uses an explicit `.dev0` lower bound so
-# pre-release/dev wheels are admissible without --prerelease=allow.
-torch_spec() {
-    local VER=$1
-    local CHANNEL=$2
-    if [ "$CHANNEL" = "nightly" ]; then
-        local MAJOR="${VER%%.*}"
-        local MINOR="${VER##*.}"
-        echo "torch>=${MAJOR}.${MINOR}.0.dev0,<${MAJOR}.$((MINOR + 1))"
-    else
-        echo "torch==${VER}.*"
-    fi
-}
+# Install torch from the cu index, isolated from PyPI: with PyPI as a
+# fallback its plain `torch==X.Y.0` beats cu nightly's `X.Y.0.dev*+cuXX`
+# (PEP 440: final > pre-release).
+install_torch() {
+    local VENV_PATH=$1
+    local VER=$2
+    local CHANNEL=$3
+    local MAJOR="${VER%%.*}"
+    local MINOR="${VER##*.}"
 
-# Echo the uv index/resolution flags appropriate for the given channel,
-# one flag per line. Stable builds use only the stable cu index and no
-# pre-release allowance; nightly builds add the nightly index and
-# --prerelease=allow.
-torch_uv_flags() {
-    local CHANNEL=$1
     if [ "$CHANNEL" = "nightly" ]; then
-        printf '%s\n' \
-            --extra-index-url "$TORCH_STABLE_INDEX" \
-            --extra-index-url "$TORCH_NIGHTLY_INDEX" \
-            --index-strategy unsafe-best-match \
-            --prerelease allow
+        uv pip install \
+            --python "$VENV_PATH/bin/python" \
+            --index-url "$TORCH_NIGHTLY_INDEX" \
+            --pre \
+            "torch>=${MAJOR}.${MINOR}.0.dev0,<${MAJOR}.$((MINOR + 1))"
     else
-        printf '%s\n' \
-            --extra-index-url "$TORCH_STABLE_INDEX" \
-            --index-strategy unsafe-best-match
+        uv pip install \
+            --python "$VENV_PATH/bin/python" \
+            --index-url "$TORCH_STABLE_INDEX" \
+            "torch==${VER}.*"
     fi
 }
 
 # Build the wheel for the current PYTHON_VERSION (and optional torch VER).
-# Creates a fresh venv at venv_path, installs build deps + torch with the
-# channel-appropriate flags, runs `uv build --no-build-isolation`, and
-# tears the venv down so the next iteration starts from a clean slate.
-# Doing it this way instead of `pip install --reinstall torch` avoids
-# orphan packages from the previous torch's transitive footprint
-# (nvidia-* wheels, triton, sympy, …) bleeding across iterations.
+# Each iteration uses a fresh venv so torch's dependencies
+# (nvidia-* wheels, triton, sympy, …) do not leak across iterations.
 build_wheel() {
     local OUT_DIR=$1
     local VER=${2:-}
@@ -225,25 +200,14 @@ build_wheel() {
     local CHANNEL="stable"
     [ -n "$VER" ] && CHANNEL=$(torch_classify "$VER")
 
-    local UV_FLAGS=()
-    while IFS= read -r f; do UV_FLAGS+=("$f"); done < <(torch_uv_flags "$CHANNEL")
-
-    local TORCH_PKG=()
-    [ -n "$VER" ] && TORCH_PKG+=("$(torch_spec "$VER" "$CHANNEL")")
-
     echo "=== Provisioning ${VENV_PATH} (python ${PYTHON_VERSION}${VER:+, torch ${VER} [${CHANNEL}]}) ==="
     rm -rf "$VENV_PATH"
     uv venv "$VENV_PATH" --python "$PYTHON_VERSION"
-    uv pip install \
-        --python "$VENV_PATH/bin/python" \
-        "${UV_FLAGS[@]}" \
-        "${BUILD_DEPS[@]}" \
-        "${TORCH_PKG[@]}"
+    uv pip install --python "$VENV_PATH/bin/python" "${BUILD_DEPS[@]}"
+    [ -n "$VER" ] && install_torch "$VENV_PATH" "$VER" "$CHANNEL"
 
     # Activate so meson's `find_installation('python3')` resolves to this
-    # venv's interpreter (which has the right torch). Deactivate before
-    # returning so the caller's auditwheel keeps using the orchestration
-    # venv on PATH.
+    # venv's interpreter (which has the right torch).
     # shellcheck disable=SC1091
     source "$VENV_PATH/bin/activate"
 
@@ -262,8 +226,8 @@ build_wheel() {
     uv build "${BUILD_ARGS[@]}"
 
     deactivate
-    # Free disk: torch + nvidia-* wheels in a venv add up to several GB;
-    # 3 torches × 5 pythons would otherwise blow the docker layer budget.
+    # torch + nvidia-* in each venv is several GB; tear down so the docker
+    # layer doesnt blow up across the (python, torch) matrix.
     rm -rf "$VENV_PATH"
 }
 
@@ -276,7 +240,8 @@ repair_wheel() {
 }
 
 if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
-    # Multi-torch: build full wheel with first torch, then merge extra .so from others.
+    # Multi-torch: build the full wheel with the first torch, then merge
+    # the per-torch .so from the others into it.
     IFS=',' read -ra TORCH_REQUESTED <<< "$TORCH_VERSIONS"
 
     # Filter to torch versions actually resolvable for this (Python, CUDA) combo.
@@ -311,14 +276,12 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
 
         EP_TMP=$(mktemp -d)
         build_wheel "$EP_TMP" "$TORCH"
-        # Repair so the .so passes auditwheel for the manylinux tag before we extract it
         repair_wheel "$EP_TMP" "$EP_TMP/dist"
 
-        # Merge the torch-versioned .so from the freshly-built wheel into
-        # the base wheel and regenerate RECORD. Both wheels were built
-        # against the same outer C++ build, so the .so's DT_NEEDED entries
-        # (libucp-<hash>.so etc.) match the libs already bundled in
-        # $BASE_WHL by auditwheel.
+        # Merge only the torch-versioned .so. Both wheels were built
+        # against the same outer C++ build, so its DT_NEEDED entries
+        # (libucp-<hash>.so etc.) match what auditwheel already bundled
+        # into $BASE_WHL.
         TORCH_MM=$(echo "$TORCH" | tr -d '.')
         EP_WHL=$(ls "$EP_TMP"/dist/*.whl)
         ./contrib/wheel_merge.py \
