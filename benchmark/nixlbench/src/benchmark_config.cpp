@@ -54,6 +54,22 @@ legacyBackendCapabilities(std::string_view backend) {
     return capabilities;
 }
 
+nixl_mem_list_t
+legacyBackendMemoryTypes(std::string_view backend) {
+    if (backend == XFERBENCH_BACKEND_GDS || backend == XFERBENCH_BACKEND_GDS_MT ||
+        backend == XFERBENCH_BACKEND_POSIX || backend == XFERBENCH_BACKEND_HF3FS) {
+        return {DRAM_SEG, FILE_SEG};
+    }
+    if (backend == XFERBENCH_BACKEND_OBJ || backend == XFERBENCH_BACKEND_AZURE_BLOB) {
+        return {DRAM_SEG, OBJ_SEG};
+    }
+
+    if (backend == XFERBENCH_BACKEND_GUSLI) {
+        return {DRAM_SEG, BLK_SEG};
+    }
+    return {};
+}
+
 nixlBackendPluginCapabilities
 mergeCapabilities(nixlBackendPluginCapabilities lhs, nixlBackendPluginCapabilities rhs) {
     lhs.requiresDirectStorage = lhs.requiresDirectStorage || rhs.requiresDirectStorage;
@@ -342,6 +358,7 @@ makeBenchmarkConfigFromLegacy(const xferBenchConfig &legacy_config) {
 
     config.backend.name = legacy_config.backend;
     config.backend.capabilities = legacyBackendCapabilities(legacy_config.backend);
+    config.backend.memory_types = legacyBackendMemoryTypes(legacy_config.backend);
     addLegacyBackendOptions(config, legacy_config);
 
     config.storage.filepath = legacy_config.filepath;

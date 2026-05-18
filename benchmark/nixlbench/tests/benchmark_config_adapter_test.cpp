@@ -112,6 +112,7 @@ TEST(BenchmarkConfigAdapterTest, LegacyConversionMapsCommonTransferAndWorkerFiel
     legacy.progress_threads = 5;
     legacy.device_list = "mlx5_0,mlx5_1";
     legacy.enable_vmm = true;
+    legacy.backend = XFERBENCH_BACKEND_POSIX;
 
     const benchmarkConfig config = makeBenchmarkConfigFromLegacy(legacy);
 
@@ -140,6 +141,7 @@ TEST(BenchmarkConfigAdapterTest, LegacyConversionMapsCommonTransferAndWorkerFiel
     EXPECT_EQ(config.worker.progress_threads, 5U);
     EXPECT_EQ(config.worker.device_list, "mlx5_0,mlx5_1");
     EXPECT_TRUE(config.worker.enable_vmm);
+    EXPECT_TRUE(isStorageBackend(config.backend));
 }
 
 TEST(BenchmarkConfigAdapterTest, RawRequestConversionMapsStorageAndGdsFields) {

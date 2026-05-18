@@ -91,7 +91,7 @@ isStorageBackend(const backendConfig &backend) {
 
 inline bool
 isObjStorageBackend(const backendConfig &backend) {
-    return backend.name == "OBJ" || backend.name == "AZURE_BLOB";
+    return std::find(backend.memory_types.begin(), backend.memory_types.end(), OBJ_SEG) != backend.memory_types.end();
 }
 
 benchmarkConfig
