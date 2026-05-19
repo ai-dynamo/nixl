@@ -77,6 +77,10 @@ class xferBenchNixlWorker: public xferBenchWorker {
         initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
         std::optional<xferBenchIOV>
         initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
+        // Issue a NIXL_WRITE loopback from a TARGET-pattern DRAM buffer to remote_iov.
+        // Used to pre-populate object-storage backends before a READ benchmark.
+        bool
+        seedObjectLoopback(const xferBenchIOV &remote_iov, size_t len);
         std::optional<xferBenchIOV>
         initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
         bool

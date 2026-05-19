@@ -1304,23 +1304,6 @@ xferBenchUtils::buildAwsCredentials() {
 }
 
 bool
-xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
-        // INFINIA backends don't need external CLI put
-        return true;
-    }
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
-        return putObjS3(buffer_size, name);
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
-        return putObjAzure(buffer_size, name);
-    } else {
-        std::cerr << "Error: putObj called with unsupported object storage backend: "
-                  << xferBenchConfig::backend << std::endl;
-        return false;
-    }
-}
-
-bool
 xferBenchUtils::getObj(const std::string &name) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
         // INFINIA backends don't need external CLI get
@@ -1351,43 +1334,6 @@ xferBenchUtils::rmObj(const std::string &name) {
                   << xferBenchConfig::backend << std::endl;
         return false;
     }
-}
-
-bool
-xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
-    std::string filename = "/tmp/" + name;
-    int fd = createFile(buffer_size, filename);
-    if (fd < 0) {
-        return false;
-    }
-
-    std::string bucket_name = xferBenchConfig::obj_bucket_name;
-    if (bucket_name.empty()) {
-        std::cerr << "Error: Invalid bucket name for S3 object put" << std::endl;
-        close(fd);
-        unlink(filename.c_str());
-        return false;
-    }
-    std::string aws_cmd = "aws s3 cp " + filename + " s3://" + bucket_name;
-    if (!xferBenchConfig::obj_endpoint_override.empty()) {
-        aws_cmd +=
-            " --checksum-algorithm SHA256 --endpoint-url " + xferBenchConfig::obj_endpoint_override;
-    }
-
-    std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Putting S3 object: " << name << " in bucket: " << bucket_name
-              << " (size: " << buffer_size << " bytes)" << std::endl;
-
-    int result = system(full_cmd.c_str());
-    if (result != 0) {
-        std::cerr << "Failed to put S3 object " << name << " in bucket " << bucket_name
-                  << " (exit code: " << result << ")" << std::endl;
-        cleanupFile(fd, filename);
-        return false;
-    }
-
-    cleanupFile(fd, filename);
-    return true;
 }
 
 bool
@@ -1472,33 +1418,6 @@ void
 xferBenchUtils::cleanupFile(const int fd, const std::string &filename) {
     close(fd);
     unlink(filename.c_str());
-}
-
-bool
-xferBenchUtils::putObjAzure(size_t buffer_size, const std::string &name) {
-    std::string filename = "/tmp/" + name;
-    int fd = createFile(buffer_size, filename);
-    if (fd < 0) {
-        return false;
-    }
-
-    std::string az_cli_params = buildCommonAzCliBlobParams(name);
-    if (az_cli_params.empty()) {
-        return false;
-    }
-    std::string full_cmd = "az storage blob upload " + az_cli_params + " -f " + filename;
-    std::cout << "Putting Azure blob: " << name << std::endl;
-
-    int result = system(full_cmd.c_str());
-    if (result != 0) {
-        std::cerr << "Warning: Failed to put Azure blob " << name << " (exit code: " << result
-                  << ")" << std::endl;
-        cleanupFile(fd, filename);
-        return false;
-    }
-
-    cleanupFile(fd, filename);
-    return true;
 }
 
 bool
