@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include <utility>
 #include <iomanip>
+#include <memory>
 #include <omp.h>
 #include <set>
 
@@ -40,6 +41,7 @@
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
 #include "utils/utils.h"
+#include "worker/worker.h"
 
 namespace {
 
@@ -1485,7 +1487,8 @@ parseGusliDeviceList(const std::string &device_list,
 }
 
 bool
-xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
+xferBenchUtils::checkConsistency(xferBenchWorker &worker,
+                                 std::vector<std::vector<xferBenchIOV>> &iov_lists) {
     int i = 0, j = 0;
     static bool gusli_devmap_init = false;
     static std::vector<GusliDeviceConfig> gusli_devs;
@@ -1503,7 +1506,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
             size_t len;
             uint8_t check_val = 0x00;
             bool rc = false;
-            bool is_allocated = false;
+            std::unique_ptr<void, decltype(&free)> owned(nullptr, &free);
 
             len = iov.len;
 
@@ -1515,7 +1518,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                                       << std::endl;
                             exit(EXIT_FAILURE);
                         }
-                        is_allocated = true;
+                        owned.reset(addr);
                         copyVramToHost(addr, (void *)iov.addr, len);
                     } else {
                         addr = (void *)iov.addr;
@@ -1526,30 +1529,18 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                                   << std::endl;
                         exit(EXIT_FAILURE);
                     }
-                    is_allocated = true;
+                    owned.reset(addr);
                     if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
                         if (!getRedisBench(len, iov.metaInfo, addr)) {
                             std::cerr << "Failed to get Redis key: " << iov.metaInfo << std::endl;
                             exit(EXIT_FAILURE);
                         }
                     } else if (xferBenchConfig::isObjStorageBackend()) {
-                        if (!xferBenchUtils::getObj(iov.metaInfo)) {
-                            std::cerr << "Failed to get object: " << iov.metaInfo << std::endl;
-                            exit(EXIT_FAILURE);
+                        if (!worker.readRemoteForVerify(iov, addr, len)) {
+                            std::cerr << "Failed to read object for verify: " << iov.metaInfo
+                                      << std::endl;
+                            return false;
                         }
-                        int fd = open(iov.metaInfo.c_str(), O_RDONLY);
-                        if (fd < 0) {
-                            std::cerr << "Failed to open downloaded file: " << iov.metaInfo
-                                      << " with error: " << strerror(errno) << std::endl;
-                            exit(EXIT_FAILURE);
-                        }
-                        ssize_t rc = pread(fd, addr, len, 0);
-                        if (rc < 0) {
-                            std::cerr << "Failed to read from file: " << iov.metaInfo
-                                      << " with error: " << strerror(errno) << std::endl;
-                        }
-                        close(fd);
-                        unlink(iov.metaInfo.c_str());
                     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
                         // Map device id -> path via device_list and read from the bdev at LBA
                         // offset
@@ -1602,7 +1593,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                     (xferBenchConfig::op_type == XFERBENCH_OP_READ &&
                      xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM)) {
                     addr = calloc(1, len);
-                    is_allocated = true;
+                    owned.reset(addr);
                     copyVramToHost(addr, (void *)iov.addr, len);
                 } else if ((xferBenchConfig::op_type == XFERBENCH_OP_WRITE &&
                             xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_DRAM) ||
@@ -1622,10 +1613,6 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                 std::cerr << "Consistency check failed for iov " << i << ":" << j << std::endl;
                 pass_check_consistency = false;
             }
-            // Free the addr only if is allocated here
-            if (is_allocated) {
-                free(addr);
-            }
             j++;
         }
         i++;
@@ -1637,7 +1624,8 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
 }
 
 bool
-xferBenchUtils::validateTransfer(bool is_initiator,
+xferBenchUtils::validateTransfer(xferBenchWorker &worker,
+                                 bool is_initiator,
                                  std::vector<std::vector<xferBenchIOV>> &local_lists,
                                  std::vector<std::vector<xferBenchIOV>> &remote_lists) {
     if (!xferBenchConfig::check_consistency) {
@@ -1646,16 +1634,16 @@ xferBenchUtils::validateTransfer(bool is_initiator,
 
     if (is_initiator) {
         if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-            return checkConsistency(local_lists);
+            return checkConsistency(worker, local_lists);
         } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
             if (xferBenchConfig::isStorageBackend()) {
-                return checkConsistency(remote_lists);
+                return checkConsistency(worker, remote_lists);
             }
         }
     } else {
         // Target
         if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
-            return checkConsistency(local_lists);
+            return checkConsistency(worker, local_lists);
         }
     }
 
@@ -1847,23 +1835,6 @@ xferBenchUtils::putRedis(size_t buffer_size, const std::string &key) {
 }
 
 bool
-xferBenchUtils::getObj(const std::string &name) {
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
-        // INFINIA backends don't need external CLI get
-        return true;
-    }
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
-        return getObjS3(name);
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
-        return getObjAzure(name);
-    } else {
-        std::cerr << "Error: getObj called with unsupported object storage backend: "
-                  << xferBenchConfig::backend << std::endl;
-        return false;
-    }
-}
-
-bool
 xferBenchUtils::rmObj(const std::string &name) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
         return true;
@@ -1882,36 +1853,6 @@ xferBenchUtils::rmObj(const std::string &name) {
                   << xferBenchConfig::backend << std::endl;
         return false;
     }
-}
-
-bool
-xferBenchUtils::getObjS3(const std::string &name) {
-    std::string bucket_name = xferBenchConfig::obj_bucket_name;
-    if (bucket_name.empty()) {
-        std::cerr << "Error: Invalid bucket name for S3 object get" << std::endl;
-        return false;
-    }
-    std::string aws_cmd = "aws s3 cp s3://" + bucket_name + "/" + name + " " + name;
-    if (!xferBenchConfig::obj_endpoint_override.empty()) {
-        aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
-    }
-
-    if (!debugEnabled()) {
-        aws_cmd += " --only-show-errors";
-    }
-    std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    if (debugEnabled()) {
-        std::cout << "Getting S3 object: " << name << " from bucket: " << bucket_name << std::endl;
-    }
-
-    int result = system(full_cmd.c_str());
-    if (result != 0) {
-        std::cerr << "Failed to get S3 object " << name << " from bucket " << bucket_name
-                  << " (exit code: " << result << ")" << std::endl;
-        return false;
-    }
-
-    return true;
 }
 
 bool
@@ -1976,24 +1917,6 @@ void
 xferBenchUtils::cleanupFile(const int fd, const std::string &filename) {
     close(fd);
     unlink(filename.c_str());
-}
-
-bool
-xferBenchUtils::getObjAzure(const std::string &name) {
-    std::string az_cli_params = buildCommonAzCliBlobParams(name);
-    if (az_cli_params.empty()) {
-        return false;
-    }
-    std::string full_cmd = "az storage blob download " + az_cli_params + " -f " + name;
-    std::cout << "Getting Azure blob: " << name << std::endl;
-
-    int result = system(full_cmd.c_str());
-    if (result != 0) {
-        std::cerr << "Warning: Failed to get Azure blob " << name << " (exit code: " << result
-                  << ")" << std::endl;
-        return false;
-    }
-    return true;
 }
 
 bool
