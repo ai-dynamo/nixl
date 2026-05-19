@@ -193,6 +193,11 @@ Specific to CTP (Custom Traffic Performance) commands:
 | `--storage-backend` | Storage backend: POSIX, GDS, GDS_MT (default: POSIX) |
 | `--storage-path` | Base path for storage files (default: `<config_dir>/storage`) |
 | `--storage-direct-io / --no-storage-direct-io` | Enable O_DIRECT for storage I/O (auto-enabled for GDS) |
+| `--storage-block-size` | Split storage I/O into fixed-size blocks (e.g. `1M`) so io_uring/AIO can pipeline requests. `0` = no splitting. |
+| `--storage-posix-api` | POSIX async API: `auto`, `aio`, or `uring`. Use `uring` for highest NFS/VAST throughput. |
+| `--storage-num-handles` | Number of concurrent transfer handles per storage op. Recommended: `8` together with `--storage-block-size 1M --storage-posix-api uring`. |
+| `--warmup-iters` | Warmup iterations per traffic pattern (default: 30) |
+| `--isolation-iters` | Isolation-benchmark iterations per traffic pattern (default: 10) |
 
 ## Command Descriptions
 
@@ -377,18 +382,19 @@ traffic_patterns:
 ```
 
 **Traffic Pattern Parameters**:
-- `matrix_file`: File containing the transfer matrix (optional, omit for storage-only)
-- `matrix`: Inline matrix as 2D array (alternative to matrix_file)
-- `mem_type`: Memory type - "cuda", "vram", "cpu", "dram" (required)
-- `sleep_before_launch_sec`: Seconds to sleep (compute simulation) before RDMA (default: 0)
-- `storage`: Per-rank storage requirements (optional, enables storage I/O)
-- `storage.read`: Array of read sizes per rank (index = rank, use 0 to skip)
-- `storage.write`: Array of write sizes per rank (index = rank, use 0 to skip)
-- `metadata`: Arbitrary metadata (informational, not used by kvbench)
-- `shards`: Number of chunks to shard the buffer into (default: 1)
+- `tp_file`: Unified TP file with `[rdma]`, `[read]`, `[write]` sections — preferred when both RDMA and storage are exercised by the same pattern. Mutually exclusive with `matrix_file`/`matrix` and the inline `storage:` block.
+- `matrix_file`: File containing the RDMA transfer matrix (legacy, optional — omit for storage-only).
+- `matrix`: Inline RDMA matrix as 2D array (alternative to `matrix_file`).
+- `mem_type`: Memory type — `"cuda"`, `"vram"`, `"cpu"`, `"dram"` (required).
+- `sleep_before_launch_sec`: Seconds to sleep (compute simulation) before RDMA (default: 0).
+- `storage`: Per-rank storage requirements when using the legacy split format.
+- `storage.read`: Array of read sizes per rank (index = rank, use 0 to skip).
+- `storage.write`: Array of write sizes per rank (index = rank, use 0 to skip).
+- `metadata`: Arbitrary metadata (informational, not used by kvbench).
+- `shards`: Number of chunks to shard the buffer into (default: 1).
 
-**Matrix File Format**:
-Matrix cells are separated by whitespaces and contain either bytes as integers or standard units (K, M, G).
+**RDMA Matrix File Format**:
+Matrix cells are separated by whitespace and contain either bytes as integers or sizes with a `K`/`M`/`G` suffix.
 
 Example matrix file:
 ```
@@ -397,6 +403,31 @@ Example matrix file:
 0 0 0 5K
 0 0 0 5K
 ```
+
+**Unified TP File Format** (combined RDMA + Storage):
+
+A single text file describes the RDMA matrix, the per-rank storage reads, and the per-rank storage writes for one traffic pattern. Each section is optional, so the same file format covers RDMA-only, storage-only, and mixed patterns. Files without any `[section]` header are parsed as a legacy RDMA-only matrix (backward compatible).
+
+```
+[rdma]
+0 710M 0 0
+0 0 0 0
+
+[read]
+710M 710M 0 0
+
+[write]
+710M 710M 0 0
+```
+
+Reference it from YAML with `tp_file`:
+```yaml
+traffic_patterns:
+  - tp_file: tps/tp_0.tp
+    mem_type: cpu
+```
+
+`inference_workload_matgen.py` emits this format alongside the legacy `matrix_file` + inline `storage:` block, so generated workloads stay compatible with older runners.
 
 #### Generate Traffic Pattern Matrices
 
@@ -431,12 +462,19 @@ python main.py sequential-ct-perftest ./config.yaml \
     --json-output-path ./results.json
 
 # With storage simulation (use matgen with --prefix-hit-rate)
-# See docs/storage-simulation.md for full documentation
 python test/inference_workload_matgen.py generate \
     --model llama-405b --prefix-hit-rate 0.75 --results-dir ./workload
 python main.py sequential-ct-perftest ./workload/metadata.yaml \
     --storage-backend POSIX \
     --storage-path /tmp/kvbench_storage
+
+# Tuned for NFS/VAST POSIX throughput
+python main.py sequential-ct-perftest ./workload/metadata.yaml \
+    --storage-backend POSIX \
+    --storage-path /mnt/vast/kvbench \
+    --storage-posix-api uring \
+    --storage-block-size 1M \
+    --storage-num-handles 8
 
 # With debug logging
 python main.py --debug sequential-ct-perftest ./config.yaml \
@@ -486,7 +524,6 @@ python main.py --debug ct-perftest ./config.yaml \
 ## Documentation Quick Reference
 
 ### Developer Guides
-- [Storage Simulation](docs/storage-simulation.md) - Guide for simulating KV cache storage with prefix caching
 - [Tutorial with GDS](docs/tutorial-gds.md) - Quick tutorial for running NIXLBench with GDS
 - [Creating a Model Configuration](docs/creating-a-model-config.md) - Guide for creating model configuration files
 - [Adding a New Model Architecture](docs/adding-a-new-model-architecture.md) - Instructions for extending KVBench with new model architectures

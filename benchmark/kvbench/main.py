@@ -53,6 +53,8 @@ def parse_size(nbytes) -> int:
 
 def load_matrix(matrix_file) -> np.ndarray:
     """Load traffic pattern matrix from file"""
+    if not os.path.isfile(matrix_file):
+        raise FileNotFoundError(f"Matrix file not found: {matrix_file}")
     matrix = []
     with open(matrix_file, "r") as f:
         for line in f:
@@ -83,6 +85,8 @@ def load_tp_file(tp_file) -> dict:
         dict with keys: 'rdma' (np.ndarray or None),
         'read' (list[str] or None), 'write' (list[str] or None)
     """
+    if not os.path.isfile(tp_file):
+        raise FileNotFoundError(f"Traffic-pattern file not found: {tp_file}")
     sections: Dict[str, list] = {}
     current_section = None
 
@@ -686,7 +690,9 @@ def sequential_ct_perftest(
             block_size_bytes = int(float(bs[:-1]) * multipliers[bs[-1]])
         else:
             block_size_bytes = int(bs)
-        logger.info("Storage block size: %d bytes (%s)", block_size_bytes, storage_block_size)
+        logger.info(
+            "Storage block size: %d bytes (%s)", block_size_bytes, storage_block_size
+        )
 
     # Pass storage config to perftest - it creates the backend with its nixl_agent
     perftest = SequentialCTPerftest(
