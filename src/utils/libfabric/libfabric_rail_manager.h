@@ -197,6 +197,9 @@ public:
      * @param xfer_id Transfer ID for tracking
      * @param completion_callback Callback for completion notification
      * @param submitted_count_out Number of requests successfully submitted
+     * @param desc_idx Index of current descriptor within the transfer
+     * @param desc_count Total number of descriptors in the transfer
+     * @param base_offset Pre-reserved round-robin offset from reserveBaseOffset()
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
@@ -213,7 +216,15 @@ public:
                              uint16_t agent_idx,
                              uint16_t xfer_id,
                              std::function<void()> completion_callback,
-                             size_t &submitted_count_out);
+                             size_t &submitted_count_out,
+                             int desc_idx,
+                             int desc_count,
+                             size_t base_offset);
+
+    /** Reserve a base offset for a transfer to ensure stable rail assignment
+     *  across all descriptors in the transfer. Call once per postXfer. */
+    size_t
+    reserveBaseOffset();
     /** Determine if striping should be used for given transfer size
      * @param transfer_size Size of the transfer in bytes
      * @return true if striping should be used, false for round-robin

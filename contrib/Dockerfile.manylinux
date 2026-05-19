@@ -23,7 +23,6 @@ ARG ARCH="x86_64"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
-ARG URING_TAG="liburing-2.13"
 ARG BUILD_NIXL_EP="true"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
@@ -116,6 +115,7 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
     make install && \
     ldconfig
 
+ARG GRPC_NPROC
 RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
     mkdir -p cmake/build && \
@@ -134,7 +134,7 @@ RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules
     -DgRPC_ABSL_PROVIDER=package \
     -DgRPC_PROTOBUF_PROVIDER=module \
     -DgRPC_ZLIB_PROVIDER=package ../.. && \
-    make -j10 && \
+    make -j${GRPC_NPROC:-$(nproc)} && \
     make install && \
     ldconfig
 
@@ -152,7 +152,7 @@ RUN cd /workspace && \
 # in order to use openssl 3.x. This is needed to build aws-sdk-cpp.
 RUN wget --tries=3 --waitretry=5 https://curl.se/download/curl-8.19.0.tar.gz && \
     tar xzf curl-8.19.0.tar.gz && cd curl-8.19.0 && \
-    ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl3 --enable-shared && \
+    ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl3 --without-libpsl --enable-shared && \
     make -j${NPROC:-$(nproc)} && make install
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760
@@ -166,14 +166,6 @@ RUN mkdir aws_sdk_build && cd aws_sdk_build && \
         -DCURL_INCLUDE_DIR=/usr/local/include \
         -DOPENSSL_USE_STATIC_LIBS=OFF && \
     make -j${NPROC:-$(nproc)} && make install
-
-RUN git clone https://github.com/axboe/liburing.git && \
-     cd liburing && \
-     git checkout $URING_TAG && \
-     ./configure --cc=gcc --cxx=g++ && \
-    make -j${NPROC:-$(nproc)} library && make liburing.pc && make install && \
-     ldconfig && \
-     cd ..
 
 ENV PKG_CONFIG_PATH=/usr/lib/pkgconfig:$PKG_CONFIG_PATH
 

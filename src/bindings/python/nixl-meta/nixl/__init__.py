@@ -69,6 +69,11 @@ for sub_name in submodules:
 if TYPE_CHECKING:
     from nixl import logging  # noqa: F401
     from nixl._api import (  # type: ignore[attr-defined]  # noqa: F401
+        DEFAULT_COMM_PORT,
         nixl_agent,
         nixl_agent_config,
+        nixl_backend_handle,
+        nixl_prepped_dlist_handle,
+        nixl_thread_sync_t,
+        nixl_xfer_handle,
     )
