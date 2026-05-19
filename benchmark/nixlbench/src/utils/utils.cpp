@@ -33,6 +33,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <gflags/gflags.h>
+#include <nixl.h>
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
@@ -300,6 +301,28 @@ int xferBenchConfig::gusli_max_simultaneous_requests = 0;
 std::string xferBenchConfig::gusli_config_file = "";
 std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
+nixl_mem_list_t xferBenchConfig::backend_mems = {};
+
+namespace {
+// Discover the memory segment types supported by the configured backend plugin.
+// Uses a transient nixlAgent to call getPluginParams; the plugin manager is a
+// singleton so this is cheap and does not affect the real agent created later
+// by the worker.
+nixl_mem_list_t
+discoverPluginMems(const std::string &backend) {
+    nixl_mem_list_t mems;
+    if (backend.empty()) {
+        return mems;
+    }
+    nixlAgent discovery_agent("nixlbench_discovery_" + std::to_string(::getpid()),
+                              nixlAgentConfig());
+    nixl_b_params_t params;
+    if (discovery_agent.getPluginParams(backend, mems, params) != NIXL_SUCCESS) {
+        mems.clear();
+    }
+    return mems;
+}
+} // namespace
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -366,6 +389,9 @@ xferBenchConfig::loadParams(void) {
     // Only load NIXL-specific configurations if using NIXL worker
     if (worker_type == XFERBENCH_WORKER_NIXL) {
         backend = NB_ARG(backend);
+        // Discover supported memory types so the storage/object/block predicates work
+        // before the real agent is created (the worker later refreshes from the engine).
+        backend_mems = discoverPluginMems(backend);
         enable_pt = NB_ARG(enable_pt);
         progress_threads = NB_ARG(progress_threads);
         device_list = NB_ARG(device_list);
@@ -776,20 +802,22 @@ xferBenchConfig::parseDeviceList() {
 
 bool
 xferBenchConfig::isStorageBackend() {
-    return (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_GDS_MT == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
+    return std::any_of(backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) {
+        return m == FILE_SEG || m == BLK_SEG || m == OBJ_SEG;
+    });
 }
 
 bool
 xferBenchConfig::isObjStorageBackend() {
-    return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
-};
+    return std::any_of(
+        backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) { return m == OBJ_SEG; });
+}
+
+bool
+xferBenchConfig::isBlkStorageBackend() {
+    return std::any_of(
+        backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) { return m == BLK_SEG; });
+}
 
 /**********
  * xferBench Utils
@@ -958,8 +986,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
 
             len = iov.len;
 
-            if (xferBenchConfig::isStorageBackend() ||
-                xferBenchConfig::backend == XFERBENCH_BACKEND_GPUNETIO) {
+            if (xferBenchConfig::isStorageBackend()) {
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
                     if (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
                         if (posix_memalign(&addr, xferBenchConfig::page_size, len) != 0) {
