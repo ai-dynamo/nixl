@@ -23,6 +23,19 @@ import os
 import sys
 import time
 
+from ht_target_selection import (  # noqa: E402
+    EIGHT_GPU_SINGLE_NODE_TARGET,
+    EVIDENCE_CORRECTNESS_TARGETS,
+    FOUR_GPU_SINGLE_NODE_TARGET,
+    MULTI_NODE_TARGET,
+    SUPPORTED_CORRECTNESS_TARGETS,
+    TargetSelectionError,
+    classify_correctness_failure,
+    format_correctness_evidence,
+    preflight_four_gpu_single_node_target,
+    resolve_correctness_target,
+)
+
 # Add elastic subdirectory to path for store_group import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "elastic"))
 # noinspection PyUnresolvedReferences
@@ -154,10 +167,11 @@ def test_main(
     assert torch.allclose(ref_num_tokens_per_rdma_rank, num_tokens_per_rdma_rank)
     assert torch.allclose(ref_num_tokens_per_expert, num_tokens_per_expert)
     assert torch.allclose(ref_is_token_in_rank, is_token_in_rank)
-    t = bench(lambda: buffer.get_dispatch_layout(topk_idx, num_experts))[0]
-    if local_rank == 0:
-        print(f"[layout] Kernel performance: {t * 1000:.3f} ms", flush=True)
-        print("", flush=True)
+    if not args.ci_correctness_only:
+        t = bench(lambda: buffer.get_dispatch_layout(topk_idx, num_experts))[0]
+        if local_rank == 0:
+            print(f"[layout] Kernel performance: {t * 1000:.3f} ms", flush=True)
+            print("", flush=True)
     group.barrier()
     time.sleep(1)
 
@@ -500,7 +514,9 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         group=group,
         tcp_store_group=tcp_store,
     )
-    num_rdma_bytes = 0 if args.ci_correctness_only else int(1e9)
+    # HT kernels use RDMA staging metadata even for the four-GPU single-node
+    # correctness target.
+    num_rdma_bytes = int(1e9)
     buffer.update_memory_buffers(
         num_ranks=num_ranks,
         num_experts_per_rank=num_qps_per_rank,
@@ -508,6 +524,9 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         num_rdma_bytes=num_rdma_bytes,
     )
     buffer.connect_ranks([i for i in range(num_ranks) if i != rank])
+
+    assert buffer.runtime.get_num_nvl_ranks() == num_local_ranks
+    assert buffer.runtime.get_num_rdma_ranks() == num_nodes
 
     if args.ci_correctness_only:
         assert num_local_ranks == 4 and num_ranks == 4
@@ -517,7 +536,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
                 flush=True,
             )
     else:
-        assert num_local_ranks == 8 and num_ranks > 8
+        assert num_local_ranks == 8
     torch.manual_seed(rank)
 
     for i in (num_sms,):
@@ -541,11 +560,21 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     dist.destroy_process_group()
 
 
-def run_server():
-    _store = store_group.create_master_store(port=TCP_STORE_PORT)  # noqa: F841
+def run_server(bind_host: str = "0.0.0.0"):
+    _store = store_group.create_master_store(  # noqa: F841
+        port=TCP_STORE_PORT,
+        host_name=bind_host,
+    )
     # Keep the server process alive while TCPStore serves requests
     while True:
         time.sleep(1)
+
+
+def _is_global_rank_zero() -> bool:
+    try:
+        return int(os.getenv("RANK", "0")) == 0
+    except ValueError:
+        return True
 
 
 if __name__ == "__main__":
@@ -585,26 +614,101 @@ if __name__ == "__main__":
         help="TCP server address (for both TCPStore and rank server). If not set, both will be started locally.",
     )
     parser.add_argument(
+        "--correctness-target",
+        type=str,
+        help=(
+            "Named correctness target to run (supported: "
+            f"{FOUR_GPU_SINGLE_NODE_TARGET}, {EIGHT_GPU_SINGLE_NODE_TARGET}, "
+            f"{MULTI_NODE_TARGET})."
+        ),
+    )
+    parser.add_argument(
         "--ci-correctness-only",
         action="store_true",
-        help="Run the reduced 4-GPU CI correctness check and skip HT performance tuning.",
+        help="Internal legacy switch for the reduced 4-GPU CI check; use --correctness-target four_gpu_single_node.",
     )
     args = parser.parse_args()
+    args.num_nodes = int(os.getenv("WORLD_SIZE", 1))
 
-    if not args.tcp_server:
-        print("Starting TCPStore and rank server locally", flush=True)
-        server_process = torch.multiprocessing.Process(target=run_server, daemon=True)
-        server_process.start()
-        time.sleep(0.5)
+    try:
+        correctness_target = resolve_correctness_target(args)
+    except TargetSelectionError as exc:
+        selected_target = getattr(args, "correctness_target", None)
+        if selected_target in EVIDENCE_CORRECTNESS_TARGETS:
+            correctness_target = SUPPORTED_CORRECTNESS_TARGETS[selected_target]
+            args.correctness_target = correctness_target.name
+            args.correctness_target_label = correctness_target.label
+            args.ci_correctness_only = correctness_target.ci_correctness_only
+            if _is_global_rank_zero():
+                print(
+                    format_correctness_evidence(
+                        args,
+                        result="fail",
+                        failure_category=classify_correctness_failure(exc),
+                    ),
+                    flush=True,
+                )
+        parser.error(str(exc))
 
-    # Set default `num_topk_groups` if not provided
-    if args.num_topk_groups is None:
-        num_nodes = int(os.getenv("WORLD_SIZE", 1))
-        args.num_topk_groups = min(num_nodes, 4)
+    args.correctness_target = correctness_target.name
+    args.correctness_target_label = correctness_target.label
+    args.ci_correctness_only = correctness_target.ci_correctness_only
 
-    num_processes = args.num_processes
-    # 2-node run (WORLD_SIZE=2): run on both nodes with same MASTER_ADDR/MASTER_PORT; node1 needs --tcp-server <node0_ip>.
-    # NVL/RDMA timeouts across nodes usually mean RDMA/IB/UCX between nodes is broken or slow (e.g. "accelerated IB support was not found" on one node).
-    torch.multiprocessing.spawn(
-        test_loop, args=(num_processes, args), nprocs=num_processes
-    )
+    if correctness_target.name and _is_global_rank_zero():
+        print(
+            f"[target] Running {correctness_target.label} ({correctness_target.name})",
+            flush=True,
+        )
+
+    tcp_store_bind_host = "127.0.0.1"
+    if correctness_target.name != FOUR_GPU_SINGLE_NODE_TARGET:
+        tcp_store_bind_host = "0.0.0.0"
+
+    try:
+        preflight_four_gpu_single_node_target(
+            args,
+            cuda=torch.cuda,
+            nixl_ep_module=nixl_ep,
+            store_group_module=store_group,
+            tcp_store_port=TCP_STORE_PORT,
+            tcp_store_host=tcp_store_bind_host,
+        )
+
+        if not args.tcp_server:
+            print("Starting TCPStore and rank server locally", flush=True)
+            server_process = torch.multiprocessing.Process(
+                target=run_server, args=(tcp_store_bind_host,), daemon=True
+            )
+            server_process.start()
+            time.sleep(0.5)
+
+        # Set default `num_topk_groups` if not provided
+        if args.num_topk_groups is None:
+            num_nodes = int(os.getenv("WORLD_SIZE", 1))
+            args.num_topk_groups = min(num_nodes, 4)
+
+        num_processes = args.num_processes
+        # 2-node run (WORLD_SIZE=2): run on both nodes with same MASTER_ADDR/MASTER_PORT; node1 needs --tcp-server <node0_ip>.
+        # NVL/RDMA timeouts across nodes usually mean RDMA/IB/UCX between nodes is broken or slow (e.g. "accelerated IB support was not found" on one node).
+        torch.multiprocessing.spawn(
+            test_loop, args=(num_processes, args), nprocs=num_processes
+        )
+    except Exception as exc:
+        if correctness_target.name in EVIDENCE_CORRECTNESS_TARGETS:
+            if _is_global_rank_zero():
+                print(
+                    format_correctness_evidence(
+                        args,
+                        result="fail",
+                        failure_category=classify_correctness_failure(exc),
+                    ),
+                    flush=True,
+                )
+            sys.exit(1)
+        raise
+
+    if (
+        correctness_target.name in EVIDENCE_CORRECTNESS_TARGETS
+        and _is_global_rank_zero()
+    ):
+        print(format_correctness_evidence(args, result="pass"), flush=True)

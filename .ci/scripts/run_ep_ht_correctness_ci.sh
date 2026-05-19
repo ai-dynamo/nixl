@@ -48,9 +48,9 @@ echo "==== Running NIXL EP HT 4-GPU correctness test ===="
 echo "This check does not cover multi-node RDMA or performance."
 
 python3 examples/device/ep/tests/test_ht.py \
-    --num-processes "${NIXL_EP_HT_CI_NUM_PROCESSES:-4}" \
+    --correctness-target four_gpu_single_node \
+    --num-processes 4 \
     --num-tokens "${NIXL_EP_HT_CI_NUM_TOKENS:-256}" \
     --hidden "${NIXL_EP_HT_CI_HIDDEN:-2048}" \
     --num-topk "${NIXL_EP_HT_CI_NUM_TOPK:-4}" \
-    --num-experts "${NIXL_EP_HT_CI_NUM_EXPERTS:-64}" \
-    --ci-correctness-only
+    --num-experts "${NIXL_EP_HT_CI_NUM_EXPERTS:-64}"

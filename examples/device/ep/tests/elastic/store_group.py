@@ -21,9 +21,10 @@ import torch.distributed as dist
 def create_master_store(
     port: int = 9999,
     timeout_sec: float = 300.0,
+    host_name: str = "0.0.0.0",
 ) -> dist.TCPStore:
     return dist.TCPStore(
-        host_name="0.0.0.0",
+        host_name=host_name,
         port=port,
         is_master=True,
         wait_for_workers=False,
