@@ -21,6 +21,7 @@
 #include "runtime/runtime.h"
 #include "utils/utils.h"
 #include <atomic>
+#include <iostream>
 #include <string>
 #include <vector>
 #include <variant>
@@ -63,6 +64,20 @@ class xferBenchWorker {
         transfer(size_t block_size,
                  const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) = 0;
+
+        // Read an OBJ_SEG buffer back from the backend into a verify buffer.
+        // Used by the consistency check for object-storage backends. Default
+        // implementation reports the operation as unsupported; concrete workers
+        // override to issue a backend-native read.
+        virtual bool
+        readObjForVerify(const xferBenchIOV &iov, void *dst, size_t len) {
+            (void)iov;
+            (void)dst;
+            (void)len;
+            std::cerr << "readObjForVerify: not implemented for this worker; "
+                      << "OBJ_SEG consistency check requires the NIXL worker" << std::endl;
+            return false;
+        }
 };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_WORKER_H

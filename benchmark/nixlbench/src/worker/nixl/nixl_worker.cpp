@@ -706,33 +706,28 @@ xferBenchNixlWorker::cleanupBasicDescObj(xferBenchIOV &iov) {
 }
 
 bool
-xferBenchNixlWorker::seedObjectLoopback(const xferBenchIOV &remote_iov, size_t len) {
-    void *scratch = nullptr;
-    if (!allocateXferMemory(len, &scratch)) {
-        std::cerr << "seedObjectLoopback: failed to allocate " << len << " bytes" << std::endl;
-        return false;
-    }
-    memset(scratch, XFERBENCH_TARGET_BUFFER_ELEMENT, len);
-
-    nixl_reg_dlist_t scratch_reg(DRAM_SEG);
+xferBenchNixlWorker::objLoopback(const xferBenchIOV &remote_iov,
+                                 void *local_buf,
+                                 size_t len,
+                                 nixl_xfer_op_t op) {
+    nixl_reg_dlist_t local_reg(DRAM_SEG);
     nixlBlobDesc reg_desc;
-    reg_desc.addr = (uintptr_t)scratch;
+    reg_desc.addr = (uintptr_t)local_buf;
     reg_desc.len = len;
     reg_desc.devId = 0;
-    scratch_reg.addDesc(reg_desc);
+    local_reg.addDesc(reg_desc);
 
     nixl_opt_args_t opt_args;
     opt_args.backends.push_back(backend_engine);
 
-    nixl_status_t rc = agent->registerMem(scratch_reg, &opt_args);
+    nixl_status_t rc = agent->registerMem(local_reg, &opt_args);
     if (NIXL_SUCCESS != rc) {
-        std::cerr << "seedObjectLoopback: registerMem failed: "
-                  << nixlEnumStrings::statusStr(rc) << std::endl;
-        free(scratch);
+        std::cerr << "objLoopback: registerMem failed: " << nixlEnumStrings::statusStr(rc)
+                  << std::endl;
         return false;
     }
 
-    std::vector<xferBenchIOV> local_iov{xferBenchIOV((uintptr_t)scratch, len, 0)};
+    std::vector<xferBenchIOV> local_iov{xferBenchIOV((uintptr_t)local_buf, len, 0)};
     std::vector<xferBenchIOV> remote_iov_vec{remote_iov};
     nixl_xfer_dlist_t local_desc(DRAM_SEG);
     nixl_xfer_dlist_t remote_desc(OBJ_SEG);
@@ -741,26 +736,58 @@ xferBenchNixlWorker::seedObjectLoopback(const xferBenchIOV &remote_iov, size_t l
 
     bool ok = false;
     nixlXferReqH *req = nullptr;
-    rc = agent->createXferReq(NIXL_WRITE, local_desc, remote_desc, name, req, &opt_args);
+    rc = agent->createXferReq(op, local_desc, remote_desc, name, req, &opt_args);
     if (NIXL_SUCCESS == rc) {
+        // Once posted, the backend may DMA into local_buf until the request reaches a
+        // terminal state. On signal we stop reporting progress but must keep polling
+        // getXferStatus until the backend is done before releasing the request and
+        // deregistering local_buf, otherwise the caller's free() races with the backend.
+        bool aborted = false;
         rc = agent->postXferReq(req);
         while (NIXL_IN_PROG == rc) {
+            if (!aborted && signaled()) {
+                std::cerr << "objLoopback: aborted by signal, draining transfer" << std::endl;
+                aborted = true;
+            }
             rc = agent->getXferStatus(req);
         }
-        ok = (NIXL_SUCCESS == rc);
-        if (!ok) {
-            std::cerr << "seedObjectLoopback: transfer failed: "
-                      << nixlEnumStrings::statusStr(rc) << std::endl;
+        ok = !aborted && (NIXL_SUCCESS == rc);
+        if (!aborted && !ok) {
+            std::cerr << "objLoopback: transfer failed: " << nixlEnumStrings::statusStr(rc)
+                      << std::endl;
         }
         agent->releaseXferReq(req);
     } else {
-        std::cerr << "seedObjectLoopback: createXferReq failed: "
-                  << nixlEnumStrings::statusStr(rc) << std::endl;
+        std::cerr << "objLoopback: createXferReq failed: " << nixlEnumStrings::statusStr(rc)
+                  << std::endl;
     }
 
-    agent->deregisterMem(scratch_reg, &opt_args);
+    agent->deregisterMem(local_reg, &opt_args);
+    return ok;
+}
+
+bool
+xferBenchNixlWorker::seedObjectLoopback(const xferBenchIOV &remote_iov, size_t len) {
+    void *scratch = nullptr;
+    if (!allocateXferMemory(len, &scratch)) {
+        std::cerr << "seedObjectLoopback: failed to allocate " << len << " bytes" << std::endl;
+        return false;
+    }
+    memset(scratch, XFERBENCH_TARGET_BUFFER_ELEMENT, len);
+
+    bool ok = objLoopback(remote_iov, scratch, len, NIXL_WRITE);
     free(scratch);
     return ok;
+}
+
+bool
+xferBenchNixlWorker::readObjForVerify(const xferBenchIOV &remote_iov, void *dst, size_t len) {
+    if (!dst || len == 0) {
+        std::cerr << "readObjForVerify: invalid arguments (dst=" << dst << ", len=" << len << ")"
+                  << std::endl;
+        return false;
+    }
+    return objLoopback(remote_iov, dst, len, NIXL_READ);
 }
 
 std::optional<xferBenchIOV>
@@ -1180,11 +1207,9 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             int devidx = 0;
             for (auto &iov : iov_list) {
                 if (xferBenchConfig::isObjStorageBackend()) {
-                    std::optional<xferBenchIOV> basic_desc;
-                    basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
-                    if (basic_desc) {
-                        remote_iov_list.push_back(basic_desc.value());
-                    }
+                    // OBJ uses single-agent loopback: the remote descriptor mirrors the
+                    // local one so verification reads back the same offset/length written.
+                    remote_iov_list.push_back(iov);
                 } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = gusli_devices[devidx++].dev_offset + file_offset;
