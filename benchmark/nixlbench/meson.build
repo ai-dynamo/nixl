@@ -153,10 +153,10 @@ if cuda_fabric_available
     add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
 endif
 
-if get_option('enable_mockkv')
-    add_project_arguments('-DNIXLBENCH_ENABLE_MOCKKV=1', language: 'cpp')
+if get_option('enable_inmemkv')
+    add_project_arguments('-DNIXLBENCH_ENABLE_INMEMKV=1', language: 'cpp')
 else
-    add_project_arguments('-DNIXLBENCH_ENABLE_MOCKKV=0', language: 'cpp')
+    add_project_arguments('-DNIXLBENCH_ENABLE_INMEMKV=0', language: 'cpp')
 endif
 
 # Subprojects

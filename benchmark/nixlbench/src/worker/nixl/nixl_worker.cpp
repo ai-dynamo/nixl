@@ -851,10 +851,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_iovs.push_back(iov_list);
         }
-#if NIXLBENCH_ENABLE_MOCKKV
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_MOCKKV) {
-        // MOCKKV backend: create DRAM_SEG descriptors with keys in metaInfo
-        // Similar to REDIS, but simpler (no external dependencies)
+#if NIXLBENCH_ENABLE_INMEMKV
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_INMEMKV) {
+        // INMEMKV backend: create DRAM_SEG descriptors with keys in metaInfo
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -862,13 +861,13 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
-                std::string unique_name = "nixlbench_mockkv" + std::to_string(list_idx) + "_" +
+                std::string unique_name = "nixlbench_inmemkv" + std::to_string(list_idx) + "_" +
                     std::to_string(i) + "_" + std::to_string(timestamp);
 
                 // Create a DRAM_SEG descriptor with key in metaInfo
-                xferBenchIOV mockkv_desc(0, buffer_size, i, unique_name);
-                std::cout << "Creating MOCKKV key: " << unique_name << std::endl;
-                iov_list.push_back(mockkv_desc);
+                xferBenchIOV inmemkv_desc(0, buffer_size, i, unique_name);
+                std::cout << "Creating INMEMKV key: " << unique_name << std::endl;
+                iov_list.push_back(inmemkv_desc);
             }
             // Register DRAM_SEG descriptors with keys in metaInfo
             nixl_reg_dlist_t desc_list(DRAM_SEG);
@@ -1051,9 +1050,9 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
-#if NIXLBENCH_ENABLE_MOCKKV
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_MOCKKV) {
-        // MOCKKV backend cleanup: deregister DRAM_SEG descriptors (same as REDIS)
+#if NIXLBENCH_ENABLE_INMEMKV
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_INMEMKV) {
+        // INMEMKV backend cleanup: deregister DRAM_SEG descriptors
         for (auto &iov_list : remote_iovs) {
             nixl_reg_dlist_t desc_list(DRAM_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
@@ -1151,17 +1150,17 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     std::vector<std::vector<xferBenchIOV>> res;
     int desc_str_sz;
 
-#if NIXLBENCH_ENABLE_MOCKKV
-    // MOCKKV never uses remote_fds; handle it outside isStorageBackend() so we cannot
+#if NIXLBENCH_ENABLE_INMEMKV
+    // INMEMKV never uses remote_fds; handle it outside isStorageBackend() so we cannot
     // reach remote_fds[fd_idx] with an empty vector (see GDB stack in exchangeIOV).
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_MOCKKV) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INMEMKV) {
         for (auto &iov_list : local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
             for (auto &iov : iov_list) {
-                xferBenchIOV mockkv_remote(iov);
-                mockkv_remote.addr = 0;
-                mockkv_remote.metaInfo = iov.metaInfo;
-                remote_iov_list.push_back(mockkv_remote);
+                xferBenchIOV inmemkv_remote(iov);
+                inmemkv_remote.addr = 0;
+                inmemkv_remote.metaInfo = iov.metaInfo;
+                remote_iov_list.push_back(inmemkv_remote);
             }
             res.push_back(remote_iov_list);
         }
@@ -1289,8 +1288,8 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
-#if NIXLBENCH_ENABLE_MOCKKV
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_MOCKKV) {
+#if NIXLBENCH_ENABLE_INMEMKV
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_INMEMKV) {
         remote_desc = nixl_xfer_dlist_t(DRAM_SEG);
 #endif
     } else if (xferBenchConfig::isStorageBackend()) {

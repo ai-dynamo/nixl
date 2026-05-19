@@ -16,12 +16,12 @@
  */
 
 /**
- * @file mockkv_backend.cpp
- * @brief MOCKKV Backend Implementation - Simple in-memory key-value store
+ * @file inmemkv_backend.cpp
+ * @brief INMEMKV Backend Implementation - Simple in-memory key-value store
  *
- * Architecture and lifecycle: see MOCKKV_ARCHITECTURE.md in this directory. Call order:
+ * Architecture and lifecycle: see INMEMKV_ARCHITECTURE.md in this directory. Call order:
  * createBackend -> registerMem -> prepXfer -> postXfer -> checkXfer -> releaseReqH -> deregisterMem.
- * Core may call unloadMD on teardown; same as Obj (S3): unloadMD does not free — only deregisterMem does
+ * Core may call unloadMD on teardown; same as Obj (S3): unloadMD does not free - only deregisterMem does
  * (see nixlLocalSection teardown path).
  *
  * Implementation:
@@ -29,7 +29,7 @@
  * - Transfer: synchronous PUT/GET in postXfer; prepXfer validates and allocates a placeholder handle
  */
 
-#include "mockkv_backend.h"
+#include "inmemkv_backend.h"
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include <absl/strings/str_format.h>
@@ -40,30 +40,30 @@
 namespace {
 
 /**
- * @brief Simple request handle for MOCKKV
+ * @brief Simple request handle for INMEMKV
  *
- * Since MOCKKV operations are synchronous, we don't need to track
+ * Since INMEMKV operations are synchronous, we don't need to track
  * async operations. This handle is minimal - just a placeholder.
  */
-class nixlMockKVBackendReqH : public nixlBackendReqH {
+class nixlInMemKVBackendReqH : public nixlBackendReqH {
 public:
-    nixlMockKVBackendReqH() = default;
-    ~nixlMockKVBackendReqH() = default;
+    nixlInMemKVBackendReqH() = default;
+    ~nixlInMemKVBackendReqH() = default;
 };
 
 /**
- * @brief Metadata for MOCKKV memory descriptors
+ * @brief Metadata for INMEMKV memory descriptors
  *
  * Stores the mapping between devId and key for later lookups.
  */
-class nixlMockKVMetadata : public nixlBackendMD {
+class nixlInMemKVMetadata : public nixlBackendMD {
 public:
-    nixlMockKVMetadata(uint64_t dev_id, std::string key)
+    nixlInMemKVMetadata(uint64_t dev_id, std::string key)
         : nixlBackendMD(true),
           devId(dev_id),
           key(key) {}
 
-    ~nixlMockKVMetadata() = default;
+    ~nixlInMemKVMetadata() = default;
 
     uint64_t devId;      // Device ID from NIXL
     std::string key;     // Key in the map
@@ -75,12 +75,12 @@ public:
  * Checks that:
  * - Operation is valid (WRITE or READ)
  * - Local memory is DRAM_SEG
- * - Remote memory is DRAM_SEG (for MOCKKV)
+ * - Remote memory is DRAM_SEG (for INMEMKV)
  *
  * @param operation Transfer operation type
  * @param local Local memory descriptors
  * @param remote Remote memory descriptors
- * @param remote_agent Remote agent name (not used for MOCKKV)
+ * @param remote_agent Remote agent name (not used for INMEMKV)
  * @param local_agent Local agent name
  * @return true if valid, false otherwise
  */
@@ -103,7 +103,7 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
         return false;
     }
 
-    // MOCKKV uses DRAM_SEG for both local and remote
+    // INMEMKV uses DRAM_SEG for both local and remote
     if (remote.getType() != DRAM_SEG) {
         NIXL_ERROR << absl::StrFormat("Error: Remote memory type must be DRAM_SEG, got %d",
                                       remote.getType());
@@ -116,17 +116,17 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
 } // namespace
 
 // ============================================================================
-// MOCKKV Engine Implementation
+// INMEMKV Engine Implementation
 // ============================================================================
 
 /**
- * @brief Construct MOCKKV backend engine
+ * @brief Construct INMEMKV backend engine
  *
  * Step 1: Read localAgent from init_params.
  * Step 2: In-memory store only (no filesystem).
- * Logs: MOCKKV backend initialized ; Local agent =
+ * Logs: INMEMKV backend initialized ; Local agent =
  */
-nixlMockKVEngine::nixlMockKVEngine(const nixlBackendInitParams *init_params)
+nixlInMemKVEngine::nixlInMemKVEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params) {
 
     // 1. Local agent name
@@ -134,21 +134,21 @@ nixlMockKVEngine::nixlMockKVEngine(const nixlBackendInitParams *init_params)
 
     // 2. Values live only in kv_store_ (no file persistence).
 
-    NIXL_INFO << "MOCKKV backend initialized (in-memory only)";
-    NIXL_INFO << "MOCKKV: Local agent = " << localAgent;
+    NIXL_INFO << "INMEMKV backend initialized (in-memory only)";
+    NIXL_INFO << "INMEMKV: Local agent = " << localAgent;
 }
 
 /**
- * @brief Register memory descriptor with MOCKKV backend
+ * @brief Register memory descriptor with INMEMKV backend
  *
  * Step 1: Require DRAM_SEG.
  * Step 2: Key from metaInfo or stringified devId.
- * Step 3: Allocate nixlMockKVMetadata(devId, key), set devIdToKey_[devId]=key.
+ * Step 3: Allocate nixlInMemKVMetadata(devId, key), set devIdToKey_[devId]=key.
  * Step 4: Return meta; caller owns it (out = release()).
  * Logs: registerMem: type=..., devId=..., metaInfo=... ; registerMem: registered devId=... -> key=...
  */
 nixl_status_t
-nixlMockKVEngine::registerMem(const nixlBlobDesc &mem,
+nixlInMemKVEngine::registerMem(const nixlBlobDesc &mem,
                               const nixl_mem_t &nixl_mem,
                               nixlBackendMD *&out) {
     NIXL_INFO << "registerMem: type=" << nixl_mem << ", devId=" << mem.devId
@@ -166,13 +166,13 @@ nixlMockKVEngine::registerMem(const nixlBlobDesc &mem,
     NIXL_DEBUG << "registerMem: using key=" << key;
 
     // 3. Metadata and devId -> key for postXfer lookups
-    std::unique_ptr<nixlMockKVMetadata> mockkv_md = std::make_unique<nixlMockKVMetadata>(
+    std::unique_ptr<nixlInMemKVMetadata> inmemkv_md = std::make_unique<nixlInMemKVMetadata>(
         mem.devId, key);
     devIdToKey_[mem.devId] = key;
     NIXL_INFO << "registerMem: registered devId=" << mem.devId << " -> key=" << key;
 
     // 4. Ownership to NIXL
-    out = mockkv_md.release();
+    out = inmemkv_md.release();
     return NIXL_SUCCESS;
 }
 
@@ -184,13 +184,13 @@ nixlMockKVEngine::registerMem(const nixlBlobDesc &mem,
  * Log: deregisterMem: removing devId=..., key=...
  */
 nixl_status_t
-nixlMockKVEngine::deregisterMem(nixlBackendMD *meta) {
-    nixlMockKVMetadata *mockkv_md = static_cast<nixlMockKVMetadata *>(meta);
-    if (mockkv_md) {
-        NIXL_INFO << "deregisterMem: removing devId=" << mockkv_md->devId
-                  << ", key=" << mockkv_md->key;
-        devIdToKey_.erase(mockkv_md->devId);
-        std::unique_ptr<nixlMockKVMetadata> ptr(mockkv_md);
+nixlInMemKVEngine::deregisterMem(nixlBackendMD *meta) {
+    nixlInMemKVMetadata *inmemkv_md = static_cast<nixlInMemKVMetadata *>(meta);
+    if (inmemkv_md) {
+        NIXL_INFO << "deregisterMem: removing devId=" << inmemkv_md->devId
+                  << ", key=" << inmemkv_md->key;
+        devIdToKey_.erase(inmemkv_md->devId);
+        std::unique_ptr<nixlInMemKVMetadata> ptr(inmemkv_md);
     }
     return NIXL_SUCCESS;
 }
@@ -205,7 +205,7 @@ nixlMockKVEngine::deregisterMem(nixlBackendMD *meta) {
  * @return NIXL_SUCCESS
  */
 nixl_status_t
-nixlMockKVEngine::queryMem(const nixl_reg_dlist_t &descs,
+nixlInMemKVEngine::queryMem(const nixl_reg_dlist_t &descs,
                            std::vector<nixl_query_resp_t> &resp) const {
     resp.reserve(descs.descCount());
 
@@ -230,11 +230,11 @@ nixlMockKVEngine::queryMem(const nixl_reg_dlist_t &descs,
  * @brief Prepare transfer operation
  *
  * Step 1: Validate WRITE/READ and DRAM_SEG on both sides.
- * Step 2: Allocate placeholder handle (MOCKKV is synchronous — no async tracking).
+ * Step 2: Allocate placeholder handle (INMEMKV is synchronous - no async tracking).
  * Log: prepXfer: operation=..., local_count=..., remote_count=...
  */
 nixl_status_t
-nixlMockKVEngine::prepXfer(const nixl_xfer_op_t &operation,
+nixlInMemKVEngine::prepXfer(const nixl_xfer_op_t &operation,
                            const nixl_meta_dlist_t &local,
                            const nixl_meta_dlist_t &remote,
                            const std::string &remote_agent,
@@ -251,7 +251,7 @@ nixlMockKVEngine::prepXfer(const nixl_xfer_op_t &operation,
     }
 
     // 2. Placeholder handle for postXfer / checkXfer / releaseReqH
-    auto req_h = std::make_unique<nixlMockKVBackendReqH>();
+    auto req_h = std::make_unique<nixlInMemKVBackendReqH>();
     handle = req_h.release();
     NIXL_DEBUG << "prepXfer: request handle created, ready for postXfer";
     return NIXL_SUCCESS;
@@ -266,7 +266,7 @@ nixlMockKVEngine::prepXfer(const nixl_xfer_op_t &operation,
  * Logs: postXfer: Starting WRITE/READ ... ; Local operation - using in-memory store ; ...
  */
 nixl_status_t
-nixlMockKVEngine::postXfer(const nixl_xfer_op_t &operation,
+nixlInMemKVEngine::postXfer(const nixl_xfer_op_t &operation,
                            const nixl_meta_dlist_t &local,
                            const nixl_meta_dlist_t &remote,
                            const std::string &remote_agent,
@@ -293,10 +293,10 @@ nixlMockKVEngine::postXfer(const nixl_xfer_op_t &operation,
         // 2. Resolve key from remote metadata or devIdToKey_
         std::string key;
         if (remote_desc.metadataP) {
-            nixlMockKVMetadata *mockkv_md =
-                dynamic_cast<nixlMockKVMetadata *>(remote_desc.metadataP);
-            if (mockkv_md) {
-                key = mockkv_md->key;
+            nixlInMemKVMetadata *inmemkv_md =
+                dynamic_cast<nixlInMemKVMetadata *>(remote_desc.metadataP);
+            if (inmemkv_md) {
+                key = inmemkv_md->key;
                 NIXL_INFO << "postXfer:   Found key in metadata: " << key;
             } else {
                 auto key_search = devIdToKey_.find(remote_desc.devId);
@@ -386,10 +386,10 @@ nixlMockKVEngine::postXfer(const nixl_xfer_op_t &operation,
 
 /**
  * @brief Check transfer operation status
- * MOCKKV is synchronous; SUCCESS immediately (work finished in postXfer).
+ * INMEMKV is synchronous; SUCCESS immediately (work finished in postXfer).
  */
 nixl_status_t
-nixlMockKVEngine::checkXfer(nixlBackendReqH *handle) const {
+nixlInMemKVEngine::checkXfer(nixlBackendReqH *handle) const {
     (void)handle;
     NIXL_DEBUG << "checkXfer: Operations are synchronous, always return SUCCESS";
     return NIXL_SUCCESS;
@@ -400,7 +400,7 @@ nixlMockKVEngine::checkXfer(nixlBackendReqH *handle) const {
  * Frees handle from prepXfer. Log: releaseReqH: Releasing request handle
  */
 nixl_status_t
-nixlMockKVEngine::releaseReqH(nixlBackendReqH *handle) const {
+nixlInMemKVEngine::releaseReqH(nixlBackendReqH *handle) const {
     NIXL_INFO << "releaseReqH: Releasing request handle";
     delete handle;
     return NIXL_SUCCESS;
@@ -411,7 +411,7 @@ nixlMockKVEngine::releaseReqH(nixlBackendReqH *handle) const {
  * Pass-through: output = input.
  */
 nixl_status_t
-nixlMockKVEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
+nixlInMemKVEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
     output = input;
     NIXL_DEBUG << "loadLocalMD: Reusing local metadata object";
     return NIXL_SUCCESS;
@@ -423,7 +423,7 @@ nixlMockKVEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
  * local-only backend: no-op.
  */
 nixl_status_t
-nixlMockKVEngine::connect(const std::string &remote_agent) {
+nixlInMemKVEngine::connect(const std::string &remote_agent) {
     (void)remote_agent;
     return NIXL_SUCCESS;
 }
@@ -437,7 +437,7 @@ nixlMockKVEngine::connect(const std::string &remote_agent) {
  * @return NIXL_SUCCESS
  */
 nixl_status_t
-nixlMockKVEngine::disconnect(const std::string &remote_agent) {
+nixlInMemKVEngine::disconnect(const std::string &remote_agent) {
     (void)remote_agent;
     return NIXL_SUCCESS;
 }
@@ -448,7 +448,7 @@ nixlMockKVEngine::disconnect(const std::string &remote_agent) {
  * Same as nixlObjEngine::unloadMD: no free; deregisterMem owns release.
  */
 nixl_status_t
-nixlMockKVEngine::unloadMD(nixlBackendMD *input) {
+nixlInMemKVEngine::unloadMD(nixlBackendMD *input) {
     (void)input;
     return NIXL_SUCCESS;
 }

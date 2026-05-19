@@ -45,10 +45,10 @@
 #define NB_ARG_UINT64(param_name, def_val, help_text) DEFINE_uint64(param_name, def_val, help_text)
 #define NB_ARG_INT32(param_name, def_val, help_text) DEFINE_int32(param_name, def_val, help_text)
 
-#if NIXLBENCH_ENABLE_MOCKKV
-#define XFERBENCH_MOCKKV_BACKEND_HELP ", MOCKKV"
+#if NIXLBENCH_ENABLE_INMEMKV
+#define XFERBENCH_INMEMKV_BACKEND_HELP ", INMEMKV"
 #else
-#define XFERBENCH_MOCKKV_BACKEND_HELP ""
+#define XFERBENCH_INMEMKV_BACKEND_HELP ""
 #endif
 
 /**********
@@ -68,7 +68,7 @@ NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
               "GUSLI, AZURE_BLOB"
-              XFERBENCH_MOCKKV_BACKEND_HELP
+              XFERBENCH_INMEMKV_BACKEND_HELP
               "] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
@@ -759,8 +759,8 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend
-#if NIXLBENCH_ENABLE_MOCKKV
-            || XFERBENCH_BACKEND_MOCKKV == xferBenchConfig::backend
+#if NIXLBENCH_ENABLE_INMEMKV
+            || XFERBENCH_BACKEND_INMEMKV == xferBenchConfig::backend
 #endif
         );
 }

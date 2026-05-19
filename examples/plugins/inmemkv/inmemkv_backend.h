@@ -16,20 +16,20 @@
  */
 
 /**
- * @file mockkv_backend.h
- * @brief MOCKKV Backend Header - Simple in-memory key-value store for learning NIXL
+ * @file inmemkv_backend.h
+ * @brief INMEMKV Backend Header - Simple in-memory key-value store for learning NIXL
  *
  * Architecture:
- * - Apps (e.g. nixlbench) create nixlAgent with backend "MOCKKV" and call
+ * - Apps (e.g. nixlbench) create nixlAgent with backend "INMEMKV" and call
  *   registerMem / prepXfer / postXfer / checkXfer / releaseReqH / deregisterMem.
  * - nixlAgent routes by memory type (DRAM_SEG, ...) to this backend.
  * - This engine implements nixlBackendEngine: register/deregister, prep/exec/check transfer,
  *   release handles; if supportsRemote, also conn info, metadata serialization, connect/unloadMD.
  *
  * Lifecycle: createBackend -> registerMem -> prepXfer -> postXfer
- * -> checkXfer -> releaseReqH -> deregisterMem; unloadMD is no-op (same as Obj — no free there).
+ * -> checkXfer -> releaseReqH -> deregisterMem; unloadMD is no-op (same as Obj - no free there).
  *
- * See MOCKKV_ARCHITECTURE.md in this directory for diagrams and log meanings.
+ * See INMEMKV_ARCHITECTURE.md in this directory for diagrams and log meanings.
  *
  * Key Features:
  * - Synchronous operations (simple to understand)
@@ -37,8 +37,8 @@
  * - Full NIXL backend interface implementation
  */
 
-#ifndef MOCKKV_BACKEND_H
-#define MOCKKV_BACKEND_H
+#ifndef INMEMKV_BACKEND_H
+#define INMEMKV_BACKEND_H
 
 #include "backend/backend_engine.h"
 #include "nixl_types.h"
@@ -47,10 +47,10 @@
 #include <vector>
 
 /**
- * @class nixlMockKVEngine
+ * @class nixlInMemKVEngine
  * @brief Simple in-memory key-value store backend for NIXL
  *
- * This backend implements a synchronous, in-memory key-value store using std::map.
+ * This backend implements a synchronous, in-memory key-value store using std::unordered_map.
  * It's designed to be simple and easy to understand, making it perfect for learning
  * how NIXL plugins work.
  *
@@ -66,18 +66,18 @@
  * - checkXfer: Check operation status (always returns SUCCESS immediately)
  * - queryMem: Check if a key exists
  */
-class nixlMockKVEngine : public nixlBackendEngine {
+class nixlInMemKVEngine : public nixlBackendEngine {
 public:
     /**
-     * @brief Construct MOCKKV backend engine
+     * @brief Construct INMEMKV backend engine
      * @param init_params Initialization parameters from NIXL
      */
-    explicit nixlMockKVEngine(const nixlBackendInitParams *init_params);
+    explicit nixlInMemKVEngine(const nixlBackendInitParams *init_params);
 
     /**
      * @brief Destructor
      */
-    ~nixlMockKVEngine() override = default;
+    ~nixlInMemKVEngine() override = default;
 
     // ========================================================================
     // Phase 2: register / deregister (registerMem / deregisterMem)
@@ -86,7 +86,7 @@ public:
     /**
      * @brief Register memory descriptor with the backend
      *
-     * Steps: (1) Key from metaInfo or stringified devId; (2) allocate nixlMockKVMetadata(devId, key);
+     * Steps: (1) Key from metaInfo or stringified devId; (2) allocate nixlInMemKVMetadata(devId, key);
      * (3) devIdToKey_[devId]=key for postXfer; (4) return meta, ownership to caller.
      * Logs: registerMem: type=..., devId=..., metaInfo=... ; registered devId=... -> key=...
      *
@@ -130,7 +130,7 @@ public:
      * @brief Prepare transfer operation
      *
      * Steps: (1) Validate WRITE/READ and DRAM_SEG on both sides; (2) allocate placeholder handle.
-     * MOCKKV is synchronous — handle is a stub. Log: prepXfer: operation=..., local_count=..., remote_count=...
+     * INMEMKV is synchronous - handle is a stub. Log: prepXfer: operation=..., local_count=..., remote_count=...
      *
      * @param operation Transfer operation (NIXL_WRITE or NIXL_READ)
      * @param local Local memory descriptors
@@ -173,7 +173,7 @@ public:
 
     /**
      * @brief Check transfer operation status
-     * MOCKKV is synchronous; always SUCCESS (work done in postXfer).
+     * INMEMKV is synchronous; always SUCCESS (work done in postXfer).
      * @param handle Request handle
      * @return NIXL_SUCCESS
      */
@@ -200,7 +200,7 @@ public:
 
     /**
      * @brief Check if backend supports remote operations
-     * @return false (MOCKKV is local in-memory only)
+     * @return false (INMEMKV is local in-memory only)
      */
     bool
     supportsRemote() const override {
@@ -209,7 +209,7 @@ public:
 
     /**
      * @brief Check if backend supports local operations
-     * @return true (MOCKKV supports local operations)
+     * @return true (INMEMKV supports local operations)
      */
     bool
     supportsLocal() const override {
@@ -295,4 +295,4 @@ private:
 
 };
 
-#endif // MOCKKV_BACKEND_H
+#endif // INMEMKV_BACKEND_H
