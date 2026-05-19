@@ -417,8 +417,6 @@ private:
     static void
     cleanupFile(const int fd, const std::string &filename);
     static bool
-    putObjAzure(size_t buffer_size, const std::string &name);
-    static bool
     getObjAzure(const std::string &name);
     static bool
     rmObjAzure(const std::string &name);
@@ -437,15 +435,11 @@ public:
     static std::string
     buildAwsCredentials();
     static bool
-    putObj(size_t buffer_size, const std::string &name);
-    static bool
     putRedis(size_t buffer_size, const std::string &key);
     static bool
     getObj(const std::string &name);
     static bool
     rmObj(const std::string &name);
-    static bool
-    putObjS3(size_t buffer_size, const std::string &name);
     static bool
     getObjS3(const std::string &name);
     static bool
