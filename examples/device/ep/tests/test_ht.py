@@ -65,7 +65,11 @@ def test_main(
         args.num_experts,
     )
 
-    assert num_experts % num_ranks == 0 and num_local_ranks == 8
+    assert num_experts % num_ranks == 0
+    if args.ci_correctness_only:
+        assert num_local_ranks == 4
+    else:
+        assert num_local_ranks == 8
     if local_rank == 0:
         print(
             f"[config] num_tokens={num_tokens}, hidden={hidden}, num_topk_groups={num_topk_groups}, num_topk={num_topk}",
@@ -159,7 +163,11 @@ def test_main(
 
     # Config
     rdma_buffer_size, nvl_buffer_size = 128, (720 if num_ranks in (144, 160) else 512)
-    config = nixl_ep.Config(num_sms, 8, nvl_buffer_size, 16, rdma_buffer_size)
+    config = (
+        nixl_ep.Buffer.get_dispatch_config(num_ranks)
+        if args.ci_correctness_only
+        else nixl_ep.Config(num_sms, 8, nvl_buffer_size, 16, rdma_buffer_size)
+    )
 
     # Test dispatch
     # noinspection PyShadowingNames
@@ -336,6 +344,14 @@ def test_main(
     if local_rank == 0:
         print("", flush=True)
 
+    if args.ci_correctness_only:
+        if local_rank == 0:
+            print(
+                "[ci] Completed reduced-topology correctness checks; skipping performance tuning.",
+                flush=True,
+            )
+        return
+
     # Tune dispatch performance
     best_dispatch_results = None
     fp8_factor = (1 + 4 / 128) / 2
@@ -446,7 +462,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     # so that UCX/DOCA can see all GPUs for GPU-initiated RDMA when needed.
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
-    torch.cuda.set_device(local_rank % 8)
+    torch.cuda.set_device(local_rank % num_local_ranks)
 
     num_nodes = int(os.getenv("WORLD_SIZE", 1))
 
@@ -460,7 +476,9 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
 
     num_sms = 24
     num_qps_per_rank = max(
-        num_sms // 2, ll_num_experts // num_ranks if args.test_ll_compatibility else 0
+        num_sms // 2,
+        args.num_experts // num_ranks if args.ci_correctness_only else 0,
+        ll_num_experts // num_ranks if args.test_ll_compatibility else 0,
     )
 
     # Create TCPStore client for NIXL metadata exchange
@@ -482,15 +500,24 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         group=group,
         tcp_store_group=tcp_store,
     )
+    num_rdma_bytes = 0 if args.ci_correctness_only else int(1e9)
     buffer.update_memory_buffers(
         num_ranks=num_ranks,
         num_experts_per_rank=num_qps_per_rank,
         num_nvl_bytes=int(2e9),
-        num_rdma_bytes=int(1e9),
+        num_rdma_bytes=num_rdma_bytes,
     )
     buffer.connect_ranks([i for i in range(num_ranks) if i != rank])
 
-    assert num_local_ranks == 8 and num_ranks > 8
+    if args.ci_correctness_only:
+        assert num_local_ranks == 4 and num_ranks == 4
+        if local_rank == 0:
+            print(
+                "[ci] Reduced 4-GPU HT correctness only; no multi-node RDMA or performance coverage.",
+                flush=True,
+            )
+    else:
+        assert num_local_ranks == 8 and num_ranks > 8
     torch.manual_seed(rank)
 
     for i in (num_sms,):
@@ -556,6 +583,11 @@ if __name__ == "__main__":
         "--tcp-server",
         type=str,
         help="TCP server address (for both TCPStore and rank server). If not set, both will be started locally.",
+    )
+    parser.add_argument(
+        "--ci-correctness-only",
+        action="store_true",
+        help="Run the reduced 4-GPU CI correctness check and skip HT performance tuning.",
     )
     args = parser.parse_args()
 

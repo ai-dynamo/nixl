@@ -441,7 +441,7 @@ void notify_dispatch(const int* num_tokens_per_rank,
     break
 
     constexpr int kNumThreads = 512;
-    const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
+    const auto num_rdma_ranks = NUM_RDMA_RANKS_FOR(num_ranks);
 
     // Get clean meta
     auto rdma_clean_meta =
@@ -1375,7 +1375,7 @@ __global__ void cached_notify(const int rdma_clean_offset,
     auto lane_id = get_lane_id();
 
     auto nvl_rank = rank % NUM_MAX_NVL_PEERS;
-    auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
+    auto num_rdma_ranks = NUM_RDMA_RANKS_FOR(num_ranks);
 
     // Using two SMs, which clean the RDMA/NVL buffer respectively
     if (sm_id == 0) {
@@ -1534,7 +1534,7 @@ void cached_notify(int hidden_int4,
                    gpu_nixl_ctx nixl_ctx) {
     const int num_threads = std::max(128, 32 * num_channels);
     const int num_warps = num_threads / 32;
-    const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
+    const auto num_rdma_ranks = NUM_RDMA_RANKS_FOR(num_ranks);
     const int kNumTMABytesPerWarp = 8192;
     const int smem_size = kNumTMABytesPerWarp * num_warps;
 
@@ -2412,7 +2412,7 @@ void combine(cudaDataType_t type,
     }                                                                                 \
     break
 
-    int num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
+    int num_rdma_ranks = NUM_RDMA_RANKS_FOR(num_ranks);
     auto num_warps_per_forwarder = std::max(kNumCombineForwarderWarps / num_rdma_ranks, 1);
     int num_forwarder_warps = num_rdma_ranks * num_warps_per_forwarder;
     EP_HOST_ASSERT(num_rdma_ranks <= kNumCombineForwarderWarps);

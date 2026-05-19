@@ -104,6 +104,7 @@ steps:
       --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} \
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
+      --build-arg BUILD_NIXL_EP=true \
       --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-base-25.10-cuda13.0-ubuntu24.04:${CI_IMAGE_TAG} \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
@@ -139,6 +140,22 @@ steps:
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_python.sh ${NIXL_INSTALL_DIR}"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+
+  - name: Run DL NIXL EP HT correctness test
+    containerSelector: "{name: 'build_helper_dl'}"
+    timeout: "${TEST_TIMEOUT}"
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      testScript: "bash .ci/scripts/run_ep_ht_correctness_ci.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
