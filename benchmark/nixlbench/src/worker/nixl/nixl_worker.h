@@ -73,6 +73,9 @@ class xferBenchNixlWorker: public xferBenchWorker {
                  const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
 
+        bool
+        readRemoteForVerify(const xferBenchIOV &iov, void *dst, size_t len) override;
+
     private:
         std::optional<xferBenchIOV>
         initBasicDescDram(size_t buffer_size, int mem_dev_id);
@@ -86,6 +89,16 @@ class xferBenchNixlWorker: public xferBenchWorker {
         // remote_iov. Used to pre-populate object-storage backends before a READ benchmark.
         bool
         seedObjectsLoopback(const std::vector<xferBenchIOV> &remote_iovs, size_t len);
+        // Register local_buf as DRAM_SEG, issue op against the OBJ_SEG remote_iovs (each
+        // paired with local_buf) through the bench's own agent, poll the request to a
+        // terminal state, then release the request and deregister. A signal stops further
+        // status reporting but the poll continues draining until the backend is done
+        // with local_buf.
+        bool
+        objLoopback(const std::vector<xferBenchIOV> &remote_iovs,
+                    void *local_buf,
+                    size_t len,
+                    nixl_xfer_op_t op);
         std::optional<xferBenchIOV>
         initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
         bool
