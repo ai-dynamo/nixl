@@ -705,6 +705,64 @@ xferBenchNixlWorker::cleanupBasicDescObj(xferBenchIOV &iov) {
     }
 }
 
+bool
+xferBenchNixlWorker::seedObjectLoopback(const xferBenchIOV &remote_iov, size_t len) {
+    void *scratch = nullptr;
+    if (!allocateXferMemory(len, &scratch)) {
+        std::cerr << "seedObjectLoopback: failed to allocate " << len << " bytes" << std::endl;
+        return false;
+    }
+    memset(scratch, XFERBENCH_TARGET_BUFFER_ELEMENT, len);
+
+    nixl_reg_dlist_t scratch_reg(DRAM_SEG);
+    nixlBlobDesc reg_desc;
+    reg_desc.addr = (uintptr_t)scratch;
+    reg_desc.len = len;
+    reg_desc.devId = 0;
+    scratch_reg.addDesc(reg_desc);
+
+    nixl_opt_args_t opt_args;
+    opt_args.backends.push_back(backend_engine);
+
+    nixl_status_t rc = agent->registerMem(scratch_reg, &opt_args);
+    if (NIXL_SUCCESS != rc) {
+        std::cerr << "seedObjectLoopback: registerMem failed: "
+                  << nixlEnumStrings::statusStr(rc) << std::endl;
+        free(scratch);
+        return false;
+    }
+
+    std::vector<xferBenchIOV> local_iov{xferBenchIOV((uintptr_t)scratch, len, 0)};
+    std::vector<xferBenchIOV> remote_iov_vec{remote_iov};
+    nixl_xfer_dlist_t local_desc(DRAM_SEG);
+    nixl_xfer_dlist_t remote_desc(OBJ_SEG);
+    iovListToNixlXferDlist(local_iov, local_desc);
+    iovListToNixlXferDlist(remote_iov_vec, remote_desc);
+
+    bool ok = false;
+    nixlXferReqH *req = nullptr;
+    rc = agent->createXferReq(NIXL_WRITE, local_desc, remote_desc, name, req, &opt_args);
+    if (NIXL_SUCCESS == rc) {
+        rc = agent->postXferReq(req);
+        while (NIXL_IN_PROG == rc) {
+            rc = agent->getXferStatus(req);
+        }
+        ok = (NIXL_SUCCESS == rc);
+        if (!ok) {
+            std::cerr << "seedObjectLoopback: transfer failed: "
+                      << nixlEnumStrings::statusStr(rc) << std::endl;
+        }
+        agent->releaseXferReq(req);
+    } else {
+        std::cerr << "seedObjectLoopback: createXferReq failed: "
+                  << nixlEnumStrings::statusStr(rc) << std::endl;
+    }
+
+    agent->deregisterMem(scratch_reg, &opt_args);
+    free(scratch);
+    return ok;
+}
+
 std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset) {
     // The dev_offset represents the LBA (Logical Block Address) offset in the block device
@@ -825,18 +883,10 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
-                std::optional<xferBenchIOV> basic_desc;
                 std::string unique_name = "nixlbench_obj" + std::to_string(list_idx) + "_" +
                     std::to_string(i) + "_" + std::to_string(timestamp);
 
-                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-                    if (!xferBenchUtils::putObj(buffer_size, unique_name)) {
-                        std::cerr << "Failed to put object: " << unique_name << std::endl;
-                        continue;
-                    }
-                }
-
-                basic_desc = initBasicDescObj(buffer_size, i, unique_name);
+                auto basic_desc = initBasicDescObj(buffer_size, i, unique_name);
                 if (basic_desc) {
                     std::cout << "Creating obj: " << unique_name << std::endl;
                     iov_list.push_back(basic_desc.value());
@@ -845,6 +895,16 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             nixl_reg_dlist_t desc_list(OBJ_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+
+            if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+                for (const auto &iov : iov_list) {
+                    if (!seedObjectLoopback(iov, buffer_size)) {
+                        std::cerr << "Failed to seed object: " << iov.metaInfo << std::endl;
+                        exit(EXIT_FAILURE);
+                    }
+                }
+            }
+
             remote_iovs.push_back(iov_list);
         }
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
