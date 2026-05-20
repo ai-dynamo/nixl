@@ -52,7 +52,7 @@ export NIXL_NO_STUBS_FALLBACK=1
 start_etcd_server "/nixl/rust_ci"
 trap 'kill -9 $ETCD_PID 2>/dev/null || true' EXIT
 
-cargo test -- --test-threads=1
+cargo test --jobs "$NPROC" -- --test-threads=1
 
 # test that stubs and real wrapper defined APIs / symbols match
 g++ -c ./src/bindings/rust/wrapper.cpp -o wrapper.o -I ./src/api/cpp/
@@ -74,7 +74,7 @@ fi
 
 
 # test stubs build
-cargo build --features stub-api
+cargo build --jobs "$NPROC" --features stub-api
 
 cargo package
 
