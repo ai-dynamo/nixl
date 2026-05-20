@@ -452,4 +452,3 @@ nixlInMemKVEngine::unloadMD(nixlBackendMD *input) {
     (void)input;
     return NIXL_SUCCESS;
 }
-
