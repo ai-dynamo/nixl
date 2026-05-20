@@ -98,7 +98,6 @@ nixl_ep_cuda_args = [
     '-DTORCH_EXTENSION_NAME=nixl_ep_cpp',
     '-DDISABLE_AGGRESSIVE_PTX_INSTRS',
     '--expt-relaxed-constexpr',  # Allow calling constexpr __host__ functions from __device__ functions
-    '-rdc=false',  # Override global -rdc=true to avoid nvlink register count errors with nixlPut
     '--ptxas-options=--register-usage-level=10',  # Allow more register usage (matches setup.py)
     '-Xcompiler', '-Wno-deprecated-declarations',
     '-Xcompiler', '-Wno-unused-variable',
@@ -127,7 +126,7 @@ nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'plugins')
 # For now, nixl ep cannot be built with -G due to register usage limits
 nixl_ep_override_options = []
 if get_option('buildtype') == 'debug'
-    nixl_ep_override_options = ['optimization=3']
+    nixl_ep_override_options = ['buildtype=custom', 'optimization=3']
     nixl_ep_cpp_args += ['-g']
 endif
 
