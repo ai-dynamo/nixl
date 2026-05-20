@@ -76,7 +76,9 @@ storageExecIterations(nixlAgent *agent,
     nixlXferReqH *req = nullptr;
     nixl_status_t create_rc =
         agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
-    if (NIXL_SUCCESS != create_rc) return -1;
+    if (NIXL_SUCCESS != create_rc) {
+        return -1;
+    }
 
     for (int i = 0; i < num_iter; ++i) {
         nixl_status_t rc = storageExecSingle(agent, req);
@@ -85,7 +87,9 @@ storageExecIterations(nixlAgent *agent,
             return -1;
         }
     }
-    if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0)) return -1;
+    if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0)) {
+        return -1;
+    }
     return 0;
 }
 
@@ -119,7 +123,9 @@ storageExecTransfer(nixlAgent *agent,
         }
     }
     auto t_end = std::chrono::high_resolution_clock::now();
-    if (ret != 0) return -1;
+    if (ret != 0) {
+        return -1;
+    }
     return std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start).count();
 }
 
@@ -815,8 +821,12 @@ PYBIND11_MODULE(_bindings, m) {
             "parallelPostXferReqs",
             [](nixlAgent &agent, std::vector<uintptr_t> reqhs, int num_threads) {
                 int n = reqhs.size();
-                if (n == 0) return;
-                if (num_threads <= 0 || num_threads > n) num_threads = n;
+                if (n == 0) {
+                    return;
+                }
+                if (num_threads <= 0 || num_threads > n) {
+                    num_threads = n;
+                }
 
                 std::vector<std::thread> threads;
                 threads.reserve(num_threads);
@@ -845,8 +855,9 @@ PYBIND11_MODULE(_bindings, m) {
                         threads.emplace_back(worker, start, end);
                     }
                 }
-                for (auto &t : threads)
+                for (auto &t : threads) {
                     t.join();
+                }
                 throw_nixl_exception(first_err.load());
             },
             py::arg("reqhs"),
@@ -865,19 +876,26 @@ PYBIND11_MODULE(_bindings, m) {
                 // (copied above) for guaranteed identical performance.
 
                 int n = file_desc_lists.size();
-                if (n == 0) return 0.0;
-                if (num_threads <= 0 || num_threads > n) num_threads = n;
+                if (n == 0) {
+                    return 0.0;
+                }
+                if (num_threads <= 0 || num_threads > n) {
+                    num_threads = n;
+                }
 
                 long page_size = sysconf(_SC_PAGESIZE);
-                if (page_size <= 0) page_size = 4096;
+                if (page_size <= 0) {
+                    page_size = 4096;
+                }
 
                 // Build IOV lists and compute per-thread buffer sizes
                 std::vector<size_t> thread_buf_sizes(n);
                 size_t total_bytes = 0;
                 for (int i = 0; i < n; i++) {
                     size_t sz = 0;
-                    for (auto &[off, len, fd] : file_desc_lists[i])
+                    for (auto &[off, len, fd] : file_desc_lists[i]) {
                         sz += len;
+                    }
                     sz = ((sz + page_size - 1) / page_size) * page_size;
                     thread_buf_sizes[i] = sz;
                     total_bytes += sz;
@@ -885,8 +903,9 @@ PYBIND11_MODULE(_bindings, m) {
 
                 // Allocate + register DRAM buffers (main thread, like nixlbench allocateMemory)
                 nixl_opt_args_t reg_opt;
-                for (auto bk : backends)
+                for (auto bk : backends) {
                     reg_opt.backends.push_back((nixlBackendH *)bk);
+                }
 
                 std::vector<void *> thread_bufs(n, nullptr);
                 std::vector<nixl_reg_dlist_t> dram_regs;
@@ -896,8 +915,11 @@ PYBIND11_MODULE(_bindings, m) {
                     for (size_t j = 0; j < dram_regs.size(); j++) {
                         agent.deregisterMem(dram_regs[j], &reg_opt);
                     }
-                    for (void *b : thread_bufs)
-                        if (b) free(b);
+                    for (void *b : thread_bufs) {
+                        if (b) {
+                            free(b);
+                        }
+                    }
                 };
 
                 for (int i = 0; i < n; i++) {
@@ -949,8 +971,7 @@ PYBIND11_MODULE(_bindings, m) {
 
                 // Timed pass (uses nixlbench's exact OMP + transfer code)
                 int64_t elapsed_us = storageExecTransfer(
-                    &agent, local_iovs, remote_iovs, agent_name,
-                    NIXL_READ, num_iters, num_threads);
+                    &agent, local_iovs, remote_iovs, agent_name, NIXL_READ, num_iters, num_threads);
 
                 // Cleanup
                 for (int i = 0; i < n; i++) {
@@ -958,9 +979,11 @@ PYBIND11_MODULE(_bindings, m) {
                     free(thread_bufs[i]);
                 }
 
-                if (elapsed_us < 0) return -1.0;
+                if (elapsed_us < 0) {
+                    return -1.0;
+                }
                 double wall_time = (double)elapsed_us / 1e6;
-                return (double)(total_bytes * num_iters) / wall_time / (1024.0*1024.0*1024.0);
+                return (double)(total_bytes * num_iters) / wall_time / (1024.0 * 1024.0 * 1024.0);
             },
             py::arg("file_desc_lists"),
             py::arg("agent_name"),
