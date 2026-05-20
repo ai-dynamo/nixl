@@ -19,22 +19,11 @@
 # limitations under the License.
 
 import argparse
+import ipaddress
 import os
+import socket
 import sys
 import time
-
-from ht_target_selection import (  # noqa: E402
-    EIGHT_GPU_SINGLE_NODE_TARGET,
-    EVIDENCE_CORRECTNESS_TARGETS,
-    FOUR_GPU_SINGLE_NODE_TARGET,
-    MULTI_NODE_TARGET,
-    SUPPORTED_CORRECTNESS_TARGETS,
-    TargetSelectionError,
-    classify_correctness_failure,
-    format_correctness_evidence,
-    preflight_four_gpu_single_node_target,
-    resolve_correctness_target,
-)
 
 # Add elastic subdirectory to path for store_group import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "elastic"))
@@ -56,6 +45,233 @@ from utils import (  # noqa: E402
 )
 
 TCP_STORE_PORT = 9999
+FOUR_GPU_SINGLE_NODE_TARGET = "four_gpu_single_node"
+FOUR_GPU_SINGLE_NODE_LABEL = "four-GPU single-node HT correctness"
+
+
+class TargetSelectionError(ValueError):
+    pass
+
+
+class CorrectnessPreflightError(RuntimeError):
+    def __init__(self, failure_category: str, message: str):
+        super().__init__(message)
+        self.failure_category = failure_category
+
+
+def resolve_correctness_target(args: argparse.Namespace) -> str | None:
+    selected = args.correctness_target
+    if selected is None:
+        return None
+
+    if selected != FOUR_GPU_SINGLE_NODE_TARGET:
+        raise TargetSelectionError(
+            f"unsupported_target: unsupported correctness target {selected!r}; "
+            f"supported target: {FOUR_GPU_SINGLE_NODE_TARGET}"
+        )
+
+    if args.num_processes != 4:
+        raise TargetSelectionError(
+            f"unsupported_target: {FOUR_GPU_SINGLE_NODE_TARGET} requires "
+            f"--num-processes 4; got {args.num_processes}"
+        )
+
+    world_size = _read_int_env("WORLD_SIZE", 1)
+    rank = _read_int_env("RANK", 0)
+    if world_size != 1:
+        raise TargetSelectionError(
+            f"unsupported_target: {FOUR_GPU_SINGLE_NODE_TARGET} requires "
+            f"WORLD_SIZE=1; got {world_size}"
+        )
+    if rank != 0:
+        raise TargetSelectionError(
+            f"unsupported_target: {FOUR_GPU_SINGLE_NODE_TARGET} requires "
+            f"RANK=0; got {rank}"
+        )
+
+    master_addr = os.getenv("MASTER_ADDR", "127.0.0.1")
+    if master_addr and not _is_local_endpoint(master_addr):
+        raise TargetSelectionError(
+            f"unsupported_target: {FOUR_GPU_SINGLE_NODE_TARGET} requires a local "
+            f"MASTER_ADDR; got {master_addr!r}"
+        )
+
+    if args.tcp_server and not _is_local_endpoint(args.tcp_server):
+        raise TargetSelectionError(
+            f"unsupported_target: {FOUR_GPU_SINGLE_NODE_TARGET} rejects off-node "
+            f"TCPStore endpoints; got {args.tcp_server!r}"
+        )
+
+    return FOUR_GPU_SINGLE_NODE_TARGET
+
+
+def preflight_four_gpu_single_node_target(
+    args: argparse.Namespace,
+    *,
+    cuda: object,
+    tcp_store_port: int,
+    tcp_store_host: str,
+) -> None:
+    if args.correctness_target != FOUR_GPU_SINGLE_NODE_TARGET:
+        return
+
+    if not cuda.is_available():
+        raise CorrectnessPreflightError(
+            "gpu_unavailable", "gpu_unavailable: CUDA runtime is unavailable"
+        )
+
+    visible_cuda_devices = int(cuda.device_count())
+    if visible_cuda_devices != 4:
+        raise CorrectnessPreflightError(
+            "gpu_unavailable",
+            f"gpu_unavailable: {FOUR_GPU_SINGLE_NODE_TARGET} requires exactly "
+            f"4 visible CUDA devices; got {visible_cuda_devices}",
+        )
+
+    current_device = None
+    try:
+        current_device = int(cuda.current_device())
+    except Exception:
+        pass
+
+    try:
+        for device in range(4):
+            try:
+                cuda.set_device(device)
+                cuda.get_device_properties(device)
+            except Exception as exc:
+                raise CorrectnessPreflightError(
+                    "runtime_not_ready",
+                    f"runtime_not_ready: CUDA context readiness failed for device {device}",
+                ) from exc
+    finally:
+        if current_device is not None:
+            try:
+                cuda.set_device(current_device)
+            except Exception:
+                pass
+
+    for src in range(4):
+        for dst in range(4):
+            if src == dst:
+                continue
+            try:
+                can_access = bool(cuda.can_device_access_peer(src, dst))
+            except Exception as exc:
+                raise CorrectnessPreflightError(
+                    "peer_wiring_failed",
+                    "peer_wiring_failed: CUDA peer access probe failed",
+                ) from exc
+            if not can_access:
+                raise CorrectnessPreflightError(
+                    "peer_wiring_failed",
+                    f"peer_wiring_failed: CUDA peer access unavailable between "
+                    f"devices {src} and {dst}",
+                )
+
+    selected_tcp_store_host = args.tcp_server or tcp_store_host
+    if not _is_local_endpoint(selected_tcp_store_host):
+        raise CorrectnessPreflightError(
+            "unsupported_target",
+            f"unsupported_target: {FOUR_GPU_SINGLE_NODE_TARGET} requires a local "
+            "TCPStore endpoint",
+        )
+    if not args.tcp_server:
+        _check_local_tcpstore_bind(selected_tcp_store_host, tcp_store_port)
+
+
+def format_correctness_evidence(
+    args: argparse.Namespace,
+    *,
+    result: str,
+    failure_category: str | None = None,
+) -> str:
+    failure = "none" if result == "pass" else (failure_category or "correctness_failed")
+    fields = (
+        ("schema", "ep_ht_correctness_evidence_v1"),
+        ("evidence_id", "ep_ht_four_gpu_single_node"),
+        ("target", FOUR_GPU_SINGLE_NODE_TARGET),
+        ("target_label", _evidence_value(FOUR_GPU_SINGLE_NODE_LABEL)),
+        ("topology", "single_node"),
+        ("world_size", 4),
+        ("num_nvl_ranks", 4),
+        ("num_rdma_ranks", 1),
+        ("workload_tokens", args.num_tokens),
+        ("hidden_size", args.hidden),
+        ("top_k", args.num_topk),
+        ("expert_count", args.num_experts),
+        ("correctness_only", "true"),
+        ("scope", "single_node_correctness_only_no_multi_node_rdma_no_performance"),
+        ("result", result),
+        ("failure_category", _evidence_value(failure)),
+    )
+    return "[evidence] " + " ".join(f"{key}={value}" for key, value in fields)
+
+
+def classify_correctness_failure(exc: BaseException) -> str:
+    if isinstance(exc, CorrectnessPreflightError):
+        return exc.failure_category
+    if isinstance(exc, TargetSelectionError):
+        return "unsupported_target"
+
+    message = str(exc).lower()
+    if any(term in message for term in ("cuda ipc", "nvlink", "peer", "ipc")):
+        return "peer_wiring_failed"
+    if any(term in message for term in ("no cuda", "cuda unavailable", "gpu")):
+        return "gpu_unavailable"
+    if any(term in message for term in ("nixl", "nccl", "runtime", "c10")):
+        return "runtime_not_ready"
+    return "correctness_failed"
+
+
+def _check_local_tcpstore_bind(host: str, port: int) -> None:
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, int(port)))
+    except Exception as exc:
+        raise CorrectnessPreflightError(
+            "runtime_not_ready",
+            "runtime_not_ready: local TCPStore bind failed for configured endpoint",
+        ) from exc
+
+
+def _is_local_endpoint(endpoint: str) -> bool:
+    normalized = endpoint.strip().strip("[]").lower().rstrip(".")
+    local_names = {
+        "localhost",
+        socket.gethostname().lower().rstrip("."),
+        socket.getfqdn().lower().rstrip("."),
+    }
+    if normalized in local_names:
+        return True
+
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    return address.is_loopback
+
+
+def _read_int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise TargetSelectionError(
+            f"unsupported_target: {name} must be an integer; got {value!r}"
+        ) from exc
+
+
+def _evidence_value(value: object) -> str:
+    normalized = "".join(
+        character.lower() if character.isalnum() else "_"
+        for character in str(value)
+    ).strip("_")
+    return normalized or "unspecified"
 
 
 # noinspection PyShadowingNames
@@ -617,15 +833,9 @@ if __name__ == "__main__":
         "--correctness-target",
         type=str,
         help=(
-            "Named correctness target to run (supported: "
-            f"{FOUR_GPU_SINGLE_NODE_TARGET}, {EIGHT_GPU_SINGLE_NODE_TARGET}, "
-            f"{MULTI_NODE_TARGET})."
+            "Named correctness target to run "
+            f"(supported: {FOUR_GPU_SINGLE_NODE_TARGET})."
         ),
-    )
-    parser.add_argument(
-        "--ci-correctness-only",
-        action="store_true",
-        help="Internal legacy switch for the reduced 4-GPU CI check; use --correctness-target four_gpu_single_node.",
     )
     args = parser.parse_args()
     args.num_nodes = int(os.getenv("WORLD_SIZE", 1))
@@ -634,11 +844,10 @@ if __name__ == "__main__":
         correctness_target = resolve_correctness_target(args)
     except TargetSelectionError as exc:
         selected_target = getattr(args, "correctness_target", None)
-        if selected_target in EVIDENCE_CORRECTNESS_TARGETS:
-            correctness_target = SUPPORTED_CORRECTNESS_TARGETS[selected_target]
-            args.correctness_target = correctness_target.name
-            args.correctness_target_label = correctness_target.label
-            args.ci_correctness_only = correctness_target.ci_correctness_only
+        if selected_target == FOUR_GPU_SINGLE_NODE_TARGET:
+            args.correctness_target = FOUR_GPU_SINGLE_NODE_TARGET
+            args.correctness_target_label = FOUR_GPU_SINGLE_NODE_LABEL
+            args.ci_correctness_only = True
             if _is_global_rank_zero():
                 print(
                     format_correctness_evidence(
@@ -650,26 +859,28 @@ if __name__ == "__main__":
                 )
         parser.error(str(exc))
 
-    args.correctness_target = correctness_target.name
-    args.correctness_target_label = correctness_target.label
-    args.ci_correctness_only = correctness_target.ci_correctness_only
+    args.correctness_target = correctness_target
+    args.correctness_target_label = (
+        FOUR_GPU_SINGLE_NODE_LABEL
+        if correctness_target == FOUR_GPU_SINGLE_NODE_TARGET
+        else None
+    )
+    args.ci_correctness_only = correctness_target == FOUR_GPU_SINGLE_NODE_TARGET
 
-    if correctness_target.name and _is_global_rank_zero():
+    if correctness_target and _is_global_rank_zero():
         print(
-            f"[target] Running {correctness_target.label} ({correctness_target.name})",
+            f"[target] Running {args.correctness_target_label} ({correctness_target})",
             flush=True,
         )
 
     tcp_store_bind_host = "127.0.0.1"
-    if correctness_target.name != FOUR_GPU_SINGLE_NODE_TARGET:
+    if correctness_target != FOUR_GPU_SINGLE_NODE_TARGET:
         tcp_store_bind_host = "0.0.0.0"
 
     try:
         preflight_four_gpu_single_node_target(
             args,
             cuda=torch.cuda,
-            nixl_ep_module=nixl_ep,
-            store_group_module=store_group,
             tcp_store_port=TCP_STORE_PORT,
             tcp_store_host=tcp_store_bind_host,
         )
@@ -694,7 +905,7 @@ if __name__ == "__main__":
             test_loop, args=(num_processes, args), nprocs=num_processes
         )
     except Exception as exc:
-        if correctness_target.name in EVIDENCE_CORRECTNESS_TARGETS:
+        if correctness_target == FOUR_GPU_SINGLE_NODE_TARGET:
             if _is_global_rank_zero():
                 print(
                     format_correctness_evidence(
@@ -707,8 +918,5 @@ if __name__ == "__main__":
             sys.exit(1)
         raise
 
-    if (
-        correctness_target.name in EVIDENCE_CORRECTNESS_TARGETS
-        and _is_global_rank_zero()
-    ):
+    if correctness_target == FOUR_GPU_SINGLE_NODE_TARGET and _is_global_rank_zero():
         print(format_correctness_evidence(args, result="pass"), flush=True)
