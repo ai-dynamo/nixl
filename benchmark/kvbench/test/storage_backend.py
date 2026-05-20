@@ -26,7 +26,7 @@ import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from nixl._api import nixl_agent
 from nixl.logging import get_logger
@@ -164,7 +164,7 @@ class FilesystemBackend(StorageBackend):
         nixl_backend: str = "POSIX",
         use_direct_io: bool = False,
         block_size: int = 0,
-        backend_params: dict = None,
+        backend_params: Optional[Dict[str, str]] = None,
     ):
         """Initialize filesystem backend.
 
@@ -200,7 +200,11 @@ class FilesystemBackend(StorageBackend):
 
         logger.info(
             "FilesystemBackend: path=%s backend=%s direct_io=%s block_size=%d params=%s",
-            base_path, nixl_backend, use_direct_io, block_size, backend_params,
+            base_path,
+            nixl_backend,
+            use_direct_io,
+            block_size,
+            backend_params,
         )
 
     def _get_file_path(self, tp_idx: int, rank: int, shard: int = -1) -> Path:
@@ -284,15 +288,21 @@ class FilesystemBackend(StorageBackend):
             fd = self._open_and_register_file(file_path, file_size)
 
             handle = StorageHandle(
-                tp_idx=tp_idx, rank=rank,
-                read_size=read_size, write_size=write_size,
+                tp_idx=tp_idx,
+                rank=rank,
+                read_size=read_size,
+                write_size=write_size,
                 backend_data={"file_path": str(file_path), "fd": fd},
             )
         else:
             # Multi-file: N shards, each with size/N
             align = max(self._block_size, 4096) if self._block_size > 0 else 4096
             shard_read = ((read_size // n_shards + align - 1) // align) * align
-            shard_write = ((write_size // n_shards + align - 1) // align) * align if write_size > 0 else 0
+            shard_write = (
+                ((write_size // n_shards + align - 1) // align) * align
+                if write_size > 0
+                else 0
+            )
             shard_size = shard_read + shard_write
 
             shard_fds = []
@@ -311,8 +321,10 @@ class FilesystemBackend(StorageBackend):
                 shard_paths.append(str(fpath))
 
             handle = StorageHandle(
-                tp_idx=tp_idx, rank=rank,
-                read_size=read_size, write_size=write_size,
+                tp_idx=tp_idx,
+                rank=rank,
+                read_size=read_size,
+                write_size=write_size,
                 backend_data={
                     "file_path": shard_paths[0],
                     "fd": shard_fds[0],
@@ -325,7 +337,10 @@ class FilesystemBackend(StorageBackend):
 
             logger.debug(
                 "Prepared sharded storage: tp=%d, rank=%d, %d shards x %d bytes",
-                tp_idx, rank, len(shard_fds), shard_size,
+                tp_idx,
+                rank,
+                len(shard_fds),
+                shard_size,
             )
 
         self._handles[key] = handle
@@ -398,60 +413,6 @@ class FilesystemBackend(StorageBackend):
             backends=[self._nixl_backend],
         )
 
-    def _create_chunked_descs(self, fd, file_offset, total_size, buffer):
-        """Create file and local memory descriptors, optionally chunked for high queue depth.
-
-        When block_size > 0, splits the transfer into multiple small descriptors.
-        This increases the async I/O queue depth in the POSIX/GDS backend, allowing
-        the NFS client to pipeline requests across nconnect sessions.
-
-        Both local and file descriptor lists must have matching entry counts
-        (required by the POSIX backend: posix_backend.cpp line 57).
-
-        Args:
-            fd: File descriptor
-            file_offset: Starting offset in file
-            total_size: Total bytes to transfer
-            buffer: Memory buffer (torch tensor)
-
-        Returns:
-            (local_descs, file_descs) tuple of NIXL descriptor lists
-        """
-        bs = self._block_size
-        if bs <= 0 or total_size <= bs:
-            # Legacy: single descriptor (queue_depth = 1)
-            file_descs = self._agent.get_xfer_descs(
-                [(file_offset, total_size, fd)], "FILE"
-            )
-            local_descs = self._agent.get_xfer_descs(buffer)
-            return local_descs, file_descs
-
-        # Chunked: N descriptors of block_size each (queue_depth = N)
-        # This mimics nixlbench's approach: 64 x 1MB = 64 outstanding I/Os
-        buf_addr = buffer.data_ptr()
-        dev_id = buffer.device.index if buffer.is_cuda else 0
-
-        file_tuples = []
-        local_tuples = []
-        for off in range(0, total_size, bs):
-            chunk = min(bs, total_size - off)
-            file_tuples.append((file_offset + off, chunk, fd))
-            local_tuples.append((buf_addr + off, chunk, dev_id or 0))
-
-        file_descs = self._agent.get_xfer_descs(file_tuples, "FILE")
-        local_mem_type = "VRAM" if buffer.is_cuda else "DRAM"
-        local_descs = self._agent.get_xfer_descs(local_tuples, local_mem_type)
-
-        logger.debug(
-            "Chunked I/O: %d descs x %d bytes (total %d, queue_depth=%d)",
-            len(file_tuples),
-            bs,
-            total_size,
-            len(file_tuples),
-        )
-
-        return local_descs, file_descs
-
     def get_read_handle(
         self,
         handle: StorageHandle,
@@ -474,9 +435,7 @@ class FilesystemBackend(StorageBackend):
             return None
         fd = handle.backend_data["fd"]
         write_offset = handle.read_size
-        return self._create_handle(
-            "WRITE", fd, write_offset, handle.write_size, buffer
-        )
+        return self._create_handle("WRITE", fd, write_offset, handle.write_size, buffer)
 
     def get_read_handles(
         self,
@@ -517,7 +476,7 @@ class FilesystemBackend(StorageBackend):
                 size = min(shard_read, total - offset_in_buf)
                 if size <= 0:
                     break
-                buf_slice = buffer[offset_in_buf:offset_in_buf + size]
+                buf_slice = buffer[offset_in_buf : offset_in_buf + size]
                 # Each shard file starts at offset 0
                 xfer = self._create_handle("READ", fd, 0, size, buf_slice)
                 handles.append(xfer)
@@ -534,7 +493,7 @@ class FilesystemBackend(StorageBackend):
                 size = min(chunk_per_handle, total - offset)
                 if size <= 0:
                     break
-                buf_slice = buffer[offset:offset + size]
+                buf_slice = buffer[offset : offset + size]
                 xfer = self._create_handle("READ", fd, offset, size, buf_slice)
                 handles.append(xfer)
             return handles
@@ -565,7 +524,7 @@ class FilesystemBackend(StorageBackend):
                 size = min(shard_write, total - offset_in_buf)
                 if size <= 0:
                     break
-                buf_slice = buffer[offset_in_buf:offset_in_buf + size]
+                buf_slice = buffer[offset_in_buf : offset_in_buf + size]
                 xfer = self._create_handle("WRITE", fd, shard_read, size, buf_slice)
                 handles.append(xfer)
             return handles
@@ -581,8 +540,10 @@ class FilesystemBackend(StorageBackend):
                 size = min(chunk_per_handle, total - offset)
                 if size <= 0:
                     break
-                buf_slice = buffer[offset:offset + size]
-                xfer = self._create_handle("WRITE", fd, write_offset + offset, size, buf_slice)
+                buf_slice = buffer[offset : offset + size]
+                xfer = self._create_handle(
+                    "WRITE", fd, write_offset + offset, size, buf_slice
+                )
                 handles.append(xfer)
             return handles
 

@@ -133,9 +133,17 @@ class SequentialCTPerftest(CTPerftest):
             # Build backend-specific params (e.g., io_uring selection)
             backend_params = {}
             if storage_posix_api == "uring":
-                backend_params = {"use_uring": "true", "use_aio": "false", "use_posix_aio": "false"}
+                backend_params = {
+                    "use_uring": "true",
+                    "use_aio": "false",
+                    "use_posix_aio": "false",
+                }
             elif storage_posix_api == "aio":
-                backend_params = {"use_aio": "true", "use_uring": "false", "use_posix_aio": "false"}
+                backend_params = {
+                    "use_aio": "true",
+                    "use_uring": "false",
+                    "use_posix_aio": "false",
+                }
             # "auto" = no params, backend picks best available (default: libaio)
 
             logger.info(
@@ -400,8 +408,7 @@ class SequentialCTPerftest(CTPerftest):
 
         # Pre-compute tags and agent names to avoid per-poll allocation
         sender_tags = {
-            rank: f"{tp.id}_{rank}_{self.my_rank}".encode()
-            for rank in expected_senders
+            rank: f"{tp.id}_{rank}_{self.my_rank}".encode() for rank in expected_senders
         }
         sender_agent_names = {rank: f"{rank}" for rank in expected_senders}
 
@@ -669,8 +676,12 @@ class SequentialCTPerftest(CTPerftest):
         Each stat dict has: avg, p50, p90, p99, min, max (all in seconds).
         """
         empty_stats = {
-            "avg": 0.0, "p50": 0.0, "p90": 0.0,
-            "p99": 0.0, "min": 0.0, "max": 0.0,
+            "avg": 0.0,
+            "p50": 0.0,
+            "p90": 0.0,
+            "p99": 0.0,
+            "min": 0.0,
+            "max": 0.0,
         }
         my_stats: List[Dict] = [empty_stats.copy() for _ in tp_handles]
 
@@ -693,7 +704,10 @@ class SequentialCTPerftest(CTPerftest):
                 if iter_idx < 3 or iter_idx == self.n_isolation_iters - 1:
                     logger.info(
                         "[Rank %d] Isolated RDMA TP %d iter %d: %.3f ms",
-                        self.my_rank, tp_ix, iter_idx, iter_latency * 1e3,
+                        self.my_rank,
+                        tp_ix,
+                        iter_idx,
+                        iter_latency * 1e3,
                     )
 
             sorted_lats = sorted(iter_latencies)
@@ -704,13 +718,23 @@ class SequentialCTPerftest(CTPerftest):
             p99 = sorted_lats[int(n * 0.99)] if n >= 100 else sorted_lats[-1]
 
             my_stats[tp_ix] = {
-                "avg": avg_lat, "p50": p50, "p90": p90, "p99": p99,
-                "min": sorted_lats[0], "max": sorted_lats[-1],
+                "avg": avg_lat,
+                "p50": p50,
+                "p90": p90,
+                "p99": p99,
+                "min": sorted_lats[0],
+                "max": sorted_lats[-1],
             }
             logger.info(
                 "[Rank %d] Isolated RDMA TP %d: avg=%.3f p50=%.3f p90=%.3f p99=%.3f ms (min=%.3f max=%.3f)",
-                self.my_rank, tp_ix, avg_lat * 1e3, p50 * 1e3, p90 * 1e3,
-                p99 * 1e3, sorted_lats[0] * 1e3, sorted_lats[-1] * 1e3,
+                self.my_rank,
+                tp_ix,
+                avg_lat * 1e3,
+                p50 * 1e3,
+                p90 * 1e3,
+                p99 * 1e3,
+                sorted_lats[0] * 1e3,
+                sorted_lats[-1] * 1e3,
             )
 
         return my_stats
@@ -745,11 +769,13 @@ class SequentialCTPerftest(CTPerftest):
     def _execute_workload_tp(self, tp_ix, tp, handles, read_h, write_h):
         """Execute one TP's phases: Storage READ -> RDMA -> Notifications -> Storage WRITE."""
         result = {
-            "rdma_start": None, "rdma_end": None,
-            "read_time": 0.0, "write_time": 0.0,
-            "read_start": None, "read_end": None,
+            "rdma_start": None,
+            "rdma_end": None,
+            "read_time": 0.0,
+            "write_time": 0.0,
+            "read_start": None,
+            "read_end": None,
         }
-        has_rdma = len(tp.senders_ranks()) > 0
         is_sender = self.my_rank in tp.senders_ranks()
         is_receiver = self.my_rank in tp.receivers_ranks()
 
@@ -767,7 +793,9 @@ class SequentialCTPerftest(CTPerftest):
 
         # PHASE 2: RDMA SEND
         if is_sender:
-            logger.debug("[Rank %d] Sender: Starting RDMA send (TP %d)", self.my_rank, tp_ix)
+            logger.debug(
+                "[Rank %d] Sender: Starting RDMA send (TP %d)", self.my_rank, tp_ix
+            )
             tp_start_ts = time.time()
             self._run_tp(handles, blocking=True)
             tp_end_ts = time.time()
@@ -775,7 +803,9 @@ class SequentialCTPerftest(CTPerftest):
             result["rdma_end"] = tp_end_ts
             logger.debug(
                 "[Rank %d] Sender: RDMA send complete in %.3f ms (TP %d)",
-                self.my_rank, (tp_end_ts - tp_start_ts) * 1000, tp_ix,
+                self.my_rank,
+                (tp_end_ts - tp_start_ts) * 1000,
+                tp_ix,
             )
 
         # PHASE 3: Wait for RDMA notifications (receivers)
@@ -784,14 +814,19 @@ class SequentialCTPerftest(CTPerftest):
             if expected_senders:
                 logger.debug(
                     "[Rank %d] Receiver: Waiting for notifications from %d senders (TP %d)",
-                    self.my_rank, len(expected_senders), tp_ix,
+                    self.my_rank,
+                    len(expected_senders),
+                    tp_ix,
                 )
                 recv_start_ts = time.time()
                 notif_times = self._wait_for_rdma_notifications(tp, expected_senders)
                 recv_end_ts = time.time()
                 logger.debug(
                     "[Rank %d] Receiver: Got all %d notifications in %.3f ms (TP %d)",
-                    self.my_rank, len(notif_times), (recv_end_ts - recv_start_ts) * 1000, tp_ix,
+                    self.my_rank,
+                    len(notif_times),
+                    (recv_end_ts - recv_start_ts) * 1000,
+                    tp_ix,
                 )
                 if not is_sender and notif_times:
                     result["rdma_start"] = recv_start_ts
@@ -812,22 +847,49 @@ class SequentialCTPerftest(CTPerftest):
     # =========================================================================
 
     def _print_iteration_results(
-        self, iter_ix, tp_sizes_gb, tp_latencies_ms,
-        storage_read_max_ms, storage_write_max_ms,
-        storage_read_sizes_gb, storage_write_sizes_gb,
-        isolated_rdma_stats_ms, isolated_read_stats_ms, isolated_write_stats_ms,
-        isolated_rdma_stats_by_ranks, isolated_read_stats_by_ranks, isolated_write_stats_by_ranks,
-        tp_mean_bws, tp_starts_by_ranks, tp_ends_by_ranks,
-        storage_read_by_ranks, storage_write_by_ranks,
+        self,
+        iter_ix,
+        tp_sizes_gb,
+        tp_latencies_ms,
+        storage_read_max_ms,
+        storage_write_max_ms,
+        storage_read_sizes_gb,
+        storage_write_sizes_gb,
+        isolated_rdma_stats_ms,
+        isolated_read_stats_ms,
+        isolated_write_stats_ms,
+        isolated_rdma_stats_by_ranks,
+        isolated_read_stats_by_ranks,
+        isolated_write_stats_by_ranks,
+        tp_mean_bws,
+        tp_starts_by_ranks,
+        tp_ends_by_ranks,
+        storage_read_by_ranks,
+        storage_write_by_ranks,
     ):
         """Print iteration results table and per-rank breakdown (rank 0 only)."""
         if self.my_rank != 0:
             return
 
         headers = [
-            "RDMA (GB)", "RDMA (ms)", "Iso p50", "Iso p90", "RDMA BW", "Iso BW",
-            "Read (GB)", "Read (ms)", "Rd p50", "Rd p90", "Read BW", "Iso Rd BW",
-            "Write (GB)", "Write (ms)", "Wr p50", "Wr p90", "Write BW", "Iso Wr BW",
+            "RDMA (GB)",
+            "RDMA (ms)",
+            "Iso p50",
+            "Iso p90",
+            "RDMA BW",
+            "Iso BW",
+            "Read (GB)",
+            "Read (ms)",
+            "Rd p50",
+            "Rd p90",
+            "Read BW",
+            "Iso Rd BW",
+            "Write (GB)",
+            "Write (ms)",
+            "Wr p50",
+            "Wr p90",
+            "Write BW",
+            "Iso Wr BW",
         ]
         data = []
         for i, tp in enumerate(self.traffic_patterns):
@@ -842,7 +904,9 @@ class SequentialCTPerftest(CTPerftest):
             iso_read_p50 = iso_read_stats["p50"]
             iso_write_p50 = iso_write_stats["p50"]
             read_bw = (read_size / (iso_read_p50 / 1e3)) if iso_read_p50 > 0 else None
-            write_bw = (write_size / (iso_write_p50 / 1e3)) if iso_write_p50 > 0 else None
+            write_bw = (
+                (write_size / (iso_write_p50 / 1e3)) if iso_write_p50 > 0 else None
+            )
 
             # Per-rank isolated BWs (bottleneck = min across ranks)
             rdma_bws = []
@@ -870,47 +934,66 @@ class SequentialCTPerftest(CTPerftest):
                     if ops.write_size > 0 and rank < len(isolated_write_stats_by_ranks):
                         rank_stats = isolated_write_stats_by_ranks[rank][i]
                         if rank_stats["p50"] > 0:
-                            write_bws.append((ops.write_size * 1e-9) / rank_stats["p50"])
+                            write_bws.append(
+                                (ops.write_size * 1e-9) / rank_stats["p50"]
+                            )
             iso_write_bw = min(write_bws) if write_bws else None
 
-            data.append([
-                tp_sizes_gb[i], tp_latencies_ms[i],
-                iso_rdma_stats["p50"] if iso_rdma_stats["p50"] > 0 else None,
-                iso_rdma_stats["p90"] if iso_rdma_stats["p90"] > 0 else None,
-                tp_mean_bws[i], iso_rdma_bw,
-                read_size if read_size > 0 else None,
-                read_ms if read_ms > 0 else None,
-                iso_read_p50 if iso_read_p50 > 0 else None,
-                iso_read_stats["p90"] if iso_read_stats["p90"] > 0 else None,
-                read_bw, iso_read_bw,
-                write_size if write_size > 0 else None,
-                write_ms if write_ms > 0 else None,
-                iso_write_p50 if iso_write_p50 > 0 else None,
-                iso_write_stats["p90"] if iso_write_stats["p90"] > 0 else None,
-                write_bw, iso_write_bw,
-            ])
+            data.append(
+                [
+                    tp_sizes_gb[i],
+                    tp_latencies_ms[i],
+                    iso_rdma_stats["p50"] if iso_rdma_stats["p50"] > 0 else None,
+                    iso_rdma_stats["p90"] if iso_rdma_stats["p90"] > 0 else None,
+                    tp_mean_bws[i],
+                    iso_rdma_bw,
+                    read_size if read_size > 0 else None,
+                    read_ms if read_ms > 0 else None,
+                    iso_read_p50 if iso_read_p50 > 0 else None,
+                    iso_read_stats["p90"] if iso_read_stats["p90"] > 0 else None,
+                    read_bw,
+                    iso_read_bw,
+                    write_size if write_size > 0 else None,
+                    write_ms if write_ms > 0 else None,
+                    iso_write_p50 if iso_write_p50 > 0 else None,
+                    iso_write_stats["p90"] if iso_write_stats["p90"] > 0 else None,
+                    write_bw,
+                    iso_write_bw,
+                ]
+            )
         logger.info(
             f"Iteration {iter_ix + 1}/{self.n_iters}\n{tabulate(data, headers=headers, floatfmt='.3f', missingval='-')}"
         )
 
         if iter_ix == self.n_iters - 1:
             self._print_per_rank_breakdown(
-                tp_starts_by_ranks, tp_ends_by_ranks,
-                storage_read_by_ranks, storage_write_by_ranks,
+                tp_starts_by_ranks,
+                tp_ends_by_ranks,
+                storage_read_by_ranks,
+                storage_write_by_ranks,
                 isolated_rdma_stats_by_ranks,
             )
 
     def _print_per_rank_breakdown(
-        self, tp_starts_by_ranks, tp_ends_by_ranks,
-        storage_read_by_ranks, storage_write_by_ranks,
+        self,
+        tp_starts_by_ranks,
+        tp_ends_by_ranks,
+        storage_read_by_ranks,
+        storage_write_by_ranks,
         isolated_rdma_stats_by_ranks,
     ):
         """Print per-rank performance breakdown (rank 0 only, last iteration)."""
         logger.info("Per-rank performance breakdown:")
         for tp_idx, tp in enumerate(self.traffic_patterns):
             rank_headers = [
-                "Rank", "RDMA (GB)", "RDMA BW", "Iso BW",
-                "Read (GB)", "Read BW", "Write (GB)", "Write BW",
+                "Rank",
+                "RDMA (GB)",
+                "RDMA BW",
+                "Iso BW",
+                "Read (GB)",
+                "Read BW",
+                "Write (GB)",
+                "Write BW",
             ]
             rank_data = []
             for rank in range(self.world_size):
@@ -921,30 +1004,41 @@ class SequentialCTPerftest(CTPerftest):
                 read_sec = storage_read_by_ranks[rank][tp_idx]
                 write_sec = storage_write_by_ranks[rank][tp_idx]
 
-                rdma_size_gb = tp.total_src_size(rank) * 1e-9 if rank in tp.senders_ranks() else 0
+                rdma_size_gb = (
+                    tp.total_src_size(rank) * 1e-9 if rank in tp.senders_ranks() else 0
+                )
                 rdma_bw = (rdma_size_gb / rdma_sec) if rdma_sec > 0 else None
-                iso_rdma_bw = (rdma_size_gb / iso_rdma_sec) if iso_rdma_sec > 0 else None
+                iso_rdma_bw = (
+                    (rdma_size_gb / iso_rdma_sec) if iso_rdma_sec > 0 else None
+                )
 
                 read_size_gb = (
                     (tp.storage_ops[rank].read_size * 1e-9)
-                    if tp.storage_ops and rank in tp.storage_ops else 0
+                    if tp.storage_ops and rank in tp.storage_ops
+                    else 0
                 )
                 read_bw = (read_size_gb / read_sec) if read_sec > 0 else None
 
                 write_size_gb = (
                     (tp.storage_ops[rank].write_size * 1e-9)
-                    if tp.storage_ops and rank in tp.storage_ops else 0
+                    if tp.storage_ops and rank in tp.storage_ops
+                    else 0
                 )
                 write_bw = (write_size_gb / write_sec) if write_sec > 0 else None
 
                 if any([rdma_bw, iso_rdma_bw, read_bw, write_bw]):
-                    rank_data.append([
-                        rank,
-                        rdma_size_gb if rdma_size_gb > 0 else None,
-                        rdma_bw, iso_rdma_bw,
-                        read_size_gb if read_size_gb > 0 else None, read_bw,
-                        write_size_gb if write_size_gb > 0 else None, write_bw,
-                    ])
+                    rank_data.append(
+                        [
+                            rank,
+                            rdma_size_gb if rdma_size_gb > 0 else None,
+                            rdma_bw,
+                            iso_rdma_bw,
+                            read_size_gb if read_size_gb > 0 else None,
+                            read_bw,
+                            write_size_gb if write_size_gb > 0 else None,
+                            write_bw,
+                        ]
+                    )
 
             if rank_data:
                 logger.info(
@@ -1032,7 +1126,8 @@ class SequentialCTPerftest(CTPerftest):
                 self._prepare_storage_read(i) for i in range(len(self.traffic_patterns))
             ]
             storage_write_handles = [
-                self._prepare_storage_write(i) for i in range(len(self.traffic_patterns))
+                self._prepare_storage_write(i)
+                for i in range(len(self.traffic_patterns))
             ]
 
             self._run_warmup(tp_handles, storage_read_handles, storage_write_handles)
@@ -1050,8 +1145,12 @@ class SequentialCTPerftest(CTPerftest):
                 "min": 0.0,
                 "max": 0.0,
             }
-            my_isolated_read_stats: List[Dict] = [empty_stats.copy() for _ in tp_handles]
-            my_isolated_write_stats: List[Dict] = [empty_stats.copy() for _ in tp_handles]
+            my_isolated_read_stats: List[Dict] = [
+                empty_stats.copy() for _ in tp_handles
+            ]
+            my_isolated_write_stats: List[Dict] = [
+                empty_stats.copy() for _ in tp_handles
+            ]
 
             results["metadata"]["sol_calculation_ts"] = time.time()
 
@@ -1069,7 +1168,8 @@ class SequentialCTPerftest(CTPerftest):
 
                 if has_reads:
                     logger.info(
-                        "[Rank %d] Running isolated storage read benchmark", self.my_rank
+                        "[Rank %d] Running isolated storage read benchmark",
+                        self.my_rank,
                     )
                     my_isolated_read_stats = self._run_isolated_storage_benchmark(
                         storage_read_handles, "read"
@@ -1077,7 +1177,8 @@ class SequentialCTPerftest(CTPerftest):
 
                 if has_writes:
                     logger.info(
-                        "[Rank %d] Running isolated storage write benchmark", self.my_rank
+                        "[Rank %d] Running isolated storage write benchmark",
+                        self.my_rank,
                     )
                     my_isolated_write_stats = self._run_isolated_storage_benchmark(
                         storage_write_handles, "write"
@@ -1094,7 +1195,9 @@ class SequentialCTPerftest(CTPerftest):
             # Store isolated results
             isolated_rdma_stats_by_ranks = dist_rt.allgather_obj(my_isolated_rdma_stats)
             isolated_read_stats_by_ranks = dist_rt.allgather_obj(my_isolated_read_stats)
-            isolated_write_stats_by_ranks = dist_rt.allgather_obj(my_isolated_write_stats)
+            isolated_write_stats_by_ranks = dist_rt.allgather_obj(
+                my_isolated_write_stats
+            )
 
             # Process isolated stats per TP - aggregate across ranks
             isolated_rdma_stats_ms = []
@@ -1153,7 +1256,9 @@ class SequentialCTPerftest(CTPerftest):
                         time.sleep(tp.sleep_before_launch_sec)
 
                     tp_result = self._execute_workload_tp(
-                        tp_ix, tp, handles,
+                        tp_ix,
+                        tp,
+                        handles,
                         storage_read_handles[tp_ix],
                         storage_write_handles[tp_ix],
                     )
@@ -1171,14 +1276,16 @@ class SequentialCTPerftest(CTPerftest):
                 iter_metadata["tps_end_ts"] = tp_ends.copy()
 
                 # Store local timing for batch gathering later
-                all_local_timings.append({
-                    "tp_starts": tp_starts,
-                    "tp_ends": tp_ends,
-                    "storage_read_times": storage_read_times,
-                    "storage_write_times": storage_write_times,
-                    "storage_read_starts": storage_read_starts,
-                    "storage_read_ends": storage_read_ends,
-                })
+                all_local_timings.append(
+                    {
+                        "tp_starts": tp_starts,
+                        "tp_ends": tp_ends,
+                        "storage_read_times": storage_read_times,
+                        "storage_write_times": storage_write_times,
+                        "storage_read_starts": storage_read_starts,
+                        "storage_read_ends": storage_read_ends,
+                    }
+                )
 
                 if verify_buffers:
                     for i, tp in enumerate(self.traffic_patterns):
@@ -1208,12 +1315,30 @@ class SequentialCTPerftest(CTPerftest):
             # Phase 3: Post-process all iterations with cross-rank data
             for iter_ix in range(self.n_iters):
                 # Reconstruct per-rank data for this iteration
-                tp_starts_by_ranks = [all_ranks_timings[r][iter_ix]["tp_starts"] for r in range(self.world_size)]
-                tp_ends_by_ranks = [all_ranks_timings[r][iter_ix]["tp_ends"] for r in range(self.world_size)]
-                storage_read_by_ranks = [all_ranks_timings[r][iter_ix]["storage_read_times"] for r in range(self.world_size)]
-                storage_write_by_ranks = [all_ranks_timings[r][iter_ix]["storage_write_times"] for r in range(self.world_size)]
-                storage_read_starts_by_ranks = [all_ranks_timings[r][iter_ix]["storage_read_starts"] for r in range(self.world_size)]
-                storage_read_ends_by_ranks = [all_ranks_timings[r][iter_ix]["storage_read_ends"] for r in range(self.world_size)]
+                tp_starts_by_ranks = [
+                    all_ranks_timings[r][iter_ix]["tp_starts"]
+                    for r in range(self.world_size)
+                ]
+                tp_ends_by_ranks = [
+                    all_ranks_timings[r][iter_ix]["tp_ends"]
+                    for r in range(self.world_size)
+                ]
+                storage_read_by_ranks = [
+                    all_ranks_timings[r][iter_ix]["storage_read_times"]
+                    for r in range(self.world_size)
+                ]
+                storage_write_by_ranks = [
+                    all_ranks_timings[r][iter_ix]["storage_write_times"]
+                    for r in range(self.world_size)
+                ]
+                storage_read_starts_by_ranks = [
+                    all_ranks_timings[r][iter_ix]["storage_read_starts"]
+                    for r in range(self.world_size)
+                ]
+                storage_read_ends_by_ranks = [
+                    all_ranks_timings[r][iter_ix]["storage_read_ends"]
+                    for r in range(self.world_size)
+                ]
 
                 tp_latencies_ms: list[float | None] = []
                 tp_mean_bws: list[float] = []
@@ -1221,8 +1346,12 @@ class SequentialCTPerftest(CTPerftest):
                 storage_write_max_ms: list[float] = []
 
                 for i, tp in enumerate(self.traffic_patterns):
-                    starts = [tp_starts_by_ranks[rank][i] for rank in range(self.world_size)]
-                    ends = [tp_ends_by_ranks[rank][i] for rank in range(self.world_size)]
+                    starts = [
+                        tp_starts_by_ranks[rank][i] for rank in range(self.world_size)
+                    ]
+                    ends = [
+                        tp_ends_by_ranks[rank][i] for rank in range(self.world_size)
+                    ]
                     starts = [x for x in starts if x is not None]
                     ends = [x for x in ends if x is not None]
 
@@ -1236,7 +1365,9 @@ class SequentialCTPerftest(CTPerftest):
                         for r in range(self.world_size)
                         if storage_write_by_ranks[r][i] > 0
                     ]
-                    storage_read_max_ms.append(max(read_times) * 1e3 if read_times else 0.0)
+                    storage_read_max_ms.append(
+                        max(read_times) * 1e3 if read_times else 0.0
+                    )
                     storage_write_max_ms.append(
                         max(write_times) * 1e3 if write_times else 0.0
                     )
@@ -1286,8 +1417,20 @@ class SequentialCTPerftest(CTPerftest):
 
                 iter_results = []
                 for i, tp in enumerate(self.traffic_patterns):
-                    starts = [x for x in (tp_starts_by_ranks[r][i] for r in range(self.world_size)) if x is not None]
-                    ends = [x for x in (tp_ends_by_ranks[r][i] for r in range(self.world_size)) if x is not None]
+                    starts = [
+                        x
+                        for x in (
+                            tp_starts_by_ranks[r][i] for r in range(self.world_size)
+                        )
+                        if x is not None
+                    ]
+                    ends = [
+                        x
+                        for x in (
+                            tp_ends_by_ranks[r][i] for r in range(self.world_size)
+                        )
+                        if x is not None
+                    ]
                     stor_starts = [
                         storage_read_starts_by_ranks[r][i]
                         for r in range(self.world_size)
@@ -1316,7 +1459,9 @@ class SequentialCTPerftest(CTPerftest):
                             "storage_read_start_ts": (
                                 min(stor_starts) if stor_starts else None
                             ),
-                            "storage_read_end_ts": max(stor_ends) if stor_ends else None,
+                            "storage_read_end_ts": (
+                                max(stor_ends) if stor_ends else None
+                            ),
                             "isolated_read_p50_ms": isolated_read_stats_ms[i]["p50"],
                             "isolated_read_p90_ms": isolated_read_stats_ms[i]["p90"],
                             "isolated_read_p99_ms": isolated_read_stats_ms[i]["p99"],

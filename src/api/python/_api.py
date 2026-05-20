@@ -653,7 +653,7 @@ class nixl_agent:
         else:
             return "ERR"
 
-    def parallel_transfer(self, handles: list, num_threads: int = 0):
+    def parallel_transfer(self, handles: list, num_threads: int = 0) -> None:
         """Submit multiple transfer handles in parallel using C++ threads.
 
         Each handle is submitted and polled to completion from a separate
@@ -664,7 +664,7 @@ class nixl_agent:
             handles: List of nixl_xfer_handle objects
             num_threads: Number of threads (0 = one per handle)
         """
-        raw_handles = [h._handle if hasattr(h, '_handle') else h for h in handles]
+        raw_handles = [h._handle if hasattr(h, "_handle") else h for h in handles]
         self.agent.parallelPostXferReqs(raw_handles, num_threads)
 
     """

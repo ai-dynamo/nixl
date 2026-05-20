@@ -19,6 +19,7 @@
 #include <pybind11/operators.h>
 #include <pybind11/numpy.h>
 #include <thread>
+#include <atomic>
 #include <algorithm>
 #include <omp.h>
 #include <pybind11/chrono.h>
@@ -84,8 +85,7 @@ storageExecIterations(nixlAgent *agent,
             return -1;
         }
     }
-    if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0))
-        return -1;
+    if (__builtin_expect(agent->releaseXferReq(req) != NIXL_SUCCESS, 0)) return -1;
     return 0;
 }
 
@@ -111,10 +111,12 @@ storageExecTransfer(nixlAgent *agent,
         storageIOVToXferDlist(remote_iov, remote_desc);
 
         nixl_opt_args_t params;
-        const int result = storageExecIterations(agent, op, local_desc, remote_desc,
-                                                  agent_name, params, num_iter);
-        if (__builtin_expect(result != 0, 0))
+        const int result =
+            storageExecIterations(agent, op, local_desc, remote_desc, agent_name, params, num_iter);
+        if (__builtin_expect(result != 0, 0)) {
+#pragma omp atomic write
             ret = result;
+        }
     }
     auto t_end = std::chrono::high_resolution_clock::now();
     if (ret != 0) return -1;
@@ -819,12 +821,18 @@ PYBIND11_MODULE(_bindings, m) {
                 std::vector<std::thread> threads;
                 threads.reserve(num_threads);
 
-                auto worker = [&agent, &reqhs, n](int start, int end) {
+                std::atomic<nixl_status_t> first_err{NIXL_SUCCESS};
+
+                auto worker = [&agent, &reqhs, &first_err](int start, int end) {
                     for (int i = start; i < end; i++) {
                         nixlXferReqH *req = (nixlXferReqH *)reqhs[i];
                         nixl_status_t rc = agent.postXferReq(req);
                         while (NIXL_IN_PROG == rc) {
                             rc = agent.getXferStatus(req);
+                        }
+                        if (rc != NIXL_SUCCESS) {
+                            nixl_status_t expected = NIXL_SUCCESS;
+                            first_err.compare_exchange_strong(expected, rc);
                         }
                     }
                 };
@@ -837,7 +845,9 @@ PYBIND11_MODULE(_bindings, m) {
                         threads.emplace_back(worker, start, end);
                     }
                 }
-                for (auto &t : threads) t.join();
+                for (auto &t : threads)
+                    t.join();
+                throw_nixl_exception(first_err.load());
             },
             py::arg("reqhs"),
             py::arg("num_threads") = 0,
@@ -847,8 +857,10 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                std::vector<std::vector<std::tuple<uint64_t, uint64_t, int>>> file_desc_lists,
                const std::string &agent_name,
-               std::vector<uintptr_t> backends,
-               int num_iters, int warmup_iters, int num_threads) -> double {
+               const std::vector<uintptr_t> &backends,
+               int num_iters,
+               int warmup_iters,
+               int num_threads) -> double {
                 // Uses nixlbench's exact execTransfer/execIterations functions
                 // (copied above) for guaranteed identical performance.
 
@@ -864,7 +876,8 @@ PYBIND11_MODULE(_bindings, m) {
                 size_t total_bytes = 0;
                 for (int i = 0; i < n; i++) {
                     size_t sz = 0;
-                    for (auto &[off, len, fd] : file_desc_lists[i]) sz += len;
+                    for (auto &[off, len, fd] : file_desc_lists[i])
+                        sz += len;
                     sz = ((sz + page_size - 1) / page_size) * page_size;
                     thread_buf_sizes[i] = sz;
                     total_bytes += sz;
@@ -875,14 +888,24 @@ PYBIND11_MODULE(_bindings, m) {
                 for (auto bk : backends)
                     reg_opt.backends.push_back((nixlBackendH *)bk);
 
-                std::vector<void*> thread_bufs(n, nullptr);
+                std::vector<void *> thread_bufs(n, nullptr);
                 std::vector<nixl_reg_dlist_t> dram_regs;
                 dram_regs.reserve(n);
 
+                auto cleanup_partial = [&]() {
+                    for (size_t j = 0; j < dram_regs.size(); j++) {
+                        agent.deregisterMem(dram_regs[j], &reg_opt);
+                    }
+                    for (void *b : thread_bufs)
+                        if (b) free(b);
+                };
+
                 for (int i = 0; i < n; i++) {
                     void *buf = nullptr;
-                    if (posix_memalign(&buf, page_size, thread_buf_sizes[i]) != 0 || !buf)
+                    if (posix_memalign(&buf, page_size, thread_buf_sizes[i]) != 0 || !buf) {
+                        cleanup_partial();
                         return -1.0;
+                    }
                     memset(buf, 0, thread_buf_sizes[i]);
                     thread_bufs[i] = buf;
 
@@ -892,7 +915,10 @@ PYBIND11_MODULE(_bindings, m) {
                     reg_desc.len = thread_buf_sizes[i];
                     reg_desc.devId = 0;
                     reg_list.addDesc(reg_desc);
-                    agent.registerMem(reg_list, &reg_opt);
+                    if (agent.registerMem(reg_list, &reg_opt) != NIXL_SUCCESS) {
+                        cleanup_partial();
+                        return -1.0;
+                    }
                     dram_regs.push_back(std::move(reg_list));
                 }
 
@@ -910,10 +936,15 @@ PYBIND11_MODULE(_bindings, m) {
 
                 // Warmup pass (not timed, like nixlbench transfer())
                 if (warmup_iters > 0) {
-                    int64_t wt = storageExecTransfer(
-                        &agent, local_iovs, remote_iovs, agent_name,
-                        NIXL_READ, warmup_iters, num_threads);
-                    if (wt < 0) { /* warmup error, continue anyway */ }
+                    int64_t wt = storageExecTransfer(&agent,
+                                                     local_iovs,
+                                                     remote_iovs,
+                                                     agent_name,
+                                                     NIXL_READ,
+                                                     warmup_iters,
+                                                     num_threads);
+                    if (wt < 0) { /* warmup error, continue anyway */
+                    }
                 }
 
                 // Timed pass (uses nixlbench's exact OMP + transfer code)

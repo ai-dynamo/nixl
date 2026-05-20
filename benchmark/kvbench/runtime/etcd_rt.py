@@ -199,7 +199,7 @@ class _EtcdDistUtils(_RTUtils):
             f"{self.prefix}/allgather/{allgather_ix}/{self.rank}", serialized_obj
         )
 
-        self.barrier()
+        self.barrier(timeout_sec=timeout_sec)
 
         for dest_rank in range(self.world_size):
             key = f"{self.prefix}/allgather/{allgather_ix}/{dest_rank}"
@@ -218,19 +218,22 @@ class _EtcdDistUtils(_RTUtils):
         return result
 
     def alltoall_obj(self, send_objs: List[Any], timeout_sec: float = 120) -> List[Any]:
+        alltoall_ix = self.ops_counter["alltoall"]["world"]
+        self.ops_counter["alltoall"]["world"] += 1
+
         result = [None for _ in range(self.world_size)]
         serialized_objs = [pickle.dumps(obj) for obj in send_objs]
 
-        self.barrier()
+        self.barrier(timeout_sec=timeout_sec)
         for dest_rank in range(self.world_size):
             self.client.put(
-                f"{self.prefix}/alltoall/{self.rank}_to_{dest_rank}",
+                f"{self.prefix}/alltoall/{alltoall_ix}/{self.rank}_to_{dest_rank}",
                 serialized_objs[dest_rank],
             )
 
-        self.barrier()
+        self.barrier(timeout_sec=timeout_sec)
         for src_rank in range(self.world_size):
-            key = f"{self.prefix}/alltoall/{src_rank}_to_{self.rank}"
+            key = f"{self.prefix}/alltoall/{alltoall_ix}/{src_rank}_to_{self.rank}"
             val = self.client.get(key)[0]
             # Retry if value is None (etcd consistency delay)
             start_time = time.time()
@@ -252,11 +255,11 @@ class _EtcdDistUtils(_RTUtils):
         root: int = 0,
         timeout_sec: float = 120,
     ) -> List[float | int]:
-        self.barrier()
+        self.barrier(timeout_sec=timeout_sec)
         self.client.put(f"{self.prefix}/all_reduce/{self.rank}", pickle.dumps(vals))
         if self.rank == root:
             self.client.delete(f"{self.prefix}/all_reduce/result")
-        self.barrier()
+        self.barrier(timeout_sec=timeout_sec)
 
         if self.rank == root:
             all_vals = []
@@ -286,7 +289,7 @@ class _EtcdDistUtils(_RTUtils):
 
             self.client.put(f"{self.prefix}/all_reduce/result", pickle.dumps(final_val))
 
-        self.barrier()
+        self.barrier(timeout_sec=timeout_sec)
 
         val = self.client.get(f"{self.prefix}/all_reduce/result")[0]
         start_time = time.time()

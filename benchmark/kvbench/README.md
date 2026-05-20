@@ -52,7 +52,7 @@ KVBench simulates real application workloads combining:
 
 ### Execution Flow Per Traffic Pattern
 
-```
+```text
 Each Rank (per traffic pattern):
   ┌─────────────────────────────────────┐
   │ 1. COMPUTE (sleep)                  │  Simulate reduced compute time
@@ -408,7 +408,7 @@ Example matrix file:
 
 A single text file describes the RDMA matrix, the per-rank storage reads, and the per-rank storage writes for one traffic pattern. Each section is optional, so the same file format covers RDMA-only, storage-only, and mixed patterns. Files without any `[section]` header are parsed as a legacy RDMA-only matrix (backward compatible).
 
-```
+```text
 [rdma]
 0 710M 0 0
 0 0 0 0
@@ -421,6 +421,7 @@ A single text file describes the RDMA matrix, the per-rank storage reads, and th
 ```
 
 Reference it from YAML with `tp_file`:
+
 ```yaml
 traffic_patterns:
   - tp_file: tps/tp_0.tp
@@ -432,6 +433,7 @@ traffic_patterns:
 #### Generate Traffic Pattern Matrices
 
 Optionally, generate matrices using the inference workload matrix generation tool:
+
 ```bash
 python test/inference_workload_matgen.py generate \
     --num-user-requests 10 \
@@ -524,6 +526,7 @@ python main.py --debug ct-perftest ./config.yaml \
 ## Documentation Quick Reference
 
 ### Developer Guides
+
 - [Tutorial with GDS](docs/tutorial-gds.md) - Quick tutorial for running NIXLBench with GDS
 - [Creating a Model Configuration](docs/creating-a-model-config.md) - Guide for creating model configuration files
 - [Adding a New Model Architecture](docs/adding-a-new-model-architecture.md) - Instructions for extending KVBench with new model architectures
