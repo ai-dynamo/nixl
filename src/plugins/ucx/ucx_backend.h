@@ -273,7 +273,7 @@ private:
     nixl_status_t
     internalMDHelper(const nixl_blob_t &blob, const std::string &agent, nixlBackendMD *&output);
 
-    // TOOD: Do derived classes need locking here?
+    // TODO: Do derived classes need locking here?
     [[nodiscard]] ucs_status_t
     recvAmImpl(const std::string &remote,
                const std::string &tag,
