@@ -25,8 +25,6 @@
 #include <filesystem>
 #include <limits>
 #include <optional>
-#include <sstream>
-#include <stdexcept>
 #include <string>
 #include <strings.h>
 #include <type_traits>
@@ -37,6 +35,7 @@
 
 #include <toml++/toml.hpp>
 
+#include "exception.h"
 #include "nixl_log.h"
 #include "nixl_types.h"
 
@@ -49,14 +48,6 @@
 namespace nixl::config {
 
 namespace internal {
-
-    template<typename... Ts>
-    [[noreturn]] void
-    throwRuntimeError(Ts &&...ts) {
-        std::ostringstream oss;
-        (void)(oss << ... << ts);
-        throw std::runtime_error(std::move(oss).str());
-    }
 
     [[nodiscard]] std::optional<std::string>
     getenvOptional(const std::string &name);
@@ -285,7 +276,7 @@ getValue(const std::string &env) {
     if (const auto view = internal::findTomlNode(env)) {
         return traits<type>::convert(view);
     }
-    internal::throwRuntimeError("Missing config entry '", env, "'");
+    throwRuntimeError("Missing config entry '", env, "'");
 }
 
 template<typename type, template<typename...> class traits = internal::convertTraits>
@@ -314,7 +305,7 @@ getNonEmptyString(const std::string &env) {
     const std::string result = getValue<std::string>(env);
 
     if (result.empty()) {
-        internal::throwRuntimeError("Config parameter '", env, "' needs non-empty value");
+        throwRuntimeError("Config parameter '", env, "' needs non-empty value");
     }
     return result;
 }
