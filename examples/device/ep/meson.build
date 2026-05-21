@@ -125,7 +125,7 @@ nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'plugins')
 # For now, nixl ep cannot be built with -G due to register usage limits
 nixl_ep_override_options = []
 if get_option('buildtype') == 'debug'
-    nixl_ep_override_options = ['optimization=3']
+    nixl_ep_override_options = ['buildtype=custom', 'optimization=3']
     nixl_ep_cpp_args += ['-g']
 endif
 
