@@ -46,6 +46,18 @@ using recv_map_value_t = std::variant<std::deque<recvMapPostValue>, std::deque<r
 
 using recv_map_t = std::map<recvMapKey, recv_map_value_t, std::less<void>>;
 
+enum class am_recv_mode_t : bool {
+    RNDV,
+    EAGER
+};
+
+enum class am_data_mode_t {
+    POST_RNDV,
+    POST_EAGER,
+    RNDV_POST,
+    EAGER_POST
+};
+
 // TODO: Check when and where ucp_am_data_release() needs to be called!!
 // (When the request is deleted after the AM CB returned UCS_INPROGRESS
 // but before ucp_am_recv_data_nbx() was called...)
@@ -59,6 +71,8 @@ struct recvRequestH : public nixlBackendReqH {
 
     void *rndv_desc = nullptr; // TODO: Lifecycle ok?
     void *data_req = nullptr; // TODO: Lifecycle is not ok yet!
+
+    am_data_mode_t mode;
 
     std::optional<recv_map_t::iterator> iter;
 
@@ -98,12 +112,14 @@ struct recvMapPostValue {
 
 // AM arrives before RECV is POSTed
 struct recvMapRndvValue {
-    recvMapRndvValue(void *rndv_desc, const std::size_t size) noexcept
+    recvMapRndvValue(void *rndv_desc, const std::size_t size, const am_recv_mode_t mode) noexcept
         : rndv_desc(rndv_desc),
-          size(size) {}
+          size(size),
+          mode(mode) {}
 
     void *rndv_desc; // TODO: Lifecycle management?
     const std::size_t size;
+    const am_recv_mode_t mode;
 };
 
 class recvMap {
@@ -154,7 +170,8 @@ public:
                 map_.erase(iter);
             }
 
-            const auto status = recvRndvData(worker, handle, value.rndv_desc, value.size);
+            const auto m = (value.mode == am_recv_mode_t::RNDV) ? am_data_mode_t::RNDV_POST : am_data_mode_t::EAGER_POST;
+            const auto status = recvRndvData(worker, handle, value.rndv_desc, value.size, m);
             return ucsToNixlStatus(status);
         }
 
@@ -170,12 +187,13 @@ public:
              const std::string &remote,
              const std::string &tag,
              void *rndv_desc,
-             const std::size_t size) {
+             const std::size_t size,
+             const am_recv_mode_t mode) {
         const std::lock_guard l1(mutex_);
         const auto [iter, _] = map_.try_emplace({remote, tag}, std::in_place_type_t<std::deque<recvMapRndvValue>>());
 
         if (auto *queue = std::get_if<std::deque<recvMapRndvValue>>(&iter->second)) {
-            queue->emplace_back(rndv_desc, size);
+            queue->emplace_back(rndv_desc, size, mode);
             NIXL_DEBUG << "UCX AM RECV AM " << remote << " tag " << tag << " queued " << queue->size();
             return UCS_INPROGRESS;
         }
@@ -192,7 +210,8 @@ public:
                 map_.erase(iter);
             }
 
-            const auto status = recvRndvData(worker, handle, rndv_desc, size);
+            const auto m = (mode == am_recv_mode_t::RNDV) ? am_data_mode_t::POST_RNDV : am_data_mode_t::POST_EAGER;
+            const auto status = recvRndvData(worker, handle, rndv_desc, size, m);
             return status;
         }
 
@@ -203,6 +222,7 @@ public:
     static void
     recvRndvDataCallback(void *request, ucs_status_t status, size_t length, void *user_data) {
         const auto handle = static_cast<recvRequestH *>(user_data);
+        NIXL_DEBUG << __FUNCTION__ << " ENTER";
         {
             const std::lock_guard l2(handle->mutex);
 
@@ -219,13 +239,15 @@ public:
         if (request) {
             ucp_request_free(request);
         }
+        NIXL_DEBUG << __FUNCTION__ << " LEAVE";
     }
 
     [[nodiscard]] ucs_status_t
     recvRndvData(const ucp_worker_h worker,
                  recvRequestH *handle,
                  void *rndv_desc,
-                 const std::size_t size) {
+                 const std::size_t size,
+                 const am_data_mode_t mode) {
         NIXL_ASSERT(handle != nullptr);
 
         if (handle->local[0].len != size) {
@@ -233,7 +255,7 @@ public:
             // sizes. If we were to accept less incoming data we would need
             // a way to tell the application how much was actually received?
             NIXL_ERROR_FUNC << "UCX AM RECV DATA expected " << handle->local[0].len << " incoming " << size;
-            ucp_am_data_release(worker, rndv_desc);
+            ucp_am_data_release(worker, rndv_desc); // TODO: For which modes is this needed?
             return UCS_ERR_REJECTED;
         }
 
@@ -246,6 +268,8 @@ public:
         params.cb.recv_am = &recvRndvDataCallback;
 
         NIXL_DEBUG << "UCX AM RECV AM DATA handle " << handle << " desc " << rndv_desc;
+
+        handle->mode = mode;
 
         const auto req = ucp_am_recv_data_nbx(worker,
                                               rndv_desc,

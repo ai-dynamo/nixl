@@ -1383,7 +1383,8 @@ sendAmCustomFlags(const nixl_opt_b_args_t *opt_args) noexcept {
             return UCP_AM_SEND_FLAG_RNDV;
         }
     }
-    return 0;
+    // TODO: Change this to 0 once we can assume UCX #11468.
+    return UCP_AM_SEND_FLAG_RNDV;
 }
 
 } // namespace
@@ -1543,13 +1544,14 @@ ucs_status_t
 nixlUcxEngine::recvAmImpl(const std::string &remote,
                           const std::string &tag,
                           void *data,
-                          const std::size_t size) {
+                          const std::size_t size,
+                          const nixl::ucx::am_recv_mode_t mode) {
     NIXL_ASSERT(!uws.empty());
     NIXL_ASSERT(uws.front());
     NIXL_ASSERT(uws.front()->get());
 
     NIXL_DEBUG << "UCX AM RECV from " << remote << " tag " << tag;
-    return recvMap_.recvRndv(uws.front()->get(), remote, tag, data, size);
+    return recvMap_.recvRndv(uws.front()->get(), remote, tag, data, size, mode);
 }
 
 ucs_status_t
@@ -1575,8 +1577,9 @@ nixlUcxEngine::recvAmCb(void *arg, const void *header,
     // ensure UCP_AM_RECV_ATTR_FLAG_DATA is set in the non-rndv case.
     NIXL_ASSERT(param->recv_attr & (UCP_AM_RECV_ATTR_FLAG_RNDV | UCP_AM_RECV_ATTR_FLAG_DATA));
 
+    const auto mode = (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV) ? nixl::ucx::am_recv_mode_t::RNDV : nixl::ucx::am_recv_mode_t::EAGER;
     const auto engine = static_cast<nixlUcxEngine *>(arg);
-    return engine->recvAmImpl(remote, tag, data, length);
+    return engine->recvAmImpl(remote, tag, data, length, mode);
 }
 
 /****************************************

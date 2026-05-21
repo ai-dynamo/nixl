@@ -278,7 +278,8 @@ private:
     recvAmImpl(const std::string &remote,
                const std::string &tag,
                void *data,
-               std::size_t size);
+               std::size_t size,
+               const nixl::ucx::am_recv_mode_t mode);
 
     static ucs_status_t
     recvAmCb(void *arg,
