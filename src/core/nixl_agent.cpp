@@ -923,6 +923,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                   local_descs.getType(),
                                                   remote_descs.getType(),
                                                   local_descs.descCount());
+
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
     for (auto &backend : backend_set) {
