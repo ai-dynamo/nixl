@@ -81,6 +81,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [ "$BUILD_NIXL_EP" = "true" ] && [ -z "$TORCH_VERSIONS" ]; then
+    echo "ERROR: --build-nixl-ep requires --torch-versions (e.g. --torch-versions 2.11,2.12)" >&2
+    exit 1
+fi
+
 set -e
 set -x
 
@@ -112,10 +117,6 @@ BUILD_DEPS=(
     "setuptools>=80.9.0"
 )
 
-# Classification cache for repeated lookups within a single script run.
-# Values: "stable" | "nightly" | "unavailable".
-declare -A TORCH_CLASS_CACHE
-
 # Slugify a dotted version (e.g. "2.13" -> "213", "3.10" -> "310") so it can
 # be used unambiguously as a path component.
 slug() { echo "${1//./}"; }
@@ -135,13 +136,9 @@ venv_path() {
 
 # Echo "stable", "nightly", or "unavailable" depending on whether
 # torch==${VER}.* resolves from the stable cu index, the nightly cu
-# index (with --pre), or neither. Cached.
+# index (with --pre), or neither.
 torch_classify() {
     local VER=$1
-    if [ -n "${TORCH_CLASS_CACHE[$VER]:-}" ]; then
-        echo "${TORCH_CLASS_CACHE[$VER]}"
-        return
-    fi
     local CLASS="unavailable"
     local PROBE="/workspace/venv-probe-py$(slug "$PYTHON_VERSION")"
     rm -rf "$PROBE"
@@ -161,7 +158,6 @@ torch_classify() {
         fi
     fi
     rm -rf "$PROBE"
-    TORCH_CLASS_CACHE[$VER]="$CLASS"
     echo "$CLASS"
 }
 
