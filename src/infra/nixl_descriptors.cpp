@@ -134,7 +134,7 @@ void nixlBlobDesc::print(const std::string &suffix) const {
 template<class T> nixlDescList<T>::nixlDescList(const nixl_mem_t &type, const int &init_size) {
     static_assert (std::is_base_of<nixlBasicDesc, T>::value);
     this->type = type;
-    this->descs.reserve(init_size);
+    this->descs.resize(init_size);
 }
 
 template <class T>
