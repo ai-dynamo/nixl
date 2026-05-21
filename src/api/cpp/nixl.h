@@ -298,10 +298,6 @@ class nixlAgent {
                      nixlXferReqH* &req_hndl,
                      const nixl_opt_args_t *extra_params = nullptr) const;
 
-    nixl_status_t
-    postTagXferReq(nixlXferReqH *req_hndl,
-                   const nixl_opt_args_t *extra_params = nullptr) const;
-
         /**
          * @brief  Check the status of transfer request `req_hndl`
          *

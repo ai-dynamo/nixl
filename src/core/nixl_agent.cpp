@@ -66,14 +66,16 @@ nixlXferReqRW::nixlXferReqRW(const std::string &remote_agent,
 
 nixlXferReqSR::nixlXferReqSR(const std::string &remote_agent,
                              const nixl_xfer_op_t operation,
+                             const std::string &tag,
                              const nixl_mem_t local_type,
                              const std::size_t desc_count)
     : nixlXferReqH(remote_agent, operation),
+      tag(tag),
       initiatorDescs(local_type, desc_count) {}
 
 void
-nixlXferReqRW::updateRequestStats(nixlTelemetry *telemetry_pub,
-                                  const nixl_telemetry_stat_status_t stat_status) {
+nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
+                                 const nixl_telemetry_stat_status_t stat_status) {
 
     static const std::array<std::string, 3> nixl_post_status_str = {
         " Posted", " Posted and Completed", " Completed"};
@@ -1037,112 +1039,134 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    if (!nixl::isReadWrite(req_hndl->operation)) {
-        NIXL_ERROR << "Operation is not read or write";
+    if (!nixl::isReadWrite(req_hndl->operation) && !nixl::isSendRecv(req_hndl->operation)) {
+        NIXL_ERROR << "Invalid operation: " << int(req_hndl->operation);
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const auto req_rw = static_cast<nixlXferReqRW *>(req_hndl);
+    if (data->telemetryEnabled) {
+        req_hndl->telemetry.startTime = std::chrono::steady_clock::now();
+    }
 
     nixl_opt_b_args_t opt_args;
 
-    opt_args.hasNotif = false;
-
-    if (data->telemetryEnabled) {
-        req_rw->telemetry.startTime = std::chrono::steady_clock::now();
+    if (extra_params) {
+        opt_args.customParam = extra_params->customParam;
     }
 
+    opt_args.hasNotif = false;
+
     NIXL_SHARED_LOCK_GUARD(data->lock);
+
     // Check if the remote was invalidated before post/repost
-    if (data->remoteSections_.count(req_rw->remoteAgent) == 0) {
-        NIXL_ERROR_FUNC << "remote agent '" << req_rw->remoteAgent
+    if (data->remoteSections_.count(req_hndl->remoteAgent) == 0) {
+        NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated after transfer request creation";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
 
     // We can't repost while a request is in progress
-    if (req_rw->status == NIXL_IN_PROG) {
-        req_rw->status = req_rw->engine->checkXfer(
-                                     req_rw->backendHandle);
-        if (req_rw->status == NIXL_IN_PROG) {
+    if (req_hndl->status == NIXL_IN_PROG) {
+        req_hndl->status = req_hndl->engine->checkXfer(
+                                     req_hndl->backendHandle);
+        if (req_hndl->status == NIXL_IN_PROG) {
             NIXL_ERROR_FUNC << "transfer request is still in progress and cannot be reposted";
             return NIXL_ERR_REPOST_ACTIVE;
         }
 
-        if (req_rw->status == NIXL_ERR_REMOTE_DISCONNECT) {
-            data->invalidateRemoteData(req_rw->remoteAgent);
-            NIXL_ERROR_FUNC << "remote agent '" << req_rw->remoteAgent
+        if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
+            data->invalidateRemoteData(req_hndl->remoteAgent);
+            NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
             return NIXL_ERR_REMOTE_DISCONNECT;
         }
     }
 
-    // Carrying over notification from xfer handle creation time
-    if (req_rw->hasNotif) {
-        opt_args.notifMsg = req_rw->notifMsg;
-        opt_args.hasNotif = true;
-    }
+    switch (req_hndl->operation) {
+    case NIXL_READ:
+    case NIXL_WRITE: {
+        const auto req_rw = static_cast<nixlXferReqRW *>(req_hndl);
 
-    // Updating the notification based on opt_args
-    if (extra_params) {
-        if (extra_params->notif) {
-            req_rw->notifMsg = *extra_params->notif;
-            opt_args.notifMsg = *extra_params->notif;
-            req_rw->hasNotif = true;
+        // Carrying over notification from xfer handle creation time
+        if (req_rw->hasNotif) {
+            opt_args.notifMsg = req_rw->notifMsg;
             opt_args.hasNotif = true;
-        } else if (extra_params->hasNotif) {
-            req_rw->notifMsg = extra_params->notifMsg;
-            opt_args.notifMsg = extra_params->notifMsg;
-            req_rw->hasNotif = true;
-            opt_args.hasNotif = true;
-        } else {
-            req_rw->hasNotif = false;
-            opt_args.hasNotif = false;
         }
-    }
 
-    if (opt_args.hasNotif && (!req_rw->engine->supportsNotif())) {
-        NIXL_ERROR_FUNC << "the selected backend '" << req_rw->engine->getType()
-                        << "' does not support notifications";
-        data->addErrorTelemetry(NIXL_ERR_BACKEND);
-        return NIXL_ERR_BACKEND;
-    }
+        // Updating the notification based on opt_args
+        if (extra_params) {
+            if (extra_params->notif) {
+                req_rw->notifMsg = *extra_params->notif;
+                opt_args.notifMsg = *extra_params->notif;
+                req_rw->hasNotif = true;
+                opt_args.hasNotif = true;
+            } else if (extra_params->hasNotif) {
+                req_rw->notifMsg = extra_params->notifMsg;
+                opt_args.notifMsg = extra_params->notifMsg;
+                req_rw->hasNotif = true;
+                opt_args.hasNotif = true;
+            } else {
+                req_rw->hasNotif = false;
+                opt_args.hasNotif = false;
+            }
+        }
 
-    // If status is not NIXL_IN_PROG we can repost,
-    req_rw->status = req_rw->engine->postXfer(req_rw->operation,
-                                              req_rw->initiatorDescs,
-                                              req_rw->targetDescs,
-                                              req_rw->remoteAgent,
-                                              req_rw->backendHandle,
-                                              &opt_args);
+        if (opt_args.hasNotif && (!req_rw->engine->supportsNotif())) {
+            NIXL_ERROR_FUNC << "the selected backend '" << req_rw->engine->getType()
+                            << "' does not support notifications";
+            data->addErrorTelemetry(NIXL_ERR_BACKEND);
+            return NIXL_ERR_BACKEND;
+        }
 
-    if (req_rw->status < 0) {
-        if (req_rw->status == NIXL_ERR_REMOTE_DISCONNECT) {
-            NIXL_ERROR_FUNC << "remote agent '" << req_rw->remoteAgent
+        // If status is not NIXL_IN_PROG we can repost,
+        req_rw->status = req_rw->engine->postXfer(req_rw->operation,
+                                                  req_rw->initiatorDescs,
+                                                  req_rw->targetDescs,
+                                                  req_rw->remoteAgent,
+                                                  req_rw->backendHandle,
+                                                  &opt_args);
+    } break;
+
+    case NIXL_SEND:
+    case NIXL_RECV: {
+        const auto req_sr = static_cast<nixlXferReqSR *>(req_hndl);
+
+        req_sr->status = req_sr->engine->postTagXfer(req_sr->operation,
+                                                     req_sr->initiatorDescs,
+                                                     req_sr->tag,
+                                                     req_sr->remoteAgent,
+                                                     req_sr->backendHandle,
+                                                     &opt_args);
+    } break;
+    };
+
+    if (req_hndl->status < 0) {
+        if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
+            NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
-            data->invalidateRemoteData(req_rw->remoteAgent);
+            data->invalidateRemoteData(req_hndl->remoteAgent);
             return NIXL_ERR_REMOTE_DISCONNECT;
         } else {
-            NIXL_ERROR_FUNC << "backend '" << req_rw->engine->getType()
+            NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
                             << "' failed to post the transfer request with status "
-                            << req_rw->status;
+                            << req_hndl->status;
         }
     }
 
     if (data->telemetryEnabled) {
-        NIXL_DEBUG << req_rw->initiatorDescs.to_string(true);
+        // NIXL_DEBUG << req_hndl->initiatorDescs.to_string(true); // TODO: Re-enable!
 
-        if (req_rw->status < 0) {
-            data->addErrorTelemetry(req_rw->status);
-        } else if (req_rw->status == NIXL_IN_PROG) {
-            req_rw->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_POST);
+        if (req_hndl->status < 0) {
+            data->addErrorTelemetry(req_hndl->status);
+        } else if (req_hndl->status == NIXL_IN_PROG) {
+            req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_POST);
         } else {
-            req_rw->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_POST_AND_FINISH);
+            req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_POST_AND_FINISH);
         }
     }
 
-    return req_rw->status;
+    return req_hndl->status;
 }
 
 nixl_status_t
@@ -1158,6 +1182,11 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
     }
 
     req_hndl = nullptr;
+
+    size_t total_bytes = 0;
+    for (int i = 0; i < local_descs.descCount(); ++i) {
+        total_bytes += local_descs[i].len;
+    }
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
@@ -1196,7 +1225,11 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
         }
     }
 
-    auto handle = std::make_unique<nixlXferReqSR>(remote_agent, operation, local_descs.getType(), local_descs.descCount());
+    auto handle = std::make_unique<nixlXferReqSR>(remote_agent,
+                                                  operation,
+                                                  tag,
+                                                  local_descs.getType(),
+                                                  local_descs.descCount());
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -1224,6 +1257,11 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
         opt_args.customParam = extra_params->customParam;
     }
 
+    if (data->telemetryEnabled) {
+        handle->telemetry.totalBytes = total_bytes;
+        handle->telemetry.descCount = handle->initiatorDescs.descCount();
+    }
+
     const auto ret = handle->engine->prepTagXfer(operation,
                                                  handle->initiatorDescs,
                                                  tag,
@@ -1240,73 +1278,6 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
 
     req_hndl = handle.release();
     return NIXL_SUCCESS;
-}
-
-nixl_status_t
-nixlAgent::postTagXferReq(nixlXferReqH *req_hndl,
-                          const nixl_opt_args_t *extra_params) const {
-
-    if (!req_hndl) {
-        NIXL_ERROR_FUNC << "transfer request handle is null";
-        data->addErrorTelemetry(NIXL_ERR_INVALID_PARAM);
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    if (!nixl::isSendRecv(req_hndl->operation)) {
-        NIXL_ERROR_FUNC << "operation is not send or recv";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    const auto req_sr = static_cast<nixlXferReqSR *>(req_hndl);
-
-    NIXL_SHARED_LOCK_GUARD(data->lock);
-
-    // Check if the remote was invalidated before post/repost
-    if (data->remoteSections_.count(req_sr->remoteAgent) == 0) {
-        NIXL_ERROR_FUNC << "remote agent '" << req_sr->remoteAgent
-                        << "' was invalidated after transfer request creation";
-        data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
-        return NIXL_ERR_NOT_FOUND;
-    }
-
-    // We can't repost while a request is in progress
-    if (req_sr->status == NIXL_IN_PROG) {
-        req_sr->status = req_sr->engine->checkXfer(
-                                     req_sr->backendHandle);
-        if (req_sr->status == NIXL_IN_PROG) {
-            NIXL_ERROR_FUNC << "transfer request is still in progress and cannot be reposted";
-            return NIXL_ERR_REPOST_ACTIVE;
-        }
-
-        if (req_sr->status == NIXL_ERR_REMOTE_DISCONNECT) {
-            data->invalidateRemoteData(req_sr->remoteAgent);
-            NIXL_ERROR_FUNC << "remote agent '" << req_sr->remoteAgent
-                            << "' was disconnected after transfer request creation";
-            return NIXL_ERR_REMOTE_DISCONNECT;
-        }
-    }
-
-    req_sr->status = req_sr->engine->postTagXfer(req_sr->operation,
-                                                 req_sr->initiatorDescs,
-                                                 req_sr->tag,
-                                                 req_sr->remoteAgent,
-                                                 req_sr->backendHandle,
-                                                 nullptr);
-
-    if (req_sr->status < 0) {
-        if (req_sr->status == NIXL_ERR_REMOTE_DISCONNECT) {
-            NIXL_ERROR_FUNC << "remote agent '" << req_sr->remoteAgent
-                            << "' was disconnected after transfer request creation";
-            data->invalidateRemoteData(req_sr->remoteAgent);
-            return NIXL_ERR_REMOTE_DISCONNECT;
-        } else {
-            NIXL_ERROR_FUNC << "backend '" << req_sr->engine->getType()
-                            << "' failed to post the transfer request with status "
-                            << req_sr->status;
-        }
-    }
-
-    return req_sr->status;
 }
 
 nixl_status_t
@@ -1332,13 +1303,12 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
                                 << "' returned error status " << req_hndl->status;
             }
         }
+
         if (data->telemetryEnabled) {
-            if (const auto req_rw = dynamic_cast<nixlXferReqRW *>(req_hndl)) {
-                if (req_rw->status == NIXL_SUCCESS) {
-                    req_rw->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_FINISH);
-                } else if (req_rw->status < 0) {
-                    data->addErrorTelemetry(req_rw->status);
-                }
+            if (req_hndl->status == NIXL_SUCCESS) {
+                req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_FINISH);
+            } else if (req_hndl->status < 0) {
+                data->addErrorTelemetry(req_hndl->status);
             }
         }
     }
@@ -1349,19 +1319,17 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
 
 nixl_status_t
 nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &telemetry) const {
-    const auto req_rw = static_cast<const nixlXferReqRW *>(req_hndl); // TODO: DETECT AND HANDLE OTHER CASE!
-
     if (!data->telemetryEnabled) {
         NIXL_ERROR_FUNC << "cannot return values when telemetry is not enabled.";
         return NIXL_ERR_NO_TELEMETRY;
     }
 
-    if (req_rw->status != NIXL_SUCCESS) {
+    if (req_hndl->status != NIXL_SUCCESS) {
         NIXL_ERROR_FUNC << "Transfer is not complete yet";
-        return req_rw->status;
+        return req_hndl->status;
     }
 
-    telemetry = req_rw->telemetry;
+    telemetry = req_hndl->telemetry;
     return NIXL_SUCCESS;
 }
 

@@ -59,10 +59,14 @@ protected:
         }
     }
 
+    void
+    updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
+
     nixlBackendEngine *engine = nullptr;
     nixlBackendReqH *backendHandle = nullptr;
 
     nixl_status_t status = NIXL_ERR_NOT_POSTED;
+    nixl_xfer_telem_t telemetry;
 };
 
 class nixlXferReqRW
@@ -77,9 +81,6 @@ public:
 
     ~nixlXferReqRW() = default;
 
-    void
-    updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
-
     friend class nixlAgent;
 
 private:
@@ -88,8 +89,6 @@ private:
 
     nixl_blob_t notifMsg;
     bool hasNotif = false;
-
-    nixl_xfer_telem_t telemetry;
 };
 
 class nixlXferReqSR
@@ -99,6 +98,7 @@ public:
 
     nixlXferReqSR(const std::string &remote_agent,
                   const nixl_xfer_op_t operation,
+                  const std::string &tag,
                   const nixl_mem_t local_type,
                   const std::size_t desc_count = 0);
 

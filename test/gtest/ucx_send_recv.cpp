@@ -353,15 +353,15 @@ TEST(UcxSendRecv, AutoSendRecv100) {
     basicSendBeforeRecv("");
 }
 
-// TEST(UcxSendRecv, AutoSendRecv10000) {
-//     data_size = 10000;
-//     basicSendBeforeRecv("");
-// }
+TEST(UcxSendRecv, AutoSendRecv10000) {
+    data_size = 10000;
+    basicSendBeforeRecv("");
+}
 
-// TEST(UcxSendRecv, AutoSendRecv1000000) {
-//     data_size = 1000000;
-//     basicSendBeforeRecv("");
-// }
+TEST(UcxSendRecv, AutoSendRecv1000000) {
+    data_size = 1000000;
+    basicSendBeforeRecv("");
+}
 
 TEST(UcxSendRecv, QueuedEagerRecvSend100) {
     data_size = 100;
@@ -423,12 +423,12 @@ TEST(UcxSendRecv, QueuedAutoSendRecv100) {
     queuedSendBeforeRecv("");
 }
 
-// TEST(UcxSendRecv, QueuedAutoSendRecv10000) {
-//     data_size = 10000;
-//     queuedSendBeforeRecv("");
-// }
+TEST(UcxSendRecv, QueuedAutoSendRecv10000) {
+    data_size = 10000;
+    queuedSendBeforeRecv("");
+}
 
-// TEST(UcxSendRecv, QueuedAutoSendRecv1000000) {
-//     data_size = 1000000;
-//     queuedSendBeforeRecv("");
-// }
+TEST(UcxSendRecv, QueuedAutoSendRecv1000000) {
+    data_size = 1000000;
+    queuedSendBeforeRecv("");
+}

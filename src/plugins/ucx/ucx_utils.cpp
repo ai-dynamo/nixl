@@ -418,7 +418,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         config.modifyAlways("NET_DEVICES", devs_str.c_str());
     }
 
-    config.modify("RNDV_THRESH", "inf");
+    config.modify("CMA_MEMORY_INVALIDATE", "y");
     config.modify("MAX_RMA_RAILS", "2");
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
     config.modify("RCACHE_MAX_UNRELEASED", "1024");

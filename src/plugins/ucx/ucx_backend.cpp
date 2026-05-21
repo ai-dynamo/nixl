@@ -1373,6 +1373,8 @@ nixlUcxEngine::prepTagXfer(const nixl_xfer_op_t operation,
 namespace
 {
 
+// This is for testing, not sure whether we want to keep it.
+
 [[nodiscard]] std::uint32_t
 sendAmCustomFlags(const nixl_opt_b_args_t *opt_args) noexcept {
     if (opt_args) {
