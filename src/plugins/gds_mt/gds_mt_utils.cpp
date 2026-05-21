@@ -52,25 +52,21 @@ gdsMtMemBuf::~gdsMtMemBuf() {
     }
 }
 
-gdsMtFileHandle::gdsMtFileHandle(int file_fd, bool fd_owned) : fd(file_fd), owned(fd_owned) {
-
+gdsMtFileHandle::gdsMtFileHandle(nixl::fdHandle &&h) : nixl::fdHandle(std::move(h)) {
     CUfileDescr_t descr = {};
-    descr.handle.fd = fd;
+    descr.handle.fd = fd();
     descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
 
-    const CUfileError_t status = cuFileHandleRegister (&cu_fhandle, &descr);
+    const CUfileError_t status = cuFileHandleRegister(&cu_fhandle, &descr);
     if (status.err != CU_FILE_SUCCESS) {
-        if (owned && fd >= 0) {
-            ::close(fd); // don't leak owned fd on failure
-        }
-        throw std::runtime_error ("GDS_MT: file register error: error=" +
-                                  std::to_string (status.err) + ", fd=" + std::to_string (fd));
+        throw std::runtime_error("GDS_MT: file register error: error=" +
+                                 std::to_string(status.err) +
+                                 ", fd=" + std::to_string(fd()));
     }
 }
 
 gdsMtFileHandle::~gdsMtFileHandle() {
-    cuFileHandleDeregister (cu_fhandle);
-    if (owned && fd >= 0) {
-        ::close(fd);
+    if (cu_fhandle) {
+        cuFileHandleDeregister(cu_fhandle);
     }
 }

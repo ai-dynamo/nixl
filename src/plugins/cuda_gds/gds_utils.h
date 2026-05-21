@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,13 +22,17 @@
 #include <nixl.h>
 #include <cufile.h>
 
-class gdsFileHandle {
-    public:
-        int fd;
-        // -1 means inf size file?
-        size_t size;
-        std::string metadata;
-        CUfileHandle_t cu_fhandle;
+#include "file/file_path_mode.h"
+
+// RAII wrapper: ctor cuFileHandleRegister, dtor cuFileHandleDeregister.
+// Fd ownership lives in the nixl::fdHandle base; close happens after
+// deregister via the base dtor (iff owned).
+class gdsFileHandle : public nixl::fdHandle {
+public:
+    explicit gdsFileHandle(nixl::fdHandle &&h);
+    ~gdsFileHandle() override;
+
+    CUfileHandle_t cu_fhandle{nullptr};
 };
 
 class gdsMemBuf {
@@ -65,11 +69,7 @@ class gdsUtil {
     public:
         gdsUtil() {}
         ~gdsUtil() {}
-        nixl_status_t registerFileHandle(int fd, size_t size,
-                                       std::string metaInfo,
-                                       gdsFileHandle& handle);
         nixl_status_t registerBufHandle(void *ptr, size_t size, int flags);
-        void deregisterFileHandle(gdsFileHandle& handle);
         nixl_status_t deregisterBufHandle(void *ptr);
         nixl_status_t openGdsDriver();
         void closeGdsDriver();

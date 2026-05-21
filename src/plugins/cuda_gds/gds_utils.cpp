@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,32 +15,31 @@
  * limitations under the License.
  */
 #include "gds_utils.h"
+
+#include <stdexcept>
+#include <string>
+
 #include "common/nixl_log.h"
 
-nixl_status_t gdsUtil::registerFileHandle(int fd,
-                                          size_t size,
-                                          std::string metaInfo,
-                                          gdsFileHandle& gds_handle)
+gdsFileHandle::gdsFileHandle(nixl::fdHandle &&h)
+    : nixl::fdHandle(std::move(h))
 {
-    CUfileError_t status;
-    CUfileDescr_t descr = {};
-    CUfileHandle_t handle;
-
-    descr.handle.fd = fd;
+    CUfileDescr_t descr{};
+    descr.handle.fd = fd();
     descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
 
-    status = cuFileHandleRegister(&handle, &descr);
+    CUfileError_t status = cuFileHandleRegister(&cu_fhandle, &descr);
     if (status.err != CU_FILE_SUCCESS) {
-        NIXL_ERROR << "file register error:";
-        return NIXL_ERR_BACKEND;
+        throw std::runtime_error("GDS: cuFileHandleRegister failed, err=" +
+                                 std::to_string(status.err));
     }
+}
 
-    gds_handle.cu_fhandle = handle;
-    gds_handle.fd = fd;
-    gds_handle.size = size;
-    gds_handle.metadata = metaInfo;
-
-    return NIXL_SUCCESS;
+gdsFileHandle::~gdsFileHandle()
+{
+    if (cu_fhandle) {
+        cuFileHandleDeregister(cu_fhandle);
+    }
 }
 
 nixl_status_t gdsUtil::registerBufHandle(void *ptr,
@@ -71,11 +70,6 @@ nixl_status_t gdsUtil::openGdsDriver()
 void gdsUtil::closeGdsDriver()
 {
     cuFileDriverClose();
-}
-
-void gdsUtil::deregisterFileHandle(gdsFileHandle& handle)
-{
-    cuFileHandleDeregister(handle.cu_fhandle);
 }
 
 nixl_status_t gdsUtil::deregisterBufHandle(void *ptr)

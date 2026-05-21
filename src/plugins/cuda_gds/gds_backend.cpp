@@ -97,97 +97,71 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
                                          const nixl_mem_t &nixl_mem,
                                          nixlBackendMD* &out)
 {
-    nixl_status_t status = NIXL_SUCCESS;
-    nixlGdsMetadata *md = new nixlGdsMetadata();
-    md->type = nixl_mem;
-    cudaError_t error_id;
-
     switch (nixl_mem) {
         case FILE_SEG: {
-            // Path-mode: backend opens/closes; falls through to fd-in-devId.
-            int fd = mem.devId;
-            if (auto spec = nixl::parsePathMeta(mem.metaInfo)) {
-                fd = ::open(spec->path.c_str(), spec->flags, spec->mode);
-                if (fd < 0) {
-                    NIXL_ERROR << absl::StrFormat(
-                        "GDS path-mode open(\"%s\") failed: errno=%d", spec->path, errno);
-                    delete md;
+            // Build the fdHandle (path-mode opens + owns, fd-mode keeps devId)
+            // and look it up in the weak_ptr cache; on miss, construct a new
+            // gdsFileHandle (RAII cuFileHandleRegister) from the fdHandle.
+            nixl::fdHandle fdh;
+            try {
+                fdh = nixl::fdHandle(mem.metaInfo, static_cast<int>(mem.devId));
+            } catch (const std::system_error &e) {
+                NIXL_ERROR << "GDS path-mode open failed: " << e.what();
+                return NIXL_ERR_BACKEND;
+            }
+            int fd = fdh.fd();
+            std::shared_ptr<gdsFileHandle> handle;
+            if (auto it = gds_file_map.find(fd); it != gds_file_map.end()) {
+                handle = it->second.lock();
+                // Cache hit: drop the just-built fdh (its dtor closes any
+                // duplicate owned fd) and reuse the cached registration.
+            }
+            if (!handle) {
+                try {
+                    handle = std::make_shared<gdsFileHandle>(std::move(fdh));
+                } catch (const std::exception &e) {
+                    NIXL_ERROR << e.what();
                     return NIXL_ERR_BACKEND;
                 }
-                md->owned = true;
-                md->path = spec->path;
+                gds_file_map[fd] = handle;
             }
-
-            // Check if we already have a file handle for this fd
-            auto it = gds_file_map.find(fd);
-            if (it != gds_file_map.end()) {
-                md->handle = it->second;
-                md->handle.size = mem.len;
-                md->handle.metadata = mem.metaInfo;
-                break;
-            }
-
-            status = gds_utils->registerFileHandle(fd, mem.len, mem.metaInfo, md->handle);
-            if (status == NIXL_SUCCESS) {
-                gds_file_map[fd] = md->handle;
-            } else if (md->owned) {
-                ::close(fd);
-            }
-            break;
+            out = new nixlGdsMetadata(std::move(handle));
+            return NIXL_SUCCESS;
         }
 
         case VRAM_SEG: {
-            error_id = cudaSetDevice(mem.devId);
+            const cudaError_t error_id = cudaSetDevice(mem.devId);
             if (error_id != cudaSuccess) {
                 NIXL_ERROR << "cudaSetDevice returned " << cudaGetErrorString(error_id)
                           << " for device ID " << mem.devId;
-                delete md;
                 return NIXL_ERR_BACKEND;
             }
-            status = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
-            if (status == NIXL_SUCCESS) {
-                md->buf.base = (void *)mem.addr;
-                md->buf.size = mem.len;
-            }
-            break;
+            [[fallthrough]];
         }
 
         case DRAM_SEG: {
-            status = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
-            if (status == NIXL_SUCCESS) {
-                md->buf.base = (void *)mem.addr;
-                md->buf.size = mem.len;
+            if (gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0) != NIXL_SUCCESS) {
+                return NIXL_ERR_BACKEND;
             }
-            break;
+            out = new nixlGdsMetadata(gdsMemBuf{(void *)mem.addr, mem.len}, nixl_mem);
+            return NIXL_SUCCESS;
         }
 
         default:
-            status = NIXL_ERR_BACKEND;
-            break;
+            return NIXL_ERR_BACKEND;
     }
-
-    if (status != NIXL_SUCCESS) {
-        delete md;
-        return status;
-    }
-
-    out = (nixlBackendMD*)md;
-    return status;
 }
 
 nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
 {
     nixlGdsMetadata *md = (nixlGdsMetadata *)meta;
-    if (md->type == FILE_SEG) {
-        gds_utils->deregisterFileHandle(md->handle);
-        gds_file_map.erase(md->handle.fd);
-        if (md->owned && md->handle.fd >= 0) {
-            ::close(md->handle.fd); // path-mode: backend owns the close
-        }
-    } else {
+    if (md->type != FILE_SEG) {
         gds_utils->deregisterBufHandle(md->buf.base);
     }
-    delete md;  // Clean up the metadata object
+    // FILE_SEG: dropping md releases the last shared_ptr<gdsFileHandle> if
+    // this was the final user; ~gdsFileHandle then deregisters and ~fdHandle
+    // closes the fd if owned. weak_ptr entries in gds_file_map become stale.
+    delete md;
     return NIXL_SUCCESS;
 }
 
@@ -222,23 +196,28 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
     // Determine if local is the file segment
     bool is_local_file = (local.getType() == FILE_SEG);
 
-    // Resolve via metadataP (path-mode opens fd inside registerMem, so the
-    // xfer-time devId doesn't match gds_file_map's fd key); fall back to
-    // devId lookup for fd-mode descriptors.
-    auto resolve_fh = [&](const nixlMetaDesc &d, gdsFileHandle &fh) -> nixl_status_t {
+    // Resolve cuFileHandle from a FILE_SEG descriptor: prefer the shared_ptr
+    // on metadataP (set by registerMem); fall back to a weak_ptr lookup keyed
+    // on the resolved fd (handles cross-MD references in the same xfer).
+    auto resolve_fh = [&](const nixlMetaDesc &d, CUfileHandle_t &out) -> nixl_status_t {
         if (d.metadataP) {
             auto *md = static_cast<const nixlGdsMetadata *>(d.metadataP);
-            if (md->type == FILE_SEG) {
-                fh = md->handle;
+            if (md->type == FILE_SEG && md->handle) {
+                out = md->handle->cu_fhandle;
                 return NIXL_SUCCESS;
             }
         }
-        const auto it = gds_file_map.find(d.devId);
+        const auto it = gds_file_map.find(d.resolveFd());
         if (it == gds_file_map.end()) {
             NIXL_ERROR << "File handle not found";
             return NIXL_ERR_NOT_FOUND;
         }
-        fh = it->second;
+        auto fh = it->second.lock();
+        if (!fh) {
+            NIXL_ERROR << "File handle has been released";
+            return NIXL_ERR_NOT_FOUND;
+        }
+        out = fh->cu_fhandle;
         return NIXL_SUCCESS;
     };
 
@@ -247,7 +226,7 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
         void* base_addr;
         size_t total_size;
         size_t base_offset;
-        gdsFileHandle fh;
+        CUfileHandle_t fh = nullptr;
 
         // Get transfer parameters based on whether local is file or memory
         if (is_local_file) {
@@ -290,7 +269,7 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
             req.addr = (char*)base_addr + current_offset;
             req.size = request_size;
             req.file_offset = base_offset + current_offset;
-            req.fh = fh.cu_fhandle;
+            req.fh = fh;
             req.op = (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE;
 
             gds_handle->request_list.push_back(req);

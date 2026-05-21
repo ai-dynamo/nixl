@@ -18,20 +18,30 @@
 #include "hf3fs_log.h"
 #include <cstring>
 #include <cerrno>
+#include <stdexcept>
+#include <string>
 #include <unistd.h>
 #include "common/nixl_log.h"
 
-
-nixl_status_t hf3fsUtil::registerFileHandle(int fd, int *ret)
+hf3fsFileHandle::hf3fsFileHandle(nixl::fdHandle &&h)
+    : nixl::fdHandle(std::move(h))
 {
-	int ret_val = hf3fs_reg_fd(fd, 0);
-	if (ret_val > 0) {
-        HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,
-            absl::StrFormat("Error registering file descriptor %d, error: %d (errno: %d - %s)",
-                            fd, ret_val, errno, nixl_strerror(errno)));
-	}
-	*ret = ret_val;
-	return NIXL_SUCCESS;
+    int ret = hf3fs_reg_fd(fd(), 0);
+    if (ret > 0) {
+        throw std::runtime_error(
+            "HF3FS: hf3fs_reg_fd failed for fd=" + std::to_string(fd()) +
+            ", error=" + std::to_string(ret) +
+            ", errno=" + std::to_string(errno) +
+            " (" + nixl_strerror(errno) + ")");
+    }
+}
+
+hf3fsFileHandle::~hf3fsFileHandle()
+{
+    int f = fd();
+    if (f >= 0) {
+        hf3fs_dereg_fd(f);
+    }
 }
 
 nixl_status_t hf3fsUtil::openHf3fsDriver()
@@ -42,11 +52,6 @@ nixl_status_t hf3fsUtil::openHf3fsDriver()
 void hf3fsUtil::closeHf3fsDriver()
 {
     // nothing to do
-}
-
-void hf3fsUtil::deregisterFileHandle(int fd)
-{
-    hf3fs_dereg_fd(fd);
 }
 
 nixl_status_t

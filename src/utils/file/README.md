@@ -4,8 +4,8 @@ This directory contains shared C++ utilities for NIXL file-aware backends:
 
 - `file_utils.{h,cpp}`: `nixl::queryFileInfo()` / `queryFileInfoList()` helpers
   for the QueryMem API (file existence + stat).
-- `file_path_mode.{h,cpp}`: `nixl::parsePathMeta()` parser and `nixlFilePathMD`
-  owned-fd RAII base for path-mode FILE_SEG registration; see
+- `file_path_mode.{h,cpp}`: `nixl::parsePathMeta()` parser and `nixl::fdHandle`
+  conditionally-owned-fd RAII helper for path-mode FILE_SEG registration; see
   [Path-Mode File Registration](#path-mode-file-registration).
 
 All file-aware plugins (POSIX, HF3FS, CUDA_GDS, GDS_MT) link
@@ -107,10 +107,15 @@ Examples: `ro:/var/cache/x.bin`, `rw,direct:/var/cache/x.bin`,
 (fail-loud); the design is strictly additive: any non-matching
 `metaInfo` falls through to caller-owned fd in `devId`.
 
-Backends consume the shared helpers `nixl::parsePathMeta()` +
-`nixlFilePathMD` from `file_path_mode.{h,cpp}`. POSIX uses
-`nixlFilePathMD` directly; HF3FS / CUDA_GDS / GDS_MT extend their
-existing per-descriptor MD struct with `owned` (and close the fd in
-`deregisterMem` after the backend-specific teardown). The GDS per-fd
-caches key on the *opened* fd, so two path-mode registrations of the
-same path yield two cuFile handles (no path-level dedup).
+Backends consume `nixl::fdHandle` from `file_path_mode.{h,cpp}`: ctor
+parses metaInfo and, on path-mode, opens the file and owns the fd;
+otherwise stays empty. `fd(fallback)` returns the owned fd if any,
+else the caller-supplied fallback (typically `devId`). The dtor closes
+iff owned. POSIX embeds `fdHandle` in its MD; CUDA_GDS / HF3FS / GDS_MT
+have their FileHandle types subclass `fdHandle` and add the
+backend-specific register/deregister in ctor/dtor, so backend dereg
+chains through `~FileHandle -> ~fdHandle` and the fd is closed exactly
+once on last-reference. The per-fd caches use `weak_ptr<FileHandle>`
+keyed on the opened fd, so two path-mode registrations of the same
+path yield two cuFile handles (no path-level dedup). xfer-time fd
+lookup goes through `nixlMetaDesc::resolveFd()` -> `nixlBackendMD::resolveFd(devId)`.

@@ -22,8 +22,6 @@
 #include <optional>
 #include <string>
 
-#include "backend/backend_engine.h"
-
 // Path-mode parser for FILE_SEG. Grammar (intentionally verbose: API contract).
 //
 //   metaInfo := <modes>:<path>     # path-mode
@@ -50,18 +48,32 @@ struct PathSpec {
 std::optional<PathSpec>
 parsePathMeta(const std::string &s);
 
-} // namespace nixl
-
-// Owned-fd RAII metadata for backends with no other per-descriptor state.
-class nixlFilePathMD : public nixlBackendMD {
+// RAII wrapper holding an fd. One ctor handles both modes:
+//   * metaInfo parses as path-mode -> open(spec); fd is owned and closed
+//     on dtor. Throws std::system_error if open() fails.
+//   * otherwise                    -> fd = fallback_fd, not owned.
+// fd() returns the held fd in both cases (-1 if default-constructed).
+// Move-only; dtor closes iff owned. Dtor is virtual so backend-specific
+// "FileHandle" classes can inherit cleanly.
+class fdHandle {
 public:
-    int fd = -1;
-    bool owned = false;
-    std::string path;
+    fdHandle() = default;
+    explicit fdHandle(const std::string &metaInfo, int fallback_fd = -1);
 
-    nixlFilePathMD() : nixlBackendMD(true /*isPrivate*/) {}
+    fdHandle(const fdHandle &) = delete;
+    fdHandle &operator=(const fdHandle &) = delete;
+    fdHandle(fdHandle &&other) noexcept;
+    fdHandle &operator=(fdHandle &&other) noexcept;
 
-    ~nixlFilePathMD() override;
+    virtual ~fdHandle();
+
+    int fd() const noexcept { return fd_; }
+
+private:
+    int fd_ = -1;
+    bool owned_ = false;
 };
+
+} // namespace nixl
 
 #endif // __FILE_PATH_MODE_H

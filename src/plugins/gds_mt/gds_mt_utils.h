@@ -22,21 +22,15 @@
 #include <nixl.h>
 #include <cufile.h>
 
-class gdsMtFileHandle {
+#include "file/file_path_mode.h"
+
+// RAII wrapper: ctor cuFileHandleRegister, dtor cuFileHandleDeregister.
+// fd ownership lives in the nixl::fdHandle base.
+class gdsMtFileHandle : public nixl::fdHandle {
 public:
-    // owned=true: path-mode. Dtor closes fd after cuFileHandleDeregister.
-    gdsMtFileHandle(int fd, bool owned = false);
-    ~gdsMtFileHandle();
+    explicit gdsMtFileHandle(nixl::fdHandle &&h);
+    ~gdsMtFileHandle() override;
 
-    gdsMtFileHandle (const gdsMtFileHandle &) = delete;
-    gdsMtFileHandle &
-    operator= (const gdsMtFileHandle &) = delete;
-    gdsMtFileHandle (gdsMtFileHandle &&) = delete;
-    gdsMtFileHandle &
-    operator= (gdsMtFileHandle &&) = delete;
-
-    int fd{-1};
-    bool owned{false};
     CUfileHandle_t cu_fhandle{nullptr};
 };
 

@@ -74,6 +74,10 @@ class nixlBackendMD {
 
         virtual ~nixlBackendMD(){
         }
+
+        // FILE_SEG MDs override this to return their carried fd. Default
+        // returns -1 for non-file MDs (DRAM/VRAM).
+        virtual int resolveFd() const noexcept { return -1; }
 };
 
 // Each backend can have different connection requirement
@@ -112,6 +116,10 @@ class nixlMetaDesc : public nixlBasicDesc {
         inline void print(const std::string &suffix) const {
             nixlBasicDesc::print(", Backend ptr val: " +
                                  std::to_string((uintptr_t)metadataP) + suffix);
+        }
+
+        int resolveFd() const noexcept {
+            return metadataP ? metadataP->resolveFd() : -1;
         }
 };
 

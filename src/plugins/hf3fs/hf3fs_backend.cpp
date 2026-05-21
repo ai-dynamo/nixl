@@ -186,46 +186,29 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
         break;
     }
     case FILE_SEG: {
-        // Path-mode: backend opens/closes; falls through to fd-in-devId.
-        int fd = -1;
-        bool owned = false;
-        std::string owned_path;
-        if (const auto spec = nixl::parsePathMeta(mem.metaInfo)) {
-            fd = ::open(spec->path.c_str(), spec->flags, spec->mode);
-            if (fd < 0) {
-                HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,
-                                 absl::StrFormat("HF3FS path-mode open(\"%s\") failed: errno=%d",
-                                                 spec->path,
-                                                 errno));
-            }
-            owned = true;
-            owned_path = spec->path;
-        } else {
-            fd = mem.devId;
+        // Build the fdHandle (one ctor covers path-mode + fd-mode), then
+        // get-or-construct the cached hf3fsFileHandle.
+        nixl::fdHandle fdh;
+        try {
+            fdh = nixl::fdHandle(mem.metaInfo, static_cast<int>(mem.devId));
+        } catch (const std::system_error &e) {
+            HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,
+                             absl::StrFormat("HF3FS path-mode open failed: %s", e.what()));
         }
-
-        // if the same file is reused - no need to re-register
-        const auto it = hf3fs_file_set.find(fd);
-        if (it == hf3fs_file_set.end()) {
-            int ret = 0;
-            status = hf3fs_utils->registerFileHandle(fd, &ret);
-            if (status != NIXL_SUCCESS) {
-                if (owned) {
-                    ::close(fd);
-                }
-                HF3FS_LOG_RETURN(status,
-                                 absl::StrFormat("Error - failed to register file handle %d", fd));
-            }
-            hf3fs_file_set.insert(fd);
+        int fd = fdh.fd();
+        std::shared_ptr<hf3fsFileHandle> handle;
+        if (auto it = hf3fs_file_map.find(fd); it != hf3fs_file_map.end()) {
+            handle = it->second.lock();
         }
-
-        nixlHf3fsFileMetadata *md = new nixlHf3fsFileMetadata();
-        md->handle.fd = fd;
-        md->handle.size = mem.len;
-        md->handle.metadata = mem.metaInfo;
-        md->owned = owned;
-        md->path = std::move(owned_path);
-        out = (nixlBackendMD *)md;
+        if (!handle) {
+            try {
+                handle = std::make_shared<hf3fsFileHandle>(std::move(fdh));
+            } catch (const std::exception &e) {
+                HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, e.what());
+            }
+            hf3fs_file_map[fd] = handle;
+        }
+        out = new nixlHf3fsFileMetadata(std::move(handle));
         break;
     }
     default:
@@ -238,16 +221,14 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
 nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
 {
     nixlHf3fsMetadata *md = (nixlHf3fsMetadata *)meta;
-    if (md->type == NIXL_HF3FS_MEM_TYPE_FILE) {
-        nixlHf3fsFileMetadata *file_md = (nixlHf3fsFileMetadata *)md;
-        hf3fs_file_set.erase(file_md->handle.fd);
-        hf3fs_utils->deregisterFileHandle(file_md->handle.fd);
-        if (file_md->owned && file_md->handle.fd >= 0) {
-            ::close(file_md->handle.fd); // path-mode: backend owns the close
-        }
-    } else if (md->type != NIXL_HF3FS_MEM_TYPE_DRAM && md->type != NIXL_HF3FS_MEM_TYPE_DRAM_ZC) {
+    if (md->type != NIXL_HF3FS_MEM_TYPE_FILE &&
+        md->type != NIXL_HF3FS_MEM_TYPE_DRAM &&
+        md->type != NIXL_HF3FS_MEM_TYPE_DRAM_ZC) {
         HF3FS_LOG_RETURN(NIXL_ERR_BACKEND, "Error - invalid metadata type");
     }
+    // FILE_SEG: dropping md releases the last shared_ptr<hf3fsFileHandle>
+    // if applicable; ~hf3fsFileHandle then hf3fs_dereg_fd and ~fdHandle
+    // closes the fd if owned. weak_ptr entries in hf3fs_file_map go stale.
     delete md;
     return NIXL_SUCCESS;
 }
@@ -324,9 +305,7 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
 
     for (int i = 0; i < file_cnt; i++) {
-        // Read fd from metadataP; in path-mode devId is 0 (path is in metaInfo).
-        auto file_md = (nixlHf3fsFileMetadata *)(*file_list)[i].metadataP;
-        int file_descriptor = file_md->handle.fd;
+        int file_descriptor = (*file_list)[i].resolveFd();
         addr = (void*) (*mem_list)[i].addr;
         size = (*mem_list)[i].len;
         offset = (size_t) (*file_list)[i].addr;  // Offset in file

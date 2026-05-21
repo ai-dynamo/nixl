@@ -24,6 +24,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <list>
+#include <memory>
+#include <unordered_map>
 #include <vector>
 #include <mutex>
 #include "gds_utils.h"
@@ -31,14 +33,23 @@
 
 class nixlGdsMetadata : public nixlBackendMD {
     public:
-        gdsFileHandle handle;
-        gdsMemBuf buf;
+        std::shared_ptr<gdsFileHandle> handle;  // FILE_SEG only
+        gdsMemBuf buf;                          // DRAM/VRAM_SEG only
         nixl_mem_t type;
-        bool owned = false; // path-mode: backend opened the fd, close on dereg
-        std::string path;
 
-        nixlGdsMetadata() : nixlBackendMD(true) { }
+        // FILE_SEG: handle is the RAII gdsFileHandle (owns fd if path-mode).
+        explicit nixlGdsMetadata(std::shared_ptr<gdsFileHandle> h)
+            : nixlBackendMD(true), handle(std::move(h)), type(FILE_SEG) {}
+
+        // DRAM/VRAM_SEG: buf is filled by registerBufHandle.
+        nixlGdsMetadata(const gdsMemBuf &b, nixl_mem_t t)
+            : nixlBackendMD(true), buf(b), type(t) {}
+
         ~nixlGdsMetadata() { }
+
+        int resolveFd() const noexcept override {
+            return handle ? handle->fd() : -1;
+        }
 };
 
 class GdsTransferRequestH {
@@ -89,7 +100,7 @@ class nixlGdsBackendReqH : public nixlBackendReqH {
 class nixlGdsEngine : public nixlBackendEngine {
     private:
         gdsUtil *gds_utils;
-        std::unordered_map<int, gdsFileHandle> gds_file_map;
+        std::unordered_map<int, std::weak_ptr<gdsFileHandle>> gds_file_map;
 
         mutable std::mutex batch_pool_lock;
         mutable std::list<nixlGdsIOBatch*> batch_pool;

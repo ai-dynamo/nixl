@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,23 +22,20 @@
 #include <nixl.h>
 #include "hf3fs_usrbio.h"
 
+#include "file/file_path_mode.h"
 
-
-class hf3fsFileHandle {
+// RAII wrapper: ctor calls hf3fs_reg_fd, dtor calls hf3fs_dereg_fd; the base
+// nixl::fdHandle dtor closes the fd after deregister iff owned.
+class hf3fsFileHandle : public nixl::fdHandle {
 public:
-    int            fd;
-    // -1 means inf size file?
-    size_t         size;
-    std::string    metadata;
-    std::string    mount_point;
+    explicit hf3fsFileHandle(nixl::fdHandle &&h);
+    ~hf3fsFileHandle() override;
 };
 
 class hf3fsUtil {
 public:
     hf3fsUtil() {}
     ~hf3fsUtil() {}
-    nixl_status_t registerFileHandle(int fd, int *ret);
-    void deregisterFileHandle(int fd);
     nixl_status_t openHf3fsDriver();
     void closeHf3fsDriver();
     nixl_status_t createIOR(struct hf3fs_ior *ior, int num_ios, bool is_read);

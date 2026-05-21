@@ -24,7 +24,8 @@
 #include <fcntl.h>
 #include "common/uuid_v4.h"
 #include <list>
-#include <unordered_set>
+#include <memory>
+#include <unordered_map>
 #include <thread>
 #include "hf3fs_utils.h"
 #include "backend/backend_engine.h"
@@ -55,11 +56,12 @@ class nixlHf3fsMetadata : public nixlBackendMD {
 
 class nixlHf3fsFileMetadata : public nixlHf3fsMetadata {
 public:
-    hf3fsFileHandle handle;
-    bool owned = false; // path-mode: backend opened the fd, close on dereg
-    std::string path;
+    std::shared_ptr<hf3fsFileHandle> handle;
 
-    nixlHf3fsFileMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE) {}
+    explicit nixlHf3fsFileMetadata(std::shared_ptr<hf3fsFileHandle> h)
+        : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE), handle(std::move(h)) {}
+
+    int resolveFd() const noexcept override { return handle->fd(); }
 };
 
 class nixlHf3fsDramMetadata : public nixlHf3fsMetadata {
@@ -117,7 +119,7 @@ class nixlHf3fsBackendReqH : public nixlBackendReqH {
 class nixlHf3fsEngine : public nixlBackendEngine {
     private:
         hf3fsUtil *hf3fs_utils;
-        std::unordered_set<int> hf3fs_file_set;
+        std::unordered_map<int, std::weak_ptr<hf3fsFileHandle>> hf3fs_file_map;
         nixl_hf3fs_mem_config mem_config;
         static long page_size;
 

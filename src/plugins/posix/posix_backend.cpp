@@ -208,21 +208,10 @@ nixl_status_t
 nixlPosixBackendReqH::postXfer() {
     num_confirmed_ios_ = 0;
 
-    // Resolve fd: path-mode (metadataP installed by registerMem) wins over devId.
-    auto resolve_fd = [](const nixlMetaDesc &d) -> int {
-        if (d.metadataP) {
-            if (auto *md = dynamic_cast<nixlPosixFileMD *>(d.metadataP)) {
-                return md->fd;
-            }
-        }
-        return static_cast<int>(d.devId);
-    };
-
     for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
          local_it != local.end() && remote_it != remote.end();
          ++local_it, ++remote_it) {
-        int fd = resolve_fd(*remote_it);
-        nixl_status_t status = io_queue_->enqueue(fd,
+        nixl_status_t status = io_queue_->enqueue(remote_it->resolveFd(),
                                                   reinterpret_cast<void *>(local_it->addr),
                                                   remote_it->len,
                                                   remote_it->addr,
@@ -271,22 +260,14 @@ nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
 
     out = nullptr;
 
-    // Path-mode FILE_SEG: backend opens/closes; otherwise falls through to fd-in-devId.
+    // FILE_SEG: one fdHandle ctor covers both modes. Path-mode -> owned fd
+    // via RAII; fd-mode -> fd taken from devId, not owned.
     if (nixl_mem == FILE_SEG) {
-        if (const auto spec = nixl::parsePathMeta(mem.metaInfo)) {
-            // Allocate owning MD before open() so bad_alloc can't strand an fd.
-            auto md = std::make_unique<nixlPosixFileMD>();
-            md->path = spec->path;
-
-            int fd = ::open(spec->path.c_str(), spec->flags, spec->mode);
-            if (fd < 0) {
-                NIXL_ERROR << absl::StrFormat(
-                    "POSIX path-mode open(\"%s\") failed: errno=%d", spec->path, errno);
-                return NIXL_ERR_BACKEND;
-            }
-            md->fd = fd;
-            md->owned = true;
-            out = md.release();
+        try {
+            out = new nixlPosixFileMD(nixl::fdHandle(mem.metaInfo, mem.devId));
+        } catch (const std::system_error &e) {
+            NIXL_ERROR << "POSIX path-mode open failed: " << e.what();
+            return NIXL_ERR_BACKEND;
         }
     }
 

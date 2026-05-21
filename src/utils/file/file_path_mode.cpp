@@ -19,6 +19,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <cerrno>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 #include <absl/strings/str_split.h>
@@ -70,10 +73,45 @@ parsePathMeta(const std::string &s) {
     return PathSpec{path, flags, mode};
 }
 
-} // namespace nixl
+fdHandle::fdHandle(const std::string &metaInfo, int fallback_fd) {
+    auto spec = parsePathMeta(metaInfo);
+    if (!spec) {
+        fd_ = fallback_fd; // fd-mode: caller-owned fd
+        return;
+    }
+    int fd = ::open(spec->path.c_str(), spec->flags, spec->mode);
+    if (fd < 0) {
+        throw std::system_error(errno, std::generic_category(),
+                                "nixl::fdHandle: open(\"" + spec->path + "\") failed");
+    }
+    fd_ = fd;
+    owned_ = true;
+}
 
-nixlFilePathMD::~nixlFilePathMD() {
-    if (owned && fd >= 0) {
-        ::close(fd);
+fdHandle::fdHandle(fdHandle &&other) noexcept
+    : fd_(other.fd_), owned_(other.owned_) {
+    other.fd_ = -1;
+    other.owned_ = false;
+}
+
+fdHandle &
+fdHandle::operator=(fdHandle &&other) noexcept {
+    if (this != &other) {
+        if (owned_ && fd_ >= 0) {
+            ::close(fd_);
+        }
+        fd_ = other.fd_;
+        owned_ = other.owned_;
+        other.fd_ = -1;
+        other.owned_ = false;
+    }
+    return *this;
+}
+
+fdHandle::~fdHandle() {
+    if (owned_ && fd_ >= 0) {
+        ::close(fd_);
     }
 }
+
+} // namespace nixl

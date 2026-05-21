@@ -29,8 +29,20 @@
 #include "io_queue.h"
 #include "sync.h"
 
-// POSIX reuses the shared owned-fd base (no extra per-descriptor state).
-using nixlPosixFileMD = nixlFilePathMD;
+// POSIX's only per-descriptor state is the owned fd. Compose nixl::fdHandle
+// and forward resolveFd() to it so xfer-time code can use desc.resolveFd().
+class nixlPosixFileMD : public nixlBackendMD {
+public:
+    nixl::fdHandle fd_handle;
+
+    nixlPosixFileMD() : nixlBackendMD(true) {}
+    explicit nixlPosixFileMD(nixl::fdHandle &&h)
+        : nixlBackendMD(true), fd_handle(std::move(h)) {}
+
+    int resolveFd() const noexcept override {
+        return fd_handle.fd();
+    }
+};
 
 class nixlPosixBackendReqH : public nixlBackendReqH {
 private:
