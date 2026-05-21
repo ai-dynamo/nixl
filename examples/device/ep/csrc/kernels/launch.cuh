@@ -86,8 +86,12 @@ cfg.dynamicSmemBytes = smem_size;
     }                                                          \
     while (false)
 
+#define NUM_RDMA_RANKS_FOR(num_ranks, num_nvl_ranks) \
+    (((num_ranks) + (num_nvl_ranks) - 1) / (num_nvl_ranks))
+
 #define SWITCH_RDMA_RANKS(case_macro) \
-    switch (num_ranks / NUM_MAX_NVL_PEERS) { \
+    switch (num_rdma_ranks) { \
+        case 1: case_macro(1); \
         case 2: case_macro(2); \
         case 4: case_macro(4); \
         case 8: case_macro(8); \
@@ -96,6 +100,34 @@ cfg.dynamicSmemBytes = smem_size;
         case 20: case_macro(20); \
         default: EP_HOST_ASSERT(false and "Unsupported RDMA ranks"); \
     } while (false)
+
+#define SWITCH_RDMA_RANKS_FOR_NVL(case_macro, nvl_ranks) \
+    switch (num_rdma_ranks) { \
+        case 1: case_macro(nvl_ranks, 1); \
+        case 2: case_macro(nvl_ranks, 2); \
+        case 4: case_macro(nvl_ranks, 4); \
+        case 8: case_macro(nvl_ranks, 8); \
+        case 16: case_macro(nvl_ranks, 16); \
+        case 18: case_macro(nvl_ranks, 18); \
+        case 20: case_macro(nvl_ranks, 20); \
+        default: EP_HOST_ASSERT(false and "Unsupported RDMA ranks"); \
+    } while (false)
+
+#define SWITCH_NVL_AND_RDMA_RANKS(case_macro)                  \
+    switch (num_nvl_ranks) {                                  \
+        case 2:                                               \
+            SWITCH_RDMA_RANKS_FOR_NVL(case_macro, 2);         \
+            break;                                            \
+        case 4:                                               \
+            SWITCH_RDMA_RANKS_FOR_NVL(case_macro, 4);         \
+            break;                                            \
+        case 8:                                               \
+            SWITCH_RDMA_RANKS_FOR_NVL(case_macro, 8);         \
+            break;                                            \
+        default:                                              \
+            EP_HOST_ASSERT(false and "Unsupported NVL ranks");\
+    }                                                         \
+    while (false)
 
 #define SWITCH_HIDDEN(case_macro) \
     switch (hidden) { \

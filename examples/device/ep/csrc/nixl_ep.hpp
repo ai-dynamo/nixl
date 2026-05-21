@@ -167,6 +167,7 @@ private:
     void _nixl_ep_destroy(void);
 
     /* high-throughput mode private funcs */
+    std::vector<int> get_active_local_ranks() const;
     void _ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles);
 
 public:
@@ -185,6 +186,8 @@ public:
     bool is_available() const;
 
     bool is_ht_available() const;
+
+    int get_num_nvl_ranks() const;
 
     int get_num_rdma_ranks() const;
 
