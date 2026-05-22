@@ -29,6 +29,7 @@
 #include <thread>
 #include <vector>
 #include <functional>
+#include <optional>
 
 #include "s3/client.h"
 #include "obj_backend.h"
@@ -172,10 +173,40 @@ public:
             });
     }
 
-    bool
-    checkObjectExists(std::string_view key) override {
-        checkedKeys_.insert(std::string(key));
-        return simulateSuccess_;
+    void
+    checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) override {
+        std::string key_str(key);
+        checkedKeys_.insert(key_str);
+
+        // Per-key error overrides global simulateError_
+        bool simulate_error = keyErrors_.count(key_str) > 0 || simulateError_;
+
+        // Per-key outcome overrides global simulateSuccess_
+        auto outcome_it = keyOutcomes_.find(key_str);
+        bool success = (outcome_it != keyOutcomes_.end()) ? outcome_it->second : simulateSuccess_;
+
+        // Per-key delay (defaults to no delay)
+        std::chrono::milliseconds delay{0};
+        auto delay_it = keyDelays_.find(key_str);
+        if (delay_it != keyDelays_.end()) {
+            delay = delay_it->second;
+        }
+
+        if (executor_) {
+            executor_->Submit([callback, success, simulate_error, delay]() {
+                if (delay.count() > 0) {
+                    std::this_thread::sleep_for(delay);
+                }
+                callback(simulate_error ? std::optional<bool>(std::nullopt) :
+                                          std::optional<bool>(success));
+            });
+        } else {
+            if (delay.count() > 0) {
+                std::this_thread::sleep_for(delay);
+            }
+            callback(simulate_error ? std::optional<bool>(std::nullopt) :
+                                      std::optional<bool>(success));
+        }
     }
 
     void
@@ -207,6 +238,99 @@ public:
     bool
     hasExecutor() const {
         return executor_ != nullptr;
+    }
+};
+
+// Mock that invokes the checkObjectExistsAsync callback twice to test
+// the exact-once guard in engine_impl.cpp's queryMem.
+class doubleCallbackMockS3Client : public iS3Client {
+private:
+    std::shared_ptr<asioThreadPoolExecutor> executor_;
+
+public:
+    doubleCallbackMockS3Client() = default;
+
+    void
+    setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) override {
+        executor_ = std::dynamic_pointer_cast<asioThreadPoolExecutor>(executor);
+    }
+
+    void
+    putObjectAsync(std::string_view, uintptr_t, size_t, size_t, put_object_callback_t callback)
+        override {
+        callback(true);
+    }
+
+    void
+    getObjectAsync(std::string_view, uintptr_t, size_t, size_t, get_object_callback_t callback)
+        override {
+        callback(true);
+    }
+
+    void
+    checkObjectExistsAsync(std::string_view, check_object_callback_t callback) override {
+        if (executor_) {
+            executor_->Submit([callback]() {
+                callback(true); // First invocation
+                callback(true); // Second invocation — should be a no-op
+            });
+        } else {
+            callback(true);
+            callback(true);
+        }
+    }
+};
+
+// Mock that throws an exception during checkObjectExistsAsync to test the
+// exception handling path in engine_impl.cpp's queryMem.
+class exceptionThrowingMockS3Client : public iS3Client {
+private:
+    std::shared_ptr<asioThreadPoolExecutor> executor_;
+    int throw_after_calls_ = 0;
+    int call_count_ = 0;
+
+public:
+    exceptionThrowingMockS3Client() = default;
+
+    exceptionThrowingMockS3Client(
+        [[maybe_unused]] nixl_b_params_t *custom_params,
+        std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr,
+        int throw_after_calls = 0)
+        : throw_after_calls_(throw_after_calls) {
+        if (executor) {
+            executor_ = std::dynamic_pointer_cast<asioThreadPoolExecutor>(executor);
+        }
+    }
+
+    void
+    setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) override {
+        executor_ = std::dynamic_pointer_cast<asioThreadPoolExecutor>(executor);
+    }
+
+    void
+    putObjectAsync(std::string_view, uintptr_t, size_t, size_t, put_object_callback_t callback)
+        override {
+        callback(true);
+    }
+
+    void
+    getObjectAsync(std::string_view, uintptr_t, size_t, size_t, get_object_callback_t callback)
+        override {
+        callback(true);
+    }
+
+    void
+    checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) override {
+        call_count_++;
+        if (call_count_ > throw_after_calls_) {
+            throw std::runtime_error("Simulated exception in checkObjectExistsAsync");
+        }
+
+        if (executor_) {
+            executor_->Submit([callback]() { callback(true); });
+        } else {
+            callback(true);
+        }
     }
 };
 

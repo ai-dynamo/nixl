@@ -46,6 +46,20 @@ public:
 
 S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params)
     : S3AccelObjEngineImpl(init_params) {
+    // Disable SDK response checksum validation by default for RDMA. RDMA GET
+    // responses have an empty HTTP body (Content-Length: 0) with data delivered
+    // out-of-band, so SDK body-checksum validation always fails when the server
+    // returns checksum headers. Transport integrity is ensured by RoCEv2 iCRC.
+    // emplace() preserves any user-provided override.
+    nixl_b_params_t *params_to_use = init_params->customParams;
+    nixl_b_params_t local_params;
+    if (!init_params->customParams) {
+        local_params["resp_checksum"] = "required";
+        params_to_use = &local_params;
+    } else {
+        init_params->customParams->emplace("resp_checksum", "required");
+    }
+
     // Create the token manager (Pattern B — no callbacks).
     tokenMgr_ = std::make_shared<CuObjTokenManager>(CUOBJ_PROTO_RDMA_DC_V1);
     if (!tokenMgr_->isConnected()) {
@@ -55,13 +69,22 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
 
     // Create the Dell RDMA client that uses the token manager.
     s3Client_ =
-        std::make_shared<awsS3DellObsClient>(init_params->customParams, tokenMgr_, executor_);
+        std::make_shared<awsS3DellObsClient>(params_to_use, tokenMgr_, executor_);
     NIXL_INFO << "Dell ObjectScale engine initialized (Pattern B)";
 }
 
 S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init_params,
                                                std::shared_ptr<iS3Client> s3_client)
     : S3AccelObjEngineImpl(init_params, s3_client) {
+    // See primary constructor for rationale.
+    nixl_b_params_t *params_to_use = init_params->customParams;
+    nixl_b_params_t local_params;
+    if (!init_params->customParams) {
+        local_params["resp_checksum"] = "required";
+        params_to_use = &local_params;
+    } else {
+        init_params->customParams->emplace("resp_checksum", "required");
+    }
     // Use the injected client if provided (testing), otherwise create one.
     if (s3_client) {
         s3Client_ = s3_client;
@@ -72,7 +95,7 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
             return;
         }
         s3Client_ =
-            std::make_shared<awsS3DellObsClient>(init_params->customParams, tokenMgr_, executor_);
+            std::make_shared<awsS3DellObsClient>(params_to_use, tokenMgr_, executor_);
     }
 
     NIXL_INFO << "Dell ObjectScale engine initialized (Pattern B, injected client)";

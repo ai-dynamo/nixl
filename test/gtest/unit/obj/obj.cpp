@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+
 /**
  * Object Plugin Unit Tests — common test suite.
  *
@@ -157,7 +158,6 @@ TEST_P(objParamTestFixture, NullHandleReleaseReqH) {
     EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
 }
 
-
 TEST_P(objParamTestFixture, WriteTransfer) {
     testTransferWithSize(NIXL_WRITE, 1024, "-" + GetParam().name);
 }
@@ -185,7 +185,8 @@ TEST_P(objParamTestFixture, CheckObjectExists) {
     descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-key-2" + suffix));
     descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "test-key-3" + suffix));
     std::vector<nixl_query_resp_t> resp;
-    objEngine_->queryMem(descs, resp);
+    nixl_status_t status = objEngine_->queryMem(descs, resp);
+    ASSERT_EQ(status, NIXL_SUCCESS);
 
     EXPECT_EQ(resp.size(), 3);
     EXPECT_EQ(resp[0].has_value(), true);
@@ -196,6 +197,104 @@ TEST_P(objParamTestFixture, CheckObjectExists) {
     EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("test-key-1" + suffix));
     EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("test-key-2" + suffix));
     EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("test-key-3" + suffix));
+}
+
+TEST_P(objParamTestFixture, CheckObjectExistsAsyncOrdering) {
+    std::string suffix = "-" + GetParam().name;
+
+    // Single combined queryMem call with per-key outcomes and staggered delays
+    // so responses complete out of order, exercising the slot-mapping logic.
+    nixl_reg_dlist_t combined_descs(OBJ_SEG);
+    combined_descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "async-key-1" + suffix)); // exists
+    combined_descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "async-key-2" + suffix)); // missing
+    combined_descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "async-key-3" + suffix)); // exists
+    combined_descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "async-key-4" + suffix)); // missing
+    combined_descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "async-key-5" + suffix)); // exists
+
+    // Drive per-key outcomes so exist/missing alternate
+    mockS3Client_->setKeyOutcome("async-key-1" + suffix, true);
+    mockS3Client_->setKeyOutcome("async-key-2" + suffix, false);
+    mockS3Client_->setKeyOutcome("async-key-3" + suffix, true);
+    mockS3Client_->setKeyOutcome("async-key-4" + suffix, false);
+    mockS3Client_->setKeyOutcome("async-key-5" + suffix, true);
+
+    // Stagger delays: earlier keys complete later to force out-of-order completion
+    mockS3Client_->setKeyDelay("async-key-1" + suffix, std::chrono::milliseconds(50));
+    mockS3Client_->setKeyDelay("async-key-2" + suffix, std::chrono::milliseconds(40));
+    mockS3Client_->setKeyDelay("async-key-3" + suffix, std::chrono::milliseconds(30));
+    mockS3Client_->setKeyDelay("async-key-4" + suffix, std::chrono::milliseconds(20));
+    mockS3Client_->setKeyDelay("async-key-5" + suffix, std::chrono::milliseconds(10));
+
+    std::vector<nixl_query_resp_t> combined_resp;
+    nixl_status_t status = objEngine_->queryMem(combined_descs, combined_resp);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    ASSERT_EQ(combined_resp.size(), 5);
+
+    // Assert each response corresponds to the descriptor at that index
+    EXPECT_TRUE(combined_resp[0].has_value()) << "async-key-1 should exist";
+    EXPECT_FALSE(combined_resp[1].has_value()) << "async-key-2 should not exist";
+    EXPECT_TRUE(combined_resp[2].has_value()) << "async-key-3 should exist";
+    EXPECT_FALSE(combined_resp[3].has_value()) << "async-key-4 should not exist";
+    EXPECT_TRUE(combined_resp[4].has_value()) << "async-key-5 should exist";
+
+    // Verify all keys were checked
+    EXPECT_EQ(mockS3Client_->getCheckedKeys().size(), 5);
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("async-key-1" + suffix));
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("async-key-2" + suffix));
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("async-key-3" + suffix));
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("async-key-4" + suffix));
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("async-key-5" + suffix));
+}
+
+TEST_P(objParamTestFixture, CheckObjectExistsAsyncFailure) {
+    mockS3Client_->setSimulateSuccess(false);
+
+    std::string suffix = "-" + GetParam().name;
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "fail-key-1" + suffix));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "fail-key-2" + suffix));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = objEngine_->queryMem(descs, resp);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    EXPECT_EQ(resp.size(), 2);
+
+    // When simulateSuccess is false, objects should appear as non-existent
+    EXPECT_EQ(resp[0].has_value(), false);
+    EXPECT_EQ(resp[1].has_value(), false);
+
+    EXPECT_EQ(mockS3Client_->getCheckedKeys().size(), 2);
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("fail-key-1" + suffix));
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("fail-key-2" + suffix));
+}
+
+TEST_P(objParamTestFixture, CheckObjectExistsAsyncEmptyList) {
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = objEngine_->queryMem(descs, resp);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    EXPECT_EQ(resp.size(), 0);
+    EXPECT_EQ(mockS3Client_->getCheckedKeys().size(), 0);
+}
+
+TEST_P(objParamTestFixture, CheckObjectExistsAsyncRequestError) {
+    // Simulate a transient error (e.g. 5xx / auth failure) that should
+    // propagate as NIXL_ERR_BACKEND rather than being treated as "not found".
+    mockS3Client_->setSimulateError(true);
+
+    std::string suffix = "-" + GetParam().name;
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "error-key-1" + suffix));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "error-key-2" + suffix));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = objEngine_->queryMem(descs, resp);
+
+    EXPECT_EQ(status, NIXL_ERR_BACKEND);
+    EXPECT_EQ(mockS3Client_->getCheckedKeys().size(), 2);
 }
 
 // Instantiate parameterized tests for Standard and CRT configurations.
@@ -340,6 +439,183 @@ TEST_F(objCrtTestFixture, TransferBelowThreshold) {
 TEST_F(objCrtTestFixture, MixedSizeThreshold) {
     // Mixed: 1 MiB (standard client) + 6 MiB (CRT client via MPU)
     testMultiDescriptorWithSizes(NIXL_WRITE, 1048576, 6291456, "-crt-mixed");
+}
+
+// ---------------------------------------------------------------------------
+// Exact-once callback guard tests
+// ---------------------------------------------------------------------------
+
+// Fixture that injects the double-callback mock so that every
+// checkObjectExistsAsync invocation fires the callback twice.
+class objDoubleCallbackFixture : public testing::Test {
+protected:
+    std::unique_ptr<nixlObjEngine> objEngine_;
+    nixlBackendInitParams initParams_;
+    nixl_b_params_t customParams_;
+
+    void
+    SetUp() override {
+        initParams_.localAgent = "test-double-callback";
+        initParams_.type = "OBJ";
+        initParams_.customParams = &customParams_;
+        initParams_.enableProgTh = false;
+        initParams_.pthrDelay = 0;
+        initParams_.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+
+        auto mockClient = std::make_shared<doubleCallbackMockS3Client>();
+        objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockClient);
+    }
+};
+
+TEST_F(objDoubleCallbackFixture, QueryMemDuplicateCallback) {
+    // Verify that a duplicate callback invocation from the SDK doesn't cause
+    // exceptions or corrupt results.  The exact-once guard in engine_impl.cpp
+    // (completed->exchange(true)) should make the second invocation a no-op.
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "dup-key-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "dup-key-2"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "dup-key-3"));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = objEngine_->queryMem(descs, resp);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    EXPECT_EQ(resp.size(), 3);
+    EXPECT_TRUE(resp[0].has_value());
+    EXPECT_TRUE(resp[1].has_value());
+    EXPECT_TRUE(resp[2].has_value());
+}
+
+// ---------------------------------------------------------------------------
+// queryMem robustness tests
+// ---------------------------------------------------------------------------
+
+TEST_F(objTestFixture, QueryMemClearsStaleResp) {
+    // First queryMem: 3 keys, all exist
+    mockS3Client_->setSimulateSuccess(true);
+
+    nixl_reg_dlist_t descs1(OBJ_SEG);
+    descs1.addDesc(nixlBlobDesc(nixlBasicDesc(), "stale-key-1"));
+    descs1.addDesc(nixlBlobDesc(nixlBasicDesc(), "stale-key-2"));
+    descs1.addDesc(nixlBlobDesc(nixlBasicDesc(), "stale-key-3"));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = objEngine_->queryMem(descs1, resp);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+    ASSERT_EQ(resp.size(), 3);
+    EXPECT_TRUE(resp[0].has_value());
+    EXPECT_TRUE(resp[1].has_value());
+    EXPECT_TRUE(resp[2].has_value());
+
+    // Second queryMem: 2 keys, both missing — reuses the same resp vector.
+    // resp.assign() must clear the 3 stale entries from the first call.
+    mockS3Client_->setSimulateSuccess(false);
+
+    nixl_reg_dlist_t descs2(OBJ_SEG);
+    descs2.addDesc(nixlBlobDesc(nixlBasicDesc(), "stale-key-4"));
+    descs2.addDesc(nixlBlobDesc(nixlBasicDesc(), "stale-key-5"));
+
+    status = objEngine_->queryMem(descs2, resp);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    // resp must reflect the second call only: 2 items, both not found
+    EXPECT_EQ(resp.size(), 2);
+    EXPECT_FALSE(resp[0].has_value());
+    EXPECT_FALSE(resp[1].has_value());
+}
+
+TEST_F(objTestFixture, QueryMemMixedPerKeyErrors) {
+    // Mix of outcomes in a single queryMem call: some keys exist, some are
+    // missing, and one returns an error (std::nullopt).  The error should
+    // cause NIXL_ERR_BACKEND while the other slots are still populated.
+    mockS3Client_->setKeyOutcome("mix-key-1", true); // exists
+    mockS3Client_->setKeyOutcome("mix-key-2", false); // missing
+    mockS3Client_->setKeyError("mix-key-3"); // transient error
+
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "mix-key-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "mix-key-2"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "mix-key-3"));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = objEngine_->queryMem(descs, resp);
+
+    // Should fail because mix-key-3 errored
+    EXPECT_EQ(status, NIXL_ERR_BACKEND);
+
+    // Non-error slots should still carry the correct values
+    ASSERT_EQ(resp.size(), 3);
+    EXPECT_TRUE(resp[0].has_value()) << "mix-key-1 should exist";
+    EXPECT_FALSE(resp[1].has_value()) << "mix-key-2 should not exist";
+    EXPECT_FALSE(resp[2].has_value()) << "mix-key-3 errored, should be nullopt";
+
+    // All 3 keys should still have been checked
+    EXPECT_EQ(mockS3Client_->getCheckedKeys().size(), 3);
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("mix-key-1"));
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("mix-key-2"));
+    EXPECT_TRUE(mockS3Client_->getCheckedKeys().count("mix-key-3"));
+}
+
+// ---------------------------------------------------------------------------
+// Exception path tests
+// ---------------------------------------------------------------------------
+
+// Fixture for exception path tests
+class objExceptionFixture : public testing::Test {
+protected:
+    std::unique_ptr<nixlObjEngine> objEngine_;
+    nixlBackendInitParams initParams_;
+    nixl_b_params_t customParams_;
+
+    void
+    SetUp() override {
+        initParams_.localAgent = "test-exception";
+        initParams_.type = "OBJ";
+        initParams_.customParams = &customParams_;
+        initParams_.enableProgTh = false;
+        initParams_.pthrDelay = 0;
+        initParams_.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+    }
+};
+
+TEST_F(objExceptionFixture, QueryMemExceptionDuringLaunch) {
+    // Test that exceptions during async request launch are handled gracefully.
+    // The mock throws after N calls, triggering the catch block in queryMem.
+    // This verifies the fix for the use-after-free race: the catch block should
+    // wait for all in-flight callbacks to complete before returning.
+    auto mockClient = std::make_shared<exceptionThrowingMockS3Client>(&customParams_, nullptr, 2);
+    objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockClient);
+
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-key-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-key-2"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-key-3"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-key-4"));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = objEngine_->queryMem(descs, resp);
+
+    // Should return error due to exception during launch
+    EXPECT_EQ(status, NIXL_ERR_BACKEND);
+
+    // Response vector should be sized correctly (all slots initialized to nullopt)
+    EXPECT_EQ(resp.size(), 4);
+}
+
+TEST_F(objExceptionFixture, QueryMemExceptionOnFirstCall) {
+    // Test exception on the very first async request launch.
+    auto mockClient = std::make_shared<exceptionThrowingMockS3Client>(&customParams_, nullptr, 0);
+    objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockClient);
+
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-immediate-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-immediate-2"));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = objEngine_->queryMem(descs, resp);
+
+    EXPECT_EQ(status, NIXL_ERR_BACKEND);
+    EXPECT_EQ(resp.size(), 2);
 }
 
 } // namespace gtest::obj

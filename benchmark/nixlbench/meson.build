@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '1.1.0',
+project('nixlbench', 'CPP', version: '1.2.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -97,8 +97,7 @@ endif
 
 cuda_fabric_available = false
 if cuda_available
-    if cpp.has_header_symbol('cuda.h', 'CU_MEM_HANDLE_TYPE_FABRIC',
-                             args: cuda_inc_path != '' ? '-I' + cuda_inc_path : [])
+    if cpp.has_header_symbol('cuda.h', 'CU_MEM_HANDLE_TYPE_FABRIC', dependencies: cuda_dep)
         cuda_fabric_available = true
     endif
 endif
