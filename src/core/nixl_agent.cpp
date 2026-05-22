@@ -1204,12 +1204,10 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
     backend_set_t backend_set;
 
     if (!extra_params || extra_params->backends.empty()) {
-        // Finding backends that support the corresponding memories
-        // locally and remotely, and find the common ones.
+        // Finding backends that support the corresponding memories locally.
         backend_set_t *local_set = data->localSection_.queryBackends(local_descs.getType());
         if (!local_set) {
-            NIXL_ERROR_FUNC << "no backends found for local or remote for their "
-                               "corresponding memory type";
+            NIXL_ERROR_FUNC << "no backends found for local memory type";
             return NIXL_ERR_NOT_FOUND;
         }
 
@@ -1220,7 +1218,7 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
         }
 
         if (backend_set.empty()) {
-            NIXL_ERROR_FUNC << "no potential backend found to be able to do the transfer";
+            NIXL_ERROR_FUNC << "no backend for " << operation << " to " << remote_agent;;
             return NIXL_ERR_NOT_FOUND;
         }
     } else {
