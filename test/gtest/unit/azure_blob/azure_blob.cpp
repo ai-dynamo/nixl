@@ -21,7 +21,10 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <chrono>
 #include <functional>
+#include <map>
+#include <thread>
 #include <asio.hpp>
 
 #include "azure_blob_client.h"
@@ -32,14 +35,38 @@ namespace gtest::azure_blob {
 class mockBlobClient : public iBlobClient {
 private:
     bool simulateSuccess_ = true;
+    bool simulateError_ = false;
     std::shared_ptr<asio::thread_pool> executor_;
     std::vector<std::function<void()>> pendingCallbacks_;
     std::set<std::string> checkedKeys_;
+    std::map<std::string, bool> keyOutcomes_;
+    std::map<std::string, std::chrono::milliseconds> keyDelays_;
+    std::set<std::string> keyErrors_;
 
 public:
     void
     setSimulateSuccess(bool success) {
         simulateSuccess_ = success;
+    }
+
+    void
+    setSimulateError(bool error) {
+        simulateError_ = error;
+    }
+
+    void
+    setKeyOutcome(const std::string &key, bool success) {
+        keyOutcomes_[key] = success;
+    }
+
+    void
+    setKeyDelay(const std::string &key, std::chrono::milliseconds delay) {
+        keyDelays_[key] = delay;
+    }
+
+    void
+    setKeyError(const std::string &key) {
+        keyErrors_.insert(key);
     }
 
     void
@@ -73,10 +100,32 @@ public:
         });
     }
 
-    bool
-    checkBlobExists(std::string_view key) override {
-        checkedKeys_.insert(std::string(key));
-        return simulateSuccess_;
+    void
+    checkBlobExistsAsync(std::string_view key, check_blob_callback_t callback) override {
+        std::string key_str(key);
+        checkedKeys_.insert(key_str);
+
+        // Per-key error overrides global simulateError_
+        bool simulate_error = keyErrors_.count(key_str) > 0 || simulateError_;
+
+        // Per-key outcome overrides global simulateSuccess_
+        auto outcome_it = keyOutcomes_.find(key_str);
+        bool success = (outcome_it != keyOutcomes_.end()) ? outcome_it->second : simulateSuccess_;
+
+        // Per-key delay (defaults to no delay)
+        std::chrono::milliseconds delay{0};
+        auto delay_it = keyDelays_.find(key_str);
+        if (delay_it != keyDelays_.end()) {
+            delay = delay_it->second;
+        }
+
+        asio::post(*executor_, [callback, success, simulate_error, delay]() {
+            if (delay.count() > 0) {
+                std::this_thread::sleep_for(delay);
+            }
+            callback(simulate_error ? std::optional<bool>(std::nullopt) :
+                                      std::optional<bool>(success));
+        });
     }
 
     void
@@ -101,6 +150,79 @@ public:
     bool
     hasExecutor() const {
         return executor_ != nullptr;
+    }
+};
+
+// Mock that fires the checkBlobExistsAsync callback twice to exercise
+// the exact-once guard in azure_blob_backend.cpp's queryMem.
+class doubleCallbackMockBlobClient : public iBlobClient {
+private:
+    std::shared_ptr<asio::thread_pool> executor_;
+
+public:
+    void
+    setExecutor(std::shared_ptr<asio::thread_pool> executor) override {
+        executor_ = executor;
+    }
+
+    void
+    putBlobAsync(std::string_view, uintptr_t, size_t, size_t, put_blob_callback_t callback)
+        override {
+        callback(true);
+    }
+
+    void
+    getBlobAsync(std::string_view, uintptr_t, size_t, size_t, get_blob_callback_t callback)
+        override {
+        callback(true);
+    }
+
+    void
+    checkBlobExistsAsync(std::string_view, check_blob_callback_t callback) override {
+        asio::post(*executor_, [callback]() {
+            callback(std::optional<bool>(true)); // First invocation
+            callback(std::optional<bool>(true)); // Second invocation - should be a no-op
+        });
+    }
+};
+
+// Mock that throws an exception during checkBlobExistsAsync to test the
+// exception handling path in azure_blob_backend.cpp's queryMem.
+class exceptionThrowingMockBlobClient : public iBlobClient {
+private:
+    std::shared_ptr<asio::thread_pool> executor_;
+    int throw_after_calls_ = 0;
+    int call_count_ = 0;
+
+public:
+    explicit exceptionThrowingMockBlobClient(int throw_after_calls = 0)
+        : throw_after_calls_(throw_after_calls) {}
+
+    void
+    setExecutor(std::shared_ptr<asio::thread_pool> executor) override {
+        executor_ = executor;
+    }
+
+    void
+    putBlobAsync(std::string_view, uintptr_t, size_t, size_t, put_blob_callback_t callback)
+        override {
+        callback(true);
+    }
+
+    void
+    getBlobAsync(std::string_view, uintptr_t, size_t, size_t, get_blob_callback_t callback)
+        override {
+        callback(true);
+    }
+
+    void
+    checkBlobExistsAsync(std::string_view, check_blob_callback_t callback) override {
+        call_count_++;
+        if (call_count_ > throw_after_calls_) {
+            throw std::runtime_error("Simulated exception in checkBlobExistsAsync");
+        }
+
+        asio::post(*executor_, [callback]() { callback(std::optional<bool>(true)); });
     }
 };
 
@@ -662,6 +784,250 @@ TEST_F(azureBlobTestFixture, CheckBlobExists) {
 
 TEST_F(azureBlobTestFixture, CheckBlobDoesNotExist) {
     testBlobExistence(false);
+}
+
+TEST_F(azureBlobTestFixture, CheckBlobExistsAsyncOrdering) {
+    // Single combined queryMem call with per-key outcomes and staggered delays
+    // so responses complete out of order, exercising the slot-mapping logic.
+    nixl_reg_dlist_t combined_descs(OBJ_SEG);
+    combined_descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "async-key-1")); // exists
+    combined_descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "async-key-2")); // missing
+    combined_descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "async-key-3")); // exists
+    combined_descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "async-key-4")); // missing
+    combined_descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "async-key-5")); // exists
+
+    // Drive per-key outcomes so exist/missing alternate
+    mockBlobClient_->setKeyOutcome("async-key-1", true);
+    mockBlobClient_->setKeyOutcome("async-key-2", false);
+    mockBlobClient_->setKeyOutcome("async-key-3", true);
+    mockBlobClient_->setKeyOutcome("async-key-4", false);
+    mockBlobClient_->setKeyOutcome("async-key-5", true);
+
+    // Stagger delays: earlier keys complete later to force out-of-order completion
+    mockBlobClient_->setKeyDelay("async-key-1", std::chrono::milliseconds(50));
+    mockBlobClient_->setKeyDelay("async-key-2", std::chrono::milliseconds(40));
+    mockBlobClient_->setKeyDelay("async-key-3", std::chrono::milliseconds(30));
+    mockBlobClient_->setKeyDelay("async-key-4", std::chrono::milliseconds(20));
+    mockBlobClient_->setKeyDelay("async-key-5", std::chrono::milliseconds(10));
+
+    std::vector<nixl_query_resp_t> combined_resp;
+    nixl_status_t status = blobEngine_->queryMem(combined_descs, combined_resp);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    ASSERT_EQ(combined_resp.size(), 5);
+
+    // Assert each response corresponds to the descriptor at that index
+    EXPECT_TRUE(combined_resp[0].has_value()) << "async-key-1 should exist";
+    EXPECT_FALSE(combined_resp[1].has_value()) << "async-key-2 should not exist";
+    EXPECT_TRUE(combined_resp[2].has_value()) << "async-key-3 should exist";
+    EXPECT_FALSE(combined_resp[3].has_value()) << "async-key-4 should not exist";
+    EXPECT_TRUE(combined_resp[4].has_value()) << "async-key-5 should exist";
+
+    // Verify all keys were checked
+    EXPECT_EQ(mockBlobClient_->getCheckedKeys().size(), 5);
+    EXPECT_TRUE(mockBlobClient_->getCheckedKeys().count("async-key-1"));
+    EXPECT_TRUE(mockBlobClient_->getCheckedKeys().count("async-key-2"));
+    EXPECT_TRUE(mockBlobClient_->getCheckedKeys().count("async-key-3"));
+    EXPECT_TRUE(mockBlobClient_->getCheckedKeys().count("async-key-4"));
+    EXPECT_TRUE(mockBlobClient_->getCheckedKeys().count("async-key-5"));
+}
+
+TEST_F(azureBlobTestFixture, CheckBlobExistsAsyncEmptyList) {
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = blobEngine_->queryMem(descs, resp);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    EXPECT_EQ(resp.size(), 0);
+    EXPECT_EQ(mockBlobClient_->getCheckedKeys().size(), 0);
+}
+
+TEST_F(azureBlobTestFixture, CheckBlobExistsAsyncRequestError) {
+    // Simulate a transient error (e.g. 5xx / auth failure) that should
+    // propagate as NIXL_ERR_BACKEND rather than being treated as "not found".
+    mockBlobClient_->setSimulateError(true);
+
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "error-key-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "error-key-2"));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = blobEngine_->queryMem(descs, resp);
+
+    EXPECT_EQ(status, NIXL_ERR_BACKEND);
+    EXPECT_EQ(mockBlobClient_->getCheckedKeys().size(), 2);
+}
+
+TEST_F(azureBlobTestFixture, QueryMemClearsStaleResp) {
+    // First queryMem: 3 keys, all exist
+    mockBlobClient_->setSimulateSuccess(true);
+
+    nixl_reg_dlist_t descs1(OBJ_SEG);
+    descs1.addDesc(nixlBlobDesc(nixlBasicDesc(), "stale-key-1"));
+    descs1.addDesc(nixlBlobDesc(nixlBasicDesc(), "stale-key-2"));
+    descs1.addDesc(nixlBlobDesc(nixlBasicDesc(), "stale-key-3"));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = blobEngine_->queryMem(descs1, resp);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+    ASSERT_EQ(resp.size(), 3);
+    EXPECT_TRUE(resp[0].has_value());
+    EXPECT_TRUE(resp[1].has_value());
+    EXPECT_TRUE(resp[2].has_value());
+
+    // Second queryMem: 2 keys, both missing - reuses the same resp vector.
+    // resp.assign() must clear the 3 stale entries from the first call.
+    mockBlobClient_->setSimulateSuccess(false);
+
+    nixl_reg_dlist_t descs2(OBJ_SEG);
+    descs2.addDesc(nixlBlobDesc(nixlBasicDesc(), "stale-key-4"));
+    descs2.addDesc(nixlBlobDesc(nixlBasicDesc(), "stale-key-5"));
+
+    status = blobEngine_->queryMem(descs2, resp);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    // resp must reflect the second call only: 2 items, both not found
+    EXPECT_EQ(resp.size(), 2);
+    EXPECT_FALSE(resp[0].has_value());
+    EXPECT_FALSE(resp[1].has_value());
+}
+
+TEST_F(azureBlobTestFixture, QueryMemMixedPerKeyErrors) {
+    // Mix of outcomes in a single queryMem call: some keys exist, some are
+    // missing, and one returns an error (std::nullopt).  The error should
+    // cause NIXL_ERR_BACKEND while the other slots are still populated.
+    mockBlobClient_->setKeyOutcome("mix-key-1", true); // exists
+    mockBlobClient_->setKeyOutcome("mix-key-2", false); // missing
+    mockBlobClient_->setKeyError("mix-key-3"); // transient error
+
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "mix-key-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "mix-key-2"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "mix-key-3"));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = blobEngine_->queryMem(descs, resp);
+
+    // Should fail because mix-key-3 errored
+    EXPECT_EQ(status, NIXL_ERR_BACKEND);
+
+    // Non-error slots should still carry the correct values
+    ASSERT_EQ(resp.size(), 3);
+    EXPECT_TRUE(resp[0].has_value()) << "mix-key-1 should exist";
+    EXPECT_FALSE(resp[1].has_value()) << "mix-key-2 should not exist";
+    EXPECT_FALSE(resp[2].has_value()) << "mix-key-3 errored, should be nullopt";
+
+    // All 3 keys should still have been checked
+    EXPECT_EQ(mockBlobClient_->getCheckedKeys().size(), 3);
+    EXPECT_TRUE(mockBlobClient_->getCheckedKeys().count("mix-key-1"));
+    EXPECT_TRUE(mockBlobClient_->getCheckedKeys().count("mix-key-2"));
+    EXPECT_TRUE(mockBlobClient_->getCheckedKeys().count("mix-key-3"));
+}
+
+// ---------------------------------------------------------------------------
+// Exact-once callback guard tests
+// ---------------------------------------------------------------------------
+
+// Fixture that injects the double-callback mock so that every
+// checkBlobExistsAsync invocation fires the callback twice.
+class azureBlobDoubleCallbackFixture : public testing::Test {
+protected:
+    std::unique_ptr<nixlAzureBlobEngine> blobEngine_;
+    nixlBackendInitParams initParams_;
+    nixl_b_params_t customParams_;
+
+    void
+    SetUp() override {
+        initParams_.localAgent = "test-double-callback";
+        initParams_.type = "AZURE_BLOB";
+        initParams_.customParams = &customParams_;
+        initParams_.enableProgTh = false;
+        initParams_.pthrDelay = 0;
+        initParams_.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+
+        auto mockClient = std::make_shared<doubleCallbackMockBlobClient>();
+        blobEngine_ = std::make_unique<nixlAzureBlobEngine>(&initParams_, mockClient);
+    }
+};
+
+TEST_F(azureBlobDoubleCallbackFixture, QueryMemDuplicateCallback) {
+    // Verify that unintended duplicate callback invocation from the blob client
+    // implementation doesn't cause exceptions or corrupt results.
+    // The exact-once guard in queryMem (completed->exchange(true)) should make
+    // the second invocation a no-op.
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "dup-key-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "dup-key-2"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "dup-key-3"));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = blobEngine_->queryMem(descs, resp);
+    ASSERT_EQ(status, NIXL_SUCCESS);
+
+    EXPECT_EQ(resp.size(), 3);
+    EXPECT_TRUE(resp[0].has_value());
+    EXPECT_TRUE(resp[1].has_value());
+    EXPECT_TRUE(resp[2].has_value());
+}
+
+// ---------------------------------------------------------------------------
+// Exception path tests
+// ---------------------------------------------------------------------------
+
+class azureBlobExceptionFixture : public testing::Test {
+protected:
+    nixlBackendInitParams initParams_;
+    nixl_b_params_t customParams_;
+
+    void
+    SetUp() override {
+        initParams_.localAgent = "test-exception";
+        initParams_.type = "AZURE_BLOB";
+        initParams_.customParams = &customParams_;
+        initParams_.enableProgTh = false;
+        initParams_.pthrDelay = 0;
+        initParams_.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+    }
+};
+
+TEST_F(azureBlobExceptionFixture, QueryMemExceptionDuringLaunch) {
+    // Test that exceptions during async request launch are handled gracefully.
+    // The mock throws after N calls, triggering the catch block in queryMem.
+    // This verifies the fix for the use-after-free race: the catch block should
+    // wait for all in-flight callbacks to complete before returning.
+    auto mockClient = std::make_shared<exceptionThrowingMockBlobClient>(2);
+    auto blobEngine = std::make_unique<nixlAzureBlobEngine>(&initParams_, mockClient);
+
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-key-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-key-2"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-key-3"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-key-4"));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = blobEngine->queryMem(descs, resp);
+
+    // Should return error due to exception during launch
+    EXPECT_EQ(status, NIXL_ERR_BACKEND);
+
+    // Response vector should be sized correctly (all slots initialized to nullopt)
+    EXPECT_EQ(resp.size(), 4);
+}
+
+TEST_F(azureBlobExceptionFixture, QueryMemExceptionOnFirstCall) {
+    // Test exception on the very first async request launch.
+    auto mockClient = std::make_shared<exceptionThrowingMockBlobClient>(0);
+    auto blobEngine = std::make_unique<nixlAzureBlobEngine>(&initParams_, mockClient);
+
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-immediate-1"));
+    descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-immediate-2"));
+
+    std::vector<nixl_query_resp_t> resp;
+    nixl_status_t status = blobEngine->queryMem(descs, resp);
+
+    EXPECT_EQ(status, NIXL_ERR_BACKEND);
+    EXPECT_EQ(resp.size(), 2);
 }
 
 } // namespace gtest::azure_blob
