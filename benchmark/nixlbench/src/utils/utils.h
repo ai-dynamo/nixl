@@ -35,24 +35,26 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-#define CHECK_CUDA_ERROR(result, message)                                           \
-    do {                                                                            \
-        if (result != cudaSuccess) {                                                \
-            std::cerr << "CUDA: " << message << " (Error code: " << result << " - " \
-                      << cudaGetErrorString(result) << ")" << std::endl;            \
-            exit(EXIT_FAILURE);                                                     \
-        }                                                                           \
+#define CHECK_CUDA_ERROR(result, message)                                       \
+    do {                                                                        \
+        const auto _r = (result);                                               \
+        if (_r != cudaSuccess) {                                                \
+            std::cerr << "CUDA: " << message << " (Error code: " << _r << " - " \
+                      << cudaGetErrorString(_r) << ")" << std::endl;            \
+            exit(EXIT_FAILURE);                                                 \
+        }                                                                       \
     } while (0)
 
-#define CHECK_CUDA_DRIVER_ERROR(result, message)                                           \
-    do {                                                                                   \
-        if (result != CUDA_SUCCESS) {                                                      \
-            const char *error_str;                                                         \
-            cuGetErrorString(result, &error_str);                                          \
-            std::cerr << "CUDA Driver: " << message << " (Error code: " << result << " - " \
-                      << error_str << ")" << std::endl;                                    \
-            exit(EXIT_FAILURE);                                                            \
-        }                                                                                  \
+#define CHECK_CUDA_DRIVER_ERROR(result, message)                                       \
+    do {                                                                               \
+        const auto _r = (result);                                                      \
+        if (_r != CUDA_SUCCESS) {                                                      \
+            const char *error_str;                                                     \
+            cuGetErrorString(_r, &error_str);                                          \
+            std::cerr << "CUDA Driver: " << message << " (Error code: " << _r << " - " \
+                      << error_str << ")" << std::endl;                                \
+            exit(EXIT_FAILURE);                                                        \
+        }                                                                              \
     } while (0)
 #endif
 
