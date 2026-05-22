@@ -24,10 +24,11 @@
 namespace nixl::ucx {
 void
 config::modify(std::string_view key, std::string_view value) const {
-    const auto env_val = nixl::config::getValueOptional<std::string>("UCX_" + std::string(key));
+    const auto ucx_key = "UCX_" + std::string(key);
+    const auto env_val = nixl::config::internal::getenvOptional(ucx_key);
 
     if (env_val) {
-        NIXL_DEBUG << "UCX env var has already been set: " << key << "=" << *env_val;
+        NIXL_DEBUG << "UCX env var already set: " << ucx_key << "=" << *env_val;
     } else {
         modifyAlways(key, value);
     }
