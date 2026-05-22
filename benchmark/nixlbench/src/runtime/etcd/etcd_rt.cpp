@@ -22,16 +22,22 @@
 #include <iomanip>
 #include <cstring>
 #include <etcd/SyncClient.hpp>
+#include <etcd/KeepAlive.hpp>
 #include <etcd/Response.hpp>
 #include "etcd_rt.h"
 
 #define ETCD_EP_DEFAULT "http://localhost:2379"
 
+namespace {
+// Lease TTL in seconds: rank key auto-expires this long after the last keepalive.
+constexpr int lease_ttl_s = 15;
+} // namespace
+
 // ETCD Runtime implementation
 xferBenchEtcdRT::xferBenchEtcdRT(const std::string &benchmark_group,
                                  const std::string &etcd_endpoints,
                                  const int size,
-                                 int *terminate_input) {
+                                 std::atomic<int> *terminate_input) {
     // Store parameters for later use in setup
     stored_etcd_endpoints = etcd_endpoints.empty() ? ETCD_EP_DEFAULT : etcd_endpoints;
     global_size = size;
@@ -75,9 +81,30 @@ xferBenchEtcdRT::setup() {
         my_rank = 0;
     }
 
-    // Update registration information
+    // Register the rank key with a lease before bumping "size"; a crash before
+    // registration leaves size unchanged. Standalone KeepAlive uses its own
+    // gRPC channel to avoid races with the main client.
+    try {
+        keepalive = std::make_unique<etcd::KeepAlive>(stored_etcd_endpoints, lease_ttl_s);
+    }
+    catch (const std::exception &e) {
+        client->unlock(lock_response.lock_key());
+        std::cerr << "Failed to start etcd keepalive: " << e.what() << std::endl;
+        return -1;
+    }
+
+    const auto rank_response = client->put(makeKey("rank", my_rank), "active", keepalive->Lease());
+    if (!rank_response.is_ok()) {
+        client->unlock(lock_response.lock_key());
+        keepalive->Cancel();
+        keepalive.reset();
+        std::cerr << "Failed to register rank key: " << rank_response.error_message() << std::endl;
+        return -1;
+    }
+
+    // Bump the non-leased "size" counter only after the rank key is successfully
+    // registered with a lease.
     client->put(makeKey("size"), std::to_string(my_rank + 1));
-    client->put(makeKey("rank", my_rank), "active");
 
     // Release the lock
     client->unlock(lock_response.lock_key());
@@ -99,8 +126,46 @@ xferBenchEtcdRT::setup() {
 }
 
 xferBenchEtcdRT::~xferBenchEtcdRT() {
+    // Stop lease keepalive before cleanup so the rank key is removed by rmdir
+    // rather than expiring after the TTL
+    if (keepalive) {
+        keepalive->Cancel();
+    }
     // All ranks delete, as some could be missing if ETCD state is confused
-    client->rmdir(makeKey(""), true);
+    if (client) {
+        client->rmdir(makeKey(""), true);
+    }
+}
+
+void
+xferBenchEtcdRT::cleanupForExit() {
+    // Cancel keepalive first so the gRPC stream closes before we touch etcd.
+    if (keepalive) {
+        keepalive->Cancel();
+        keepalive.reset();
+    }
+    // Remove the whole namespace so non-leased keys (e.g. "size") don't
+    // linger and poison the next run in the same benchmark_group.
+    if (client) {
+        client->rmdir(makeKey(""), true);
+    }
+}
+
+bool
+xferBenchEtcdRT::areAllPeersAlive() {
+    for (int r = 0; r < global_size; r++) {
+        if (r == my_rank) continue;
+        auto resp = client->get(makeKey("rank", r));
+        // For a single-key get(), is_ok() reflects gRPC success, NOT key existence:
+        // a missing key returns is_ok()=true with an empty value().key().
+        // resp.value().key() is non-empty only when the key actually exists in etcd.
+        if (!resp.is_ok() || resp.value().key().empty()) {
+            std::cerr << "nixlbench: peer rank " << r
+                      << " key missing (or etcd error) -- peer may have died" << std::endl;
+            return false;
+        }
+    }
+    return true;
 }
 
 int

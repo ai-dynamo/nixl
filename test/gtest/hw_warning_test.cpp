@@ -73,12 +73,10 @@ TEST_F(HardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
 /**
  * Test that a warning is logged when IB devices are present but UCX
  * RDMA support is not available.
- *
- * Note: This warning only triggers for UCX >= 1.21.
  */
 TEST_F(HardwareWarningTest, WarnWhenIbPresentButRdmaNotSupported) {
-    if (ucpVersion_ < UCP_VERSION(1, 21)) {
-        GTEST_SKIP() << "UCX version is less than 1.21, skipping test";
+    if (ucpVersion_ < ucp_version_mem_type_rdma) {
+        GTEST_SKIP() << "UCX version too old for RDMA memory type check, skipping test";
     }
 
     const auto &hw_info = nixl::hwInfo::instance();
@@ -182,12 +180,6 @@ TEST_F(HardwareWarningTest, EfaHardwareMismatchNoWarning) {
         std::cout << "\n > Case " << i << ": backends=[" << backends_str << "]\n" << std::endl;
 
         nixlAgent agent("EfaTestAgent", nixlAgentConfig(true));
-
-        const gtest::LogIgnoreGuard lig_no_efa(
-            "Could not find EFA devices, rail selection for DRAM memory type aborted");
-        const gtest::LogIgnoreGuard lig_rail_fallback(
-            "Using default \\(all\\) rail selection policy for DRAM memory type due to "
-            "previous errors");
 
         for (const auto &name : backends) {
             nixlBackendH *backend;

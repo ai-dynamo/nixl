@@ -54,9 +54,18 @@
 
 namespace nixl_ep {
 
-static void sleep_ms(int milliseconds) {
+namespace {
+
+void sleep_ms(int milliseconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
 }
+
+uint64_t milliseconds_to_cycles(uint64_t milliseconds, int device_clock_rate_khz) {
+    EP_HOST_ASSERT(device_clock_rate_khz > 0);
+    return milliseconds * static_cast<uint64_t>(device_clock_rate_khz);
+}
+
+} // namespace
 
 void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes)
 {
@@ -68,8 +77,12 @@ void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int6
     }
 }
 
-Buffer::Buffer(int rank, bool explicitly_destroy, bool low_latency_mode):
+Buffer::Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms):
         low_latency_mode(low_latency_mode),
+        timeout_ms([timeout_ms] {
+            EP_HOST_ASSERT(timeout_ms >= 0);
+            return static_cast<uint64_t>(timeout_ms);
+        }()),
         rank(rank), num_ranks(1),
         explicitly_destroy(explicitly_destroy),
         comm_stream(at::cuda::getStreamFromPool(true)) {}
@@ -102,9 +115,10 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     num_rdma_ranks = std::max(1, num_ranks / NUM_MAX_NVL_PEERS), num_nvl_ranks = std::min(num_ranks, NUM_MAX_NVL_PEERS);
 
     // Get device info
-    cudaDeviceProp device_prop = {};
-    CUDA_CHECK(cudaGetDeviceProperties(&device_prop, device_id));
-    num_device_sms = device_prop.multiProcessorCount;
+    int device_clock_rate_khz = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&num_device_sms, cudaDevAttrMultiProcessorCount, device_id));
+    CUDA_CHECK(cudaDeviceGetAttribute(&device_clock_rate_khz, cudaDevAttrClockRate, device_id));
+    timeout_cycles = milliseconds_to_cycles(timeout_ms, device_clock_rate_khz);
     int denom_sms = std::max(1, num_device_sms / 2);
     auto per_channel_bytes = ceil_div<int64_t>(num_rdma_bytes, denom_sms);
     EP_HOST_ASSERT(per_channel_bytes < std::numeric_limits<int>::max());
@@ -128,21 +142,24 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     workspace = m_workspace_alloc->ptr();
     CUDA_CHECK(cudaMemsetAsync(workspace, 0, NUM_WORKSPACE_BYTES, comm_stream));
 
-    // MoE counter
-    CUDA_CHECK(cudaMallocHost(&moe_recv_counter, sizeof(int64_t), cudaHostAllocMapped));
-    CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_counter_mapped, const_cast<int*>(moe_recv_counter), 0));
-    *moe_recv_counter = -1;
+    if (!low_latency_mode) {
+        // MoE counter
+        CUDA_CHECK(cudaMallocHost(&moe_recv_counter, sizeof(int), cudaHostAllocMapped));
+        CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_counter_mapped, const_cast<int*>(moe_recv_counter), 0));
+        *moe_recv_counter = -1;
 
-    // MoE expert-level counter
-    CUDA_CHECK(cudaMallocHost(&moe_recv_expert_counter, sizeof(int) * NUM_MAX_LOCAL_EXPERTS, cudaHostAllocMapped));
-    CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_expert_counter_mapped, const_cast<int*>(moe_recv_expert_counter), 0));
-    for (int i = 0; i < NUM_MAX_LOCAL_EXPERTS; ++ i)
-        moe_recv_expert_counter[i] = -1;
+        // MoE expert-level counter
+        CUDA_CHECK(cudaMallocHost(&moe_recv_expert_counter, sizeof(int) * NUM_MAX_LOCAL_EXPERTS, cudaHostAllocMapped));
+        CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_expert_counter_mapped, const_cast<int*>(moe_recv_expert_counter), 0));
+        for (int i = 0; i < NUM_MAX_LOCAL_EXPERTS; ++ i)
+            moe_recv_expert_counter[i] = -1;
 
-    // MoE RDMA-level counter
-    CUDA_CHECK(cudaMallocHost(&moe_recv_rdma_counter, sizeof(int), cudaHostAllocMapped));
-    CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_rdma_counter_mapped, const_cast<int*>(moe_recv_rdma_counter), 0));
-    *moe_recv_rdma_counter = -1;
+        // MoE RDMA-level counter
+        CUDA_CHECK(cudaMallocHost(&moe_recv_rdma_counter, sizeof(int), cudaHostAllocMapped));
+        CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_rdma_counter_mapped, const_cast<int*>(moe_recv_rdma_counter), 0));
+        *moe_recv_rdma_counter = -1;
+    }
+
     EP_HOST_ASSERT(max_experts_per_rank > 0);
     m_rdma_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_rdma_bytes));
     rdma_buffer_ptr = m_rdma_alloc->ptr();
@@ -162,14 +179,14 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     sync_count_ptr = static_cast<int *>(m_sync_count_alloc->ptr());
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_count_ptr, 0, num_sync_buffer_bytes));
-    CUDA_CHECK(cudaMalloc(&local_barrier_cnt_ptr, num_sync_buffer_bytes));
-    CUDA_CHECK(cudaMemset(local_barrier_cnt_ptr, 0, num_sync_buffer_bytes));
 
-    // Allocate barrier counters for high-throughput mode
-    CUDA_CHECK(cudaMalloc(&local_ht_barrier_counter, sizeof(uint64_t)));
-    CUDA_CHECK(cudaMemset(local_ht_barrier_counter, 0, sizeof(uint64_t)));
-    CUDA_CHECK(cudaMalloc(&last_ht_barrier_counter, sizeof(uint64_t)));
-    CUDA_CHECK(cudaMemset(last_ht_barrier_counter, 0, sizeof(uint64_t)));
+    if (!low_latency_mode) {
+        CUDA_CHECK(cudaMalloc(&local_ht_barrier_counter, sizeof(uint64_t)));
+        CUDA_CHECK(cudaMemset(local_ht_barrier_counter, 0, sizeof(uint64_t)));
+        CUDA_CHECK(cudaMalloc(&last_ht_barrier_counter, sizeof(uint64_t)));
+        CUDA_CHECK(cudaMemset(last_ht_barrier_counter, 0, sizeof(uint64_t)));
+    }
+
     CUDA_CHECK(cudaDeviceSynchronize());
 
     my_peer_info.rdma_buffer_ptr = rdma_buffer_ptr;
@@ -260,17 +277,17 @@ void Buffer::destroy() {
     _nixl_ep_destroy();
 
     if (num_nvl_bytes > 0) {
-        intranode::barrier(barrier_signal_ptrs_gpu, nvl_rank, num_nvl_ranks, comm_stream);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        intranode::barrier(barrier_signal_ptrs_gpu, nvl_rank, num_nvl_ranks, timeout_cycles, comm_stream);
+        warn_cuda(cudaDeviceSynchronize(), "synchronize device after intranode barrier");
 
         // Close remote IPC
         if (is_available()) {
             for (int i = 0; i < num_nvl_ranks; ++ i) if (i != nvl_rank)
-                CUDA_CHECK(cudaIpcCloseMemHandle(buffer_ptrs[i]));
+                warn_cuda(cudaIpcCloseMemHandle(buffer_ptrs[i]), "close remote IPC handle");
         }
 
         // Free local buffer
-        CUDA_CHECK(cudaFree(buffer_ptrs[nvl_rank]));
+        warn_cuda(cudaFree(buffer_ptrs[nvl_rank]), "free local NVL buffer");
     }
 
     if (nixl_agent_info and nixl_agent_info->agent != nullptr) {
@@ -290,6 +307,11 @@ void Buffer::destroy() {
                       nixl_agent_info->sync_count_reg_descs,
                       &nixl_agent_info->extra_params),
                   "deregister sync-count memory");
+        if (local_ht_barrier_counter != nullptr) {
+            warn_nixl(nixl_agent_info->agent->deregisterMem(
+                          nixl_agent_info->ht_barrier_reg_descs),
+                      "deregister ht barrier memory");
+        }
 
         nixl_agent_info.reset();
     }
@@ -303,16 +325,21 @@ void Buffer::destroy() {
     m_sync_count_alloc.reset();
     sync_count_ptr = nullptr;
 
-    warn_cuda(cudaFree(local_barrier_cnt_ptr), "free local barrier count");
-    warn_cuda(cudaFree(local_ht_barrier_counter), "free local ht barrier counter");
-    warn_cuda(cudaFree(last_ht_barrier_counter), "free last ht barrier counter");
+    if (!low_latency_mode) {
+        warn_cuda(cudaFree(local_ht_barrier_counter), "free local ht barrier counter");
+        local_ht_barrier_counter = nullptr;
+        warn_cuda(cudaFree(last_ht_barrier_counter), "free last ht barrier counter");
+        last_ht_barrier_counter = nullptr;
+        warn_cuda(cudaFreeHost(const_cast<int*>(moe_recv_counter)), "free moe receive counter");
+        moe_recv_counter = nullptr;
+        warn_cuda(cudaFreeHost(const_cast<int*>(moe_recv_expert_counter)), "free moe receive expert counter");
+        moe_recv_expert_counter = nullptr;
+        warn_cuda(cudaFreeHost(const_cast<int*>(moe_recv_rdma_counter)), "free moe receive rdma counter");
+        moe_recv_rdma_counter = nullptr;
+    }
 
     m_workspace_alloc.reset();
     workspace = nullptr;
-
-    CUDA_CHECK(cudaFreeHost(const_cast<int*>(moe_recv_counter)));
-    CUDA_CHECK(cudaFreeHost(const_cast<int*>(moe_recv_expert_counter)));
-    CUDA_CHECK(cudaFreeHost(const_cast<int*>(moe_recv_rdma_counter)));
 
     destroyed = true;
     available = false;
@@ -320,7 +347,7 @@ void Buffer::destroy() {
 
 void Buffer::barrier() {
     auto compute_stream = at::cuda::getCurrentCUDAStream();
-    ep_kernels::barrier(gpu_ctx, mask_buffer_ptr, compute_stream);
+    ep_kernels::barrier(gpu_ctx, mask_buffer_ptr, timeout_cycles, compute_stream);
 }
 
 void Buffer::_nixl_agents_connect(const std::vector<int>& ranks, const std::vector<nixl_blob_t>& remote_mds) {
@@ -438,7 +465,6 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std:
         new_ranks.push_back(remote_rank);
         CUDA_CHECK(cudaMemset(mask_buffer_ptr + remote_rank, 0, sizeof(int)));
         CUDA_CHECK(cudaMemset(sync_count_ptr + remote_rank, 0, sizeof(int)));
-        CUDA_CHECK(cudaMemset(local_barrier_cnt_ptr + remote_rank, 0, sizeof(int)));
         CUDA_CHECK(cudaMemset(sync_buffer_ptr + remote_rank, 0, sizeof(int)));
 
         if (remote_mds.has_value())
@@ -697,7 +723,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
                                  buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens,
                                  barrier_signal_ptrs_gpu, rank, comm_stream,
                                  config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
-                                 num_nvl_bytes, true, low_latency_mode, gpu_ctx);
+                                 num_nvl_bytes, timeout_cycles, true, low_latency_mode, gpu_ctx);
     } else {
         rdma_channel_prefix_matrix = torch::empty({num_rdma_ranks, num_channels}, dtype(torch::kInt32).device(torch::kCUDA));
         recv_rdma_rank_prefix_sum = torch::empty({num_rdma_ranks}, dtype(torch::kInt32).device(torch::kCUDA));
@@ -719,7 +745,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
                                    buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens,
                                    barrier_signal_ptrs_gpu, rank, comm_stream,
                                    config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
-                                   num_nvl_bytes, low_latency_mode, gpu_ctx);
+                                   num_nvl_bytes, timeout_cycles, low_latency_mode, gpu_ctx);
 
         // Synchronize total received tokens and tokens per expert
         auto start_time = std::chrono::high_resolution_clock::now();
@@ -754,12 +780,22 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
     auto recv_gbl_channel_prefix_matrix = std::optional<torch::Tensor>();
     auto send_rdma_head = std::optional<torch::Tensor>();
     auto send_nvl_head = std::optional<torch::Tensor>();
+    void* recv_src_meta_ptr = nullptr;
+    int* recv_rdma_channel_prefix_matrix_ptr = nullptr;
+    int* recv_gbl_channel_prefix_matrix_ptr = nullptr;
+    int* send_rdma_head_ptr = nullptr;
+    int* send_nvl_head_ptr = nullptr;
     if (not cached_mode) {
         recv_src_meta = torch::empty({num_recv_tokens, ht::get_source_meta_bytes()}, dtype(torch::kByte).device(torch::kCUDA));
         recv_rdma_channel_prefix_matrix = torch::empty({num_rdma_ranks, num_channels}, dtype(torch::kInt32).device(torch::kCUDA));
         recv_gbl_channel_prefix_matrix = torch::empty({num_ranks, num_channels}, dtype(torch::kInt32).device(torch::kCUDA));
         send_rdma_head = torch::empty({num_tokens, num_rdma_ranks}, dtype(torch::kInt32).device(torch::kCUDA));
         send_nvl_head = torch::empty({num_rdma_recv_tokens, NUM_MAX_NVL_PEERS}, dtype(torch::kInt32).device(torch::kCUDA));
+        recv_src_meta_ptr = recv_src_meta->data_ptr();
+        recv_rdma_channel_prefix_matrix_ptr = recv_rdma_channel_prefix_matrix->data_ptr<int>();
+        recv_gbl_channel_prefix_matrix_ptr = recv_gbl_channel_prefix_matrix->data_ptr<int>();
+        send_rdma_head_ptr = send_rdma_head->data_ptr<int>();
+        send_nvl_head_ptr = send_nvl_head->data_ptr<int>();
     }
 
     // Assign pointers
@@ -780,11 +816,11 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
     // Launch data dispatch
     // NOTES: the buffer size checks are moved into the `.cu` file
     ht::dispatch(recv_x.data_ptr(), recv_x_scales_ptr, recv_topk_idx_ptr, recv_topk_weights_ptr,
-                        cached_mode ? nullptr : recv_src_meta->data_ptr(),
+                        recv_src_meta_ptr,
                         x.data_ptr(), x_scales_ptr, topk_idx_ptr, topk_weights_ptr,
-                        cached_mode ? nullptr : send_rdma_head->data_ptr<int>(), cached_mode ? nullptr : send_nvl_head->data_ptr<int>(),
-                        cached_mode ? nullptr : recv_rdma_channel_prefix_matrix->data_ptr<int>(),
-                        cached_mode ? nullptr : recv_gbl_channel_prefix_matrix->data_ptr<int>(),
+                        send_rdma_head_ptr, send_nvl_head_ptr,
+                        recv_rdma_channel_prefix_matrix_ptr,
+                        recv_gbl_channel_prefix_matrix_ptr,
                         rdma_channel_prefix_matrix.data_ptr<int>(), recv_rdma_rank_prefix_sum.data_ptr<int>(),
                         gbl_channel_prefix_matrix.data_ptr<int>(), recv_gbl_rank_prefix_sum.data_ptr<int>(),
                         is_token_in_rank.data_ptr<bool>(),
@@ -793,7 +829,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
                         rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens, config.num_max_rdma_chunked_recv_tokens,
                         buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
                         rank, num_ranks, cached_mode,
-                        comm_stream, num_channels, low_latency_mode, gpu_ctx);
+                        comm_stream, num_channels, timeout_cycles, low_latency_mode, gpu_ctx);
 
     // Wait streams
     std::optional<EventHandle> event;
@@ -906,7 +942,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
                              buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens,
                              barrier_signal_ptrs_gpu, rank, comm_stream,
                              config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
-                             num_nvl_bytes, false, low_latency_mode, gpu_ctx);
+                             num_nvl_bytes, timeout_cycles, false, low_latency_mode, gpu_ctx);
 
     // Assign bias pointers
     auto bias_opts = std::vector<std::optional<torch::Tensor>>({bias_0, bias_1});
@@ -930,7 +966,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
                        num_tokens, num_combined_tokens, hidden, num_topk,
                        rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens, config.num_max_rdma_chunked_recv_tokens,
                        buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
-                       rank, num_ranks, comm_stream, num_channels, low_latency_mode, gpu_ctx);
+                       rank, num_ranks, comm_stream, num_channels, timeout_cycles, low_latency_mode, gpu_ctx);
 
     // Wait streams
     std::optional<EventHandle> event;
@@ -1050,6 +1086,7 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
                                num_tokens, hidden, num_max_dispatch_tokens_per_rank,
                                num_topk, num_experts, rank, num_ranks,
                                use_fp8, round_scale, use_ue8m0,
+                               timeout_cycles,
                                workspace, num_device_sms,
                                launch_stream, phases, gpu_ctx);
     };
@@ -1147,7 +1184,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
                               next_clean_meta.first, next_clean_meta.second,
                               num_combined_tokens, hidden, num_max_dispatch_tokens_per_rank,
                               num_topk, num_experts, rank, num_ranks,
-                              use_logfmt,
+                             use_logfmt, timeout_cycles,
                               workspace, num_device_sms,
                               launch_stream, phases, zero_copy, gpu_ctx);
     };
@@ -1330,15 +1367,16 @@ void Buffer::_nixl_agent_init() {
     nixl_agent_info->sync_count_reg_descs.clear();
     nixl_agent_info->sync_count_reg_descs.addDesc(
         nixlBlobDesc(reinterpret_cast<uintptr_t>(sync_count_ptr), max_num_ranks * sizeof(int), device_id, ""));
+    nixl_agent_info->ht_barrier_reg_descs.clear();
 
     EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->rdma_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
     EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->sync_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
     EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->sync_count_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
 
-    if (!low_latency_mode && local_ht_barrier_counter) {
-        nixl_reg_dlist_t ht_barrier_dlist(VRAM_SEG);
-        ht_barrier_dlist.addDesc(nixlBlobDesc((uintptr_t)(local_ht_barrier_counter), sizeof(uint64_t), get_local_device_id(), ""));
-        EP_HOST_ASSERT(agent->registerMem(ht_barrier_dlist) == NIXL_SUCCESS);
+    if (local_ht_barrier_counter) {
+        nixl_agent_info->ht_barrier_reg_descs.addDesc(
+            nixlBlobDesc((uintptr_t)(local_ht_barrier_counter), sizeof(uint64_t), get_local_device_id(), ""));
+        EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->ht_barrier_reg_descs) == NIXL_SUCCESS);
     }
 
     if (getenv("NIXL_ETCD_ENDPOINTS")) {
@@ -1405,7 +1443,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("current_stream_wait", &nixl_ep::EventHandle::current_stream_wait);
 
     pybind11::class_<nixl_ep::Buffer>(m, "Buffer")
-        .def(pybind11::init<int, bool, bool>())
+        .def(pybind11::init<int, bool, bool, int>())
         .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers)
         .def("barrier", &nixl_ep::Buffer::barrier)
         .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles) {

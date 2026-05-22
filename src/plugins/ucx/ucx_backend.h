@@ -42,7 +42,6 @@ enum ucx_cb_op_t { NOTIF_STR };
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
-        std::string remoteAgent;
         std::vector<std::unique_ptr<nixlUcxEp>> eps;
 
     public:

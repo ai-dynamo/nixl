@@ -186,11 +186,10 @@ telemetryLoader(void *handle, const std::string &plugin_path) {
         return nullptr;
     }
 
-    // Check API version
-    if (plugin->api_version != nixlTelemetryPluginApiVersionV1) {
+    if (plugin->api_version != nixl_telemetry_plugin_api_version::V2) {
         NIXL_ERROR << "Plugin API version mismatch for " << plugin_path << ": expected "
-                   << static_cast<int>(nixlTelemetryPluginApiVersionV1) << ", got "
-                   << static_cast<int>(plugin->api_version);
+                   << static_cast<unsigned int>(nixl_telemetry_plugin_api_version::V2) << ", got "
+                   << static_cast<unsigned int>(plugin->api_version);
         dlclose(handle);
         return nullptr;
     }

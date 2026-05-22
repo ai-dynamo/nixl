@@ -932,20 +932,13 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
 
     nixlSerDes::_stringToBytes(addr.data(), remote_conn_info, size);
     std::shared_ptr<nixlUcxConnection> conn = std::make_shared<nixlUcxConnection>();
-    bool error = false;
     for (auto &uw: uws) {
         auto result = uw->connect(addr.data(), size);
         if (!result.ok()) {
-            error = true;
-            break;
+            return NIXL_ERR_BACKEND;
         }
         conn->eps.push_back(std::move(*result));
     }
-
-    if (error)
-        return NIXL_ERR_BACKEND;
-
-    conn->remoteAgent = remote_agent;
 
     remoteConnMap.insert({remote_agent, conn});
 

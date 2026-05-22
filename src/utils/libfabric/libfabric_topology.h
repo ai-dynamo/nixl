@@ -84,6 +84,8 @@ private:
     nixl_status_t
     buildAccelToEfaMapping();
     void
+    buildNicInfoMap();
+    void
     cleanupHwlocTopology();
 
     // Data structures for NIXL topology-aware grouping algorithm
@@ -161,6 +163,16 @@ private:
                                uint16_t &domain,
                                uint8_t &bus_id,
                                size_t &link_speed);
+
+    void
+    collectNicInfo(NicInfo &nic,
+                   const std::string &name,
+                   const std::string &pcie_addr,
+                   hwloc_obj_t hwloc_node,
+                   uint16_t domain_id,
+                   uint8_t bus_id,
+                   uint8_t device_id,
+                   uint8_t function_id);
 
     // finds out the PCIe bandwidth limit of all NUMA nodes (determined by sum of connected PCIe
     // switches/bridges)
