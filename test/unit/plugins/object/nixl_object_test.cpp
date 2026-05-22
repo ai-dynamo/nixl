@@ -125,12 +125,13 @@ printProgress(float progress) {
     std::cout << "[";
     int pos = barWidth * progress;
     for (int i = 0; i < barWidth; ++i) {
-        if (i < pos)
+        if (i < pos) {
             std::cout << "=";
-        else if (i == pos)
+        } else if (i == pos) {
             std::cout << ">";
-        else
+        } else {
             std::cout << " ";
+        }
     }
     std::cout << "] " << std::fixed << std::setprecision(1) << (progress * 100.0) << "% ";
 
@@ -817,14 +818,18 @@ cleanup:
     if (use_vram) {
 #ifdef HAVE_CUDA
         for (i = 0; i < num_transfers; i++) {
-            if (vram_addr[i]) cudaFree(vram_addr[i]);
+            if (vram_addr[i]) {
+                cudaFree(vram_addr[i]);
+            }
         }
 #endif
         delete[] vram_addr;
         delete[] vram_buf;
     } else {
         for (i = 0; i < num_transfers; i++) {
-            if (dram_addr[i]) free(dram_addr[i]);
+            if (dram_addr[i]) {
+                free(dram_addr[i]);
+            }
         }
         delete[] dram_addr;
         delete[] dram_buf;

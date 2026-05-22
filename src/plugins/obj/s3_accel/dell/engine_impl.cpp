@@ -68,8 +68,7 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
     }
 
     // Create the Dell RDMA client that uses the token manager.
-    s3Client_ =
-        std::make_shared<awsS3DellObsClient>(params_to_use, tokenMgr_, executor_);
+    s3Client_ = std::make_shared<awsS3DellObsClient>(params_to_use, tokenMgr_, executor_);
     NIXL_INFO << "Dell ObjectScale engine initialized (Pattern B)";
 }
 
@@ -94,8 +93,7 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
             NIXL_ERROR << "CuObjTokenManager failed to connect";
             return;
         }
-        s3Client_ =
-            std::make_shared<awsS3DellObsClient>(params_to_use, tokenMgr_, executor_);
+        s3Client_ = std::make_shared<awsS3DellObsClient>(params_to_use, tokenMgr_, executor_);
     }
 
     NIXL_INFO << "Dell ObjectScale engine initialized (Pattern B, injected client)";
@@ -111,8 +109,9 @@ S3DellObsObjEngineImpl::registerMem(const nixlBlobDesc &mem,
                                     nixlBackendMD *&out) {
     // Check supported memory types.
     auto supported = getSupportedMems();
-    if (std::find(supported.begin(), supported.end(), nixl_mem) == supported.end())
+    if (std::find(supported.begin(), supported.end(), nixl_mem) == supported.end()) {
         return NIXL_ERR_NOT_SUPPORTED;
+    }
 
     // OBJ_SEG: delegate to the parent for devId → object key mapping.
     if (nixl_mem == OBJ_SEG) {
