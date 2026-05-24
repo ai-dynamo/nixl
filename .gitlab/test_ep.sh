@@ -72,8 +72,6 @@ else
     echo "/sys/module/nv_peer_mem/version not found"
 fi
 
-start_etcd_server "/nixl/python_ci"
-
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
