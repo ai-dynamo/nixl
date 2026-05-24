@@ -194,7 +194,9 @@ private:
     discoverTelemetryPlugin(const std::string &filename);
 
     std::shared_ptr<const nixlPluginHandle>
-    loadPluginFromPath(const std::string &plugin_path, nixlPluginLoaderFunc loader);
+    loadPluginFromPath(const std::string &plugin_path,
+                       nixlPluginLoaderFunc loader,
+                       bool deepbind = false);
 
     std::string
     composePluginPath(const std::string &dir,

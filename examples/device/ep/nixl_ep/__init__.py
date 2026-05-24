@@ -18,9 +18,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
+import os
+import sys
+from contextlib import contextmanager
+
 import torch
 
-from . import nixl_ep_cpp as _nixl_ep_cpp
+
+def _deepbind_enabled() -> bool:
+    value = os.getenv("NIXL_UCX_DEEPBIND", "1").strip().lower()
+    return value not in {"0", "false", "no", "off", "disable", "disabled"}
+
+
+@contextmanager
+def _rtld_deepbind_import():
+    deepbind = getattr(os, "RTLD_DEEPBIND", 0)
+    if not deepbind or not _deepbind_enabled() or not hasattr(sys, "getdlopenflags"):
+        yield
+        return
+
+    old_flags = sys.getdlopenflags()
+    sys.setdlopenflags(old_flags | deepbind)
+    try:
+        yield
+    finally:
+        sys.setdlopenflags(old_flags)
+
+
+with _rtld_deepbind_import():
+    _nixl_ep_cpp = importlib.import_module(f"{__name__}.nixl_ep_cpp")
+nixl_ep_cpp = _nixl_ep_cpp
+
 from .buffer import Buffer
 from .utils import EventOverlap
 

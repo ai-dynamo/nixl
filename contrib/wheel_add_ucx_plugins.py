@@ -21,6 +21,7 @@ import csv
 import hashlib
 import logging
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -105,13 +106,15 @@ def get_repaired_lib_name_map(libs_dir):
     (like "libboost_atomic-fb1368c6.so.1.66.0").
     """
     name_map = {}
+    repaired_name_re = re.compile(
+        r"^(?P<base>.+)-[0-9a-f]{8}(?P<suffix>\.so(?:\..*)?)$"
+    )
     for fname in sorted(os.listdir(libs_dir)):
-        if (
-            os.path.isfile(os.path.join(libs_dir, fname))
-            and ".so" in fname
-            and "-" in fname
-        ):
-            base_name = fname.split("-")[0]
+        if os.path.isfile(os.path.join(libs_dir, fname)) and ".so" in fname:
+            match = repaired_name_re.match(fname)
+            if not match:
+                continue
+            base_name = match.group("base")
             name_map[base_name] = fname
             print(f"Found already bundled lib: {base_name} -> {fname}")
     return name_map

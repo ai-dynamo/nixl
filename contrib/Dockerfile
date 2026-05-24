@@ -23,7 +23,9 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG UCX_REPO="https://github.com/openucx/ucx.git"
 ARG UCX_REF="v1.21.x"
+ARG UCX_SONAME_SUFFIX=""
 ARG BUILD_NIXL_EP="true"
 ARG RDMA_CORE_PREFIX="/usr"
 ARG UCX_PREFIX="/usr"
@@ -178,12 +180,22 @@ RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
 RUN cd /usr/local/src && \
-     git clone https://github.com/openucx/ucx.git && \
+     git clone "$UCX_REPO" ucx && \
      cd ucx && \
      echo "=== Using UCX_REF=$UCX_REF ===" && \
      git checkout $UCX_REF && \
      if [ "$BUILD_NIXL_EP" = "true" ]; then EXPERIMENTAL_API_PARAM="--enable-experimental-api"; else EXPERIMENTAL_API_PARAM=""; fi && \
      ./autogen.sh && \
+     if [ -n "$UCX_SONAME_SUFFIX" ]; then \
+         if ./configure --help | grep -q -- "--with-soname-suffix"; then \
+             UCX_SONAME_PARAM="--with-soname-suffix=$UCX_SONAME_SUFFIX"; \
+         else \
+             echo "UCX_REF=$UCX_REF does not support --with-soname-suffix" >&2; \
+             exit 1; \
+         fi; \
+     else \
+         UCX_SONAME_PARAM=""; \
+     fi && \
      ./contrib/configure-release-mt  \
          --prefix=$UCX_PREFIX        \
          --enable-shared             \
@@ -197,7 +209,8 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --without-gdrcopy           \
-         --with-efa  &&              \
+         --with-efa                  \
+         $UCX_SONAME_PARAM &&        \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
