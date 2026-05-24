@@ -85,6 +85,8 @@ NB_ARG_INT32(num_iter, 1000, "Max iterations");
 NB_ARG_BOOL(recreate_xfer,
             false,
             "Recreate xfer each iteration (default: false for all backends, true for GUSLI)");
+NB_ARG_BOOL(reregister_mem, false, "Register and deregister memory on every iteration");
+NB_ARG_INT32(pipeline_depth, 1, "Number of transfer requests in flight simultaneously");
 NB_ARG_INT32(large_blk_iter_ftr,
              16,
              "factor to reduce test iteration when testing large block size(>1MB)");
@@ -99,6 +101,7 @@ NB_ARG_INT32(num_target_dev, 1, "Number of device in target process");
 NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 NB_ARG_UINT64(progress_threads, 0, "Number of progress threads");
 NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
+NB_ARG_BOOL(use_hugepages, false, "Allocate data buffers using hugepages (2MB pages)");
 
 // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
 NB_ARG_STRING(filepath, "", "File path for storage operations");
@@ -253,6 +256,7 @@ int xferBenchConfig::num_threads = 0;
 bool xferBenchConfig::enable_pt = false;
 size_t xferBenchConfig::progress_threads = 0;
 bool xferBenchConfig::enable_vmm = false;
+bool xferBenchConfig::use_hugepages = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::asio_address = "127.0.0.1";
@@ -271,6 +275,8 @@ int xferBenchConfig::posix_kernel_queue_size = 0;
 std::string xferBenchConfig::filepath = "";
 std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
+bool xferBenchConfig::reregister_mem = false;
+int xferBenchConfig::pipeline_depth = 1;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
 std::string xferBenchConfig::obj_secret_key = "";
@@ -471,6 +477,10 @@ xferBenchConfig::loadParams(void) {
     start_batch_size = NB_ARG(start_batch_size);
     max_batch_size = NB_ARG(max_batch_size);
     num_iter = NB_ARG(num_iter);
+    if (num_iter < 1) {
+        std::cerr << "num_iter must be >= 1" << std::endl;
+        return -1;
+    }
     large_blk_iter_ftr = NB_ARG(large_blk_iter_ftr);
     warmup_iter = NB_ARG(warmup_iter);
     num_threads = NB_ARG(num_threads);
@@ -483,8 +493,26 @@ xferBenchConfig::loadParams(void) {
     posix_api_type = NB_ARG(posix_api_type);
     storage_enable_direct = NB_ARG(storage_enable_direct);
     recreate_xfer = NB_ARG(recreate_xfer);
+    reregister_mem = NB_ARG(reregister_mem);
+    pipeline_depth = NB_ARG(pipeline_depth);
+    if (pipeline_depth < 1) {
+        std::cerr << "pipeline_depth must be >= 1" << std::endl;
+        return -1;
+    }
+    use_hugepages = NB_ARG(use_hugepages);
+    if (use_hugepages && (total_buffer_size % HUGEPAGE_SIZE) != 0) {
+        size_t hugepage_aligned_size = ROUND_UP(total_buffer_size, HUGEPAGE_SIZE);
+        std::cout << "Rounding total_buffer_size from " << total_buffer_size << " to "
+                  << hugepage_aligned_size << " for 2MB hugepage alignment." << std::endl;
+        total_buffer_size = hugepage_aligned_size;
+    }
     if (!recreate_xfer && XFERBENCH_BACKEND_GUSLI == backend) {
         std::cout << "GUSLI backend requires per-iteration request creation due to library bug."
+                  << " Setting recreate_xfer to true." << std::endl;
+        recreate_xfer = true;
+    }
+    if (!recreate_xfer && reregister_mem) {
+        std::cout << "reregister_mem requires per-iteration request creation."
                   << " Setting recreate_xfer to true." << std::endl;
         recreate_xfer = true;
     }
@@ -619,6 +647,10 @@ xferBenchConfig::printConfig() {
         printOption("Enable VMM (--enable_vmm=[0,1])", std::to_string(enable_vmm));
         printOption("Recreate xfer each iteration (--recreate_xfer=[0,1])",
                     std::to_string(recreate_xfer));
+        printOption("Re-register memory each iteration (--reregister_mem=[0,1])",
+                    std::to_string(reregister_mem));
+        printOption("Pipeline depth (--pipeline_depth=N)", std::to_string(pipeline_depth));
+        printOption("Use hugepages (--use_hugepages=[0,1])", std::to_string(use_hugepages));
 
         // Print GDS options if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
