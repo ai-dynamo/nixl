@@ -36,7 +36,9 @@ def main():
         pattern = re.compile(
             rf"(^|/)[^/]*\.libs/lib{lib}-{escaped_suffix}(-[0-9a-f]{{8}})?\.so"
         )
-        matches = require_matches(names, pattern, f"private lib{lib}-{args.soname_suffix}")
+        matches = require_matches(
+            names, pattern, f"private lib{lib}-{args.soname_suffix}"
+        )
         print(f"found private lib{lib}: {matches[0]}")
 
     ucx_modules = require_matches(

@@ -50,8 +50,8 @@ with _rtld_deepbind_import():
     _nixl_ep_cpp = importlib.import_module(f"{__name__}.nixl_ep_cpp")
 nixl_ep_cpp = _nixl_ep_cpp
 
-from .buffer import Buffer
-from .utils import EventOverlap
+from .buffer import Buffer  # noqa: E402
+from .utils import EventOverlap  # noqa: E402
 
 topk_idx_t = getattr(_nixl_ep_cpp, "topk_idx_t", torch.int64)
 Config = _nixl_ep_cpp.Config

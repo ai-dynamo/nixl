@@ -9,7 +9,6 @@ import re
 import subprocess
 import sys
 
-
 CHILD_SCRIPT = r"""
 import ctypes
 import os
@@ -136,7 +135,9 @@ def check_bindings(args):
         for symbol, expected_target in expectations.items():
             target = bindings.get(symbol)
             if target is None:
-                raise RuntimeError(f"no LD_DEBUG binding found for {source_name}:{symbol}")
+                raise RuntimeError(
+                    f"no LD_DEBUG binding found for {source_name}:{symbol}"
+                )
             if expected_target not in target:
                 raise RuntimeError(
                     f"{source_name}:{symbol} bound to {target}, expected {expected_target}"

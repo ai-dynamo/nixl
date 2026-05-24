@@ -249,8 +249,8 @@ shouldDeepBindPlugin(const std::string &plugin_name) {
         return nixl::config::getValueDefaulted<bool>(kUcxDeepBindVar, true);
     }
     catch (const std::exception &e) {
-        NIXL_WARN << "Invalid " << kUcxDeepBindVar << " value, enabling RTLD_DEEPBIND: "
-                  << e.what();
+        NIXL_WARN << "Invalid " << kUcxDeepBindVar
+                  << " value, enabling RTLD_DEEPBIND: " << e.what();
         return true;
     }
 }
