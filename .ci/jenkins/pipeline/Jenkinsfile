@@ -14,7 +14,7 @@
 // This library provides functionality for interacting with GitHub
 // It is used to update the commit status and upload logs
 @Library('blossom-github-lib@master')
-@Library('ci-demo')  // External library for matrix build functionality
+@Library('github.com/ntsemah/ci-demo@HPCINFRA-4417')  // External library for matrix build functionality (fork for PR testing — revert before merge)
 @Library('swx-jenkins-lib')  // External library for matrix build functionality
 
 // Initialize the build matrix
