@@ -72,8 +72,6 @@ else
     echo "/sys/module/nv_peer_mem/version not found"
 fi
 
-start_etcd_server "/nixl/python_ci"
-
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
@@ -99,7 +97,5 @@ run_elastic_test() {
 # NVLink (default)
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
-
-kill -9 $ETCD_PID 2>/dev/null || true
 
 echo "==== nixl_ep elastic tests done ===="
