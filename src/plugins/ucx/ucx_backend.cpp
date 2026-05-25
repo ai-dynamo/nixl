@@ -1377,8 +1377,8 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     if (const auto h = dynamic_cast<nixl::ucx::recvRequestH *>(handle)) {
-        h->release();
         recvMap_.erase(h);
+        h->release();
         delete h;
     } else if (const auto h = dynamic_cast<nixlUcxBackendReqH *>(handle)) {
         h->release();

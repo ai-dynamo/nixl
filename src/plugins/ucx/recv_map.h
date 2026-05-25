@@ -81,6 +81,15 @@ public:
         if (!map_.empty()) {
             NIXL_WARN << "UCX AM RECV map is not empty";
         }
+
+        for (auto &[key, value] : map_) {
+            if (auto* queue = std::get_if<std::deque<recvMapPostValue>>(&value)) {
+                for (auto &entry : *queue) {
+                    const std::lock_guard lg(entry.handle->mutex);
+                    entry.handle->iter.reset();
+                }
+            }
+        }
     }
 
     recvMap(recvMap&&) = delete;
@@ -128,13 +137,13 @@ public:
             if (!queue->empty()) {
                 NIXL_ASSERT(handle->allCallsImpl());
                 NIXL_DEBUG << "UCX AM RECV satisfied from queue with remaining " << queue->size();
-                return handle->status();
+                return handle->statusImpl(false);
             }
 
             if (handle->allCallsImpl()) {
                 map_.erase(iter);
                 NIXL_DEBUG << "UCX AM RECV satisfied from queue without remaining";
-                return handle->status();
+                return handle->statusImpl(false);
             }
 
             NIXL_DEBUG << "UCX AM RECV partially satisfied -- flipping queue";
@@ -209,7 +218,7 @@ public:
 
         ucp_request_param_t params{0};
 
-        NIXL_DEBUG << "UCX AM RECV AM DATA handle " << handle << " desc " << rndv_desc;
+        NIXL_DEBUG << "UCX AM RECV DATA handle " << handle << " desc " << rndv_desc;
 
         const auto req = ucp_am_recv_data_nbx(worker,
                                               rndv_desc,

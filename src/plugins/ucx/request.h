@@ -231,23 +231,35 @@ struct recvRequestH : public nixlUcxBackendReqH {
         return (recvDataCalls == size_t(local.descCount())) || (recvDataErrors > 0);
     }
 
+    void
+    release() override {
+        const std::lock_guard lg(mutex);
+        nixlUcxBackendReqH::release();
+    }
+
     // We cannot use nixlUcxBackendReqH::status() without modifications, it
     // assumes requests_.empty() means that we are done, but for RECV there
-    // might be ucp_am_recv_data_nbx() calls that we have not made yet.
+    // might be ucp_am_recv_data_nbx() calls that we have yet to make.
 
     [[nodiscard]] nixl_status_t
     status() override {
         const std::lock_guard lg(mutex);
+        return statusImpl(true);
+    }
 
+    [[nodiscard]] nixl_status_t
+    statusImpl(const bool progress) {
         if (requests_.empty()) {
             if (allCallsImpl()) {
                 connections_.clear();
-                return NIXL_SUCCESS;
+                return recvDataErrors ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
             }
             return NIXL_IN_PROG;
         }
 
-        worker_->progressLoop();
+        if (progress) {
+            worker_->progressLoop();
+        }
 
         /* If last request is incomplete, return NIXL_IN_PROG early without
          * checking other requests */
