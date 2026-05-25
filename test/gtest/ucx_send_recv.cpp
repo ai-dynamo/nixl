@@ -82,12 +82,10 @@ struct testRequest {
 };
 
 struct testEngine {
-    explicit
-    testEngine(const std::string &name)
+    explicit testEngine(const std::string &name)
         : name(name),
           engine(makeTestEngine(name)),
-          conn(localConnInfo(engine.get()))
-    {}
+          conn(localConnInfo(engine.get())) {}
 
     ~testEngine() {
         for (const auto reg : registrations) {
@@ -112,11 +110,8 @@ struct testEngine {
         result.dlist->addDesc(desc);
         nixl_opt_b_args_t args;
         args.customParam = custom;
-        EXPECT_EQ(engine->prepTagXfer(operation,
-                                      *result.dlist,
-                                      tag,
-                                      remote_agent,
-                                      result.req), NIXL_SUCCESS);
+        EXPECT_EQ(engine->prepTagXfer(operation, *result.dlist, tag, remote_agent, result.req),
+                  NIXL_SUCCESS);
         return result;
     }
 
@@ -124,12 +119,8 @@ struct testEngine {
     postXfer(testRequest &req, const std::string &custom = "") {
         nixl_opt_b_args_t args;
         args.customParam = custom;
-        const auto status = engine->postTagXfer(req.op,
-                                                *req.dlist,
-                                                req.tag,
-                                                req.remote_agent,
-                                                req.req,
-                                                &args);
+        const auto status =
+            engine->postTagXfer(req.op, *req.dlist, req.tag, req.remote_agent, req.req, &args);
         if (status == NIXL_SUCCESS) {
             return true;
         }
@@ -163,11 +154,13 @@ const std::string the_tag = "theTAG";
 const auto delay = std::chrono::milliseconds(234);
 
 [[nodiscard]]
-bool buffer_eq(const testRequest &req1, const testRequest& req2) noexcept {
+bool
+buffer_eq(const testRequest &req1, const testRequest &req2) noexcept {
     return std::memcmp(req1.buffer.get(), req2.buffer.get(), data_size) == 0;
 }
 
-void basicSendBeforeRecv(const std::string &customParam) {
+void
+basicSendBeforeRecv(const std::string &customParam) {
     testEngine t1("agent");
     testEngine t2("guard");
 
@@ -195,7 +188,8 @@ void basicSendBeforeRecv(const std::string &customParam) {
     t2.release(req2);
 }
 
-void basicRecvBeforeSend(const std::string &customParam) {
+void
+basicRecvBeforeSend(const std::string &customParam) {
     testEngine t1("agent");
     testEngine t2("guard");
 
@@ -223,7 +217,8 @@ void basicRecvBeforeSend(const std::string &customParam) {
     t2.release(req2);
 }
 
-void queuedSendBeforeRecv(const std::string &customParam, const std::size_t iterations = 42) {
+void
+queuedSendBeforeRecv(const std::string &customParam, const std::size_t iterations = 42) {
     testEngine t1("agent");
     testEngine t2("guard");
 
@@ -259,7 +254,8 @@ void queuedSendBeforeRecv(const std::string &customParam, const std::size_t iter
     }
 }
 
-void queuedRecvBeforeSend(const std::string &customParam, const std::size_t iterations = 42) {
+void
+queuedRecvBeforeSend(const std::string &customParam, const std::size_t iterations = 42) {
     testEngine t1("agent");
     testEngine t2("guard");
 

@@ -56,9 +56,7 @@ operator==(const recvMapKey &l, const recvMapKey &r) noexcept {
 
 // RECV is POSTed before AM arrives
 struct recvMapPostValue {
-    explicit
-    recvMapPostValue(recvRequestH *handle) noexcept
-        : handle(handle) {}
+    explicit recvMapPostValue(recvRequestH *handle) noexcept : handle(handle) {}
 
     recvRequestH *handle; // TODO: Check lifecycle management?
 };
@@ -83,7 +81,7 @@ public:
         }
 
         for (auto &[key, value] : map_) {
-            if (auto* queue = std::get_if<std::deque<recvMapPostValue>>(&value)) {
+            if (auto *queue = std::get_if<std::deque<recvMapPostValue>>(&value)) {
                 for (auto &entry : *queue) {
                     const std::lock_guard lg(entry.handle->mutex);
                     entry.handle->iter.reset();
@@ -92,11 +90,13 @@ public:
         }
     }
 
-    recvMap(recvMap&&) = delete;
-    recvMap(const recvMap&) = delete;
+    recvMap(recvMap &&) = delete;
+    recvMap(const recvMap &) = delete;
 
-    void operator=(recvMap&&) = delete;
-    void operator=(const recvMap&) = delete;
+    void
+    operator=(recvMap &&) = delete;
+    void
+    operator=(const recvMap &) = delete;
 
     [[nodiscard]] nixl_status_t
     postRecv(const ucp_worker_h worker,
@@ -110,11 +110,13 @@ public:
         NIXL_ASSERT(handle);
         NIXL_ASSERT(!handle->iter);
 
-        const auto [iter, _] = map_.try_emplace({remote, tag}, std::in_place_type_t<std::deque<recvMapPostValue>>());
+        const auto [iter, _] =
+            map_.try_emplace({remote, tag}, std::in_place_type_t<std::deque<recvMapPostValue>>());
 
         if (auto *queue = std::get_if<std::deque<recvMapPostValue>>(&iter->second)) {
             queue->emplace_back(handle);
-            NIXL_DEBUG << "UCX AM RECV POST " << remote << " tag " << tag << " handle " << handle << " queued " << queue->size();
+            NIXL_DEBUG << "UCX AM RECV POST " << remote << " tag " << tag << " handle " << handle
+                       << " queued " << queue->size();
             handle->iter = iter;
             return NIXL_IN_PROG;
         }
@@ -166,21 +168,25 @@ public:
              void *rndv_desc,
              const std::size_t size) {
         const std::lock_guard l1(mutex_);
-        const auto [iter, _] = map_.try_emplace({remote, tag}, std::in_place_type_t<std::deque<recvMapRndvValue>>());
+        const auto [iter, _] =
+            map_.try_emplace({remote, tag}, std::in_place_type_t<std::deque<recvMapRndvValue>>());
 
         if (auto *queue = std::get_if<std::deque<recvMapRndvValue>>(&iter->second)) {
             queue->emplace_back(rndv_desc, size);
-            NIXL_DEBUG << "UCX AM RECV AM " << remote << " tag " << tag << " queued " << queue->size();
+            NIXL_DEBUG << "UCX AM RECV AM " << remote << " tag " << tag << " queued "
+                       << queue->size();
             return UCS_INPROGRESS;
         }
 
         if (auto *queue = std::get_if<std::deque<recvMapPostValue>>(&iter->second)) {
             NIXL_ASSERT(!queue->empty());
             recvRequestH *handle = queue->front().handle;
-            NIXL_DEBUG << "UCX AM RECV AM " << remote << " tag " << tag << " handle " << handle << " first of " << queue->size();
+            NIXL_DEBUG << "UCX AM RECV AM " << remote << " tag " << tag << " handle " << handle
+                       << " first of " << queue->size();
             const std::lock_guard l2(handle->mutex);
 
-            const auto result = recvRndvData(worker, handle, rndv_desc, size) ? UCS_OK : UCS_ERR_REJECTED;
+            const auto result =
+                recvRndvData(worker, handle, rndv_desc, size) ? UCS_OK : UCS_ERR_REJECTED;
 
             // TODO: In the error case, future received active message might be for this handle!!
 
@@ -210,7 +216,8 @@ public:
             // For now it was agreed that we only need to handle matching
             // sizes. If we were to accept less incoming data we would need
             // a way to tell the application how much was actually received?
-            NIXL_ERROR_FUNC << "UCX AM RECV DATA expected " << handle->local[handle->recvDataCalls].len << " incoming " << size;
+            NIXL_ERROR_FUNC << "UCX AM RECV DATA expected "
+                            << handle->local[handle->recvDataCalls].len << " incoming " << size;
             ucp_am_data_release(worker, rndv_desc); // TODO: Correct? Needed elsewhere?
             ++handle->recvDataErrors;
             return false;
@@ -220,11 +227,12 @@ public:
 
         NIXL_DEBUG << "UCX AM RECV DATA handle " << handle << " desc " << rndv_desc;
 
-        const auto req = ucp_am_recv_data_nbx(worker,
-                                              rndv_desc,
-                                              reinterpret_cast<void *>(handle->local[handle->recvDataCalls].addr),
-                                              handle->local[handle->recvDataCalls].len,
-                                              &params);
+        const auto req = ucp_am_recv_data_nbx(
+            worker,
+            rndv_desc,
+            reinterpret_cast<void *>(handle->local[handle->recvDataCalls].addr),
+            handle->local[handle->recvDataCalls].len,
+            &params);
 
         ++handle->recvDataCalls;
 

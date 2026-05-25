@@ -48,8 +48,7 @@ public:
     friend class nixlAgent;
 
 protected:
-    nixlXferReqH(const std::string &remote_agent,
-                 const nixl_xfer_op_t operation)
+    nixlXferReqH(const std::string &remote_agent, const nixl_xfer_op_t operation)
         : remoteAgent(remote_agent),
           operation(operation) {}
 
@@ -69,10 +68,8 @@ protected:
     nixl_xfer_telem_t telemetry;
 };
 
-class nixlXferReqRW
-    : public nixlXferReqH {
+class nixlXferReqRW : public nixlXferReqH {
 public:
-
     nixlXferReqRW(const std::string &remote_agent,
                   const nixl_xfer_op_t operation,
                   const nixl_mem_t local_type,
@@ -91,8 +88,7 @@ private:
     bool hasNotif = false;
 };
 
-class nixlXferReqSR
-    : public nixlXferReqH {
+class nixlXferReqSR : public nixlXferReqH {
 public:
     const std::string tag;
 

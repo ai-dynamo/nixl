@@ -684,7 +684,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
 
     auto &uw = uws.front();
     workerAddr = uw->epAddr();
-    uw->regAmCallback(nixl::ucx::am_cb_op_t::SEND_RECV, recvAmCb, this, UCP_AM_FLAG_PERSISTENT_DATA);
+    uw->regAmCallback(
+        nixl::ucx::am_cb_op_t::SEND_RECV, recvAmCb, this, UCP_AM_FLAG_PERSISTENT_DATA);
     uw->regAmCallback(nixl::ucx::am_cb_op_t::NOTIF_STR, notifAmCb, this);
 }
 
@@ -1152,9 +1153,8 @@ nixl_status_t
 nixlUcxEngine::prepTagSend(const nixl_meta_dlist_t &local,
                            const std::string &tag,
                            const std::string &remote_agent,
-                           nixlBackendReqH* &handle,
-                           const nixl_opt_b_args_t *opt_args
-                           ) const {
+                           nixlBackendReqH *&handle,
+                           const nixl_opt_b_args_t *opt_args) const {
     NIXL_ASSERT(!tag.empty());
     NIXL_ASSERT(!local.isEmpty());
 
@@ -1171,9 +1171,8 @@ nixl_status_t
 nixlUcxEngine::prepTagRecv(const nixl_meta_dlist_t &local,
                            const std::string &tag,
                            const std::string &remote_agent,
-                           nixlBackendReqH* &nixl_handle,
-                           const nixl_opt_b_args_t *opt_args
-                           ) const {
+                           nixlBackendReqH *&nixl_handle,
+                           const nixl_opt_b_args_t *opt_args) const {
     NIXL_ASSERT(!tag.empty());
     NIXL_ASSERT(!local.isEmpty());
 
@@ -1191,9 +1190,8 @@ nixlUcxEngine::prepTagXfer(const nixl_xfer_op_t operation,
                            const nixl_meta_dlist_t &local,
                            const std::string &tag,
                            const std::string &remote_agent,
-                           nixlBackendReqH* &handle,
-                           const nixl_opt_b_args_t *opt_args
-                           ) const {
+                           nixlBackendReqH *&handle,
+                           const nixl_opt_b_args_t *opt_args) const {
     if (tag.empty()) {
         NIXL_ERROR_FUNC << "non-empty tag required for send or recv";
         return NIXL_ERR_INVALID_PARAM;
@@ -1217,8 +1215,7 @@ nixlUcxEngine::prepTagXfer(const nixl_xfer_op_t operation,
     return NIXL_ERR_INVALID_PARAM;
 }
 
-namespace
-{
+namespace {
 
 [[nodiscard]] std::uint32_t
 sendAmCustomFlags(const nixl_opt_b_args_t *opt_args) noexcept {
@@ -1240,9 +1237,8 @@ nixl_status_t
 nixlUcxEngine::postTagSend(const nixl_meta_dlist_t &local,
                            const std::string &tag,
                            const std::string &remote_agent,
-                           nixlBackendReqH* &nixl_handle,
-                           const nixl_opt_b_args_t *opt_args
-                           ) const {
+                           nixlBackendReqH *&nixl_handle,
+                           const nixl_opt_b_args_t *opt_args) const {
     NIXL_DEBUG << "UCX AM SEND POST " << remote_agent << " tag " << tag;
 
     const auto conn = getConnection(remote_agent);
@@ -1288,9 +1284,8 @@ nixl_status_t
 nixlUcxEngine::postTagRecv(const nixl_meta_dlist_t &local,
                            const std::string &tag,
                            const std::string &remote_agent,
-                           nixlBackendReqH* &nixl_handle,
-                           const nixl_opt_b_args_t *opt_args
-                           ) const {
+                           nixlBackendReqH *&nixl_handle,
+                           const nixl_opt_b_args_t *opt_args) const {
     NIXL_DEBUG << "UCX AM RECV POST " << remote_agent << " tag " << tag;
 
     const auto ucx_handle = dynamic_cast<nixl::ucx::recvRequestH *>(nixl_handle);
@@ -1311,9 +1306,8 @@ nixlUcxEngine::postTagXfer(const nixl_xfer_op_t operation,
                            const nixl_meta_dlist_t &local,
                            const std::string &tag,
                            const std::string &remote_agent,
-                           nixlBackendReqH* &handle,
-                           const nixl_opt_b_args_t *opt_args
-                           ) const {
+                           nixlBackendReqH *&handle,
+                           const nixl_opt_b_args_t *opt_args) const {
     if (tag.empty()) {
         NIXL_ERROR_FUNC << "non-empty tag required for send or recv";
         return NIXL_ERR_INVALID_PARAM;
@@ -1420,8 +1414,10 @@ nixlUcxEngine::recvAmImpl(const std::string &remote,
 }
 
 ucs_status_t
-nixlUcxEngine::recvAmCb(void *arg, const void *header,
-                        size_t header_length, void *data,
+nixlUcxEngine::recvAmCb(void *arg,
+                        const void *header,
+                        size_t header_length,
+                        void *data,
                         size_t length,
                         const ucp_am_recv_param_t *param) {
     nixlSerDes ser_des;
@@ -1430,7 +1426,8 @@ nixlUcxEngine::recvAmCb(void *arg, const void *header,
     const std::string remote = ser_des.getStr("name");
     const std::string tag = ser_des.getStr("tag");
 
-    NIXL_DEBUG << "UCX AM RECV " << header << " " << header_length << " " << data << " " << length << " " << param->recv_attr;
+    NIXL_DEBUG << "UCX AM RECV " << header << " " << header_length << " " << data << " " << length
+               << " " << param->recv_attr;
 
     if (remote.empty() || tag.empty()) {
         NIXL_ERROR_FUNC << "UCX AM RECV received empty header field";
@@ -1442,7 +1439,8 @@ nixlUcxEngine::recvAmCb(void *arg, const void *header,
     // ensure UCP_AM_RECV_ATTR_FLAG_DATA is set in the non-rndv case.
     NIXL_ASSERT(param->recv_attr & (UCP_AM_RECV_ATTR_FLAG_RNDV | UCP_AM_RECV_ATTR_FLAG_DATA));
 
-    // const auto mode = (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV) ? nixl::ucx::am_recv_mode_t::RNDV : nixl::ucx::am_recv_mode_t::EAGER;
+    // const auto mode = (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV) ?
+    // nixl::ucx::am_recv_mode_t::RNDV : nixl::ucx::am_recv_mode_t::EAGER;
     const auto engine = static_cast<nixlUcxEngine *>(arg);
     return engine->recvAmImpl(remote, tag, data, length);
 }

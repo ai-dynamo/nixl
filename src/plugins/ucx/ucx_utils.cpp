@@ -638,7 +638,10 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
  * =========================================== */
 
 int
-nixlUcxWorker::regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg, const unsigned flags) {
+nixlUcxWorker::regAmCallback(nixl::ucx::am_cb_op_t msg_id,
+                             ucp_am_recv_callback_t cb,
+                             void *arg,
+                             const unsigned flags) {
     ucp_am_handler_param_t params = {0};
 
     params.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_CB |

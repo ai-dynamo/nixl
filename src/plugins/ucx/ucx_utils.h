@@ -223,7 +223,10 @@ public:
 
     /* Active message handling */
     int
-    regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg, unsigned flags = 0);
+    regAmCallback(nixl::ucx::am_cb_op_t msg_id,
+                  ucp_am_recv_callback_t cb,
+                  void *arg,
+                  unsigned flags = 0);
 
     /* Data access */
     unsigned
@@ -273,13 +276,14 @@ ucx_err_mode_to_string(ucp_err_handling_mode_t t);
 ucx_err_mode_from_string(std::string_view s);
 
 class nixlUcxConnection : public nixlBackendConnMD {
-    private:
-        std::vector<std::unique_ptr<nixlUcxEp>> eps;
+private:
+    std::vector<std::unique_ptr<nixlUcxEp>> eps;
 
-    public:
-        [[nodiscard]] const std::unique_ptr<nixlUcxEp>& getEp(size_t ep_id) const noexcept {
-            return eps[ep_id];
-        }
+public:
+    [[nodiscard]] const std::unique_ptr<nixlUcxEp> &
+    getEp(size_t ep_id) const noexcept {
+        return eps[ep_id];
+    }
 
     friend class nixlUcxEngine;
 };

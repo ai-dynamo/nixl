@@ -32,7 +32,7 @@
 
 /****************************************
  * Backend request management
-*****************************************/
+ *****************************************/
 
 class nixlUcxBackendReqH : public nixlBackendReqH {
 protected:
@@ -210,8 +210,7 @@ struct recvRequestH : public nixlUcxBackendReqH {
 
     std::optional<recv_map_t::iterator> iter;
 
-    explicit
-    recvRequestH(nixlUcxWorker *worker, size_t worker_id, const nixl_meta_dlist_t &local)
+    explicit recvRequestH(nixlUcxWorker *worker, size_t worker_id, const nixl_meta_dlist_t &local)
         : nixlUcxBackendReqH(worker, worker_id, local.descCount()),
           local(local) {}
 

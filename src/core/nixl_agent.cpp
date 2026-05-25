@@ -997,14 +997,14 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
                             nixl_cost_t &method,
                             const nixl_opt_args_t* extra_params) const
 {
-    const auto req_rw = static_cast<const nixlXferReqRW *>(req_hndl); // TODO: DETECT AND HANDLE OTHER CASE!
+    const auto req_rw =
+        static_cast<const nixlXferReqRW *>(req_hndl); // TODO: DETECT AND HANDLE OTHER CASE!
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
     // Check if the remote agent connection info is still valid
     // (assuming cost estimation requires connection info like transfers)
-    if (!req_rw->remoteAgent.empty() &&
-        (data->remoteSections_.count(req_rw->remoteAgent) == 0)) {
+    if (!req_rw->remoteAgent.empty() && (data->remoteSections_.count(req_rw->remoteAgent) == 0)) {
         NIXL_ERROR_FUNC << "invalid request handle, remote agent was invalidated "
                            "after transfer request creation";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
@@ -1178,7 +1178,7 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
                             const nixl_xfer_dlist_t &local_descs,
                             const std::string &tag,
                             const std::string &remote_agent,
-                            nixlXferReqH* &req_hndl,
+                            nixlXferReqH *&req_hndl,
                             const nixl_opt_args_t *extra_params) const {
     if (!nixl::isSendRecv(operation)) {
         NIXL_ERROR_FUNC << "Operation is not send or recv";
@@ -1218,7 +1218,8 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
         }
 
         if (backend_set.empty()) {
-            NIXL_ERROR_FUNC << "no backend for " << operation << " to " << remote_agent;;
+            NIXL_ERROR_FUNC << "no backend for " << operation << " to " << remote_agent;
+            ;
             return NIXL_ERR_NOT_FOUND;
         }
     } else {
@@ -1227,11 +1228,8 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
         }
     }
 
-    auto handle = std::make_unique<nixlXferReqSR>(remote_agent,
-                                                  operation,
-                                                  tag,
-                                                  local_descs.getType(),
-                                                  local_descs.descCount());
+    auto handle = std::make_unique<nixlXferReqSR>(
+        remote_agent, operation, tag, local_descs.getType(), local_descs.descCount());
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -1248,7 +1246,7 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
 
     if (!handle->engine) {
         NIXL_ERROR_FUNC << "no specified or potential backend had the required "
-            "registrations to be able to do the transfer";
+                           "registrations to be able to do the transfer";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
@@ -1264,12 +1262,8 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
         handle->telemetry.descCount = handle->initiatorDescs.descCount();
     }
 
-    const auto ret = handle->engine->prepTagXfer(operation,
-                                                 handle->initiatorDescs,
-                                                 tag,
-                                                 remote_agent,
-                                                 handle->backendHandle,
-                                                 &opt_args);
+    const auto ret = handle->engine->prepTagXfer(
+        operation, handle->initiatorDescs, tag, remote_agent, handle->backendHandle, &opt_args);
 
     if (ret != NIXL_SUCCESS) {
         NIXL_ERROR_FUNC << "backend '" << handle->engine->getType()
@@ -1283,7 +1277,7 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
 }
 
 nixl_status_t
-nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
+nixlAgent::getXferStatus(nixlXferReqH *req_hndl) const {
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // If the status is done, no need to recheck and no state changes.
     // Same for users incorrectly recalling this method in error/done.

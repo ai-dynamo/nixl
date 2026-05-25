@@ -175,18 +175,16 @@ public:
                 const nixl_meta_dlist_t &local,
                 const std::string &tag,
                 const std::string &remote_agent,
-                nixlBackendReqH* &handle,
-                const nixl_opt_b_args_t *opt_args = nullptr
-                ) const override;
+                nixlBackendReqH *&handle,
+                const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
     nixl_status_t
     postTagXfer(nixl_xfer_op_t operation,
                 const nixl_meta_dlist_t &local,
                 const std::string &tag,
                 const std::string &remote_agent,
-                nixlBackendReqH* &handle,
-                const nixl_opt_b_args_t *opt_args = nullptr
-                ) const override;
+                nixlBackendReqH *&handle,
+                const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
     nixl_status_t
     checkXfer(nixlBackendReqH *handle) const override;
@@ -262,10 +260,7 @@ private:
 
     // TODO: Do derived classes need locking here?
     [[nodiscard]] ucs_status_t
-    recvAmImpl(const std::string &remote,
-               const std::string &tag,
-               void *data,
-               std::size_t size);
+    recvAmImpl(const std::string &remote, const std::string &tag, void *data, std::size_t size);
 
     static ucs_status_t
     recvAmCb(void *arg,
@@ -312,33 +307,29 @@ private:
     prepTagSend(const nixl_meta_dlist_t &local,
                 const std::string &tag,
                 const std::string &remote_agent,
-                nixlBackendReqH* &handle,
-                const nixl_opt_b_args_t *opt_args
-                ) const;
+                nixlBackendReqH *&handle,
+                const nixl_opt_b_args_t *opt_args) const;
 
     nixl_status_t
     prepTagRecv(const nixl_meta_dlist_t &local,
                 const std::string &tag,
                 const std::string &remote_agent,
-                nixlBackendReqH* &handle,
-                const nixl_opt_b_args_t *opt_args
-                ) const;
+                nixlBackendReqH *&handle,
+                const nixl_opt_b_args_t *opt_args) const;
 
     nixl_status_t
     postTagSend(const nixl_meta_dlist_t &local,
                 const std::string &tag,
                 const std::string &remote_agent,
-                nixlBackendReqH* &handle,
-                const nixl_opt_b_args_t *opt_args
-                ) const;
+                nixlBackendReqH *&handle,
+                const nixl_opt_b_args_t *opt_args) const;
 
     nixl_status_t
     postTagRecv(const nixl_meta_dlist_t &local,
                 const std::string &tag,
                 const std::string &remote_agent,
-                nixlBackendReqH* &handle,
-                const nixl_opt_b_args_t *opt_args
-                ) const;
+                nixlBackendReqH *&handle,
+                const nixl_opt_b_args_t *opt_args) const;
 
     /**
      * Get the worker ID from the optional arguments.

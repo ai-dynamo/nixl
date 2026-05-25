@@ -45,7 +45,7 @@ enum nixl_mem_t {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG};
  * @enum   nixl_xfer_op_t
  * @brief  An enumeration of different transfer types for NIXL
  */
-enum nixl_xfer_op_t {NIXL_READ, NIXL_WRITE, NIXL_SEND, NIXL_RECV};
+enum nixl_xfer_op_t { NIXL_READ, NIXL_WRITE, NIXL_SEND, NIXL_RECV };
 
 /**
  * @enum   nixl_status_t
