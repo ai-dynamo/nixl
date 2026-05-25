@@ -167,7 +167,9 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
     cd ../.. && rm -rf etcd-cpp-apiv3
 
 # Install AWS SDK C++ dependencies and build
-RUN dnf install -y libcurl-devel uuid-devel zlib-devel
+RUN dnf install -y libcurl-devel uuid-devel zlib-devel && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
     mkdir sdk_build && \
