@@ -1177,7 +1177,7 @@ nixlUcxEngine::prepTagRecv(const nixl_meta_dlist_t &local,
     NIXL_ASSERT(!tag.empty());
     NIXL_ASSERT(!local.isEmpty());
 
-    const auto worker_id = getWorkerId(opt_args);
+    const size_t worker_id = 0;
 
     NIXL_DEBUG << "UCX AM RECV PREP " << remote_agent << " tag " << tag;
 

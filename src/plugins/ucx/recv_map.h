@@ -128,18 +128,19 @@ public:
             if (!queue->empty()) {
                 NIXL_ASSERT(handle->allCallsImpl());
                 NIXL_DEBUG << "UCX AM RECV satisfied from queue with remaining " << queue->size();
-                return NIXL_SUCCESS;
+                return handle->status();
             }
 
             if (handle->allCallsImpl()) {
                 map_.erase(iter);
                 NIXL_DEBUG << "UCX AM RECV satisfied from queue without remaining";
-                return NIXL_SUCCESS;
+                return handle->status();
             }
 
             NIXL_DEBUG << "UCX AM RECV partially satisfied -- flipping queue";
             iter->second.emplace<std::deque<recvMapPostValue>>().emplace_back(handle);
-            return NIXL_SUCCESS;
+            handle->iter = iter;
+            return NIXL_IN_PROG;
         }
 
         NIXL_ERROR_FUNC << "unreachable";
@@ -202,6 +203,7 @@ public:
             // a way to tell the application how much was actually received?
             NIXL_ERROR_FUNC << "UCX AM RECV DATA expected " << handle->local[handle->recvDataCalls].len << " incoming " << size;
             ucp_am_data_release(worker, rndv_desc); // TODO: Correct? Needed elsewhere?
+            ++handle->recvDataErrors;
             return false;
         }
 
