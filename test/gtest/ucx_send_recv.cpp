@@ -106,6 +106,10 @@ struct testEngine {
         desc.addr = uintptr_t(result.buffer.get());
         desc.len = data_size;
         result.dlist->addDesc(desc);
+        result.dlist->addDesc(desc);
+        result.dlist->addDesc(desc);
+        result.dlist->addDesc(desc);
+        result.dlist->addDesc(desc);
         nixl_opt_b_args_t args;
         args.customParam = custom;
         EXPECT_EQ(engine->prepTagXfer(operation,

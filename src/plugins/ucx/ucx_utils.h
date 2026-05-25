@@ -30,6 +30,7 @@ extern "C" {
 #include "ucx_enums.h"
 
 #include "absl/strings/numbers.h"
+#include "backend/backend_aux.h"
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
 
@@ -270,5 +271,17 @@ ucx_err_mode_to_string(ucp_err_handling_mode_t t);
 
 [[nodiscard]] ucp_err_handling_mode_t
 ucx_err_mode_from_string(std::string_view s);
+
+class nixlUcxConnection : public nixlBackendConnMD {
+    private:
+        std::vector<std::unique_ptr<nixlUcxEp>> eps;
+
+    public:
+        [[nodiscard]] const std::unique_ptr<nixlUcxEp>& getEp(size_t ep_id) const noexcept {
+            return eps[ep_id];
+        }
+
+    friend class nixlUcxEngine;
+};
 
 #endif

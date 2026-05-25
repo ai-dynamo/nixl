@@ -39,22 +39,9 @@
 #include "mem_list.h"
 #include "recv_map.h"
 #include "rkey.h"
+#include "types.h"
 #include "ucx_enums.h"
 #include "ucx_utils.h"
-
-class nixlUcxConnection : public nixlBackendConnMD {
-    private:
-        std::vector<std::unique_ptr<nixlUcxEp>> eps;
-
-    public:
-        [[nodiscard]] const std::unique_ptr<nixlUcxEp>& getEp(size_t ep_id) const noexcept {
-            return eps[ep_id];
-        }
-
-    friend class nixlUcxEngine;
-};
-
-using ucx_connection_ptr_t = std::shared_ptr<nixlUcxConnection>;
 
 // A private metadata has to implement get, and has all the metadata
 class nixlUcxPrivateMetadata : public nixlBackendMD {
@@ -278,8 +265,7 @@ private:
     recvAmImpl(const std::string &remote,
                const std::string &tag,
                void *data,
-               std::size_t size,
-               const nixl::ucx::am_recv_mode_t mode);
+               std::size_t size);
 
     static ucs_status_t
     recvAmCb(void *arg,

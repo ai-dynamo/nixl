@@ -27,6 +27,18 @@
 
 namespace nixl::ucx {
 
+enum class am_recv_mode_t : bool {
+    RNDV,
+    EAGER
+};
+
+enum class am_data_mode_t {
+    POST_RNDV,
+    POST_EAGER,
+    RNDV_POST,
+    EAGER_POST
+};
+
 inline constexpr std::string_view invalid_string = "INVALID";
 
 enum class mt_mode_t {
