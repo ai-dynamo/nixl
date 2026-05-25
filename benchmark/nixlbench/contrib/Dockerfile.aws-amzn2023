@@ -255,7 +255,7 @@ RUN uv pip install -e benchmark/kvbench
 
 ENV PATH=/usr/local/nixlbench/bin:/usr/local/nixl/bin:$PATH
 ENV LD_LIBRARY_PATH=/usr/local/nixlbench/lib64:$LD_LIBRARY_PATH
-ENV PYTHON_PATH=/usr/local/nixlbench/lib/python$DEFAULT_PYTHON_VERSION/site-packages/nixlbench/
+ENV PYTHONPATH=/usr/local/nixlbench/lib/python$DEFAULT_PYTHON_VERSION/site-packages/nixlbench/
 
 # Fix for etcd proto dependencies
 ENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
