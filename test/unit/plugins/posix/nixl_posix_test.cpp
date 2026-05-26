@@ -60,6 +60,40 @@ namespace {
         return std::string((line_width - str.length()) / 2, ' ') + str;
     }
 
+    bool
+    has_supported_test_queue(bool use_uring) {
+        if (use_uring) {
+#ifdef HAVE_LIBURING
+            return true;
+#else
+            return false;
+#endif
+        }
+
+#if defined(HAVE_LINUXAIO) || defined(HAVE_LIBURING)
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    void
+    print_unsupported_test_queue_error(bool use_uring) {
+        std::cerr << "Unsupported POSIX test queue configuration: ";
+        if (use_uring) {
+            std::cerr << "io_uring was requested, but this build does not include liburing support."
+                      << std::endl;
+        } else {
+            std::cerr << "this build does not include Linux AIO or io_uring support." << std::endl;
+#ifdef HAVE_POSIXAIO
+            std::cerr
+                << "POSIX AIO may be available in the plugin, but this test requires Linux AIO "
+                   "or io_uring."
+                << std::endl;
+#endif
+        }
+    }
+
     constexpr char default_test_files_dir_path[] = "tmp/testfiles";
 
     // Custom deleter for posix_memalign allocated memory
@@ -217,7 +251,8 @@ read_write_test (int num_transfers,
         params["use_uring"] = "true";
         params["use_aio"] = "false";
     } else {
-        // Use the backend's compiled default queue. Some builds have POSIX AIO but not Linux AIO.
+        // Use the backend's compiled default queue. Startup validation rejects POSIX AIO-only
+        // builds.
         params["use_uring"] = "false";
     }
 
@@ -245,9 +280,12 @@ read_write_test (int num_transfers,
         std::cerr << std::endl << line_str << std::endl;
         std::cerr << center_str("ERROR: Backend Creation Failed") << std::endl;
         std::cerr << line_str << std::endl;
-        std::cerr << "Error creating POSIX backend: " << nixlEnumStrings::statusStr(status) << std::endl;
+        std::cerr << "Error creating POSIX backend: " << nixlEnumStrings::statusStr(status)
+                  << std::endl;
         if (use_uring) {
-            std::cerr << "io_uring was requested but may not be available. Try running without -U flag to use AIO instead." << std::endl;
+            std::cerr << "io_uring was requested but may not be available. Try running without -U "
+                         "flag to use the default queue."
+                      << std::endl;
         }
         std::cerr << std::endl << line_str << std::endl;
         return 1;
@@ -497,7 +535,8 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
         params["use_uring"] = "true";
         params["use_aio"] = "false";
     } else {
-        // Use the backend's compiled default queue. Some builds have POSIX AIO but not Linux AIO.
+        // Use the backend's compiled default queue. Startup validation rejects POSIX AIO-only
+        // builds.
         params["use_uring"] = "false";
     }
 
@@ -777,15 +816,20 @@ main (int argc, char *argv[]) {
                        "  -s transfer_size      Size of each transfer in bytes (default: %zu)",
                        default_transfer_size)
                 << std::endl;
-            std::cout << absl::StrFormat ("  -d test_files_dir_path Directory for test files, "
-                                          "strongly recommended to use nvme device (default: %s)",
-                                          default_test_files_dir_path)
+            std::cout << absl::StrFormat("  -d test_files_dir_path Directory for test files, "
+                                         "strongly recommended to use nvme device (default: %s)",
+                                         default_test_files_dir_path)
                       << std::endl;
             std::cout << absl::StrFormat ("  -D Use O_DIRECT for file I/O") << std::endl;
-            std::cout << absl::StrFormat ("  -U Use io_uring backend instead of AIO") << std::endl;
+            std::cout << absl::StrFormat("  -U Explicitly use the io_uring backend") << std::endl;
             std::cout << absl::StrFormat ("  -h Show this help message") << std::endl;
             return (opt == 'h') ? 0 : 1;
         }
+    }
+
+    if (!has_supported_test_queue(use_uring)) {
+        print_unsupported_test_queue_error(use_uring);
+        return 1;
     }
 
     // Convert directory path to absolute path using std::filesystem

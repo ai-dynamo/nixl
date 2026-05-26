@@ -15,9 +15,21 @@
 
 # Using globally defined has_posix_plugin from the root meson.build
 if has_posix_plugin
+    posix_test_compile_defs = []
+    if has_linux_aio
+        posix_test_compile_defs += ['-DHAVE_LINUXAIO']
+    endif
+    if has_io_uring
+        posix_test_compile_defs += ['-DHAVE_LIBURING']
+    endif
+    if has_posix_aio
+        posix_test_compile_defs += ['-DHAVE_POSIXAIO']
+    endif
+
     nixl_posix_app = executable('nixl_posix_test', 'nixl_posix_test.cpp',
                                 dependencies: [nixl_dep, nixl_infra, absl_log_dep],
                                 include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                                cpp_args: posix_test_compile_defs,
                                 install: true)
 
     # Register the test with the test suite
