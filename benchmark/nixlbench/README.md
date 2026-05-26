@@ -324,7 +324,7 @@ sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpu
 # Clone and build GUSLI
 git clone https://github.com/nvidia/gusli.git
 cd gusli
-make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0
+make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1
 
 # Install library and headers
 sudo cp libgusli_clnt.so /usr/lib/
@@ -536,6 +536,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --gusli_device_security LIST           # Comma-separated security flags per device (e.g., 'sec=0x3,sec=0x71')
 --gusli_device_byte_offsets LIST       # Comma-separated LBA offset in bytes per device (default: 1048576)
 --gusli_config_file CONTENT            # Custom config file content (auto-generated if not provided)
+--gusli_try_use_uring                  # Try to use io_uring engine in GUSLI backend (default: false)
 
 Note: storage_enable_direct is automatically enabled for GUSLI backend
 ```
@@ -710,6 +711,7 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 - `--gusli_device_security`: Comma-separated security flags per device (default: "sec=0x3" for each device)
 - `--gusli_device_byte_offsets`: Comma-separated LBA offset in bytes per device (default: 1MB for each device)
 - `--gusli_config_file`: Custom config file content override
+- `--gusli_try_use_uring`: Try to use io_uring engine (default: false); can also be set via `--config_file` as `gusli_try_use_uring=true`
 
 **Notes**:
 - Number of devices in `--device_list` must match `--num_initiator_dev` and `--num_target_dev`
