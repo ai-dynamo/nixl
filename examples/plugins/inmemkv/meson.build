@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,9 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if get_option('build_examples')
-    subdir('cpp')
-    subdir('plugins')
-endif
+inmemkv_sources = [
+    'inmemkv_backend.cpp',
+    'inmemkv_backend.h',
+    'inmemkv_plugin.cpp',
+]
 
-subdir('device')
+inmemkv_example_plugin = shared_library(
+    'INMEMKV',
+    inmemkv_sources,
+    dependencies: [nixl_infra, nixl_common_dep],
+    cpp_args: ['-fPIC'],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs],
+    install: false,
+    name_prefix: 'libplugin_')
