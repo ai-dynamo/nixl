@@ -1116,23 +1116,22 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
-        size_t list_idx = 0;
-        for (auto &iov_list : local_iovs) {
+        for (size_t list_idx = 0; list_idx < local_iovs.size(); list_idx++) {
+            const auto &iov_list = local_iovs[list_idx];
             std::vector<xferBenchIOV> remote_iov_list;
-            int devidx = 0;
-            for (auto &iov : iov_list) {
+            size_t num_devices = iov_list.size();
+            for (size_t devidx = 0; devidx < num_devices; devidx++) {
+                const auto &iov = iov_list[devidx];
                 if (xferBenchConfig::isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
-                    size_t num_devices = iov_list.size();
                     int obj_dev_id = list_idx * num_devices + devidx;
                     basic_desc = initBasicDescObj(iov.len, obj_dev_id, iov.metaInfo);
-                    devidx++;
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
                     }
                 } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
                     xferBenchIOV iov_remote(iov);
-                    iov_remote.addr = gusli_devices[devidx++].dev_offset + file_offset;
+                    iov_remote.addr = gusli_devices[devidx].dev_offset + file_offset;
                     iov_remote.len = block_size;
                     iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);
@@ -1153,7 +1152,6 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
                 file_offset += block_size;
             }
-            list_idx++;
         }
     } else {
         for (const auto &local_iov : local_iovs) {
