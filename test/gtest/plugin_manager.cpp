@@ -211,7 +211,9 @@ TEST_F(LoadedPluginTestFixture, LibfabricPluginAdvertisesPostThreadOptions) {
     auto plugin_handle = plugin_manager_.getBackendPlugin("LIBFABRIC");
     if (!plugin_handle) {
         plugin_handle = plugin_manager_.loadBackendPlugin("LIBFABRIC");
-        if (plugin_handle) loaded_plugins_.insert("LIBFABRIC");
+        if (plugin_handle) {
+            loaded_plugins_.insert("LIBFABRIC");
+        }
     }
     ASSERT_NE(plugin_handle, nullptr);
 
