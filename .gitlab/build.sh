@@ -38,7 +38,7 @@ GRPC_TAG=${GRPC_TAG:-v1.73.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
-UCCL_COMMIT_SHA="2de728f1a27ea3f3b66059baf838f940e243ebc6"
+UCCL_COMMIT_SHA="0cdb740cf369a4f4dd63b9b773c8937f187b179a"
 AZURITE_VER="3.35.0"
 TMPDIR=$(mktemp -d)
 
@@ -137,7 +137,7 @@ else
         click tabulate auditwheel tomlkit \
         pytest pytest-timeout zmq \
         mpmath typing-extensions sympy numpy \
-        networkx MarkupSafe fsspec filelock jinja2
+        networkx MarkupSafe fsspec filelock jinja2 nanobind
 
     # Install torch from the CUDA-matched PyTorch index
     cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
@@ -299,7 +299,7 @@ else
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
       cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
-      ninja && \
+      ninja -j"$NPROC" && \
       $SUDO ninja install && \
       $SUDO ldconfig && \
       cd .. && \
@@ -321,7 +321,7 @@ else
       cd azure-sdk-for-cpp/ && \
       mkdir build && cd build && \
       AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
-      cmake --build . --target azure-storage-blobs azure-identity && \
+      cmake --build . --parallel "$NPROC" --target azure-storage-blobs azure-identity && \
       $SUDO cmake --install sdk/core && \
       $SUDO cmake --install sdk/storage/azure-storage-common && \
       $SUDO cmake --install sdk/storage/azure-storage-blobs && \

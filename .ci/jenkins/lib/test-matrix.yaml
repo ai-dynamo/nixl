@@ -50,7 +50,7 @@ env:
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260506-3"
+  CI_IMAGE_TAG: "20260519-1"
 
 empty_volumes:
   - {mountPath: /root, memory: false}
@@ -65,7 +65,6 @@ runs_on_dockers:
      file: '.ci/dockerfiles/Dockerfile.base',
      name: 'nixl-ci-gpu-base-25.10-cuda13.0-ubuntu24.04',
      tag: "${CI_IMAGE_TAG}",
-     deps: ['.gitlab/build.sh', '.ci/scripts/common.sh'],
      build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
     }
   - {
