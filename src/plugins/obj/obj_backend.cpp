@@ -31,7 +31,9 @@ namespace {
 
 std::string
 getAccelType(const nixl_b_params_t *custom_params) {
-    if (!custom_params) return "";
+    if (!custom_params) {
+        return "";
+    }
     auto it = custom_params->find("type");
     return (it != custom_params->end()) ? it->second : "";
 }
@@ -53,11 +55,13 @@ createAccelEngine(const nixl_b_params_t *custom_params, Args &&...args) {
 
 std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params) {
-    if (isAcceleratedRequested(init_params->customParams))
+    if (isAcceleratedRequested(init_params->customParams)) {
         return createAccelEngine(init_params->customParams, init_params);
+    }
 
-    if (getCrtMinLimit(init_params->customParams) > 0)
+    if (getCrtMinLimit(init_params->customParams) > 0) {
         return std::make_unique<S3CrtObjEngineImpl>(init_params);
+    }
 
     return std::make_unique<DefaultObjEngineImpl>(init_params);
 }
@@ -66,12 +70,14 @@ std::unique_ptr<nixlObjEngineImpl>
 createObjEngineImpl(const nixlBackendInitParams *init_params,
                     std::shared_ptr<iS3Client> s3_client,
                     std::shared_ptr<iS3Client> s3_client_crt) {
-    if (isAcceleratedRequested(init_params->customParams))
+    if (isAcceleratedRequested(init_params->customParams)) {
         return createAccelEngine(
             init_params->customParams, init_params, std::move(s3_client), std::move(s3_client_crt));
+    }
 
-    if (getCrtMinLimit(init_params->customParams) > 0)
+    if (getCrtMinLimit(init_params->customParams) > 0) {
         return std::make_unique<S3CrtObjEngineImpl>(init_params, s3_client, s3_client_crt);
+    }
 
     return std::make_unique<DefaultObjEngineImpl>(init_params, s3_client, s3_client_crt);
 }

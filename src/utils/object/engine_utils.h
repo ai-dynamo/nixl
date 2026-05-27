@@ -20,7 +20,9 @@ getNumThreads(nixl_b_params_t *custom_params) {
 
 inline size_t
 getCrtMinLimit(nixl_b_params_t *custom_params) {
-    if (!custom_params) return 0;
+    if (!custom_params) {
+        return 0;
+    }
 
     auto it = custom_params->find("crtMinLimit");
     if (it != custom_params->end()) {
@@ -38,7 +40,9 @@ getCrtMinLimit(nixl_b_params_t *custom_params) {
 
 inline bool
 isAcceleratedRequested(nixl_b_params_t *custom_params) {
-    if (!custom_params) return false;
+    if (!custom_params) {
+        return false;
+    }
     auto accel_it = custom_params->find("accelerated");
     return accel_it != custom_params->end() && accel_it->second == "true";
 }

@@ -34,10 +34,13 @@ objAccelEngineEntry
 objAccelEngineRegistry::lookupOrThrow(const std::string &type) const {
     const std::lock_guard<std::mutex> lock(mutex_);
     auto it = entries_.find(type);
-    if (it != entries_.end()) return it->second;
+    if (it != entries_.end()) {
+        return it->second;
+    }
 
-    if (type.empty())
+    if (type.empty()) {
         throw std::runtime_error("Accelerated engine support not available (not compiled)");
+    }
 
     throw std::runtime_error("Accelerated engine type '" + type +
                              "' is not available (not compiled)");

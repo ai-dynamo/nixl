@@ -39,7 +39,9 @@ public:
     std::shared_ptr<mockS3Client>
     create(const std::string &type) const {
         auto it = entries_.find(type);
-        if (it != entries_.end()) return it->second();
+        if (it != entries_.end()) {
+            return it->second();
+        }
         return nullptr;
     }
 

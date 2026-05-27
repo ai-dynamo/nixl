@@ -313,8 +313,9 @@ protected:
         auto type_it = customParams_.find("type");
         std::string type = (type_it != customParams_.end()) ? type_it->second : "";
         auto mock = mockClientRegistry::instance().create(type);
-        if (!type.empty() && !mock)
+        if (!type.empty() && !mock) {
             throw std::runtime_error("No registered mock for engine type '" + type + "'");
+        }
         mockS3Client_ = mock ? mock : std::make_shared<mockS3Client>();
         objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockS3Client_);
     }
