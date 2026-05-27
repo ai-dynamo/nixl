@@ -13,17 +13,18 @@
  * S3 Dell ObjectScale Engine Implementation (Pattern B).
  *
  * Provides RDMA-accelerated S3 object storage operations for Dell ObjectScale.
- * Inherits from S3AccelObjEngineImpl and overrides only what is Dell-specific:
+ * Inherits from S3AccelObjEngineImpl and overrides Dell-specific behaviour:
  *
  *   - getSupportedMems() → adds VRAM_SEG to the supported set.
  *   - registerMem()      → registers DRAM/VRAM with cuObject for RDMA.
  *   - deregisterMem()    → deregisters DRAM/VRAM from cuObject.
  *   - getClient()        → returns the Dell RDMA client.
+ *   - postXfer()         → rejects non-zero PUT offsets, then delegates
+ *                           to the parent whose putObjectAsync/getObjectAsync
+ *                           the Dell client overrides to inject RDMA tokens.
  *
- * The transfer lifecycle (prepXfer, postXfer, checkXfer, releaseReqH) is
- * inherited unchanged from DefaultObjEngineImpl.  The parent's postXfer
- * calls getClient()->putObjectAsync() / getObjectAsync(), which the Dell
- * client overrides to inject RDMA tokens transparently.
+ * The remaining transfer lifecycle (prepXfer, checkXfer, releaseReqH) is
+ * inherited unchanged from DefaultObjEngineImpl.
  */
 class S3DellObsObjEngineImpl : public S3AccelObjEngineImpl {
 public:
@@ -85,14 +86,21 @@ public:
     deregisterMem(nixlBackendMD *meta) override;
 
     /**
-     * Post-transfer validation and dispatch.
+     * @brief Validate a transfer request and dispatch it.
      *
      * For WRITE operations, rejects non-zero remote offsets before launching
      * any async PUTs.  Dell ObjectScale RDMA PUT does not support partial
      * writes at a non-zero offset; failing early prevents partially-enqueued
      * multi-descriptor requests.
      *
-     * For READ operations and valid WRITE operations, delegates to the parent.
+     * @param operation    Transfer direction (NIXL_READ or NIXL_WRITE).
+     * @param local        Local descriptor list.
+     * @param remote       Remote descriptor list.
+     * @param remote_agent Remote agent identifier.
+     * @param handle       Backend request handle (from prepXfer).
+     * @param opt_args     Optional backend arguments.
+     * @return NIXL_ERR_INVALID_PARAM for invalid WRITE offsets; otherwise the
+     *         status from S3AccelObjEngineImpl::postXfer().
      */
     nixl_status_t
     postXfer(const nixl_xfer_op_t &operation,
