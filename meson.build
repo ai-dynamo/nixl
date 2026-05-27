@@ -175,14 +175,14 @@ cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
 
-use_rocm = get_option('use_rocm')
+rocm_path = get_option('use_rocm')
+use_rocm = rocm_path != ''
 
 if use_rocm
-    rocm_path = get_option('rocm_path')
     hipcc_prog = find_program(rocm_path + '/bin/hipcc', required: false)
     if not hipcc_prog.found()
-        error('use_rocm=true but hipcc not found at ' + rocm_path + '/bin/hipcc. ' +
-              'Install ROCm or set -Drocm_path=<path>.')
+        error('use_rocm set but hipcc not found at ' + rocm_path + '/bin/hipcc. ' +
+              'Install ROCm or pass the correct prefix via -Duse_rocm=<path>.')
     endif
 
     rocm_inc = rocm_path + '/include'
@@ -190,14 +190,10 @@ if use_rocm
     add_project_arguments('-D__HIP_PLATFORM_AMD__', language: 'cpp')
     add_project_link_arguments(['-L' + rocm_lib, '-lamdhip64', '-lhiprtc'], language: 'cpp')
 
-    # cuda_dep is set to an empty-but-found dependency so that plugins
-    # which list it defensively (e.g. UCX, which has zero CUDA usage in
-    # source but lists cuda_dep in its deps array) still build cleanly.
-    # CUDA-only plugins (cuda_gds, gds_mt, gpunetio, libfabric) have
-    # explicit subdir_done() guards at the top of their meson.build files
-    # to short-circuit before any cuda.h include or CUDA flag is touched.
-    # Using disabler() here would cascade through the UCX plugin's dep
-    # list and silently nullify its shared_library() call.
+    # cuda_dep is an empty-but-found dependency on ROCm builds so that plugins
+    # which list it defensively (e.g. UCX) still build cleanly. Plugins that
+    # require real CUDA headers (cuda_gds, gds_mt, libfabric) will naturally
+    # skip via their own gds_path / cufile / libfabric dependency checks.
     cuda_dep = declare_dependency()
     cuda_wheel_dir = 'nixl_rocm'
     summary({'GPU vendor': 'AMD ROCm', 'ROCm path': rocm_path}, section: 'Build')

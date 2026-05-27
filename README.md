@@ -165,20 +165,21 @@ Common build options:
 
 #### Building for AMD ROCm
 
-NIXL has experimental support for AMD Instinct GPUs via the `use_rocm=true` Meson option. The build switches the GPU toolchain from CUDA to HIP and disables CUDA-only plugins. Supported architectures:
+NIXL has experimental support for AMD Instinct GPUs via the `use_rocm` Meson option. Pass the ROCm install prefix as the value — this both enables the ROCm build and tells the build system where to find HIP. The build switches the GPU toolchain from CUDA to HIP. Supported architectures:
 
+- **gfx90a** — MI250X
 - **gfx942** — MI300X, MI325X
 - **gfx950** — MI350X, MI355X
 
 **Prerequisites:**
-- ROCm 7.x installed at `/opt/rocm` (or a custom path; pass `-Drocm_path=<path>`).
-- `hipcc` available at `$rocm_path/bin/hipcc`.
-- UCX 1.18+ built with `--with-rocm` (the UCX backend reaches GPU memory through UCX's transport selection; ROCm support must be compiled into UCX itself).
+- ROCm 7.x installed (default `/opt/rocm`).
+- `hipcc` available at `$use_rocm/bin/hipcc`.
+- UCX 1.18+ built with `--with-rocm`.
 
 **Build:**
 
 ```bash
-$ meson setup build -Duse_rocm=true
+$ meson setup build -Duse_rocm=/opt/rocm   # or your custom ROCm prefix
 $ cd build
 $ ninja
 ```

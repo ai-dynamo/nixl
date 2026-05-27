@@ -21,36 +21,19 @@
 
 namespace nixl {
 
-/**
- * @brief Hardware information gathered by scanning PCI devices.
- *
- * Scans the sysfs PCI device directory to detect available hardware.
- */
 class hwInfo {
 public:
-    /** Number of NVIDIA GPUs detected via PCI vendor 0x10de. */
     unsigned numNvidiaGpus = 0;
-    /** Number of AMD GPUs detected via PCI vendor 0x1002. */
-    unsigned numAmdGpus = 0;
-    /** Number of Mellanox InfiniBand HCAs detected via PCI vendor 0x15b3 + class 0x0207. */
-    unsigned numIbDevices = 0;
-    /** Number of AWS Elastic Fabric Adapters detected via PCI vendor 0x1d0f + EFA device IDs. */
+    unsigned numAmdGpus    = 0;
+    unsigned numIbDevices  = 0;
     unsigned numEfaDevices = 0;
 
-    /** Return a cached singleton instance of hwInfo. */
-    [[nodiscard]] static const hwInfo &
-    instance();
+    [[nodiscard]] static const hwInfo &instance();
 
 private:
-    /**
-     * Construct hwInfo by scanning /sys/bus/pci/devices once. Counts populated
-     * fields on the public surface; failed sysfs reads are logged at TRACE
-     * level and skipped. Use ::instance() to obtain the cached singleton.
-     */
     hwInfo();
     hwInfo(const hwInfo &) = delete;
-    hwInfo &
-    operator=(const hwInfo &) = delete;
+    hwInfo &operator=(const hwInfo &) = delete;
 };
 
 } // namespace nixl

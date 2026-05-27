@@ -16,15 +16,6 @@
 
 # LibFabric plugin configuration
 
-if get_option('use_rocm')
-    # libfabric_backend.h includes <cuda.h> unconditionally; making it
-    # ROCm-aware is a separate piece of work tracked for a follow-up PR.
-    # For now, disable the libfabric plugin on ROCm builds; UCX remains
-    # the supported AMD transport.
-    message('LIBFABRIC plugin skipped: cuda.h dependency in libfabric_backend.h ' +
-            'pending refactor for ROCm (use_rocm=true)')
-    subdir_done()
-endif
 
 # Enable libfabric utils layer
 libfabric_plugin_deps = [
