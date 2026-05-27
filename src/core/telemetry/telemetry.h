@@ -79,7 +79,9 @@ private:
     void
     registerPeriodicTask(periodicTask &task);
     void
-    updateData(const std::string &event_name, nixl_telemetry_category_t category, uint64_t value);
+    updateData(nixl_telemetry_event_type_t event_type,
+               nixl_telemetry_category_t category,
+               uint64_t value);
     bool
     writeEventHelper();
     std::unique_ptr<nixlTelemetryExporter> exporter_;

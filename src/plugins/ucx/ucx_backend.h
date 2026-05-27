@@ -30,15 +30,14 @@
 #include <optional>
 
 #include "nixl.h"
-#include "backend/backend_engine.h"
 
-// Local includes
+#include "backend/backend_engine.h"
 #include "common/nixl_time.h"
+
 #include "mem_list.h"
 #include "rkey.h"
+#include "ucx_enums.h"
 #include "ucx_utils.h"
-
-enum ucx_cb_op_t { NOTIF_STR };
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
@@ -79,22 +78,18 @@ class nixlUcxPrivateMetadata : public nixlBackendMD {
 // A public metadata has to implement put, and only has the remote metadata
 class nixlUcxPublicMetadata : public nixlBackendMD {
 public:
-    nixlUcxPublicMetadata() : nixlBackendMD(false) {}
+    nixlUcxPublicMetadata() = delete;
+    nixlUcxPublicMetadata(const ucx_connection_ptr_t &conn, std::vector<nixl::ucx::rkey> &&rkeys);
 
     [[nodiscard]] const nixl::ucx::rkey &
-    getRkey(size_t id) const {
-        return *rkeys_[id];
+    getRkey(const size_t id) const {
+        return rkeys_[id];
     }
 
-    void
-    addRkey(const nixlUcxEp &ep, const void *rkey_buffer) {
-        rkeys_.emplace_back(std::make_unique<nixl::ucx::rkey>(ep, rkey_buffer));
-    }
-
-    ucx_connection_ptr_t conn;
+    const ucx_connection_ptr_t conn;
 
 private:
-    std::vector<std::unique_ptr<nixl::ucx::rkey>> rkeys_;
+    const std::vector<nixl::ucx::rkey> rkeys_;
 };
 
 class nixlUcxEngine : public nixlBackendEngine {
@@ -185,8 +180,11 @@ public:
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
-    int
+    unsigned
     progress();
+
+    void
+    progressLoop();
 
     nixl_status_t
     getNotifs(notif_list_t &notif_list) override;
@@ -228,11 +226,8 @@ protected:
         return uws.size();
     }
 
-    void
-    getNotifsImpl(notif_list_t &notif_list);
-
     virtual void
-    appendNotif(std::string remote_name, std::string msg);
+    appendNotif(std::string &&remote_name, std::string &&msg);
 
     virtual nixl_status_t
     sendXferRange(const nixl_xfer_op_t &operation,
@@ -244,6 +239,8 @@ protected:
                   size_t end_idx) const;
 
     nixlUcxEngine(const nixlBackendInitParams &init_params);
+
+    notif_list_t notifList_;
 
 private:
     // Memory management helpers
@@ -296,11 +293,6 @@ private:
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
 
-    const bool progressThreadEnabled_;
-
-    /* Notifications */
-    notif_list_t notifMainList;
-
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
 };
@@ -320,12 +312,11 @@ public:
 
 protected:
     void
-    appendNotif(std::string remote_name, std::string msg) override;
+    appendNotif(std::string &&remote_name, std::string &&msg) override;
 
 private:
     std::unique_ptr<nixlUcxThread> thread_;
-    std::mutex notifMtx_;
-    notif_list_t notifPthr_;
+    std::mutex notifMutex_;
 };
 
 namespace asio {
@@ -355,7 +346,7 @@ public:
 
 protected:
     void
-    appendNotif(std::string remote_name, std::string msg) override;
+    appendNotif(std::string &&remote_name, std::string &&msg) override;
 
     nixl_status_t
     sendXferRange(const nixl_xfer_op_t &operation,
@@ -372,7 +363,6 @@ private:
     std::vector<std::unique_ptr<nixlUcxThread>> dedicatedThreads_;
     size_t numSharedWorkers_;
     std::mutex notifMutex_;
-    notif_list_t notifThread_;
     size_t splitBatchSize_;
 };
 

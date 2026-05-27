@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "mock_s3_client.h"
+#include "obj_test_base.h"
 #include "mock_client_registry.h"
 #include "s3_accel/dell/rdma_interface.h"
 

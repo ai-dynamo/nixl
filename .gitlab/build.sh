@@ -29,7 +29,7 @@ EXTRA_BUILD_ARGS=${3:-""}
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 NIXLBENCH_BUILD_DIR=${NIXLBENCH_BUILD_DIR:-nixlbench_build}
 # UCX_VERSION is the version of UCX to build override default with env variable.
-UCX_VERSION=${UCX_VERSION:-v1.20.x}
+UCX_VERSION=${UCX_VERSION:-v1.21.x}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
 # Abseil and gRPC versions for consistent toolchain build.
@@ -38,7 +38,7 @@ GRPC_TAG=${GRPC_TAG:-v1.73.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
-UCCL_COMMIT_SHA="2de728f1a27ea3f3b66059baf838f940e243ebc6"
+UCCL_COMMIT_SHA="0cdb740cf369a4f4dd63b9b773c8937f187b179a"
 AZURITE_VER="3.35.0"
 TMPDIR=$(mktemp -d)
 
@@ -101,7 +101,6 @@ else
                                  libprotobuf-dev \
                                  libcpprest-dev \
                                  libaio-dev \
-                                 liburing-dev \
                                  libelf-dev \
                                  libgflags-dev \
                                  patchelf \
@@ -124,6 +123,7 @@ else
                                  libhwloc-dev \
                                  libxml2-dev \
                                  libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
+    $SUDO apt-mark hold liburing2 liburing-dev
 
     # Ubuntu 22.04 specific setup
     if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
@@ -137,7 +137,16 @@ else
         click tabulate auditwheel tomlkit \
         pytest pytest-timeout zmq \
         mpmath typing-extensions sympy numpy \
-        networkx MarkupSafe fsspec filelock jinja2 torch
+        networkx MarkupSafe fsspec filelock jinja2 nanobind
+
+    # Install torch from the CUDA-matched PyTorch index
+    cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
+    if [ -z "$cuda_version" ]; then
+        echo "ERROR: unable to determine CUDA version from nvcc" >&2
+        exit 1
+    fi
+    $SUDO pip3 --no-cache-dir install --break-system-packages \
+        --index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
 
     # Add DOCA repository and install packages
     ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
@@ -286,10 +295,11 @@ else
       echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
       git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
+      sed -i '/liburing-dev/d' dependencies.sh
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
       cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
-      ninja && \
+      ninja -j"$NPROC" && \
       $SUDO ninja install && \
       $SUDO ldconfig && \
       cd .. && \
@@ -311,7 +321,7 @@ else
       cd azure-sdk-for-cpp/ && \
       mkdir build && cd build && \
       AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
-      cmake --build . --target azure-storage-blobs azure-identity && \
+      cmake --build . --parallel "$NPROC" --target azure-storage-blobs azure-identity && \
       $SUDO cmake --install sdk/core && \
       $SUDO cmake --install sdk/storage/azure-storage-common && \
       $SUDO cmake --install sdk/storage/azure-storage-blobs && \
