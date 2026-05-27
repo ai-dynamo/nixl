@@ -52,7 +52,7 @@ env:
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260709-1"
+  CI_IMAGE_TAG: "20260712-1"
   ENROOT_MOUNT_PATH: "/enroot_images"  # NFS mount on mizu nodes; on failure the container is exported here as <containerName>.sqsh
   ENROOT_DATA_PATH: "/enroot-data/enroot-data-148069/user-148069"  # svc-nixl user on mizu nodes
 
