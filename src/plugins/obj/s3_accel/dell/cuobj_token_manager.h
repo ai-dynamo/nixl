@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef NIXL_OBJ_PLUGIN_S3_DELL_CUOBJ_TOKEN_MANAGER_H
-#define NIXL_OBJ_PLUGIN_S3_DELL_CUOBJ_TOKEN_MANAGER_H
+#ifndef NIXL_SRC_PLUGINS_OBJ_S3_ACCEL_DELL_CUOBJ_TOKEN_MANAGER_H
+#define NIXL_SRC_PLUGINS_OBJ_S3_ACCEL_DELL_CUOBJ_TOKEN_MANAGER_H
 
 #include <cuobjclient.h>
 #include <memory>
@@ -106,4 +106,4 @@ private:
     std::unique_ptr<cuObjClient> client_;
 };
 
-#endif // NIXL_OBJ_PLUGIN_S3_DELL_CUOBJ_TOKEN_MANAGER_H
+#endif // NIXL_SRC_PLUGINS_OBJ_S3_ACCEL_DELL_CUOBJ_TOKEN_MANAGER_H

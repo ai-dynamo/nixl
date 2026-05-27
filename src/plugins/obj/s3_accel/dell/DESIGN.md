@@ -28,13 +28,15 @@ done.  No callbacks, no synchronous I/O pretense.
 ## How it works
 
 **Before (Pattern A):**
-```
+
+```text
 prepXfer:  cuObjPut/cuObjGet → callback extracts rdma_desc → store in request handle
 postXfer:  dynamic_cast to iDellS3RdmaClient → putObjectRdmaAsync(rdma_desc)
 ```
 
 **After (Pattern B):**
-```
+
+```text
 prepXfer:  inherited from parent (creates empty handle, validates params)
 postXfer:  inherited from parent → calls putObjectAsync/getObjectAsync
            → Dell client generates token inline via cuMemObjGetRDMAToken
@@ -47,7 +49,7 @@ postXfer:  inherited from parent → calls putObjectAsync/getObjectAsync
 |------|------|------------|
 | **cuobj_token_manager.h/.cpp** (NEW) | RAII wrapper: `registerMemory`, `deregisterMemory`, `generatePutToken`, `generateGetToken` | Replaces `CUObjIOOps` callbacks, `rdma_ctx_t`, `objectGet/objectPut` statics, and `obs_ops` global. Simple 1:1 mapping: each `registerMemory` = one `cuMemObjGetDescriptor`, each `deregisterMemory` = one `cuMemObjPutDescriptor`. |
 | **client.h/.cpp** (REWRITE) | Overrides standard `putObjectAsync`/`getObjectAsync` with RDMA token injection | Replaces `iDellS3RdmaClient` separate interface and its `putObjectRdmaAsync`/`getObjectRdmaAsync`. Eliminates the `dynamic_cast` in `postXfer`. The Dell client now fulfills the standard `iS3Client` contract — the parent's `postXfer` calls it without knowing RDMA is involved. |
-| **engine_impl.h/.cpp** (SIMPLIFY) | Only overrides `registerMem`, `deregisterMem`, `getSupportedMems`, `getClient` | Removes `prepXfer`, `postXfer`, `checkXfer`, `releaseReqH` overrides (inherited from `DefaultObjEngineImpl`). Removes 5 helper classes: `obsObjTransferRequestH`, `nixlObsObjBackendReqH`, `nixlObsObjMetadata`, `rdma_ctx_t`, `isValidPrepXferParams` duplicate. |
+| **engine_impl.h/.cpp** (SIMPLIFY) | Overrides `registerMem`, `deregisterMem`, `getSupportedMems`, `getClient`, and `postXfer` (offset validation only) | Removes `prepXfer`, `checkXfer`, `releaseReqH` overrides (inherited from `DefaultObjEngineImpl`). Removes 5 helper classes: `obsObjTransferRequestH`, `nixlObsObjBackendReqH`, `nixlObsObjMetadata`, `rdma_ctx_t`, `isValidPrepXferParams` duplicate. `postXfer` override rejects non-zero PUT offsets before delegating to parent. |
 | **rdma_interface.h** (DELETE) | Removes `iDellS3RdmaClient` interface | No longer needed — Dell client implements the standard `iS3Client` interface. |
 | **s3/engine_impl.cpp** (4 lines) | `isValidPrepXferParams` accepts `VRAM_SEG` | Dell engine reports `VRAM_SEG` in `getSupportedMems()` but the parent's validation only accepted `DRAM_SEG`. |
 | **meson.build** (2 lines) | Add `cuobj_token_manager.{h,cpp}` to build | New source files. |
@@ -85,7 +87,7 @@ at its exact address — no pool-relative offset computation needed.
 | Metric | Before | After |
 |--------|--------|-------|
 | Dell-specific lines | ~900 | ~360 |
-| Engine methods overridden | 6 | 3 |
+| Engine methods overridden | 6 | 4 |
 | Helper classes | 5 | 1 (`nixlDellMemMetadata`) |
 | `dynamic_cast` at runtime | Yes | No |
 | Separate RDMA interface | `iDellS3RdmaClient` | None (standard `iS3Client`) |

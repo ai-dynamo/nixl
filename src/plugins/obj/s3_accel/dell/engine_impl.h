@@ -84,10 +84,27 @@ public:
     nixl_status_t
     deregisterMem(nixlBackendMD *meta) override;
 
+    /**
+     * Post-transfer validation and dispatch.
+     *
+     * For WRITE operations, rejects non-zero remote offsets before launching
+     * any async PUTs.  Dell ObjectScale RDMA PUT does not support partial
+     * writes at a non-zero offset; failing early prevents partially-enqueued
+     * multi-descriptor requests.
+     *
+     * For READ operations and valid WRITE operations, delegates to the parent.
+     */
+    nixl_status_t
+    postXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args) const override;
+
     // prepXfer   — INHERITED from DefaultObjEngineImpl (validates, creates handle).
-    // postXfer   — INHERITED from DefaultObjEngineImpl (calls
-    // client->putObjectAsync/getObjectAsync). checkXfer  — INHERITED from DefaultObjEngineImpl
-    // (polls futures). releaseReqH — INHERITED from DefaultObjEngineImpl (deletes handle).
+    // checkXfer  — INHERITED from DefaultObjEngineImpl (polls futures).
+    // releaseReqH — INHERITED from DefaultObjEngineImpl (deletes handle).
 
 protected:
     /**

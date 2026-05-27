@@ -8,6 +8,7 @@
 #include "common/nixl_log.h"
 #include <algorithm>
 #include <memory>
+#include <stdexcept>
 
 namespace {
 
@@ -63,8 +64,8 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
     // Create the token manager (Pattern B — no callbacks).
     tokenMgr_ = std::make_shared<CuObjTokenManager>(CUOBJ_PROTO_RDMA_DC_V1);
     if (!tokenMgr_->isConnected()) {
-        NIXL_ERROR << "CuObjTokenManager failed to connect";
-        return;
+        throw std::runtime_error(
+            "Dell ObjectScale engine: CuObjTokenManager failed to connect to cuObject service");
     }
 
     // Create the Dell RDMA client that uses the token manager.
@@ -90,13 +91,39 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
     } else {
         tokenMgr_ = std::make_shared<CuObjTokenManager>(CUOBJ_PROTO_RDMA_DC_V1);
         if (!tokenMgr_->isConnected()) {
-            NIXL_ERROR << "CuObjTokenManager failed to connect";
-            return;
+            throw std::runtime_error(
+                "Dell ObjectScale engine: CuObjTokenManager failed to connect to cuObject service");
         }
         s3Client_ = std::make_shared<awsS3DellObsClient>(params_to_use, tokenMgr_, executor_);
     }
 
     NIXL_INFO << "Dell ObjectScale engine initialized (Pattern B, injected client)";
+}
+
+// ---------------------------------------------------------------------------
+// postXfer: reject non-zero PUT offsets before dispatching
+// ---------------------------------------------------------------------------
+
+nixl_status_t
+S3DellObsObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
+                                 const nixl_meta_dlist_t &local,
+                                 const nixl_meta_dlist_t &remote,
+                                 const std::string &remote_agent,
+                                 nixlBackendReqH *&handle,
+                                 const nixl_opt_b_args_t *opt_args) const {
+    // Dell ObjectScale RDMA PUT does not support partial writes at a non-zero
+    // offset.  Reject early so no async operations are enqueued.
+    if (operation == NIXL_WRITE) {
+        for (int i = 0; i < remote.descCount(); ++i) {
+            if (remote[i].addr != 0) {
+                NIXL_ERROR << "Dell ObjectScale PUT does not support non-zero offset (descriptor "
+                           << i << ", offset=" << remote[i].addr << ")";
+                return NIXL_ERR_INVALID_PARAM;
+            }
+        }
+    }
+
+    return S3AccelObjEngineImpl::postXfer(operation, local, remote, remote_agent, handle, opt_args);
 }
 
 // ---------------------------------------------------------------------------

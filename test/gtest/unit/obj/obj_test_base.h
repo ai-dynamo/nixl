@@ -410,8 +410,16 @@ protected:
         status = objEngine_->checkXfer(handle);
         EXPECT_EQ(status, NIXL_SUCCESS);
 
-        if (operation == NIXL_READ) {
-            EXPECT_EQ(test_buffer[0], 'A');
+        if (operation == NIXL_READ && !test_buffer.empty()) {
+            // Verify multiple positions to catch partial/offset-corrupted reads.
+            // Mock fills with: buffer[i] = 'A' + ((i + offset) % 26)
+            EXPECT_EQ(test_buffer.front(), 'A');
+            if (test_buffer.size() > 1) {
+                size_t mid = test_buffer.size() / 2;
+                EXPECT_EQ(test_buffer[mid], static_cast<char>('A' + (mid % 26)));
+                EXPECT_EQ(test_buffer.back(),
+                          static_cast<char>('A' + ((test_buffer.size() - 1) % 26)));
+            }
         }
 
         objEngine_->releaseReqH(handle);
