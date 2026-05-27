@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * This file incorporates material from the DeepSeek project, licensed under the MIT License.
  * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -20,46 +20,106 @@
  * limitations under the License.
  */
 
-#include <ATen/cuda/CUDAContext.h>
-#include <memory>
+#pragma once
 
+#include "cuda_warn.hpp"
 #include "kernels/exception.cuh"
+
+#include <c10/cuda/CUDAStream.h>
+
+#include <cuda_runtime.h>
+
+#include <memory>
 
 namespace nixl_ep {
 
-struct EventHandle {
-    std::shared_ptr<torch::Event> event;
+class cudaEvent {
+public:
+    cudaEvent() : event_{create()} {}
 
-    EventHandle() {
-        event = std::make_shared<torch::Event>(torch::kCUDA);
-        event->record(at::cuda::getCurrentCUDAStream());
+    cudaEvent(const cudaEvent &) = delete;
+    cudaEvent &
+    operator=(const cudaEvent &) = delete;
+
+    cudaEvent(cudaEvent &&other) noexcept : event_{other.event_} {
+        other.event_ = nullptr;
     }
 
-    explicit EventHandle(const at::cuda::CUDAStream& stream) {
-        event = std::make_shared<torch::Event>(torch::kCUDA);
-        event->record(stream);
+    cudaEvent &
+    operator=(cudaEvent &&other) noexcept {
+        if (this != &other) {
+            destroy();
+            event_ = other.event_;
+            other.event_ = nullptr;
+        }
+        return *this;
     }
 
-    EventHandle(const EventHandle& other) = default;
-
-    void current_stream_wait() const {
-        at::cuda::getCurrentCUDAStream().unwrap().wait(*event);
+    ~cudaEvent() noexcept {
+        destroy();
     }
+
+    void
+    record(const at::cuda::CUDAStream &stream) {
+        CUDA_CHECK(cudaEventRecord(event_, stream.stream()));
+    }
+
+    void
+    block(const at::cuda::CUDAStream &stream) const {
+        CUDA_CHECK(cudaStreamWaitEvent(stream.stream(), event_, 0));
+    }
+
+private:
+    static cudaEvent_t
+    create() {
+        cudaEvent_t event;
+        CUDA_CHECK(cudaEventCreateWithFlags(&event, cudaEventDisableTiming));
+        return event;
+    }
+
+    void
+    destroy() noexcept {
+        if (event_ == nullptr) {
+            return;
+        }
+        warnCuda(cudaEventDestroy(event_), "Event::destroy()", "cudaEventDestroy");
+        event_ = nullptr;
+    }
+
+    cudaEvent_t event_;
 };
 
-torch::Event create_event(const at::cuda::CUDAStream &s) {
-    auto event = torch::Event(torch::kCUDA);
-    event.record(s);
-    return event;
-}
+struct EventHandle {
+    EventHandle() : event_{std::make_shared<cudaEvent>()} {
+        event_->record(at::cuda::getCurrentCUDAStream());
+    }
 
-void stream_wait(const at::cuda::CUDAStream& s_0, const at::cuda::CUDAStream& s_1) {
+    explicit EventHandle(const at::cuda::CUDAStream &stream)
+        : event_{std::make_shared<cudaEvent>()} {
+        event_->record(stream);
+    }
+
+    EventHandle(const EventHandle &other) = default;
+
+    void
+    currentStreamWait() const {
+        event_->block(at::cuda::getCurrentCUDAStream());
+    }
+
+    void streamWait(const at::cuda::CUDAStream &stream) const {
+        event_->block(stream);
+    }
+
+private:
+    std::shared_ptr<cudaEvent> event_;
+};
+
+inline void
+streamWait(const at::cuda::CUDAStream &s_0, const at::cuda::CUDAStream &s_1) {
     EP_HOST_ASSERT(s_0.id() != s_1.id());
-    s_0.unwrap().wait(create_event(s_1));
-}
-
-void stream_wait(const at::cuda::CUDAStream& s, const EventHandle& event) {
-    s.unwrap().wait(*event.event);
+    cudaEvent e;
+    e.record(s_1);
+    e.block(s_0);
 }
 
 } // namespace nixl_ep

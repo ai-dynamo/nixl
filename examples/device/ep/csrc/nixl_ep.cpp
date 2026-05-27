@@ -40,6 +40,7 @@
 #include <fstream>
 #include <unistd.h>
 #include <stdio.h>
+#include "cuda_warn.hpp"
 #include "kernels/exception.cuh"
 #include "nixl.h"
 #include <ifaddrs.h>
@@ -279,10 +280,7 @@ torch::Stream Buffer::get_comm_stream() const {
 
 void Buffer::destroy() {
     auto warn_cuda = [](cudaError_t status, const char *operation) noexcept {
-        if (status != cudaSuccess) {
-            std::cerr << "WARNING: destroy() failed to " << operation << ": "
-                      << cudaGetErrorString(status) << '\n';
-        }
+        warnCuda(status, "destroy()", operation);
     };
 
     auto warn_nixl = [](nixl_status_t status, const char* operation) noexcept {
@@ -564,10 +562,10 @@ Buffer::get_dispatch_layout(const torch::Tensor& topk_idx, int num_experts,
     }
 
     // Wait previous tasks to be finished
-    if (previous_event.has_value()) {
-        stream_wait(comm_stream, previous_event.value());
+    if (previous_event) {
+        previous_event->streamWait(comm_stream);
     } else {
-        stream_wait(comm_stream, compute_stream);
+        streamWait(comm_stream, compute_stream);
     }
 
     auto num_tokens = static_cast<int>(topk_idx.size(0)), num_topk = static_cast<int>(topk_idx.size(1));
@@ -602,7 +600,7 @@ Buffer::get_dispatch_layout(const torch::Tensor& topk_idx, int num_experts,
                 to.has_value() ? to->record_stream(compute_stream) : void();
         }
     } else {
-        stream_wait(compute_stream, comm_stream);
+        streamWait(compute_stream, comm_stream);
     }
 
     // Switch back compute stream
@@ -720,10 +718,10 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
     }
 
     // Wait previous tasks to be finished
-    if (previous_event.has_value()) {
-        stream_wait(comm_stream, previous_event.value());
+    if (previous_event) {
+        previous_event->streamWait(comm_stream);
     } else {
-        stream_wait(comm_stream, compute_stream);
+        streamWait(comm_stream, compute_stream);
     }
 
     // Create handles (only return for non-cached mode)
@@ -882,7 +880,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
                 to.has_value() ? to->record_stream(compute_stream) : void();
         }
     } else {
-        stream_wait(compute_stream, comm_stream);
+        streamWait(compute_stream, comm_stream);
     }
 
     // Switch back compute stream
@@ -939,10 +937,10 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
     }
 
     // Wait previous tasks to be finished
-    if (previous_event.has_value()) {
-        stream_wait(comm_stream, previous_event.value());
+    if (previous_event) {
+        previous_event->streamWait(comm_stream);
     } else {
-        stream_wait(comm_stream, compute_stream);
+        streamWait(comm_stream, compute_stream);
     }
 
     // Top-k checks
@@ -1016,7 +1014,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
                 to.has_value() ? to->record_stream(compute_stream) : void();
         }
     } else {
-        stream_wait(compute_stream, comm_stream);
+        streamWait(compute_stream, comm_stream);
     }
 
     // Switch back compute stream
@@ -1071,7 +1069,7 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
     auto launch_stream = return_recv_hook ? compute_stream : comm_stream;
     EP_HOST_ASSERT(not (async and return_recv_hook));
     if (not return_recv_hook)
-        stream_wait(launch_stream, compute_stream);
+        streamWait(launch_stream, compute_stream);
 
     // Allocate packed tensors
     auto packed_recv_x = torch::empty({num_experts_per_rank, active_rank_bound * num_max_dispatch_tokens_per_rank, hidden},
@@ -1129,7 +1127,7 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
         // so in Python API, we must wrap all tensors into the event handle.
         event = EventHandle(launch_stream);
     } else if (not return_recv_hook) {
-        stream_wait(compute_stream, launch_stream);
+        streamWait(compute_stream, launch_stream);
     }
 
     // Receiver callback
@@ -1191,7 +1189,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
     auto launch_stream = return_recv_hook ? compute_stream : comm_stream;
     EP_HOST_ASSERT(not (async and return_recv_hook));
     if (not return_recv_hook)
-        stream_wait(launch_stream, compute_stream);
+        streamWait(launch_stream, compute_stream);
 
     // Allocate output tensor
     torch::Tensor combined_x;
@@ -1230,7 +1228,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
         // so in Python API, we must wrap all tensors into the event handle.
         event = EventHandle(launch_stream);
     } else if (not return_recv_hook) {
-        stream_wait(compute_stream, launch_stream);
+        streamWait(compute_stream, launch_stream);
     }
 
     // Receiver callback
@@ -1494,7 +1492,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
     pybind11::class_<nixl_ep::EventHandle>(m, "EventHandle")
         .def(pybind11::init<>())
-        .def("current_stream_wait", &nixl_ep::EventHandle::current_stream_wait);
+        .def("current_stream_wait", &nixl_ep::EventHandle::currentStreamWait);
 
     pybind11::class_<nixl_ep::Buffer>(m, "Buffer")
         .def(pybind11::init<int, bool, bool, int>())
