@@ -110,8 +110,17 @@ private:
     int num_device_sms;
     uint64_t timeout_cycles = 0;
     int rank, rdma_rank, nvl_rank;
-    int num_ranks, num_rdma_ranks, num_nvl_ranks;
+    int max_num_ranks;
     std::vector<int> remote_ranks; /* global ranks */
+    // Host-side active rank state over max_num_ranks. This can differ from
+    // the runtime device mask, which kernels may update on faults/timeouts.
+    // Host state changes only through explicit control APIs.
+    std::vector<bool> active_ranks;
+    // Upper bound for active rank ids. Ranks may be sparse;
+    // masked holes inside [0, active_rank_bound) are skipped by LL kernels.
+    int active_rank_bound = 0;
+    int num_rdma_ranks = 0, num_nvl_ranks = 0;
+    int num_experts_per_rank = 0;
     cudaIpcMemHandle_t ipc_handles[NUM_MAX_NVL_PEERS];
 
     // Stream for communication
@@ -147,8 +156,6 @@ private:
     std::unique_ptr<NixlAgentInfo> nixl_agent_info;
     std::vector<NixlPeerInfo> nixl_peer_info;
     NixlPeerInfo my_peer_info;
-    int max_num_ranks;
-    int max_experts_per_rank;
     nixl_ep::gpu_nixl_ctx gpu_ctx;
     nixl_ep::gpu_nixl_ctx* gpu_ctx_ptr = nullptr;
     uint64_t* last_ht_barrier_counter = nullptr;
@@ -165,6 +172,8 @@ private:
     void _nixl_ep_memory_views_create(void);
     void _nixl_ep_memory_views_destroy(void);
     void _nixl_ep_destroy(void);
+    bool _is_rank_connected(int rank_id) const;
+    void _refresh_active_rank_bound();
 
     /* high-throughput mode private funcs */
     void _ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles);
@@ -172,13 +181,13 @@ private:
 public:
     Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms);
 
-    void update_memory_buffers(int num_ranks, int max_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes = 0);
+    void update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes = 0);
 
     void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, const std::vector<std::optional<pybind11::bytearray>>& all_gathered_handles = {}, bool activate = true);
 
     void disconnect_ranks(const std::vector<int>& remote_ranks_list);
 
-    void init(int num_ranks, int max_experts_per_rank, int64_t num_nvl_bytes, int64_t num_rdma_bytes);
+    void init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes, int64_t num_rdma_bytes);
 
     ~Buffer() noexcept;
 
