@@ -160,8 +160,7 @@ Common build options:
 - `static_plugins`: Comma-separated list of plugins to build statically
 - `enable_plugins`: Comma-separated list of plugins to build (e.g. `-Denable_plugins=UCX,POSIX`). Cannot be used with `disable_plugins`.
 - `disable_plugins`: Comma-separated list of plugins to exclude (e.g. `-Ddisable_plugins=GDS`). Cannot be used with `enable_plugins`.
-- `use_rocm`: Build NIXL against AMD ROCm/HIP instead of CUDA (default: false). See [Building for AMD ROCm](#building-for-amd-rocm) below.
-- `rocm_path`: Path to the ROCm install root (default: `/opt/rocm`). Only used when `use_rocm=true`.
+- `use_rocm`: Path to the ROCm install root (e.g. `-Duse_rocm=/opt/rocm`). Empty (default) = CUDA build; non-empty enables the ROCm/HIP build using the given prefix. See [Building for AMD ROCm](#building-for-amd-rocm) below.
 
 #### Building for AMD ROCm
 

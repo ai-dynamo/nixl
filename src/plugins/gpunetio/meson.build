@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if get_option('use_rocm')
+if get_option('use_rocm') != ''
     message('GPUNETIO plugin skipped: DOCA GPUNetIO is NVIDIA/Mellanox-only (use_rocm=true)')
     subdir_done()
 endif

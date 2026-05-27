@@ -16,7 +16,6 @@
 
 # LibFabric plugin configuration
 
-
 # Enable libfabric utils layer
 libfabric_plugin_deps = [
     nixl_infra,
@@ -29,8 +28,9 @@ libfabric_plugin_deps = [
 
 compile_flags = ['-DHAVE_LIBFABRIC']
 
-# Add CUDA support if available
-if cuda_dep.found()
+# Add CUDA support if available (skip on ROCm builds — cuda_dep is an empty
+# placeholder there and must not inject -DHAVE_CUDA)
+if get_option('use_rocm') == '' and cuda_dep.found()
     libfabric_plugin_deps += [cuda_dep]
     compile_flags += ['-DHAVE_CUDA']
 endif
