@@ -24,16 +24,18 @@ namespace nixl {
 class hwInfo {
 public:
     unsigned numNvidiaGpus = 0;
-    unsigned numAmdGpus    = 0;
-    unsigned numIbDevices  = 0;
+    unsigned numAmdGpus = 0;
+    unsigned numIbDevices = 0;
     unsigned numEfaDevices = 0;
 
-    [[nodiscard]] static const hwInfo &instance();
+    [[nodiscard]] static const hwInfo &
+    instance();
 
 private:
     hwInfo();
     hwInfo(const hwInfo &) = delete;
-    hwInfo &operator=(const hwInfo &) = delete;
+    hwInfo &
+    operator=(const hwInfo &) = delete;
 };
 
 } // namespace nixl
