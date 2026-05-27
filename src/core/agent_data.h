@@ -19,6 +19,7 @@
 
 #include "mem_section.h"
 #include "telemetry.h"
+#include "nixl_md_manager.h"
 #include "stream/metadata_stream.h"
 #include "sync.h"
 
@@ -67,6 +68,10 @@ class nixlAgentData {
         const nixlAgentConfig config_;
         const bool useEtcd_;
         const bool needsCommThread_;
+        // Opt-in gate for the metadata manager (NIXL_MD_MANAGER env var).
+        const bool mdManagerEnabled_;
+        std::mutex mdManagerMutex_;
+        std::unique_ptr<nixlMDManager> mdManager_;
         nixlLock        lock;
         bool telemetryEnabled = false;
         bool efaWarningChecked = false;

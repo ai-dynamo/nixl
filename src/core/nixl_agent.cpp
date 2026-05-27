@@ -21,6 +21,7 @@
 #include <numeric>
 
 #include "nixl.h"
+#include "nixl_md_manager.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
 #include "transfer_request.h"
@@ -128,6 +129,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
       config_(config),
       useEtcd_(detectEtcd()),
       needsCommThread_(useEtcd_ || config.useListenThread),
+      mdManagerEnabled_(nixl::config::checkExistence("NIXL_MD_MANAGER")),
       lock(effectiveSyncMode(config.syncMode, needsCommThread_)) {
 #if HAVE_ETCD
     NIXL_DEBUG << "NIXL ETCD is " << (useEtcd_ ? "enabled" : "disabled");
@@ -1708,6 +1710,22 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
 
     // This is a checker method, returning not found is not an error to be logged
     return NIXL_ERR_NOT_FOUND;
+}
+
+nixl_status_t
+nixlAgent::getMDManager(nixlMDManager *&out) {
+    if (!data->mdManagerEnabled_) {
+        out = nullptr;
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+    std::lock_guard<std::mutex> lk(data->mdManagerMutex_);
+    if (!data->mdManager_) {
+        // Construction is private (friend nixlAgent), so std::make_unique
+        // cannot reach it; do an explicit reset/new.
+        data->mdManager_.reset(new nixlMDManager(*this));
+    }
+    out = data->mdManager_.get();
+    return NIXL_SUCCESS;
 }
 
 backend_set_t
