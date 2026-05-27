@@ -25,6 +25,7 @@
 #include <string>
 #include <stdexcept>
 #include <cstdlib>
+#include <cstdio>
 #include <absl/strings/str_format.h>
 #include "common/configuration.h"
 #include "nixl_types.h"
@@ -93,9 +94,30 @@ azureBlobClient::azureBlobClient(nixl_b_params_t *custom_params,
     options.Telemetry.ApplicationId = "azpartner-nixl/0.1.0";
 
     std::string caBundle = ::getCaBundle(custom_params);
-    if (!caBundle.empty()) {
+
+    {
         Azure::Core::Http::CurlTransportOptions curlOptions;
-        curlOptions.CAInfo = caBundle;
+        const char *ca_info = caBundle.empty() ? nullptr : caBundle.c_str();
+
+        if (!ca_info) {
+            for (const auto *path : {
+                     "/etc/ssl/certs/ca-certificates.crt",                // Debian/Ubuntu/Gentoo
+                     "/etc/pki/tls/certs/ca-bundle.crt",                  // Fedora/RHEL 6
+                     "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", // CentOS/RHEL 7
+                     "/etc/ssl/cert.pem"                                  // Alpine Linux
+                 }) {
+                if (FILE *f = fopen(path, "r")) {
+                    fclose(f);
+                    ca_info = path;
+                    break;
+                }
+            }
+        }
+
+        if (ca_info) {
+            curlOptions.CAInfo = ca_info;
+        }
+
         options.Transport.Transport =
             std::make_shared<Azure::Core::Http::CurlTransport>(curlOptions);
     }
