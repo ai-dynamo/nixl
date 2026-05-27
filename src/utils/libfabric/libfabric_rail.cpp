@@ -168,7 +168,9 @@ ControlRequestPool::~ControlRequestPool() {
 
 void
 ControlRequestPool::cleanup() {
-    if (buffer_chunks_.empty()) return; // Already cleaned up
+    if (buffer_chunks_.empty()) {
+        return; // Already cleaned up
+    }
 
     for (auto &chunk : buffer_chunks_) {
         if (chunk.mr) {
@@ -696,8 +698,14 @@ nixlLibfabricRail::cleanup() {
 }
 
 void
-nixlLibfabricRail::setNotificationCallback(std::function<void(const std::string &)> callback) {
+nixlLibfabricRail::setNotificationCallback(
+    std::function<void(const std::string &, uint16_t)> callback) {
     notificationCallback = callback;
+}
+
+void
+nixlLibfabricRail::setHandshakeCallback(std::function<void(const std::string &)> callback) {
+    handshakeCallback = callback;
 }
 
 void
@@ -706,7 +714,7 @@ nixlLibfabricRail::setProgressThreadEnabled(bool enabled) {
 }
 
 void
-nixlLibfabricRail::setXferIdCallback(std::function<void(uint32_t)> callback) {
+nixlLibfabricRail::setXferIdCallback(std::function<void(uint32_t, uint16_t)> callback) {
     xferIdCallback = callback;
 }
 
@@ -905,6 +913,8 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
     NIXL_TRACE << "Received control message type " << msg_type << " agent_idx=" << agent_idx
                << " XFER_ID=" << xfer_id << " imm_data=" << std::hex << comp->data << std::dec;
 
+    nixl_status_t result = NIXL_SUCCESS;
+
     if (msg_type == NIXL_LIBFABRIC_MSG_NOTIFICTION) {
         NIXL_TRACE << "Processing notification request on rail " << rail_id
                    << " Xfer_id :" << xfer_id;
@@ -915,17 +925,27 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
         NIXL_TRACE << "Adding message: " << message << " to the notification list on rail "
                    << rail_id;
 
-        // Call engine's callback to store notification in central storage (like reference)
         if (notificationCallback) {
-            notificationCallback(message);
+            notificationCallback(message, agent_idx);
             NIXL_TRACE << "Notification stored via callback";
         } else {
             NIXL_ERROR << "No notification callback set!";
-            return NIXL_ERR_BACKEND;
+            result = NIXL_ERR_BACKEND;
+        }
+    } else if (msg_type == NIXL_LIBFABRIC_MSG_HANDSHAKE) {
+        if (comp->len < 4) {
+            NIXL_ERROR << "Handshake message too short on rail " << rail_id << " (len=" << comp->len
+                       << ")";
+            result = NIXL_ERR_BACKEND;
+        } else if (handshakeCallback) {
+            std::string payload(static_cast<const char *>(req->buffer), comp->len);
+            handshakeCallback(payload);
+        } else {
+            NIXL_WARN << "No handshake callback set; dropping handshake message";
         }
     } else {
         NIXL_ERROR << "Unknown message type: " << std::hex << msg_type << std::dec;
-        return NIXL_ERR_BACKEND;
+        result = NIXL_ERR_BACKEND;
     }
 
     // Clear the receive buffer after processing
@@ -946,7 +966,7 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
         releaseRequest(new_req);
         return status;
     }
-    return NIXL_SUCCESS;
+    return result;
 }
 
 // Handle remote write completions (data arrival notification)
@@ -964,9 +984,8 @@ nixlLibfabricRail::processRemoteWriteCompletion(struct fi_cq_data_entry *comp) c
                    << " bytes" << " agent_idx=" << agent_idx << " XFER_ID=" << xfer_id
                    << " imm_data=" << std::hex << comp->data << std::dec;
 
-        // Call XFER_ID tracking callback to add received XFER_ID to global set
         if (xferIdCallback) {
-            xferIdCallback(comp->data);
+            xferIdCallback(comp->data, agent_idx);
             NIXL_TRACE << "Called XFER_ID callback for XFER_ID " << xfer_id;
         } else {
             NIXL_ERROR << "No XFER_ID callback set for rail " << rail_id;
