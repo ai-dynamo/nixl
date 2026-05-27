@@ -24,18 +24,10 @@
 #
 tcp_port_range=1000
 min_port_number=10500
-max_port_number=65535
+max_port_number=32500
 
-# GITLAB CI
-if [ -n "$CI_CONCURRENT_ID" ]; then
-    nixl_concurrent_id=$CI_CONCURRENT_ID
-# Jenkins CI
-elif [ -n "$EXECUTOR_NUMBER" ]; then
-    nixl_concurrent_id=$EXECUTOR_NUMBER
-else
-    # Fallback to random number if both CI_CONCURRENT_ID and EXECUTOR_NUMBER are not set
-    nixl_concurrent_id=$((RANDOM % $(((max_port_number - min_port_number) / tcp_port_range))))
-fi
+tcp_port_slots=$(((max_port_number - min_port_number) / tcp_port_range))
+nixl_concurrent_id=$(( ${CI_CONCURRENT_ID:-${EXECUTOR_NUMBER:-$RANDOM}} % tcp_port_slots ))
 
 echo nixl_concurrent_id="$nixl_concurrent_id"
 
