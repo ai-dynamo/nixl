@@ -271,10 +271,55 @@ TEST_F(objDellTestFixture, DellEngineInvalidRemoteMemoryType) {
 }
 
 // ---------------------------------------------------------------------------
-// Dell engine: postXfer validation
+// Dell engine: prepXfer / postXfer validation
 //
-// These errors are caught at postXfer time, not prepXfer.
+// isValidPrepXferParams checks: operation type, local mem type, remote mem type,
+// descriptor count.  devId registration is checked in postXfer.
 // ---------------------------------------------------------------------------
+
+/** prepXfer rejects mismatched local/remote descriptor list sizes. */
+TEST_F(objDellTestFixture, DellEngineMismatchedDescriptorCounts) {
+    std::vector<char> test_buffer1(512);
+    std::vector<char> test_buffer2(512);
+
+    nixlBlobDesc local_desc1, local_desc2;
+    local_desc1.addr = reinterpret_cast<uintptr_t>(test_buffer1.data());
+    local_desc1.len = test_buffer1.size();
+    local_desc1.devId = 1;
+    local_desc2.addr = reinterpret_cast<uintptr_t>(test_buffer2.data());
+    local_desc2.len = test_buffer2.size();
+    local_desc2.devId = 2;
+    nixlBackendMD *local_metadata1 = nullptr, *local_metadata2 = nullptr;
+    ASSERT_EQ(objEngine_->registerMem(local_desc1, DRAM_SEG, local_metadata1), NIXL_SUCCESS);
+    ASSERT_EQ(objEngine_->registerMem(local_desc2, DRAM_SEG, local_metadata2), NIXL_SUCCESS);
+
+    nixlBlobDesc remote_desc;
+    remote_desc.devId = 3;
+    remote_desc.metaInfo = "mismatch-test-key";
+    nixlBackendMD *remote_metadata = nullptr;
+    ASSERT_EQ(objEngine_->registerMem(remote_desc, OBJ_SEG, remote_metadata), NIXL_SUCCESS);
+
+    nixl_meta_dlist_t local_descs(DRAM_SEG);
+    nixl_meta_dlist_t remote_descs(OBJ_SEG);
+
+    // Add 2 local descriptors but only 1 remote descriptor
+    nixlMetaDesc local_meta_desc1(local_desc1.addr, local_desc1.len, local_desc1.devId);
+    nixlMetaDesc local_meta_desc2(local_desc2.addr, local_desc2.len, local_desc2.devId);
+    nixlMetaDesc remote_meta_desc(0, 512, remote_desc.devId);
+    local_descs.addDesc(local_meta_desc1);
+    local_descs.addDesc(local_meta_desc2);
+    remote_descs.addDesc(remote_meta_desc);
+
+    nixlBackendReqH *handle = nullptr;
+    nixl_status_t status = objEngine_->prepXfer(
+        NIXL_WRITE, local_descs, remote_descs, initParams_.localAgent, handle, nullptr);
+
+    EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+
+    objEngine_->deregisterMem(local_metadata1);
+    objEngine_->deregisterMem(local_metadata2);
+    objEngine_->deregisterMem(remote_metadata);
+}
 
 /** postXfer fails when the remote devId has no registered OBJ_SEG mapping. */
 TEST_F(objDellTestFixture, DellUnregisteredRemoteDevId) {

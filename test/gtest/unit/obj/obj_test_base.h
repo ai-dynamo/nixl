@@ -22,14 +22,14 @@
 #include "nixl_types.h"
 #include <algorithm>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
 #include <vector>
-#include <functional>
-#include <optional>
 
 #include "s3/client.h"
 #include "obj_backend.h"
@@ -368,7 +368,7 @@ protected:
 
         std::vector<char> test_buffer(buffer_size);
 
-        nixlBlobDesc local_desc, remote_desc;
+        nixlBlobDesc local_desc = {}, remote_desc = {};
         local_desc.addr = reinterpret_cast<uintptr_t>(test_buffer.data());
         local_desc.len = test_buffer.size();
         local_desc.devId = 1;
@@ -428,7 +428,7 @@ protected:
 
         std::vector<char> test_buffer0(size0);
         std::vector<char> test_buffer1(size1);
-        nixlBlobDesc local_desc0, local_desc1;
+        nixlBlobDesc local_desc0 = {}, local_desc1 = {};
         local_desc0.addr = reinterpret_cast<uintptr_t>(test_buffer0.data());
         local_desc1.addr = reinterpret_cast<uintptr_t>(test_buffer1.data());
         local_desc0.len = test_buffer0.size();
@@ -441,7 +441,7 @@ protected:
         ASSERT_EQ(objEngine_->registerMem(local_desc0, DRAM_SEG, local_metadata0), NIXL_SUCCESS);
         ASSERT_EQ(objEngine_->registerMem(local_desc1, DRAM_SEG, local_metadata1), NIXL_SUCCESS);
 
-        nixlBlobDesc remote_desc0, remote_desc1;
+        nixlBlobDesc remote_desc0 = {}, remote_desc1 = {};
         remote_desc0.devId = 2;
         remote_desc1.devId = 3;
         remote_desc0.metaInfo = (operation == NIXL_READ) ? "test-read-key0" : "test-write-key0";
@@ -509,14 +509,14 @@ protected:
 
         std::vector<char> test_buffer(buffer_size, 'Z');
 
-        nixlBlobDesc local_desc;
+        nixlBlobDesc local_desc = {};
         local_desc.addr = reinterpret_cast<uintptr_t>(test_buffer.data());
         local_desc.len = test_buffer.size();
         local_desc.devId = 1;
         nixlBackendMD *local_metadata = nullptr;
         ASSERT_EQ(objEngine_->registerMem(local_desc, DRAM_SEG, local_metadata), NIXL_SUCCESS);
 
-        nixlBlobDesc remote_desc;
+        nixlBlobDesc remote_desc = {};
         remote_desc.devId = 2;
         remote_desc.metaInfo = "test-fail-key" + key_suffix;
         nixlBackendMD *remote_metadata = nullptr;
@@ -546,8 +546,21 @@ protected:
         EXPECT_EQ(status, NIXL_IN_PROG);
 
         mockS3Client_->execAsync();
-        status = objEngine_->checkXfer(handle);
+        int max_polls = 100;
+        int poll_count = 0;
+        do {
+            status = objEngine_->checkXfer(handle);
+            poll_count++;
+        } while (status == NIXL_IN_PROG && poll_count < max_polls);
+        EXPECT_NE(status, NIXL_IN_PROG) << "Polling timed out waiting for terminal status";
         EXPECT_NE(status, NIXL_SUCCESS); // Should not succeed
+
+        // Verify failed read did not mutate destination buffer
+        if (operation == NIXL_READ) {
+            EXPECT_TRUE(std::all_of(
+                test_buffer.begin(), test_buffer.end(), [](char c) { return c == 'Z'; }));
+        }
+
 
         objEngine_->releaseReqH(handle);
         objEngine_->deregisterMem(local_metadata);
