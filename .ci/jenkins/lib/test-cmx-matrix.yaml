@@ -1,0 +1,155 @@
+---
+#
+# Key Components:
+# - Job Configuration: Defines timeout, failure behavior, and server resources
+# - Docker Images: Specifies the container images used for different build stages
+# - Matrix Axes: Defines build variations (currently x86_64 architecture)
+# - Run Steps: Sequential steps for running tests
+#
+# When Modified:
+# - Adding/removing Docker images: Affects available test environments
+# - Modifying matrix axes: Changes test variations (e.g., adding architectures)
+# - Adjusting resource limits: Impacts test performance and resource allocation
+# - Adding/removing steps: Changes the test pipeline sequence
+#
+# Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
+
+
+job: nixl-ci-cmx
+
+# Fail job if one of the steps fails or continue
+failFast: false
+
+timeout_minutes: 240
+
+registry_host: harbor.mellanox.com
+registry_auth: nixl_harbor_credentials
+registry_path: /nixl/base
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: "{memory: 16Gi, cpu: 16000m}"
+  requests: "{memory: 8Gi, cpu: 8000m}"
+  privileged: true
+
+credentials:
+  - {credentialsId: 'nixl_harbor_credentials', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+
+env:
+  NIXL_INSTALL_DIR: /opt/nixl
+  NIXL_BUILD_DIR: nixl_build
+  SLURM_NODES: 1
+  SLURM_PARTITION: mizu
+  SLURM_HEAD_NODE: scctl
+  SLURM_GRES: gpu:1
+  SLURM_MEM: 64G
+  SLURM_MINCPUS: 16
+  SLURM_JOB_TIMEOUT: '02:20:00'
+  SLURM_IMMEDIATE_TIMEOUT: "3600"
+  SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
+  JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
+  STORAGE_DRIVER: overlay
+  CI_IMAGE_TAG: "20260519-1"
+
+empty_volumes:
+  - {mountPath: /root, memory: false}
+  - {mountPath: /var/lib/containers/storage, memory: false}
+
+pvc_volumes:
+  - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
+
+# label is defined at jenkins slave configuration, we want to run the job on a gpu agent and be able to esaly replace it without having to change this file
+runs_on_dockers:
+  - {
+     file: '.ci/dockerfiles/Dockerfile.base',
+     name: 'nixl-ci-cmx-base-25.10-cuda13.0-ubuntu24.04',
+     tag: "${CI_IMAGE_TAG}",
+     deps: ['.gitlab/build.sh', '.ci/scripts/common.sh'],
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+    }
+  - {
+     file: '.ci/dockerfiles/Dockerfile.build_helper',
+     name: 'build_helper',
+     tag: "${CI_IMAGE_TAG}",
+     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+    }
+
+matrix:
+  axes:
+    arch:
+      - x86_64
+    ucx_version:
+      - master
+
+taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
+
+
+steps:
+  - name: Compiling NIXL Docker Image
+    containerSelector: "{name: 'build_helper'}"
+    credentialsId: "nixl_harbor_credentials"
+    parallel: false
+    run: |
+      set -x
+      export PR_IMAGE=${registry_host}/nixl/pr/${arch}/nixl-ci-cmx-test-${ucx_version}:${BUILD_NUMBER}
+      rm -rf /etc/containers/storage.conf && rm -f /usr/share/containers/storage.conf
+      podman build --network host \
+      --build-arg UCX_VERSION=${ucx_version} \
+      --build-arg PRE_INSTALLED_ENV="true" \
+      --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} \
+      --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
+      --build-arg HAS_GPU=true \
+      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-cmx-base-25.10-cuda13.0-ubuntu24.04:${CI_IMAGE_TAG} \
+      --tag ${PR_IMAGE} \
+      -f .ci/dockerfiles/Dockerfile.gpu-test .
+      podman push --creds ${REPO_USER}:${REPO_PASS} ${PR_IMAGE}
+
+  - name: Allocate Environment
+    containerSelector: "{name: 'build_helper'}"
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: allocation
+    args:
+      partition: "${SLURM_PARTITION}"
+      headNode: "${SLURM_HEAD_NODE}"
+      nodes: "${SLURM_NODES}"
+      jobTimeout: "${SLURM_JOB_TIMEOUT}"
+      immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
+      jobName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      extraArgs: [
+        "--gres=${SLURM_GRES}",
+        "--mincpus=${SLURM_MINCPUS}",
+        "--mem=${SLURM_MEM}",
+        "--nodelist=mizu03",
+        "--reservation=BF3_tests"
+      ]
+
+  - name: Run CMX tests
+    containerSelector: "{name: 'build_helper'}"
+    timeout: 50
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      testScript: "/bin/echo Ok"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-cmx-test-${ucx_version}:${BUILD_NUMBER}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+
+pipeline_stop:
+  containerSelector: "{name: 'build_helper'}"
+  parallel: false
+  shell: action
+  module: slurmCI
+  run: stopAllForBuild
+  args:
+    credentialsId: "${SCCTL_CREDENTIALS_ID}"
+    headNode: "${SLURM_HEAD_NODE}"
+    jobIdDir: "${JOB_ID_FILE_ROOT}"
