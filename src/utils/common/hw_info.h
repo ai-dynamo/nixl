@@ -30,13 +30,13 @@ namespace nixl {
  */
 class hwInfo {
 public:
-    /** Number of NVIDIA GPUs found on the PCI bus (vendor 0x10de, GPU class). */
+    /** NVIDIA GPUs on the PCI bus (vendor 0x10de, GPU class). */
     unsigned numNvidiaGpus = 0;
-    /** Number of AMD GPUs found on the PCI bus (vendor 0x1002, GPU class). */
+    /** AMD GPUs on the PCI bus (vendor 0x1002, GPU class). */
     unsigned numAmdGpus = 0;
-    /** Number of Mellanox InfiniBand / RoCE devices found on the PCI bus (vendor 0x15b3, class 0x0207). */
+    /** Mellanox InfiniBand / RoCE devices (vendor 0x15b3, class 0x0207). */
     unsigned numIbDevices = 0;
-    /** Number of AWS EFA devices found on the PCI bus (vendor 0x1d0f, EFA device IDs). */
+    /** AWS EFA devices (vendor 0x1d0f, EFA device IDs). */
     unsigned numEfaDevices = 0;
 
     /**
