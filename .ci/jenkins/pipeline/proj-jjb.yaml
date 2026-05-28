@@ -482,6 +482,229 @@
                     parent-credentials: true
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
+# Job template for the LLM (vLLM / SGLang) container build pipeline.
+# Builds 3 image variants (vllm-nixl, sglang-nixl, sglang-cu13-nixl) from a
+# published NIXL wheel set, for x86_64 and aarch64, and publishes multi-arch
+# manifests. Mirrors the manual procedure documented at
+# README.md
+- job-template:
+    name: "{jjb_proj}-build-llm-container"
+    project-type: pipeline
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 30
+          num-to-keep: 30
+      - inject:
+          keep-system-variables: true
+          properties-content: |
+            jjb_proj={jjb_proj}-build-llm-container
+            conf_file=.ci/jenkins/lib/build-llm-container-matrix.yaml
+    description: >
+      <b>NIXL LLM container build</b><br/>
+      • Builds 3 inference container variants per release: <b>vllm-nixl</b>, <b>sglang-nixl</b>, <b>sglang-cu13-nixl</b><br/>
+      • Builds for x86_64 and aarch64 (aarch64 via podman with QEMU)<br/>
+      • Publishes multi-arch manifests after both arches succeed<br/>
+      • Wheels pulled from <code>sw-dynamo-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/&lt;arch&gt;/</code><br/>
+      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>llm/{{vllm-nixl,sglang-nixl,sglang-cu13-nixl}}</code><br/>
+      • For <b>rc0</b> leave the <code>BASE_IMAGE_*</code> params empty to use upstream defaults<br/>
+      • For <b>rcN, N&gt;0</b> set each <code>BASE_IMAGE_*</code> to the matching rc0 image to isolate the verification to the NIXL change<br/>
+      <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
+    concurrent: true
+    sandbox: true
+    parameters:
+      - choice:
+          name: "BUILD_TARGET"
+          choices:
+            - "all"
+            - "vllm"
+            - "sglang"
+            - "sglang-cu13"
+          description: >
+            Which image variants to build:<br/>
+            • <b>all</b>: build all 3 variants (default)<br/>
+            • <b>vllm</b>: only vllm-nixl<br/>
+            • <b>sglang</b>: only sglang-nixl (cu12)<br/>
+            • <b>sglang-cu13</b>: only sglang-cu13-nixl
+      - string:
+          name: "NIXL_VERSION"
+          default: "1.1.0"
+          description: "NIXL version (e.g. 1.1.0). Used in image tag and wheel path."
+      - string:
+          name: "RC"
+          default: "rc0"
+          description: "Release candidate label (e.g. rc0, rc1, rc4). Used in image tag."
+      - string:
+          name: "WHEEL_BUILD_ID"
+          default: ""
+          description: >
+            Artifactory build id for the wheel set (e.g. <code>48633863</code>).<br/>
+            Full wheel URL: <code>sw-dynamo-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/&lt;arch&gt;/nixl*.whl</code>
+      - string:
+          name: "PYTHON_TAG"
+          default: "cp312"
+          description: "CPython ABI tag used in wheel filename (e.g. cp312)."
+      - string:
+          name: "MANYLINUX_TAG"
+          default: "2_28"
+          description: "manylinux platform tag used in wheel filename (e.g. 2_28)."
+      - string:
+          name: "BASE_IMAGE_VLLM"
+          default: ""
+          description: >
+            Optional override for the vllm base image build-arg.<br/>
+            Leave empty for <b>rc0</b> (uses Dockerfile default <code>docker.io/vllm/vllm-openai:latest</code>).<br/>
+            For <b>rcN, N&gt;0</b> set to the corresponding rc0 image, e.g.<br/>
+            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/llm/vllm-nixl:1.1.0-rc0</code>
+      - string:
+          name: "BASE_IMAGE_SGLANG"
+          default: ""
+          description: >
+            Optional override for the sglang (cu12) base image build-arg.<br/>
+            Leave empty for <b>rc0</b> (uses Dockerfile default <code>docker.io/lmsysorg/sglang:latest</code>).<br/>
+            For <b>rcN, N&gt;0</b> pin to the rc0 image.
+      - string:
+          name: "BASE_IMAGE_SGLANG_CU13"
+          default: ""
+          description: >
+            Optional override for the sglang-cu13 base image build-arg.<br/>
+            Leave empty to use upstream <code>docker.io/lmsysorg/sglang:latest-cu130-runtime</code> (rc0 default).<br/>
+            For <b>rcN, N&gt;0</b> pin to the rc0 sglang-cu13 image.
+      - string:
+          name: "TAG_SUFFIX"
+          default: ""
+          description: >
+            Optional tag suffix for re-spins (e.g. <code>v2</code>, <code>v3</code>).<br/>
+            Final tag format: <code>&lt;NIXL_VERSION&gt;-&lt;RC&gt;[-&lt;TAG_SUFFIX&gt;]</code>
+      - bool:
+          name: "RUN_SMOKE_TEST"
+          default: true
+          description: "Run `python3 -c 'importlib.metadata.version(...)'` on the built images (native-arch runs only)."
+      - bool:
+          name: "UPDATE_LATEST"
+          default: false
+          description: >
+            Also tag the resulting multi-arch manifests as <code>:latest</code> for each variant.
+      - bool:
+          name: "ALLOW_OVERWRITE"
+          default: false
+          description: >
+            By default the job aborts in <b>Prepare</b> if the canonical
+            multi-arch destination tag
+            (<code>&lt;variant&gt;:&lt;NIXL_VERSION&gt;-&lt;RC&gt;[-&lt;TAG_SUFFIX&gt;]</code>)
+            already exists in the registry, to avoid silently overwriting a
+            published RC. Per-architecture tags are not checked.<br/>
+            Tick to skip the check and overwrite the existing tag(s).
+      - string:
+          name: "MAIL_TO"
+          default: ""
+          description: "Email address to send build results to (optional)."
+      - string:
+          name: "ci_refspec"
+          default: "{jjb_branch}"
+          description: >
+            Git ref of <b>this</b> nixl repo to check out for the Dockerfiles
+            and CI scripts (separate from NIXL_VERSION, which is the wheel
+            version embedded in image tags).<br/>
+            Examples: <code>main</code>, <code>release/1.1.0</code>,
+            <code>refs/tags/v1.1.0-rc4</code>, a commit SHA, or
+            <code>refs/pull/1234/head</code>.
+    pipeline-scm:
+      scm:
+        - git:
+            url: "{jjb_git}"
+            credentials-id: "svc-nixl-ssh_key"
+            branches: ['${{ci_refspec}}']
+            shallow-clone: false
+            do-not-fetch-tags: false
+            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +refs/pull/*/head:refs/pull/*/head"
+            browser: githubweb
+            browser-url: "{jjb_git}"
+            submodule:
+              disable: false
+              recursive: true
+              tracking: true
+              parent-credentials: true
+      script-path: "{jjb_jenkinsfile}"
+
+# Job template for the LLM (vLLM / SGLang) container test pipeline.
+# Tests the three published LLM inference container variants on mizu SLURM:
+# spins up prefill + decode + proxy/router inside the LLM image on a 2-GPU
+# node and runs smoke / perf / accuracy phases.
+- job-template:
+    name: "{jjb_proj}-test-llm-container"
+    project-type: pipeline
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 30
+          num-to-keep: 30
+      - inject:
+          keep-system-variables: true
+          properties-content: |
+            jjb_proj={jjb_proj}-test-llm-container
+            conf_file=.ci/jenkins/lib/test-llm-container-matrix.yaml
+    description: >
+      <b>NIXL LLM container test</b><br/>
+      • Tests one inference container image on the <b>mizu</b> SLURM partition (single 2-GPU node)<br/>
+      • Brings up prefill + decode + proxy/router and runs smoke / perf / accuracy phases<br/>
+      • Framework (vllm vs sglang) is auto-detected from the image URL<br/>
+      • The URL must point to the per-arch image (mizu nodes are x86_64), e.g.<br/>
+      &nbsp;&nbsp;<code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/llm/vllm-nixl:1.1.0-rc0-x86_64</code><br/>
+      <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
+    concurrent: true
+    sandbox: true
+    parameters:
+      - string:
+          name: "IMAGE_URL"
+          default: ""
+          description: >
+            Full URL of the LLM image to test (per-arch, e.g.
+            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/llm/vllm-nixl:1.1.0-rc0-x86_64</code>).<br/>
+            Framework is auto-detected: URL containing <code>vllm</code> runs
+            <code>test_vllm.sh</code>; URL containing <code>sglang</code> runs <code>test_sglang.sh</code>.
+      - bool:
+          name: "RUN_SMOKE"
+          default: true
+          description: "Run the smoke test (prefill+decode+proxy/router, one completion request)."
+      - bool:
+          name: "RUN_PERF"
+          default: false
+          description: "Run the perf bench (vllm bench serve / sglang.bench_serving). Adds ~15 min."
+      - bool:
+          name: "RUN_ACCURACY"
+          default: false
+          description: >
+            Run the accuracy test (<code>sglang.test.run_eval --eval-name gsm8k</code>, 200 examples, threshold 0.85).<br/>
+            SGLang only — no-ops for vllm (no equivalent built-in harness).
+      - bool:
+          name: "build_dockers"
+          default: false
+          description: "Force rebuild docker containers"
+      - string:
+          name: "ci_refspec"
+          default: "{jjb_branch}"
+          description: >
+            Git ref of <b>this</b> nixl repo to check out for the test scripts and CI helpers.<br/>
+            Examples: <code>main</code>, <code>release/1.1.0</code>, <code>refs/tags/v1.1.0-rc4</code>, a commit SHA, or <code>refs/pull/1234/head</code>.
+    pipeline-scm:
+      scm:
+        - git:
+            url: "{jjb_git}"
+            credentials-id: "svc-nixl-ssh_key"
+            branches: ['${{ci_refspec}}']
+            shallow-clone: false
+            do-not-fetch-tags: false
+            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +refs/pull/*/head:refs/pull/*/head"
+            browser: githubweb
+            browser-url: "{jjb_git}"
+            submodule:
+              disable: false
+              recursive: true
+              tracking: true
+              parent-credentials: true
+      script-path: "{jjb_jenkinsfile}"
+
 # Project definition that instantiates the job templates
 # This section defines the actual jobs that will be created
 - project:
@@ -496,6 +719,8 @@
         - "{jjb_proj}-dispatcher"  # Create dispatcher job
         - "{jjb_proj}-non-gpu"       # Create non-gpu job
         - "{jjb_proj}-build-container"  # Create container builder job
+        - "{jjb_proj}-build-llm-container"  # Create LLM (vllm/sglang) container builder job
+        - "{jjb_proj}-test-llm-container"   # Create LLM container test job (SLURM)
         - "{jjb_proj}-gpu"        # Create gpu job
         - "{jjb_proj}-dl-gpu"   # Create dl-gpu job for dlcluster.nvidia.com
         - "{jjb_proj}-build-wheel"  # Create build wheel job
