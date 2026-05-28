@@ -43,7 +43,7 @@ env:
   NIXL_BUILD_DIR: nixl_build
   SLURM_NODES: 1
   SLURM_PARTITION: gb300nvl72_ci
-  SLURM_HEAD_NODE: dlcluster-login-03.nvidia.com
+  SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
   SLURM_ACCOUNT: 'blackwell-ci'
   SLURM_JOB_TIMEOUT: '01:30:00'
