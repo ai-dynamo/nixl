@@ -19,7 +19,6 @@ ARG BASE_IMAGE_TAG="13.0.2-devel-amzn2023"
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
 ARG DEFAULT_PYTHON_VERSION="3.12"
-ARG HWLOC_VERSION="2.12.2"
 ARG EFA_VERSION="1.48.0"
 ARG UCX_REF="v1.20.x"
 ARG ARCH="x86_64"
@@ -50,6 +49,9 @@ RUN dnf install -y \
     git \
     numactl \
     numactl-devel \
+    hwloc \
+    hwloc-libs \
+    hwloc-devel \
     openssl-devel
 
 WORKDIR /workspace
@@ -69,21 +71,6 @@ RUN curl --retry 3 --retry-delay 2 -fsSL -o aws-efa-installer-${EFA_VERSION}.tar
 
 ENV EFA_VERSION="${EFA_VERSION}"
 ENV PKG_CONFIG_PATH="/opt/amazon/efa/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-
-RUN rpm -e --nodeps hwloc hwloc-libs && \
-    ldconfig && \
-    HWLOC_SERIES="$(echo "${HWLOC_VERSION}" | cut -d. -f1,2)" && \
-    curl -LO "https://download.open-mpi.org/release/hwloc/v${HWLOC_SERIES}/hwloc-${HWLOC_VERSION}.tar.gz" && \
-        tar -xzf "hwloc-${HWLOC_VERSION}.tar.gz" && \
-    cd "hwloc-${HWLOC_VERSION}" && \
-    ./configure --prefix=/usr/local/hwloc --disable-nvml && \
-    make -j"$(nproc)" && \
-    make install && \
-    echo "/usr/local/hwloc/lib" > /etc/ld.so.conf.d/000_hwloc.conf && \
-    ldconfig && \
-    cd .. && rm -rf hwloc-${HWLOC_VERSION} hwloc-${HWLOC_VERSION}.tar.gz
-
-ENV PKG_CONFIG_PATH="/usr/local/hwloc/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 
 # Install AWS CLI
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "awscliv2.zip" && \
