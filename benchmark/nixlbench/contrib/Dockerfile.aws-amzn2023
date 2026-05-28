@@ -28,6 +28,8 @@ ARG BUILD_TYPE="release"
 ARG NPROC
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG ETCD_VER="v3.6.11"
+ARG ETCD_DOWNLOAD_URL="https://github.com/etcd-io/etcd/releases/download"
 
 RUN dnf install -y \
     ninja-build \
@@ -152,6 +154,16 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=17 -DCMAKE_PREFIX_PATH=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install && \
     cd ../.. && rm -rf etcd-cpp-apiv3
+
+# Install etcd
+RUN ETCD_ARCH=$(case "$(uname -m)" in x86_64) echo "amd64";; aarch64) echo "arm64";; *) echo "$(uname -m)";; esac) && \
+    curl --retry 3 --retry-delay 2 -fsSL -o etcd-${ETCD_VER}-linux-${ETCD_ARCH}.tar.gz \
+        ${ETCD_DOWNLOAD_URL}/${ETCD_VER}/etcd-${ETCD_VER}-linux-${ETCD_ARCH}.tar.gz && \
+    mkdir etcd && \
+    tar -xf etcd-${ETCD_VER}-linux-${ETCD_ARCH}.tar.gz -C etcd --strip-components=1 && \
+    cp etcd/{etcd,etcdctl} /usr/local/bin/ && \
+    chmod +x /usr/local/bin/{etcd,etcdctl} && \
+    rm -rf etcd etcd-${ETCD_VER}-linux-${ETCD_ARCH}.tar.gz
 
 # Install AWS SDK C++ dependencies and build
 RUN dnf install -y libcurl-devel uuid-devel zlib-devel && \
