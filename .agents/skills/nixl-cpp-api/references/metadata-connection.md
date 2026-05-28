@@ -27,6 +27,7 @@ for moving opaque metadata bytes:
 
 ```cpp
 nixl_blob_t local_md;
+nixl_blob_t remote_md;
 nixl_status_t st = local_agent.getLocalMD(local_md);
 if (st != NIXL_SUCCESS) {
     return st;

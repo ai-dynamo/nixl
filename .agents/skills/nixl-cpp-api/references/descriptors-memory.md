@@ -41,10 +41,10 @@ Confirm against the user's installed headers before copying code.
 4. Use backend hints when the operation must be restricted to known backend
    handles:
 
-```cpp
-nixl_opt_args_t args;
-args.backends.push_back(backend);
-```
+    ```cpp
+    nixl_opt_args_t args;
+    args.backends.push_back(backend);
+    ```
 
 5. Register with `registerMem(reg_list, &args)`.
 6. Deregister with the matching descriptors and backend hints from the owner
