@@ -1,3 +1,8 @@
+---
+name: nixl-developer-agent-guide
+description: Use for developer-facing NIXL agent guidance covering repo changes, reviews, debugging, tests, CI, docs, plugins, bindings, and performance-sensitive behavior.
+---
+
 # NIXL Developer Agent Guide
 
 Use this guide when reviewing, debugging, or changing the NIXL repository.

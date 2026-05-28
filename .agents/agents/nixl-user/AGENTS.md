@@ -1,3 +1,8 @@
+---
+name: nixl-user-agent-guide
+description: Use for user-facing NIXL agent guidance covering install, backend selection, Python/C++ API use, diagnostics, frameworks, benchmarks, and telemetry.
+---
+
 # NIXL User Agent Guide
 
 Use this guide when helping NIXL users install, configure, use, or troubleshoot

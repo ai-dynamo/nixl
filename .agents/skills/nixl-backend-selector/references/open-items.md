@@ -14,6 +14,7 @@ public `main`/`latest` sources.
 - `TBD-2`: framework backend selector surface.
 - `TBD-3`: backend parameters and fallback semantics.
 - `TBD-4`: hardware, fabric, storage, and runtime requirements.
+- `TBD-5`: performance and correctness validation.
 
 ## Public Source Pins
 
