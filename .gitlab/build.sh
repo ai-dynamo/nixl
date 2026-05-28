@@ -89,7 +89,7 @@ ARCH=$(uname -m)
 export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${LIBFABRIC_INSTALL_DIR}/lib"
 export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
 export PATH="${INSTALL_DIR}/bin:$HOME/.local/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
-export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:${LIBFABRIC_INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH"
+export PKG_CONFIG_PATH="/opt/mellanox/doca/lib/$ARCH-linux-gnu/pkgconfig:/opt/mellanox/doca/lib64/pkgconfig:${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:${LIBFABRIC_INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH:/opt/doca_memos/doca_kv/lib/$ARCH-linux-gnu/pkgconfig"
 export NIXL_PLUGIN_DIR="${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
 export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
 
@@ -125,6 +125,7 @@ else
                                  libprotobuf-dev \
                                  libcpprest-dev \
                                  libaio-dev \
+                                 liburing-dev \
                                  libelf-dev \
                                  libgflags-dev \
                                  patchelf \
@@ -397,6 +398,46 @@ else
     )
 fi # PRE_INSTALLED_UCX_ENV end
 
+if [ -n "$DOCA_KV_ENV" ]; then
+    echo "DOCA_KV_ENV is set, compiling DOCA KV"
+    git clone -b doca_memos ssh://svc-nixl@git-nbu.nvidia.com:12023/doca/doca.git ${TMPDIR}/doca_kv
+    ( \
+    cd ${TMPDIR}/doca_kv && \
+    meson setup build \
+    -Ddisable_all_applications=true -Ddisable_all_samples=false \
+    -Ddisable_all_tools=true -Ddisable_all_services=true \
+    -Ddisable_all_extensions=true -Denable_grpc_support=false \
+    -Denable_gpu_support=false -Dbuildtype=debug \
+    -Denable_libs=kv,argp -Dprefix=/opt/doca_memos/doca_kv && \
+    cd build && \
+    meson compile && \
+    $SUDO meson install \
+    )
+    echo "/opt/doca_memos/doca_kv/lib/${ARCH}-linux-gnu" | $SUDO tee /etc/ld.so.conf.d/doca_kv.conf
+    $SUDO ldconfig
+
+    # Clone the DOCA KV mock (private gitlab-master repo) using build-time git
+    # credentials provided as secrets (see Dockerfile.gpu-test / test-cmx-matrix.yaml).
+    # Kept as source under ${MOCK_SRC} so the test stage builds/swaps it in without
+    # needing credentials at test time. Staged under /opt (not /tmp): the SLURM/enroot
+    # test runtime overmounts /tmp, which would hide anything baked there at build time.
+    MOCK_SRC=/opt/doca_kv_mock
+    if [ ! -s /run/secrets/git_user ] || [ ! -s /run/secrets/git_pass ]; then
+        echo "ERROR: DOCA_KV_ENV is set but git_user/git_pass build secrets are missing" >&2
+        exit 1
+    fi
+    # Create the target owned by the build user so the test stage's `make` can write into it.
+    $SUDO mkdir -p "${MOCK_SRC}"
+    $SUDO chown "$(id -u):$(id -g)" "${MOCK_SRC}"
+    set +x  # never echo the credentials
+    _git_auth=$(printf '%s:%s' "$(cat /run/secrets/git_user)" "$(cat /run/secrets/git_pass)" | base64 | tr -d '\n')
+    git -c http.extraHeader="Authorization: Basic ${_git_auth}" clone --depth 1 \
+        https://gitlab-master.nvidia.com/benwalker/doca_kv_mock.git "${MOCK_SRC}"
+    unset _git_auth
+    set -x
+    # Drop .git so the credential/header stored by `git clone -c` never lands in the image.
+    rm -rf "${MOCK_SRC}/.git"
+fi
 $SUDO rm -rf ${TMPDIR}
 
 # Disabling CUDA IPC not to use NVLINK, as it slows down local

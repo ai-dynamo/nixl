@@ -18,16 +18,21 @@ ARG NIXL_BUILD_DIR
 ARG PRE_INSTALLED_ENV
 ARG PRE_INSTALLED_NIXL_ENV
 ARG PRE_INSTALLED_UCX_ENV
+ARG DOCA_KV_ENV
 ARG UCX_VERSION=v1.21.x
 ARG HAS_GPU=true
 ARG BUILD_NIXL_EP=false
 ARG WORKSPACE=/workspace/nixl
+ENV GIT_SSH_COMMAND="ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes"
 
 
 WORKDIR ${WORKSPACE}
 COPY --chown="${_UID}":"${_GID}" . .
 
-RUN .gitlab/build.sh ${NIXL_INSTALL_DIR}
+RUN --mount=type=secret,id=ssh_key,target=/tmp/ssh_key,mode=0400,uid=${_UID},gid=${_GID} \
+    --mount=type=secret,id=git_user,uid=${_UID},gid=${_GID} \
+    --mount=type=secret,id=git_pass,uid=${_UID},gid=${_GID} \
+    .gitlab/build.sh ${NIXL_INSTALL_DIR}
 RUN sudo apt-get clean && \
     sudo rm -rf /var/lib/apt/lists/*
 

@@ -35,6 +35,8 @@ kubernetes:
 
 credentials:
   - {credentialsId: 'nixl_harbor_credentials', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+  - {credentialsId: 'svc-nixl-ssh_key', type: 'sshUserPrivateKey', keyFileVariable: 'SSH_KEY'}
+  - {credentialsId: 'svc-nixl-gitlab-token', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS'}
 
 env:
   NIXL_INSTALL_DIR: /opt/nixl
@@ -42,7 +44,7 @@ env:
   SLURM_NODES: 1
   SLURM_PARTITION: mizu
   SLURM_HEAD_NODE: scctl
-  SLURM_GRES: gpu:1
+  SLURM_GRES: "gpu:1,bf:1"
   SLURM_MEM: 64G
   SLURM_MINCPUS: 16
   SLURM_JOB_TIMEOUT: '02:20:00'
@@ -50,7 +52,7 @@ env:
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260519-1"
+  CI_IMAGE_TAG: "20260630-2"
 
 empty_volumes:
   - {mountPath: /root, memory: false}
@@ -65,12 +67,11 @@ runs_on_dockers:
      file: '.ci/dockerfiles/Dockerfile.base',
      name: 'nixl-ci-cmx-base-25.10-cuda13.0-ubuntu24.04',
      tag: "${CI_IMAGE_TAG}",
-     deps: ['.gitlab/build.sh', '.ci/scripts/common.sh'],
      build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
-     name: 'build_helper',
+     name: 'build_helper_cmx',
      tag: "${CI_IMAGE_TAG}",
      build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
     }
@@ -87,8 +88,8 @@ taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
 steps:
   - name: Compiling NIXL Docker Image
-    containerSelector: "{name: 'build_helper'}"
-    credentialsId: "nixl_harbor_credentials"
+    containerSelector: "{name: 'build_helper_cmx'}"
+    credentialsId: ["nixl_harbor_credentials", "svc-nixl-ssh_key", "svc-nixl-gitlab-token"]
     parallel: false
     run: |
       set -x
@@ -99,14 +100,18 @@ steps:
       --build-arg PRE_INSTALLED_ENV="true" \
       --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} \
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
+      --build-arg DOCA_KV_ENV=true \
       --build-arg HAS_GPU=true \
       --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-cmx-base-25.10-cuda13.0-ubuntu24.04:${CI_IMAGE_TAG} \
       --tag ${PR_IMAGE} \
+      --secret id=ssh_key,src=${SSH_KEY} \
+      --secret id=git_user,env=GIT_USER \
+      --secret id=git_pass,env=GIT_PASS \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       podman push --creds ${REPO_USER}:${REPO_PASS} ${PR_IMAGE}
 
   - name: Allocate Environment
-    containerSelector: "{name: 'build_helper'}"
+    containerSelector: "{name: 'build_helper_cmx'}"
     parallel: false
     shell: action
     module: slurmCI
@@ -117,19 +122,17 @@ steps:
       nodes: "${SLURM_NODES}"
       jobTimeout: "${SLURM_JOB_TIMEOUT}"
       immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
-      jobName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      jobName: "nixl-ci-cmx-${ucx_version}-${BUILD_NUMBER}"
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
       extraArgs: [
         "--gres=${SLURM_GRES}",
         "--mincpus=${SLURM_MINCPUS}",
-        "--mem=${SLURM_MEM}",
-        "--nodelist=mizu03",
-        "--reservation=BF3_tests"
+        "--mem=${SLURM_MEM}"
       ]
 
   - name: Run CMX tests
-    containerSelector: "{name: 'build_helper'}"
+    containerSelector: "{name: 'build_helper_cmx'}"
     timeout: 50
     parallel: false
     shell: action
@@ -137,14 +140,14 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
-      testScript: "/bin/echo Ok"
+      testScript: ".gitlab/test_cmx.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
       dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-cmx-test-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      containerName: "nixl-ci-cmx-${ucx_version}-${BUILD_NUMBER}"
 
 pipeline_stop:
-  containerSelector: "{name: 'build_helper'}"
+  containerSelector: "{name: 'build_helper_cmx'}"
   parallel: false
   shell: action
   module: slurmCI
