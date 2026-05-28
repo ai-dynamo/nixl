@@ -50,89 +50,89 @@ get_options() {
             exit
             ;;
         --base-image)
-            if [ "$2" ]; then
+            if [ -n "$2" ]; then
                 BASE_IMAGE="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
         ;;
         --base-image-tag)
-            if [ "$2" ]; then
-                BASE_IMAGE_TAG=$2
+            if [ -n "$2" ]; then
+                BASE_IMAGE_TAG="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --wheel-base)
-            if [ "$2" ]; then
-                WHL_BASE=$2
+            if [ -n "$2" ]; then
+                WHL_BASE="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --os)
-            if [ "$2" ]; then
-                OS=$2
+            if [ -n "$2" ]; then
+                OS="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --no-cache)
             NO_CACHE=" --no-cache"
             ;;
         --build-type)
-            if [ "$2" ]; then
-                BUILD_TYPE=$2
+            if [ -n "$2" ]; then
+                BUILD_TYPE="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --tag)
-            if [ "$2" ]; then
+            if [ -n "$2" ]; then
                 TAG="--tag $2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --dockerfile)
-            if [ "$2" ]; then
+            if [ -n "$2" ]; then
                 DOCKER_FILE="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --python-versions)
-            if [ "$2" ]; then
-                WHL_PYTHON_VERSIONS=$2
+            if [ -n "$2" ]; then
+                WHL_PYTHON_VERSIONS="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --ucx-ref)
-            if [ "$2" ]; then
-                UCX_REF=$2
+            if [ -n "$2" ]; then
+                UCX_REF="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --build-nixl-ep)
             BUILD_NIXL_EP=true
             ;;
         --arch)
-            if [ "$2" ]; then
-                ARCH=$2
+            if [ -n "$2" ]; then
+                ARCH="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --)
@@ -140,10 +140,10 @@ get_options() {
             break
             ;;
          -?*)
-            error 'ERROR: Unknown option: ' $1
+            error 'ERROR: Unknown option: ' "$1"
             ;;
          ?*)
-            error 'ERROR: Unknown option: ' $1
+            error 'ERROR: Unknown option: ' "$1"
             ;;
         *)
             break
@@ -229,4 +229,4 @@ BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
+docker build --platform "linux/$ARCH" -f "$DOCKER_FILE" $BUILD_ARGS $TAG $NO_CACHE "$BUILD_CONTEXT"
