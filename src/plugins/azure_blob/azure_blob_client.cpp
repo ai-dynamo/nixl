@@ -65,7 +65,9 @@ getConnectionString(nixl_b_params_t *custom_params) {
         }
     }
     const char *env_conn = std::getenv("AZURE_STORAGE_CONNECTION_STRING");
-    if (env_conn && env_conn[0] != '\0') return std::string(env_conn);
+    if (env_conn && env_conn[0] != '\0') {
+        return std::string(env_conn);
+    }
     return "";
 }
 
@@ -101,10 +103,7 @@ azureBlobClient::azureBlobClient(nixl_b_params_t *custom_params,
 
         if (!ca_info) {
             for (const auto *path : {
-                     "/etc/ssl/certs/ca-certificates.crt",                // Debian/Ubuntu/Gentoo
-                     "/etc/pki/tls/certs/ca-bundle.crt",                  // Fedora/RHEL 6
-                     "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", // CentOS/RHEL 7
-                     "/etc/ssl/cert.pem"                                  // Alpine Linux
+                     "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Gentoo
                  }) {
                 if (FILE *f = fopen(path, "r")) {
                     fclose(f);
