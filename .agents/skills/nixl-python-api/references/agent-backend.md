@@ -18,7 +18,8 @@ Confirm these from the user's installed runtime/source when possible:
   for file/object paths.
 
 If any item is missing, return `Environment not ready` or
-`Backend evidence missing` rather than implementing readiness-dependent API code.
+`Backend evidence missing` rather than implementing readiness-dependent Python
+API code.
 
 ## Minimal Backend Probe
 

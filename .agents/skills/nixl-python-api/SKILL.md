@@ -24,8 +24,8 @@ around NIXL.
   `references/` file needed for the user's lifecycle stage.
 - Do not depend on external skill routing. If installation, plugin, CUDA, or
   framework readiness is missing, stay in this skill and report the missing
-  evidence as a readiness finding before implementing readiness-dependent API
-  code.
+  evidence as a readiness finding before implementing readiness-dependent
+  Python API code.
 - Start with installed package, wheel, or source evidence before writing
   examples or patching readiness-dependent Python API code.
 
@@ -39,8 +39,9 @@ ask for the smallest source or runtime artifact needed.
 
 Treat the user's installed NIXL package, wheel, or source checkout as the
 source of truth. Before proposing examples or patching readiness-dependent
-Python API code, inspect that installed source or runtime surface when
-available.
+Python API code, inspect the user's installed source or runtime surface; if
+unavailable, provide only fallback-oriented guidance and state the missing
+evidence.
 
 Use version-matched upstream source/docs only when they match the user's
 installed version or commit. Use the fallback snapshot listed in
@@ -95,7 +96,7 @@ Before giving a lifecycle recipe, classify readiness:
 | Status | Meaning | Next action |
 | --- | --- | --- |
 | `Ready for API recipe` | Import works, selected backend is created or source-backed, required memory type is supported, and topology is known. | Load the matching lifecycle reference. |
-| `Environment not ready` | `import nixl`, agent construction, CUDA library loading, or package/source identity is failing or unknown. | Ask for the exact error plus package/source evidence; do not implement readiness-dependent API code yet. |
+| `Environment not ready` | `import nixl`, agent construction, CUDA library loading, or package/source identity is failing or unknown. | Ask for the exact error plus package/source evidence; do not implement readiness-dependent Python API code yet. |
 | `Backend evidence missing` | Backend plugin, backend params, backend creation, or required `DRAM`/`VRAM`/storage memory type is not proven. | Request runtime plugin/backend evidence from the same environment. |
 | `Version/source evidence missing` | The user wants examples or readiness-dependent Python API edits but installed version/source is unknown. | Use the fallback snapshot only for orientation and state the exact source evidence still needed. |
 | `Framework-managed boundary` | A framework owns peer setup or metadata exchange. | Ask for the framework integration source/config before replacing it with direct NIXL listener code. |
