@@ -395,6 +395,24 @@ else
           $SUDO make -j install-strip && \
           $SUDO ldconfig \
     )
+    git clone https://git-nbu.nvidia.com/r/a/doca/doca ${TMPDIR}/doca_kv
+    ( \
+    cd ${TMPDIR}/doca_kv && \
+    git checkout doca_kvcache  && \
+    meson setup build \
+    -Ddisable_all_applications=true -Ddisable_all_samples=false \
+    -Ddisable_all_tools=true -Ddisable_all_services=true \
+    -Ddisable_all_extensions=true -Denable_grpc_support=false \
+    -Denable_gpu_support=false -Dbuildtype=debug \
+    -Denable_libs=kv,argp -Dprefix=/opt/doca_memos/doca_kv && \
+    cd build && \
+    meson compile && \
+    meson install && \
+    cd /opt/doca_memos/doca_kv && \
+    $SUDO cp -r include/* /usr/include/ && \
+    $SUDO cp -r lib/aarch64-linux-gnu/* /usr/lib/aarch64-linux-gnu/ && \
+    $SUDO ldconfig \
+    )
 fi # PRE_INSTALLED_UCX_ENV end
 
 $SUDO rm -rf ${TMPDIR}
