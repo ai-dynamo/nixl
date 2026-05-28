@@ -255,6 +255,67 @@
                     parent-credentials: true
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
+# Template for the main cmx test job that performs the actual cmx test process
+- job-template:
+    name: "{jjb_proj}-cmx"      # Will be expanded to 'nixl-ci-cmx'
+    project-type: pipeline
+    disabled: false
+    properties:
+        # Similar properties as dispatcher job
+        - github:
+            url: "{jjb_gh_url}"
+        - build-discarder:
+            days-to-keep: 14
+            num-to-keep: 1000
+        - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-cmx
+    description: Do NOT edit this job through the Web GUI !
+    concurrent: true
+    sandbox: true
+    # Test job parameters
+    parameters:
+        - string:
+            name: "sha1"
+            default: "{jjb_branch}"    # Default to 'main' branch
+            description: "Commit to be checked, usually set by PR"
+        - string:
+            name: "githubData"
+            default: ""
+            description: "Variables from post"
+        - string:
+            name: "conf_file"
+            default: ".ci/jenkins/lib/test-cmx-matrix.yaml"  # Test matrix configuration
+            description: "Job config file"
+        - bool:
+            name: "build_dockers"
+            default: false
+            description: "Force rebuild docker containers"
+        - string:
+            name: "DEBUG"
+            default: 0
+            description: "Enable debug prints and traces, valid values are 0-9"
+    # SCM configuration for the build job
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                branches: ['$sha1']
+                shallow-clone: false
+                do-not-fetch-tags: false
+                # Configure refspec to handle branches, PRs, and tags
+                refspec: "{jjb_gh_refspec}"
+                browser: githubweb
+                browser-url: "{jjb_git}"
+                # Handle git submodules
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
+
 # Template for the main test job that performs the actual test process
 - job-template:
     name: "{jjb_proj}-gpu"      # Will be expanded to 'nixl-ci-gpu'
@@ -1103,3 +1164,4 @@
         - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
         - "{jjb_proj}-cleanup-artifacts"  # Create Artifactory cleanup job
         - "{jjb_proj}-nightly"  # Create nightly UCX-master validation orchestrator
+        - "{jjb_proj}-cmx"  # Create cmx job
