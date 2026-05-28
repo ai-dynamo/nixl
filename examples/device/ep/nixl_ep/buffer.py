@@ -717,9 +717,10 @@ class Buffer:
         Mask or unmask a rank during low-latency communication.
 
         Arguments:
-            rank: the rank to mask (unmask).
-            mask: if True, will mask the rank (do not recvfrom/sendto the rank), otherwise will unmask the rank.
-                The local rank cannot be masked.
+            rank_to_mask: the rank to mask or unmask.
+            mask: if True, will mask the rank (do not recvfrom/sendto the
+                rank), otherwise will unmask the rank. The local rank cannot
+                be masked, and unmasking requires an already-connected rank.
         """
         self.runtime.update_mask_buffer(rank_to_mask, mask)
 
