@@ -82,7 +82,7 @@ get_options() {
             fi
             ;;
         --no-cache)
-            NO_CACHE=" --no-cache"
+            USE_NO_CACHE=true
             ;;
         --build-type)
             if [ -n "$2" ]; then
@@ -94,7 +94,7 @@ get_options() {
             ;;
         --tag)
             if [ -n "$2" ]; then
-                TAG="--tag $2"
+                TAG="$2"
                 shift
             else
                 missing_requirement "$1"
@@ -161,7 +161,7 @@ get_options() {
     WHL_PLATFORM=${WHL_BASE}_${ARCH}
 
     if [ -z "$TAG" ]; then
-        TAG="--tag nixl:${VERSION}"
+        TAG="nixl:${VERSION}"
     fi
 }
 
@@ -216,17 +216,29 @@ if [ -d "$NIXL_DIR/build" ]; then
     exit 1
 fi
 
-BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
-BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
-BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
-BUILD_ARGS+=" --build-arg ARCH=$ARCH"
-BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
-BUILD_ARGS+=" --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP"
-BUILD_ARGS+=" --build-arg NPROC=$NPROC"
-BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
-BUILD_ARGS+=" --build-arg OS=$OS"
-BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
+docker_args=(
+    --platform "linux/$ARCH"
+    -f "$DOCKER_FILE"
+    --tag "$TAG"
+    --build-arg "BASE_IMAGE=$BASE_IMAGE"
+    --build-arg "BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
+    --build-arg "WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
+    --build-arg "WHL_PLATFORM=$WHL_PLATFORM"
+    --build-arg "ARCH=$ARCH"
+    --build-arg "UCX_REF=$UCX_REF"
+    --build-arg "BUILD_NIXL_EP=$BUILD_NIXL_EP"
+    --build-arg "NPROC=$NPROC"
+    --build-arg "GRPC_NPROC=$GRPC_NPROC"
+    --build-arg "OS=$OS"
+    --build-arg "BUILD_TYPE=$BUILD_TYPE"
+)
+
+if [ "$USE_NO_CACHE" = true ]; then
+    docker_args+=(--no-cache)
+fi
+
+docker_args+=("$BUILD_CONTEXT")
 
 show_build_options
 
-docker build --platform "linux/$ARCH" -f "$DOCKER_FILE" $BUILD_ARGS $TAG $NO_CACHE "$BUILD_CONTEXT"
+docker build "${docker_args[@]}"
