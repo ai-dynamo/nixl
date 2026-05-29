@@ -25,7 +25,7 @@ option('cudapath_inc', type: 'string', value: '', description: 'Include path for
 option('cudapath_lib', type: 'string', value: '', description: 'Library path for CUDA')
 option('cudapath_stub', type: 'string', value: '', description: 'Extra Stub path for CUDA')
 option('nixl_cuda_arch_list', type: 'string', value: 'auto', description: 'Comma-separated CUDA SM targets (e.g. 90,100), or auto to select defaults (sm_80+ normally, sm_90+ when build_nixl_ep is enabled). Use a single target like 100 for faster single-GPU builds.')
-option('use_rocm', type: 'string', value: '', description: 'Path to the ROCm install root. Empty (default) = CUDA build. Non-empty enables the ROCm/HIP build using this path as the ROCm prefix (e.g. -Duse_rocm=/opt/rocm).')
+option('wheel_variant', type: 'string', value: '', description: 'Override wheel variant suffix (e.g. -Dwheel_variant=rocm yields nixl_rocm). Empty = autodetect from CUDA major version.')
 option('static_plugins', type: 'string', value: '', description: 'Plugins to be built-in, comma-separated')
 option('enable_plugins', type: 'string', value: '', description: 'Comma-separated list of plugins to build. Default (empty) builds all available plugins.')
 option('disable_plugins', type: 'string', value: '', description: 'Comma-separated list of plugins to exclude from build. Cannot be used with enable_plugins.')

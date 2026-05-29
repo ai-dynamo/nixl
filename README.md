@@ -160,42 +160,16 @@ Common build options:
 - `static_plugins`: Comma-separated list of plugins to build statically
 - `enable_plugins`: Comma-separated list of plugins to build (e.g. `-Denable_plugins=UCX,POSIX`). Cannot be used with `disable_plugins`.
 - `disable_plugins`: Comma-separated list of plugins to exclude (e.g. `-Ddisable_plugins=GDS`). Cannot be used with `enable_plugins`.
-- `use_rocm`: Path to the ROCm install root (e.g. `-Duse_rocm=/opt/rocm`). Empty (default) = CUDA build; non-empty enables the ROCm/HIP build using the given prefix. See [Building for AMD ROCm](#building-for-amd-rocm) below.
+- `wheel_variant`: Override the Python wheel variant suffix (e.g. `-Dwheel_variant=rocm` yields `nixl_rocm`). Empty (default) = autodetect from the CUDA major version.
 
 #### Building for AMD ROCm
 
-NIXL has experimental support for AMD Instinct GPUs via the `use_rocm` Meson option. Pass the ROCm install prefix as the value — this both enables the ROCm build and tells the build system where to find HIP. The build switches the GPU toolchain from CUDA to HIP. Supported architectures:
+NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or not a ROCm toolchain is present. GPU-side ROCm/HIP build support for the benchmark suite lives in nixlbench — see PR #1647 for the `use_rocm` / `rocm_path` options there. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
 
-- **gfx90a** — MI250X
-- **gfx942** — MI300X, MI325X
-- **gfx950** — MI350X, MI355X
-
-**Prerequisites:**
-- ROCm 7.x installed (default `/opt/rocm`).
-- `hipcc` available at `$use_rocm/bin/hipcc`.
-- UCX 1.18+ built with `--with-rocm`.
-
-**Build:**
-
-```bash
-$ meson setup build -Duse_rocm=/opt/rocm   # or your custom ROCm prefix
-$ cd build
-$ ninja
-```
-
-**Plugins enabled on ROCm builds:**
-- `UCX` — primary transport for AMD GPU memory (requires UCX with ROCm support).
+**Plugins on ROCm hosts (CUDA toolchain absent):**
+- `UCX` — primary transport for AMD GPU memory (requires UCX built with `--with-rocm`).
 - `POSIX`, `OBJ`, `AZURE_BLOB`, `HF3FS`, `MOONCAKE`, `GUSLI`, `UCCL` — vendor-neutral; build unchanged.
-
-**Plugins automatically disabled on ROCm builds (NVIDIA-only by design):**
-- `GDS` / `GDS_MT` — GPUDirect Storage is NVIDIA-only; no ROCm equivalent today.
-- `GPUNETIO` — DOCA GPUNetIO requires NVIDIA / Mellanox stack.
-- `LIBFABRIC` — `libfabric_backend.h` includes `<cuda.h>` unconditionally; ROCm support is feasible (libfabric upstream has a ROCm provider) and is tracked as a follow-up. UCX remains the supported AMD transport in the meantime.
-
-**Verification:**
-- Hotaisle MI300X (gfx942, ROCm 7.0.2, AMDSMI 26.0.2): build + UCX transfer validated. Same toolchain applies to MI325X (gfx942).
-- AAC1 MI355X (gfx950, ROCm 7.2.0 via `rocm/sgl-dev` container): build validated. Same toolchain applies to MI350X (gfx950).
-- AMD GPUs are detected via PCI vendor `0x1002` and exposed through `hwInfo::numAmdGpus`.
+- `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — skip automatically because their CUDA / cuFile / DOCA dependencies are not found.
 
 **Known gaps (will be addressed in follow-up PRs):**
 - `nixlbench` (the NIXL benchmark tool) needs CUDA-driver-API → HIP translation work before it builds on ROCm. Use `examples/cpp/nixl_etcd_example` for transfer validation in the meantime.

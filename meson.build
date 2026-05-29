@@ -175,29 +175,7 @@ cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
 
-rocm_path = get_option('use_rocm')
-use_rocm = rocm_path != ''
-
-if use_rocm
-    hipcc_prog = find_program(rocm_path + '/bin/hipcc', required: false)
-    if not hipcc_prog.found()
-        error('use_rocm set but hipcc not found at ' + rocm_path + '/bin/hipcc. ' +
-              'Install ROCm or pass the correct prefix via -Duse_rocm=<path>.')
-    endif
-
-    rocm_inc = rocm_path + '/include'
-    rocm_lib = rocm_path + '/lib'
-    add_project_arguments('-D__HIP_PLATFORM_AMD__', language: 'cpp')
-    add_project_link_arguments(['-L' + rocm_lib, '-lamdhip64', '-lhiprtc'], language: 'cpp')
-
-    # cuda_dep is an empty-but-found dependency on ROCm builds so that plugins
-    # which list it defensively (e.g. UCX) still build cleanly. Plugins that
-    # require real CUDA headers (cuda_gds, gds_mt, libfabric) will naturally
-    # skip via their own gds_path / cufile / libfabric dependency checks.
-    cuda_dep = declare_dependency()
-    cuda_wheel_dir = 'nixl_rocm'
-    summary({'GPU vendor': 'AMD ROCm', 'ROCm path': rocm_path}, section: 'Build')
-elif cuda_lib_path == ''
+if cuda_lib_path == ''
     cuda_dep = dependency('cuda', required : false, modules : [ 'cudart', 'cuda' ])
     if not cuda_dep.found()
         # Meson is not detecting CUDA reliably on ARM, fallback to default
@@ -227,7 +205,7 @@ else
     include_directories : include_directories(cuda_inc_path))
 endif
 
-if cuda_dep.found() and not use_rocm
+if cuda_dep.found()
     add_languages('CUDA')
     cuda = import('unstable-cuda')
     nvcc = meson.get_compiler('cuda')
@@ -299,15 +277,18 @@ if cuda_dep.found() and not use_rocm
     else
         error('Unsupported CUDA version: ' + cuda_version_major)
     endif
-elif use_rocm
-    # ROCm path: cuda_wheel_dir already set above, GPUNETIO already disabled
-    # by its own meson.build (depends on cuda_dep), no warning needed.
-    doca_gpunetio_dep = disabler()
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
-    warning('CUDA not found, cannot autodetect wheel dir; defaulting to nixl_cu12')
     cuda_wheel_dir = 'nixl_cu12'
+endif
+
+# Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix
+# without otherwise affecting the build. Non-empty value wins over the
+# autodetected CUDA-major value above: e.g. -Dwheel_variant=rocm -> nixl_rocm.
+wheel_variant = get_option('wheel_variant').strip()
+if wheel_variant != ''
+    cuda_wheel_dir = 'nixl_' + wheel_variant
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
