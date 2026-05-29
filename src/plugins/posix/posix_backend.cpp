@@ -69,7 +69,7 @@ castPosixHandle(nixlBackendReqH *handle) {
     if (!handle) {
         throw nixlPosixBackendReqH::exception("received null handle", NIXL_ERR_INVALID_PARAM);
     }
-    return dynamic_cast<nixlPosixBackendReqH &>(*handle);
+    return *static_cast<nixlPosixBackendReqH *>(handle);
 }
 
 static std::string_view
@@ -201,7 +201,7 @@ nixlPosixBackendReqH::checkXfer() {
 
 nixl_status_t
 nixlPosixBackendReqH::postXfer() {
-    if (!io_queue_) {
+    if (__builtin_expect(!io_queue_, 0)) {
         NIXL_ERROR << "POSIX I/O queue is not initialized";
         return NIXL_ERR_BACKEND;
     }
@@ -347,16 +347,8 @@ nixlPosixEngine::releaseReqH(nixlBackendReqH *handle) const {
         return NIXL_SUCCESS;
     }
 
-    try {
-        (void)castPosixHandle(handle);
-        delete handle;
-        return NIXL_SUCCESS;
-    }
-    catch (const nixlPosixBackendReqH::exception &e) {
-        NIXL_ERROR << e.what();
-        return e.code();
-    }
-    return NIXL_ERR_BACKEND;
+    delete handle;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
