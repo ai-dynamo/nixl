@@ -24,11 +24,11 @@
 #include <optional>
 #include <string>
 #include <stdexcept>
-#include <cstdlib>
-#include <cstdio>
 #include <absl/strings/str_format.h>
 #include "common/configuration.h"
+#include "common/nixl_log.h"
 #include "nixl_types.h"
+#include <filesystem>
 
 namespace {
 
@@ -64,11 +64,8 @@ getConnectionString(nixl_b_params_t *custom_params) {
             return conn_it->second;
         }
     }
-    const char *env_conn = std::getenv("AZURE_STORAGE_CONNECTION_STRING");
-    if (env_conn && env_conn[0] != '\0') {
-        return std::string(env_conn);
-    }
-    return "";
+
+    return nixl::config::getValueDefaulted("AZURE_STORAGE_CONNECTION_STRING", std::string());
 }
 
 std::string
@@ -81,7 +78,22 @@ getCaBundle(nixl_b_params_t *custom_params) {
     }
 
     // Return empty string if not provided, which means use default CA bundle
-    return nixl::config::getValueDefaulted<std::string>("AZURE_CA_BUNDLE", "");
+    std::string ca_bundle = nixl::config::getValueDefaulted<std::string>("AZURE_CA_BUNDLE", "");
+    if (!ca_bundle.empty()) {
+        return ca_bundle;
+    }
+
+    // Libcurl currently looks for CA bundles based on the platform that is built (currently CentOS)
+    // and not the platform that it is running on. This means it will not look for certs in the
+    // correct location on Ubuntu. This is a workaround to make sure we check for Ubuntu certs
+    // before falling back to libcurl's default location. In the future, we can remove this check if
+    // we find a way to build libcurl to search for certs in a more cross-distro compatible way.
+    if (std::filesystem::exists("/etc/ssl/certs/ca-certificates.crt")) {
+        NIXL_DEBUG << "Using CA bundle: /etc/ssl/certs/ca-certificates.crt";
+        return "/etc/ssl/certs/ca-certificates.crt";
+    }
+
+    return "";
 }
 
 } // namespace
@@ -100,18 +112,6 @@ azureBlobClient::azureBlobClient(nixl_b_params_t *custom_params,
     {
         Azure::Core::Http::CurlTransportOptions curlOptions;
         const char *ca_info = caBundle.empty() ? nullptr : caBundle.c_str();
-
-        if (!ca_info) {
-            for (const auto *path : {
-                     "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Gentoo
-                 }) {
-                if (FILE *f = fopen(path, "r")) {
-                    fclose(f);
-                    ca_info = path;
-                    break;
-                }
-            }
-        }
 
         if (ca_info) {
             curlOptions.CAInfo = ca_info;
