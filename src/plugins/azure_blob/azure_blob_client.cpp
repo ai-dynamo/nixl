@@ -88,9 +88,10 @@ getCaBundle(nixl_b_params_t *custom_params) {
     // correct location on Ubuntu. This is a workaround to make sure we check for Ubuntu certs
     // before falling back to libcurl's default location. In the future, we can remove this check if
     // we find a way to build libcurl to search for certs in a more cross-distro compatible way.
-    if (std::filesystem::exists("/etc/ssl/certs/ca-certificates.crt")) {
-        NIXL_DEBUG << "Using CA bundle: /etc/ssl/certs/ca-certificates.crt";
-        return "/etc/ssl/certs/ca-certificates.crt";
+    const std::string ubuntu_ca_bundle = "/etc/ssl/certs/ca-certificates.crt";
+    if (std::filesystem::exists(ubuntu_ca_bundle)) {
+        NIXL_DEBUG << "Using detected CA bundle at: " << ubuntu_ca_bundle;
+        return ubuntu_ca_bundle;
     }
 
     return "";
@@ -108,15 +109,10 @@ azureBlobClient::azureBlobClient(nixl_b_params_t *custom_params,
     options.Telemetry.ApplicationId = "azpartner-nixl/0.1.0";
 
     std::string caBundle = ::getCaBundle(custom_params);
-
-    {
+    Azure::Core::Http::CurlTransportOptions curlOptions;
+    if (!caBundle.empty()) {
         Azure::Core::Http::CurlTransportOptions curlOptions;
-        const char *ca_info = caBundle.empty() ? nullptr : caBundle.c_str();
-
-        if (ca_info) {
-            curlOptions.CAInfo = ca_info;
-        }
-
+        curlOptions.CAInfo = caBundle;
         options.Transport.Transport =
             std::make_shared<Azure::Core::Http::CurlTransport>(curlOptions);
     }
