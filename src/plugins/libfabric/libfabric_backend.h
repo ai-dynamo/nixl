@@ -181,7 +181,7 @@ private:
     std::chrono::microseconds progress_thread_delay_;
 
     // Rail Manager - Stack allocated for better performance (mutable for const methods)
-    mutable nixlLibfabricRailManager rail_manager;
+    mutable nixlLibfabricRailManager rail_manager_;
 
     // Configurable striping threshold
     size_t striping_threshold_;
@@ -212,7 +212,7 @@ private:
     mutable std::mutex connection_state_mutex_;
 
 
-    // System runtime type (set during initialization from rail_manager)
+    // System runtime type (set during initialization from rail_manager_)
     fi_hmem_iface runtime_;
 
     void
