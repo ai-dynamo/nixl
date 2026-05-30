@@ -33,6 +33,13 @@
 #include <cuda_runtime.h>
 #endif
 
+namespace {
+std::string
+getProviderDeviceLabel(const std::string &provider_name) {
+    return provider_name.empty() ? "libfabric" : provider_name;
+}
+} // namespace
+
 nixlLibfabricTopology::nixlLibfabricTopology()
     : num_aws_accel(0),
       num_nvidia_accel(0),
@@ -75,13 +82,13 @@ nixlLibfabricTopology::discoverTopology() {
     if (status != NIXL_SUCCESS) {
         return status;
     }
-    // For EFA devices, build PCIe to Libfabric device mapping and full topology
-    if (provider_name == "efa") {
+    // For EFA and CXI devices, build PCIe to Libfabric device mapping and full topology
+    if (provider_name == "efa" || provider_name == "cxi") {
         // Build PCIe to Libfabric device mapping
         status = buildPcieToLibfabricMapping();
         if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Failed to build PCIe to Libfabric mapping - this is required for EFA "
-                          "topology discovery";
+            NIXL_ERROR << "Failed to build PCIe to Libfabric mapping - this is required for "
+                       << getProviderDeviceLabel(provider_name) << " topology discovery";
             return status;
         }
         // Discover hardware topology using hwloc
@@ -91,14 +98,15 @@ nixlLibfabricTopology::discoverTopology() {
             return status;
         }
 
-        // build nic info map regardless of accelerator to EFA mapping
+        // build nic info map regardless of accelerator to provider mapping
         buildNicInfoMap();
 
-        // Build nVidia accelerator to EFA mapping based on PCIe topology
+        // Build nVidia accelerator to provider mapping based on PCIe topology
         if (num_nvidia_accel > 0) {
             status = buildAccelToEfaMapping();
             if (status != NIXL_SUCCESS) {
-                NIXL_ERROR << "Failed to build accelerator to EFA mapping";
+                NIXL_ERROR << "Failed to build accelerator to "
+                           << getProviderDeviceLabel(provider_name) << " mapping";
                 return status;
             }
         }
@@ -130,8 +138,9 @@ nixlLibfabricTopology::discoverProviderWithDevices() {
     num_devices = all_devices.size();
 
     // Set device type based on discovered provider
-    if (provider_name == "efa") {
-        NIXL_INFO << "Discovered " << num_devices << " EFA devices";
+    if (provider_name == "efa" || provider_name == "cxi") {
+        NIXL_INFO << "Discovered " << num_devices << " " << getProviderDeviceLabel(provider_name)
+                  << " devices";
     } else if (provider_name == "tcp" || provider_name == "sockets") {
         NIXL_INFO << "Discovered " << num_devices << " " << provider_name
                   << " devices (TCP fallback)";
@@ -163,24 +172,25 @@ nixlLibfabricTopology::getEfaDevicesForPci(const std::string &pci_bus_id) const 
                  function);
         std::string normalized_id(normalized_pci);
 
-        // GPU query, lookup based on GPU BDF
+        // GPU query, lookup based on accelerator BDF
         if (auto it = pci_to_efa_devices.find(normalized_id); it != pci_to_efa_devices.end()) {
-            NIXL_DEBUG << "Found EFA devices for PCI " << pci_bus_id << " (normalized to "
-                       << normalized_id << ")";
+            NIXL_DEBUG << "Found " << getProviderDeviceLabel(provider_name) << " devices for PCI "
+                       << pci_bus_id << " (normalized to " << normalized_id << ")";
             return it->second;
         }
 
-        // Neuron query, lookup based on EFA BDF
+        // Neuron query, lookup based on provider BDF
         if (auto it = pcie_to_libfabric_map.find(normalized_id);
             it != pcie_to_libfabric_map.end()) {
-            NIXL_DEBUG << "Found EFA devices for PCI " << pci_bus_id << " (normalized to "
-                       << normalized_id << ")";
+            NIXL_DEBUG << "Found " << getProviderDeviceLabel(provider_name) << " devices for PCI "
+                       << pci_bus_id << " (normalized to " << normalized_id << ")";
             return {it->second};
         }
 
         // PCI ID parsed successfully but not found in mapping
         NIXL_WARN << "PCI bus ID " << pci_bus_id << " (normalized to " << normalized_id
-                  << ") not found in accelerator-EFA mapping, returning all devices";
+                  << ") not found in accelerator-" << getProviderDeviceLabel(provider_name)
+                  << " mapping, returning all devices";
     } else {
         // Failed to parse PCI bus ID format
         NIXL_WARN << "Failed to parse PCI bus ID format: " << pci_bus_id
@@ -200,13 +210,16 @@ nixlLibfabricTopology::getDeviceNumaNode(const std::string &efa_device) const {
     int device_numa_node = -1;
     NicInfoMap::const_iterator itr = nic_info_map.find(efa_device);
     if (itr == nic_info_map.end()) {
-        NIXL_WARN << "EFA device " << efa_device << " not found in nic_info_map";
+        NIXL_WARN << getProviderDeviceLabel(provider_name) << " device " << efa_device
+                  << " not found in nic_info_map";
     } else {
         device_numa_node = itr->second.numa_node_id;
         if (device_numa_node == INVALID_NUMA_NODE_ID) {
-            NIXL_INFO << "EFA device " << efa_device << " is not associated with a NUMA node";
+            NIXL_INFO << getProviderDeviceLabel(provider_name) << " device " << efa_device
+                      << " is not associated with a NUMA node";
         } else {
-            NIXL_DEBUG << "EFA device " << efa_device << " is on NUMA node " << device_numa_node;
+            NIXL_DEBUG << getProviderDeviceLabel(provider_name) << " device " << efa_device
+                       << " is on NUMA node " << device_numa_node;
         }
     }
     return device_numa_node;
@@ -222,7 +235,8 @@ nixlLibfabricTopology::getPcieDevData(const std::string &efa_device,
     bool found = false;
     NicInfoMap::const_iterator itr = nic_info_map.find(efa_device);
     if (itr == nic_info_map.end()) {
-        NIXL_WARN << "EFA device " << efa_device << " not found in nic_info_map";
+        NIXL_WARN << getProviderDeviceLabel(provider_name) << " device " << efa_device
+                  << " not found in nic_info_map";
     } else {
         found = true;
         numa_node_id = itr->second.numa_node_id;
@@ -230,11 +244,12 @@ nixlLibfabricTopology::getPcieDevData(const std::string &efa_device,
         parent_switch_domain = itr->second.parent_switch_domain;
         parent_switch_bus_id = itr->second.parent_switch_bus_id;
         parent_switch_link_speed = itr->second.parent_switch_link_speed;
-        NIXL_DEBUG << "EFA device " << efa_device << " has upstream link speed "
-                   << device_link_speed << " Gbps, and is associated with NUMA node "
-                   << numa_node_id << " through PCIe switch on domain/bus-id "
-                   << parent_switch_domain << "/" << parent_switch_bus_id
-                   << " with upstream link speed of " << parent_switch_link_speed << " Gbps";
+        NIXL_DEBUG << getProviderDeviceLabel(provider_name) << " device " << efa_device
+                   << " has upstream link speed " << device_link_speed
+                   << " Gbps, and is associated with NUMA node " << numa_node_id
+                   << " through PCIe switch on domain/bus-id " << parent_switch_domain << "/"
+                   << parent_switch_bus_id << " with upstream link speed of "
+                   << parent_switch_link_speed << " Gbps";
     }
     return found;
 }
@@ -260,24 +275,28 @@ nixlLibfabricTopology::printTopologyInfo() const {
     NIXL_TRACE << "Topology discovered: " << (topology_discovered ? "Yes" : "No");
     NIXL_TRACE << "Number of AWS accelerators: " << num_aws_accel;
     NIXL_TRACE << "Number of NUMA nodes: " << num_numa_nodes;
-    NIXL_TRACE << "Number of EFA devices: " << num_devices;
-    NIXL_TRACE << "EFA devices: ";
+    NIXL_TRACE << "Number of " << getProviderDeviceLabel(provider_name)
+               << " devices: " << num_devices;
+    NIXL_TRACE << getProviderDeviceLabel(provider_name) << " devices: ";
     for (size_t i = 0; i < all_devices.size(); ++i) {
         NIXL_TRACE << "  [" << i << "] " << all_devices[i];
     }
-    NIXL_TRACE << "Accelerator-PCI → EFA mapping:";
+    NIXL_TRACE << "Accelerator-PCI → " << getProviderDeviceLabel(provider_name) << " mapping:";
     for (const auto &pair : pci_to_efa_devices) {
         std::stringstream ss;
         ss << "Accelerator-PCI " << pair.first << " → [";
         for (size_t i = 0; i < pair.second.size(); ++i) {
-            if (i > 0) ss << ", ";
+            if (i > 0) {
+                ss << ", ";
+            }
             ss << pair.second[i];
         }
         ss << "]";
         NIXL_INFO << ss.str();
     }
-    NIXL_TRACE << "Host memory (DRAM) will limit number of EFA devices used per-NUMA node "
-                  "according to maximum PCIe switch bandwidth";
+    NIXL_TRACE << "Host memory (DRAM) will limit number of "
+               << getProviderDeviceLabel(provider_name)
+               << " devices used per-NUMA node according to maximum PCIe switch bandwidth";
     NIXL_TRACE << "=====================================";
 }
 
@@ -287,7 +306,8 @@ nixlLibfabricTopology::getTopologyString() const {
     ss << "Libfabric Topology: ";
     ss << "AWS_Accelerators=" << num_aws_accel << ", ";
     ss << "NUMA=" << num_numa_nodes << ", ";
-    ss << "EFA=" << num_devices << ", ";
+    ss << "Provider=" << getProviderDeviceLabel(provider_name) << ", ";
+    ss << "Devices=" << num_devices << ", ";
     ss << "Discovered=" << (topology_discovered ? "Yes" : "No");
     return ss.str();
 }
@@ -316,7 +336,7 @@ nixlLibfabricTopology::initHwlocTopology() {
         return NIXL_ERR_BACKEND;
     }
 
-    // Enable I/O device discovery - this is the key to seeing EFA devices!
+    // Enable I/O device discovery - this is the key to seeing provider devices!
 #if (HWLOC_API_VERSION >= 0x00020000)
     enum hwloc_type_filter_e filter = HWLOC_TYPE_FILTER_KEEP_ALL;
     ret = hwloc_topology_set_io_types_filter(hwloc_topology, filter);
@@ -373,7 +393,7 @@ nixlLibfabricTopology::discoverHwlocTopology() {
         NIXL_ERROR << "hwloc topology not initialized";
         return NIXL_ERR_BACKEND;
     }
-    // Discover accelerators and EFA devices using hwloc
+    // Discover accelerators and provider devices using hwloc
     nixl_status_t status = discoverAccelWithHwloc();
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to discover accelerators with hwloc";
@@ -381,7 +401,8 @@ nixlLibfabricTopology::discoverHwlocTopology() {
     }
     status = discoverEfaDevicesWithHwloc();
     if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to discover EFA devices with hwloc";
+        NIXL_ERROR << "Failed to discover " << getProviderDeviceLabel(provider_name)
+                   << " devices with hwloc";
         return status;
     }
     // Discover NUMA topology
@@ -447,23 +468,28 @@ nixlLibfabricTopology::discoverAccelWithHwloc() {
 
 nixl_status_t
 nixlLibfabricTopology::discoverEfaDevicesWithHwloc() {
-    // EFA devices are already discovered via libfabric
-    // This method validates the hwloc discovery matches libfabric discovery
-    int hwloc_efa_count = 0;
+    // Provider devices are already discovered via libfabric.
+    // This method validates the hwloc discovery matches the mapped provider devices.
+    int hwloc_provider_count = 0;
     hwloc_obj_t pci_obj = nullptr;
     while ((pci_obj = hwloc_get_next_pcidev(hwloc_topology, pci_obj)) != nullptr) {
-        if (isEfaDevice(pci_obj)) {
-            hwloc_efa_count++;
-            NIXL_TRACE << "Found EFA device via hwloc: " << getPcieAddressFromHwlocObj(pci_obj);
+        const std::string pcie_addr = getPcieAddressFromHwlocObj(pci_obj);
+        if (!pcie_addr.empty() &&
+            pcie_to_libfabric_map.find(pcie_addr) != pcie_to_libfabric_map.end()) {
+            hwloc_provider_count++;
+            NIXL_TRACE << "Found " << getProviderDeviceLabel(provider_name)
+                       << " device via hwloc: " << pcie_addr;
         }
     }
 
-    NIXL_TRACE << "hwloc found " << hwloc_efa_count << " EFA devices, libfabric found "
+    NIXL_TRACE << "hwloc found " << hwloc_provider_count << " "
+               << getProviderDeviceLabel(provider_name) << " devices, libfabric found "
                << num_devices;
 
-    if (hwloc_efa_count != num_devices) {
-        NIXL_DEBUG << "Mismatch between hwloc (" << hwloc_efa_count << ") and libfabric ("
-                   << num_devices << ") EFA device counts";
+    if (hwloc_provider_count != num_devices) {
+        NIXL_DEBUG << "Mismatch between hwloc (" << hwloc_provider_count << ") and libfabric ("
+                   << num_devices << ") " << getProviderDeviceLabel(provider_name)
+                   << " device counts";
     }
 
     return NIXL_SUCCESS;
@@ -474,7 +500,7 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
     pcie_to_libfabric_map.clear();
     libfabric_to_pcie_map.clear();
 
-    // Get EFA device info with PCIe addresses from libfabric
+    // Get provider device info with PCIe addresses from libfabric
     struct fi_info *hints, *info;
 
     hints = fi_allocinfo();
@@ -483,8 +509,13 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
         return NIXL_ERR_BACKEND;
     }
 
-    // Configure hints for the discovered provider
-    // This ensures consistency between device discovery and PCIe mapping
+    // Configure hints for the discovered provider.
+    // This ensures consistency between device discovery and PCIe mapping.
+    hints->caps = FI_MSG | FI_RMA;
+    hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
+    hints->mode = FI_CONTEXT;
+    hints->ep_attr->type = FI_EP_RDM;
+    hints->domain_attr->mr_mode = ~3;
     hints->fabric_attr->prov_name = strdup(provider_name.c_str());
 
     int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
@@ -533,6 +564,13 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
 
     fi_freeinfo(info);
     fi_freeinfo(hints);
+
+    if (libfabric_to_pcie_map.size() != all_devices.size()) {
+        NIXL_ERROR << "Mapped only " << libfabric_to_pcie_map.size() << " of " << all_devices.size()
+                   << " " << getProviderDeviceLabel(provider_name) << " devices to PCIe addresses";
+        return NIXL_ERR_BACKEND;
+    }
+
     NIXL_TRACE << "Built PCIe to Libfabric mapping for " << pcie_to_libfabric_map.size()
                << " devices using provider " << provider_name;
     return NIXL_SUCCESS;
@@ -541,15 +579,15 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
 nixl_status_t
 nixlLibfabricTopology::buildAccelToEfaMapping() {
     pci_to_efa_devices.clear();
-    // Implement NIXL's topology-aware accelerator-EFA grouping algorithm
+    // Implement NIXL's topology-aware accelerator-provider grouping algorithm
     nixl_status_t status = buildTopologyAwareGrouping();
     if (status != NIXL_SUCCESS) {
         NIXL_WARN << "Topology-aware grouping failed, using fallback to use all available devices";
         return buildFallbackMapping();
     }
 
-    NIXL_TRACE << "Built PCI→EFA mapping for " << pci_to_efa_devices.size()
-               << " accelerators using topology-aware algorithm";
+    NIXL_TRACE << "Built PCI→" << getProviderDeviceLabel(provider_name) << " mapping for "
+               << pci_to_efa_devices.size() << " accelerators using topology-aware algorithm";
 
     return NIXL_SUCCESS;
 }
@@ -591,7 +629,7 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
     if (status != NIXL_SUCCESS) {
         return status;
     }
-    // Step 4: Convert groups to Accelerator→EFA mapping
+    // Step 4: Convert groups to Accelerator→provider mapping
     for (size_t group_idx = 0; group_idx < nic_groups.size(); ++group_idx) {
         const auto &group = nic_groups[group_idx];
         if (group.has_accel) {
@@ -618,9 +656,12 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
                 pci_to_efa_devices[pci_bus_id] = accel_efa_devices;
 
                 NIXL_TRACE << "PCI " << pci_bus_id << " (Accelerator " << accel_index << ") → "
-                           << accel_efa_devices.size() << " EFA devices: [";
+                           << accel_efa_devices.size() << " "
+                           << getProviderDeviceLabel(provider_name) << " devices: [";
                 for (size_t i = 0; i < accel_efa_devices.size(); ++i) {
-                    if (i > 0) NIXL_TRACE << ", ";
+                    if (i > 0) {
+                        NIXL_TRACE << ", ";
+                    }
                     NIXL_TRACE << accel_efa_devices[i];
                 }
                 NIXL_TRACE << "]";
@@ -684,7 +725,8 @@ nixlLibfabricTopology::buildFallbackMapping() {
     // Fallback: if specific mapping failed, use simple approach
     // We can't build PCI-based mapping without topology, so just return success
     // getEfaDevicesForPci() will return all_devices when no mapping is found
-    NIXL_WARN << "Using fallback: all accelerators will use all available EFA devices";
+    NIXL_WARN << "Using fallback: all accelerators will use all available "
+              << getProviderDeviceLabel(provider_name) << " devices";
     return NIXL_SUCCESS;
 }
 
@@ -905,8 +947,9 @@ nixlLibfabricTopology::collectNicInfo(NicInfo &nic,
         nic.parent_switch_bus_id = UINT8_MAX;
     }
     nic_info_map.insert(NicInfoMap::value_type(name, nic));
-    NIXL_DEBUG << "EFA device " << name << " mapped to NUMA node " << nic.numa_node_id
-               << " (PCIe address " << pcie_addr << ", speed: " << nic.line_speed
+    NIXL_DEBUG << getProviderDeviceLabel(provider_name) << " device " << name
+               << " mapped to NUMA node " << nic.numa_node_id << " (PCIe address " << pcie_addr
+               << ", speed: " << nic.line_speed
                << " Gbps, upstream link speed: " << nic.upstream_link_speed
                << " Gbps, parent switch domain/bus-id: " << nic.parent_switch_domain << "/"
                << nic.parent_switch_bus_id << ")";
@@ -1226,7 +1269,9 @@ nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered
         if (num_groups > 0 && !accel.empty()) {
             // Sort NICs by bus ID for consistent assignment
             std::sort(nics.begin(), nics.end(), [](const NicInfo &a, const NicInfo &b) {
-                if (a.bus_id != b.bus_id) return a.bus_id < b.bus_id;
+                if (a.bus_id != b.bus_id) {
+                    return a.bus_id < b.bus_id;
+                }
                 return a.device_id < b.device_id;
             });
 
