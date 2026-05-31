@@ -81,8 +81,8 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
     const auto warp_id = thread_id / 32, lane_id = get_lane_id();
     const auto num_sms = static_cast<int>(gridDim.x);
     const auto num_warps = num_warp_groups * num_warps_per_group;
-    const auto num_local_experts = num_experts_per_rank;
-    const auto active_expert_bound = active_rank_bound * num_local_experts;
+    const int num_local_experts = num_experts_per_rank;
+    const int active_expert_bound = active_rank_bound * num_local_experts;
     const auto warp_group_id = warp_id / num_warps_per_group;
     const auto sub_warp_id = warp_id % num_warps_per_group;
     const auto responsible_expert_idx = sm_id * num_warp_groups + warp_group_id;
@@ -628,8 +628,8 @@ combine(void* combined_x,
     const auto thread_id = static_cast<int>(threadIdx.x);
     const auto num_threads = __shfl_sync(0xffffffff, static_cast<int>(blockDim.x), 0);
     const auto warp_id = __shfl_sync(0xffffffff, thread_id / 32, 0), lane_id = get_lane_id();
-    const auto num_local_experts = num_experts_per_rank;
-    const auto active_expert_bound = active_rank_bound * num_local_experts;
+    const int num_local_experts = num_experts_per_rank;
+    const int active_expert_bound = active_rank_bound * num_local_experts;
     const auto warp_group_id = warp_id / num_warps_per_group;
     const auto sub_warp_id = warp_id % num_warps_per_group;
     const auto responsible_expert_idx = sm_id * num_warp_groups + warp_group_id;

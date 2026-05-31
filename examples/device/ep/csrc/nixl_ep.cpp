@@ -88,7 +88,6 @@ Buffer::Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int tim
         comm_stream(at::cuda::getStreamFromPool(true)) {}
 
 bool Buffer::_is_rank_connected(int rank_id) const {
-    EP_HOST_ASSERT(rank_id >= 0 and rank_id < max_num_ranks);
     return rank_id == rank or std::find(remote_ranks.begin(), remote_ranks.end(), rank_id) != remote_ranks.end();
 }
 
@@ -104,6 +103,9 @@ void Buffer::_refresh_active_rank_bound() {
 
 void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes, int64_t num_rdma_bytes)
 {
+    EP_HOST_ASSERT(num_ranks > 0);
+    EP_HOST_ASSERT(num_experts_per_rank > 0);
+
     // Update buffer attributes
     this->max_num_ranks = num_ranks;
     this->num_experts_per_rank = num_experts_per_rank;
@@ -175,7 +177,6 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
         *moe_recv_rdma_counter = -1;
     }
 
-    EP_HOST_ASSERT(num_experts_per_rank > 0);
     m_rdma_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_rdma_bytes));
     rdma_buffer_ptr = m_rdma_alloc->ptr();
     CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
@@ -188,7 +189,7 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
     active_ranks.assign(max_num_ranks, false);
     active_ranks[rank] = true;
-    _refresh_active_rank_bound();
+    active_rank_bound = rank + 1;
 
     int num_sync_buffer_bytes = max_num_ranks * sizeof(int);
     m_sync_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes));
@@ -565,7 +566,6 @@ Buffer::get_dispatch_layout(const torch::Tensor& topk_idx, int num_experts,
 
     auto num_tokens = static_cast<int>(topk_idx.size(0)), num_topk = static_cast<int>(topk_idx.size(1));
     const int num_ranks = max_num_ranks;
-    EP_HOST_ASSERT(num_ranks > 0);
     auto num_tokens_per_rank = torch::empty({num_ranks}, dtype(torch::kInt32).device(torch::kCUDA));
     auto num_tokens_per_rdma_rank = std::optional<torch::Tensor>();
     auto num_tokens_per_expert = torch::empty({num_experts}, dtype(torch::kInt32).device(torch::kCUDA));
@@ -617,7 +617,6 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
                            int expert_alignment, const Config& config, std::optional<EventHandle>& previous_event, bool async, bool allocate_on_comm_stream) {
     EP_HOST_ASSERT(!low_latency_mode && "ht_dispatch() requires high-throughput mode (low_latency_mode=false)");
     const int num_ranks = max_num_ranks;
-    EP_HOST_ASSERT(num_ranks > 0);
     // In dispatch, CPU will busy-wait until GPU receive tensor size metadata from other ranks, which can be quite long.
     // If users of DeepEP need to execute other Python code on other threads, such as KV transfer, their code will get stuck due to GIL
     // unless we release GIL here.
@@ -900,7 +899,6 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
                           const Config& config, std::optional<EventHandle>& previous_event, bool async, bool allocate_on_comm_stream) {
     EP_HOST_ASSERT(!low_latency_mode && "ht_combine() requires high-throughput mode (low_latency_mode=false)");
     const int num_ranks = max_num_ranks;
-    EP_HOST_ASSERT(num_ranks > 0);
     const int num_channels = config.num_sms / 2;
     EP_HOST_ASSERT(config.num_sms % 2 == 0);
 
