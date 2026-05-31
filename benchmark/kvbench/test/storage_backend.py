@@ -549,19 +549,21 @@ class FilesystemBackend(StorageBackend):
 
     def close(self):
         """Close all files and deregister from NIXL."""
-        # Deregister from NIXL
-        for file_path, reg_descs in self._file_reg_descs.items():
+        # Deregister from NIXL. Failures here are not fatal — we still need
+        # to release the file descriptors below — but we log them at debug
+        # level so they're recoverable when investigating a cleanup issue.
+        for reg_descs in self._file_reg_descs.values():
             try:
                 self._agent.deregister_memory(reg_descs, backends=[self._nixl_backend])
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("deregister_memory failed during close: %s", exc)
 
         # Close file descriptors
-        for file_path, fd in self._file_descriptors.items():
+        for fd in self._file_descriptors.values():
             try:
                 os.close(fd)
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("os.close(fd=%d) failed during close: %s", fd, exc)
 
         self._handles.clear()
         self._file_descriptors.clear()
