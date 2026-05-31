@@ -30,6 +30,40 @@ NIXL KVBench provides two main categories of functionality:
 1. **KVBench Commands**: Test KV cache transfers across various LLM architectures with different access patterns (block and layer approaches)
 2. **CTP Commands**: Custom Traffic Performance Testing for measuring asymmetric traffic patterns using transfer matrices
 
+### Design Philosophy
+
+KVBench is a **generic multi-rank benchmark framework** that separates concerns:
+
+| Component | Role | Example |
+|-----------|------|---------|
+| **Workload Generators** | Create YAML configs for specific applications | `matgen` (LLM workloads) |
+| **KVBench Framework** | Execute any valid YAML with RDMA + Storage + Compute | `sequential-ct-perftest` |
+| **Storage Backends** | Pluggable I/O implementations | POSIX, GDS, GDS_MT |
+
+This design allows:
+- **Portable configs**: YAML specifies "what" (bytes), not "where" (paths)
+- **Multiple workload types**: LLM inference, database patterns, custom scenarios
+- **Backend flexibility**: Choose storage backend at runtime via CLI
+
+KVBench simulates real application workloads combining:
+- Storage I/O (read/write per rank)
+- Network transfers (RDMA)
+- Compute simulation (sleep)
+
+### Execution Flow Per Traffic Pattern
+
+```text
+Each Rank (per traffic pattern):
+  ┌─────────────────────────────────────┐
+  │ 1. COMPUTE (sleep)                  │  Simulate reduced compute time
+  │ 2. STORAGE READ (blocking)          │  Read cached data from file
+  │ 3. RDMA TRANSFER (blocking)         │  Send/receive data to other ranks
+  │ 4. STORAGE WRITE (blocking)         │  Write new KV cache to file
+  └─────────────────────────────────────┘
+```
+
+Each operation is timed independently.
+
 ## Supported LLM Architectures
 - DeepSeek R1
 - LLama 3.1
@@ -156,6 +190,14 @@ Specific to CTP (Custom Traffic Performance) commands:
 | `--verify-buffers / --no-verify-buffers` | Verify buffer contents after transfer (default: False) |
 | `--print-recv-buffers / --no-print-recv-buffers` | Print received buffer contents (default: False) |
 | `--json-output-path` | Path to save JSON output (sequential-ct-perftest only) |
+| `--storage-backend` | Storage backend: POSIX, GDS, GDS_MT (default: POSIX) |
+| `--storage-path` | Base path for storage files (default: `<config_dir>/storage`) |
+| `--storage-direct-io / --no-storage-direct-io` | Enable O_DIRECT for storage I/O (auto-enabled for GDS) |
+| `--storage-block-size` | Split storage I/O into fixed-size blocks (e.g. `1M`) so io_uring/AIO can pipeline requests. `0` = no splitting. |
+| `--storage-posix-api` | POSIX async API: `auto`, `aio`, or `uring`. Use `uring` for highest NFS/VAST throughput. |
+| `--storage-num-handles` | Number of concurrent transfer handles per storage op. Recommended: `8` together with `--storage-block-size 1M --storage-posix-api uring`. |
+| `--warmup-iters` | Warmup iterations per traffic pattern (default: 30) |
+| `--isolation-iters` | Isolation-benchmark iterations per traffic pattern (default: 10) |
 
 ## Command Descriptions
 
@@ -315,25 +357,44 @@ traffic_pattern:
 **Sequential CT Perftest Configuration** (multiple traffic patterns):
 ```yaml
 traffic_patterns:
-- matrix_file: /path/to/matrices/matrix_0.txt
-  metadata:
-    isl: 38328
-  sleep_after_launch_sec: 16.480753057792
-- matrix_file: /path/to/matrices/matrix_1.txt
-  metadata:
-    isl: 25034
-  sleep_after_launch_sec: 71.875102179328
+  # RDMA only (no storage)
+  - matrix_file: /path/to/matrices/matrix_0.txt
+    mem_type: cuda
+    sleep_before_launch_sec: 0.01
+    metadata:
+      description: "RDMA transfer only"
+
+  # RDMA + Storage (75% cache hit)
+  - matrix_file: /path/to/matrices/matrix_1.txt
+    mem_type: cpu
+    sleep_before_launch_sec: 0.005
+    storage:
+      read:  [1572864, 1572864, 0, 0]  # Ranks 0,1 read 1.5MB each
+      write: [524288, 524288, 0, 0]    # Ranks 0,1 write 0.5MB each
+    metadata:
+      prefix_hit_rate: 0.75
+
+  # Storage only (no RDMA) - matrix_file is optional
+  - mem_type: cpu
+    storage:
+      read:  [1M, 1M, 1M, 1M, 1M, 1M, 1M, 1M]   # All 8 ranks read 1MB
+      write: [1M, 1M, 1M, 1M, 1M, 1M, 1M, 1M]   # All 8 ranks write 1MB
 ```
 
 **Traffic Pattern Parameters**:
-- `matrix_file`: File containing the transfer matrix (required)
-- `shards`: Number of chunks to shard the buffer into (default: 1)
-- `mem_type`: Memory type, currently supports "cuda" (default: "cuda") (Use `CUDA_VISIBLE_DEVICES` to control the GPU device)
-- `xfer_op`: Transfer operation, "READ" or "WRITE" (default: "WRITE")
-- `sleep_after_launch_sec`: Seconds to sleep before running pattern (default: 0)
+- `tp_file`: Unified TP file with `[rdma]`, `[read]`, `[write]` sections — preferred when both RDMA and storage are exercised by the same pattern. Mutually exclusive with `matrix_file`/`matrix` and the inline `storage:` block.
+- `matrix_file`: File containing the RDMA transfer matrix (legacy, optional — omit for storage-only).
+- `matrix`: Inline RDMA matrix as 2D array (alternative to `matrix_file`).
+- `mem_type`: Memory type — `"cuda"`, `"vram"`, `"cpu"`, `"dram"` (required).
+- `sleep_before_launch_sec`: Seconds to sleep (compute simulation) before RDMA (default: 0).
+- `storage`: Per-rank storage requirements when using the legacy split format.
+- `storage.read`: Array of read sizes per rank (index = rank, use 0 to skip).
+- `storage.write`: Array of write sizes per rank (index = rank, use 0 to skip).
+- `metadata`: Arbitrary metadata (informational, not used by kvbench).
+- `shards`: Number of chunks to shard the buffer into (default: 1).
 
-**Matrix File Format**:
-Matrix cells are separated by whitespaces and contain either bytes as integers or standard units (K, M, G).
+**RDMA Matrix File Format**:
+Matrix cells are separated by whitespace and contain either bytes as integers or sizes with a `K`/`M`/`G` suffix.
 
 Example matrix file:
 ```
@@ -343,9 +404,36 @@ Example matrix file:
 0 0 0 5K
 ```
 
+**Unified TP File Format** (combined RDMA + Storage):
+
+A single text file describes the RDMA matrix, the per-rank storage reads, and the per-rank storage writes for one traffic pattern. Each section is optional, so the same file format covers RDMA-only, storage-only, and mixed patterns. Files without any `[section]` header are parsed as a legacy RDMA-only matrix (backward compatible).
+
+```text
+[rdma]
+0 710M 0 0
+0 0 0 0
+
+[read]
+710M 710M 0 0
+
+[write]
+710M 710M 0 0
+```
+
+Reference it from YAML with `tp_file`:
+
+```yaml
+traffic_patterns:
+  - tp_file: tps/tp_0.tp
+    mem_type: cpu
+```
+
+`inference_workload_matgen.py` emits this format alongside the legacy `matrix_file` + inline `storage:` block, so generated workloads stay compatible with older runners.
+
 #### Generate Traffic Pattern Matrices
 
 Optionally, generate matrices using the inference workload matrix generation tool:
+
 ```bash
 python test/inference_workload_matgen.py generate \
     --num-user-requests 10 \
@@ -374,6 +462,21 @@ python main.py sequential-ct-perftest ./config.yaml
 python main.py sequential-ct-perftest ./config.yaml \
     --verify-buffers \
     --json-output-path ./results.json
+
+# With storage simulation (use matgen with --prefix-hit-rate)
+python test/inference_workload_matgen.py generate \
+    --model llama-405b --prefix-hit-rate 0.75 --results-dir ./workload
+python main.py sequential-ct-perftest ./workload/metadata.yaml \
+    --storage-backend POSIX \
+    --storage-path /tmp/kvbench_storage
+
+# Tuned for NFS/VAST POSIX throughput
+python main.py sequential-ct-perftest ./workload/metadata.yaml \
+    --storage-backend POSIX \
+    --storage-path /mnt/vast/kvbench \
+    --storage-posix-api uring \
+    --storage-block-size 1M \
+    --storage-num-handles 8
 
 # With debug logging
 python main.py --debug sequential-ct-perftest ./config.yaml \
@@ -420,8 +523,10 @@ python main.py --debug ct-perftest ./config.yaml \
 - [ ] Support more memory types beyond CUDA
 - [ ] Optimize transfer preparation performance
 
-## Developer Guides
-For more detailed information, please refer to the following documentation:
+## Documentation Quick Reference
+
+### Developer Guides
+
 - [Tutorial with GDS](docs/tutorial-gds.md) - Quick tutorial for running NIXLBench with GDS
 - [Creating a Model Configuration](docs/creating-a-model-config.md) - Guide for creating model configuration files
 - [Adding a New Model Architecture](docs/adding-a-new-model-architecture.md) - Instructions for extending KVBench with new model architectures
