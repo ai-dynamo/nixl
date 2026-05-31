@@ -186,7 +186,6 @@
         scm:
             - git:
                 url: "{jjb_git}"
-                credentials-id: 'svc-nixl-ssh_key'
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -248,7 +247,6 @@
         scm:
             - git:
                 url: "{jjb_git}"
-                credentials-id: 'svc-nixl-ssh_key'
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -310,7 +308,6 @@
         scm:
             - git:
                 url: "{jjb_git}"
-                credentials-id: 'svc-nixl-ssh_key'
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -414,11 +411,10 @@
       scm:
         - git:
             url: "{jjb_git}"
-            credentials-id: "svc-nixl-ssh_key"
             branches: ['$NIXL_VERSION']
             shallow-clone: false
             do-not-fetch-tags: false
-            refspec: "{jjb_gh_refspec}"
+            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/remotes/origin/tags/* +$NIXL_VERSION:refs/remotes/origin/$NIXL_VERSION"
             browser: githubweb
             browser-url: "{jjb_git}"
             submodule:
@@ -471,7 +467,6 @@
         scm:
             - git:
                 url: "{jjb_git}"
-                credentials-id: 'swx-jenkins_ssh_key'
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -492,11 +487,11 @@
 - project:
     name: nixl
     jjb_proj: 'nixl-ci'           # Project prefix for job names
-    jjb_git: 'git@github.com:ai-dynamo/nixl.git'  # Repository URL
+    jjb_git: 'https://github.com/ai-dynamo/nixl.git'  # Repository URL
     jjb_jenkinsfile: '.ci/jenkins/pipeline/Jenkinsfile'  # Main pipeline definition
     jjb_branch: 'main'            # Default branch
     jjb_gh_url: 'https://github.com/ai-dynamo/nixl'  # GitHub web URL
-    jjb_gh_refspec: '+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/* +refs/tags/*:refs/remotes/origin/tags/*'
+    jjb_gh_refspec: '+refs/heads/*:refs/remotes/origin/* +$sha1:refs/remotes/origin/$sha1'
     jobs:
         - "{jjb_proj}-dispatcher"  # Create dispatcher job
         - "{jjb_proj}-non-gpu"       # Create non-gpu job
