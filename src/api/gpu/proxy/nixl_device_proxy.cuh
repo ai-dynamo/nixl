@@ -80,6 +80,8 @@ static_assert(sizeof(*nixlProxyWorkRing{}.producer_idx) == 8,
               "producer_idx must be 64-bit to avoid wrap-around false completions");
 static_assert(sizeof(*nixlProxyWorkRing{}.consumer_idx) == 8,
               "consumer_idx must be 64-bit to match producer_idx");
+static_assert(sizeof(*nixlProxyWorkRing{}.consumer_idx_cache) == 8,
+              "consumer_idx_cache must be 64-bit to match producer_idx");
 static_assert(sizeof(nixlProxyCompletionSlot::completed_idx) == 8,
               "completed_idx must be 64-bit to match producer_idx");
 
@@ -117,7 +119,8 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
     //
     // producer_idx lives in device memory and only needs device-scope atomicity.
     // consumer_idx lives in pinned host memory (accessible from device via
-    // UVA mapped pointer), so full-ring polling uses system-scope atomics.
+    // UVA mapped pointer). The device cache keeps the non-full path from
+    // repeatedly touching host memory.
     __device__ inline nixl_status_t
     enqueue(nixlProxySubmission submission, nixlGpuXferStatusH *xfer_status = nullptr) {
         if (submission.channel_id >= num_channels) {
@@ -135,9 +138,14 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
         // Atomically claim a unique slot in the ring.
         const uint64_t ticket = producer_idx.fetch_add(1, cuda::memory_order_relaxed);
 
-        // Spin until the claimed slot has space (consumer has freed it).
-        while (ticket - cons.load(cuda::memory_order_acquire) >= ring->depth) {
-            if (shut.load(cuda::memory_order_acquire)
+        // Fast path: use the device cache. Refresh from host only if the ring
+        // appears full, since mapped-host loads are much slower than HBM loads.
+        uint64_t cached_consumer_idx = *ring->consumer_idx_cache;
+        while (ticket - cached_consumer_idx >= ring->depth) {
+            cached_consumer_idx = cons.load(cuda::memory_order_acquire);
+            *ring->consumer_idx_cache = cached_consumer_idx;
+
+            if (shut.load(cuda::memory_order_relaxed)
                 == static_cast<uint32_t>(nixl_proxy_control_state_t::SHUTDOWN)) {
                 return NIXL_ERR_BACKEND;
             }

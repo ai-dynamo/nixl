@@ -60,6 +60,8 @@ struct nixlProxyWorkRing {
     uint64_t *producer_idx = nullptr;
     /** Mapped pinned consumer; host proxy uses __atomic_* on host alias (nixlProxyChannelState). */
     uint64_t *consumer_idx = nullptr;
+    /** Device-resident cached consumer index; GPU refreshes from consumer_idx only when full. */
+    uint64_t *consumer_idx_cache = nullptr;
     /** The depth of the work ring. */
     uint32_t depth = 0;
 };
