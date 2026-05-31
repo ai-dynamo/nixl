@@ -28,6 +28,14 @@ from .rt_base import ReduceOp, _RTUtils
 
 logger = get_logger(__name__)
 
+# Poll interval for the wait-until-key-present loops below. The value is a
+# trade-off: too low and we hammer etcd between retries; too high and we add
+# latency to every barrier/allgather/alltoall/all_reduce. 50ms keeps the QPS
+# per waiter well below etcd's per-client default while staying small enough
+# that a typical world-size of <=1024 ranks adds only a few seconds of
+# slack on the slowest path. Not aimed at context-switching — pure backoff.
+_POLL_INTERVAL_SEC = 0.05
+
 
 def int_to_bytes(val: int) -> bytes:
     return val.to_bytes(length=4, byteorder="big")
@@ -105,7 +113,7 @@ class _EtcdDistUtils(_RTUtils):
                     raise TimeoutError(
                         f"[Rank {self.rank}] Timeout waiting for rank 0 init after {init_timeout_sec}s"
                     )
-                time.sleep(0.05)
+                time.sleep(_POLL_INTERVAL_SEC)
             logger.info("Rank %d: rank 0 ready, proceeding", self.rank)
 
     def destroy_dist(self):
@@ -168,7 +176,7 @@ class _EtcdDistUtils(_RTUtils):
                         f"Waiting for rank {waiting_for_rank} to enter barrier."
                     )
             # Fan out - wait for root to set 0 again
-            while not self._get_int_val(key) == 0:
+            while self._get_int_val(key) != 0:
                 if timeout_sec and time.time() - start_time > timeout_sec:
                     current_val = self._get_int_val(key) or 0
                     missing_ranks = (
@@ -211,7 +219,7 @@ class _EtcdDistUtils(_RTUtils):
                     raise TimeoutError(
                         f"[Rank {self.rank}] allgather_obj timeout waiting for rank {dest_rank} after {timeout_sec}s"
                     )
-                time.sleep(0.05)
+                time.sleep(_POLL_INTERVAL_SEC)
                 val = self.client.get(key)[0]
             result[dest_rank] = pickle.loads(val)
 
@@ -242,7 +250,7 @@ class _EtcdDistUtils(_RTUtils):
                     raise TimeoutError(
                         f"[Rank {self.rank}] alltoall_obj timeout waiting for rank {src_rank} after {timeout_sec}s"
                     )
-                time.sleep(0.05)
+                time.sleep(_POLL_INTERVAL_SEC)
                 val = self.client.get(key)[0]
             result[src_rank] = pickle.loads(val)
 
@@ -271,19 +279,23 @@ class _EtcdDistUtils(_RTUtils):
                         raise TimeoutError(
                             f"[Rank {self.rank}] all_reduce timeout waiting for rank {dest_rank} after {timeout_sec}s"
                         )
-                    time.sleep(0.05)
+                    time.sleep(_POLL_INTERVAL_SEC)
                     val = self.client.get(f"{self.prefix}/all_reduce/{dest_rank}")[0]
                 all_vals.append(pickle.loads(val))
 
             logger.debug("All reduce values: %s", all_vals)
+            # strict=True so a per-rank list-length mismatch fails loudly
+            # instead of silently truncating.
             if op == ReduceOp.SUM:
-                final_val = [sum(col) for col in zip(*all_vals)]
+                final_val = [sum(col) for col in zip(*all_vals, strict=True)]
             elif op == ReduceOp.AVG:
-                final_val = [sum(col) / self.world_size for col in zip(*all_vals)]
+                final_val = [
+                    sum(col) / self.world_size for col in zip(*all_vals, strict=True)
+                ]
             elif op == ReduceOp.MIN:
-                final_val = [min(col) for col in zip(*all_vals)]
+                final_val = [min(col) for col in zip(*all_vals, strict=True)]
             elif op == ReduceOp.MAX:
-                final_val = [max(col) for col in zip(*all_vals)]
+                final_val = [max(col) for col in zip(*all_vals, strict=True)]
             else:
                 raise ValueError(f"Unsupported reduce operation: {op}")
 
@@ -298,7 +310,7 @@ class _EtcdDistUtils(_RTUtils):
                 raise TimeoutError(
                     f"[Rank {self.rank}] all_reduce timeout waiting for result after {timeout_sec}s"
                 )
-            time.sleep(0.05)
+            time.sleep(_POLL_INTERVAL_SEC)
             val = self.client.get(f"{self.prefix}/all_reduce/result")[0]
         final_val = pickle.loads(val)
 
