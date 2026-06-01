@@ -72,6 +72,10 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
 
             void init(nixlBackendH* backend) {
                 m_params = { .backends = {backend} };
+                // Each testXfer call reuses the fixture's Agent and may call
+                // init() multiple times. Reset m_dlist so a second init() does
+                // not register the same memory range twice.
+                m_dlist.clear();
                 nixl::fillRegList(m_dlist, m_desc, m_data);
             }
 
