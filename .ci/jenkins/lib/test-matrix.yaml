@@ -123,7 +123,9 @@ steps:
       extraArgs: [
         "--gres=${SLURM_GRES}",
         "--mincpus=${SLURM_MINCPUS}",
-        "--mem=${SLURM_MEM}"
+        "--mem=${SLURM_MEM}",
+        "--nodelist=mizu03",
+        "--reservation=BF3_tests"
       ]
 
   - name: Run CPP tests

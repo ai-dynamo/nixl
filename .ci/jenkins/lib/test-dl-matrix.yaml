@@ -115,7 +115,14 @@ steps:
     module: slurmCI
     run: allocation
     args:
-      partition: "${SLURM_PARTITION}"
+      partition: [
+        "gb300nvl72_ci",
+        "gb200nvl72_ci"
+      ]
+      account: [
+        'blackwell-ci',
+        'oberon-gb-ci'
+      ]
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       nodes: "${SLURM_NODES}"
@@ -124,9 +131,6 @@ steps:
       jobName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
       credentialsId: "${SSH_CREDENTIALS_ID}"
-      extraArgs: [
-        "--account=${SLURM_ACCOUNT}"
-      ]
 
   - name: Run DL Python tests
     containerSelector: "{name: 'build_helper_dl'}"
