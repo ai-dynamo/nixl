@@ -358,6 +358,11 @@ nixlLibfabricRailManager::shouldUseStriping(size_t transfer_size) const {
     return transfer_size >= striping_threshold_;
 }
 
+size_t
+nixlLibfabricRailManager::reserveBaseOffset() {
+    return round_robin_counter.fetch_add(1);
+}
+
 nixl_status_t
 nixlLibfabricRailManager::prepareAndSubmitTransfer(
     nixlLibfabricReq::OpType op_type,
@@ -373,7 +378,10 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     uint16_t agent_idx,
     uint16_t xfer_id,
     std::function<void()> completion_callback,
-    size_t &submitted_count_out) {
+    size_t &submitted_count_out,
+    int desc_idx,
+    int desc_count,
+    size_t base_offset) {
     // Initialize output parameter
     submitted_count_out = 0;
 
@@ -386,11 +394,19 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     bool use_striping = shouldUseStriping(transfer_size) && selected_rails.size() > 1;
     NIXL_DEBUG << "use_striping=" << use_striping;
     if (!use_striping) {
-        // Round-robin: use one rail for entire transfer
-        const auto counter_value = round_robin_counter.fetch_add(1);
-        const size_t rail_id = selected_rails[counter_value % selected_rails.size()];
+        // WRITE: group 16 consecutive descs to same rail for FI_MORE batching.
+        // READ: per-descriptor round-robin (FI_MORE has no benefit for reads).
+        constexpr int FI_MORE_BATCH_SIZE = 16;
+        const bool batch_write = (op_type == nixlLibfabricReq::WRITE);
+        const size_t rr_idx =
+            batch_write ? (base_offset + desc_idx / FI_MORE_BATCH_SIZE) : (base_offset + desc_idx);
+        const size_t rail_id = selected_rails[rr_idx % selected_rails.size()];
         const size_t remote_ep_id =
-            remote_selected_endpoints[counter_value % remote_selected_endpoints.size()];
+            remote_selected_endpoints[rr_idx % remote_selected_endpoints.size()];
+        const int pos_in_group = desc_idx % FI_MORE_BATCH_SIZE;
+        const bool is_last_in_group =
+            (pos_in_group == FI_MORE_BATCH_SIZE - 1) || (desc_idx == desc_count - 1);
+        const uint64_t fi_flags = (batch_write && !is_last_in_group) ? FI_MORE : 0;
         NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
         nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
@@ -432,7 +448,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                                 dest_addrs.at(rail_id)[remote_ep_id],
                                                 req->remote_addr,
                                                 req->remote_key,
-                                                req);
+                                                req,
+                                                fi_flags);
         } else {
             status = rails_[rail_id]->postRead(req->local_addr,
                                                req->chunk_size,
@@ -458,7 +475,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                    << transfer_size << " bytes, XFER_ID=" << req->xfer_id;
 
     } else {
-        // Striping: distribute across multiple rails
+        // Striping: distribute across multiple rails (no FI_MORE for striped transfers)
+        uint64_t fi_flags = 0;
         size_t num_rails = selected_rails.size();
         size_t chunk_size = transfer_size / num_rails;
         size_t remainder = transfer_size % num_rails;
@@ -512,7 +530,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                                     dest_addrs.at(rail_id)[remote_ep_id],
                                                     req->remote_addr,
                                                     req->remote_key,
-                                                    req);
+                                                    req,
+                                                    fi_flags);
             } else {
                 status = rails_[rail_id]->postRead(req->local_addr,
                                                    req->chunk_size,

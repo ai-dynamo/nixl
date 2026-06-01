@@ -314,7 +314,8 @@ public:
               fi_addr_t dest_addr,
               uint64_t remote_addr,
               uint64_t remote_key,
-              nixlLibfabricReq *req) const;
+              nixlLibfabricReq *req,
+              uint64_t fi_flags = 0) const;
 
     /** Post RDMA read operation */
     nixl_status_t
