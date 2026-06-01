@@ -1,16 +1,21 @@
 name: stg-nixl build
 
 # Staging end-to-end BUILD test for the nixl runners (velonix PR #459).
-# Build-only: compiles the wheel image (which builds the Python wheels) and runs
-# cargo on the Rust crates, all on the stg-nixl runner. No ECR push / no Artifactory
-# upload, so it needs no extra secrets. Dispatch + PR triggered so it runs from the
-# feature branch. Delete once the nixl runners are validated.
+# Three jobs validate, on the stg-nixl runners:
+#   build-stg      - x86 build-nixl (NGC base), wheels + crates, no push (fast proof)
+#   manylinux-amd  - x86 manylinux build (GitLab dgx/cuda base) + PUSH to ECR
+#                    -> exercises GITLAB_REGISTRY_* pull + NIXL_ECR_IMAGE push (IRSA)
+#   build-arm      - aarch64 build-nixl on the ARM runner
+# Dispatch + PR triggered so it runs from the feature branch. Delete once validated.
 on:
   workflow_dispatch:
   pull_request:
 
 permissions:
   contents: read
+
+env:
+  IMAGE_BASE: ${{ vars.NIXL_ECR_IMAGE }}
 
 jobs:
   build-stg:
@@ -61,3 +66,86 @@ jobs:
           path: dist/*.whl
           if-no-files-found: warn
           retention-days: 1
+
+  manylinux-amd:
+    runs-on: stg-nixl-builder-amd-v1
+    timeout-minutes: 90
+    env:
+      GITLAB_REGISTRY_USER: ${{ secrets.GITLAB_REGISTRY_USER }}
+      GITLAB_REGISTRY_TOKEN: ${{ secrets.GITLAB_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Log in to GitLab registry
+        if: ${{ env.GITLAB_REGISTRY_TOKEN != '' }}
+        run: |
+          echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 \
+            -u "$GITLAB_REGISTRY_USER" --password-stdin
+
+      - name: Build manylinux image and push to ECR
+        run: |
+          set -e
+          IMAGE="${IMAGE_BASE}:stg-manylinux-${{ github.run_id }}"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          chmod +x contrib/build-container.sh
+          bash contrib/build-container.sh \
+            --base-image "gitlab-master.nvidia.com:5005/dl/dgx/cuda" \
+            --base-image-tag "12.9-devel-manylinux--25.06" \
+            --wheel-base "manylinux_2_28" \
+            --python-versions "3.12" \
+            --tag "$IMAGE" \
+            --os "ubuntu24" \
+            --arch "x86_64" \
+            --dockerfile "contrib/Dockerfile.manylinux"
+          docker push "$IMAGE"
+
+      - name: List built wheels
+        run: |
+          set -e
+          CN=nixl-stg-ml-extract-${{ github.run_id }}
+          docker rm -f "$CN" || true
+          docker create --name "$CN" "$IMAGE"
+          docker cp "$CN:/workspace/nixl/dist" ./dist || true
+          docker rm -f "$CN" || true
+          echo "=== manylinux wheels ==="
+          ls -la dist/*.whl
+
+  build-arm:
+    runs-on: stg-nixl-builder-arm-v1
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build NIXL wheel image (aarch64, no push)
+        run: |
+          set -e
+          IMAGE=nixl-stg-arm-test:${{ github.run_id }}
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          chmod +x contrib/build-container.sh
+          bash contrib/build-container.sh \
+            --base-image "nvcr.io/nvidia/cuda-dl-base" \
+            --base-image-tag "25.06-cuda12.9-devel-ubuntu24.04" \
+            --wheel-base "manylinux_2_39" \
+            --python-versions "3.12" \
+            --tag "$IMAGE" \
+            --os "ubuntu24" \
+            --arch "aarch64" \
+            --dockerfile "contrib/Dockerfile"
+
+      - name: List built wheels
+        run: |
+          set -e
+          CN=nixl-stg-arm-extract-${{ github.run_id }}
+          docker rm -f "$CN" || true
+          docker create --name "$CN" "$IMAGE"
+          docker cp "$CN:/workspace/nixl/dist" ./dist || true
+          docker rm -f "$CN" || true
+          echo "=== arm wheels ==="
+          ls -la dist/*.whl
