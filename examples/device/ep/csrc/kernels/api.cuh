@@ -211,10 +211,6 @@ void combine(cudaDataType_t type,
 
 // EP kernels
 namespace ep_kernels {
-void clean_buffer(int* clean_0, int num_clean_int_0,
-                              int* clean_1, int num_clean_int_1,
-                              int rank, int num_ranks, int* mask_buffer, int* sync_buffer,
-                              cudaStream_t stream);
 
 void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               int* packed_recv_src_info, int64_t* packed_recv_layout_range,

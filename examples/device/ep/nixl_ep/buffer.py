@@ -324,20 +324,6 @@ class Buffer:
             EventOverlap(event),
         )
 
-    def clean_buffer(
-        self, num_max_dispatch_tokens_per_rank: int, hidden: int, num_experts: int
-    ) -> None:
-        """
-        As the kernels require part of the buffer to be zero-initialized, so it is vital to clean the buffer
-            if the buffer is dirty at some time.
-
-        Arguments:
-            num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
-            hidden: the hidden dimension of each token.
-            num_experts: the number of all experts.
-        """
-        self.runtime.clean_buffer(num_max_dispatch_tokens_per_rank, hidden, num_experts)
-
     # noinspection PyTypeChecker
     def low_latency_dispatch(
         self,
