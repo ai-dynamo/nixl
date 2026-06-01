@@ -310,7 +310,10 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --without-gdrcopy           \
-         --with-efa &&               \
+         --with-efa                  \
+         --without-dc                \
+         --without-rdmacm            \
+         --without-gga &&            \
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig
