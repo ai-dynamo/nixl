@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.1.0',
+project('nixl', 'CPP', version: '1.2.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++17',
@@ -79,6 +79,17 @@ dl_dep = cpp.find_library('dl', required: true)
 rt_dep = cpp.find_library('rt', required: true)
 thread_dep = dependency('threads')
 
+# Forced to ignore this error due to:
+# https://github.com/abseil/abseil-cpp/issues/1779
+# This must be global since subprojects cannot be assigned with arguments.
+# Adding this configuration only for release build to consider it while developing.
+# NOTE: Must be declared before any subproject fallback that builds a target
+# (e.g. liburing wrap), because Meson forbids add_global_arguments after targets.
+if get_option('buildtype') == 'release'
+  abseil_flags = cpp.get_supported_arguments('-Wno-error=maybe-uninitialized', '-Wno-maybe-uninitialized')
+  add_global_arguments(abseil_flags, language: 'cpp')
+endif
+
 # Check for libaio (for LINUX AIO plugin and test)
 has_linux_aio = false
 linux_aio_dep = cpp.find_library('aio', required: false)
@@ -88,9 +99,22 @@ endif
 
 # Check for liburing
 has_io_uring = false
-io_uring_dep = dependency('liburing', required: false)
+io_uring_dep = dependency('liburing', required: false,
+                          fallback: ['liburing'],
+                          default_options: ['default_library=shared'])
 if io_uring_dep.found()
-    has_io_uring = cpp.has_function('io_uring_queue_init_params', prefix: '#include <liburing.h>',  dependencies: [io_uring_dep])
+  if io_uring_dep.type_name() == 'internal'
+    # Internal (subproject) deps cannot be passed to compiler checks in meson
+    # < 1.5.  Retrieve the include dirs from the already-configured subproject
+    # and probe the header directly.
+    liburing_subproj = subproject('liburing')
+    has_io_uring = cpp.has_header_symbol('liburing.h', 'io_uring_queue_init_params',
+                                         include_directories: liburing_subproj.get_variable('inc'))
+  else
+    has_io_uring = cpp.has_function('io_uring_queue_init_params',
+                                    prefix: '#include <liburing.h>',
+                                    dependencies: [io_uring_dep])
+  endif
 endif
 
 # Check for POSIX aio
@@ -103,15 +127,6 @@ has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 cuobj_dep = dependency('cuobjclient-13.1', required: false)
 if cuobj_dep.found()
     add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
-endif
-
-# Forced to ignore this error due to:
-# https://github.com/abseil/abseil-cpp/issues/1779
-# This must be global since subprojects cannot be assigned with arguments.
-# Adding this configuration only for release build to consider it while developing.
-if get_option('buildtype') == 'release'
-  abseil_flags = cpp.get_supported_arguments('-Wno-error=maybe-uninitialized', '-Wno-maybe-uninitialized')
-  add_global_arguments(abseil_flags, language: 'cpp')
 endif
 
 # Search for Abseil dependencies in the system first
@@ -195,27 +210,57 @@ if cuda_dep.found()
     cuda = import('unstable-cuda')
     nvcc = meson.get_compiler('cuda')
 
-    # Please extend with your arch if not present in the list
-    nvcc_flags = []
-    # nixl ep cannot be built with sm_80
-    if not get_option('build_nixl_ep')
-        nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
+    cuda_arch_list = get_option('nixl_cuda_arch_list').strip()
+    if cuda_arch_list == 'auto'
+        if get_option('build_nixl_ep')
+            cuda_arch_list = '90,100,103,120'
+        else
+            cuda_arch_list = '80,86,89,90,100,103,120'
+        endif
     endif
-    nvcc_flags += ['-gencode', 'arch=compute_90,code=sm_90']
+
+    nvcc_flags = []
+    nvcc_flags_link = []
+    nvcc_ptx_arch_num = 0
+    selected_cuda_archs = []
+    foreach cuda_arch : cuda_arch_list.split(',')
+        cuda_arch = cuda_arch.strip()
+        if cuda_arch == ''
+            continue
+        endif
+        if cuda_arch.startswith('sm_')
+            cuda_arch = cuda_arch.replace('sm_', '')
+        endif
+
+        cuda_arch_num = cuda_arch.to_int()
+        if cuda_arch_num > nvcc_ptx_arch_num
+            nvcc_ptx_arch_num = cuda_arch_num
+        endif
+
+        cuda_compute_arch = 'compute_' + cuda_arch
+        cuda_sm_arch = 'sm_' + cuda_arch
+        nvcc_flags += ['-gencode', 'arch=' + cuda_compute_arch + ',code=' + cuda_sm_arch]
+        nvcc_flags_link += ['-gencode=arch=' + cuda_compute_arch + ',code=' + cuda_sm_arch]
+        selected_cuda_archs += [cuda_sm_arch]
+    endforeach
+
+    if selected_cuda_archs.length() == 0
+        error('No CUDA targets selected')
+    endif
+
+    nvcc_ptx_arch = 'compute_' + nvcc_ptx_arch_num.to_string()
+    nvcc_flags += ['-gencode', 'arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch]
+    nvcc_flags_link += ['-gencode=arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch]
+
     add_project_arguments(nvcc_flags, language: 'cuda')
 
     # Refer to https://mesonbuild.com/Cuda-module.html
     add_project_arguments('-forward-unknown-to-host-compiler', language: 'cuda')
     add_project_arguments('-rdc=true', language: 'cuda')
 
-    nvcc_flags_link = []
-    # nixl ep cannot be built with sm_80
-    if not get_option('build_nixl_ep')
-        nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
-    endif
-    nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
     message('nvcc version: ' + nvcc.version())
+    message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
     if nvcc.version().version_compare('>=12.8')
         doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
