@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# DeepSeek-V4-Pro architecture (1.6T total / 49B activated, 1M context).
+
+model_name: 'DEEPSEEK_V4_PRO'
+
+num_hidden_layers: 61
+num_nextn_predict_layers: 1
+
+num_query_heads: 128
+num_key_value_heads: 1
+kv_head_dim: 512
+kv_rope_dim: 64
+embedding_dimension: 7168
+
+# Sliding-window branch size: n_win uncompressed KV entries on every CSA/HCA
+# layer, and the MTP layer itself runs pure sliding window.
+sliding_window: 128
+
+# Hybrid attention interleaving. Length = num_hidden_layers + num_nextn_predict_layers.
+# r=4   → CSA (Compressed Sparse Attention, with lightning indexer)
+# r=128 → HCA (Heavily Compressed Attention, no indexer)
+# r=0   → MTP layer, pure sliding-window
+compress_ratios: [128, 128, 4, 128, 4, 128, 4, 128, 4, 128, 4, 128, 4, 128, 4,
+                  128, 4, 128, 4, 128, 4, 128, 4, 128, 4, 128, 4, 128, 4, 128,
+                  4, 128, 4, 128, 4, 128, 4, 128, 4, 128, 4, 128, 4, 128, 4,
+                  128, 4, 128, 4, 128, 4, 128, 4, 128, 4, 128, 4, 128, 4, 128,
+                  4, 0]
+
+# DSA lightning indexer. Cached on CSA layers only, compressed at the same
+# m=4 ratio. Storage precision is set via index_quant_mode in the runtime
+# config (StrategyConfig).
+index_head_dim: 128
+index_n_heads: 64
+index_topk: 1024
+
+num_model_params: 1600000000000
