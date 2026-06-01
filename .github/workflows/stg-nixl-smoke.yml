@@ -5,7 +5,12 @@ name: stg-nixl smoke
 # nixl runners are validated and staging is handed back. Targets the stg-* runner
 # scale sets, which only exist while aws-ci-stg is pinned to the nixl branch.
 on:
+  # workflow_dispatch only shows in the Actions UI once the file is on the default
+  # branch. While validating from the feature branch, also run on push to it.
   workflow_dispatch:
+  push:
+    branches:
+      - nmailhot/nixl-ci-runners
 
 permissions:
   contents: read
