@@ -210,6 +210,19 @@ TEST_F(MDManagerFixture, UnregisterUnknownPeerIsOk) {
     EXPECT_EQ(a.mdm->unregisterMDPeer("never_registered"), NIXL_SUCCESS);
 }
 
+TEST_F(MDManagerFixture, ReRegisterSameAddressIsIdempotent) {
+    auto &a = agents_[0];
+    EXPECT_EQ(a.mdm->registerMDPeer("peer", "127.0.0.1", 1234), NIXL_SUCCESS);
+    EXPECT_EQ(a.mdm->registerMDPeer("peer", "127.0.0.1", 1234), NIXL_SUCCESS);
+}
+
+TEST_F(MDManagerFixture, ReRegisterDifferentAddressIsRejected) {
+    auto &a = agents_[0];
+    EXPECT_EQ(a.mdm->registerMDPeer("peer", "127.0.0.1", 1234), NIXL_SUCCESS);
+    EXPECT_EQ(a.mdm->registerMDPeer("peer", "127.0.0.1", 5678), NIXL_ERR_NOT_ALLOWED);
+    EXPECT_EQ(a.mdm->registerMDPeer("peer", "10.0.0.1", 1234), NIXL_ERR_NOT_ALLOWED);
+}
+
 TEST_F(MDManagerFixture, NetworkOpsRequireRegistration) {
     auto &a = agents_[0];
     EXPECT_EQ(a.mdm->sendLocalMD("unregistered_peer"), NIXL_ERR_NOT_FOUND);

@@ -68,9 +68,8 @@ class nixlAgentData {
         const nixlAgentConfig config_;
         const bool useEtcd_;
         const bool needsCommThread_;
-        // Opt-in gate for the metadata manager (NIXL_MD_MANAGER env var).
-        const bool mdManagerEnabled_;
-        std::mutex mdManagerMutex_;
+        // Constructed in the nixlAgent ctor when NIXL_MD_MANAGER is set;
+        // null (and getMDManager reports NIXL_ERR_NOT_SUPPORTED) otherwise.
         std::unique_ptr<nixlMDManager> mdManager_;
         nixlLock        lock;
         bool telemetryEnabled = false;
