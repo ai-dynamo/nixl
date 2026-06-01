@@ -184,11 +184,10 @@ TEST_F(telemetryTest, TransferBytesTracking) {
 }
 
 TEST_F(telemetryTest, TelemetryEventStructure) {
-    nixlTelemetryEvent event1(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-                              nixl_telemetry_event_type_t::AGENT_TX_BYTES,
-                              42);
+    nixlTelemetryEvent event1(nixl_telemetry_event_type_t::AGENT_TX_BYTES, 42);
 
-    EXPECT_EQ(event1.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
+    EXPECT_EQ(TELEMETRY_VERSION, 3);
+    EXPECT_EQ(sizeof(nixlTelemetryEvent), 16);
     EXPECT_EQ(event1.value_, 42);
     EXPECT_EQ(event1.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
 }
@@ -233,20 +232,6 @@ TEST_F(telemetryTest, CustomTelemetryDirectory) {
         EXPECT_TRUE(fs::exists(file_path));
     });
     envHelper_.popVar();
-}
-
-TEST_F(telemetryTest, TelemetryCategoryStringConversion) {
-    for (int i = 0; i < static_cast<int>(nixl_telemetry_category_t::NIXL_TELEMETRY_CUSTOM) + 1;
-         ++i) {
-        auto category = static_cast<nixl_telemetry_category_t>(i);
-        std::string category_str = nixlEnumStrings::telemetryCategoryStr(category);
-        EXPECT_FALSE(category_str.empty());
-        EXPECT_NE(category_str, "BAD_CATEGORY");
-    }
-
-    auto invalid_category = static_cast<nixl_telemetry_category_t>(999);
-    std::string invalid_str = nixlEnumStrings::telemetryCategoryStr(invalid_category);
-    EXPECT_EQ(invalid_str, "BAD_CATEGORY");
 }
 
 // Test concurrent access (basic thread safety)
@@ -316,11 +301,9 @@ TEST_F(telemetryTest, TelemetryAgentEventsOne) {
     nixlTelemetryEvent event;
     buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
-    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
 
     buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_RX_BYTES);
-    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
 
     envHelper_.popVar();
 }
@@ -347,11 +330,9 @@ TEST_F(telemetryTest, TelemetryAgentEventsTwo) {
     nixlTelemetryEvent event;
     buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
-    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
 
     buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_ERR_BACKEND);
-    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR);
 
     envHelper_.popVar();
 }

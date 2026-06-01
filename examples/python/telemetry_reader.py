@@ -33,18 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants from telemetry_event.h
-TELEMETRY_VERSION = 2
-
-# NIXL telemetry categories
-NIXL_TELEMETRY_MEMORY = 0
-NIXL_TELEMETRY_TRANSFER = 1
-NIXL_TELEMETRY_CONNECTION = 2
-NIXL_TELEMETRY_BACKEND = 3
-NIXL_TELEMETRY_ERROR = 4
-NIXL_TELEMETRY_PERFORMANCE = 5
-NIXL_TELEMETRY_SYSTEM = 6
-NIXL_TELEMETRY_CUSTOM = 7
-NIXL_TELEMETRY_MAX = 8
+TELEMETRY_VERSION = 3
 
 # NIXL telemetry event types (nixl_telemetry_event_type_t)
 AGENT_TX_BYTES = 0
@@ -85,9 +74,8 @@ class NixlTelemetryEvent(ctypes.Structure):
 
     _pack_ = 1
     _fields_ = [
-        ("category", ctypes.c_int),
-        ("event_type", ctypes.c_uint8),
-        ("_padding", ctypes.c_char * 3),
+        ("event_type", ctypes.c_uint32),
+        ("_padding", ctypes.c_char * 4),
         ("value", ctypes.c_uint64),
     ]
 
@@ -230,17 +218,6 @@ def format_bytes(bytes_val):
     return f"{value:.2f} {units[unit_index]}"
 
 
-_CATEGORY_STRINGS = {
-    NIXL_TELEMETRY_MEMORY: "MEMORY",
-    NIXL_TELEMETRY_TRANSFER: "TRANSFER",
-    NIXL_TELEMETRY_CONNECTION: "CONNECTION",
-    NIXL_TELEMETRY_BACKEND: "BACKEND",
-    NIXL_TELEMETRY_ERROR: "ERROR",
-    NIXL_TELEMETRY_PERFORMANCE: "PERFORMANCE",
-    NIXL_TELEMETRY_SYSTEM: "SYSTEM",
-    NIXL_TELEMETRY_CUSTOM: "CUSTOM",
-}
-
 _EVENT_TYPE_STRINGS = {
     AGENT_TX_BYTES: "agent_tx_bytes",
     AGENT_RX_BYTES: "agent_rx_bytes",
@@ -265,11 +242,6 @@ _EVENT_TYPE_STRINGS = {
 }
 
 
-def get_telemetry_category_string(category):
-    """Get string representation of telemetry category"""
-    return _CATEGORY_STRINGS.get(category, f"UNKNOWN_CATEGORY_{category}")
-
-
 def get_telemetry_event_type_string(event_type):
     """Get string representation of telemetry event type enum"""
     return _EVENT_TYPE_STRINGS.get(event_type, f"unknown_event_{event_type}")
@@ -280,9 +252,7 @@ def print_telemetry_event(event):
     logger.info("\n=== NIXL Telemetry Event ===")
 
     event_name = get_telemetry_event_type_string(event.event_type)
-    category_str = get_telemetry_category_string(event.category)
 
-    logger.info("Category: %s", category_str)
     logger.info("Event: %s", event_name)
     logger.info("Value: %s", event.value)
     logger.info("===========================")

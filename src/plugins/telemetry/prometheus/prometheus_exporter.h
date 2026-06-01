@@ -105,10 +105,10 @@ private:
     initializeMetrics();
 
     void
-    registerCounter(const std::string &name, const std::string &help, const std::string &category);
+    registerCounter(const std::string &name, const std::string &help);
 
     void
-    registerGauge(const std::string &name, const std::string &help, const std::string &category);
+    registerGauge(const std::string &name, const std::string &help);
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H
