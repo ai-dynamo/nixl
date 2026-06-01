@@ -32,6 +32,8 @@
 
 namespace {
 
+constexpr std::string_view ubuntu_ca_bundle = "/etc/ssl/certs/ca-certificates.crt";
+
 std::string
 getAccountUrl(nixl_b_params_t *custom_params) {
     if (custom_params) {
@@ -88,10 +90,9 @@ getCaBundle(nixl_b_params_t *custom_params) {
     // correct location on Ubuntu. This is a workaround to make sure we check for Ubuntu certs
     // before falling back to libcurl's default location. In the future, we can remove this check if
     // we find a way to build libcurl to search for certs in a more cross-distro compatible way.
-    const std::string ubuntu_ca_bundle = "/etc/ssl/certs/ca-certificates.crt";
     if (std::filesystem::exists(ubuntu_ca_bundle)) {
         NIXL_INFO << "Using detected CA bundle at: " << ubuntu_ca_bundle;
-        return ubuntu_ca_bundle;
+        return std::string(ubuntu_ca_bundle);
     }
 
     return "";
