@@ -38,7 +38,7 @@ if doca_found
         'doca_plugin.cpp',
         'doca_exporter.cpp',
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
-        dependencies: [nixl_infra, absl_log_dep, doca_dep],
+        dependencies: [nixl_infra, nixl_common_dep, absl_log_dep, doca_dep],
         install: true,
         install_dir: plugin_install_dir,
         name_prefix: '',
