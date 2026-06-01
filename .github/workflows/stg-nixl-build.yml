@@ -1,0 +1,63 @@
+name: stg-nixl build
+
+# Staging end-to-end BUILD test for the nixl runners (velonix PR #459).
+# Build-only: compiles the wheel image (which builds the Python wheels) and runs
+# cargo on the Rust crates, all on the stg-nixl runner. No ECR push / no Artifactory
+# upload, so it needs no extra secrets. Dispatch + PR triggered so it runs from the
+# feature branch. Delete once the nixl runners are validated.
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-stg:
+    runs-on: stg-nixl-builder-amd-v1
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build NIXL wheel image (no push)
+        run: |
+          set -e
+          IMAGE=nixl-stg-test:${{ github.run_id }}
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          chmod +x contrib/build-container.sh
+          bash contrib/build-container.sh \
+            --base-image "nvcr.io/nvidia/cuda-dl-base" \
+            --base-image-tag "25.06-cuda12.9-devel-ubuntu24.04" \
+            --wheel-base "manylinux_2_39" \
+            --python-versions "3.12" \
+            --tag "$IMAGE" \
+            --os "ubuntu24" \
+            --arch "x86_64" \
+            --dockerfile "contrib/Dockerfile"
+
+      - name: List built wheels
+        run: |
+          set -e
+          CN=nixl-stg-extract-${{ github.run_id }}
+          docker rm -f "$CN" || true
+          docker create --name "$CN" "$IMAGE"
+          docker cp "$CN:/workspace/nixl/dist" ./dist || true
+          docker rm -f "$CN" || true
+          echo "=== built wheels ==="
+          ls -la dist/*.whl
+
+      - name: Build crates (cargo check)
+        run: |
+          set -e
+          docker run --rm -w /workspace/nixl "$IMAGE" /bin/bash -c "
+            grep '^version = ' Cargo.toml &&
+            cargo check --manifest-path src/bindings/rust/Cargo.toml"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stg-nixl-wheels
+          path: dist/*.whl
+          if-no-files-found: warn
+          retention-days: 1
