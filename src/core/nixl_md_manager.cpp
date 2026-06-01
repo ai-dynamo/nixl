@@ -32,7 +32,7 @@ makePeerArgs(const std::string &ip, std::uint16_t port, const nixl_opt_args_t *b
 
 bool
 nixlMDManager::lookupPeer(const std::string &agent_name, Peer &out) const {
-    std::lock_guard<std::mutex> lk(mu_);
+    std::lock_guard<std::mutex> lk(mutex_);
     auto it = peers_.find(agent_name);
     if (it == peers_.end()) {
         return false;
@@ -52,7 +52,15 @@ nixlMDManager::registerMDPeer(const std::string &agent_name,
     // nixl_opt_args_t::port default.
     const std::uint16_t resolved_port =
         (port == 0) ? static_cast<std::uint16_t>(default_comm_port) : port;
-    std::lock_guard<std::mutex> lk(mu_);
+    std::lock_guard<std::mutex> lk(mutex_);
+    // Same address is idempotent; rebinding a name is rejected (unregister first).
+    const auto it = peers_.find(agent_name);
+    if (it != peers_.end()) {
+        if (it->second.ip == ip && it->second.port == resolved_port) {
+            return NIXL_SUCCESS;
+        }
+        return NIXL_ERR_NOT_ALLOWED;
+    }
     peers_[agent_name] = Peer{ip, resolved_port};
     return NIXL_SUCCESS;
 }
@@ -72,7 +80,7 @@ nixlMDManager::unregisterMDPeer(const std::string &agent_name) {
     }
     // Compare-then-erase: guard against a concurrent registerMDPeer
     // having replaced the entry while invalidate was in flight.
-    std::lock_guard<std::mutex> lk(mu_);
+    std::lock_guard<std::mutex> lk(mutex_);
     auto it = peers_.find(agent_name);
     if (it != peers_.end() && it->second.ip == peer.ip && it->second.port == peer.port) {
         peers_.erase(it);
@@ -86,6 +94,11 @@ nixlMDManager::sendLocalMD(const std::string &agent_name) const {
     if (!lookupPeer(agent_name, peer)) {
         return NIXL_ERR_NOT_FOUND;
     }
+    // lookupPeer copies {ip, port}, so the lock is released before the call
+    // below. A concurrent unregister/re-register can change the registry in
+    // this gap; we intentionally use the snapshot rather than hold the lock
+    // across a network call. Worst case the send targets the just-removed
+    // address, which is acceptable.
     const auto args = makePeerArgs(peer.ip, peer.port);
     return agent_.sendLocalMD(&args);
 }

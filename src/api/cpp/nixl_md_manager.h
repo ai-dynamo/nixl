@@ -44,23 +44,31 @@ enum class nixl_md_backend_t {
  * @class nixlMDManager
  * @brief Name-based, P2P-only wrapper over nixlAgent's metadata APIs.
  *
- * Construction is owned by nixlAgent (via nixlAgent::getMDManager()). The
- * manager stores a per-name {ip, port} registry; each name-keyed call
- * resolves the peer and delegates to the matching nixlAgent method with
- * extra_params.ipAddr / extra_params.port populated. No new threads, no
- * new sockets, no new state in nixlAgent.
+ * The owning nixlAgent constructs the manager when NIXL_MD_MANAGER is set
+ * and hands it out via nixlAgent::getMDManager(). The manager stores a
+ * per-name {ip, port} registry; each name-keyed call resolves the peer and
+ * delegates to the matching nixlAgent method with extra_params.ipAddr /
+ * extra_params.port populated. No new threads, no new sockets, no new state
+ * in nixlAgent.
  */
 class nixlMDManager {
 public:
+    explicit nixlMDManager(nixlAgent &agent) noexcept : agent_(agent) {}
+
     /**
      * @brief Register a P2P peer's reachable address.
+     *
+     * Re-registering the same {ip, port} is a no-op; rebinding a name to a
+     * different address is rejected (unregisterMDPeer first).
      *
      * @param agent_name Logical agent name.
      * @param ip         IPv4 dotted-decimal address.
      * @param port       TCP port the peer listens on. `0` is treated as
      *                   `default_comm_port`.
-     * @return nixl_status_t NIXL_SUCCESS, or NIXL_ERR_INVALID_PARAM if
-     *                   `agent_name` or `ip` is empty.
+     * @return nixl_status_t NIXL_SUCCESS (new or identical registration);
+     *                   NIXL_ERR_INVALID_PARAM if `agent_name` or `ip` is
+     *                   empty; NIXL_ERR_NOT_ALLOWED if `agent_name` is
+     *                   already registered to a different address.
      */
     [[nodiscard]] nixl_status_t
     registerMDPeer(const std::string &agent_name, const std::string &ip, std::uint16_t port);
@@ -166,9 +174,6 @@ public:
     operator=(const nixlMDManager &) = delete;
 
 private:
-    explicit nixlMDManager(nixlAgent &agent) noexcept : agent_(agent) {}
-    friend class nixlAgent;
-
     struct Peer {
         std::string ip;
         std::uint16_t port;
@@ -178,7 +183,7 @@ private:
     lookupPeer(const std::string &agent_name, Peer &out) const;
 
     nixlAgent &agent_;
-    mutable std::mutex mu_;
+    mutable std::mutex mutex_;
     std::unordered_map<std::string, Peer> peers_;
 };
 

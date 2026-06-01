@@ -567,10 +567,10 @@ class nixlAgent {
          * @brief  Opt-in accessor for the name-keyed metadata manager.
          *
          * Returns NIXL_ERR_NOT_SUPPORTED when the NIXL_MD_MANAGER environment
-         * variable is unset. When enabled, the returned pointer is owned by
-         * the agent; do not delete it. `out` is set to `nullptr` on the
-         * disabled path. Non-const because the first call constructs the
-         * manager lazily.
+         * variable was unset at agent construction. When enabled, the manager
+         * is built in the agent ctor and the returned pointer is owned by the
+         * agent; do not delete it. `out` is set to `nullptr` on the disabled
+         * path.
          *
          * @param  out [out]     Pointer to the agent-owned nixlMDManager,
          *                       or `nullptr` if the manager is disabled.
