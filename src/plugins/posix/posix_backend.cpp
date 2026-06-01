@@ -69,7 +69,7 @@ castPosixHandle(nixlBackendReqH *handle) {
     if (!handle) {
         throw nixlPosixBackendReqH::exception("received null handle", NIXL_ERR_INVALID_PARAM);
     }
-    return *static_cast<nixlPosixBackendReqH *>(handle);
+    return static_cast<nixlPosixBackendReqH &>(*handle);
 }
 
 static std::string_view
@@ -343,10 +343,7 @@ nixlPosixEngine::checkXfer(nixlBackendReqH *handle) const {
 
 nixl_status_t
 nixlPosixEngine::releaseReqH(nixlBackendReqH *handle) const {
-    if (!handle) {
-        return NIXL_SUCCESS;
-    }
-
+    NIXL_ASSERT(handle != nullptr);
     delete handle;
     return NIXL_SUCCESS;
 }
