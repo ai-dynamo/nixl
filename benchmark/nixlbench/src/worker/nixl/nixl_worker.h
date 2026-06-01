@@ -28,6 +28,7 @@
 #include <nixl.h>
 #include "utils/utils.h"
 #include "worker/worker.h"
+#include <random>
 
 struct xferFileState {
     int fd;
@@ -91,6 +92,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
         cleanupBasicDescBlk(xferBenchIOV &basic_desc);
         bool
         ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
-};
+        std::random_device rd_;
+        std::mt19937 default_rng_;
+    };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H
