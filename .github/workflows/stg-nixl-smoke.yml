@@ -1,0 +1,36 @@
+name: stg-nixl smoke
+
+# Throwaway smoke test for the staging nixl runners (velonix PR #459 staging
+# validation). Dispatch-only — never runs automatically. Safe to delete once the
+# nixl runners are validated and staging is handed back. Targets the stg-* runner
+# scale sets, which only exist while aws-ci-stg is pinned to the nixl branch.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-amd:
+    runs-on: stg-nixl-builder-amd-v1
+    steps:
+      - name: Runner is up
+        run: |
+          echo "arch: $(uname -m)"
+          echo "user: $(whoami)"
+      - name: Docker (dind sidecar) works
+        run: docker info
+      - name: IRSA -> ECR auth works
+        uses: aws-actions/amazon-ecr-login@v2
+
+  smoke-arm:
+    runs-on: stg-nixl-builder-arm-v1
+    steps:
+      - name: Runner is up
+        run: |
+          echo "arch: $(uname -m)"
+          echo "user: $(whoami)"
+      - name: Docker (dind sidecar) works
+        run: docker info
+      - name: IRSA -> ECR auth works
+        uses: aws-actions/amazon-ecr-login@v2
