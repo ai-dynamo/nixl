@@ -99,7 +99,9 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
 }
 
 xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
-    : xferBenchWorker() {
+    : xferBenchWorker(),
+      rd_(),
+      default_rng_(rd_()) {
     seg_type = GET_SEG_TYPE(isInitiator());
 
     int rank;
@@ -793,7 +795,9 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
         write_ptr += rc;
     }
 
-    if (end_offset > fstate.file_size) fstate.file_size = end_offset;
+    if (end_offset > fstate.file_size) {
+        fstate.file_size = end_offset;
+    }
 
     return ret;
 }
@@ -866,7 +870,9 @@ xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t
 bool
 xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size) {
     int flags = O_RDWR | O_CREAT | O_LARGEFILE;
-    if (xferBenchConfig::storage_enable_direct) flags |= O_DIRECT;
+    if (xferBenchConfig::storage_enable_direct) {
+        flags |= O_DIRECT;
+    }
 
     int fd = open(device.device_path.c_str(), flags, 0744);
     if (fd < 0) {
@@ -1064,7 +1070,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     iov_list.push_back(basic_desc.value());
                 }
                 file_idx += 1;
-                if (file_idx >= num_files) file_idx = 0;
+                if (file_idx >= num_files) {
+                    file_idx = 0;
+                }
             }
             nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, FILE_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
@@ -1241,14 +1249,34 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     remote_iov_list.push_back(iov_remote);
                     fd_idx++;
                     if (fd_idx >= remote_fds.size()) {
+                        if (xferBenchConfig::randomize_location_mode ==
+                            XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
+                            int loopCount =
+                                (local_iovs.size() * iov_list.size() / remote_fds.size()) - 1;
+                            file_offset = default_rng_() % loopCount * block_size;
+                            std::cout << "File offset: " << file_offset << std::endl;
+                        } else {
+                            file_offset += block_size;
+                        }
                         file_offset += block_size;
                         fd_idx = 0;
                     }
                 }
             }
+
+            if (xferBenchConfig::randomize_location_mode ==
+                XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED) {
+                std::shuffle(remote_iov_list.begin(), remote_iov_list.end(), default_rng_);
+            }
+
             res.push_back(remote_iov_list);
             if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
-                file_offset += block_size;
+                if (xferBenchConfig::randomize_location_mode ==
+                    XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
+                    file_offset = default_rng_() % ((local_iovs.size() - 1) * block_size);
+                } else {
+                    file_offset += block_size;
+                }
             }
         }
     } else {

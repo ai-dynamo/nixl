@@ -480,6 +480,10 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --filepath PATH            # File path for storage operations
 --num_files NUM            # Number of files used by benchmark (default: 1)
 --storage_enable_direct    # Enable direct I/O for storage operations
+--randomize_location_mode MODE    # Controls block location randomization [none, blockaligned, bytealigned] (default: none)
+                                  # blockaligned: randomizes the order of the otherwize sequentially block aligned iov's in the batch, also works on object plugins
+                                  # bytealigned: randomizes the offset per iov up to block size * batch size
+
 ```
 
 #### Backend-Specific Options

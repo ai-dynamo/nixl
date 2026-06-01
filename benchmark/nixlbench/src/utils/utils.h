@@ -141,6 +141,11 @@
 #define XFERBENCH_WORKER_NIXL "nixl"
 #define XFERBENCH_WORKER_NVSHMEM "nvshmem"
 
+// Randomization location modes
+#define XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE "none"
+#define XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED "blockaligned"
+#define XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED "bytealigned"
+
 #define IS_PAIRWISE_AND_SG()                                 \
     (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
      XFERBENCH_MODE_SG == xferBenchConfig::mode)
@@ -177,6 +182,7 @@ public:
     static std::string etcd_endpoints;
     static std::string asio_address; // IPv4
     static uint16_t asio_port;
+    static std::string randomize_location_mode;
     static std::string benchmark_group;
     static std::string filepath;
     static std::string filenames;
