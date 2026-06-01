@@ -90,7 +90,7 @@ getCaBundle(nixl_b_params_t *custom_params) {
     // we find a way to build libcurl to search for certs in a more cross-distro compatible way.
     const std::string ubuntu_ca_bundle = "/etc/ssl/certs/ca-certificates.crt";
     if (std::filesystem::exists(ubuntu_ca_bundle)) {
-        NIXL_DEBUG << "Using detected CA bundle at: " << ubuntu_ca_bundle;
+        NIXL_INFO << "Using detected CA bundle at: " << ubuntu_ca_bundle;
         return ubuntu_ca_bundle;
     }
 
@@ -109,7 +109,6 @@ azureBlobClient::azureBlobClient(nixl_b_params_t *custom_params,
     options.Telemetry.ApplicationId = "azpartner-nixl/0.1.0";
 
     std::string caBundle = ::getCaBundle(custom_params);
-    Azure::Core::Http::CurlTransportOptions curlOptions;
     if (!caBundle.empty()) {
         Azure::Core::Http::CurlTransportOptions curlOptions;
         curlOptions.CAInfo = caBundle;
