@@ -37,8 +37,6 @@
 
 namespace {
 
-const std::string kTransferCategory = "NIXL_TELEMETRY_TRANSFER";
-
 struct PrometheusSample {
     std::unordered_map<std::string, std::string> labels;
     double value = 0;
@@ -152,7 +150,6 @@ bool
 findAgentMetricSample(const std::string &body,
                       const std::string &metric_name,
                       const std::string &agent_name,
-                      const std::string &category,
                       PrometheusSample &sample) {
     std::istringstream body_lines(body);
     std::string line;
@@ -168,10 +165,8 @@ findAgentMetricSample(const std::string &body,
         }
 
         const auto agent_it = labels.find("agent_name");
-        const auto category_it = labels.find("category");
         const auto hostname_it = labels.find("hostname");
         if (agent_it != labels.end() && agent_it->second == agent_name &&
-            category_it != labels.end() && category_it->second == category &&
             hostname_it != labels.end() && !hostname_it->second.empty()) {
             sample.labels = labels;
             sample.value = value;
@@ -278,13 +273,11 @@ TEST_F(prometheusTelemetryTest, AgentMetricsAppearInScrape) {
     EXPECT_NE(body.find("\nagent_memory_deregistered{"), std::string::npos)
         << "Missing agent_memory_deregistered gauge";
 
-    // Each metric must carry the three labels the exporter attaches.
+    // Each metric must carry the two labels the exporter attaches.
     EXPECT_NE(body.find("agent_name=\"" + agent_name + "\""), std::string::npos)
         << "agent_name label missing";
-    EXPECT_NE(body.find("category=\"NIXL_TELEMETRY_TRANSFER\""), std::string::npos);
-    EXPECT_NE(body.find("category=\"NIXL_TELEMETRY_MEMORY\""), std::string::npos);
-    EXPECT_NE(body.find("category=\"NIXL_TELEMETRY_PERFORMANCE\""), std::string::npos);
     EXPECT_NE(body.find("hostname=\""), std::string::npos);
+    EXPECT_EQ(body.find("category=\""), std::string::npos);
 
     const std::string peer_agent_name = "prometheus_test_agent_peer";
     {
@@ -342,9 +335,7 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     constexpr uint64_t kIncrement = 1000;
     constexpr int kEventCount = 5;
     for (int i = 0; i < kEventCount; ++i) {
-        const nixlTelemetryEvent event{nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-                                       nixl_telemetry_event_type_t::AGENT_TX_BYTES,
-                                       kIncrement};
+        const nixlTelemetryEvent event{nixl_telemetry_event_type_t::AGENT_TX_BYTES, kIncrement};
         EXPECT_EQ(exporter->exportEvent(event), NIXL_SUCCESS);
     }
 
@@ -352,14 +343,13 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
 
     PrometheusSample sample;
-    ASSERT_TRUE(
-        findAgentMetricSample(body, "agent_tx_bytes_total", agent_name, kTransferCategory, sample))
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_tx_bytes_total", agent_name, sample))
         << "agent_tx_bytes_total for this agent is not in scrape body.\n"
         << "On buggy code, counters_ map holds a dangling Counter* and "
         << "Family::metrics_ is empty, so Family::Collect() returns {} and "
         << "TextSerializer emits nothing for this family.";
     EXPECT_EQ(sample.labels["agent_name"], agent_name);
-    EXPECT_EQ(sample.labels["category"], kTransferCategory);
+    EXPECT_EQ(sample.labels.find("category"), sample.labels.end());
     EXPECT_FALSE(sample.labels["hostname"].empty());
 
     EXPECT_EQ(sample.value, static_cast<double>(kIncrement * kEventCount))
@@ -367,8 +357,7 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
         << (kIncrement * kEventCount);
 
     PrometheusSample peer_sample;
-    EXPECT_TRUE(findAgentMetricSample(
-        body, "agent_tx_bytes_total", peer_agent_name, kTransferCategory, peer_sample))
+    EXPECT_TRUE(findAgentMetricSample(body, "agent_tx_bytes_total", peer_agent_name, peer_sample))
         << "Missing metrics for peer agent before teardown";
 
     peer_exporter.reset();
@@ -380,7 +369,6 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     ASSERT_TRUE(findAgentMetricSample(after_peer_teardown_body,
                                       "agent_tx_bytes_total",
                                       agent_name,
-                                      kTransferCategory,
                                       remaining_sample))
         << "First agent metrics were removed when peer exporter was destroyed";
     EXPECT_EQ(remaining_sample.value, static_cast<double>(kIncrement * kEventCount));
