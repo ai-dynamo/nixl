@@ -14,12 +14,50 @@
 # limitations under the License.
 
 
-ARG BASE_IMAGE
-ARG BASE_IMAGE_TAG
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
-
-ARG DEFAULT_PYTHON_VERSION="3.14"
+# === Option B (DRAFT, UNVALIDATED) ===========================================
+# Build wheels on the PUBLIC PyPA manylinux_2_28 image and bring CUDA in from a
+# public NGC CUDA image, instead of the internal
+# gitlab-master.nvidia.com:5005/dl/dgx/cuda manylinux image (NOT reachable from
+# the velonix AWS runners — no DNS/PrivateLink). Mirrors dynamo's
+# container/templates/wheel_builder.Dockerfile pattern. Validate on the PR before
+# relying on it (gcc-toolset for CUDA, the CUDA COPY, DOCA el8 rpms).
+# ARCH must be declared before the FROM lines that interpolate it.
 ARG ARCH="x86_64"
+
+# CUDA toolkit provider: a public NGC CUDA *devel* image, el8/ubi8 to match the
+# AlmaLinux-8 manylinux base (e.g. nvcr.io/nvidia/cuda:12.9.1-devel-ubi8).
+# Reachable from the AWS runners; replaces the internal GitLab base image.
+ARG BASE_IMAGE="nvcr.io/nvidia/cuda"
+ARG BASE_IMAGE_TAG
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS cuda
+
+# Manylinux build base — official PyPA image (public on quay.io; velonix also has
+# a quay ECR pull-through). AlmaLinux 8 / glibc 2.28 => manylinux_2_28 wheels.
+FROM quay.io/pypa/manylinux_2_28_${ARCH}
+
+# Re-declare args needed inside this build stage (args before the first FROM are
+# only visible to FROM lines).
+ARG ARCH="x86_64"
+ARG DEFAULT_PYTHON_VERSION="3.14"
+
+# CUDA version (e.g. 12.9 / 13.0) — was provided as an ENV by the old GitLab base;
+# now passed explicitly. Used for the torch cuXXX index and the cu12/cu13 wheel split.
+ARG CUDA_VERSION
+ENV CUDA_VERSION=${CUDA_VERSION}
+
+# Bring the CUDA toolkit onto the manylinux base (dynamo wheel_builder pattern).
+COPY --from=cuda /usr/local/cuda /usr/local/cuda
+ENV CUDA_HOME=/usr/local/cuda \
+    PATH=/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH:-}
+
+# CUDA needs gcc <= 14. The PyPA manylinux base + system "Development Tools" can
+# pull in a gcc that CUDA rejects, so pin gcc-toolset-14 on PATH ahead of the
+# system gcc (same approach as dynamo's wheel_builder). gcc-toolset-14 is added to
+# the dnf install list below.
+ENV PATH=/opt/rh/gcc-toolset-14/root/usr/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/rh/gcc-toolset-14/root/usr/lib64:${LD_LIBRARY_PATH:-}
+# === end Option B header ======================================================
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
@@ -42,6 +80,7 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     gflags \
     glibc-headers \
     gcc-c++ \
+    gcc-toolset-14 \
     libaio \
     libaio-devel \
     libtool-ltdl \

@@ -70,9 +70,6 @@ jobs:
   manylinux-amd:
     runs-on: stg-nixl-builder-amd-v1
     timeout-minutes: 90
-    env:
-      GITLAB_REGISTRY_USER: ${{ secrets.GITLAB_REGISTRY_USER }}
-      GITLAB_REGISTRY_TOKEN: ${{ secrets.GITLAB_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -81,21 +78,20 @@ jobs:
       - name: Log in to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Log in to GitLab registry
-        if: ${{ env.GITLAB_REGISTRY_TOKEN != '' }}
-        run: |
-          echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 \
-            -u "$GITLAB_REGISTRY_USER" --password-stdin
-
+      # Option B: no GitLab login — the manylinux build now uses the public PyPA
+      # manylinux_2_28 base (in Dockerfile.manylinux) and pulls CUDA from a public
+      # NGC image (--base-image below), both reachable from the AWS runners.
       - name: Build manylinux image and push to ECR
         run: |
           set -e
           IMAGE="${IMAGE_BASE}:stg-manylinux-${{ github.run_id }}"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
           chmod +x contrib/build-container.sh
+          # NOTE: confirm this NGC CUDA devel tag exists (nvcr.io/nvidia/cuda el8/ubi8).
           bash contrib/build-container.sh \
-            --base-image "gitlab-master.nvidia.com:5005/dl/dgx/cuda" \
-            --base-image-tag "12.9-devel-manylinux--25.06" \
+            --base-image "nvcr.io/nvidia/cuda" \
+            --base-image-tag "12.9.1-devel-ubi8" \
+            --cuda-version "12.9" \
             --wheel-base "manylinux_2_28" \
             --python-versions "3.12" \
             --tag "$IMAGE" \
