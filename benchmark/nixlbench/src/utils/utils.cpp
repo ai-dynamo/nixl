@@ -544,6 +544,25 @@ xferBenchConfig::loadParams(void) {
         recreate_xfer = true;
     }
 
+    // Validate randomization mode
+    if (isStorageBackend()) {
+        if (randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE &&
+            randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED &&
+            randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
+            std::cerr << "Invalid randomize_location_mode: " << randomize_location_mode
+                      << " valid modes are " << XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE << ", "
+                      << XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED << ", "
+                      << XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED << std::endl;
+            return -1;
+        }
+    } else {
+        if (randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE) {
+            std::cerr << "Randomization of read/write location is only supported for storage "
+                         "backends. Ignoring randomize_location_mode."
+                      << std::endl;
+        }
+    }
+
     // Validate runtime configuration
     if (!isStorageBackend()) {
         if (runtime_type == XFERBENCH_RT_ETCD) {
@@ -556,16 +575,6 @@ xferBenchConfig::loadParams(void) {
         } else if (runtime_type == XFERBENCH_RT_ASIO) {
             std::cout << "Using address " << asio_address << " port " << asio_port
                       << " for ASIO runtime" << std::endl;
-        }
-    } else {
-        if (randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE &&
-            randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED &&
-            randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
-            std::cerr << "Invalid randomize_location_mode: " << randomize_location_mode
-                      << " valid modes are " << XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE << ", "
-                      << XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED << ", "
-                      << XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED << std::endl;
-            return -1;
         }
     }
 
