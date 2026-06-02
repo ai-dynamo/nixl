@@ -51,6 +51,14 @@ fn set_unique_telemetry_dir(test_name: &str) -> String {
     path
 }
 
+fn telemetry_cleanup(telemetry_dir: &str) {
+    env::remove_var("NIXL_TELEMETRY_ENABLE");
+    env::remove_var("NIXL_TELEMETRY_DIR");
+    if let Err(e) = std::fs::remove_dir_all(telemetry_dir) {
+        eprintln!("Warning: failed to remove telemetry directory {telemetry_dir}: {e}");
+    }
+}
+
 fn create_agent_with_backend(name: &str) -> Result<(Agent, OptArgs), NixlError> {
     let agent = Agent::new(name).expect("Failed to create agent");
     let plugins = agent.get_available_plugins().expect("Failed to get available plugins");
@@ -1569,9 +1577,7 @@ fn test_get_xfer_telemetry_success() {
         println!("Transfer rate: {:.2} MB/s", rate / 1_000_000.0);
     }
 
-    env::remove_var("NIXL_TELEMETRY_ENABLE");
-    env::remove_var("NIXL_TELEMETRY_DIR");
-    let _ = std::fs::remove_dir_all(telemetry_dir);
+    telemetry_cleanup(&telemetry_dir);
 }
 
 #[test]
@@ -1625,9 +1631,7 @@ fn test_get_xfer_telemetry_from_request() {
         println!("Telemetry data from request: {:?}", telemetry);
     }
 
-    env::remove_var("NIXL_TELEMETRY_ENABLE");
-    env::remove_var("NIXL_TELEMETRY_DIR");
-    let _ = std::fs::remove_dir_all(telemetry_dir);
+    telemetry_cleanup(&telemetry_dir);
 }
 
 #[test]

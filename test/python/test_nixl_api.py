@@ -247,7 +247,7 @@ def test_incorrect_plugin_env(monkeypatch):
         nixl_agent("bad env agent")
 
 
-def _run_xfer_telemetry_check(agent1, agent2, expect_telemetry=True):
+def _run_xfer_telemetry_check(agent1, agent2, expect_telemetry: bool = True) -> None:
     mem_size = 128
     addr1 = utils.malloc_passthru(mem_size)
     addr2 = utils.malloc_passthru(mem_size)

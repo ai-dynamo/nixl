@@ -127,7 +127,7 @@ getExporterName() {
 
     if (!nixl::config::checkExistence(telemetryDirVar)) {
         NIXL_DEBUG << telemetryDirVar
-                   << " is not set, NIXL telemetry is enabled without any exporter";
+                   << " is not set and no exporter was specified; NIXL telemetry is disabled";
         return std::nullopt;
     }
 

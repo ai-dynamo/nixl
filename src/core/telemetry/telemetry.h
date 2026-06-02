@@ -50,6 +50,14 @@ struct periodicTask {
 
 class nixlTelemetry {
 public:
+    /**
+     * @brief Creates a telemetry instance if an exporter/sink is configured.
+     * @param agent_name Non-empty agent name.
+     * @return A telemetry instance, or nullptr when no exporter/sink is
+     *         configured (telemetry is intentionally disabled).
+     * @throws std::invalid_argument / std::runtime_error on genuine
+     *         configuration or plugin-load errors.
+     */
     static std::unique_ptr<nixlTelemetry>
     create(const std::string &agent_name);
 
