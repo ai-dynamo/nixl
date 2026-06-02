@@ -522,6 +522,20 @@ nixlAlloc::adopt(void *addr, size_t size) {
 
 } // namespace
 
+uint64_t
+xferBenchNixlWorker::getFileOffset(uint64_t currentOffset, uint64_t max_offset, size_t block_size) {
+    // For randomize location mode being byte aligned, it generates a random offset below the max
+    // offset. For randomize location mode being block aligned, we don't change the offset here, we
+    // adjust the order of the iov, that way it works for object iovs as well.
+    if (xferBenchConfig::randomize_location_mode ==
+        XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED) {
+        return default_rng_() % max_offset;
+    } else {
+        // For block aligned, we can just increment the offset sequentially
+        return currentOffset + block_size;
+    }
+}
+
 std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescDram(size_t buffer_size, int mem_dev_id) {
     auto alloc = nixlAlloc::make(buffer_size);
@@ -1321,18 +1335,10 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     remote_iov_list.push_back(iov_remote);
                     fd_idx++;
                     if (fd_idx >= remote_fds.size()) {
-                        if (xferBenchConfig::randomize_location_mode ==
-                            XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
-                            // randomly sets a file offset based on the maximum that would have
-                            // occurred if there was no randomization.  The loopCount calculates the
-                            // max times this code would run and uses that as the limit for the
-                            // offset, the offset here is explicitly not block aligned.
-                            int total_loop_count =
-                                (local_iovs.size() * iov_list.size() / remote_fds.size()) - 1;
-                            file_offset = default_rng_() % (total_loop_count * block_size);
-                        } else {
-                            file_offset += block_size;
-                        }
+                        int total_loop_count =
+                            (local_iovs.size() * iov_list.size() / remote_fds.size()) - 1;
+                        int max_offset = total_loop_count * block_size;
+                        file_offset = getFileOffset(file_offset, max_offset, block_size);
                         fd_idx = 0;
                     }
                 }
@@ -1345,12 +1351,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
 
             res.push_back(remote_iov_list);
             if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
-                if (xferBenchConfig::randomize_location_mode ==
-                    XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
-                    file_offset = default_rng_() % ((local_iovs.size() - 1) * block_size);
-                } else {
-                    file_offset += block_size;
-                }
+                uint64_t max_offset = ((local_iovs.size() - 1) * block_size);
+                file_offset = getFileOffset(file_offset, max_offset, block_size);
             }
         }
     } else {
