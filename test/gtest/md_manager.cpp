@@ -205,6 +205,13 @@ TEST_F(MDManagerFixture, RegisterRejectsEmptyInputs) {
     EXPECT_EQ(a.mdm->registerMDPeer("peer", "", 1234), NIXL_ERR_INVALID_PARAM);
 }
 
+TEST_F(MDManagerFixture, RegisterRejectsMalformedIp) {
+    auto &a = agents_[0];
+    EXPECT_EQ(a.mdm->registerMDPeer("peer", "not-an-ip", 1234), NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(a.mdm->registerMDPeer("peer", "256.0.0.1", 1234), NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(a.mdm->registerMDPeer("peer", "127.0.0.1.5", 1234), NIXL_ERR_INVALID_PARAM);
+}
+
 TEST_F(MDManagerFixture, UnregisterUnknownPeerIsOk) {
     auto &a = agents_[0];
     EXPECT_EQ(a.mdm->unregisterMDPeer("never_registered"), NIXL_SUCCESS);

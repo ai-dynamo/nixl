@@ -62,13 +62,15 @@ public:
      * different address is rejected (unregisterMDPeer first).
      *
      * @param agent_name Logical agent name.
-     * @param ip         IPv4 dotted-decimal address.
+     * @param ip         IPv4 dotted-decimal address (validated with
+     *                   inet_pton; the listener path is currently IPv4-only).
      * @param port       TCP port the peer listens on. `0` is treated as
      *                   `default_comm_port`.
      * @return nixl_status_t NIXL_SUCCESS (new or identical registration);
-     *                   NIXL_ERR_INVALID_PARAM if `agent_name` or `ip` is
-     *                   empty; NIXL_ERR_NOT_ALLOWED if `agent_name` is
-     *                   already registered to a different address.
+     *                   NIXL_ERR_INVALID_PARAM if `agent_name` is empty or
+     *                   `ip` is not a valid IPv4 address; NIXL_ERR_NOT_ALLOWED
+     *                   if `agent_name` is already registered to a different
+     *                   address.
      */
     [[nodiscard]] nixl_status_t
     registerMDPeer(const std::string &agent_name, const std::string &ip, std::uint16_t port);
