@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <memory>
+#include <numeric>
 #include <sstream>
 #include "utils/neuron.h"
 #include "utils/utils.h"
@@ -1418,6 +1419,9 @@ struct slotState {
     bool in_flight = false;
     bool registered = false;
     nixlTime::us_t post_ts = 0;
+    nixlDlistH *prep_local_dlist = nullptr;
+    nixlDlistH *prep_remote_dlist = nullptr;
+    std::vector<int> indices;
 };
 
 // Register memory (if --reregister_mem) and create the XferReq for a slot
@@ -1444,10 +1448,36 @@ prepareSlot(nixlAgent *agent,
     }
 
     if (!slot.req) {
-        nixl_xfer_dlist_t ld(GET_SEG_TYPE(true));
-        nixl_xfer_dlist_t rd(GET_SEG_TYPE(false));
-        prepareTransferDescriptors(ld, rd, slot.local_iov, slot.remote_iov);
-        nixl_status_t rc = agent->createXferReq(op, ld, rd, target, slot.req, &params);
+        nixl_status_t rc;
+        if (xferBenchConfig::prepped_xfer) {
+            if (!slot.prep_local_dlist) {
+                nixl_xfer_dlist_t ld(GET_SEG_TYPE(true));
+                nixl_xfer_dlist_t rd(GET_SEG_TYPE(false));
+                prepareTransferDescriptors(ld, rd, slot.local_iov, slot.remote_iov);
+                rc = agent->prepXferDlist(NIXL_INIT_AGENT, ld, slot.prep_local_dlist, &params);
+                if (rc != NIXL_SUCCESS) {
+                    return rc;
+                }
+                rc = agent->prepXferDlist(target, rd, slot.prep_remote_dlist, &params);
+                if (rc != NIXL_SUCCESS) {
+                    return rc;
+                }
+                slot.indices.resize(ld.descCount());
+                std::iota(slot.indices.begin(), slot.indices.end(), 0);
+            }
+            rc = agent->makeXferReq(op,
+                                    slot.prep_local_dlist,
+                                    slot.indices,
+                                    slot.prep_remote_dlist,
+                                    slot.indices,
+                                    slot.req,
+                                    &params);
+        } else {
+            nixl_xfer_dlist_t ld(GET_SEG_TYPE(true));
+            nixl_xfer_dlist_t rd(GET_SEG_TYPE(false));
+            prepareTransferDescriptors(ld, rd, slot.local_iov, slot.remote_iov);
+            rc = agent->createXferReq(op, ld, rd, target, slot.req, &params);
+        }
         if (rc != NIXL_SUCCESS) {
             return rc;
         }
@@ -1498,6 +1528,14 @@ cleanupSlots(nixlAgent *agent, nixlBackendH *backend_engine, std::vector<slotSta
         if (slot.req) {
             agent->releaseXferReq(slot.req);
             slot.req = nullptr;
+        }
+        if (slot.prep_local_dlist) {
+            agent->releasedDlistH(slot.prep_local_dlist);
+            slot.prep_local_dlist = nullptr;
+        }
+        if (slot.prep_remote_dlist) {
+            agent->releasedDlistH(slot.prep_remote_dlist);
+            slot.prep_remote_dlist = nullptr;
         }
         if (xferBenchConfig::reregister_mem && slot.registered) {
             deregisterIterationMem(agent, slot.local_iov, slot.remote_iov, backend_engine);
