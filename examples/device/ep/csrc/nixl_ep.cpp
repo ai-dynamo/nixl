@@ -91,14 +91,20 @@ bool Buffer::_is_rank_connected(int rank_id) const {
     return rank_id == rank or std::find(remote_ranks.begin(), remote_ranks.end(), rank_id) != remote_ranks.end();
 }
 
+void Buffer::set_active_rank_bound(int bound) {
+    EP_HOST_ASSERT(bound > 0 && "active_rank_bound must be positive");
+    active_rank_bound = bound;
+}
+
 void Buffer::_refresh_active_rank_bound() {
-    active_rank_bound = 0;
+    int bound = 0;
     for (int rank_id = max_num_ranks - 1; rank_id >= 0; --rank_id) {
         if (active_ranks[rank_id]) {
-            active_rank_bound = rank_id + 1;
+            bound = rank_id + 1;
             break;
         }
     }
+    set_active_rank_bound(bound);
 }
 
 void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes, int64_t num_rdma_bytes)
@@ -189,7 +195,7 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
     active_ranks.assign(max_num_ranks, false);
     active_ranks[rank] = true;
-    active_rank_bound = rank + 1;
+    set_active_rank_bound(rank + 1);
 
     int num_sync_buffer_bytes = max_num_ranks * sizeof(int);
     m_sync_alloc = std::make_unique<vmm_region>(static_cast<size_t>(num_sync_buffer_bytes));
@@ -1036,7 +1042,6 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
     EP_HOST_ASSERT(x.size(0) == topk_idx.size(0) and x.size(0) <= num_max_dispatch_tokens_per_rank);
     EP_HOST_ASSERT(topk_idx.scalar_type() == c10::CppTypeToScalarType<topk_idx_t>::value);
     const int active_expert_bound = active_rank_bound * num_experts_per_rank;
-    EP_HOST_ASSERT(active_rank_bound > 0);
     EP_HOST_ASSERT(num_experts == active_expert_bound && "num_experts must equal active_rank_bound * num_experts_per_rank");
 
     // Diagnosis tensors
@@ -1146,7 +1151,6 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
                             const std::optional<torch::Tensor>& out) {
     EP_HOST_ASSERT(low_latency_mode && "combine() requires low-latency mode (low_latency_mode=true)");
     const int active_expert_bound = active_rank_bound * num_experts_per_rank;
-    EP_HOST_ASSERT(active_rank_bound > 0);
     EP_HOST_ASSERT(num_experts == active_expert_bound && "num_experts must equal active_rank_bound * num_experts_per_rank");
 
     // Tensor checks
@@ -1244,7 +1248,6 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
 torch::Tensor
 Buffer::get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden, int num_experts) const {
     const int active_expert_bound = active_rank_bound * num_experts_per_rank;
-    EP_HOST_ASSERT(active_rank_bound > 0);
     EP_HOST_ASSERT(num_experts == active_expert_bound && "num_experts must equal active_rank_bound * num_experts_per_rank");
 
     int max_num_experts = max_num_ranks * num_experts_per_rank;

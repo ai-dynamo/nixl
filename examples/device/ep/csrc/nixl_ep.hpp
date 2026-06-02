@@ -173,6 +173,7 @@ private:
     void _nixl_ep_memory_views_destroy(void);
     void _nixl_ep_destroy(void);
     bool _is_rank_connected(int rank_id) const;
+    void set_active_rank_bound(int bound);
     void _refresh_active_rank_bound();
 
     /* high-throughput mode private funcs */
