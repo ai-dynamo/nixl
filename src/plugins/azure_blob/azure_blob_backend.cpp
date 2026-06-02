@@ -111,6 +111,43 @@ public:
     std::string blobName;
 };
 
+struct QueryMemDescriptorState {
+    std::shared_ptr<std::promise<void>> promise;
+    std::shared_ptr<std::atomic<bool>> completed;
+};
+
+// Wait for all asynchronous memory queries to complete with a per-descriptor
+// wait timeout.
+void
+waitForQueryMemFutures(std::vector<std::future<void>> &futures,
+                       std::vector<QueryMemDescriptorState> &states,
+                       std::vector<nixl_query_resp_t> &resp,
+                       std::atomic<bool> &has_error,
+                       std::chrono::seconds timeout) {
+    for (size_t i = 0; i < futures.size(); ++i) {
+        if (futures[i].wait_for(timeout) == std::future_status::timeout) {
+            if (!states[i].completed->exchange(true)) {
+                // We've timed out and the callback never fired. Mark as
+                // completed and resolve the promise ourselves.
+                NIXL_ERROR << "checkBlobExistsAsync timed out for descriptor " << i;
+                resp[i] = std::nullopt;
+                has_error.store(true, std::memory_order_relaxed);
+                try {
+                    states[i].promise->set_value();
+                }
+                catch (...) {
+                }
+            } else {
+                // Handles case where we timed out but the callback started
+                // at the same time as the timeout and won the exchange.
+                // Wait for it to finish so its writes to resp[i]/has_error
+                // complete before stack-captured references go out of scope.
+                futures[i].wait();
+            }
+        }
+    }
+}
+
 } // namespace
 
 // -----------------------------------------------------------------------------
@@ -175,14 +212,9 @@ nixlAzureBlobEngine::queryMem(const nixl_reg_dlist_t &descs,
                               std::vector<nixl_query_resp_t> &resp) const {
     resp.assign(descs.descCount(), std::nullopt);
 
-    struct PerDescriptorState {
-        std::shared_ptr<std::promise<void>> promise;
-        std::shared_ptr<std::atomic<bool>> completed;
-    };
-
     std::vector<std::future<void>> futures;
     futures.reserve(descs.descCount());
-    std::vector<PerDescriptorState> states;
+    std::vector<QueryMemDescriptorState> states;
     states.reserve(descs.descCount());
     std::atomic<bool> has_error{false};
 
@@ -192,8 +224,8 @@ nixlAzureBlobEngine::queryMem(const nixl_reg_dlist_t &descs,
         // Launch async existence checks for each descriptor
         for (int i = 0; i < descs.descCount(); ++i) {
             auto &desc = descs[i];
-            auto state = PerDescriptorState{std::make_shared<std::promise<void>>(),
-                                            std::make_shared<std::atomic<bool>>(false)};
+            auto state = QueryMemDescriptorState{std::make_shared<std::promise<void>>(),
+                                                 std::make_shared<std::atomic<bool>>(false)};
 
             blobClient_->checkBlobExistsAsync(
                 desc.metaInfo,
@@ -220,44 +252,12 @@ nixlAzureBlobEngine::queryMem(const nixl_reg_dlist_t &descs,
         }
     }
     catch (const std::exception &e) {
-        // Drain all already-launched async callbacks with timeout before returning
-        for (size_t j = 0; j < futures.size(); ++j) {
-            if (futures[j].wait_for(kQueryTimeout) == std::future_status::timeout) {
-                if (!states[j].completed->exchange(true)) {
-                    try {
-                        states[j].promise->set_value();
-                    }
-                    catch (...) {
-                    }
-                }
-            }
-        }
-        // Wait for all callbacks to complete their writes to resp/has_error
-        // to avoid use-after-free if a callback passed the exchange check
-        // but was preempted before writing.
-        for (size_t j = 0; j < futures.size(); ++j) {
-            futures[j].wait();
-        }
+        waitForQueryMemFutures(futures, states, resp, has_error, kQueryTimeout);
         NIXL_ERROR << "Failed to query memory: " << e.what();
         return NIXL_ERR_BACKEND;
     }
 
-    // Wait for all async operations with timeout fallback
-    for (size_t i = 0; i < futures.size(); ++i) {
-        if (futures[i].wait_for(kQueryTimeout) == std::future_status::timeout) {
-            // Watchdog: if callback never fired, mark as completed and resolve
-            if (!states[i].completed->exchange(true)) {
-                resp[i] = std::nullopt;
-                has_error.store(true, std::memory_order_relaxed);
-                try {
-                    states[i].promise->set_value();
-                }
-                catch (...) {
-                }
-            }
-            NIXL_ERROR << "checkBlobExistsAsync timed out for descriptor " << i;
-        }
-    }
+    waitForQueryMemFutures(futures, states, resp, has_error, kQueryTimeout);
 
     if (has_error.load(std::memory_order_relaxed)) {
         NIXL_ERROR << "Failed to query memory: one or more existence checks failed";
