@@ -51,6 +51,13 @@ protected:
         ASSERT_EQ(::setenv(docaPrometheusPortVar, std::to_string(port_).c_str(), 1), 0);
     }
 
+    void
+    TearDown() override {
+        // Pair with SetUp so the fixture does not leak process-wide env state.
+        ::unsetenv(docaPrometheusLocalVar);
+        ::unsetenv(docaPrometheusPortVar);
+    }
+
     uint16_t port_ = 0;
 };
 
