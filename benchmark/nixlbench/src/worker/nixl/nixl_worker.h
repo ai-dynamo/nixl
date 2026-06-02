@@ -94,6 +94,6 @@ class xferBenchNixlWorker: public xferBenchWorker {
         ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
         std::random_device rd_;
         std::mt19937 default_rng_;
-    };
+};
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H
