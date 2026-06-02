@@ -91,7 +91,7 @@ getCaBundle(nixl_b_params_t *custom_params) {
     // before falling back to libcurl's default location. In the future, we can remove this check if
     // we find a way to build libcurl to search for certs in a more cross-distro compatible way.
     if (std::filesystem::exists(ubuntu_ca_bundle)) {
-        NIXL_INFO << "Using detected CA bundle at: " << ubuntu_ca_bundle;
+        NIXL_DEBUG << "Using detected CA bundle at: " << ubuntu_ca_bundle;
         return std::string(ubuntu_ca_bundle);
     }
 
