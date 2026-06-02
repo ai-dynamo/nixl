@@ -52,7 +52,7 @@ jobs:
   # version: replicate the GitLab before_script version computation.
   # ----------------------------------------------------------------------------
   version:
-    runs-on: prod-nixl-builder-amd-v1
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     outputs:
       version: ${{ steps.compute.outputs.version }}
     steps:
@@ -87,7 +87,7 @@ jobs:
   # ----------------------------------------------------------------------------
   build:
     needs: version
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-${{ matrix.runner }}-v1
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -98,50 +98,50 @@ jobs:
             base_image: nvcr.io/nvidia/cuda-dl-base
             base_image_tag: 25.06-cuda12.9-devel-ubuntu24.04
             whl_base: manylinux_2_39
+            cuda_version: "12.9"
             arch: x86_64
-            runner: prod-nixl-builder-amd-v1
+            runner: amd
+          # Option B: manylinux jobs build on the public PyPA manylinux_2_28 base
+          # (Dockerfile.manylinux) and pull CUDA from a public NGC image — no GitLab.
+          # VERIFY the nvcr.io/nvidia/cuda el8/ubi8 devel tags below actually exist.
           - name: build-nixl-manylinux
             dockerfile: contrib/Dockerfile.manylinux
-            base_image: gitlab-master.nvidia.com:5005/dl/dgx/cuda
-            base_image_tag: 12.9-devel-manylinux--25.06
+            base_image: nvcr.io/nvidia/cuda
+            base_image_tag: 12.9.1-devel-ubi8
             whl_base: manylinux_2_28
+            cuda_version: "12.9"
             arch: x86_64
-            runner: prod-nixl-builder-amd-v1
+            runner: amd
           - name: build-nixl-manylinux-cuda13
             dockerfile: contrib/Dockerfile.manylinux
-            base_image: gitlab-master.nvidia.com:5005/dl/dgx/cuda
-            base_image_tag: 13.0-devel-manylinux--25.09
+            base_image: nvcr.io/nvidia/cuda
+            base_image_tag: 13.0.1-devel-ubi8
             whl_base: manylinux_2_28
+            cuda_version: "13.0"
             arch: x86_64
-            runner: prod-nixl-builder-amd-v1
+            runner: amd
           - name: build-nixl-arm-manylinux
             dockerfile: contrib/Dockerfile.manylinux
-            base_image: gitlab-master.nvidia.com:5005/dl/dgx/cuda
-            base_image_tag: 12.9-devel-manylinux--25.06
+            base_image: nvcr.io/nvidia/cuda
+            base_image_tag: 12.9.1-devel-ubi8
             whl_base: manylinux_2_28
+            cuda_version: "12.9"
             arch: aarch64
-            runner: prod-nixl-builder-arm-v1
+            runner: arm
           - name: build-nixl-arm-manylinux-cuda13
             dockerfile: contrib/Dockerfile.manylinux
-            base_image: gitlab-master.nvidia.com:5005/dl/dgx/cuda
-            base_image_tag: 13.0-devel-manylinux--25.09
+            base_image: nvcr.io/nvidia/cuda
+            base_image_tag: 13.0.1-devel-ubi8
             whl_base: manylinux_2_28
+            cuda_version: "13.0"
             arch: aarch64
-            runner: prod-nixl-builder-arm-v1
-    env:
-      GITLAB_REGISTRY_USER: ${{ secrets.GITLAB_REGISTRY_USER }}
-      GITLAB_REGISTRY_TOKEN: ${{ secrets.GITLAB_REGISTRY_TOKEN }}
+            runner: arm
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Log in to ECR
         uses: aws-actions/amazon-ecr-login@v2
-      - name: Log in to GitLab registry
-        if: ${{ env.GITLAB_REGISTRY_TOKEN != '' }}
-        run: |
-          echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 \
-            -u "$GITLAB_REGISTRY_USER" --password-stdin
       - name: Build and push image
         run: |
           set -e
@@ -151,6 +151,7 @@ jobs:
           bash contrib/build-container.sh \
             --base-image "${{ matrix.base_image }}" \
             --base-image-tag "${{ matrix.base_image_tag }}" \
+            --cuda-version "${{ matrix.cuda_version }}" \
             --wheel-base "${{ matrix.whl_base }}" \
             --python-versions "${WHL_PYTHON_VERSIONS}" \
             --tag "${IMAGE_NAME}" \
@@ -180,7 +181,7 @@ jobs:
   scan-wheels:
     needs: build
     if: ${{ github.event.inputs.security_scan == 'true' || github.event.inputs.release_build == 'true' }}
-    runs-on: prod-nixl-builder-amd-v1
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     env:
       PACKAGE_LICENSE: "Apache-2.0"
       SKIPPED_SECURITY_RULES: "B404,B603,B108"
@@ -223,7 +224,7 @@ jobs:
   # ----------------------------------------------------------------------------
   test-cpp-no-gpu:
     needs: build
-    runs-on: prod-nixl-builder-amd-v1
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     timeout-minutes: 75
     steps:
       - name: Log in to ECR
@@ -241,7 +242,7 @@ jobs:
 
   test-python-no-gpu:
     needs: build
-    runs-on: prod-nixl-builder-amd-v1
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     timeout-minutes: 75
     steps:
       - name: Log in to ECR
@@ -362,7 +363,7 @@ jobs:
   upload-x86-wheels:
     needs: build
     if: ${{ github.event.inputs.release_build == 'true' }}
-    runs-on: prod-nixl-builder-amd-v1
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     timeout-minutes: 30
     env:
       ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
@@ -400,7 +401,7 @@ jobs:
   upload-arm-wheels:
     needs: build
     if: ${{ github.event.inputs.release_build == 'true' }}
-    runs-on: prod-nixl-builder-arm-v1
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-arm-v1
     timeout-minutes: 30
     env:
       ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
@@ -441,7 +442,7 @@ jobs:
     # environment provides the equivalent manual approval gate (configure
     # required reviewers under Settings -> Environments -> release).
     if: ${{ github.event.inputs.release_build == 'true' }}
-    runs-on: prod-nixl-builder-amd-v1
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     environment: release
     env:
       ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}

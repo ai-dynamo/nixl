@@ -41,6 +41,9 @@ OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
+# CUDA toolkit version (e.g. 12.9 / 13.0). Option B (manylinux on public PyPA base)
+# no longer inherits this from the base image's ENV, so it must be passed in.
+CUDA_VERSION=${CUDA_VERSION:-}
 
 get_options() {
     while :; do
@@ -87,6 +90,14 @@ get_options() {
         --build-type)
             if [ "$2" ]; then
                 BUILD_TYPE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --cuda-version)
+            if [ "$2" ]; then
+                CUDA_VERSION=$2
                 shift
             else
                 missing_requirement $1
@@ -217,6 +228,7 @@ if [ -d "$NIXL_DIR/build" ]; then
 fi
 
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
+BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
