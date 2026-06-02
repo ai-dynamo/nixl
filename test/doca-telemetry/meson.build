@@ -13,11 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Standalone DOCA telemetry exporter test. It links the DOCA telemetry exporter
-# directly and intentionally pulls in NO nixl libraries, so the process carries
-# only CollectX's gRPC (no duplicate-flag clash with nixl's gRPC). Built only
-# when the DOCA telemetry headers are present, mirroring the plugin gate in
-# src/plugins/telemetry/doca/meson.build.
+# Standalone DOCA telemetry tests. They intentionally avoid linking nixl core
+# (no etcd/gRPC), so each process carries only CollectX's gRPC (no duplicate-flag
+# clash with nixl's gRPC). Built only when the DOCA telemetry headers are present,
+# mirroring the plugin gate in src/plugins/telemetry/doca/meson.build.
+#  - doca_test:      exercises the raw DOCA Metrics API directly.
+#  - doca_nixl_test: exercises the NIXL DOCA exporter (compiled in directly, so
+#                    it pulls only nixl_infra/nixl_common - no gRPC).
 
 if not gtest_dep.found()
     subdir_done()
@@ -54,7 +56,25 @@ if doca_found
     )
 
     test('doca_test', doca_test_exe, is_parallel: false)
-    message('Building standalone DOCA telemetry exporter test')
+
+    doca_exporter_dir = '../../src/plugins/telemetry/doca'
+    doca_nixl_test_exe = executable('doca_nixl_test',
+        sources: [
+            'telemetry_doca_nixl_test.cpp',
+            doca_exporter_dir / 'doca_exporter.cpp',
+        ],
+        include_directories: [
+            nixl_inc_dirs,
+            utils_inc_dirs,
+            include_directories(doca_exporter_dir),
+        ],
+        dependencies: [gtest_dep, doca_dep, nixl_infra, nixl_common_dep, absl_log_dep],
+        cpp_args: ['-Wno-deprecated-declarations'],
+        install: true,
+    )
+
+    test('doca_nixl_test', doca_nixl_test_exe, is_parallel: false)
+    message('Building standalone DOCA telemetry exporter tests')
 else
     warning('DOCA Telemetry Exporter headers not found. DOCA telemetry exporter test will not be built.')
 endif
