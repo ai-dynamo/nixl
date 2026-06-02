@@ -1030,7 +1030,7 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Te
 Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
                              const std::optional<torch::Tensor>& cumulative_local_expert_recv_stats,
                              const std::optional<torch::Tensor>& dispatch_wait_recv_cost_stats,
-                             int num_max_dispatch_tokens_per_rank, int num_experts,
+                             int num_max_dispatch_tokens_per_rank,
                              bool use_fp8, bool round_scale, bool use_ue8m0,
                              bool async, bool return_recv_hook) {
     EP_HOST_ASSERT(low_latency_mode && "dispatch() requires low-latency mode (low_latency_mode=true)");
@@ -1041,8 +1041,6 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
     EP_HOST_ASSERT(topk_idx.dim() == 2 and topk_idx.is_contiguous());
     EP_HOST_ASSERT(x.size(0) == topk_idx.size(0) and x.size(0) <= num_max_dispatch_tokens_per_rank);
     EP_HOST_ASSERT(topk_idx.scalar_type() == c10::CppTypeToScalarType<topk_idx_t>::value);
-    const int active_expert_bound = active_rank_bound * num_experts_per_rank;
-    EP_HOST_ASSERT(num_experts == active_expert_bound && "num_experts must equal active_rank_bound * num_experts_per_rank");
 
     // Diagnosis tensors
     if (cumulative_local_expert_recv_stats.has_value()) {
@@ -1146,12 +1144,10 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
 Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const torch::Tensor& topk_weights,
                             const torch::Tensor& src_info, const torch::Tensor& layout_range,
                             const std::optional<torch::Tensor>& combine_wait_recv_cost_stats,
-                            int num_max_dispatch_tokens_per_rank, int num_experts,
+                            int num_max_dispatch_tokens_per_rank,
                             bool use_logfmt, bool zero_copy, bool async, bool return_recv_hook,
                             const std::optional<torch::Tensor>& out) {
     EP_HOST_ASSERT(low_latency_mode && "combine() requires low-latency mode (low_latency_mode=true)");
-    const int active_expert_bound = active_rank_bound * num_experts_per_rank;
-    EP_HOST_ASSERT(num_experts == active_expert_bound && "num_experts must equal active_rank_bound * num_experts_per_rank");
 
     // Tensor checks
     EP_HOST_ASSERT(x.dim() == 3 and x.is_contiguous() and x.scalar_type() == torch::kBFloat16);
@@ -1246,10 +1242,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
 }
 
 torch::Tensor
-Buffer::get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden, int num_experts) const {
-    const int active_expert_bound = active_rank_bound * num_experts_per_rank;
-    EP_HOST_ASSERT(num_experts == active_expert_bound && "num_experts must equal active_rank_bound * num_experts_per_rank");
-
+Buffer::get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden) const {
     int max_num_experts = max_num_ranks * num_experts_per_rank;
     EPLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, max_num_ranks, max_num_experts);
 

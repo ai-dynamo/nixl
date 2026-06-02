@@ -330,7 +330,7 @@ class Buffer:
         x: torch.Tensor,
         topk_idx: torch.Tensor,
         num_max_dispatch_tokens_per_rank: int,
-        num_experts: int,
+        num_experts: Optional[int] = None,
         cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
         dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
         use_fp8: bool = True,
@@ -353,7 +353,9 @@ class Buffer:
             topk_idx: `torch.Tensor` with `nixl_ep.topk_idx_t`, shaped as `[num_tokens, num_topk]`, only several top-k shapes
                 are supported. `-1` indices (not selecting any expert) are supported.
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
-            num_experts: active expert bound for the active rank set.
+            num_experts: deprecated optional parameter. This value is ignored by low-latency
+                dispatch; the number of experts is determined from the `num_experts_per_rank`
+                passed to `update_memory_buffers()` and the currently active ranks.
             cumulative_local_expert_recv_stats: a cumulative expert count tensor for statistics, which should have shape
                 `[num_local_experts]` and be typed as `torch.int`. This is useful for online service EP load balance
                 monitoring.
@@ -401,7 +403,6 @@ class Buffer:
             cumulative_local_expert_recv_stats,
             dispatch_wait_recv_cost_stats,
             num_max_dispatch_tokens_per_rank,
-            num_experts,
             use_fp8,
             round_scale,
             use_ue8m0,
@@ -413,7 +414,6 @@ class Buffer:
             packed_recv_layout_range,
             num_max_dispatch_tokens_per_rank,
             x.size(1),
-            num_experts,
         )
         tensors_to_record = (
             x,
@@ -487,7 +487,6 @@ class Buffer:
             layout_range,
             num_max_dispatch_tokens_per_rank,
             hidden,
-            num_experts,
         ) = handle
         combined_x, event, hook = self.runtime.combine(
             x,
@@ -497,7 +496,6 @@ class Buffer:
             layout_range,
             combine_wait_recv_cost_stats,
             num_max_dispatch_tokens_per_rank,
-            num_experts,
             use_logfmt,
             zero_copy,
             async_finish,
@@ -740,7 +738,7 @@ class Buffer:
         self.runtime.clean_mask_buffer()
 
     def get_next_combine_buffer(
-        self, handle: Tuple[torch.Tensor, torch.Tensor, int, int, int]
+        self, handle: Tuple[torch.Tensor, torch.Tensor, int, int]
     ):
         """
         Get the raw registered RDMA buffer tensor for next combine, so that the next combine kernel can skip the copying.
@@ -758,10 +756,9 @@ class Buffer:
             layout_range,
             num_max_dispatch_tokens_per_rank,
             hidden,
-            num_experts,
         ) = handle
         return self.runtime.get_next_combine_buffer(
-            num_max_dispatch_tokens_per_rank, hidden, num_experts
+            num_max_dispatch_tokens_per_rank, hidden
         )
 
     def update_memory_buffers(
