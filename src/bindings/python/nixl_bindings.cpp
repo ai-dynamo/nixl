@@ -632,13 +632,16 @@ PYBIND11_MODULE(_bindings, m) {
                 local_indices_vec = init_indices_lambda(local_indices);
                 remote_indices_vec = init_indices_lambda(remote_indices);
 
-                throw_nixl_exception(agent.makeXferReq(operation,
-                                                       (nixlDlistH *)local_side,
-                                                       local_indices_vec,
-                                                       (nixlDlistH *)remote_side,
-                                                       remote_indices_vec,
-                                                       handle,
-                                                       &extra_params));
+                {
+                    py::gil_scoped_release release;
+                    throw_nixl_exception(agent.makeXferReq(operation,
+                                                           (nixlDlistH *)local_side,
+                                                           local_indices_vec,
+                                                           (nixlDlistH *)remote_side,
+                                                           remote_indices_vec,
+                                                           handle,
+                                                           &extra_params));
+                }
 
                 return (uintptr_t)handle;
             },
