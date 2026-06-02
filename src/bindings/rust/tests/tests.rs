@@ -1690,8 +1690,10 @@ fn test_get_xfer_telemetry_without_telemetry_enabled() {
 
 #[test]
 fn test_get_xfer_telemetry_before_posting() {
+    // Configure a real sink so telemetry is actually active; this test must
+    // fail because the transfer was not posted, not because telemetry is off.
     let env_guard = EnvGuard::new(["NIXL_TELEMETRY_ENABLE", "NIXL_TELEMETRY_DIR"]);
-    env_guard.set("NIXL_TELEMETRY_ENABLE", "1");
+    let _telemetry_dir = enable_telemetry_with_temp_dir(&env_guard, "before-posting");
 
     let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
     let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
@@ -1715,15 +1717,17 @@ fn test_get_xfer_telemetry_before_posting() {
             None
         ).expect("Failed to create transfer request");
 
-        // Try to get telemetry before posting the request - should fail
+        // Telemetry is active, so this must fail for the "not posted" reason:
+        // getXferTelemetry returns NIXL_ERR_NOT_POSTED, which the binding
+        // surfaces as BackendError.
         let telemetry_result = xfer_req.get_telemetry();
         assert!(telemetry_result.is_err(), "get_xfer_telemetry should fail before transfer is posted");
         let error = telemetry_result.err().unwrap();
         match error {
-            NixlError::NoTelemetry | NixlError::BackendError => {
+            NixlError::BackendError => {
                 println!("Got expected error before posting: {:?}", error);
             }
-            other => panic!("Expected NoTelemetry or BackendError, got: {:?}", other),
+            other => panic!("Expected BackendError (transfer not posted), got: {:?}", other),
         }
 
         println!("Successfully tested telemetry before posting - got expected error");
