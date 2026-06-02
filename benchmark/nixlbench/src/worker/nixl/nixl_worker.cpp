@@ -1325,7 +1325,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                         if (xferBenchConfig::randomize_location_mode ==
                             XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
                             // randomly sets a file offset based on the maximum that would have
-                            // occured if there was no randomization.  The loopCount calculates the
+                            // occurred if there was no randomization.  The loopCount calculates the
                             // max times this code would run and uses that as the limit for the
                             // offset
                             int loopCount =
