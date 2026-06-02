@@ -20,7 +20,7 @@
 //! `nixl` crate.
 
 use nixl_sys::*;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, thread};
 use std::collections::HashMap;
 // Helper function to create an agent with error handling
@@ -38,6 +38,17 @@ fn setup_agent_with_backend(agent: &Agent) -> Result<OptArgs, NixlError> {
     let _ = opt_args.add_backend(&agent.get_backend("UCX").unwrap());
 
     Ok(opt_args)
+}
+
+fn set_unique_telemetry_dir(test_name: &str) -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time before UNIX_EPOCH")
+        .as_nanos();
+    let path = format!("/tmp/nixl-rust-telemetry-{}-{}", test_name, timestamp);
+    std::fs::create_dir_all(&path).expect("failed to create telemetry directory");
+    env::set_var("NIXL_TELEMETRY_DIR", &path);
+    path
 }
 
 fn create_agent_with_backend(name: &str) -> Result<(Agent, OptArgs), NixlError> {
@@ -1490,6 +1501,7 @@ fn test_query_xfer_backend_invalid_request() {
 #[test]
 fn test_get_xfer_telemetry_success() {
     env::set_var("NIXL_TELEMETRY_ENABLE", "1");
+    let telemetry_dir = set_unique_telemetry_dir("success");
 
     let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
     let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
@@ -1556,11 +1568,16 @@ fn test_get_xfer_telemetry_success() {
         println!("Telemetry data: {:?}", telemetry);
         println!("Transfer rate: {:.2} MB/s", rate / 1_000_000.0);
     }
+
+    env::remove_var("NIXL_TELEMETRY_ENABLE");
+    env::remove_var("NIXL_TELEMETRY_DIR");
+    let _ = std::fs::remove_dir_all(telemetry_dir);
 }
 
 #[test]
 fn test_get_xfer_telemetry_from_request() {
     env::set_var("NIXL_TELEMETRY_ENABLE", "1");
+    let telemetry_dir = set_unique_telemetry_dir("from-request");
 
     let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
     let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
@@ -1607,6 +1624,10 @@ fn test_get_xfer_telemetry_from_request() {
 
         println!("Telemetry data from request: {:?}", telemetry);
     }
+
+    env::remove_var("NIXL_TELEMETRY_ENABLE");
+    env::remove_var("NIXL_TELEMETRY_DIR");
+    let _ = std::fs::remove_dir_all(telemetry_dir);
 }
 
 #[test]

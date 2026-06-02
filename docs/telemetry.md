@@ -72,8 +72,8 @@ Telemetry is configured by environment variables:
 | `NIXL_TELEMETRY_EXPORTER` | Name of the exporter plugin to use | - |
 
 - `NIXL_TELEMETRY_ENABLE` can be set to `y`/`yes`/`on`/`true`/`enable`/`1` to be enabled, and `n`/`no`/`off`/`false`/`disable`/`0` (or not set) to be disabled. Matching is case insensitive.
-- If telemetry is disabled via the config but enabled programmatically then telemetry is captured internally but not exported. This might still incur a performance penalty.
-- If telemetry is enabled via the config but no exporter is set, or the name of the exporter is empty, then behaviour depends on `NIXL_TELEMETRY_DIR` as explained below.
+- Telemetry is active only when an exporter or sink can be created. If telemetry is requested but neither `NIXL_TELEMETRY_EXPORTER` nor `NIXL_TELEMETRY_DIR` is configured, telemetry collection is disabled.
+- If telemetry is enabled but no exporter is set, or the exporter name is empty, then behaviour depends on `NIXL_TELEMETRY_DIR` as explained below.
 
 ## Cyclic Buffer
 

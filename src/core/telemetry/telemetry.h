@@ -50,6 +50,9 @@ struct periodicTask {
 
 class nixlTelemetry {
 public:
+    static std::unique_ptr<nixlTelemetry>
+    create(const std::string &agent_name);
+
     explicit nixlTelemetry(const std::string &agent_name);
 
     ~nixlTelemetry();
@@ -74,6 +77,9 @@ public:
     addPostTime(std::chrono::microseconds post_time);
 
 private:
+    [[nodiscard]] bool
+    isActive() const noexcept;
+
     void
     initializeTelemetry();
     void

@@ -628,18 +628,19 @@ TEST_P(TestTransferTelemetry, GetXferTelemetryFile) {
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryAPI) {
-    // Enable telemetry without file output
+    // Enabling telemetry without a configured exporter or buffer sink should
+    // not create a half-active telemetry instance.
     env.addVar("NIXL_TELEMETRY_ENABLE", "y");
-    runTelemetryTransferTest(1024, NIXL_SUCCESS, false);
+    runTelemetryTransferTest(1024, NIXL_ERR_NO_TELEMETRY, false);
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryAPICfg) {
-    // Disable telemetry from env var but through config, expecting a warning
+    // An explicit disabled environment variable overrides agent config telemetry.
     env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
-    const LogIgnoreGuard lig("ignoring the NIXL_TELEMETRY_ENABLE environment variable");
+    const LogIgnoreGuard lig("ignoring telemetry requested through agent config");
 
-    runTelemetryTransferTest(1024, NIXL_SUCCESS, true);
+    runTelemetryTransferTest(1024, NIXL_ERR_NO_TELEMETRY, true);
 
     EXPECT_EQ(lig.getIgnoredCount(), 2);
 }
