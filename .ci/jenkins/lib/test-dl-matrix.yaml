@@ -42,17 +42,17 @@ env:
   NIXL_INSTALL_DIR: /opt/nixl
   NIXL_BUILD_DIR: nixl_build
   SLURM_NODES: 1
-  SLURM_PARTITION: gb300nvl72_ci
+  SLURM_PARTITION: gb200nvl72_ci
   SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
-  SLURM_ACCOUNT: 'blackwell-ci'
+  SLURM_ACCOUNT: 'oberon-gb-ci'
   SLURM_JOB_TIMEOUT: '01:30:00'
   SLURM_IMMEDIATE_TIMEOUT: 3600
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   TEST_TIMEOUT: 50
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260519-1"
+  CI_IMAGE_TAG: "20260601-1"
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
