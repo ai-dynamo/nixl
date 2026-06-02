@@ -257,6 +257,8 @@ if cuda_dep.found()
     # Refer to https://mesonbuild.com/Cuda-module.html
     add_project_arguments('-forward-unknown-to-host-compiler', language: 'cuda')
     add_project_arguments('-rdc=true', language: 'cuda')
+    # Build all CUDA targets with C++20 to match the core's standard and ABI.
+    add_project_arguments('-std=c++20', language: 'cuda')
 
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
     message('nvcc version: ' + nvcc.version())
