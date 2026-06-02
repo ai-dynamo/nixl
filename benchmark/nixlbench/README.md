@@ -481,8 +481,9 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --num_files NUM            # Number of files used by benchmark (default: 1)
 --storage_enable_direct    # Enable direct I/O for storage operations
 --randomize_location_mode MODE    # Controls block location randomization [none, blockaligned, bytealigned] (default: none)
-                                  # blockaligned: randomizes the order of the otherwize sequentially block aligned iov's in the batch, also works on object plugins
+                                  # blockaligned: randomizes the order of the otherwise sequentially block aligned iov's in the batch, also works on object plugins
                                   # bytealigned: randomizes the offset per iov scrambling the block order instead of being sequential.
+--randomize_location_mode_seed  # random seed used for randomized location mode (default: ...)
 
 ```
 
