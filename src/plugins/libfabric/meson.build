@@ -28,6 +28,7 @@ libfabric_plugin_deps = [
 
 compile_flags = ['-DHAVE_LIBFABRIC']
 
+# Add CUDA support if available
 if cuda_dep.found()
     libfabric_plugin_deps += [cuda_dep]
     compile_flags += ['-DHAVE_CUDA']
