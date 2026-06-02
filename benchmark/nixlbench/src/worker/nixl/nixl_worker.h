@@ -82,6 +82,9 @@ class xferBenchNixlWorker: public xferBenchWorker {
         initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
         bool
         ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
+        uint64_t
+        getFileOffset(uint64_t currentOffset, uint64_t max_offset, size_t block_size);
+
         std::mt19937_64 default_rng_;
 };
 
