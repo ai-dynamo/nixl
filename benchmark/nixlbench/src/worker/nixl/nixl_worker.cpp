@@ -110,8 +110,7 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
 
 xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
     : xferBenchWorker(),
-      rd_(),
-      default_rng_(rd_()) {
+      default_rng_(xferBenchConfig::randomize_location_mode_seed) {
     seg_type = GET_SEG_TYPE(isInitiator());
 
     int rank;

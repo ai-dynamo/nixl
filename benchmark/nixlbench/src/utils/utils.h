@@ -183,6 +183,7 @@ public:
     static std::string asio_address; // IPv4
     static uint16_t asio_port;
     static std::string randomize_location_mode;
+    static uint64_t randomize_location_mode_seed;
     static std::string benchmark_group;
     static std::string filepath;
     static std::string filenames;
