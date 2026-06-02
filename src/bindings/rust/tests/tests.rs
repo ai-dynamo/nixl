@@ -435,11 +435,11 @@ fn test_multiple_storage_descriptors() {
 
 #[test]
 fn test_memory_registration() {
-    let agent = Agent::new("test_agent").unwrap();
+    let (agent, opt_args) = create_agent_with_backend("test_agent").unwrap();
     let mut storage = SystemStorage::new(1024).unwrap();
 
     // Register memory
-    storage.register(&agent, None).unwrap();
+    storage.register(&agent, Some(&opt_args)).unwrap();
 
     // Verify we can still access the memory
     storage.memset(0xAA);
@@ -448,29 +448,29 @@ fn test_memory_registration() {
 
 #[test]
 fn test_registration_handle_drop() {
-    let agent = Agent::new("test_agent").unwrap();
+    let (agent, opt_args) = create_agent_with_backend("test_agent").unwrap();
     let mut storage = SystemStorage::new(1024).unwrap();
 
     // Register memory
-    storage.register(&agent, None).unwrap();
+    storage.register(&agent, Some(&opt_args)).unwrap();
 
     // Drop the storage, which should trigger deregistration
     drop(storage);
 
     // Create new storage to verify we can register again
     let mut new_storage = SystemStorage::new(1024).unwrap();
-    new_storage.register(&agent, None).unwrap();
+    new_storage.register(&agent, Some(&opt_args)).unwrap();
 }
 
 #[test]
 fn test_multiple_registrations() {
-    let agent = Agent::new("test_agent").unwrap();
+    let (agent, opt_args) = create_agent_with_backend("test_agent").unwrap();
     let mut storage1 = SystemStorage::new(1024).unwrap();
     let mut storage2 = SystemStorage::new(2048).unwrap();
 
     // Register both storages
-    storage1.register(&agent, None).unwrap();
-    storage2.register(&agent, None).unwrap();
+    storage1.register(&agent, Some(&opt_args)).unwrap();
+    storage2.register(&agent, Some(&opt_args)).unwrap();
 
     // Verify we can still access both memories
     storage1.memset(0xAA);
