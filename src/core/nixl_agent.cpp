@@ -123,11 +123,15 @@ effectiveSyncMode(nixl_thread_sync_t requested, bool needs_comm_thread) {
 }
 
 std::unique_ptr<nixlMDManager>
-makeMDManager(nixlAgent &agent) {
+makeMDManager(nixlAgent &agent,
+              const std::string &name,
+              std::chrono::microseconds etcd_watch_timeout) {
     if (!nixl::config::checkExistence("NIXL_MD_MANAGER")) {
         return nullptr;
     }
-    return std::make_unique<nixlMDManager>(agent);
+    // The name is passed in (not read via agent.getName()) because the owning
+    // nixlAgent's data pointer is not yet assigned during this construction.
+    return std::make_unique<nixlMDManager>(agent, name, etcd_watch_timeout);
 }
 
 } // namespace
@@ -139,7 +143,7 @@ nixlAgentData::nixlAgentData(nixlAgent &agent,
       config_(config),
       useEtcd_(detectEtcd()),
       needsCommThread_(useEtcd_ || config.useListenThread),
-      mdManager_(makeMDManager(agent)),
+      mdManager_(makeMDManager(agent, name, config.etcdWatchTimeout)),
       lock(effectiveSyncMode(config.syncMode, needsCommThread_)) {
 #if HAVE_ETCD
     NIXL_DEBUG << "NIXL ETCD is " << (useEtcd_ ? "enabled" : "disabled");

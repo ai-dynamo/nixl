@@ -24,28 +24,51 @@
 #include "nixl_descriptors.h"
 #include "nixl_types.h"
 
+#include <chrono>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 class nixlAgent;
+class nixlMetadataBackend;
 
 /**
  * @class nixlMDManager
- * @brief Name-based, P2P-only wrapper over nixlAgent's metadata APIs.
+ * @brief Name-based wrapper over nixlAgent's metadata APIs.
  *
  * The owning nixlAgent constructs the manager when NIXL_MD_MANAGER is set
- * and hands it out via nixlAgent::getMDManager(). The manager stores a
- * per-name {ip, port} registry; each name-keyed call resolves the peer and
- * delegates to the matching nixlAgent method with extra_params.ipAddr /
- * extra_params.port populated. No new threads, no new sockets, no new state
- * in nixlAgent.
+ * and hands it out via nixlAgent::getMDManager(). The transport is chosen at
+ * construction: ETCD when NIXL_ETCD_ENDPOINTS is set (via a core-internal
+ * nixlMetadataBackend), otherwise P2P. The manager stores a per-name registry;
+ * P2P resolves each name to {ip, port} and delegates to the matching nixlAgent
+ * method, while ETCD keys metadata by name in the store and ignores the
+ * address fields.
  */
 class nixlMDManager {
 public:
-    explicit nixlMDManager(nixlAgent &agent) noexcept : agent_(agent) {}
+    /**
+     * @brief Construct the manager and select its backend from the environment.
+     *
+     * @param agent              Owning agent; delegated to for cache ops.
+     * @param self_name          This agent's name, used to build KV keys and
+     *                           to prefix trace logs. Passed in (rather than
+     *                           read via agent.getName()) because the owning
+     *                           agent is still being constructed at this point.
+     * @param etcd_watch_timeout Watch timeout forwarded to the ETCD backend.
+     *
+     * In ETCD mode the backend connects eagerly (health gate); construction
+     * throws if the store is unreachable.
+     */
+    nixlMDManager(nixlAgent &agent,
+                  std::string self_name,
+                  std::chrono::microseconds etcd_watch_timeout);
+
+    ~nixlMDManager();
 
     /**
      * @brief Register a P2P peer's reachable address.
@@ -71,11 +94,9 @@ public:
      * @brief Drop a previously-registered peer and invalidate the local
      *        metadata we last sent to that peer.
      *
-     * When the peer is known, the manager first calls
-     * nixlAgent::invalidateLocalMD against the peer's {ip, port}. The
-     * registry entry is erased only when the invalidate call succeeds, so
-     * the caller can retry on a transient failure. Unregistering an
-     * unknown peer is a no-op and returns `NIXL_SUCCESS`.
+     * P2P: calls nixlAgent::invalidateLocalMD against the peer's {ip, port},
+     * erasing the entry only on success (so the caller can retry). ETCD: just
+     * forgets the peer locally. Unregistering an unknown peer is a no-op.
      *
      * @param agent_name Peer to unregister.
      * @return nixl_status_t NIXL_SUCCESS on success or unknown peer;
@@ -105,8 +126,11 @@ public:
      *                        `customParam`). The manager overrides
      *                        `ipAddr`/`port` from the registry; any
      *                        caller-supplied values for those fields are
-     *                        ignored. `metadataLabel` is not yet used
-     *                        (reserved for future ETCD support).
+     *                        ignored. `metadataLabel` is required when the
+     *                        ETCD backend is active (it is used as the key
+     *                        label; an empty label returns
+     *                        NIXL_ERR_INVALID_PARAM) and is ignored on the
+     *                        P2P path.
      * @return nixl_status_t NIXL_SUCCESS, or NIXL_ERR_NOT_FOUND if the peer
      *                        is not registered.
      */
@@ -150,20 +174,19 @@ public:
     checkRemoteMD(const std::string &agent_name, const nixl_xfer_dlist_t &descs) const;
 
     /**
-     * @brief Name of the metadata transport in use. Currently always `P2P`;
-     *        ETCD is not yet supported.
+     * @brief Name of the metadata transport in use, selected at construction
+     *        (`"ETCD"` when an ETCD backend is active, otherwise `"P2P"`).
      *
      * Returns a name rather than an enum so new backends can be added without
      * editing a closed public type (mirrors nixl_backend_t for transfer
-     * backends). When the backend layer lands this should report the active
-     * backend's own name instead of a literal.
+     * backends); each backend reports its own name via nixlMetadataBackend.
+     * Defined in the .cpp because it dereferences the core-internal backend,
+     * which must not be included from this installed public header.
      *
      * @return std::string_view The active transport name.
      */
     [[nodiscard]] std::string_view
-    getBackend() const noexcept {
-        return "P2P";
-    }
+    getBackend() const noexcept;
 
     nixlMDManager(nixlMDManager &&) = delete;
     nixlMDManager(const nixlMDManager &) = delete;
@@ -173,26 +196,54 @@ public:
     operator=(const nixlMDManager &) = delete;
 
 private:
-    // Registry entry for a tracked agent. The registry itself (name -> entry)
-    // is backend-agnostic; the ip/port are P2P-only addressing and are unused
-    // by centralized backends. They belong with the P2P transport long term
-    // (a future P2P backend), not in shared manager state.
+    // Registry entry for a tracked agent. ip/port are P2P-only addressing,
+    // unused by centralized backends. `epoch` (from registerEpoch_) stamps
+    // each (re)register so unregister's compare-then-erase won't drop an entry
+    // re-registered during an in-flight invalidate; equality includes it.
     struct Peer {
         std::string ip;
         std::uint16_t port;
+        std::uint64_t epoch = 0;
 
         [[nodiscard]] bool
         operator==(const Peer &other) const noexcept {
-            return ip == other.ip && port == other.port;
+            return ip == other.ip && port == other.port && epoch == other.epoch;
         }
     };
 
     [[nodiscard]] bool
     lookupPeer(const std::string &agent_name, Peer &out) const;
 
+    // KV key builder, owned by the manager (legacy {namespace}/{agent}/{label}).
+    [[nodiscard]] std::string
+    makeKey(const std::string &agent_name, const std::string &label) const;
+
+    // Apply queued remote-invalidation events to the agent's cache. Called
+    // opportunistically from fetchRemoteMD/checkRemoteMD; no-op on P2P.
+    void
+    drainInvalidated() const;
+
+    // ETCD is active when a backend object exists; P2P leaves backend_ null.
+    [[nodiscard]] bool
+    usingEtcd() const noexcept {
+        return backend_ != nullptr;
+    }
+
     nixlAgent &agent_;
+    const std::string selfName_;
+    std::string namespacePrefix_;
+
     mutable std::mutex mutex_;
+    // Bumped under mutex_ on every successful register; see Peer::epoch.
+    std::uint64_t registerEpoch_ = 0;
     std::unordered_map<std::string, Peer> peers_;
+
+    mutable std::mutex invalidatedMutex_;
+    mutable std::vector<std::string> invalidatedAgents_;
+
+    // Declared last so it is destroyed first: canceling the backend's watchers
+    // before the invalidation queue their callbacks push into is torn down.
+    std::unique_ptr<nixlMetadataBackend> backend_;
 };
 
 #endif // NIXL_SRC_API_CPP_NIXL_MD_MANAGER_H
