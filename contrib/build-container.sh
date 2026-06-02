@@ -200,8 +200,10 @@ show_build_options() {
     echo "UCX Ref: ${UCX_REF}"
     if [ -n "$UCX_SONAME_SUFFIX" ]; then
         echo "UCX SONAME suffix: ${UCX_SONAME_SUFFIX}"
+        echo "UCX module deepbind: Enabled"
     else
         echo "UCX SONAME suffix: Disabled"
+        echo "UCX module deepbind: Disabled"
     fi
     if [ "$BUILD_NIXL_EP" = "true" ]; then
         echo "NIXL EP: Enabled"
@@ -224,7 +226,7 @@ show_help() {
     echo "  [--ucx-repo ucx git repository URL]"
     echo "  [--ucx-ref ucx git reference (branch, tag, or sha)]"
     echo "  [--ucx-soname-suffix suffix to pass to UCX --with-soname-suffix]"
-    echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix]"
+    echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix and --enable-module-deepbind]"
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"

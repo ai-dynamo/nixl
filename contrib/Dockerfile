@@ -193,8 +193,15 @@ RUN cd /usr/local/src && \
              echo "UCX_REF=$UCX_REF does not support --with-soname-suffix" >&2; \
              exit 1; \
          fi; \
+         if ./configure --help | grep -q -- "--enable-module-deepbind"; then \
+             UCX_MODULE_DEEPBIND_PARAM="--enable-module-deepbind"; \
+         else \
+             echo "UCX_REF=$UCX_REF does not support --enable-module-deepbind" >&2; \
+             exit 1; \
+         fi; \
      else \
          UCX_SONAME_PARAM=""; \
+         UCX_MODULE_DEEPBIND_PARAM=""; \
      fi && \
      ./contrib/configure-release-mt  \
          --prefix=$UCX_PREFIX        \
@@ -210,7 +217,8 @@ RUN cd /usr/local/src && \
          --with-dm                   \
          --without-gdrcopy           \
          --with-efa                  \
-         $UCX_SONAME_PARAM &&        \
+         $UCX_SONAME_PARAM           \
+         $UCX_MODULE_DEEPBIND_PARAM && \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig

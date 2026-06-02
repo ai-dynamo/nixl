@@ -46,6 +46,18 @@ def main():
         re.compile(r"(^|/)[^/]*\.libs/ucx/libuc[stm]_[^/]+\.so"),
         "bundled UCX modules under *.libs/ucx",
     )
+    module_suffix_pattern = re.compile(
+        rf"-{escaped_suffix}(-[0-9a-f]{{8}})?\.so"
+    )
+    modules_without_suffix = [
+        name for name in ucx_modules
+        if not module_suffix_pattern.search(name.rsplit("/", 1)[-1])
+    ]
+    if modules_without_suffix:
+        raise RuntimeError(
+            "UCX module(s) missing private SONAME suffix: "
+            + ", ".join(modules_without_suffix[:5])
+        )
     print(f"found {len(ucx_modules)} UCX module(s)")
 
     nixl_plugins = require_matches(

@@ -163,7 +163,7 @@ def get_lib_deps(lib_path):
     return ret
 
 
-def copytree(src, dst):
+def copytree(src, dst, skip_symlinks=False, symlink_keep_suffix=None):
     """
     Copy a tree of files from @src directory to @dst directory.
     Similar to shutil.copytree, but returns a list of all files copied.
@@ -177,13 +177,25 @@ def copytree(src, dst):
         os.makedirs(dst_dir, exist_ok=True)
         for file in files:
             src_file = os.path.join(root, file)
+            if skip_symlinks and os.path.islink(src_file):
+                if symlink_keep_suffix and f"-{symlink_keep_suffix}" in file:
+                    logger.debug("Keeping suffixed plugin symlink %s", src_file)
+                else:
+                    logger.debug("Skipping symlinked plugin alias %s", src_file)
+                    continue
             dst_file = os.path.join(dst_dir, file)
             shutil.copy2(src_file, dst_file)
             copied_files.append(dst_file)
     return copied_files
 
 
-def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
+def add_plugins(
+    wheel_path,
+    sys_plugins_dir,
+    install_dirname,
+    skip_symlinks=False,
+    symlink_keep_suffix=None,
+):
     """
     Adds the plugins from @sys_dir to the wheel.
     The plugins are copied to a subdirectory @install_dir relative to the wheel's nixl.libs.
@@ -219,7 +231,12 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
 
     pkg_plugins_dir = os.path.join(pkg_libs_dir, install_dirname)
     logger.debug("Copying plugins from %s to %s", sys_plugins_dir, pkg_plugins_dir)
-    copied_files = copytree(sys_plugins_dir, pkg_plugins_dir)
+    copied_files = copytree(
+        sys_plugins_dir,
+        pkg_plugins_dir,
+        skip_symlinks,
+        symlink_keep_suffix,
+    )
     if not copied_files:
         raise RuntimeError(f"No plugins found in {sys_plugins_dir}")
 
@@ -284,6 +301,28 @@ def main():
         default="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins",
     )
     parser.add_argument(
+        "--skip-nixl-plugins",
+        action="store_true",
+        help="Only add UCX modules. Useful when the NIXL plugin is already in the wheel.",
+    )
+    parser.add_argument(
+        "--skip-plugin-symlinks",
+        action="store_true",
+        help=(
+            "Do not copy symlinked plugin aliases. If --plugin-soname-suffix is set, "
+            "suffixed SONAME symlinks are still copied."
+        ),
+    )
+    parser.add_argument(
+        "--plugin-soname-suffix",
+        type=str,
+        default=None,
+        help=(
+            "Private SONAME suffix to keep when --skip-plugin-symlinks is used, "
+            "for example 'nixl' keeps libuct_ib-nixl.so.0."
+        ),
+    )
+    parser.add_argument(
         "wheel", type=str, nargs="+", help="Path to one or more wheel files"
     )
     args = parser.parse_args()
@@ -292,8 +331,15 @@ def main():
         args.nixl_plugins_dir = args.nixl_plugins_dir.replace("$ARCH", arch)
 
     for wheel_path in args.wheel:
-        add_plugins(wheel_path, args.ucx_plugins_dir, "ucx")
-        add_plugins(wheel_path, args.nixl_plugins_dir, "nixl")
+        add_plugins(
+            wheel_path,
+            args.ucx_plugins_dir,
+            "ucx",
+            skip_symlinks=args.skip_plugin_symlinks,
+            symlink_keep_suffix=args.plugin_soname_suffix,
+        )
+        if not args.skip_nixl_plugins:
+            add_plugins(wheel_path, args.nixl_plugins_dir, "nixl")
 
 
 if __name__ == "__main__":
