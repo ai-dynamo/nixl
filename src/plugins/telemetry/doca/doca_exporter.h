@@ -39,7 +39,7 @@ public:
     // Production relies on CollectX auto-flush (buffer fill / flush interval);
     // this is exposed so tests can flush a few events before scraping, since a
     // handful of samples will not fill the buffer to trigger an auto-flush.
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     flush();
 
 private:
