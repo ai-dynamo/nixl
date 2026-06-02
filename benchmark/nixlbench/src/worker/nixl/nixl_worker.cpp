@@ -528,7 +528,7 @@ xferBenchNixlWorker::getFileOffset(uint64_t currentOffset, uint64_t max_offset, 
     // offset. For randomize location mode being block aligned, we don't change the offset here, we
     // adjust the order of the iov, that way it works for object iovs as well.
     if (xferBenchConfig::randomize_location_mode ==
-        XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED) {
+        XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
         return default_rng_() % max_offset;
     } else {
         // For block aligned, we can just increment the offset sequentially
