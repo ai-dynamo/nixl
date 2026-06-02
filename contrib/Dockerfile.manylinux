@@ -57,6 +57,12 @@ ENV CUDA_HOME=/usr/local/cuda \
 # the dnf install list below.
 ENV PATH=/opt/rh/gcc-toolset-14/root/usr/bin:${PATH} \
     LD_LIBRARY_PATH=/opt/rh/gcc-toolset-14/root/usr/lib64:${LD_LIBRARY_PATH:-}
+
+# The PyPA manylinux_2_28 image ships CMake 4.x, which removed support for
+# cmake_minimum_required(VERSION < 3.5). Some bundled deps (e.g. gRPC's c-ares)
+# still declare ancient minimums. This tells CMake 4.x to accept them. (Harmless
+# on the older CMake that the previous GitLab base shipped.)
+ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
 # === end Option B header ======================================================
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
