@@ -552,6 +552,16 @@ xferBenchConfig::loadParams(void) {
             std::cout << "Using address " << asio_address << " port " << asio_port
                       << " for ASIO runtime" << std::endl;
         }
+    } else {
+        if (randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE &&
+            randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED &&
+            randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
+            std::cerr << "Invalid randomize_location_mode: " << randomize_location_mode
+                      << " valid modes are " << XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE << ", "
+                      << XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED << ", "
+                      << XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED << std::endl;
+            return -1;
+        }
     }
 
     // Validate backend-specific configurations

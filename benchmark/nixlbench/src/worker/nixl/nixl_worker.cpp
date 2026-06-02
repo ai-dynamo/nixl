@@ -1324,10 +1324,13 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     if (fd_idx >= remote_fds.size()) {
                         if (xferBenchConfig::randomize_location_mode ==
                             XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
+                            // randomly sets a file offset based on the maximum that would have
+                            // occured if there was no randomization.  The loopCount calculates the
+                            // max times this code would run and uses that as the limit for the
+                            // offset
                             int loopCount =
                                 (local_iovs.size() * iov_list.size() / remote_fds.size()) - 1;
                             file_offset = default_rng_() % loopCount * block_size;
-                            std::cout << "File offset: " << file_offset << std::endl;
                         } else {
                             file_offset += block_size;
                         }
