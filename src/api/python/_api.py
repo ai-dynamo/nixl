@@ -15,7 +15,7 @@
 
 import pickle
 from enum import Enum
-from typing import Optional, Union
+from typing import Optional, Union, overload
 
 import numpy as np
 import torch
@@ -704,6 +704,68 @@ class nixl_agent:
 
     def release_dlist_handle(self, handle: nixl_prepped_dlist_handle):
         handle.release()
+
+    """
+    @brief Prepare a memory view handle for either a local or remote
+           descriptor list. Two call shapes (dispatched by the underlying
+           pybind11 overloads of nixlAgent::prepMemView):
+             - Local : prep_mem_view(dlist: nixlXferDList, backends=[])
+             - Remote: prep_mem_view(mem_type: str, descs, backends=[])
+                        where descs is a list of 4-tuples
+                        (addr, len, dev_id, remote_agent_name).
+           Returns the raw uintptr handle; pair with release_mem_view to free.
+
+    @param backends Optional list of backend names to limit the preparation to.
+    @return Opaque uintptr handle for the memory view.
+    """
+
+    @overload
+    def prep_mem_view(  # noqa: E704
+        self,
+        dlist: nixlBind.nixlXferDList,
+        *,
+        backends: list[str] = [],
+    ) -> int: ...
+
+    @overload
+    def prep_mem_view(  # noqa: E704
+        self,
+        mem_type: str,
+        descs: list[tuple],
+        *,
+        backends: list[str] = [],
+    ) -> int: ...
+
+    def prep_mem_view(  # type: ignore[misc]
+        self,
+        dlist_or_mem_type: Union[nixlBind.nixlXferDList, str],
+        descs: Optional[list[tuple]] = None,
+        *,
+        backends: list[str] = [],
+    ) -> int:
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+        if descs is None:
+            # Local form: first arg is the prepared local dlist.
+            return self.agent.prepMemView(dlist_or_mem_type, handle_list)
+        # Remote form: first arg is a mem_type string; map it to the
+        # underlying enum so the C++ remote overload matches.
+        assert isinstance(
+            dlist_or_mem_type, str
+        ), "When descs is provided, the first arg must be a mem_type str"
+        return self.agent.prepMemView(
+            self.nixl_mems[dlist_or_mem_type], descs, handle_list
+        )
+
+    """
+    @brief Release a memory view handle previously returned by prep_mem_view.
+
+    @param mvh uintptr handle returned by prep_mem_view.
+    """
+
+    def release_mem_view(self, mvh: int) -> None:
+        self.agent.releaseMemView(mvh)
 
     """
     @brief Get new notifications that have come to the agent.
