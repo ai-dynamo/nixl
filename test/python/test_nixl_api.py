@@ -127,6 +127,71 @@ def test_nixl_conf_bad_sync_mode():
         nixl_agent_config(sync_mode=1)
 
 
+@pytest.mark.parametrize(
+    ("configured_mode", "expected_mode"),
+    [
+        ("none", "none"),
+        ("peer", "peer"),
+    ],
+)
+def test_ucx_error_handling_mode_config(monkeypatch, configured_mode, expected_mode):
+    captured: list[tuple[str, dict[str, str]]] = []
+
+    class FakeAgent:
+        def getAvailPlugins(self) -> list[str]:
+            return ["UCX"]
+
+        def createBackend(self, backend: str, init_params: dict[str, str]) -> int:
+            captured.append((backend, init_params.copy()))
+            return 0
+
+        def getBackendParams(self, backend: int) -> tuple[dict[str, str], list[str]]:
+            return {}, []
+
+    monkeypatch.setattr(bindings, "nixlAgent", lambda agent_name, config: FakeAgent())
+    config = nixl_agent_config(
+        backends=["UCX"], ucx_error_handling_mode=configured_mode
+    )
+    agent = nixl_agent(str(uuid.uuid4()), nixl_conf=config)
+    agent.create_backend("UCX", {})
+
+    assert len(captured) == 2
+    assert captured[0][1]["ucx_error_handling_mode"] == expected_mode
+    assert captured[1][1]["ucx_error_handling_mode"] == expected_mode
+
+
+def test_ucx_error_handling_mode_user_override(monkeypatch):
+    captured: list[tuple[str, dict[str, str]]] = []
+
+    class FakeAgent:
+        def getAvailPlugins(self) -> list[str]:
+            return ["UCX"]
+
+        def createBackend(self, backend: str, init_params: dict[str, str]) -> int:
+            captured.append((backend, init_params.copy()))
+            return 0
+
+        def getBackendParams(self, backend: int) -> tuple[dict[str, str], list[str]]:
+            return {}, []
+
+    monkeypatch.setattr(bindings, "nixlAgent", lambda agent_name, config: FakeAgent())
+    config = nixl_agent_config(backends=[], ucx_error_handling_mode="none")
+    agent = nixl_agent(str(uuid.uuid4()), nixl_conf=config)
+    agent.create_backend("UCX", {"ucx_error_handling_mode": "peer"})
+
+    assert len(captured) == 1
+    assert captured[0][1]["ucx_error_handling_mode"] == "peer"
+
+
+@pytest.mark.parametrize("invalid_mode", ["invalid", None])
+def test_ucx_error_handling_mode_invalid(invalid_mode):
+    with pytest.raises(
+        ValueError,
+        match="ucx_error_handling_mode must be 'none' or 'peer'",
+    ):
+        nixl_agent_config(ucx_error_handling_mode=invalid_mode)
+
+
 def test_make_invalid_op(one_empty_agent, two_xfer_lists):
     # Only READ/WRITE are supported
     with pytest.raises(KeyError):
