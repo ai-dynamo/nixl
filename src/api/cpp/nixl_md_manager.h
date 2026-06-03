@@ -28,6 +28,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 class nixlAgent;
 
@@ -53,7 +54,8 @@ enum class nixl_md_backend_t {
  */
 class nixlMDManager {
 public:
-    explicit nixlMDManager(nixlAgent &agent) noexcept : agent_(agent) {}
+    nixlMDManager(nixlAgent &agent, std::string self_name) noexcept
+        : agent_(agent), self_name_(std::move(self_name)) {}
 
     /**
      * @brief Register a P2P peer's reachable address.
@@ -185,6 +187,7 @@ private:
     lookupPeer(const std::string &agent_name, Peer &out) const;
 
     nixlAgent &agent_;
+    const std::string self_name_;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, Peer> peers_;
 };
