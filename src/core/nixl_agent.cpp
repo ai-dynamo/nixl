@@ -174,7 +174,7 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
     }
 
     if (nixl::config::checkExistence("NIXL_MD_MANAGER")) {
-        data->mdManager_ = std::make_unique<nixlMDManager>(*this);
+        data->mdManager_ = std::make_unique<nixlMDManager>(*this, name);
     }
 }
 
