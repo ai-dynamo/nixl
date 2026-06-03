@@ -171,7 +171,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
 
     red_status_t rs;
 
-    NIXL_INFO << absl::StrFormat("INFINIA: v%s", INFINIA_PLUGIN_VERSION);
+    NIXL_INFO << "INFINIA: v" << INFINIA_PLUGIN_VERSION;
 
     if (!init_params) {
         initErr = true;
@@ -658,7 +658,7 @@ infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
     // Execute the batch ops in parallel
     red_status_t rs = batch_task.start();
     if (rs != RED_SUCCESS) {
-        NIXL_ERROR << absl::StrFormat("Failed to start HEAD batch: %s", red_strerror(rs));
+        NIXL_ERROR << "Failed to start HEAD batch: " << red_strerror(rs);
         return NIXL_ERR_BACKEND;
     }
 
@@ -702,7 +702,7 @@ infinia_engine::connect(const std::string &remote_agent) {
     }
 
     // TODO: Add actual Infinia connection logic here
-    NIXL_DEBUG << absl::StrFormat("Connecting to remote agent: %s", remote_agent);
+    NIXL_DEBUG << "Connecting to remote agent: " << remote_agent;
     return NIXL_SUCCESS;
 }
 
@@ -713,7 +713,7 @@ infinia_engine::disconnect(const std::string &remote_agent) {
     }
 
     // TODO: Add actual Infinia disconnection logic here
-    NIXL_DEBUG << absl::StrFormat("Disconnecting from remote agent: %s", remote_agent);
+    NIXL_DEBUG << "Disconnecting from remote agent: " << remote_agent;
     return NIXL_SUCCESS;
 }
 
@@ -863,7 +863,7 @@ infinia_engine::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
-        NIXL_ERROR << absl::StrFormat("Error preparing transfer: %s", e.what());
+        NIXL_ERROR << "Error preparing transfer: " << e.what();
         return NIXL_ERR_BACKEND;
     }
 }
@@ -902,7 +902,7 @@ infinia_engine::postXfer(const nixl_xfer_op_t &operation,
         return backend_handle.postTransfer();
     }
     catch (const std::exception &e) {
-        NIXL_ERROR << absl::StrFormat("Error posting transfer: %s", e.what());
+        NIXL_ERROR << "Error posting transfer: " << e.what();
         return NIXL_ERR_BACKEND;
     }
 }
@@ -920,7 +920,7 @@ infinia_engine::checkXfer(nixlBackendReqH *handle) const {
         return backend_handle.checkTransfer();
     }
     catch (const std::exception &e) {
-        NIXL_ERROR << absl::StrFormat("Error checking transfer: %s", e.what());
+        NIXL_ERROR << "Error checking transfer: " << e.what();
         return NIXL_ERR_BACKEND;
     }
 }
@@ -965,7 +965,7 @@ infinia_engine::loadRemoteConnInfo(const std::string &remote_agent,
     }
 
     // TODO: Parse and store remote connection information
-    NIXL_DEBUG << absl::StrFormat("Ignoring remote connection info for %s", remote_agent);
+    NIXL_DEBUG << "Ignoring remote connection info for " << remote_agent;
     return NIXL_SUCCESS;
 }
 
@@ -979,7 +979,7 @@ infinia_engine::loadRemoteMD(const nixlBlobDesc &input,
     }
 
     // TODO: Create remote metadata object
-    NIXL_DEBUG << absl::StrFormat("Ignoring remote metadata for %s", remote_agent);
+    NIXL_DEBUG << "Ignoring remote metadata for " << remote_agent;
     output = nullptr;
     return NIXL_SUCCESS;
 }
@@ -1032,8 +1032,7 @@ nixlInfiniaBackendReqH::~nixlInfiniaBackendReqH() {
             batch_task_.wait();
         }
         catch (const std::exception &e) {
-            NIXL_ERROR << absl::StrFormat("Exception while waiting for batch completion: %s",
-                                          e.what());
+            NIXL_ERROR << "Exception while waiting for batch completion: " << e.what();
         }
     }
 }
@@ -1155,12 +1154,12 @@ nixlInfiniaBackendReqH::postTransfer() {
             NIXL_ERROR << "BatchTask already started or invalid state";
             return NIXL_ERR_INVALID_PARAM;
         } else {
-            NIXL_ERROR << absl::StrFormat("Failed to start batch: %s", red_strerror(rs));
+            NIXL_ERROR << "Failed to start batch: " << red_strerror(rs);
             return NIXL_ERR_BACKEND;
         }
     }
     catch (const std::exception &e) {
-        NIXL_ERROR << absl::StrFormat("Failed to start batch: %s", e.what());
+        NIXL_ERROR << "Failed to start batch: " << e.what();
         return NIXL_ERR_BACKEND;
     }
 }
@@ -1236,8 +1235,7 @@ nixlInfiniaBackendReqH::checkTransfer() {
         // Reset BatchTask state for potential reuse (allows reposting)
         red_status_t reset_rs = batch_task_.reset_state();
         if (reset_rs != RED_SUCCESS) {
-            NIXL_WARN << absl::StrFormat("Failed to reset BatchTask state: %s",
-                                         red_strerror(reset_rs));
+            NIXL_WARN << "Failed to reset BatchTask state: " << red_strerror(reset_rs);
         }
 
         // Mark transfer as completed (allows reposting)
@@ -1247,7 +1245,7 @@ nixlInfiniaBackendReqH::checkTransfer() {
         return transfer_status_ == RED_SUCCESS ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
     }
     catch (const std::exception &e) {
-        NIXL_ERROR << absl::StrFormat("Exception while getting batch result: %s", e.what());
+        NIXL_ERROR << "Exception while getting batch result: " << e.what();
         transfer_posted_ = false;
         transfer_completed_ = true;
         return NIXL_ERR_BACKEND;
