@@ -154,8 +154,6 @@ nixlTelemetry::initializeTelemetry() {
         return;
     }
 
-    // Allocate the staging buffer once up to its cap so appending events on the
-    // telemetry path does not trigger repeated vector reallocations.
     events_.reserve(maxBufferedEvents_);
 
     NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << *exporter_name;
