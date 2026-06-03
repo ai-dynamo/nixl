@@ -41,3 +41,26 @@ See the [Python examples](../examples/python/) directory for complete working ex
 - [nixl_api_example.py](../examples/python/nixl_api_example.py) - General API usage
 - [basic_two_peers.py](../examples/python/basic_two_peers.py) - Basic transfer operations
 - [partial_md_example.py](../examples/python/partial_md_example.py) - Partial metadata handling
+
+## Backend initialization parameters
+
+Backends can expose initialization parameters through `get_plugin_params(backend)`.
+You can override values before calling `create_backend`.
+
+```python
+params = agent.get_plugin_params("UCX")
+
+# Common UCX options.
+params["ucx_error_handling_mode"] = "peer"   # or "none"
+params["ucx_vram_memtype_hint"] = "auto"     # recommended default
+
+agent.create_backend("UCX", params)
+```
+
+For `ucx_vram_memtype_hint`:
+
+- `auto` is the recommended default.
+- `none` disables NIXL memory-type hinting and leaves detection to UCX.
+- Explicit accelerator hints are also supported for advanced tuning: `cuda`, `cuda-managed`, `rocm`, `ze-device`.
+- Values are case-sensitive.
+- Explicit hints fail backend creation when UCX context memory types cannot be queried, or when the queried UCX context does not advertise the requested memtype (for example, `cuda`/`rocm`/`ze-device` selected but not supported by the current UCX context). `auto` and `none` continue without hinting.
