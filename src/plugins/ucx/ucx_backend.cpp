@@ -555,14 +555,31 @@ struct nixlUcxStagedChunk {
         FAILED,
     };
 
-    nixlUcxStagedChunk(uint64_t chunk_id, size_t chunk_offset, size_t chunk_size)
+    nixlUcxStagedChunk(uint64_t chunk_id,
+                       uintptr_t local_gpu_addr,
+                       uint64_t local_gpu_dev,
+                       uintptr_t remote_gpu_addr,
+                       uint64_t remote_gpu_dev,
+                       size_t chunk_size,
+                       nixlUcxStagedPrivateMetadata *local_metadata,
+                       nixlUcxStagedPublicMetadata *remote_metadata)
         : id(chunk_id),
-          offset(chunk_offset),
-          size(chunk_size) {}
+          localGpuAddr(local_gpu_addr),
+          localGpuDev(local_gpu_dev),
+          remoteGpuAddr(remote_gpu_addr),
+          remoteGpuDev(remote_gpu_dev),
+          size(chunk_size),
+          localMetadata(local_metadata),
+          remoteMetadata(remote_metadata) {}
 
     const uint64_t id;
-    const size_t offset;
+    const uintptr_t localGpuAddr;
+    const uint64_t localGpuDev;
+    const uintptr_t remoteGpuAddr;
+    const uint64_t remoteGpuDev;
     const size_t size;
+    nixlUcxStagedPrivateMetadata *localMetadata = nullptr;
+    nixlUcxStagedPublicMetadata *remoteMetadata = nullptr;
     size_t localSlotId = 0;
     bool localSlotHeld = false;
     uint64_t remoteSlotId = 0;
@@ -591,8 +608,8 @@ public:
 
     void
     releaseLocalSlot(nixlUcxStagedChunk &chunk) {
-        if (localMetadata && chunk.localSlotHeld) {
-            localMetadata->releaseSlot(chunk.localSlotId);
+        if (chunk.localMetadata && chunk.localSlotHeld) {
+            chunk.localMetadata->releaseSlot(chunk.localSlotId);
             chunk.localSlotHeld = false;
         }
     }
@@ -662,14 +679,7 @@ public:
 
     const uint64_t transferId;
     std::string remoteAgent;
-    nixlUcxStagedPrivateMetadata *localMetadata = nullptr;
-    nixlUcxStagedPublicMetadata *remoteMetadata = nullptr;
-    uintptr_t localGpuAddr = 0;
-    uint64_t localGpuDev = 0;
-    uintptr_t remoteGpuAddr = 0;
-    uint64_t remoteGpuDev = 0;
     size_t totalSize = 0;
-    size_t chunkSize = 0;
     size_t completedChunks = 0;
     std::vector<std::unique_ptr<nixlUcxStagedChunk>> chunks;
     bool pendingRegistered = false;
@@ -2531,62 +2541,74 @@ nixlUcxEngine::postStagedWrite(const nixl_meta_dlist_t &local,
         return NIXL_ERR_NOT_ALLOWED;
     }
 
-    if (local.descCount() != 1 || remote.descCount() != 1) {
-        NIXL_ERROR << "UCX VRAM staging v1 supports exactly one descriptor per WRITE";
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    if (local[0].len != remote[0].len || local[0].len == 0) {
+    const int local_desc_count = local.descCount();
+    const int remote_desc_count = remote.descCount();
+    if (local_desc_count <= 0 || remote_desc_count <= 0 ||
+        local_desc_count != remote_desc_count) {
         return NIXL_ERR_INVALID_PARAM;
-    }
-
-    auto *lmd = dynamic_cast<nixlUcxStagedPrivateMetadata *>(local[0].metadataP);
-    auto *rmd = dynamic_cast<nixlUcxStagedPublicMetadata *>(remote[0].metadataP);
-    if (!lmd || !rmd) {
-        NIXL_ERROR << "UCX VRAM staging metadata mismatch";
-        return NIXL_ERR_MISMATCH;
-    }
-
-    const size_t size = local[0].len;
-    if (!rangeCovers(lmd->gpuBase, lmd->gpuLen, local[0].addr, size) ||
-        !rangeCovers(rmd->gpuBase, rmd->gpuLen, remote[0].addr, size)) {
-        NIXL_ERROR << "UCX VRAM staging descriptor is outside registered region";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    const size_t chunk_size = std::min(lmd->slotSize, rmd->slotSize);
-    if (chunk_size == 0) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    if (rmd->slotAddrs.empty() || rmd->slotRkeys.empty()) {
-        return NIXL_ERR_MISMATCH;
     }
 
     staged_handle->remoteAgent = remote_agent;
-    staged_handle->localMetadata = lmd;
-    staged_handle->remoteMetadata = rmd;
-    staged_handle->localGpuAddr = local[0].addr;
-    staged_handle->localGpuDev = local[0].devId;
-    staged_handle->remoteGpuAddr = remote[0].addr;
-    staged_handle->remoteGpuDev = remote[0].devId;
-    staged_handle->totalSize = size;
-    staged_handle->chunkSize = chunk_size;
+    staged_handle->totalSize = 0;
 
-    const size_t chunk_count = (size + chunk_size - 1) / chunk_size;
-    staged_handle->chunks.reserve(chunk_count);
-    for (size_t i = 0; i < chunk_count; ++i) {
-        const size_t offset = i * chunk_size;
-        const size_t this_chunk_size = std::min(chunk_size, size - offset);
-        auto chunk =
-            std::make_unique<nixlUcxStagedChunk>(static_cast<uint64_t>(i),
-                                                 offset,
-                                                 this_chunk_size);
-        chunk->req =
-            std::make_unique<nixlUcxBackendReqH>(staged_handle->getWorker(),
-                                                 staged_handle->getWorkerId());
-        chunk->req->reserve(3);
-        staged_handle->chunks.push_back(std::move(chunk));
+    const size_t desc_count = static_cast<size_t>(local_desc_count);
+    for (size_t desc_id = 0; desc_id < desc_count; ++desc_id) {
+        const auto &local_desc = local[desc_id];
+        const auto &remote_desc = remote[desc_id];
+        if (local_desc.len != remote_desc.len || local_desc.len == 0) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+
+        auto *lmd = dynamic_cast<nixlUcxStagedPrivateMetadata *>(local_desc.metadataP);
+        auto *rmd = dynamic_cast<nixlUcxStagedPublicMetadata *>(remote_desc.metadataP);
+        if (!lmd || !rmd) {
+            NIXL_ERROR << "UCX VRAM staging metadata mismatch for descriptor " << desc_id;
+            return NIXL_ERR_MISMATCH;
+        }
+
+        const size_t desc_size = local_desc.len;
+        if (!rangeCovers(lmd->gpuBase, lmd->gpuLen, local_desc.addr, desc_size) ||
+            !rangeCovers(rmd->gpuBase, rmd->gpuLen, remote_desc.addr, desc_size)) {
+            NIXL_ERROR << "UCX VRAM staging descriptor " << desc_id
+                       << " is outside registered region";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+
+        const size_t chunk_size = std::min(lmd->slotSize, rmd->slotSize);
+        if (chunk_size == 0) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+
+        if (rmd->slotAddrs.empty() || rmd->slotRkeys.empty()) {
+            return NIXL_ERR_MISMATCH;
+        }
+
+        if (desc_size > std::numeric_limits<size_t>::max() - staged_handle->totalSize) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        staged_handle->totalSize += desc_size;
+
+        for (size_t offset = 0; offset < desc_size; offset += chunk_size) {
+            const size_t this_chunk_size = std::min(chunk_size, desc_size - offset);
+            auto chunk = std::make_unique<nixlUcxStagedChunk>(
+                static_cast<uint64_t>(staged_handle->chunks.size()),
+                local_desc.addr + offset,
+                local_desc.devId,
+                remote_desc.addr + offset,
+                remote_desc.devId,
+                this_chunk_size,
+                lmd,
+                rmd);
+            chunk->req =
+                std::make_unique<nixlUcxBackendReqH>(staged_handle->getWorker(),
+                                                     staged_handle->getWorkerId());
+            chunk->req->reserve(3);
+            staged_handle->chunks.push_back(std::move(chunk));
+        }
+    }
+
+    if (staged_handle->chunks.empty()) {
+        return NIXL_ERR_INVALID_PARAM;
     }
 
     nixl_status_t ret = registerPendingStagedReq(staged_handle->transferId, staged_handle);
@@ -2622,8 +2644,8 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
                                       chunk.id,
                                       chunk.remoteSlotId,
                                       chunk.leaseId,
-                                      staged_handle->remoteGpuAddr + chunk.offset,
-                                      staged_handle->remoteGpuDev,
+                                      chunk.remoteGpuAddr,
+                                      chunk.remoteGpuDev,
                                       chunk.size);
                 staged_handle->releaseRemoteSlot(chunk);
             }
@@ -2647,13 +2669,12 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
         chunk.grantStatus.store(NIXL_IN_PROG);
 
         nixlUcxReq req = nullptr;
-        const uintptr_t remote_gpu_addr = staged_handle->remoteGpuAddr + chunk.offset;
         const nixl_status_t send_status =
             sendStagedSlotReq(staged_handle->remoteAgent,
                               staged_handle->transferId,
                               chunk.id,
-                              remote_gpu_addr,
-                              staged_handle->remoteGpuDev,
+                              chunk.remoteGpuAddr,
+                              chunk.remoteGpuDev,
                               chunk.size,
                               conn->getEp(staged_handle->getWorkerId()),
                               &req);
@@ -2667,7 +2688,11 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
     };
 
     auto start_granted_chunk = [&](nixlUcxStagedChunk &chunk) -> nixl_status_t {
-        const auto local_slot_id = staged_handle->localMetadata->acquireSlot();
+        if (!chunk.localMetadata || !chunk.remoteMetadata) {
+            return NIXL_ERR_MISMATCH;
+        }
+
+        const auto local_slot_id = chunk.localMetadata->acquireSlot();
         if (!local_slot_id) {
             return NIXL_IN_PROG;
         }
@@ -2676,15 +2701,14 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
         chunk.localSlotHeld = true;
 
         int previous_device = -1;
-        nixl_status_t ret = cudaSetDeviceForCopy(staged_handle->localGpuDev, previous_device);
+        nixl_status_t ret = cudaSetDeviceForCopy(chunk.localGpuDev, previous_device);
         if (ret != NIXL_SUCCESS) {
             staged_handle->releaseChunkSlots(chunk);
             return ret;
         }
 
-        nixlUcxStagedSlot &local_slot = staged_handle->localMetadata->slots[chunk.localSlotId];
-        const auto local_gpu_addr =
-            reinterpret_cast<void *>(staged_handle->localGpuAddr + chunk.offset);
+        nixlUcxStagedSlot &local_slot = chunk.localMetadata->slots[chunk.localSlotId];
+        const auto local_gpu_addr = reinterpret_cast<void *>(chunk.localGpuAddr);
         const cudaError_t cuda_ret =
             cudaMemcpy(local_slot.hostAddr, local_gpu_addr, chunk.size, cudaMemcpyDeviceToHost);
         cudaRestoreDevice(previous_device);
@@ -2697,15 +2721,15 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
                                   chunk.id,
                                   chunk.remoteSlotId,
                                   chunk.leaseId,
-                                  staged_handle->remoteGpuAddr + chunk.offset,
-                                  staged_handle->remoteGpuDev,
+                                  chunk.remoteGpuAddr,
+                                  chunk.remoteGpuDev,
                                   chunk.size);
             staged_handle->releaseChunkSlots(chunk);
             return NIXL_ERR_BACKEND;
         }
 
         const size_t worker_id = staged_handle->getWorkerId();
-        const auto *rmd = staged_handle->remoteMetadata;
+        const auto *rmd = chunk.remoteMetadata;
         if (chunk.remoteSlotId >= rmd->slotRkeys.size() ||
             worker_id >= rmd->slotRkeys[chunk.remoteSlotId].size()) {
             sendStagedSlotRelease(staged_handle->remoteAgent,
@@ -2713,8 +2737,8 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
                                   chunk.id,
                                   chunk.remoteSlotId,
                                   chunk.leaseId,
-                                  staged_handle->remoteGpuAddr + chunk.offset,
-                                  staged_handle->remoteGpuDev,
+                                  chunk.remoteGpuAddr,
+                                  chunk.remoteGpuDev,
                                   chunk.size);
             staged_handle->releaseChunkSlots(chunk);
             return NIXL_ERR_MISMATCH;
@@ -2735,8 +2759,8 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
                                   chunk.id,
                                   chunk.remoteSlotId,
                                   chunk.leaseId,
-                                  staged_handle->remoteGpuAddr + chunk.offset,
-                                  staged_handle->remoteGpuDev,
+                                  chunk.remoteGpuAddr,
+                                  chunk.remoteGpuDev,
                                   chunk.size);
             staged_handle->releaseChunkSlots(chunk);
             return ret;
@@ -2751,8 +2775,8 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
                                   chunk.id,
                                   chunk.remoteSlotId,
                                   chunk.leaseId,
-                                  staged_handle->remoteGpuAddr + chunk.offset,
-                                  staged_handle->remoteGpuDev,
+                                  chunk.remoteGpuAddr,
+                                  chunk.remoteGpuDev,
                                   chunk.size);
             staged_handle->releaseChunkSlots(chunk);
             return ret;
@@ -2849,16 +2873,14 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
                     }
 
                     nixlUcxReq req = nullptr;
-                    const uintptr_t remote_gpu_addr =
-                        staged_handle->remoteGpuAddr + chunk.offset;
                     const nixl_status_t send_status =
                         sendStagedWriteReady(staged_handle->remoteAgent,
                                              staged_handle->transferId,
                                              chunk.id,
                                              chunk.remoteSlotId,
                                              chunk.leaseId,
-                                             remote_gpu_addr,
-                                             staged_handle->remoteGpuDev,
+                                             chunk.remoteGpuAddr,
+                                             chunk.remoteGpuDev,
                                              chunk.size,
                                              conn->getEp(staged_handle->getWorkerId()),
                                              &req);
@@ -3071,8 +3093,8 @@ nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
                                       chunk.id,
                                       chunk.remoteSlotId,
                                       chunk.leaseId,
-                                      staged_handle->remoteGpuAddr + chunk.offset,
-                                      staged_handle->remoteGpuDev,
+                                      chunk.remoteGpuAddr,
+                                      chunk.remoteGpuDev,
                                       chunk.size);
                 staged_handle->releaseRemoteSlot(chunk);
             }

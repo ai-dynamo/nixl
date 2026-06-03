@@ -7,6 +7,7 @@
 
 #include <cuda_runtime_api.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -34,11 +35,15 @@ struct Args {
     size_t concurrency = 1;
     size_t iters = 1;
     size_t offsetStride = 0;
+    size_t descriptors = 1;
     uint64_t initiatorId = 0;
     size_t initiatorCount = 1;
+    size_t pollSleepUs = 10000;
     std::string ucxDevices;
     std::string ucxTls = "rc,ud,self";
     bool staging = true;
+    bool prepped = false;
+    bool skipDescMerge = false;
 };
 
 [[noreturn]] void
@@ -47,8 +52,11 @@ usage(const char *prog) {
               << " --mode target|initiator [--ip target_ip] [--port port]"
               << " [--bytes n] [--timeout seconds] [--chunk-size n]"
               << " [--slots n] [--concurrency n] [--iters n]"
-              << " [--offset-stride n] [--initiator-id n] [--initiator-count n]"
-              << " [--ucx-devices devs] [--ucx-tls tls] [--staging 0|1]\n";
+              << " [--offset-stride n] [--descriptors n]"
+              << " [--initiator-id n] [--initiator-count n]"
+              << " [--poll-sleep-us n]"
+              << " [--ucx-devices devs] [--ucx-tls tls] [--staging 0|1]"
+              << " [--prepped 0|1] [--skip-desc-merge 0|1]\n";
     std::exit(2);
 }
 
@@ -84,16 +92,24 @@ parseArgs(int argc, char **argv) {
             args.iters = std::stoull(needValue());
         } else if (key == "--offset-stride") {
             args.offsetStride = std::stoull(needValue());
+        } else if (key == "--descriptors") {
+            args.descriptors = std::stoull(needValue());
         } else if (key == "--initiator-id") {
             args.initiatorId = std::stoull(needValue());
         } else if (key == "--initiator-count") {
             args.initiatorCount = std::stoull(needValue());
+        } else if (key == "--poll-sleep-us") {
+            args.pollSleepUs = std::stoull(needValue());
         } else if (key == "--ucx-devices") {
             args.ucxDevices = needValue();
         } else if (key == "--ucx-tls") {
             args.ucxTls = needValue();
         } else if (key == "--staging") {
             args.staging = (needValue() != "0");
+        } else if (key == "--prepped") {
+            args.prepped = (needValue() != "0");
+        } else if (key == "--skip-desc-merge") {
+            args.skipDescMerge = (needValue() != "0");
         } else {
             usage(argv[0]);
         }
@@ -106,7 +122,9 @@ parseArgs(int argc, char **argv) {
         usage(argv[0]);
     }
     if (args.bytes == 0 || args.concurrency == 0 || args.iters == 0 ||
-        args.initiatorCount == 0) {
+        args.initiatorCount == 0 || args.descriptors == 0 ||
+        args.descriptors > args.bytes ||
+        args.descriptors > static_cast<size_t>(std::numeric_limits<int>::max())) {
         usage(argv[0]);
     }
     if (args.offsetStride != 0 && args.offsetStride < args.bytes) {
@@ -135,7 +153,7 @@ checkCuda(cudaError_t status, const std::string &what) {
 
 template <class Predicate>
 void
-waitUntil(Predicate pred, const std::string &label, double timeoutSeconds) {
+waitUntil(Predicate pred, const std::string &label, double timeoutSeconds, size_t pollSleepUs) {
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                               std::chrono::duration<double>(timeoutSeconds));
@@ -146,7 +164,9 @@ waitUntil(Predicate pred, const std::string &label, double timeoutSeconds) {
         if (std::chrono::steady_clock::now() >= deadline) {
             throw std::runtime_error("timeout waiting for " + label);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (pollSleepUs != 0) {
+            std::this_thread::sleep_for(std::chrono::microseconds(pollSleepUs));
+        }
     }
 }
 
@@ -196,6 +216,20 @@ localRegionBytes(const Args &args) {
 size_t
 targetRegionBytes(const Args &args) {
     return regionBytesForCount(args, totalTransferCount(args));
+}
+
+size_t
+descriptorOffset(const Args &args, size_t descIndex) {
+    const size_t base = args.bytes / args.descriptors;
+    const size_t rem = args.bytes % args.descriptors;
+    return descIndex * base + std::min(descIndex, rem);
+}
+
+size_t
+descriptorLength(const Args &args, size_t descIndex) {
+    const size_t base = args.bytes / args.descriptors;
+    const size_t rem = args.bytes % args.descriptors;
+    return base + (descIndex < rem ? 1 : 0);
 }
 
 std::string
@@ -325,10 +359,25 @@ makeRegDlist(void *ptr, size_t bytes) {
 }
 
 nixl_xfer_dlist_t
-makeXferDlist(const nixlBasicDesc &desc) {
+makeXferDlist(uintptr_t baseAddr, size_t transferOffset, uint64_t devId, const Args &args) {
     nixl_xfer_dlist_t dlist(VRAM_SEG);
-    dlist.addDesc(desc);
+    for (size_t desc = 0; desc < args.descriptors; ++desc) {
+        const size_t desc_offset = descriptorOffset(args, desc);
+        const size_t desc_len = descriptorLength(args, desc);
+        nixlBasicDesc piece(baseAddr + transferOffset + desc_offset, desc_len, devId);
+        dlist.addDesc(piece);
+    }
     return dlist;
+}
+
+std::vector<int>
+makeDescriptorIndices(const Args &args) {
+    std::vector<int> indices;
+    indices.reserve(args.descriptors);
+    for (size_t desc = 0; desc < args.descriptors; ++desc) {
+        indices.push_back(static_cast<int>(desc));
+    }
+    return indices;
 }
 
 nixl_opt_args_t
@@ -374,7 +423,8 @@ runTarget(const Args &args) {
         waitUntil(
             [&]() { return agent.checkRemoteMD(initiatorName, empty) == NIXL_SUCCESS; },
             "initiator metadata",
-            args.timeout);
+            args.timeout,
+            args.pollSleepUs);
     }
 
     nixlBasicDesc dstDesc(reinterpret_cast<uintptr_t>(dst), totalBytes, 0);
@@ -403,7 +453,8 @@ runTarget(const Args &args) {
             return doneCount >= totalCount;
         },
         "write completion notification",
-        args.timeout);
+        args.timeout,
+        args.pollSleepUs);
 
     std::vector<unsigned char> got(totalBytes);
     checkCuda(cudaMemcpy(got.data(), dst, totalBytes, cudaMemcpyDeviceToHost),
@@ -454,7 +505,8 @@ runInitiator(const Args &args) {
     waitUntil(
         [&]() { return agent.checkRemoteMD(kTargetAgent, empty) == NIXL_SUCCESS; },
         "target metadata",
-        args.timeout);
+        args.timeout,
+        args.pollSleepUs);
     check(agent.sendLocalMD(&socket), "sendLocalMD initiator");
 
     nixlBasicDesc targetDesc;
@@ -477,7 +529,8 @@ runInitiator(const Args &args) {
             return false;
         },
         "target descriptors",
-        args.timeout);
+        args.timeout,
+        args.pollSleepUs);
     if (!haveDesc) {
         throw std::runtime_error("target descriptor was not received");
     }
@@ -487,6 +540,8 @@ runInitiator(const Args &args) {
     for (size_t iter = 0; iter < args.iters; ++iter) {
         std::vector<nixlXferReqH *> handles(args.concurrency, nullptr);
         std::vector<nixl_status_t> statuses(args.concurrency, NIXL_IN_PROG);
+        std::vector<nixlDlistH *> localPreps(args.concurrency, nullptr);
+        std::vector<nixlDlistH *> remotePreps(args.concurrency, nullptr);
 
         for (size_t lane = 0; lane < args.concurrency; ++lane) {
             const size_t transfer = iter * args.concurrency + lane;
@@ -494,17 +549,29 @@ runInitiator(const Args &args) {
             const size_t remoteOffset =
                 globalTransferIndex(args, args.initiatorId, transfer) * stride;
 
-            nixlBasicDesc srcDesc(reinterpret_cast<uintptr_t>(src) + localOffset, args.bytes, 0);
-            nixlBasicDesc dstDesc(targetDesc.addr + remoteOffset, args.bytes, targetDesc.devId);
-            nixl_xfer_dlist_t local = makeXferDlist(srcDesc);
-            nixl_xfer_dlist_t remote = makeXferDlist(dstDesc);
+            nixl_xfer_dlist_t local =
+                makeXferDlist(reinterpret_cast<uintptr_t>(src), localOffset, 0, args);
+            nixl_xfer_dlist_t remote =
+                makeXferDlist(targetDesc.addr, remoteOffset, targetDesc.devId, args);
 
             nixl_opt_args_t xferExtra = backendOnly(backend);
             xferExtra.notif = kDone;
+            xferExtra.skipDescMerge = args.skipDescMerge;
 
-            check(agent.createXferReq(NIXL_WRITE, local, remote, kTargetAgent, handles[lane],
-                                      &xferExtra),
-                  "createXferReq");
+            if (args.prepped) {
+                check(agent.prepXferDlist(local, localPreps[lane], &extra),
+                      "prepXferDlist local");
+                check(agent.prepXferDlist(kTargetAgent, remote, remotePreps[lane], &extra),
+                      "prepXferDlist remote");
+                const std::vector<int> indices = makeDescriptorIndices(args);
+                check(agent.makeXferReq(NIXL_WRITE, localPreps[lane], indices, remotePreps[lane],
+                                        indices, handles[lane], &xferExtra),
+                      "makeXferReq");
+            } else {
+                check(agent.createXferReq(NIXL_WRITE, local, remote, kTargetAgent, handles[lane],
+                                          &xferExtra),
+                      "createXferReq");
+            }
             if (!printedBackend) {
                 nixlBackendH *chosen = nullptr;
                 check(agent.queryXferBackend(handles[lane], chosen), "queryXferBackend");
@@ -534,16 +601,29 @@ runInitiator(const Args &args) {
                 return allDone;
             },
             "transfer completion",
-            args.timeout);
+            args.timeout,
+            args.pollSleepUs);
 
         for (auto *handle : handles) {
             check(agent.releaseXferReq(handle), "releaseXferReq");
+        }
+        for (auto *handle : localPreps) {
+            if (handle) {
+                check(agent.releasedDlistH(handle), "release local dlist handle");
+            }
+        }
+        for (auto *handle : remotePreps) {
+            if (handle) {
+                check(agent.releasedDlistH(handle), "release remote dlist handle");
+            }
         }
         completedTransfers += args.concurrency;
     }
 
     std::cout << "Initiator WRITE completed: " << completedTransfers << " transfers, "
-              << args.bytes << " bytes each\n";
+              << args.bytes << " bytes each, " << args.descriptors
+              << " descriptor(s) each, prepped=" << (args.prepped ? 1 : 0)
+              << ", skip_desc_merge=" << (args.skipDescMerge ? 1 : 0) << "\n";
     check(agent.invalidateRemoteMD(kTargetAgent), "invalidateRemoteMD");
     check(agent.deregisterMem(reg, &extra), "initiator deregisterMem");
     checkCuda(cudaFree(src), "initiator cudaFree");

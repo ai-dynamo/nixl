@@ -122,13 +122,16 @@ Current local implementation status:
 - Fixed UCX data-plane device selection so the backend accepts the documented `ucx_devices`
   parameter and remains compatible with the older `device_list` parameter. Both forms use
   comma-separated lists and trim whitespace around each device name.
+- Added staged WRITE support for multiple descriptor pairs. Each local/remote descriptor pair must
+  have the same nonzero length; the backend splits each pair into staged chunks and uses the same
+  target-side slot lease protocol per chunk.
+- Added C++ smoke coverage for the prepped transfer path (`prepXferDlist + makeXferReq`) used by
+  SGLang's fast KV transfer path.
 - Kept staged mode opt-in. The default direct UCX path remains unchanged.
 
 Current limitations:
 
 - `NIXL_READ` is not implemented for staged mode.
-- The staged WRITE path still supports exactly one descriptor, but the descriptor may be larger
-  than one staging slot and will be split into chunks.
 - Staged v1 uses synchronous CUDA copies for correctness.
 - Staged v1 uses UCX worker 0 for internal ready/ACK messages.
 - Target H2D is still performed synchronously in the internal active-message handler.
@@ -511,7 +514,7 @@ Tune chunk size and slot count based on PCIe copy bandwidth, RDMA bandwidth, and
 
 Current Phase 2 status:
 
-- Implemented chunk splitting for one large `VRAM_SEG` descriptor.
+- Implemented chunk splitting for staged `VRAM_SEG` descriptor pairs.
 - Added `chunk_id` to internal `STAGED_WRITE_READY` and `STAGED_ACK` messages.
 - Initiator can keep multiple chunks in flight up to the available local and remote staging slot
   count.
@@ -602,6 +605,9 @@ The C++ smoke test has been extended with:
 --offset-stride N
 --initiator-id N
 --initiator-count N
+--descriptors N
+--prepped 0|1
+--skip-desc-merge 0|1
 ```
 
 Observed Phase 3A acceptance matrix on `sglang-rdma-0-26 -> sglang-rdma-0-41`:
@@ -661,13 +667,78 @@ selected rails:
 0-41 mlx5_5 port_rcv_data:  +85,401,600
 ```
 
-Suggested commit split:
+#### SGLang NIXL Path Audit
+
+The installed SGLang package on `sglang-rdma-0-26` is `sglang==0.5.10` under
+`/opt/venv/lib/python3.10/site-packages`. Its NIXL disaggregation path is:
 
 ```text
-staging: reject staged request repost until reset is implemented
-staging: add target-side slot lease control messages
-staging: validate lease before H2D and release on failure
-examples: add concurrent staged vram write smoke
+sglang/srt/disaggregation/nixl/conn.py
+```
+
+Observed properties:
+
+- The KV cache, sliced KV cache, aux data, and state transfer paths all call
+  `agent.initialize_xfer("WRITE", ...)`.
+- No SGLang NIXL path found in this package calls `NIXL_READ`.
+- Each transfer creates a fresh NIXL xfer handle, posts it once with `agent.transfer(handle)`, stores
+  the handle, and polls it with `agent.check_xfer_state(handle)`. No repost/reset pattern was found.
+- KV cache WRITE is not single descriptor in the general case. The code groups contiguous source and
+  destination block indices, then emits descriptors for each layer and K/V tensor. For a standard
+  MHA model with one contiguous block group, this is already one descriptor per layer for K plus one
+  descriptor per layer for V. Additional non-contiguous block groups increase descriptor count.
+- `send_kvcache_slice` can emit even more VRAM descriptors because it creates per-token head-slice
+  descriptors for each layer K/V pair.
+- Aux transfer uses DRAM descriptors and is unaffected by VRAM staging.
+- State transfer can also use VRAM descriptors depending on `state_type`.
+
+This means current staged WRITE correctness is aligned with SGLang on operation and handle
+lifecycle. Phase 3C adds the missing descriptor-shape support: staged WRITE now accepts multiple
+local/remote descriptor pairs, validates pair counts and sizes, and expands each pair into staged
+chunks internally. This keeps SGLang's existing multi-descriptor WRITE requests on the same NIXL API
+surface.
+
+#### Phase 3C: Multi-Descriptor WRITE
+
+Phase 3C has been implemented for staged WRITE. The operation remains WRITE-only and staged handle
+repost remains rejected. The backend now accepts a descriptor list, splits every descriptor pair
+into chunks, and runs the target-side slot lease protocol per chunk. Request completion and user
+notification still wait for all descriptor chunks to receive target H2D ACKs.
+
+The C++ smoke test now has `--descriptors N`, which splits every transfer's local and remote xfer
+dlists into `N` descriptors while the registered VRAM region remains contiguous. It also has
+`--prepped 1` for the `prepXferDlist + makeXferReq` path and `--skip-desc-merge 1` to keep the test
+descriptor list from being merged back into one contiguous descriptor.
+
+Observed Phase 3C acceptance matrix on `sglang-rdma-0-26 -> sglang-rdma-0-41`:
+
+```text
+descriptors=1, slots=1, concurrency=2, bytes=4 MiB:         passed
+skip_desc_merge=1, descriptors=8, slots=4,
+  concurrency=2, bytes=16 MiB:                               passed
+skip_desc_merge=1, descriptors=4, slots=4,
+  concurrency=2, bytes=80 MiB:                               passed
+skip_desc_merge=1, descriptors=72, slots=4,
+  concurrency=1, bytes=16 MiB:                               passed
+initiators=2, skip_desc_merge=1, descriptors=8, slots=1,
+  concurrency=2 each, bytes=16 MiB:                          passed
+prepped=1, skip_desc_merge=1, descriptors=8,
+  slots=4, concurrency=2, bytes=16 MiB:                      passed
+prepped=1, skip_desc_merge=1, descriptors=72,
+  slots=4, concurrency=1, bytes=16 MiB:                      passed
+```
+
+The `descriptors=4, bytes=80 MiB` case validates both multi-descriptor and multi-chunk behavior:
+each 20 MiB descriptor is split across the 16 MiB staging chunk boundary.
+
+Counter validation for a `skip_desc_merge=1, descriptors=4, bytes=80 MiB, concurrency=2` run with
+`ucx_devices=mlx5_4,mlx5_5`:
+
+```text
+0-26 mlx5_4 port_xmit_data: +21,356,058
+0-26 mlx5_5 port_xmit_data: +21,350,400
+0-41 mlx5_4 port_rcv_data:  +21,356,324
+0-41 mlx5_5 port_rcv_data:  +21,350,400
 ```
 
 ### Phase 4: READ Support
