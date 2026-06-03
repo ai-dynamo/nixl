@@ -32,6 +32,21 @@ extern "C" {
 #include "absl/strings/numbers.h"
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
+inline constexpr std::string_view nixl_ucx_vram_staging_param_name = "vram_staging";
+inline constexpr std::string_view nixl_ucx_staging_chunk_size_param_name = "staging_chunk_size";
+inline constexpr std::string_view nixl_ucx_staging_slots_param_name = "staging_slots_per_gpu";
+inline constexpr std::string_view nixl_ucx_staging_force_progress_param_name =
+    "staging_force_progress_thread";
+inline constexpr std::string_view nixl_ucx_staging_cuda_streams_param_name =
+    "staging_cuda_copy_streams";
+inline constexpr std::string_view nixl_ucx_vram_staging_env_name = "NIXL_UCX_VRAM_STAGING";
+inline constexpr std::string_view nixl_ucx_staging_chunk_size_env_name =
+    "NIXL_UCX_STAGING_CHUNK_SIZE";
+inline constexpr std::string_view nixl_ucx_staging_slots_env_name = "NIXL_UCX_STAGING_SLOTS";
+inline constexpr std::string_view nixl_ucx_staging_force_progress_env_name =
+    "NIXL_UCX_STAGING_FORCE_PROGRESS_THREAD";
+inline constexpr std::string_view nixl_ucx_staging_cuda_streams_env_name =
+    "NIXL_UCX_STAGING_CUDA_COPY_STREAMS";
 
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
 // field only from UCX 1.22
@@ -54,6 +69,22 @@ nixl_b_params_get(const nixl_b_params_t *custom_params, const std::string &key, 
         return absl::SimpleAtoi(it->second, &result) ? result : default_value;
     }
 }
+
+[[nodiscard]] bool
+nixl_b_params_get_bool(const nixl_b_params_t *custom_params,
+                       std::string_view key,
+                       bool default_value);
+
+[[nodiscard]] size_t
+nixl_b_params_get_size(const nixl_b_params_t *custom_params,
+                       std::string_view key,
+                       size_t default_value);
+
+[[nodiscard]] bool
+nixl_env_get_bool(std::string_view name, bool default_value);
+
+[[nodiscard]] size_t
+nixl_env_get_size(std::string_view name, size_t default_value);
 
 using nixlUcxReq = void *;
 

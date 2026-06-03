@@ -18,6 +18,7 @@
 #include "ucx_utils.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <exception>
 #include <stdexcept>
@@ -29,6 +30,7 @@
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
+#include "common/configuration.h"
 #include "serdes/serdes.h"
 
 [[nodiscard]] nixl_b_params_t
@@ -37,7 +39,101 @@ get_ucx_backend_common_options() {
 
     params.emplace(nixl_ucx_err_handling_param_name,
                    ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_PEER));
+    params.emplace(nixl_ucx_vram_staging_param_name, "false");
+    params.emplace(nixl_ucx_staging_chunk_size_param_name, std::to_string(16 * 1024 * 1024));
+    params.emplace(nixl_ucx_staging_slots_param_name, "4");
+    params.emplace(nixl_ucx_staging_force_progress_param_name, "true");
+    params.emplace(nixl_ucx_staging_cuda_streams_param_name, "1");
     return params;
+}
+
+namespace {
+
+[[nodiscard]] bool
+parseBool(std::string_view value, bool default_value) {
+    const std::string text(value);
+    try {
+        return nixl::config::internal::convertTraits<bool>::convert(text);
+    }
+    catch (const std::exception &e) {
+        NIXL_WARN << "Invalid boolean UCX backend parameter value '" << text
+                  << "', using default " << default_value << ": " << e.what();
+        return default_value;
+    }
+}
+
+[[nodiscard]] size_t
+parseSize(std::string_view value, size_t default_value) {
+    const std::string text(value);
+
+    if (text.empty()) {
+        NIXL_WARN << "Empty size UCX backend parameter value, using default " << default_value;
+        return default_value;
+    }
+
+    size_t number_end = text.size();
+    uint64_t scale = 1;
+    const char last = static_cast<char>(std::tolower(static_cast<unsigned char>(text.back())));
+    if (last == 'k' || last == 'm' || last == 'g') {
+        number_end -= 1;
+        scale = (last == 'k') ? 1024ULL : (last == 'm') ? 1024ULL * 1024ULL :
+                                                       1024ULL * 1024ULL * 1024ULL;
+    }
+
+    size_t result = 0;
+    const std::string number = text.substr(0, number_end);
+    if (number.empty() || !absl::SimpleAtoi(number, &result)) {
+        NIXL_WARN << "Invalid size UCX backend parameter value '" << text << "', using default "
+                  << default_value;
+        return default_value;
+    }
+    return result * scale;
+}
+
+} // namespace
+
+[[nodiscard]] bool
+nixl_b_params_get_bool(const nixl_b_params_t *custom_params,
+                       std::string_view key,
+                       bool default_value) {
+    if (!custom_params) {
+        return default_value;
+    }
+
+    const auto it = custom_params->find(std::string(key));
+    if (it == custom_params->end()) {
+        return default_value;
+    }
+
+    return parseBool(it->second, default_value);
+}
+
+[[nodiscard]] size_t
+nixl_b_params_get_size(const nixl_b_params_t *custom_params,
+                       std::string_view key,
+                       size_t default_value) {
+    if (!custom_params) {
+        return default_value;
+    }
+
+    const auto it = custom_params->find(std::string(key));
+    if (it == custom_params->end()) {
+        return default_value;
+    }
+
+    return parseSize(it->second, default_value);
+}
+
+[[nodiscard]] bool
+nixl_env_get_bool(std::string_view name, bool default_value) {
+    const auto value = nixl::config::internal::getenvOptional(std::string(name));
+    return value ? parseBool(*value, default_value) : default_value;
+}
+
+[[nodiscard]] size_t
+nixl_env_get_size(std::string_view name, size_t default_value) {
+    const auto value = nixl::config::internal::getenvOptional(std::string(name));
+    return value ? parseSize(*value, default_value) : default_value;
 }
 
 [[nodiscard]] std::string_view

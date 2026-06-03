@@ -28,6 +28,7 @@
 #include <chrono>
 #include <poll.h>
 #include <optional>
+#include <unordered_map>
 
 #include "nixl.h"
 
@@ -208,6 +209,24 @@ public:
     void releaseMemView(nixlMemViewH) const override;
 
 protected:
+    struct VramStagingConfig {
+        bool enabled = false;
+        size_t chunkSize = 16 * 1024 * 1024;
+        size_t slotsPerGpu = 4;
+        bool forceProgressThread = true;
+        size_t cudaCopyStreams = 1;
+    };
+
+    [[nodiscard]] bool
+    vramStagingEnabled() const noexcept {
+        return vramStagingConfig_.enabled;
+    }
+
+    [[nodiscard]] const VramStagingConfig &
+    vramStagingConfig() const noexcept {
+        return vramStagingConfig_;
+    }
+
     const std::vector<std::unique_ptr<nixlUcxWorker>> &
     getWorkers() const {
         return uws;
@@ -246,6 +265,78 @@ private:
     // Memory management helpers
     nixl_status_t
     internalMDHelper(const nixl_blob_t &blob, const std::string &agent, nixlBackendMD *&output);
+
+    nixl_status_t
+    internalStagedMDHelper(const nixl_blob_t &blob,
+                           const std::string &agent,
+                           nixlBackendMD *&output);
+
+    uint64_t
+    nextStagedTransferId() const noexcept;
+
+    nixl_status_t
+    registerPendingStagedReq(uint64_t transfer_id, nixlBackendReqH *handle) const;
+
+    void
+    unregisterPendingStagedReq(uint64_t transfer_id, nixlBackendReqH *handle) const;
+
+    void
+    completePendingStagedReq(uint64_t transfer_id, uint64_t chunk_id, nixl_status_t status) const;
+
+    void
+    registerStagedRegion(nixlBackendMD *metadata);
+
+    void
+    unregisterStagedRegion(nixlBackendMD *metadata);
+
+    nixl_status_t
+    postStagedWrite(const nixl_meta_dlist_t &local,
+                    const nixl_meta_dlist_t &remote,
+                    const std::string &remote_agent,
+                    nixlBackendReqH *handle,
+                    const nixl_opt_b_args_t *opt_args) const;
+
+    nixl_status_t
+    checkStagedXfer(nixlBackendReqH *handle) const;
+
+    nixl_status_t
+    sendStagedWriteReady(const std::string &remote_agent,
+                         uint64_t transfer_id,
+                         uint64_t chunk_id,
+                         uint64_t remote_slot_id,
+                         uintptr_t remote_gpu_addr,
+                         uint64_t remote_gpu_dev,
+                         size_t size,
+                         const std::unique_ptr<nixlUcxEp> &ep,
+                         nixlUcxReq *req) const;
+
+    nixl_status_t
+    sendStagedAck(const std::string &remote_agent,
+                  uint64_t transfer_id,
+                  uint64_t chunk_id,
+                  nixl_status_t status) const;
+
+    nixl_status_t
+    handleStagedWriteReady(const nixl_blob_t &message) const;
+
+    static ucs_status_t
+    stagedWriteReadyAmCb(void *arg,
+                         const void *header,
+                         size_t header_length,
+                         void *data,
+                         size_t length,
+                         const ucp_am_recv_param_t *param);
+
+    static ucs_status_t
+    stagedAckAmCb(void *arg,
+                  const void *header,
+                  size_t header_length,
+                  void *data,
+                  size_t length,
+                  const ucp_am_recv_param_t *param);
+
+    static VramStagingConfig
+    makeVramStagingConfig(const nixl_b_params_t *custom_params);
 
     // Notifications
     static ucs_status_t
@@ -292,6 +383,12 @@ private:
     std::vector<std::unique_ptr<nixlUcxWorker>> uws;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
+    VramStagingConfig vramStagingConfig_;
+    mutable std::atomic<uint64_t> nextStagedTransferId_;
+    mutable std::mutex stagedReqMutex_;
+    mutable std::unordered_map<uint64_t, nixlBackendReqH *> pendingStagedReqs_;
+    mutable std::mutex stagedRegionMutex_;
+    std::vector<nixlBackendMD *> stagedRegions_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
