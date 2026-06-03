@@ -187,22 +187,21 @@ jobs:
       SKIPPED_SECURITY_RULES: "B404,B603,B108"
       ALLOWED_NOSEC_COUNT: "0"
       IGNORE_FAILED_PIP_INSTALL: "1"
-      GITLAB_REGISTRY_USER: ${{ secrets.GITLAB_REGISTRY_USER }}
-      GITLAB_REGISTRY_TOKEN: ${{ secrets.GITLAB_REGISTRY_TOKEN }}
     steps:
       - name: Download manylinux wheels
         uses: actions/download-artifact@v4
         with:
           name: dist-build-nixl-manylinux
           path: dist
-      - name: Log in to GitLab registry
-        if: ${{ env.GITLAB_REGISTRY_TOKEN != '' }}
-        run: |
-          echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 \
-            -u "$GITLAB_REGISTRY_USER" --password-stdin
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
       - name: Scan wheels with wheeltamer
         run: |
           set -e
+          # wheeltamer is mirrored into ECR (gitlab-master is unreachable from the
+          # AWS runners). Mirror with: crane copy
+          #   gitlab-master.nvidia.com:5005/dl/pypi/wheel-ci-cd:wheeltamer
+          #   ${NIXL_ECR_IMAGE}:wheeltamer
           CN="wheeltamer_${{ github.run_id }}"
           docker rm -f "$CN" || true
           docker create --name="$CN" \
@@ -211,7 +210,7 @@ jobs:
             -e ALLOWED_NOSEC_COUNT="${ALLOWED_NOSEC_COUNT}" \
             -e IGNORE_FAILED_PIP_INSTALL="${IGNORE_FAILED_PIP_INSTALL}" \
             --pull=always \
-            gitlab-master.nvidia.com:5005/dl/pypi/wheel-ci-cd:wheeltamer
+            "${{ vars.NIXL_ECR_IMAGE }}:wheeltamer"
           docker cp "$PWD/dist/." "$CN:/workspace"
           docker start -a "$CN"
       - name: Cleanup
