@@ -18,14 +18,12 @@
 #![allow(dead_code)]
 
 use std::env;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, MutexGuard};
 
 /// Process-global lock serializing all `EnvGuard` users, so tests that mutate
 /// shared environment variables cannot race under the parallel test runner.
-fn env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
+/// `Mutex::new` is `const`, so a const-initialized static suffices (no lazy init).
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// RAII guard for tests that mutate process-global environment variables.
 ///
@@ -46,7 +44,7 @@ impl EnvGuard {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let lock = env_lock()
+        let lock = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let saved = vars
