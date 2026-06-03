@@ -213,27 +213,43 @@ Single-chunk correctness mode can use conservative synchronization before introd
 UCX active messages can be reused for internal staged protocol messages. These messages should be
 separate from user notifications.
 
-Suggested message types:
+Current implemented message types:
 
 ```text
-STAGE_WRITE_CHUNK_READY
-STAGE_WRITE_CHUNK_ACK
-STAGE_WRITE_ABORT
-STAGE_SLOT_RELEASE
+STAGED_WRITE_READY
+STAGED_ACK
 ```
 
-Each message should include:
+Phase 3A should add target-side slot lease messages:
 
 ```text
-protocol_version
-transfer_id
-descriptor_id
-chunk_id
-slot_id
-gpu_offset
-chunk_size
-status
+STAGED_SLOT_REQ
+STAGED_SLOT_GRANT
+STAGED_SLOT_RELEASE
 ```
+
+The key protocol change is that the initiator must not choose the target staging slot from public
+metadata by itself. The target owns its staging slots and must grant a lease before the initiator
+can RDMA-write into one.
+
+Suggested WRITE chunk flow after Phase 3A:
+
+```text
+initiator -> target: STAGED_SLOT_REQ(transfer_id, chunk_id, gpu_addr, gpu_dev, size)
+target -> initiator: STAGED_SLOT_GRANT(transfer_id, chunk_id, slot_id, lease_id, status)
+initiator:          D2H into local staging slot
+initiator:          UCX host RDMA write into granted target slot
+initiator:          UCX flush
+initiator -> target: STAGED_WRITE_READY(transfer_id, chunk_id, slot_id, lease_id,
+                                        gpu_addr, gpu_dev, size)
+target:             validate lease, H2D from target slot into target GPU
+target -> initiator: STAGED_ACK(transfer_id, chunk_id, lease_id, status)
+initiator:          release local slot and mark chunk done
+```
+
+`STAGED_SLOT_RELEASE` is used when an initiator has received a grant but cannot complete the chunk
+path, for example D2H failure, UCX write failure, UCX flush failure, READY send failure, request
+release, cancellation, or remote disconnect handling.
 
 The target side must process internal messages even when the application is not calling
 `getNotifs`. Staged mode should therefore require a progress thread or provide a backend-owned
@@ -260,24 +276,73 @@ The staging pool needs explicit ownership tracking. Publishing staging slots in 
 enough, because multiple in-flight transfers or multiple initiators can otherwise write into the
 same slot.
 
-The first implementation can choose one of two approaches:
+Current Phase 2 ownership is only transfer-local:
 
-1. Restrict staged mode to one peer and one in-flight request per registered region.
-2. Implement target-side slot leasing before the first correctness test.
+- local source slots are protected by `nixlUcxStagedPrivateMetadata::slotBusy`,
+- target slots are tracked by `nixlUcxStagedBackendReqH::remoteSlotBusy`,
+- `remoteSlotBusy` is private to one request handle.
 
-For production use, target-side slot leasing is required. Slot state should include:
+This is enough for one transfer's chunk pipeline, but not enough for concurrent transfers. Two
+handles in the same initiator process, or two different initiators, can both select target slot 0
+because they have independent local views of remote slot availability.
+
+For SGLang-style concurrent use, target-side slot leasing is required. Slot state should live in
+the target's `nixlUcxStagedPrivateMetadata`, because that process owns the pinned host staging
+slots. The same state table should cover local D2H use and remote incoming RDMA use so a process
+that is both initiator and target cannot reuse one physical host slot for incompatible purposes.
+
+Suggested state model:
 
 ```text
-free
-reserved
-rdma_in_progress
-h2d_in_progress
-acked
-error
+FREE
+LOCAL_D2H
+REMOTE_RESERVED
+REMOTE_RDMA_READY
+REMOTE_H2D
+ERROR
+```
+
+Suggested lease fields:
+
+```text
+state
+owner_agent
+transfer_id
+chunk_id
+lease_id
+gpu_addr
+gpu_dev
+size
+deadline
+```
+
+`STAGED_WRITE_READY` must validate the lease before H2D:
+
+```text
+slot_id exists
+lease_id matches
+owner_agent matches
+transfer_id matches
+chunk_id matches
+size <= slot_size
+gpu range is inside the registered VRAM region
+slot state is REMOTE_RESERVED or REMOTE_RDMA_READY
 ```
 
 Every failure path must release or poison affected slots so later transfers cannot observe stale
-state.
+state. At minimum:
+
+- initiator D2H failure after grant sends `STAGED_SLOT_RELEASE`,
+- UCX write or flush failure after grant sends `STAGED_SLOT_RELEASE`,
+- READY send failure after grant sends `STAGED_SLOT_RELEASE`,
+- target malformed READY releases a matching lease or marks the slot `ERROR`,
+- target H2D failure releases the slot and sends an error ACK,
+- initiator request release sends release for any chunk that holds a target lease but has not
+  received ACK.
+
+Target H2D should not run while holding the global staged region mutex. The callback should find the
+region and lease, copy the needed slot pointer and GPU range, update slot state, release the region
+lock, perform H2D, then reacquire the slot lock to release or poison the lease and send ACK.
 
 ## CUDA Synchronization
 
@@ -476,6 +541,91 @@ Add production safety:
 - partial failure cleanup,
 - telemetry for D2H, RDMA, H2D, and ack latency.
 
+#### Phase 3A: Target-Side Slot Lease
+
+Phase 3A should be completed before SGLang concurrent testing. The Phase 2 pipeline proves a single
+large transfer can reuse slots safely within one request handle, but it does not protect target
+staging slots across multiple request handles or initiators.
+
+Recommended implementation order:
+
+1. Reject staged request repost until reset support exists.
+   Ordinary UCX requests may be reposted after completion, but the staged handle currently owns
+   chunk state such as `chunks`, `completedChunks`, `nextChunkToPost`, and per-chunk ACK state. A
+   conservative first patch should return `NIXL_ERR_NOT_ALLOWED` when a staged handle is posted
+   outside the initial state.
+2. Add `STAGED_SLOT_REQ`, `STAGED_SLOT_GRANT`, and `STAGED_SLOT_RELEASE`.
+   The target grants concrete staging slots and assigns a `lease_id`; the initiator uses only the
+   granted slot for the chunk RDMA write.
+3. Validate the lease in `STAGED_WRITE_READY`.
+   The target must verify owner, transfer id, chunk id, slot id, lease id, GPU range, and size
+   before running H2D.
+4. Release or poison slots on every failure path.
+   Slot leaks will deadlock later transfers; stale slot reuse can corrupt target GPU data.
+5. Add concurrent smoke tests.
+   Correctness must be shown for multiple in-flight WRITE requests and at least two initiator
+   processes writing different offsets into one target allocation.
+
+Suggested internal slot lease structures:
+
+```cpp
+enum class StagedSlotState {
+    FREE,
+    LOCAL_D2H,
+    REMOTE_RESERVED,
+    REMOTE_RDMA_READY,
+    REMOTE_H2D,
+    ERROR,
+};
+
+struct StagedSlotLease {
+    StagedSlotState state;
+    std::string ownerAgent;
+    uint64_t transferId;
+    uint64_t chunkId;
+    uint64_t leaseId;
+    uintptr_t gpuAddr;
+    uint64_t gpuDev;
+    size_t size;
+    std::chrono::steady_clock::time_point deadline;
+};
+```
+
+The C++ smoke test should be extended with:
+
+```text
+--concurrency N
+--iters N
+--bytes N
+--chunk-size N
+--slots N
+--offset-stride N
+--initiator-id N
+```
+
+Suggested acceptance matrix:
+
+```text
+slots=1, concurrency=2,  bytes=16 MiB
+slots=1, concurrency=8,  bytes=4 MiB
+slots=4, concurrency=8,  bytes=80 MiB
+slots=4, concurrency=16, bytes=1 MiB
+two initiator processes writing distinct offsets into one target allocation
+```
+
+The target should allocate one larger GPU buffer. Each transfer writes a different offset, and the
+data pattern should encode `initiator_id`, transfer index, and byte offset so target verification can
+detect cross-transfer slot overwrites.
+
+Suggested commit split:
+
+```text
+staging: reject staged request repost until reset is implemented
+staging: add target-side slot lease control messages
+staging: validate lease before H2D and release on failure
+examples: add concurrent staged vram write smoke
+```
+
 ### Phase 4: READ Support
 
 Implement staged `NIXL_READ` only if the application path requires it.
@@ -503,8 +653,9 @@ delegates the whole transfer lifecycle to the selected backend.
 - Does the target application path use `NIXL_READ`, or is `NIXL_WRITE` sufficient?
 - Does the application provide any implicit CUDA stream ordering before calling NIXL?
 - How many concurrent transfers can exist per peer and per registered GPU region?
-- Should target-side slot leasing be implemented in Phase 1 or deferred behind a single-inflight
-  restriction?
+- What lease timeout should be used before a target slot is marked `ERROR` or reclaimed?
+- Should target H2D remain in the UCX active-message callback for Phase 3A, or should it move to a
+  target-side staging worker queue immediately after lease validation?
 - Should staged mode force a progress thread, or can all needed progress be driven by existing
   application polling in the target process?
 - Which UCX transports are selected for host DRAM transfers on the target hosts?
