@@ -22,79 +22,20 @@
 
 #pragma once
 
-#include "cuda_warn.hpp"
+#include "cuda_stream.hpp"
+#include "cuda_event.hpp"
 #include "kernels/exception.cuh"
-
-#include <c10/cuda/CUDAStream.h>
-
-#include <cuda_runtime.h>
 
 #include <memory>
 
 namespace nixl_ep {
-
-class cudaEvent {
+class EventHandle {
 public:
-    cudaEvent() : event_{create()} {}
-
-    cudaEvent(const cudaEvent &) = delete;
-    cudaEvent &
-    operator=(const cudaEvent &) = delete;
-
-    cudaEvent(cudaEvent &&other) noexcept : event_{other.event_} {
-        other.event_ = nullptr;
-    }
-
-    cudaEvent &
-    operator=(cudaEvent &&other) noexcept {
-        if (this != &other) {
-            destroy();
-            event_ = other.event_;
-            other.event_ = nullptr;
-        }
-        return *this;
-    }
-
-    ~cudaEvent() noexcept {
-        destroy();
-    }
-
-    void
-    record(const at::cuda::CUDAStream &stream) {
-        CUDA_CHECK(cudaEventRecord(event_, stream.stream()));
-    }
-
-    void
-    block(const at::cuda::CUDAStream &stream) const {
-        CUDA_CHECK(cudaStreamWaitEvent(stream.stream(), event_, 0));
-    }
-
-private:
-    static cudaEvent_t
-    create() {
-        cudaEvent_t event;
-        CUDA_CHECK(cudaEventCreateWithFlags(&event, cudaEventDisableTiming));
-        return event;
-    }
-
-    void
-    destroy() noexcept {
-        if (event_ == nullptr) {
-            return;
-        }
-        warnCuda(cudaEventDestroy(event_), "Event::destroy()", "cudaEventDestroy");
-        event_ = nullptr;
-    }
-
-    cudaEvent_t event_;
-};
-
-struct EventHandle {
     EventHandle() : event_{std::make_shared<cudaEvent>()} {
-        event_->record(at::cuda::getCurrentCUDAStream());
+        event_->record(cuda_stream::getCurrent());
     }
 
-    explicit EventHandle(const at::cuda::CUDAStream &stream)
+    explicit EventHandle(cudaStream_t stream)
         : event_{std::make_shared<cudaEvent>()} {
         event_->record(stream);
     }
@@ -103,11 +44,13 @@ struct EventHandle {
 
     void
     currentStreamWait() const {
-        event_->block(at::cuda::getCurrentCUDAStream());
+        cudaStream_t stream = cuda_stream::getCurrent();
+        CUDA_CHECK(cudaStreamWaitEvent(stream, event_->get(), 0));
     }
 
-    void streamWait(const at::cuda::CUDAStream &stream) const {
-        event_->block(stream);
+    void
+    streamWait(cudaStream_t stream) const {
+        CUDA_CHECK(cudaStreamWaitEvent(stream, event_->get(), 0));
     }
 
 private:
@@ -115,11 +58,10 @@ private:
 };
 
 inline void
-streamWait(const at::cuda::CUDAStream &s_0, const at::cuda::CUDAStream &s_1) {
-    EP_HOST_ASSERT(s_0.id() != s_1.id());
-    cudaEvent e;
-    e.record(s_1);
-    e.block(s_0);
+streamWait(cudaStream_t cuda_stream_0, cudaStream_t cuda_stream_1) {
+    EP_HOST_ASSERT(cuda_stream_0 != cuda_stream_1);
+    cudaEvent cuda_event;
+    cuda_event.record(cuda_stream_1);
+    CUDA_CHECK(cudaStreamWaitEvent(cuda_stream_0, cuda_event.get(), 0));
 }
-
 } // namespace nixl_ep
