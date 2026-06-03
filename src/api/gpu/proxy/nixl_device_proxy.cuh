@@ -28,9 +28,10 @@ struct ProxyDeviceContext;
 // Overlay struct written into nixlGpuXferStatusH::storage by enqueue()
 // and read back by pollXferStatus().  Must fit within the 64-byte opaque blob.
 struct ProxyXferStatus {
-    nixlProxyCompletionSlot *slot;  // device pointer to the channel's nixlProxyCompletionSlot
-    uint64_t        op_idx;
+    nixlProxyCompletionSlot *slot; // device pointer to the channel's nixlProxyCompletionSlot
+    uint64_t op_idx;
 };
+
 static_assert(sizeof(ProxyXferStatus) <= sizeof(nixlGpuXferStatusH),
               "ProxyXferStatus must fit in nixlGpuXferStatusH::storage");
 
@@ -43,7 +44,8 @@ extern __device__ __constant__ ProxyDeviceContext *g_nixl_proxy_ctx;
 __host__ inline cudaError_t
 nixlProxyPublishContext(nixlProxyDeviceContextData *ctx) {
     ProxyDeviceContext *device_ctx = reinterpret_cast<ProxyDeviceContext *>(ctx);
-    cudaError_t err = cudaMemcpyToSymbol(g_nixl_proxy_ctx, &device_ctx, sizeof(ProxyDeviceContext *));
+    cudaError_t err =
+        cudaMemcpyToSymbol(g_nixl_proxy_ctx, &device_ctx, sizeof(ProxyDeviceContext *));
     if (err != cudaSuccess) {
         fprintf(stderr,
                 "nixlProxyPublishContext: cudaMemcpyToSymbol failed: code=%d msg=%s\n",
@@ -66,12 +68,12 @@ nixlProxyClearContext() {
     return err;
 }
 
-__device__ __forceinline__  uint64_t
+__device__ __forceinline__ uint64_t
 proxyMemViewIdFromHandle(nixlMemViewH mvh) {
     return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(mvh));
 }
 
-__device__ __forceinline__  ProxyDeviceContext *
+__device__ __forceinline__ ProxyDeviceContext *
 load_proxy_context() {
     return g_nixl_proxy_ctx;
 }
@@ -86,7 +88,8 @@ static_assert(sizeof(nixlProxyCompletionSlot::completed_idx) == 8,
               "completed_idx must be 64-bit to match producer_idx");
 
 template<nixl_gpu_level_t level>
-__device__ inline void nixlProxyExecInit(uint32_t &lane_id) {
+__device__ inline void
+nixlProxyExecInit(uint32_t &lane_id) {
     static_assert(level != nixl_gpu_level_t::GRID,
                   "Proxy GPU backend does not support GRID-level operations");
 
@@ -100,7 +103,8 @@ __device__ inline void nixlProxyExecInit(uint32_t &lane_id) {
 }
 
 template<nixl_gpu_level_t level>
-__device__ inline void nixlProxySync() {
+__device__ inline void
+nixlProxySync() {
     static_assert(level != nixl_gpu_level_t::GRID,
                   "Proxy GPU backend does not support GRID-level operations");
 
@@ -128,10 +132,9 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
         }
 
         nixlProxyChannelView &channel_view = channels[submission.channel_id];
-        nixlProxyWorkRing         *ring    = channel_view.work_ring;
+        nixlProxyWorkRing *ring = channel_view.work_ring;
 
-        cuda::atomic_ref<uint64_t, cuda::thread_scope_device> producer_idx(
-            *ring->producer_idx);
+        cuda::atomic_ref<uint64_t, cuda::thread_scope_device> producer_idx(*ring->producer_idx);
         cuda::atomic_ref<uint64_t, cuda::thread_scope_system> cons(*ring->consumer_idx);
         cuda::atomic_ref<uint32_t, cuda::thread_scope_system> shut(*shutdown_word);
 
@@ -145,8 +148,8 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
             cached_consumer_idx = cons.load(cuda::memory_order_acquire);
             *ring->consumer_idx_cache = cached_consumer_idx;
 
-            if (shut.load(cuda::memory_order_relaxed)
-                == static_cast<uint32_t>(nixl_proxy_control_state_t::SHUTDOWN)) {
+            if (shut.load(cuda::memory_order_relaxed) ==
+                static_cast<uint32_t>(nixl_proxy_control_state_t::SHUTDOWN)) {
                 return NIXL_ERR_BACKEND;
             }
         }
@@ -157,7 +160,13 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
         // Signal this slot is ready for the consumer.  The release
         // guarantees the record write above is visible before the
         // consumer reads op_idx via an acquire load. op_idx == 0 means empty.
-        cuda::atomic_ref<uint64_t, cuda::thread_scope_system> record_op_idx(
+        submission.op_idx = 0;
+        ring->records[slot] = submission;
+
+        // Avoiding system-scope release keeps enqueue from paying
+        // a global GPU memory drain; the CPU worker acquire-polls op_idx
+        // before copying the record.
+        cuda::atomic_ref<uint64_t, cuda::thread_scope_device> record_op_idx(
             ring->records[slot].op_idx);
         record_op_idx.store(submission_op_idx, cuda::memory_order_release);
 
@@ -179,11 +188,9 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
     //                              latched the channel
     __device__ inline nixl_status_t
     pollXferStatus(const nixlGpuXferStatusH &xfer_status) const {
-        const ProxyXferStatus *pxs =
-            reinterpret_cast<const ProxyXferStatus *>(xfer_status.storage);
+        const ProxyXferStatus *pxs = reinterpret_cast<const ProxyXferStatus *>(xfer_status.storage);
 
-        cuda::atomic_ref<uint64_t, cuda::thread_scope_system> comp_idx(
-            pxs->slot->completed_idx);
+        cuda::atomic_ref<uint64_t, cuda::thread_scope_system> comp_idx(pxs->slot->completed_idx);
 
         const uint64_t completed_idx = comp_idx.load(cuda::memory_order_acquire);
         if (completed_idx > pxs->op_idx) {
