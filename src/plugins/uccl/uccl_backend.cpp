@@ -659,6 +659,9 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
     // Perform a vector read/write operation
     int result = 0;
     uint64_t transfer_id = 0;
+    if (!handle) {
+        handle = new nixlUcclReqH(conn);
+    }
     uccl_handle = static_cast<nixlUcclReqH *>(handle);
 
     // Build optional IPC info pointers for cross-process local transfers
@@ -692,9 +695,6 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
-    if (!handle) {
-        handle = new nixlUcclReqH(conn);
-    }
     uccl_handle->transfer_id = transfer_id;
 
     NIXL_DEBUG << "Successfully posted vector " << (operation == NIXL_READ ? "READ" : "WRITE")
