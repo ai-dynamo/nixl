@@ -95,6 +95,7 @@ class xferBenchNixlWorker: public xferBenchWorker {
         uint64_t
         getFileOffset(uint64_t currentOffset, uint64_t max_offset, size_t block_size);
 
+        std::random_device rd_;
         std::mt19937_64 default_rng_;
 };
 
