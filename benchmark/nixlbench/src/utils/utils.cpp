@@ -145,7 +145,7 @@ NB_ARG_STRING(randomize_location_mode,
               "Mode to randomize read/write location [none, blockaligned, bytealigned]");
 
 NB_ARG_UINT64(randomize_location_mode_seed,
-              42,
+              0,
               "Seed used for randomization, set this for reproducible randomization");
 
 namespace {
@@ -280,7 +280,7 @@ std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::asio_address = "127.0.0.1";
 std::uint16_t xferBenchConfig::asio_port = 12345;
 std::string xferBenchConfig::randomize_location_mode = "none";
-uint64_t xferBenchConfig::randomize_location_mode_seed = 42;
+uint64_t xferBenchConfig::randomize_location_mode_seed = 0;
 std::string xferBenchConfig::benchmark_group = "default";
 int xferBenchConfig::gds_batch_pool_size = 0;
 int xferBenchConfig::gds_batch_limit = 0;
@@ -790,6 +790,8 @@ xferBenchConfig::printConfig() {
             printOption("Randomize location mode (--randomize_location_mode=[none, blockaligned, "
                         "bytealigned])",
                         randomize_location_mode);
+            printOption("Randomize location mode seed (--randomize_location_mode_seed=N)",
+                        std::to_string(randomize_location_mode_seed));
         }
 
         // Print DOCA GPUNetIO options if backend is DOCA GPUNetIO

@@ -98,9 +98,22 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     return config.str();
 }
 
+uint64_t
+getRandomSeed() {
+    if (xferBenchConfig::randomize_location_mode_seed != 0) {
+        return xferBenchConfig::randomize_location_mode_seed;
+    }
+
+    std::random_device rd;
+    uint64_t seed = rd();
+    xferBenchConfig::randomize_location_mode_seed =
+        seed; // Store the generated seed back to config for reproducibility
+    return seed;
+}
+
 xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
     : xferBenchWorker(),
-      default_rng_(xferBenchConfig::randomize_location_mode_seed) {
+      default_rng_(getRandomSeed()) {
     seg_type = GET_SEG_TYPE(isInitiator());
 
     int rank;
@@ -515,6 +528,7 @@ xferBenchNixlWorker::getFileOffset(uint64_t currentOffset, uint64_t max_offset, 
         XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
         return default_rng_() % max_offset;
     } else {
+        std::cout << currentOffset << std::endl;
         // For block aligned, we can just increment the offset sequentially
         return currentOffset + block_size;
     }
