@@ -137,8 +137,9 @@ Current local implementation status:
   H2D and four target slots.
 - Added an experimental `staging_target_h2d_worker` /
   `NIXL_UCX_STAGING_TARGET_H2D_WORKER` switch. It moves target H2D out of the UCX active-message
-  callback into a target-side worker thread, then sends ACK after H2D completion. It is disabled by
-  default because current measurements do not show a throughput gain.
+  callback into a target-side worker thread. The worker uses `cudaMemcpyAsync`, CUDA events, and
+  `staging_cuda_copy_streams` target streams, then sends ACK only after the event completes. It is
+  disabled by default because current measurements do not show a throughput gain.
 - Added staged WRITE support for multiple descriptor pairs. Each local/remote descriptor pair must
   have the same nonzero length; the backend splits each pair into staged chunks and uses the same
   target-side slot lease protocol per chunk.
@@ -867,21 +868,25 @@ it holds target staging leases longer and delays WRITE_READY/H2D/ACK into bursts
 target H2D and only four target slots this is a net regression, not a path to 20 GiB/s. Keep
 `staging_batch_flush=false` unless specifically profiling this behavior.
 
-Target H2D worker measurements with `staging_slot_request_window=32` and
+Target async H2D worker measurements with `staging_slot_request_window=32` and
 `staging_batch_flush=false`:
 
 ```text
-target_h2d_worker=false, profile off: 18.97 GiB/s
-target_h2d_worker=true,  profile off: 18.60 GiB/s
-target_h2d_worker=true,  profile on:  18.04 GiB/s
+target_h2d_worker=false, profile off:                       18.93-18.97 GiB/s
+target_h2d_worker=true,  cuda_copy_streams=1, profile off:  17.67 GiB/s
+target_h2d_worker=true,  cuda_copy_streams=2, profile off:  17.34 GiB/s
+target_h2d_worker=true,  cuda_copy_streams=4, profile off:  18.04 GiB/s
+target_h2d_worker=true,  cuda_copy_streams=1, profile on:   17.67 GiB/s
 ```
 
-The H2D worker does what it is designed to do: target callback time dropped from about 169 ms total
-for 256 READY messages to about 95 us total. H2D itself remained about 168 ms total for the same
-4 GiB payload. Because the worker currently performs synchronous H2D on one thread, this removes
-UCX callback blocking but does not create more H2D overlap. Keep
+The async H2D worker does what it is designed to do: target callback time dropped from about
+169 ms total for 256 READY messages to about 110 us total. However, ACK still has to wait for H2D
+event completion, and increasing target H2D streams did not improve end-to-end transfer bandwidth
+on this RTX 4090 setup. With one async stream, measured event latency includes queued work behind
+that stream and rose to about 259 ms total for the 4 GiB payload. Keep
 `staging_target_h2d_worker=false` for the current first version; use
-`NIXL_UCX_STAGING_TARGET_H2D_WORKER=1` only when profiling callback interference.
+`NIXL_UCX_STAGING_TARGET_H2D_WORKER=1` only when profiling callback interference or future CUDA
+stream overlap work.
 
 Host and local PCIe baselines measured in the same containers:
 
@@ -895,13 +900,14 @@ bounded-window staged:    about 18.6 GiB/s
 ```
 
 The remaining gap is therefore not explained by pinned memory registration or TCP fallback. The
-current staged v1 path still uses synchronous `cudaMemcpy` and performs target H2D in the UCX
-active-message callback by default. The next performance work should focus on:
+current staged v1 default path still uses synchronous `cudaMemcpy` and performs target H2D in the
+UCX active-message callback. The async H2D worker removes callback blocking but is not a throughput
+win on the current setup. The next performance work should focus on:
 
-1. converting D2H/H2D to `cudaMemcpyAsync` plus CUDA events,
-2. using one or more target-side CUDA streams so H2D can overlap with UCX progress and ACK send,
-3. replacing busy retry scheduling with a lease-grant queue or target-side pending queue,
-4. revisiting flush coalescing only after target H2D is asynchronous and slots are not held idle.
+1. converting source-side D2H to `cudaMemcpyAsync` plus CUDA events,
+2. reducing slot-grant retry churn with a lease-grant queue or target-side pending queue,
+3. measuring smaller/larger slot counts with the async target path to confirm slot pressure,
+4. revisiting flush coalescing only after slots are not held idle.
 
 ### Phase 4: READ Support
 
@@ -931,8 +937,8 @@ delegates the whole transfer lifecycle to the selected backend.
 - Does the application provide any implicit CUDA stream ordering before calling NIXL?
 - How many concurrent transfers can exist per peer and per registered GPU region?
 - What lease timeout should be used before a target slot is marked `ERROR` or reclaimed?
-- Should target H2D remain in the UCX active-message callback for Phase 3A, or should it move to a
-  target-side staging worker queue immediately after lease validation?
+- Can the experimental async target H2D worker become useful after source D2H is also asynchronous,
+  or should the default keep synchronous target H2D for lower overhead?
 - Should staged mode force a progress thread, or can all needed progress be driven by existing
   application polling in the target process?
 - Which UCX transports are selected for host DRAM transfers on the target hosts?

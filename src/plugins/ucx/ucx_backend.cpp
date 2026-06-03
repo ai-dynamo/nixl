@@ -1569,45 +1569,26 @@ nixlUcxEngine::enqueueStagedH2D(StagedH2DTask &&task) const {
 
 void
 nixlUcxEngine::stagedH2DWorkerLoop() const {
-    while (true) {
-        StagedH2DTask task;
-        {
-            std::unique_lock lock(stagedH2DMutex_);
-            stagedH2DCv_.wait(lock, [this]() {
-                return stagedH2DStop_ || !stagedH2DQueue_.empty();
-            });
-            if (stagedH2DStop_ && stagedH2DQueue_.empty()) {
-                return;
-            }
-            task = std::move(stagedH2DQueue_.front());
-            stagedH2DQueue_.pop_front();
-        }
+    struct DeviceStreams {
+        std::vector<cudaStream_t> streams;
+        size_t next = 0;
+    };
 
-        nixl_status_t status = NIXL_SUCCESS;
-        uint64_t h2d_us = 0;
-        auto *region = dynamic_cast<nixlUcxStagedPrivateMetadata *>(task.region);
-        if (!region) {
-            status = NIXL_ERR_MISMATCH;
-        } else {
-            int previous_device = -1;
-            status = cudaSetDeviceForCopy(task.gpuDev, previous_device);
-            if (status == NIXL_SUCCESS) {
-                const uint64_t h2d_start_us = task.profileEnabled ? profileNowUs() : 0;
-                const cudaError_t cuda_ret = cudaMemcpy((void *)task.gpuAddr,
-                                                        task.hostAddr,
-                                                        task.size,
-                                                        cudaMemcpyHostToDevice);
-                if (task.profileEnabled) {
-                    h2d_us = profileNowUs() - h2d_start_us;
-                }
-                if (cuda_ret != cudaSuccess) {
-                    NIXL_ERROR << "UCX staged H2D failed for transfer_id=" << task.transferId
-                               << " chunk_id=" << task.chunkId << ": "
-                               << cudaGetErrorString(cuda_ret);
-                    status = NIXL_ERR_BACKEND;
-                }
-            }
-            cudaRestoreDevice(previous_device);
+    struct InflightH2D {
+        StagedH2DTask task;
+        nixlUcxStagedPrivateMetadata *region = nullptr;
+        cudaEvent_t event = nullptr;
+        uint64_t h2dStartUs = 0;
+    };
+
+    std::unordered_map<uint64_t, DeviceStreams> device_streams;
+    std::vector<InflightH2D> inflight;
+
+    auto finish_task = [&](const StagedH2DTask &task,
+                           nixlUcxStagedPrivateMetadata *region,
+                           nixl_status_t status,
+                           uint64_t h2d_us) {
+        if (region) {
             region->finishRemoteLease(task.slotId, task.leaseId, status);
         }
 
@@ -1633,6 +1614,138 @@ nixlUcxEngine::stagedH2DWorkerLoop() const {
                           << " callback_avg_us=" << (total_callback_us / ready_count);
             }
         }
+    };
+
+    auto poll_inflight = [&]() {
+        for (size_t i = 0; i < inflight.size();) {
+            InflightH2D &item = inflight[i];
+            const cudaError_t query = cudaEventQuery(item.event);
+            if (query == cudaErrorNotReady) {
+                ++i;
+                continue;
+            }
+
+            nixl_status_t status = NIXL_SUCCESS;
+            if (query != cudaSuccess) {
+                NIXL_ERROR << "UCX staged async H2D event failed for transfer_id="
+                           << item.task.transferId << " chunk_id=" << item.task.chunkId << ": "
+                           << cudaGetErrorString(query);
+                status = NIXL_ERR_BACKEND;
+            }
+
+            uint64_t h2d_us = 0;
+            if (item.task.profileEnabled && item.h2dStartUs != 0) {
+                h2d_us = profileNowUs() - item.h2dStartUs;
+            }
+            cudaEventDestroy(item.event);
+            finish_task(item.task, item.region, status, h2d_us);
+            inflight.erase(inflight.begin() + i);
+        }
+    };
+
+    auto submit_task = [&](StagedH2DTask &&task) {
+        auto *region = dynamic_cast<nixlUcxStagedPrivateMetadata *>(task.region);
+        if (!region) {
+            finish_task(task, nullptr, NIXL_ERR_MISMATCH, 0);
+            return;
+        }
+
+        int previous_device = -1;
+        nixl_status_t status = cudaSetDeviceForCopy(task.gpuDev, previous_device);
+        if (status != NIXL_SUCCESS) {
+            finish_task(task, region, status, 0);
+            return;
+        }
+
+        DeviceStreams &streams = device_streams[task.gpuDev];
+        if (streams.streams.empty()) {
+            const size_t stream_count = std::max<size_t>(1, vramStagingConfig_.cudaCopyStreams);
+            streams.streams.reserve(stream_count);
+            for (size_t i = 0; i < stream_count; ++i) {
+                cudaStream_t stream = nullptr;
+                const cudaError_t cuda_ret = cudaStreamCreateWithFlags(&stream,
+                                                                       cudaStreamNonBlocking);
+                if (cuda_ret != cudaSuccess) {
+                    NIXL_ERROR << "UCX staged H2D stream creation failed for gpu_dev="
+                               << task.gpuDev << ": " << cudaGetErrorString(cuda_ret);
+                    cudaRestoreDevice(previous_device);
+                    finish_task(task, region, NIXL_ERR_BACKEND, 0);
+                    return;
+                }
+                streams.streams.push_back(stream);
+            }
+        }
+
+        cudaEvent_t event = nullptr;
+        cudaError_t cuda_ret = cudaEventCreateWithFlags(&event, cudaEventDisableTiming);
+        if (cuda_ret != cudaSuccess) {
+            NIXL_ERROR << "UCX staged H2D event creation failed for transfer_id="
+                       << task.transferId << " chunk_id=" << task.chunkId << ": "
+                       << cudaGetErrorString(cuda_ret);
+            cudaRestoreDevice(previous_device);
+            finish_task(task, region, NIXL_ERR_BACKEND, 0);
+            return;
+        }
+
+        cudaStream_t stream = streams.streams[streams.next++ % streams.streams.size()];
+        const uint64_t h2d_start_us = task.profileEnabled ? profileNowUs() : 0;
+        cuda_ret =
+            cudaMemcpyAsync((void *)task.gpuAddr,
+                            task.hostAddr,
+                            task.size,
+                            cudaMemcpyHostToDevice,
+                            stream);
+        if (cuda_ret == cudaSuccess) {
+            cuda_ret = cudaEventRecord(event, stream);
+        }
+        cudaRestoreDevice(previous_device);
+
+        if (cuda_ret != cudaSuccess) {
+            NIXL_ERROR << "UCX staged async H2D submit failed for transfer_id=" << task.transferId
+                       << " chunk_id=" << task.chunkId << ": " << cudaGetErrorString(cuda_ret);
+            cudaEventDestroy(event);
+            finish_task(task, region, NIXL_ERR_BACKEND, 0);
+            return;
+        }
+
+        inflight.push_back({std::move(task), region, event, h2d_start_us});
+    };
+
+    auto destroy_streams = [&]() {
+        for (auto &[gpu_dev, streams] : device_streams) {
+            int previous_device = -1;
+            const nixl_status_t status = cudaSetDeviceForCopy(gpu_dev, previous_device);
+            for (cudaStream_t stream : streams.streams) {
+                if (status == NIXL_SUCCESS) {
+                    cudaStreamDestroy(stream);
+                }
+            }
+            cudaRestoreDevice(previous_device);
+        }
+    };
+
+    while (true) {
+        std::deque<StagedH2DTask> ready_tasks;
+        {
+            std::unique_lock lock(stagedH2DMutex_);
+            stagedH2DCv_.wait_for(lock, std::chrono::microseconds(50), [this]() {
+                return stagedH2DStop_ || !stagedH2DQueue_.empty();
+            });
+            if (stagedH2DStop_ && stagedH2DQueue_.empty() && inflight.empty()) {
+                destroy_streams();
+                return;
+            }
+            while (!stagedH2DQueue_.empty()) {
+                ready_tasks.push_back(std::move(stagedH2DQueue_.front()));
+                stagedH2DQueue_.pop_front();
+            }
+        }
+
+        for (auto &task : ready_tasks) {
+            submit_task(std::move(task));
+        }
+
+        poll_inflight();
     }
 }
 
