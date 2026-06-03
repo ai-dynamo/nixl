@@ -55,7 +55,8 @@ enum class nixl_md_backend_t {
 class nixlMDManager {
 public:
     nixlMDManager(nixlAgent &agent, std::string self_name) noexcept
-        : agent_(agent), self_name_(std::move(self_name)) {}
+        : agent_(agent),
+          self_name_(std::move(self_name)) {}
 
     /**
      * @brief Register a P2P peer's reachable address.
