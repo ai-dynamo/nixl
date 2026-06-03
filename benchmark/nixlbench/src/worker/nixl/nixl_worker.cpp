@@ -528,7 +528,6 @@ xferBenchNixlWorker::getFileOffset(uint64_t currentOffset, uint64_t max_offset, 
         XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
         return default_rng_() % max_offset;
     } else {
-        std::cout << currentOffset << std::endl;
         // For block aligned, we can just increment the offset sequentially
         return currentOffset + block_size;
     }
