@@ -164,8 +164,7 @@ nixlTelemetry::initializeTelemetry() {
     const nixlTelemetryExporterInitParams init_params{agentName_, maxBufferedEvents_};
     exporter_ = plugin_handle->createExporter(init_params);
     if (!exporter_) {
-        NIXL_ERROR << "Failed to create telemetry exporter: " << *exporter_name;
-        return;
+        throw std::runtime_error("Failed to create telemetry exporter: " + *exporter_name);
     }
 
     NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << *exporter_name;

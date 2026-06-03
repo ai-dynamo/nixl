@@ -38,6 +38,7 @@
 namespace fs = std::filesystem;
 constexpr char TELEMETRY_ENABLED_VAR[] = "NIXL_TELEMETRY_ENABLE";
 constexpr char TELEMETRY_DIR_VAR[] = "NIXL_TELEMETRY_DIR";
+constexpr char TELEMETRY_EXPORTER_VAR[] = "NIXL_TELEMETRY_EXPORTER";
 
 class telemetryTest : public ::testing::Test {
 protected:
@@ -123,6 +124,18 @@ TEST_F(telemetryTest, InvalidBufferSize) {
     envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "0");
 
     EXPECT_THROW({ nixlTelemetry telemetry(testFile_); }, std::invalid_argument);
+    envHelper_.popVar();
+}
+
+TEST_F(telemetryTest, NonexistentExporterThrows) {
+    // An explicitly requested exporter that cannot be loaded must surface the
+    // failure rather than silently disabling telemetry.
+    envHelper_.addVar(TELEMETRY_EXPORTER_VAR, "nixl_nonexistent_exporter");
+
+    // The plugin manager logs an expected warning when the .so is not found.
+    gtest::LogIgnoreGuard ignore_missing_plugin("Plugin file does not exist");
+
+    EXPECT_THROW({ nixlTelemetry telemetry(testFile_); }, std::runtime_error);
     envHelper_.popVar();
 }
 
