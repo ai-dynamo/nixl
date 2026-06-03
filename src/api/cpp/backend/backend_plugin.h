@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,9 @@
 
 // Forward declarations for special engine types
 class nixlUcxEngine;
+
+// Plugins must be compiled with the same C++ standard and a compatible
+// libstdc++ ABI as the NIXL core library. NIXL core currently requires C++20.
 
 // Define the plugin API version
 #define NIXL_PLUGIN_API_VERSION 1
