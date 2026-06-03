@@ -45,7 +45,9 @@ env:
   WHL_PYTHON_VERSIONS: "3.10,3.11,3.12,3.13,3.14"
   IMAGE_BASE: ${{ vars.NIXL_ECR_IMAGE }}
   # Release flag, normalized to a plain "true"/"false" string usable in shells.
-  RELEASE_BUILD: ${{ github.event.inputs.release_build == true || github.event.inputs.release_build == 'true' }}
+  # TEMPORARY (remove before merge): the 'ci-release-test' label forces the release
+  # path — wheel + crate PUBLISH to Artifactory — to run on a labeled PR.
+  RELEASE_BUILD: ${{ github.event.inputs.release_build == true || github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
 
 jobs:
   # ----------------------------------------------------------------------------
@@ -180,7 +182,7 @@ jobs:
   # ----------------------------------------------------------------------------
   scan-wheels:
     needs: build
-    if: ${{ github.event.inputs.security_scan == 'true' || github.event.inputs.release_build == 'true' }}
+    if: ${{ github.event.inputs.security_scan == 'true' || github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     env:
       PACKAGE_LICENSE: "Apache-2.0"
@@ -361,7 +363,7 @@ jobs:
   # ----------------------------------------------------------------------------
   upload-x86-wheels:
     needs: build
-    if: ${{ github.event.inputs.release_build == 'true' }}
+    if: ${{ github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     timeout-minutes: 30
     env:
@@ -399,7 +401,7 @@ jobs:
 
   upload-arm-wheels:
     needs: build
-    if: ${{ github.event.inputs.release_build == 'true' }}
+    if: ${{ github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-arm-v1
     timeout-minutes: 30
     env:
@@ -440,7 +442,7 @@ jobs:
     # GitLab marked this job `when: manual` on release builds. The `release`
     # environment provides the equivalent manual approval gate (configure
     # required reviewers under Settings -> Environments -> release).
-    if: ${{ github.event.inputs.release_build == 'true' }}
+    if: ${{ github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     environment: release
     env:
