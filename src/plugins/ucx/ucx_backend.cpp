@@ -21,6 +21,7 @@
 #include "common/nixl_log.h"
 
 #include <algorithm>
+#include <cctype>
 #include <optional>
 #include <limits>
 #include <future>
@@ -31,8 +32,65 @@
 #include <cuda_runtime_api.h>
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/str_split.h"
 #include <asio.hpp>
+
+namespace {
+
+[[nodiscard]] std::string
+trimAscii(std::string_view value) {
+    size_t first = 0;
+    while (first < value.size() &&
+           std::isspace(static_cast<unsigned char>(value[first])) != 0) {
+        ++first;
+    }
+
+    size_t last = value.size();
+    while (last > first && std::isspace(static_cast<unsigned char>(value[last - 1])) != 0) {
+        --last;
+    }
+
+    return std::string(value.substr(first, last - first));
+}
+
+[[nodiscard]] std::vector<std::string>
+splitCommaSeparatedDeviceList(std::string_view value) {
+    std::vector<std::string> devices;
+    size_t start = 0;
+    while (start <= value.size()) {
+        const size_t comma = value.find(',', start);
+        const size_t end = comma == std::string_view::npos ? value.size() : comma;
+        std::string device = trimAscii(value.substr(start, end - start));
+        if (!device.empty()) {
+            devices.push_back(std::move(device));
+        }
+        if (comma == std::string_view::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+    return devices;
+}
+
+[[nodiscard]] std::vector<std::string>
+getConfiguredUcxDevices(const nixl_b_params_t *custom_params) {
+    if (!custom_params) {
+        return {};
+    }
+
+    const auto ucx_devices_it = custom_params->find("ucx_devices");
+    if (ucx_devices_it != custom_params->end() && !trimAscii(ucx_devices_it->second).empty()) {
+        return splitCommaSeparatedDeviceList(ucx_devices_it->second);
+    }
+
+    const auto device_list_it = custom_params->find("device_list");
+    if (device_list_it != custom_params->end() && !trimAscii(device_list_it->second).empty()) {
+        return splitCommaSeparatedDeviceList(device_list_it->second);
+    }
+
+    return {};
+}
+
+} // namespace
 
 /****************************************
  * Backend request management
@@ -1273,8 +1331,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
-    if (custom_params->count("device_list")!=0)
-        devs = absl::StrSplit((*custom_params)["device_list"], ", ");
+    devs = getConfiguredUcxDevices(custom_params);
 
     size_t num_workers = nixl_b_params_get(custom_params, "num_workers", 1);
     size_t num_threads = nixl_b_params_get(custom_params, "num_threads", 0);

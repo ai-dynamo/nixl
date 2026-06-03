@@ -119,6 +119,9 @@ Current local implementation status:
   use has completed.
 - Added concurrent C++ smoke coverage for multiple in-flight staged WRITE requests, including two
   initiator processes writing different offsets into one target VRAM registration.
+- Fixed UCX data-plane device selection so the backend accepts the documented `ucx_devices`
+  parameter and remains compatible with the older `device_list` parameter. Both forms use
+  comma-separated lists and trim whitespace around each device name.
 - Kept staged mode opt-in. The default direct UCX path remains unchanged.
 
 Current limitations:
@@ -420,6 +423,9 @@ used the ordinary `bond0` address (`10.159.0.41` on the target), while UCX data 
 restricted to the high-speed RDMA devices with `ucx_devices=mlx5_4,mlx5_5` and
 `UCX_TLS=rc,ud,self`. This does not require changing `ip route`.
 
+The backend also accepts the older `device_list` key for compatibility. `ucx_devices` is preferred;
+if it is unset or empty, `device_list` is used.
+
 ### Phase 1: WRITE Correctness
 
 Implement the smallest correct staged write:
@@ -634,6 +640,26 @@ initiators=2, slots=4, concurrency=4 each, bytes=80 MiB: passed
 
 All runs used the target control address `10.159.0.41`, `ucx_devices=mlx5_4,mlx5_5`, and
 `UCX_TLS=rc,ud,self`.
+
+Post-fix smoke matrix after enabling `ucx_devices` parsing:
+
+```text
+slots=1, concurrency=2, bytes=16 MiB:                  passed
+slots=1, concurrency=8, bytes=4 MiB:                   passed
+slots=4, concurrency=8, bytes=80 MiB:                  passed
+initiators=2, slots=1, concurrency=4 each, bytes=4 MiB:  passed
+initiators=2, slots=4, concurrency=4 each, bytes=80 MiB: passed
+```
+
+For the single-initiator 80 MiB x 8 run after the parameter fix, mlx5 counters increased on both
+selected rails:
+
+```text
+0-26 mlx5_4 port_xmit_data: +85,427,614
+0-26 mlx5_5 port_xmit_data: +85,401,600
+0-41 mlx5_4 port_rcv_data:  +85,427,882
+0-41 mlx5_5 port_rcv_data:  +85,401,600
+```
 
 Suggested commit split:
 
