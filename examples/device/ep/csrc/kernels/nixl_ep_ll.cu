@@ -72,7 +72,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
          int* atomic_counter_per_expert, int* atomic_finish_counter_per_expert,
          uint64_t* next_clean, int num_next_clean_int,
          int num_tokens, int num_max_dispatch_tokens_per_rank,
-         int num_topk, int active_rank_bound, int num_experts_per_rank, int rank,
+         int num_topk, int active_rank_bound, int num_local_experts, int rank,
          int num_warp_groups, int num_warps_per_group,
          bool round_scale, uint64_t timeout_cycles, int phases, nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
     auto nixl_ctx = *nixl_ctx_ptr;
@@ -81,7 +81,6 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
     const auto warp_id = thread_id / 32, lane_id = get_lane_id();
     const auto num_sms = static_cast<int>(gridDim.x);
     const auto num_warps = num_warp_groups * num_warps_per_group;
-    const int num_local_experts = num_experts_per_rank;
     const int active_expert_bound = active_rank_bound * num_local_experts;
     const auto warp_group_id = warp_id / num_warps_per_group;
     const auto sub_warp_id = warp_id % num_warps_per_group;
@@ -619,7 +618,7 @@ combine(void* combined_x,
         int* atomic_clean_flag,
         int num_combined_tokens, int hidden, int num_topk,
         int num_max_dispatch_tokens_per_rank,
-        int active_rank_bound, int num_experts_per_rank, int rank,
+        int active_rank_bound, int num_local_experts, int rank,
         int num_warp_groups, int num_warps_per_group,
         uint64_t timeout_cycles, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
     auto nixl_ctx = *nixl_ctx_ptr;
@@ -628,7 +627,6 @@ combine(void* combined_x,
     const auto thread_id = static_cast<int>(threadIdx.x);
     const auto num_threads = __shfl_sync(0xffffffff, static_cast<int>(blockDim.x), 0);
     const auto warp_id = __shfl_sync(0xffffffff, thread_id / 32, 0), lane_id = get_lane_id();
-    const int num_local_experts = num_experts_per_rank;
     const int active_expert_bound = active_rank_bound * num_local_experts;
     const auto warp_group_id = warp_id / num_warps_per_group;
     const auto sub_warp_id = warp_id % num_warps_per_group;
