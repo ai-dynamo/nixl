@@ -853,7 +853,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     size_t total_bytes = 0;
     for (int i = 0; i < local_descs.descCount(); ++i) {
-        if (__builtin_expect(local_descs[i].len != remote_descs[i].len, 0)) {
+        if (local_descs[i].len != remote_descs[i].len) [[unlikely]] {
             NIXL_ERROR_FUNC << "length mismatch at index " << i;
             return NIXL_ERR_INVALID_PARAM;
         }
