@@ -39,11 +39,13 @@ struct Args {
     uint64_t initiatorId = 0;
     size_t initiatorCount = 1;
     size_t pollSleepUs = 10000;
+    uint64_t progressDelayUs = nixlAgentConfig::kDefaultPthrDelayUs;
     std::string ucxDevices;
     std::string ucxTls = "rc,ud,self";
     bool staging = true;
     bool prepped = false;
     bool skipDescMerge = false;
+    bool timing = false;
 };
 
 [[noreturn]] void
@@ -54,9 +56,9 @@ usage(const char *prog) {
               << " [--slots n] [--concurrency n] [--iters n]"
               << " [--offset-stride n] [--descriptors n]"
               << " [--initiator-id n] [--initiator-count n]"
-              << " [--poll-sleep-us n]"
+              << " [--poll-sleep-us n] [--progress-delay-us n]"
               << " [--ucx-devices devs] [--ucx-tls tls] [--staging 0|1]"
-              << " [--prepped 0|1] [--skip-desc-merge 0|1]\n";
+              << " [--prepped 0|1] [--skip-desc-merge 0|1] [--timing 0|1]\n";
     std::exit(2);
 }
 
@@ -100,6 +102,8 @@ parseArgs(int argc, char **argv) {
             args.initiatorCount = std::stoull(needValue());
         } else if (key == "--poll-sleep-us") {
             args.pollSleepUs = std::stoull(needValue());
+        } else if (key == "--progress-delay-us") {
+            args.progressDelayUs = std::stoull(needValue());
         } else if (key == "--ucx-devices") {
             args.ucxDevices = needValue();
         } else if (key == "--ucx-tls") {
@@ -110,6 +114,8 @@ parseArgs(int argc, char **argv) {
             args.prepped = (needValue() != "0");
         } else if (key == "--skip-desc-merge") {
             args.skipDescMerge = (needValue() != "0");
+        } else if (key == "--timing") {
+            args.timing = (needValue() != "0");
         } else {
             usage(argv[0]);
         }
@@ -168,6 +174,23 @@ waitUntil(Predicate pred, const std::string &label, double timeoutSeconds, size_
             std::this_thread::sleep_for(std::chrono::microseconds(pollSleepUs));
         }
     }
+}
+
+using Clock = std::chrono::steady_clock;
+using TimePoint = Clock::time_point;
+
+uint64_t
+elapsedUs(TimePoint begin, TimePoint end) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+}
+
+void
+printTiming(const Args &args, const std::string &role, const std::string &name, uint64_t us) {
+    if (!args.timing) {
+        return;
+    }
+    std::cout << role << " timing " << name << "_us=" << us << " " << name
+              << "_sec=" << (static_cast<double>(us) / 1000000.0) << "\n";
 }
 
 size_t
@@ -397,10 +420,18 @@ socketArgs(const Args &args, nixlBackendH *backend) {
 
 void
 runTarget(const Args &args) {
-    nixlAgentConfig cfg(true, true, static_cast<uint16_t>(args.port));
+    const auto totalStart = Clock::now();
+    const auto setupStart = Clock::now();
+    nixlAgentConfig cfg(true,
+                        true,
+                        static_cast<uint16_t>(args.port),
+                        nixlAgentConfig::kDefaultSyncMode,
+                        1,
+                        args.progressDelayUs);
     nixlAgent agent(kTargetAgent, cfg);
     nixlBackendH *backend = createUcxBackend(agent, args);
     nixl_opt_args_t extra = backendOnly(backend);
+    const auto setupEnd = Clock::now();
 
     const std::vector<uint64_t> initiatorIds = expectedInitiatorIds(args);
     std::vector<std::string> initiatorNames;
@@ -414,10 +445,16 @@ runTarget(const Args &args) {
     const size_t stride = effectiveOffsetStride(args);
     const size_t totalBytes = targetRegionBytes(args);
 
+    const auto bufferStart = Clock::now();
     void *dst = allocDeviceBuffer(totalBytes, nullptr);
+    const auto bufferEnd = Clock::now();
+
+    const auto registerStart = Clock::now();
     nixl_reg_dlist_t reg = makeRegDlist(dst, totalBytes);
     check(agent.registerMem(reg, &extra), "target registerMem");
+    const auto registerEnd = Clock::now();
 
+    const auto metadataStart = Clock::now();
     nixl_xfer_dlist_t empty(VRAM_SEG);
     for (const std::string &initiatorName : initiatorNames) {
         waitUntil(
@@ -432,8 +469,10 @@ runTarget(const Args &args) {
     for (const std::string &initiatorName : initiatorNames) {
         check(agent.genNotif(initiatorName, descMsg, &extra), "target genNotif DESC");
     }
+    const auto metadataEnd = Clock::now();
     std::cout << "Target descriptors sent to " << initiatorNames.size() << " initiator(s)\n";
 
+    const auto waitStart = Clock::now();
     size_t doneCount = 0;
     waitUntil(
         [&]() {
@@ -455,7 +494,9 @@ runTarget(const Args &args) {
         "write completion notification",
         args.timeout,
         args.pollSleepUs);
+    const auto waitEnd = Clock::now();
 
+    const auto verifyStart = Clock::now();
     std::vector<unsigned char> got(totalBytes);
     checkCuda(cudaMemcpy(got.data(), dst, totalBytes, cudaMemcpyDeviceToHost),
               "target cudaMemcpy device to host");
@@ -478,27 +519,54 @@ runTarget(const Args &args) {
 
     std::cout << "Target verification passed: " << totalCount << " transfers, " << args.bytes
               << " bytes each, " << initiatorNames.size() << " initiator(s)\n";
+    const auto verifyEnd = Clock::now();
+
+    const auto cleanupStart = Clock::now();
     check(agent.deregisterMem(reg, &extra), "target deregisterMem");
     checkCuda(cudaFree(dst), "target cudaFree");
+    const auto cleanupEnd = Clock::now();
+
+    printTiming(args, "target", "setup", elapsedUs(setupStart, setupEnd));
+    printTiming(args, "target", "buffer_prepare", elapsedUs(bufferStart, bufferEnd));
+    printTiming(args, "target", "register", elapsedUs(registerStart, registerEnd));
+    printTiming(args, "target", "metadata", elapsedUs(metadataStart, metadataEnd));
+    printTiming(args, "target", "wait_done", elapsedUs(waitStart, waitEnd));
+    printTiming(args, "target", "verify", elapsedUs(verifyStart, verifyEnd));
+    printTiming(args, "target", "cleanup", elapsedUs(cleanupStart, cleanupEnd));
+    printTiming(args, "target", "total", elapsedUs(totalStart, cleanupEnd));
 }
 
 void
 runInitiator(const Args &args) {
-    nixlAgentConfig cfg(true, true, 0);
+    const auto totalStart = Clock::now();
+    const auto setupStart = Clock::now();
+    nixlAgentConfig cfg(true,
+                        true,
+                        0,
+                        nixlAgentConfig::kDefaultSyncMode,
+                        1,
+                        args.progressDelayUs);
     const std::string initiatorName = initiatorAgentName(args);
     nixlAgent agent(initiatorName, cfg);
     nixlBackendH *backend = createUcxBackend(agent, args);
     nixl_opt_args_t extra = backendOnly(backend);
+    const auto setupEnd = Clock::now();
 
     const size_t count = localTransferCount(args);
     const size_t stride = effectiveOffsetStride(args);
     const size_t totalBytes = localRegionBytes(args);
 
+    const auto bufferStart = Clock::now();
     const auto pattern = makeSourceRegion(args);
     void *src = allocDeviceBuffer(totalBytes, &pattern);
+    const auto bufferEnd = Clock::now();
+
+    const auto registerStart = Clock::now();
     nixl_reg_dlist_t reg = makeRegDlist(src, totalBytes);
     check(agent.registerMem(reg, &extra), "initiator registerMem");
+    const auto registerEnd = Clock::now();
 
+    const auto metadataStart = Clock::now();
     nixl_opt_args_t socket = socketArgs(args, backend);
     check(agent.fetchRemoteMD(kTargetAgent, &socket), "fetchRemoteMD target");
     nixl_xfer_dlist_t empty(VRAM_SEG);
@@ -534,15 +602,20 @@ runInitiator(const Args &args) {
     if (!haveDesc) {
         throw std::runtime_error("target descriptor was not received");
     }
+    const auto metadataEnd = Clock::now();
 
     bool printedBackend = false;
     size_t completedTransfers = 0;
+    uint64_t transferSetupPostUs = 0;
+    uint64_t transferWaitUs = 0;
+    const auto transferLoopStart = Clock::now();
     for (size_t iter = 0; iter < args.iters; ++iter) {
         std::vector<nixlXferReqH *> handles(args.concurrency, nullptr);
         std::vector<nixl_status_t> statuses(args.concurrency, NIXL_IN_PROG);
         std::vector<nixlDlistH *> localPreps(args.concurrency, nullptr);
         std::vector<nixlDlistH *> remotePreps(args.concurrency, nullptr);
 
+        const auto iterSetupPostStart = Clock::now();
         for (size_t lane = 0; lane < args.concurrency; ++lane) {
             const size_t transfer = iter * args.concurrency + lane;
             const size_t localOffset = transfer * stride;
@@ -584,7 +657,10 @@ runInitiator(const Args &args) {
                 check(statuses[lane], "postXferReq");
             }
         }
+        const auto iterSetupPostEnd = Clock::now();
+        transferSetupPostUs += elapsedUs(iterSetupPostStart, iterSetupPostEnd);
 
+        const auto iterWaitStart = Clock::now();
         waitUntil(
             [&]() {
                 bool allDone = true;
@@ -603,6 +679,8 @@ runInitiator(const Args &args) {
             "transfer completion",
             args.timeout,
             args.pollSleepUs);
+        const auto iterWaitEnd = Clock::now();
+        transferWaitUs += elapsedUs(iterWaitStart, iterWaitEnd);
 
         for (auto *handle : handles) {
             check(agent.releaseXferReq(handle), "releaseXferReq");
@@ -619,14 +697,36 @@ runInitiator(const Args &args) {
         }
         completedTransfers += args.concurrency;
     }
+    const auto transferLoopEnd = Clock::now();
 
     std::cout << "Initiator WRITE completed: " << completedTransfers << " transfers, "
               << args.bytes << " bytes each, " << args.descriptors
               << " descriptor(s) each, prepped=" << (args.prepped ? 1 : 0)
               << ", skip_desc_merge=" << (args.skipDescMerge ? 1 : 0) << "\n";
+
+    const auto cleanupStart = Clock::now();
     check(agent.invalidateRemoteMD(kTargetAgent), "invalidateRemoteMD");
     check(agent.deregisterMem(reg, &extra), "initiator deregisterMem");
     checkCuda(cudaFree(src), "initiator cudaFree");
+    const auto cleanupEnd = Clock::now();
+
+    const size_t totalTransferBytes = checkedMul(completedTransfers, args.bytes, "total bytes");
+    const double transferSec =
+        static_cast<double>(elapsedUs(transferLoopStart, transferLoopEnd)) / 1000000.0;
+    if (args.timing && transferSec > 0) {
+        const double gibPerSec = static_cast<double>(totalTransferBytes) / transferSec /
+                                 static_cast<double>(1024 * 1024 * 1024);
+        std::cout << "initiator timing transfer_loop_gib_per_sec=" << gibPerSec << "\n";
+    }
+    printTiming(args, "initiator", "setup", elapsedUs(setupStart, setupEnd));
+    printTiming(args, "initiator", "buffer_prepare", elapsedUs(bufferStart, bufferEnd));
+    printTiming(args, "initiator", "register", elapsedUs(registerStart, registerEnd));
+    printTiming(args, "initiator", "metadata", elapsedUs(metadataStart, metadataEnd));
+    printTiming(args, "initiator", "transfer_setup_post", transferSetupPostUs);
+    printTiming(args, "initiator", "transfer_wait", transferWaitUs);
+    printTiming(args, "initiator", "transfer_loop", elapsedUs(transferLoopStart, transferLoopEnd));
+    printTiming(args, "initiator", "cleanup", elapsedUs(cleanupStart, cleanupEnd));
+    printTiming(args, "initiator", "total", elapsedUs(totalStart, cleanupEnd));
 }
 
 } // namespace

@@ -39,6 +39,12 @@ inline constexpr std::string_view nixl_ucx_staging_force_progress_param_name =
     "staging_force_progress_thread";
 inline constexpr std::string_view nixl_ucx_staging_cuda_streams_param_name =
     "staging_cuda_copy_streams";
+inline constexpr std::string_view nixl_ucx_staging_slot_window_param_name =
+    "staging_slot_request_window";
+inline constexpr std::string_view nixl_ucx_staging_batch_flush_param_name =
+    "staging_batch_flush";
+inline constexpr std::string_view nixl_ucx_staging_target_h2d_worker_param_name =
+    "staging_target_h2d_worker";
 inline constexpr std::string_view nixl_ucx_vram_staging_env_name = "NIXL_UCX_VRAM_STAGING";
 inline constexpr std::string_view nixl_ucx_staging_chunk_size_env_name =
     "NIXL_UCX_STAGING_CHUNK_SIZE";
@@ -47,6 +53,12 @@ inline constexpr std::string_view nixl_ucx_staging_force_progress_env_name =
     "NIXL_UCX_STAGING_FORCE_PROGRESS_THREAD";
 inline constexpr std::string_view nixl_ucx_staging_cuda_streams_env_name =
     "NIXL_UCX_STAGING_CUDA_COPY_STREAMS";
+inline constexpr std::string_view nixl_ucx_staging_slot_window_env_name =
+    "NIXL_UCX_STAGING_SLOT_REQUEST_WINDOW";
+inline constexpr std::string_view nixl_ucx_staging_batch_flush_env_name =
+    "NIXL_UCX_STAGING_BATCH_FLUSH";
+inline constexpr std::string_view nixl_ucx_staging_target_h2d_worker_env_name =
+    "NIXL_UCX_STAGING_TARGET_H2D_WORKER";
 
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
 // field only from UCX 1.22

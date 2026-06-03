@@ -85,6 +85,9 @@ staging_chunk_size=16777216
 staging_slots_per_gpu=4
 staging_force_progress_thread=true
 staging_cuda_copy_streams=1
+staging_slot_request_window=32
+staging_batch_flush=false
+staging_target_h2d_worker=false
 ```
 
 Suggested environment variables:
@@ -95,6 +98,9 @@ NIXL_UCX_STAGING_CHUNK_SIZE=16M
 NIXL_UCX_STAGING_SLOTS=4
 NIXL_UCX_STAGING_FORCE_PROGRESS_THREAD=1
 NIXL_UCX_STAGING_CUDA_COPY_STREAMS=1
+NIXL_UCX_STAGING_SLOT_REQUEST_WINDOW=32
+NIXL_UCX_STAGING_BATCH_FLUSH=0
+NIXL_UCX_STAGING_TARGET_H2D_WORKER=0
 ```
 
 The existing direct UCX path remains the default. Staged mode is opt-in.
@@ -122,6 +128,17 @@ Current local implementation status:
 - Fixed UCX data-plane device selection so the backend accepts the documented `ucx_devices`
   parameter and remains compatible with the older `device_list` parameter. Both forms use
   comma-separated lists and trim whitespace around each device name.
+- Added transfer-only timing output and staged profile counters for initiator control messages,
+  D2H/write/flush/READY/ACK timing, and target H2D callback timing.
+- Added bounded slot-request scheduling through `staging_slot_request_window` /
+  `NIXL_UCX_STAGING_SLOT_REQUEST_WINDOW`.
+- Added an experimental `staging_batch_flush` / `NIXL_UCX_STAGING_BATCH_FLUSH` switch. It is
+  disabled by default because current measurements show it is a regression with synchronous target
+  H2D and four target slots.
+- Added an experimental `staging_target_h2d_worker` /
+  `NIXL_UCX_STAGING_TARGET_H2D_WORKER` switch. It moves target H2D out of the UCX active-message
+  callback into a target-side worker thread, then sends ACK after H2D completion. It is disabled by
+  default because current measurements do not show a throughput gain.
 - Added staged WRITE support for multiple descriptor pairs. Each local/remote descriptor pair must
   have the same nonzero length; the backend splits each pair into staged chunks and uses the same
   target-side slot lease protocol per chunk.
@@ -134,7 +151,9 @@ Current limitations:
 - `NIXL_READ` is not implemented for staged mode.
 - Staged v1 uses synchronous CUDA copies for correctness.
 - Staged v1 uses UCX worker 0 for internal ready/ACK messages.
-- Target H2D is still performed synchronously in the internal active-message handler.
+- Target H2D is still performed synchronously in the internal active-message handler by default.
+- Batch flush is experimental and disabled by default.
+- Target-side H2D worker is experimental and disabled by default.
 - Malformed READY cleanup, lease timeout, remote disconnect recovery, and poison/reclaim policy for
   `ERROR` slots are still future robustness work.
 
@@ -740,6 +759,149 @@ Counter validation for a `skip_desc_merge=1, descriptors=4, bytes=80 MiB, concur
 0-41 mlx5_4 port_rcv_data:  +21,356,324
 0-41 mlx5_5 port_rcv_data:  +21,350,400
 ```
+
+#### Phase 3D: Transfer-Only Bandwidth Measurement
+
+The smoke test has been extended with timing output so staged bandwidth can be measured with a
+PD-like scope. The `transfer_loop` timing starts after:
+
+- the source and target VRAM buffers already exist,
+- both VRAM regions have been registered with NIXL,
+- staged pinned host slots have been allocated and registered,
+- remote metadata and target descriptors have been exchanged.
+
+It excludes CPU pattern generation, CUDA allocation, initial source-buffer population, metadata
+handshake, full target verification, deregistration, and free. This is the closest current smoke
+test proxy for the SGLang PD path where prefill and decode register long-lived VRAM pools at
+startup and runtime transfers only write page/range descriptors inside those pools.
+
+Observed transfer-only results on `sglang-rdma-0-26 -> sglang-rdma-0-41`, GPU0 to GPU0:
+
+```text
+payload:               4 GiB
+descriptors:           8
+prepped:               1
+skip_desc_merge:       1
+ucx_devices:           mlx5_4,mlx5_5
+UCX_TLS:               rc,ud,self
+poll_sleep_us:         0
+```
+
+Best observed setting:
+
+```text
+bytes=512 MiB, concurrency=8, iters=1
+chunk_size=16 MiB, slots_per_gpu=4
+transfer_loop_us=230,256
+transfer_loop_gib_per_sec=17.37
+target verification: passed
+```
+
+The corresponding mlx5 counter deltas were aligned with the 4 GiB payload and showed data-plane
+traffic on both selected rails:
+
+```text
+0-26 mlx5_4 port_xmit_data: +547,548,283
+0-26 mlx5_5 port_xmit_data: +546,570,240
+0-41 mlx5_4 port_rcv_data:  +547,548,551
+0-41 mlx5_5 port_rcv_data:  +546,570,240
+```
+
+Since the IB data counters are in 4-byte units, these deltas correspond to roughly 4.07 GiB of
+wire-level counter growth across the two rails, including protocol/control overhead.
+
+The shell `real` time for this smoke should not be used as the staged data-path bandwidth because
+it includes benchmark setup. In the same run the initiator spent about 5.56 seconds in
+`buffer_prepare`, mostly generating and uploading a 4 GiB byte pattern. The staged data-path timing
+was only about 0.23 seconds:
+
+```text
+initiator setup_sec:          0.58
+initiator buffer_prepare_sec: 5.56
+initiator register_sec:       0.03
+initiator metadata_sec:       0.29
+initiator transfer_loop_sec:  0.23
+initiator cleanup_sec:        0.01
+```
+
+Tuning results so far:
+
+```text
+chunk=16 MiB,  slots=4, concurrency=4:  15.50 GiB/s
+chunk=16 MiB,  slots=4, concurrency=8:  17.37-17.75 GiB/s
+chunk=16 MiB,  slots=4, concurrency=12: 16.21 GiB/s
+chunk=16 MiB,  slots=4, concurrency=16: 16.62 GiB/s
+chunk=64 MiB,  slots=4, concurrency=8:  16.25 GiB/s
+chunk=128 MiB, slots=4, concurrency=8:  16.93 GiB/s
+chunk=256 MiB, slots=4, concurrency=8:  16.78 GiB/s
+chunk=16 MiB,  slots=8, concurrency=4:  13.08 GiB/s
+```
+
+Bounded slot-request window measurements:
+
+```text
+profile enabled, window=unbounded: 15.82 GiB/s, slot_req_sent=13,800, grant_inprog=13,544
+profile enabled, window=4:         15.08 GiB/s, slot_req_sent=256,    grant_inprog=0
+profile enabled, window=8:         14.87 GiB/s, slot_req_sent=425,    grant_inprog=150
+profile enabled, window=16(auto):  15.64 GiB/s, slot_req_sent=1,055,  grant_inprog=871
+profile enabled, window=32:        18.52 GiB/s, slot_req_sent=3,113,  grant_inprog=2,868
+profile off,     window=32:        18.34-18.63 GiB/s
+```
+
+The best current tuned point is `chunk_size=16 MiB`, `slots_per_gpu=4`,
+`staging_slot_request_window=32`, and around eight concurrent WRITE requests. A window exactly equal
+to the target slot count removes most control-plane retries but underfills the pipeline. A wider
+window keeps more work available and is faster even though the target still returns some
+`NIXL_IN_PROG` slot grants.
+
+Batch-flush measurements with `staging_slot_request_window=32`:
+
+```text
+batch_flush=false, profile off: 18.63 GiB/s
+batch_flush=true,  profile off: 11.27 GiB/s
+batch_flush=true,  profile on:  11.03 GiB/s
+```
+
+The current batch-flush experiment reduces flush calls from 32 per 512 MiB request to about 8, but
+it holds target staging leases longer and delays WRITE_READY/H2D/ACK into bursts. With synchronous
+target H2D and only four target slots this is a net regression, not a path to 20 GiB/s. Keep
+`staging_batch_flush=false` unless specifically profiling this behavior.
+
+Target H2D worker measurements with `staging_slot_request_window=32` and
+`staging_batch_flush=false`:
+
+```text
+target_h2d_worker=false, profile off: 18.97 GiB/s
+target_h2d_worker=true,  profile off: 18.60 GiB/s
+target_h2d_worker=true,  profile on:  18.04 GiB/s
+```
+
+The H2D worker does what it is designed to do: target callback time dropped from about 169 ms total
+for 256 READY messages to about 95 us total. H2D itself remained about 168 ms total for the same
+4 GiB payload. Because the worker currently performs synchronous H2D on one thread, this removes
+UCX callback blocking but does not create more H2D overlap. Keep
+`staging_target_h2d_worker=false` for the current first version; use
+`NIXL_UCX_STAGING_TARGET_H2D_WORKER=1` only when profiling callback interference.
+
+Host and local PCIe baselines measured in the same containers:
+
+```text
+ib_write_bw mlx5_4:       196.08 Gb/s
+ib_write_bw mlx5_5:       196.08 Gb/s
+ib_write_bw dual rail:    about 392 Gb/s aggregate
+GPU pinned H2D/D2H:       about 25.2 / 24.6 GiB/s per host
+staged transfer-only:     about 17.4 GiB/s
+bounded-window staged:    about 18.6 GiB/s
+```
+
+The remaining gap is therefore not explained by pinned memory registration or TCP fallback. The
+current staged v1 path still uses synchronous `cudaMemcpy` and performs target H2D in the UCX
+active-message callback by default. The next performance work should focus on:
+
+1. converting D2H/H2D to `cudaMemcpyAsync` plus CUDA events,
+2. using one or more target-side CUDA streams so H2D can overlap with UCX progress and ACK send,
+3. replacing busy retry scheduling with a lease-grant queue or target-side pending queue,
+4. revisiting flush coalescing only after target H2D is asynchronous and slots are not held idle.
 
 ### Phase 4: READ Support
 

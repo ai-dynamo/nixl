@@ -26,6 +26,7 @@
 #include <condition_variable>
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <poll.h>
 #include <optional>
 #include <unordered_map>
@@ -215,6 +216,9 @@ protected:
         size_t slotsPerGpu = 4;
         bool forceProgressThread = true;
         size_t cudaCopyStreams = 1;
+        size_t slotRequestWindow = 0;
+        bool batchFlush = false;
+        bool targetH2DWorker = false;
     };
 
     [[nodiscard]] bool
@@ -236,6 +240,9 @@ protected:
     getWorker(size_t worker_id) const {
         return uws[worker_id];
     }
+
+    void
+    stopStagedH2DWorker();
 
     [[nodiscard]] size_t
     getWorkerId(const nixl_opt_b_args_t *opt_args = nullptr) const noexcept;
@@ -365,6 +372,30 @@ private:
     nixl_status_t
     handleStagedWriteReady(const nixl_blob_t &message) const;
 
+    struct StagedH2DTask {
+        nixlBackendMD *region = nullptr;
+        void *hostAddr = nullptr;
+        std::string remoteAgent;
+        uint64_t transferId = 0;
+        uint64_t chunkId = 0;
+        uint64_t slotId = 0;
+        uint64_t leaseId = 0;
+        uintptr_t gpuAddr = 0;
+        uint64_t gpuDev = 0;
+        size_t size = 0;
+        bool profileEnabled = false;
+        uint64_t callbackUs = 0;
+    };
+
+    void
+    startStagedH2DWorker();
+
+    [[nodiscard]] nixl_status_t
+    enqueueStagedH2D(StagedH2DTask &&task) const;
+
+    void
+    stagedH2DWorkerLoop() const;
+
     static ucs_status_t
     stagedSlotReqAmCb(void *arg,
                       const void *header,
@@ -459,6 +490,15 @@ private:
     mutable std::unordered_map<uint64_t, nixlBackendReqH *> pendingStagedReqs_;
     mutable std::mutex stagedRegionMutex_;
     std::vector<nixlBackendMD *> stagedRegions_;
+    mutable std::atomic<uint64_t> stagedProfileTargetReadyCount_{0};
+    mutable std::atomic<uint64_t> stagedProfileTargetBytes_{0};
+    mutable std::atomic<uint64_t> stagedProfileTargetH2DUs_{0};
+    mutable std::atomic<uint64_t> stagedProfileTargetCallbackUs_{0};
+    mutable std::mutex stagedH2DMutex_;
+    mutable std::condition_variable stagedH2DCv_;
+    mutable std::deque<StagedH2DTask> stagedH2DQueue_;
+    mutable bool stagedH2DStop_ = false;
+    std::thread stagedH2DThread_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
