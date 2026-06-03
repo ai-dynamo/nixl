@@ -35,6 +35,7 @@ struct Args {
     size_t iters = 1;
     size_t offsetStride = 0;
     uint64_t initiatorId = 0;
+    size_t initiatorCount = 1;
     std::string ucxDevices;
     std::string ucxTls = "rc,ud,self";
     bool staging = true;
@@ -46,7 +47,7 @@ usage(const char *prog) {
               << " --mode target|initiator [--ip target_ip] [--port port]"
               << " [--bytes n] [--timeout seconds] [--chunk-size n]"
               << " [--slots n] [--concurrency n] [--iters n]"
-              << " [--offset-stride n] [--initiator-id n]"
+              << " [--offset-stride n] [--initiator-id n] [--initiator-count n]"
               << " [--ucx-devices devs] [--ucx-tls tls] [--staging 0|1]\n";
     std::exit(2);
 }
@@ -85,6 +86,8 @@ parseArgs(int argc, char **argv) {
             args.offsetStride = std::stoull(needValue());
         } else if (key == "--initiator-id") {
             args.initiatorId = std::stoull(needValue());
+        } else if (key == "--initiator-count") {
+            args.initiatorCount = std::stoull(needValue());
         } else if (key == "--ucx-devices") {
             args.ucxDevices = needValue();
         } else if (key == "--ucx-tls") {
@@ -102,10 +105,15 @@ parseArgs(int argc, char **argv) {
     if (args.mode == "initiator" && args.ip.empty()) {
         usage(argv[0]);
     }
-    if (args.bytes == 0 || args.concurrency == 0 || args.iters == 0) {
+    if (args.bytes == 0 || args.concurrency == 0 || args.iters == 0 ||
+        args.initiatorCount == 0) {
         usage(argv[0]);
     }
     if (args.offsetStride != 0 && args.offsetStride < args.bytes) {
+        usage(argv[0]);
+    }
+    if (args.mode == "initiator" && args.initiatorCount > 1 &&
+        (args.initiatorId == 0 || args.initiatorId > args.initiatorCount)) {
         usage(argv[0]);
     }
     return args;
@@ -164,24 +172,78 @@ effectiveOffsetStride(const Args &args) {
 }
 
 size_t
-transferCount(const Args &args) {
-    return checkedMul(args.concurrency, args.iters, "transfer count");
+localTransferCount(const Args &args) {
+    return checkedMul(args.concurrency, args.iters, "local transfer count");
 }
 
 size_t
-regionBytes(const Args &args) {
-    const size_t count = transferCount(args);
+totalTransferCount(const Args &args) {
+    return checkedMul(localTransferCount(args), args.initiatorCount, "total transfer count");
+}
+
+size_t
+regionBytesForCount(const Args &args, size_t count) {
     const size_t stride = effectiveOffsetStride(args);
     const size_t lastOffset = checkedMul(count - 1, stride, "last transfer offset");
     return checkedAdd(lastOffset, args.bytes, "registered GPU region size");
 }
 
+size_t
+localRegionBytes(const Args &args) {
+    return regionBytesForCount(args, localTransferCount(args));
+}
+
+size_t
+targetRegionBytes(const Args &args) {
+    return regionBytesForCount(args, totalTransferCount(args));
+}
+
 std::string
-initiatorAgentName(const Args &args) {
-    if (args.initiatorId == 0) {
+initiatorAgentName(uint64_t initiator_id) {
+    if (initiator_id == 0) {
         return kInitiatorAgent;
     }
-    return std::string(kInitiatorAgent) + "-" + std::to_string(args.initiatorId);
+    return std::string(kInitiatorAgent) + "-" + std::to_string(initiator_id);
+}
+
+std::string
+initiatorAgentName(const Args &args) {
+    return initiatorAgentName(args.initiatorId);
+}
+
+std::vector<uint64_t>
+expectedInitiatorIds(const Args &args) {
+    std::vector<uint64_t> ids;
+    ids.reserve(args.initiatorCount);
+    if (args.initiatorCount == 1) {
+        ids.push_back(args.initiatorId);
+        return ids;
+    }
+
+    for (size_t i = 1; i <= args.initiatorCount; ++i) {
+        ids.push_back(static_cast<uint64_t>(i));
+    }
+    return ids;
+}
+
+size_t
+initiatorSlotIndex(const Args &args, uint64_t initiator_id) {
+    if (args.initiatorCount == 1) {
+        return 0;
+    }
+    if (initiator_id == 0 || initiator_id > args.initiatorCount) {
+        throw std::runtime_error("invalid initiator id for multi-initiator run");
+    }
+    return static_cast<size_t>(initiator_id - 1);
+}
+
+size_t
+globalTransferIndex(const Args &args, uint64_t initiator_id, size_t local_transfer) {
+    return checkedAdd(checkedMul(initiatorSlotIndex(args, initiator_id),
+                                 localTransferCount(args),
+                                 "initiator transfer base"),
+                      local_transfer,
+                      "global transfer index");
 }
 
 unsigned char
@@ -201,9 +263,9 @@ makePattern(size_t bytes, size_t transferIndex = 0, uint64_t initiatorId = 0) {
 
 std::vector<unsigned char>
 makeSourceRegion(const Args &args) {
-    std::vector<unsigned char> pattern(regionBytes(args), 0);
+    std::vector<unsigned char> pattern(localRegionBytes(args), 0);
     const size_t stride = effectiveOffsetStride(args);
-    const size_t count = transferCount(args);
+    const size_t count = localTransferCount(args);
     for (size_t transfer = 0; transfer < count; ++transfer) {
         const size_t offset = transfer * stride;
         for (size_t i = 0; i < args.bytes; ++i) {
@@ -291,41 +353,54 @@ runTarget(const Args &args) {
     nixlBackendH *backend = createUcxBackend(agent, args);
     nixl_opt_args_t extra = backendOnly(backend);
 
-    const std::string initiatorName = initiatorAgentName(args);
-    const size_t count = transferCount(args);
+    const std::vector<uint64_t> initiatorIds = expectedInitiatorIds(args);
+    std::vector<std::string> initiatorNames;
+    initiatorNames.reserve(initiatorIds.size());
+    for (const uint64_t initiator_id : initiatorIds) {
+        initiatorNames.push_back(initiatorAgentName(initiator_id));
+    }
+
+    const size_t localCount = localTransferCount(args);
+    const size_t totalCount = totalTransferCount(args);
     const size_t stride = effectiveOffsetStride(args);
-    const size_t totalBytes = regionBytes(args);
+    const size_t totalBytes = targetRegionBytes(args);
 
     void *dst = allocDeviceBuffer(totalBytes, nullptr);
     nixl_reg_dlist_t reg = makeRegDlist(dst, totalBytes);
     check(agent.registerMem(reg, &extra), "target registerMem");
 
     nixl_xfer_dlist_t empty(VRAM_SEG);
-    waitUntil(
-        [&]() { return agent.checkRemoteMD(initiatorName, empty) == NIXL_SUCCESS; },
-        "initiator metadata",
-        args.timeout);
+    for (const std::string &initiatorName : initiatorNames) {
+        waitUntil(
+            [&]() { return agent.checkRemoteMD(initiatorName, empty) == NIXL_SUCCESS; },
+            "initiator metadata",
+            args.timeout);
+    }
 
     nixlBasicDesc dstDesc(reinterpret_cast<uintptr_t>(dst), totalBytes, 0);
     nixl_blob_t descMsg = std::string("DESC:") + dstDesc.serialize();
-    check(agent.genNotif(initiatorName, descMsg, &extra), "target genNotif DESC");
-    std::cout << "Target descriptors sent\n";
+    for (const std::string &initiatorName : initiatorNames) {
+        check(agent.genNotif(initiatorName, descMsg, &extra), "target genNotif DESC");
+    }
+    std::cout << "Target descriptors sent to " << initiatorNames.size() << " initiator(s)\n";
 
     size_t doneCount = 0;
     waitUntil(
         [&]() {
             nixl_notifs_t notifs;
             check(agent.getNotifs(notifs, &extra), "target getNotifs");
-            auto it = notifs.find(initiatorName);
-            if (it == notifs.end()) {
-                return false;
-            }
-            for (const auto &msg : it->second) {
-                if (msg == kDone) {
-                    ++doneCount;
+            for (const std::string &initiatorName : initiatorNames) {
+                auto it = notifs.find(initiatorName);
+                if (it == notifs.end()) {
+                    continue;
+                }
+                for (const auto &msg : it->second) {
+                    if (msg == kDone) {
+                        ++doneCount;
+                    }
                 }
             }
-            return doneCount >= count;
+            return doneCount >= totalCount;
         },
         "write completion notification",
         args.timeout);
@@ -334,20 +409,24 @@ runTarget(const Args &args) {
     checkCuda(cudaMemcpy(got.data(), dst, totalBytes, cudaMemcpyDeviceToHost),
               "target cudaMemcpy device to host");
     checkCuda(cudaDeviceSynchronize(), "target cudaDeviceSynchronize");
-    for (size_t transfer = 0; transfer < count; ++transfer) {
-        const size_t offset = transfer * stride;
-        for (size_t i = 0; i < args.bytes; ++i) {
-            const unsigned char expected = patternByte(i, transfer, args.initiatorId);
-            if (got[offset + i] != expected) {
-                throw std::runtime_error("verification mismatch at transfer " +
-                                         std::to_string(transfer) + " byte " +
-                                         std::to_string(i));
+    for (const uint64_t initiatorId : initiatorIds) {
+        for (size_t transfer = 0; transfer < localCount; ++transfer) {
+            const size_t globalTransfer = globalTransferIndex(args, initiatorId, transfer);
+            const size_t offset = globalTransfer * stride;
+            for (size_t i = 0; i < args.bytes; ++i) {
+                const unsigned char expected = patternByte(i, transfer, initiatorId);
+                if (got[offset + i] != expected) {
+                    throw std::runtime_error("verification mismatch at initiator " +
+                                             std::to_string(initiatorId) + " transfer " +
+                                             std::to_string(transfer) + " byte " +
+                                             std::to_string(i));
+                }
             }
         }
     }
 
-    std::cout << "Target verification passed: " << count << " transfers, " << args.bytes
-              << " bytes each\n";
+    std::cout << "Target verification passed: " << totalCount << " transfers, " << args.bytes
+              << " bytes each, " << initiatorNames.size() << " initiator(s)\n";
     check(agent.deregisterMem(reg, &extra), "target deregisterMem");
     checkCuda(cudaFree(dst), "target cudaFree");
 }
@@ -360,9 +439,9 @@ runInitiator(const Args &args) {
     nixlBackendH *backend = createUcxBackend(agent, args);
     nixl_opt_args_t extra = backendOnly(backend);
 
-    const size_t count = transferCount(args);
+    const size_t count = localTransferCount(args);
     const size_t stride = effectiveOffsetStride(args);
-    const size_t totalBytes = regionBytes(args);
+    const size_t totalBytes = localRegionBytes(args);
 
     const auto pattern = makeSourceRegion(args);
     void *src = allocDeviceBuffer(totalBytes, &pattern);
@@ -411,10 +490,12 @@ runInitiator(const Args &args) {
 
         for (size_t lane = 0; lane < args.concurrency; ++lane) {
             const size_t transfer = iter * args.concurrency + lane;
-            const size_t offset = transfer * stride;
+            const size_t localOffset = transfer * stride;
+            const size_t remoteOffset =
+                globalTransferIndex(args, args.initiatorId, transfer) * stride;
 
-            nixlBasicDesc srcDesc(reinterpret_cast<uintptr_t>(src) + offset, args.bytes, 0);
-            nixlBasicDesc dstDesc(targetDesc.addr + offset, args.bytes, targetDesc.devId);
+            nixlBasicDesc srcDesc(reinterpret_cast<uintptr_t>(src) + localOffset, args.bytes, 0);
+            nixlBasicDesc dstDesc(targetDesc.addr + remoteOffset, args.bytes, targetDesc.devId);
             nixl_xfer_dlist_t local = makeXferDlist(srcDesc);
             nixl_xfer_dlist_t remote = makeXferDlist(dstDesc);
 

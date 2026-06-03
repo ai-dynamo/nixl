@@ -117,8 +117,8 @@ Current local implementation status:
 - Added lease validation before target H2D and release messages for failure cleanup after a grant.
 - Added local slot state tracking so one process does not reuse a staging slot before its D2H/RDMA
   use has completed.
-- Added concurrent C++ smoke coverage for multiple in-flight staged WRITE requests writing
-  different offsets into one target VRAM registration.
+- Added concurrent C++ smoke coverage for multiple in-flight staged WRITE requests, including two
+  initiator processes writing different offsets into one target VRAM registration.
 - Kept staged mode opt-in. The default direct UCX path remains unchanged.
 
 Current limitations:
@@ -129,8 +129,6 @@ Current limitations:
 - Staged v1 uses synchronous CUDA copies for correctness.
 - Staged v1 uses UCX worker 0 for internal ready/ACK messages.
 - Target H2D is still performed synchronously in the internal active-message handler.
-- Multi-initiator smoke coverage is not implemented yet; current concurrent smoke coverage is one
-  initiator process with multiple in-flight request handles.
 - Malformed READY cleanup, lease timeout, remote disconnect recovery, and poison/reclaim policy for
   `ERROR` slots are still future robustness work.
 
@@ -541,10 +539,10 @@ Add production safety:
 
 #### Phase 3A: Target-Side Slot Lease
 
-Phase 3A has been implemented for one initiator process with multiple in-flight WRITE request
-handles. The Phase 2 pipeline proved a single large transfer could reuse slots safely within one
-request handle; Phase 3A protects target staging slots across multiple request handles by moving
-remote slot ownership into the target process.
+Phase 3A has been implemented and smoke-tested with one initiator process using multiple in-flight
+WRITE request handles. The Phase 2 pipeline proved a single large transfer could reuse slots safely
+within one request handle; Phase 3A protects target staging slots across multiple request handles by
+moving remote slot ownership into the target process.
 
 Implemented changes:
 
@@ -563,7 +561,6 @@ Implemented changes:
    for held remote leases; target H2D failure marks the slot `ERROR` and sends an error ACK.
 5. Add concurrent smoke tests.
    Correctness has been shown for multiple in-flight WRITE requests from one initiator process.
-   Two-initiator-process smoke remains future coverage.
 
 Current internal slot lease structures:
 
@@ -598,6 +595,7 @@ The C++ smoke test has been extended with:
 --slots N
 --offset-stride N
 --initiator-id N
+--initiator-count N
 ```
 
 Observed Phase 3A acceptance matrix on `sglang-rdma-0-26 -> sglang-rdma-0-41`:
@@ -613,11 +611,29 @@ The target allocates one larger GPU buffer. Each transfer writes a different off
 pattern encodes `initiator_id`, transfer index, and byte offset so target verification can detect
 cross-transfer slot overwrites.
 
-Remaining Phase 3A coverage:
+#### Phase 3B: Multi-Initiator Smoke
+
+Phase 3B extends the C++ smoke test so one target can wait for multiple initiator agents and send
+the same target VRAM descriptor to all of them. Each initiator writes a distinct offset range:
 
 ```text
-two initiator processes writing distinct offsets into one target allocation
+global_transfer = (initiator_id - 1) * local_transfer_count + local_transfer
+remote_offset = global_transfer * offset_stride
 ```
+
+The target waits for all DONE notifications and verifies the whole target allocation with a pattern
+that includes `initiator_id`, transfer index, and byte offset.
+
+Observed Phase 3B acceptance matrix on `sglang-rdma-0-26 -> sglang-rdma-0-41`:
+
+```text
+initiators=2, slots=1, concurrency=1 each, bytes=16 MiB: passed
+initiators=2, slots=1, concurrency=4 each, bytes=4 MiB:  passed
+initiators=2, slots=4, concurrency=4 each, bytes=80 MiB: passed
+```
+
+All runs used the target control address `10.159.0.41`, `ucx_devices=mlx5_4,mlx5_5`, and
+`UCX_TLS=rc,ud,self`.
 
 Suggested commit split:
 
