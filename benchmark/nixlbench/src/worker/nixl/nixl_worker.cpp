@@ -1586,20 +1586,20 @@ execTransferLoop(nixlAgent *agent,
     int completed = 0;
 
     for (int s = 0; s < depth; s++) {
-        if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+        if (terminate_ptr && terminate_ptr->load()) [[unlikely]] {
             cleanupSlots(agent, backend_engine, slots);
             return -1;
         }
         nixl_status_t rc =
             prepareSlot(agent, backend_engine, op, target, params, thread_stats, slots[s]);
-        if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+        if (rc != NIXL_SUCCESS) [[unlikely]] {
             std::cerr << "prepareSlot failed for slot " << s << ": "
                       << nixlEnumStrings::statusStr(rc) << std::endl;
             cleanupSlots(agent, backend_engine, slots);
             return -1;
         }
         rc = postSlot(agent, thread_stats, slots[s]);
-        if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+        if (rc != NIXL_SUCCESS) [[unlikely]] {
             std::cerr << "postSlot failed for slot " << s << ": " << nixlEnumStrings::statusStr(rc)
                       << std::endl;
             cleanupSlots(agent, backend_engine, slots);
@@ -1609,7 +1609,7 @@ execTransferLoop(nixlAgent *agent,
     }
 
     while (completed < num_iter) {
-        if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+        if (terminate_ptr && terminate_ptr->load()) [[unlikely]] {
             cleanupSlots(agent, backend_engine, slots);
             return -1;
         }
@@ -1623,7 +1623,7 @@ execTransferLoop(nixlAgent *agent,
                 continue;
             }
 
-            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+            if (rc != NIXL_SUCCESS) [[unlikely]] {
                 std::cerr << "Transfer failed on slot " << s << ": "
                           << nixlEnumStrings::statusStr(rc) << std::endl;
                 cleanupSlots(agent, backend_engine, slots);
@@ -1638,21 +1638,21 @@ execTransferLoop(nixlAgent *agent,
                 continue;
             }
 
-            if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+            if (terminate_ptr && terminate_ptr->load()) [[unlikely]] {
                 cleanupSlots(agent, backend_engine, slots);
                 return -1;
             }
 
             if (recreate) {
                 rc = recycleSlot(agent, backend_engine, slots[s]);
-                if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                if (rc != NIXL_SUCCESS) [[unlikely]] {
                     std::cerr << "recycleSlot failed for slot " << s << ": "
                               << nixlEnumStrings::statusStr(rc) << std::endl;
                     cleanupSlots(agent, backend_engine, slots);
                     return -1;
                 }
                 rc = prepareSlot(agent, backend_engine, op, target, params, thread_stats, slots[s]);
-                if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                if (rc != NIXL_SUCCESS) [[unlikely]] {
                     std::cerr << "prepareSlot failed on resubmit for slot " << s << ": "
                               << nixlEnumStrings::statusStr(rc) << std::endl;
                     cleanupSlots(agent, backend_engine, slots);
@@ -1661,7 +1661,7 @@ execTransferLoop(nixlAgent *agent,
             }
 
             rc = postSlot(agent, thread_stats, slots[s]);
-            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+            if (rc != NIXL_SUCCESS) [[unlikely]] {
                 std::cerr << "postSlot failed on resubmit for slot " << s << ": "
                           << nixlEnumStrings::statusStr(rc) << std::endl;
                 cleanupSlots(agent, backend_engine, slots);
@@ -1715,7 +1715,7 @@ execTransfer(nixlAgent *agent,
                                       remote_iov,
                                       terminate_ptr);
 
-        if (__builtin_expect(result != 0, 0)) {
+        if (result != 0) [[unlikely]] {
             ret = result;
         }
 
