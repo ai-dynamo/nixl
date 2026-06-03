@@ -72,6 +72,9 @@ toStringView(const ep_state_t t) noexcept {
 
 enum class am_cb_op_t {
     NOTIF_STR,
+    STAGED_SLOT_REQ,
+    STAGED_SLOT_GRANT,
+    STAGED_SLOT_RELEASE,
     STAGED_WRITE_READY,
     STAGED_ACK,
 };
@@ -81,6 +84,12 @@ toStringView(const am_cb_op_t t) noexcept {
     switch (t) {
     case am_cb_op_t::NOTIF_STR:
         return "NOTIF_STR";
+    case am_cb_op_t::STAGED_SLOT_REQ:
+        return "STAGED_SLOT_REQ";
+    case am_cb_op_t::STAGED_SLOT_GRANT:
+        return "STAGED_SLOT_GRANT";
+    case am_cb_op_t::STAGED_SLOT_RELEASE:
+        return "STAGED_SLOT_RELEASE";
     case am_cb_op_t::STAGED_WRITE_READY:
         return "STAGED_WRITE_READY";
     case am_cb_op_t::STAGED_ACK:

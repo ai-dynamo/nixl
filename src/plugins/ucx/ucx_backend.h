@@ -281,7 +281,17 @@ private:
     unregisterPendingStagedReq(uint64_t transfer_id, nixlBackendReqH *handle) const;
 
     void
-    completePendingStagedReq(uint64_t transfer_id, uint64_t chunk_id, nixl_status_t status) const;
+    completePendingStagedSlotGrant(uint64_t transfer_id,
+                                   uint64_t chunk_id,
+                                   uint64_t slot_id,
+                                   uint64_t lease_id,
+                                   nixl_status_t status) const;
+
+    void
+    completePendingStagedReq(uint64_t transfer_id,
+                             uint64_t chunk_id,
+                             uint64_t lease_id,
+                             nixl_status_t status) const;
 
     void
     registerStagedRegion(nixlBackendMD *metadata);
@@ -300,10 +310,39 @@ private:
     checkStagedXfer(nixlBackendReqH *handle) const;
 
     nixl_status_t
+    sendStagedSlotReq(const std::string &remote_agent,
+                      uint64_t transfer_id,
+                      uint64_t chunk_id,
+                      uintptr_t remote_gpu_addr,
+                      uint64_t remote_gpu_dev,
+                      size_t size,
+                      const std::unique_ptr<nixlUcxEp> &ep,
+                      nixlUcxReq *req) const;
+
+    nixl_status_t
+    sendStagedSlotGrant(const std::string &remote_agent,
+                        uint64_t transfer_id,
+                        uint64_t chunk_id,
+                        uint64_t slot_id,
+                        uint64_t lease_id,
+                        nixl_status_t status) const;
+
+    nixl_status_t
+    sendStagedSlotRelease(const std::string &remote_agent,
+                          uint64_t transfer_id,
+                          uint64_t chunk_id,
+                          uint64_t slot_id,
+                          uint64_t lease_id,
+                          uintptr_t remote_gpu_addr,
+                          uint64_t remote_gpu_dev,
+                          size_t size) const;
+
+    nixl_status_t
     sendStagedWriteReady(const std::string &remote_agent,
                          uint64_t transfer_id,
                          uint64_t chunk_id,
                          uint64_t remote_slot_id,
+                         uint64_t lease_id,
                          uintptr_t remote_gpu_addr,
                          uint64_t remote_gpu_dev,
                          size_t size,
@@ -314,10 +353,41 @@ private:
     sendStagedAck(const std::string &remote_agent,
                   uint64_t transfer_id,
                   uint64_t chunk_id,
+                  uint64_t lease_id,
                   nixl_status_t status) const;
 
     nixl_status_t
+    handleStagedSlotReq(const nixl_blob_t &message) const;
+
+    nixl_status_t
+    handleStagedSlotRelease(const nixl_blob_t &message) const;
+
+    nixl_status_t
     handleStagedWriteReady(const nixl_blob_t &message) const;
+
+    static ucs_status_t
+    stagedSlotReqAmCb(void *arg,
+                      const void *header,
+                      size_t header_length,
+                      void *data,
+                      size_t length,
+                      const ucp_am_recv_param_t *param);
+
+    static ucs_status_t
+    stagedSlotGrantAmCb(void *arg,
+                        const void *header,
+                        size_t header_length,
+                        void *data,
+                        size_t length,
+                        const ucp_am_recv_param_t *param);
+
+    static ucs_status_t
+    stagedSlotReleaseAmCb(void *arg,
+                          const void *header,
+                          size_t header_length,
+                          void *data,
+                          size_t length,
+                          const ucp_am_recv_param_t *param);
 
     static ucs_status_t
     stagedWriteReadyAmCb(void *arg,
