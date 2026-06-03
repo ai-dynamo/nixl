@@ -1804,7 +1804,7 @@ xferBenchNixlWorker::synchronizeStart() {
                   << xferBenchConfig::num_target_dev << " targets)" << std::endl;
     } else {
         std::cout << "Waiting for all processes to start... (expecting " << rt->getSize()
-                  << " total" << std::endl;
+                  << " total)" << std::endl;
     }
 
     if (rt) {
