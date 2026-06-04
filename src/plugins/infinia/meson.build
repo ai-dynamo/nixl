@@ -38,9 +38,6 @@ else
     compile_flags = [ '-UHAVE_CUDA' ]
 endif
 
-# RED async library requires C++20 coroutines
-cpp_std_override = 'c++20'
-
 # Get Abseil dependencies
 absl_log_dep = dependency('absl_log', required: true)
 
@@ -53,7 +50,6 @@ if 'INFINIA' in static_plugins
     include_directories: [nixl_inc_dirs,utils_inc_dirs, infinia_inc_path],
     install: false,
     cpp_args : compile_flags + ['-fcoroutines'],
-    override_options : ['cpp_std=c++20'],
     name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
   infinia_backend_lib = shared_library('INFINIA',
@@ -64,7 +60,6 @@ else
     include_directories: [nixl_inc_dirs,utils_inc_dirs, infinia_inc_path],
     install: true,
     cpp_args : compile_flags + ['-fPIC', '-fcoroutines'],
-    override_options : ['cpp_std=c++20'],
     name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
     install_dir: plugin_install_dir,
     install_rpath: '$ORIGIN/..')
