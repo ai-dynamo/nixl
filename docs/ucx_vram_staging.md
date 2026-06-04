@@ -31,6 +31,9 @@ source GPU -> source pinned DRAM -> UCX host RDMA -> target pinned DRAM -> targe
 The main goal is to avoid changing inference framework code that already uses the standard NIXL
 agent API.
 
+For the related single-node no-P2P GPU-to-GPU case, see
+[`local_vram_staging.md`](local_vram_staging.md).
+
 ## Goals
 
 - Preserve the existing NIXL API surface for applications.
