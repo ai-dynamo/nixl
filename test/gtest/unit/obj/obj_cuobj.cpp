@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,10 @@
 #include "s3_accel/dell/cuobj_token_manager.h"
 #include <cstdlib>
 #include <cstring>
+
+#ifdef HAVE_CUDA
+#include <cuda_runtime.h>
+#endif
 
 namespace gtest::obj {
 
@@ -671,10 +675,22 @@ protected:
     static constexpr size_t kBufferSize = 64 * 1024; // 64 KiB
 
     void *buffer_ = nullptr;
+    bool useCuda_ = false;
 
     void
     SetUp() override {
-        // posix_memalign guarantees page alignment, which cuObject prefers.
+#ifdef HAVE_CUDA
+        // cuMemObjGetDescriptor requires GPU device memory for RDMA
+        // registration (GPU-direct RDMA). Use cudaMalloc, then initialize
+        // via cudaMemset since the pointer is not host-accessible.
+        if (cudaSetDevice(0) == cudaSuccess &&
+            cudaMalloc(&buffer_, kBufferSize) == cudaSuccess) {
+            useCuda_ = true;
+            cudaMemset(buffer_, 0xAB, kBufferSize);
+            return;
+        }
+#endif
+        // Fallback to posix_memalign if CUDA is not available or fails.
         int rc = posix_memalign(&buffer_, kPageSize, kBufferSize);
         ASSERT_EQ(rc, 0);
         ASSERT_NE(buffer_, nullptr);
@@ -684,7 +700,14 @@ protected:
     void
     TearDown() override {
         if (buffer_) {
-            free(buffer_);
+#ifdef HAVE_CUDA
+            if (useCuda_) {
+                cudaFree(buffer_);
+            } else
+#endif
+            {
+                free(buffer_);
+            }
             buffer_ = nullptr;
         }
     }
@@ -699,6 +722,99 @@ TEST_F(CuObjTokenManagerTest, ConstructionDefault) {
     CuObjTokenManager mgr;
     // isConnected() returns a valid bool (true or false) — no crash.
     (void)mgr.isConnected();
+}
+
+TEST_F(CuObjTokenManagerTest, DiagnoseConnection) {
+    std::cout << "=== CuObjTokenManager connection diagnostics ===" << std::endl;
+
+#ifdef HAVE_CUDA
+    std::cout << "  HAVE_CUDA:     yes" << std::endl;
+
+    // GPU info
+    int dev_count = 0;
+    cudaGetDeviceCount(&dev_count);
+    std::cout << "  CUDA devices:  " << dev_count << std::endl;
+    for (int i = 0; i < dev_count; ++i) {
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, i);
+        std::cout << "    [" << i << "] " << prop.name
+                  << " (compute " << prop.major << "." << prop.minor << ")" << std::endl;
+    }
+#else
+    std::cout << "  HAVE_CUDA:     no" << std::endl;
+#endif
+    std::cout << "  useCuda_:      " << (useCuda_ ? "true" : "false") << std::endl;
+    std::cout << "  buffer_:       " << buffer_ << std::endl;
+
+    CuObjTokenManager mgr;
+    std::cout << "  isConnected(): " << (mgr.isConnected() ? "true" : "false") << std::endl;
+
+    if (!mgr.isConnected()) {
+        std::cout << "=== end diagnostics (not connected) ===" << std::endl;
+        return;
+    }
+
+    // Try different memory types and sizes
+    struct MemTest {
+        const char *label;
+        void *ptr;
+        size_t size;
+        std::function<void()> cleanup;
+    };
+    std::vector<MemTest> tests;
+
+    // Test 1: fixture buffer_ (cudaMalloc or posix_memalign) with full size
+    tests.push_back({"buffer_ (full 64K)", buffer_, kBufferSize, nullptr});
+
+    // Test 2: fixture buffer_ with 4K
+    tests.push_back({"buffer_ (4K)", buffer_, 4096, nullptr});
+
+#ifdef HAVE_CUDA
+    // Test 3: fresh cudaMalloc 64K
+    void *gpu_buf = nullptr;
+    if (cudaMalloc(&gpu_buf, kBufferSize) == cudaSuccess) {
+        tests.push_back({"cudaMalloc 64K", gpu_buf, kBufferSize,
+                         [gpu_buf]() { cudaFree(gpu_buf); }});
+    }
+
+    // Test 4: cudaMallocHost (pinned host) 64K
+    void *pinned_buf = nullptr;
+    if (cudaMallocHost(&pinned_buf, kBufferSize) == cudaSuccess) {
+        tests.push_back({"cudaMallocHost 64K", pinned_buf, kBufferSize,
+                         [pinned_buf]() { cudaFreeHost(pinned_buf); }});
+    }
+
+    // Test 5: cudaMallocManaged (unified) 64K
+    void *managed_buf = nullptr;
+    if (cudaMallocManaged(&managed_buf, kBufferSize) == cudaSuccess) {
+        tests.push_back({"cudaMallocManaged 64K", managed_buf, kBufferSize,
+                         [managed_buf]() { cudaFree(managed_buf); }});
+    }
+#endif
+
+    // Test 6: posix_memalign 64K
+    void *sys_buf = nullptr;
+    posix_memalign(&sys_buf, 4096, kBufferSize);
+    if (sys_buf) {
+        tests.push_back({"posix_memalign 64K", sys_buf, kBufferSize,
+                         [sys_buf]() { free(sys_buf); }});
+    }
+
+    for (auto &t : tests) {
+        cuObjErr_t rc = mgr.registerMemory(t.ptr, t.size);
+        std::cout << "  registerMemory(" << t.label << ", ptr=" << t.ptr
+                  << ", size=" << t.size << ") = " << rc << std::endl;
+        if (rc == CU_OBJ_SUCCESS) {
+            mgr.deregisterMemory(t.ptr);
+        }
+    }
+
+    // Cleanup
+    for (auto &t : tests) {
+        if (t.cleanup) t.cleanup();
+    }
+
+    std::cout << "=== end diagnostics ===" << std::endl;
 }
 
 TEST_F(CuObjTokenManagerTest, ConstructionWithProtocol) {
