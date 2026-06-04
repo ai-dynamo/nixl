@@ -127,8 +127,10 @@ echo "Streaming logs from pod: $POD"
 kubectl -n ucx-ci-batch-nodes logs -f "$POD" || kubectl -n ucx-ci-batch-nodes logs "$POD" --previous || true
 
 # logs -f can return early (apiserver GOAWAY), so cover the full build+test.
-echo "Waiting for job completion (timeout: 60m)..."
-if ! wait_for_status "SUCCEEDED" 3600 10; then
+# Wait 5m past the in-pod TEST_TIMEOUT (60m) so this layer strictly wraps it
+# and can observe the resulting FAILED instead of timing out alongside it.
+echo "Waiting for job completion (timeout: 65m)..."
+if ! wait_for_status "SUCCEEDED" 3900 10; then
     echo "Failure running NIXL tests"
     exit 1
 fi
