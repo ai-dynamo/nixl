@@ -31,7 +31,6 @@
 #include <map>
 #include <filesystem>
 #include <string_view>
-#include <format>
 #include <ranges>
 #include <algorithm>
 #include <cctype>
@@ -67,7 +66,7 @@ trim(std::string_view sv) noexcept {
     return sv.substr(start, end - start + 1);
 }
 
-// Modern C++20 config file parser using <filesystem>, <string_view>, and std::format
+// Modern C++20 config file parser using <filesystem> and <string_view>
 // Supports comments (#) and blank lines in key=value format
 [[nodiscard]] static std::map<std::string, std::string>
 parseConfigFile(const std::string &filepath) {
@@ -76,16 +75,16 @@ parseConfigFile(const std::string &filepath) {
     // Use filesystem to check if file exists
     const fs::path config_path{filepath};
     if (!fs::exists(config_path)) {
-        throw std::runtime_error(std::format("Config file not found: {}", filepath));
+        throw std::runtime_error("Config file not found: " + filepath);
     }
 
     if (!fs::is_regular_file(config_path)) {
-        throw std::runtime_error(std::format("Config path is not a file: {}", filepath));
+        throw std::runtime_error("Config path is not a file: " + filepath);
     }
 
     std::ifstream file(config_path);
     if (!file.is_open()) {
-        throw std::runtime_error(std::format("Failed to open config file: {}", filepath));
+        throw std::runtime_error("Failed to open config file: " + filepath);
     }
 
     std::map<std::string, std::string> config;
@@ -106,8 +105,8 @@ parseConfigFile(const std::string &filepath) {
         // Parse key=value using string_view
         const auto eq_pos = line_view.find('=');
         if (eq_pos == std::string_view::npos) {
-            NIXL_WARN << std::format(
-                "Skipping invalid line {} in {}: {}", line_num, filepath, line_view);
+            NIXL_WARN << absl::StrFormat(
+                "Skipping invalid line %d in %s: %s", line_num, filepath, line_view);
             continue;
         }
 
