@@ -228,13 +228,31 @@ class NIXLBench:
             )
 
     def _configure_obj(self, source: str, destination: str):
-        """Configure OBJ plugin for object storage operations"""
-        if source == "memory":
-            self.target_seg_type = "OBJ"
-        elif destination == "memory":
-            self.initiator_seg_type = "OBJ"
+        """Configure OBJ plugin for object storage operations."""
+        arg_to_seg_type = {
+            "memory": "DRAM",
+            "gpu": "VRAM",
+        }
+
+        src_local = source in arg_to_seg_type
+        dst_local = destination in arg_to_seg_type
+
+        if src_local and dst_local:
+            raise ValueError(
+                f"Invalid source/destination for OBJ: source={source}, destination={destination}, "
+                f"both are local — exactly one must be a remote OBJ endpoint"
+            )
+        if src_local:
+            self.op_type = "WRITE"
+            self.initiator_seg_type = arg_to_seg_type[source]
+        elif dst_local:
+            self.op_type = "READ"
+            self.initiator_seg_type = arg_to_seg_type[destination]
         else:
-            raise ValueError(f"Invalid source for OBJ: {source}")
+            raise ValueError(
+                f"Invalid source/destination for OBJ: source={source}, destination={destination}, "
+                f"one of them must be in {list(arg_to_seg_type.keys())}"
+            )
 
     def configure_segment_type(self, backend: str, source: str, destination: str):
         backend_lower = backend.lower()
