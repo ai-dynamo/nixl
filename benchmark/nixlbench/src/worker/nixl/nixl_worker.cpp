@@ -30,6 +30,7 @@
 #include <iomanip>
 #include <memory>
 #include <sstream>
+#include <unordered_set>
 #include "utils/neuron.h"
 #include "utils/utils.h"
 #include <unistd.h>
@@ -955,7 +956,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     }
                 }
 
-                basic_desc = initBasicDescObj(buffer_size, i, unique_name);
+                int obj_dev_id = list_idx * num_devices + i;
+                basic_desc = initBasicDescObj(buffer_size, obj_dev_id, unique_name);
                 if (basic_desc) {
                     std::cout << "Creating obj: " << unique_name << std::endl;
                     iov_list.push_back(basic_desc.value());
@@ -1094,9 +1096,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
             for (auto &iov : iov_list) {
                 if (isInitiator()) {
-                    memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
+                    memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, iov.len);
                 } else if (isTarget()) {
-                    memset((void *)iov.addr, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+                    memset((void *)iov.addr, XFERBENCH_TARGET_BUFFER_ELEMENT, iov.len);
                 }
             }
         }
@@ -1111,6 +1113,47 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
 
 
     opt_args.backends.push_back(backend_engine);
+
+    // Ordering invariants:
+    // 1. Deregister remote IOVs before local IOVs
+    //    (remote registrations may reference local buffers).
+    // 2. Call deregisterMem() before each IOV cleanup
+    //    (cleanup destroys resources that backends need).
+    if (xferBenchConfig::isObjStorageBackend()) {
+        for (auto &iov_list : remote_iovs) {
+            nixl_reg_dlist_t desc_list(OBJ_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+            for (auto &iov : iov_list) {
+                cleanupBasicDescObj(iov);
+            }
+        }
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
+        for (auto &iov_list : remote_iovs) {
+            nixl_reg_dlist_t desc_list(BLK_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+            for (auto &iov : iov_list) {
+                cleanupBasicDescBlk(iov);
+            }
+        }
+    } else if (xferBenchConfig::isStorageBackend()) {
+        for (auto &iov_list : remote_iovs) {
+            nixl_reg_dlist_t desc_list(FILE_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+        }
+        // Close each backing fd exactly once, after all deregistrations complete.
+        std::unordered_set<int> closed_fds;
+        for (auto &iov_list : remote_iovs) {
+            for (auto &iov : iov_list) {
+                if (closed_fds.insert(iov.devId).second) {
+                    cleanupBasicDescFile(iov);
+                }
+            }
+        }
+    }
+
     for (auto &iov_list : iov_lists) {
         nixl_reg_dlist_t desc_list(seg_type);
         iovListToNixlRegDlist(iov_list, desc_list);
@@ -1128,35 +1171,6 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
                 std::cerr << "Unsupported mem type: " << seg_type << std::endl;
                 exit(EXIT_FAILURE);
             }
-        }
-    }
-
-    if (xferBenchConfig::isObjStorageBackend()) {
-        for (auto &iov_list : remote_iovs) {
-            for (auto &iov : iov_list) {
-                cleanupBasicDescObj(iov);
-            }
-            nixl_reg_dlist_t desc_list(OBJ_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
-        }
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
-        for (auto &iov_list : remote_iovs) {
-            for (auto &iov : iov_list) {
-                cleanupBasicDescBlk(iov);
-            }
-            nixl_reg_dlist_t desc_list(BLK_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
-        }
-    } else if (xferBenchConfig::isStorageBackend()) {
-        for (auto &iov_list : remote_iovs) {
-            for (auto &iov : iov_list) {
-                cleanupBasicDescFile(iov);
-            }
-            nixl_reg_dlist_t desc_list(FILE_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
     }
 }
@@ -1234,19 +1248,22 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
-        for (auto &iov_list : local_iovs) {
+        for (size_t list_idx = 0; list_idx < local_iovs.size(); list_idx++) {
+            const auto &iov_list = local_iovs[list_idx];
             std::vector<xferBenchIOV> remote_iov_list;
-            int devidx = 0;
-            for (auto &iov : iov_list) {
+            size_t num_devices = iov_list.size();
+            for (size_t devidx = 0; devidx < num_devices; devidx++) {
+                const auto &iov = iov_list[devidx];
                 if (xferBenchConfig::isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
-                    basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
+                    int obj_dev_id = list_idx * num_devices + devidx;
+                    basic_desc = initBasicDescObj(iov.len, obj_dev_id, iov.metaInfo);
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
                     }
                 } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
                     xferBenchIOV iov_remote(iov);
-                    iov_remote.addr = gusli_devices[devidx++].dev_offset + file_offset;
+                    iov_remote.addr = gusli_devices[devidx].dev_offset + file_offset;
                     iov_remote.len = block_size;
                     iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);
@@ -1548,20 +1565,20 @@ execTransferLoop(nixlAgent *agent,
     int completed = 0;
 
     for (int s = 0; s < depth; s++) {
-        if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+        if (terminate_ptr && terminate_ptr->load()) [[unlikely]] {
             cleanupSlots(agent, backend_engine, slots);
             return -1;
         }
         nixl_status_t rc =
             prepareSlot(agent, backend_engine, op, target, params, thread_stats, slots[s]);
-        if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+        if (rc != NIXL_SUCCESS) [[unlikely]] {
             std::cerr << "prepareSlot failed for slot " << s << ": "
                       << nixlEnumStrings::statusStr(rc) << std::endl;
             cleanupSlots(agent, backend_engine, slots);
             return -1;
         }
         rc = postSlot(agent, thread_stats, slots[s]);
-        if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+        if (rc != NIXL_SUCCESS) [[unlikely]] {
             std::cerr << "postSlot failed for slot " << s << ": " << nixlEnumStrings::statusStr(rc)
                       << std::endl;
             cleanupSlots(agent, backend_engine, slots);
@@ -1571,7 +1588,7 @@ execTransferLoop(nixlAgent *agent,
     }
 
     while (completed < num_iter) {
-        if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+        if (terminate_ptr && terminate_ptr->load()) [[unlikely]] {
             cleanupSlots(agent, backend_engine, slots);
             return -1;
         }
@@ -1585,7 +1602,7 @@ execTransferLoop(nixlAgent *agent,
                 continue;
             }
 
-            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+            if (rc != NIXL_SUCCESS) [[unlikely]] {
                 std::cerr << "Transfer failed on slot " << s << ": "
                           << nixlEnumStrings::statusStr(rc) << std::endl;
                 cleanupSlots(agent, backend_engine, slots);
@@ -1600,21 +1617,21 @@ execTransferLoop(nixlAgent *agent,
                 continue;
             }
 
-            if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+            if (terminate_ptr && terminate_ptr->load()) [[unlikely]] {
                 cleanupSlots(agent, backend_engine, slots);
                 return -1;
             }
 
             if (recreate) {
                 rc = recycleSlot(agent, backend_engine, slots[s]);
-                if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                if (rc != NIXL_SUCCESS) [[unlikely]] {
                     std::cerr << "recycleSlot failed for slot " << s << ": "
                               << nixlEnumStrings::statusStr(rc) << std::endl;
                     cleanupSlots(agent, backend_engine, slots);
                     return -1;
                 }
                 rc = prepareSlot(agent, backend_engine, op, target, params, thread_stats, slots[s]);
-                if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                if (rc != NIXL_SUCCESS) [[unlikely]] {
                     std::cerr << "prepareSlot failed on resubmit for slot " << s << ": "
                               << nixlEnumStrings::statusStr(rc) << std::endl;
                     cleanupSlots(agent, backend_engine, slots);
@@ -1623,7 +1640,7 @@ execTransferLoop(nixlAgent *agent,
             }
 
             rc = postSlot(agent, thread_stats, slots[s]);
-            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+            if (rc != NIXL_SUCCESS) [[unlikely]] {
                 std::cerr << "postSlot failed on resubmit for slot " << s << ": "
                           << nixlEnumStrings::statusStr(rc) << std::endl;
                 cleanupSlots(agent, backend_engine, slots);
@@ -1677,7 +1694,7 @@ execTransfer(nixlAgent *agent,
                                       remote_iov,
                                       terminate_ptr);
 
-        if (__builtin_expect(result != 0, 0)) {
+        if (result != 0) [[unlikely]] {
             ret = result;
         }
 
@@ -1804,7 +1821,7 @@ xferBenchNixlWorker::synchronizeStart() {
                   << xferBenchConfig::num_target_dev << " targets)" << std::endl;
     } else {
         std::cout << "Waiting for all processes to start... (expecting " << rt->getSize()
-                  << " total" << std::endl;
+                  << " total)" << std::endl;
     }
 
     if (rt) {
