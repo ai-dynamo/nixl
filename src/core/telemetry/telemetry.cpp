@@ -154,6 +154,8 @@ nixlTelemetry::initializeTelemetry() {
         return;
     }
 
+    events_.reserve(maxBufferedEvents_);
+
     NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << *exporter_name;
 
     const auto run_interval =
