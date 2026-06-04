@@ -17,27 +17,12 @@ ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
 ARG OS
 
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+# DOCA source selection:
+#   upstream - install DOCA from the public DOCA host repo packages (default)
+#   custom   - build DOCA from source provided via the `doca` build-context
+ARG DOCA="upstream"
 
-# Set default OS if not provided
-ARG OS=${OS:-ubuntu24}
-ARG ARCH="x86_64"
-ARG DEFAULT_PYTHON_VERSION="3.12"
-ARG UCX_REF="v1.21.x"
-ARG BUILD_NIXL_EP="true"
-ARG RDMA_CORE_PREFIX="/usr"
-ARG UCX_PREFIX="/usr"
-ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
-ARG DOCA_PREFIX="/opt/mellanox/doca"
-ARG NIXL_PREFIX="/usr/local/nixl"
-ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
-ARG NPROC
-ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
-ARG LIBFABRIC_VERSION="v1.21.0"
-ARG LIBFABRIC_INSTALL_PATH="/usr/local"
-ARG BUILD_TYPE="release"
-ARG ABSL_TAG="lts_2025_08_14"
-ARG GRPC_TAG="v1.73.0"
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS base
 
 # Install build dependencies from Ubuntu repository
 RUN apt-get update -y && \
@@ -70,6 +55,10 @@ RUN apt-get update -y && \
     # azure-sdk-for-cpp dependencies
     libxml2-dev
 
+# === DOCA variant: upstream (host repo packages only) ===
+FROM base AS doca_upstream_image
+RUN echo "INFO: Using DOCA from host repo packages (DOCA=upstream)."
+
 # Add DOCA repository and install packages
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
@@ -85,6 +74,54 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "am
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
     libnuma-dev librdmacm-dev ibverbs-providers
+
+# === DOCA variant: custom (build from source provided via the `doca` build-context) ===
+# The host repo packages installed in doca_base above still provide rdma-core,
+# libibverbs and libmlx5 (required by the gpunetio plugin); the source build
+# below overlays the custom doca-* libraries and headers into ${DOCA_PREFIX}.
+# NOTE: adjust the build invocation below to match the storage/doca build system.
+FROM doca_base AS doca_custom_image
+ARG DOCA_PREFIX="/opt/mellanox/doca"
+ARG DOCA_BUILD_TYPE="release"
+ARG NPROC
+RUN mkdir -p /workspace/doca-src
+COPY --from=doca . /workspace/doca-src
+RUN echo "INFO: Building custom DOCA from source into ${DOCA_PREFIX}..." && \
+    cd /workspace/doca-src && \
+    meson setup build/ \
+    -Ddisable_all_applications=true \
+    -Ddisable_all_samples=false \
+    -Ddisable_all_tools=true \
+    -Ddisable_all_services=true \
+    -Ddisable_all_extensions=true \
+    -Denable_grpc_support=false \
+    -Denable_gpu_support=false \
+    -Dbuildtype=${DOCA_BUILD_TYPE} \
+    -Denable_libs=kv,argp \
+    -Dprefix=${DOCA_PREFIX} && \
+    cd build && \
+    ninja && \
+    ninja install
+
+# === Select the DOCA variant and continue the main build ===
+FROM doca_${DOCA}_image AS nixl_build
+
+ARG ARCH="x86_64"
+ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG UCX_REF="v1.21.x"
+ARG BUILD_NIXL_EP="true"
+ARG RDMA_CORE_PREFIX="/usr"
+ARG UCX_PREFIX="/usr"
+ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
+ARG DOCA_PREFIX="/opt/mellanox/doca"
+ARG NIXL_PREFIX="/usr/local/nixl"
+ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
+ARG NPROC
+ARG LIBFABRIC_VERSION="v1.21.0"
+ARG LIBFABRIC_INSTALL_PATH="/usr/local"
+ARG BUILD_TYPE="release"
+ARG ABSL_TAG="lts_2025_08_14"
+ARG GRPC_TAG="v1.73.0"
 
 WORKDIR /workspace
 
