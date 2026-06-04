@@ -37,6 +37,7 @@
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
 #include "utils/utils.h"
+#include "worker/worker.h"
 
 // Define command line parameters
 #define NB_ARG_STRING(param_name, def_val, help_text) DEFINE_string(param_name, def_val, help_text)
@@ -936,7 +937,8 @@ parseGusliDeviceList(const std::string &device_list,
 }
 
 bool
-xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
+xferBenchUtils::checkConsistency(xferBenchWorker &worker,
+                                 std::vector<std::vector<xferBenchIOV>> &iov_lists) {
     int i = 0, j = 0;
     static bool gusli_devmap_init = false;
     static std::vector<GusliDeviceConfig> gusli_devs;
@@ -980,23 +982,14 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                     }
                     is_allocated = true;
                     if (xferBenchConfig::isObjStorageBackend()) {
-                        if (!xferBenchUtils::getObj(iov.metaInfo)) {
-                            std::cerr << "Failed to get object: " << iov.metaInfo << std::endl;
-                            exit(EXIT_FAILURE);
+                        if (!worker.readObjForVerify(iov, addr, len)) {
+                            std::cerr << "Failed to read object for verify: " << iov.metaInfo
+                                      << std::endl;
+                            if (is_allocated) {
+                                free(addr);
+                            }
+                            return false;
                         }
-                        int fd = open(iov.metaInfo.c_str(), O_RDONLY);
-                        if (fd < 0) {
-                            std::cerr << "Failed to open downloaded file: " << iov.metaInfo
-                                      << " with error: " << strerror(errno) << std::endl;
-                            exit(EXIT_FAILURE);
-                        }
-                        ssize_t rc = pread(fd, addr, len, 0);
-                        if (rc < 0) {
-                            std::cerr << "Failed to read from file: " << iov.metaInfo
-                                      << " with error: " << strerror(errno) << std::endl;
-                        }
-                        close(fd);
-                        unlink(iov.metaInfo.c_str());
                     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
                         // Map device id -> path via device_list and read from the bdev at LBA
                         // offset
@@ -1082,7 +1075,8 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
 }
 
 bool
-xferBenchUtils::validateTransfer(bool is_initiator,
+xferBenchUtils::validateTransfer(xferBenchWorker &worker,
+                                 bool is_initiator,
                                  std::vector<std::vector<xferBenchIOV>> &local_lists,
                                  std::vector<std::vector<xferBenchIOV>> &remote_lists) {
     if (!xferBenchConfig::check_consistency) {
@@ -1091,16 +1085,16 @@ xferBenchUtils::validateTransfer(bool is_initiator,
 
     if (is_initiator) {
         if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-            return checkConsistency(local_lists);
+            return checkConsistency(worker, local_lists);
         } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
             if (xferBenchConfig::isStorageBackend()) {
-                return checkConsistency(remote_lists);
+                return checkConsistency(worker, remote_lists);
             }
         }
     } else {
         // Target
         if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
-            return checkConsistency(local_lists);
+            return checkConsistency(worker, local_lists);
         }
     }
 
@@ -1256,32 +1250,6 @@ xferBenchUtils::buildAwsCredentials() {
 }
 
 bool
-xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
-        return putObjS3(buffer_size, name);
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
-        return putObjAzure(buffer_size, name);
-    } else {
-        std::cerr << "Error: putObj called with unsupported object storage backend: "
-                  << xferBenchConfig::backend << std::endl;
-        return false;
-    }
-}
-
-bool
-xferBenchUtils::getObj(const std::string &name) {
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
-        return getObjS3(name);
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
-        return getObjAzure(name);
-    } else {
-        std::cerr << "Error: getObj called with unsupported object storage backend: "
-                  << xferBenchConfig::backend << std::endl;
-        return false;
-    }
-}
-
-bool
 xferBenchUtils::rmObj(const std::string &name) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
         return rmObjS3(name);
@@ -1292,68 +1260,6 @@ xferBenchUtils::rmObj(const std::string &name) {
                   << xferBenchConfig::backend << std::endl;
         return false;
     }
-}
-
-bool
-xferBenchUtils::putObjS3(size_t buffer_size, const std::string &name) {
-    std::string filename = "/tmp/" + name;
-    int fd = createFile(buffer_size, filename);
-    if (fd < 0) {
-        return false;
-    }
-
-    std::string bucket_name = xferBenchConfig::obj_bucket_name;
-    if (bucket_name.empty()) {
-        std::cerr << "Error: Invalid bucket name for S3 object put" << std::endl;
-        close(fd);
-        unlink(filename.c_str());
-        return false;
-    }
-    std::string aws_cmd = "aws s3 cp " + filename + " s3://" + bucket_name;
-    if (!xferBenchConfig::obj_endpoint_override.empty()) {
-        aws_cmd +=
-            " --checksum-algorithm SHA256 --endpoint-url " + xferBenchConfig::obj_endpoint_override;
-    }
-
-    std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Putting S3 object: " << name << " in bucket: " << bucket_name
-              << " (size: " << buffer_size << " bytes)" << std::endl;
-
-    int result = system(full_cmd.c_str());
-    if (result != 0) {
-        std::cerr << "Failed to put S3 object " << name << " in bucket " << bucket_name
-                  << " (exit code: " << result << ")" << std::endl;
-        cleanupFile(fd, filename);
-        return false;
-    }
-
-    cleanupFile(fd, filename);
-    return true;
-}
-
-bool
-xferBenchUtils::getObjS3(const std::string &name) {
-    std::string bucket_name = xferBenchConfig::obj_bucket_name;
-    if (bucket_name.empty()) {
-        std::cerr << "Error: Invalid bucket name for S3 object get" << std::endl;
-        return false;
-    }
-    std::string aws_cmd = "aws s3 cp s3://" + bucket_name + "/" + name + " " + name;
-    if (!xferBenchConfig::obj_endpoint_override.empty()) {
-        aws_cmd += " --endpoint-url " + xferBenchConfig::obj_endpoint_override;
-    }
-
-    std::string full_cmd = buildAwsCredentials() + aws_cmd;
-    std::cout << "Getting S3 object: " << name << " from bucket: " << bucket_name << std::endl;
-
-    int result = system(full_cmd.c_str());
-    if (result != 0) {
-        std::cerr << "Failed to get S3 object " << name << " from bucket " << bucket_name
-                  << " (exit code: " << result << ")" << std::endl;
-        return false;
-    }
-
-    return true;
 }
 
 bool
@@ -1413,51 +1319,6 @@ void
 xferBenchUtils::cleanupFile(const int fd, const std::string &filename) {
     close(fd);
     unlink(filename.c_str());
-}
-
-bool
-xferBenchUtils::putObjAzure(size_t buffer_size, const std::string &name) {
-    std::string filename = "/tmp/" + name;
-    int fd = createFile(buffer_size, filename);
-    if (fd < 0) {
-        return false;
-    }
-
-    std::string az_cli_params = buildCommonAzCliBlobParams(name);
-    if (az_cli_params.empty()) {
-        return false;
-    }
-    std::string full_cmd = "az storage blob upload " + az_cli_params + " -f " + filename;
-    std::cout << "Putting Azure blob: " << name << std::endl;
-
-    int result = system(full_cmd.c_str());
-    if (result != 0) {
-        std::cerr << "Warning: Failed to put Azure blob " << name << " (exit code: " << result
-                  << ")" << std::endl;
-        cleanupFile(fd, filename);
-        return false;
-    }
-
-    cleanupFile(fd, filename);
-    return true;
-}
-
-bool
-xferBenchUtils::getObjAzure(const std::string &name) {
-    std::string az_cli_params = buildCommonAzCliBlobParams(name);
-    if (az_cli_params.empty()) {
-        return false;
-    }
-    std::string full_cmd = "az storage blob download " + az_cli_params + " -f " + name;
-    std::cout << "Getting Azure blob: " << name << std::endl;
-
-    int result = system(full_cmd.c_str());
-    if (result != 0) {
-        std::cerr << "Warning: Failed to get Azure blob " << name << " (exit code: " << result
-                  << ")" << std::endl;
-        return false;
-    }
-    return true;
 }
 
 bool

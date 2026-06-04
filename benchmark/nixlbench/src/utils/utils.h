@@ -332,6 +332,8 @@ public:
           metaInfo(m) {}
 };
 
+class xferBenchWorker;
+
 class xferBenchUtils {
 private:
     static xferBenchRT *rt;
@@ -340,10 +342,6 @@ private:
     createFile(size_t buffer_size, const std::string &filename);
     static void
     cleanupFile(const int fd, const std::string &filename);
-    static bool
-    putObjAzure(size_t buffer_size, const std::string &name);
-    static bool
-    getObjAzure(const std::string &name);
     static bool
     rmObjAzure(const std::string &name);
     static std::string
@@ -359,22 +357,15 @@ public:
     static std::string
     buildAwsCredentials();
     static bool
-    putObj(size_t buffer_size, const std::string &name);
-    static bool
-    getObj(const std::string &name);
-    static bool
     rmObj(const std::string &name);
-    static bool
-    putObjS3(size_t buffer_size, const std::string &name);
-    static bool
-    getObjS3(const std::string &name);
     static bool
     rmObjS3(const std::string &name);
 
     static bool
-    checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
+    checkConsistency(xferBenchWorker &worker, std::vector<std::vector<xferBenchIOV>> &desc_lists);
     static bool
-    validateTransfer(bool is_initiator,
+    validateTransfer(xferBenchWorker &worker,
+                     bool is_initiator,
                      std::vector<std::vector<xferBenchIOV>> &local_lists,
                      std::vector<std::vector<xferBenchIOV>> &remote_lists);
     static void
