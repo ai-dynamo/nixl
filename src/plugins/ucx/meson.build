@@ -26,7 +26,6 @@ ucx_backend_sources = ['config.cpp',
                        'ucx_utils.cpp']
 
 ucx_backend_dependencies = [asio_dep,
-                            cuda_dep,
                             nixl_common_dep,
                             nixl_infra,
                             serdes_interface,
