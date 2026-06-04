@@ -169,6 +169,7 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
       queue_depth_(loc.descCount()),
       num_confirmed_ios_(queue_depth_),
       any_failed_(false),
+      cancel_requested_(false),
       io_queue_(io_queue) {
     NIXL_ASSERT(local.descCount());
     NIXL_ASSERT(remote.descCount());
@@ -196,7 +197,8 @@ nixlPosixBackendReqH::prepXfer() {
 
 nixl_status_t
 nixlPosixBackendReqH::checkXfer() {
-    // report the verdict only after all ios drain, so a partial fault leaves no stale state
+    // report the verdict only after all ios drain, so terminal status means the
+    // kernel is done with the buffers/fds (safe for reads and writes)
     if (num_confirmed_ios_ == queue_depth_) {
         return any_failed_ ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
     }
@@ -204,6 +206,18 @@ nixlPosixBackendReqH::checkXfer() {
     nixl_status_t status = io_queue_->poll();
     if (status < 0) {
         return status;
+    }
+
+    // on the first detected failure, abort what we can without waiting: drop our
+    // un-submitted ios and cancel our in-flight ios where the backend supports
+    // it. Done once per transfer.
+    if (any_failed_ && !cancel_requested_) {
+        cancel_requested_ = true;
+        io_queue_->cancel(this);
+    }
+
+    if (num_confirmed_ios_ == queue_depth_) {
+        return any_failed_ ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
     }
 
     return NIXL_IN_PROG;
@@ -218,6 +232,7 @@ nixlPosixBackendReqH::postXfer() {
 
     num_confirmed_ios_ = 0;
     any_failed_ = false;
+    cancel_requested_ = false;
 
     for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
          local_it != local.end() && remote_it != remote.end();

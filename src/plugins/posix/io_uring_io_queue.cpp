@@ -33,6 +33,7 @@ public:
     nixlPosixIOQueueDoneCb clb_;
     void *ctx_;
     struct io_uring_sqe *sqe_;
+    bool in_flight_; // submitted to the kernel, not yet reaped (scopes cancel)
 };
 
 class nixlPosixIOQueueUring : public nixlPosixIOQueueImpl<nixlPosixIoUringIO> {
@@ -51,6 +52,8 @@ public:
             void *ctx) override;
     virtual nixl_status_t
     poll(void) override;
+    virtual nixl_status_t
+    cancel(void *ctx) override;
     virtual ~nixlPosixIOQueueUring() override;
 
 protected:
@@ -98,6 +101,7 @@ nixlPosixIOQueueUring::post(void) {
         }
 
         io_uring_sqe_set_data(sqe, io);
+        io->in_flight_ = true;
     }
 
     int ret = io_uring_submit(&uring);
@@ -117,6 +121,15 @@ nixlPosixIOQueueUring::doCheckCompleted(void) {
     io_uring_for_each_cqe(&uring, head, cqe) {
         int res = cqe->res;
         nixlPosixIoUringIO *io = reinterpret_cast<nixlPosixIoUringIO *>(io_uring_cqe_get_data(cqe));
+        // cancel SQEs carry a null sentinel user_data; reap the completion but
+        // do not treat it as an io.
+        if (!io) {
+            count++;
+            if (count == MAX_IO_CHECK_COMPLETED_BATCH_SIZE) {
+                break;
+            }
+            continue;
+        }
         int error = (res < 0 || static_cast<size_t>(res) != io->len_);
         if (error) {
             NIXL_ERROR << absl::StrFormat(
@@ -125,6 +138,7 @@ nixlPosixIOQueueUring::doCheckCompleted(void) {
         if (io->clb_) {
             io->clb_(io->ctx_, error ? 0 : static_cast<uint32_t>(res), error);
         }
+        io->in_flight_ = false;
         free_ios_.push_back(io);
         count++;
         if (count == MAX_IO_CHECK_COMPLETED_BATCH_SIZE) {
@@ -164,6 +178,7 @@ nixlPosixIOQueueUring::enqueue(int fd,
     io->read_ = read;
     io->clb_ = clb;
     io->ctx_ = ctx;
+    io->in_flight_ = false;
 
     ios_to_submit_.push_back(io);
 
@@ -178,6 +193,33 @@ nixlPosixIOQueueUring::poll(void) {
     }
 
     return doCheckCompleted();
+}
+
+nixl_status_t
+nixlPosixIOQueueUring::cancel(void *ctx) {
+    // drop this transfer's un-submitted ios
+    nixlPosixIOQueueImpl<nixlPosixIoUringIO>::cancel(ctx);
+
+    // best-effort: ask the kernel to cancel this transfer's in-flight ios. The
+    // cancel SQE carries a null sentinel so doCheckCompleted skips its own
+    // completion; the target io still completes (ECANCELED or its real result)
+    // and is reaped normally.
+    bool submit_cancels = false;
+    for (auto &io : ios_) {
+        if (io.in_flight_ && io.ctx_ == ctx) {
+            struct io_uring_sqe *sqe = io_uring_get_sqe(&uring);
+            if (!sqe) {
+                break; // SQ full; the remaining in-flight ios drain on their own
+            }
+            io_uring_prep_cancel(sqe, &io, 0);
+            io_uring_sqe_set_data(sqe, nullptr);
+            submit_cancels = true;
+        }
+    }
+    if (submit_cancels) {
+        io_uring_submit(&uring);
+    }
+    return NIXL_SUCCESS;
 }
 
 nixlPosixIOQueueUring::~nixlPosixIOQueueUring() {
