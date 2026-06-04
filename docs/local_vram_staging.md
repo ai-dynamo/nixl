@@ -197,6 +197,11 @@ NIXL_UCX_LOCAL_STAGING_OWNER=source
 NIXL_UCX_LOCAL_STAGING_HOST_ID=<optional stable host id>
 ```
 
+`NIXL_UCX_VRAM_LOCAL_STAGING=1` now automatically enables UCX VRAM staging if
+`NIXL_UCX_VRAM_STAGING` or `vram_staging` was left off. The backend logs this once during engine
+construction. This avoids the common misconfiguration where local staging is requested but
+`VRAM_SEG` registration falls back to the direct UCX VRAM path.
+
 Debug-only fault injection for validation:
 
 ```text
@@ -230,8 +235,9 @@ container_hint
 Default host-id selection:
 
 1. `NIXL_UCX_LOCAL_STAGING_HOST_ID`, if provided.
-2. `/etc/machine-id`, if available.
-3. hostname as a fallback.
+2. `/proc/sys/kernel/random/boot_id`, if available.
+3. `/etc/machine-id`, if available.
+4. hostname as a fallback.
 
 Container deployments need special care. Two containers on the same physical host may have
 different hostnames or private IPC namespaces. For shared pinned staging, both processes need to see
@@ -241,8 +247,13 @@ the same shared-memory object. Practical deployment options:
 - or use a bind-mounted staging directory, such as `/tmp/nixl-local-staging`, that is visible to both
   containers.
 
-If the shared object cannot be opened by the source process, the backend must not silently use an
+If the shared object cannot be opened by the peer process, the backend must not silently use an
 invalid pointer. It should fall back or fail clearly.
+
+The target also constrains advertised local shared paths to the configured staging directory. It
+canonicalizes the configured directory and source path, opens the file with `O_NOFOLLOW`, and
+rejects READY messages whose path or slot does not match metadata previously loaded for that source
+agent.
 
 For Phase 1 validation through the existing UCX staged path, use UCX shared-memory transports such as
 `UCX_TLS=sm,self` or explicit components like `UCX_TLS=posix,sysv,cma,self`, depending on the UCX
@@ -675,17 +686,29 @@ backend:
 - Added opt-in `vram_local_staging` / `NIXL_UCX_VRAM_LOCAL_STAGING`.
 - Added `local_staging_shm_dir` / `NIXL_UCX_LOCAL_STAGING_SHM_DIR`, defaulting to `/dev/shm/nixl`.
 - Added `local_staging_fallback` / `NIXL_UCX_LOCAL_STAGING_FALLBACK`, defaulting to enabled.
+- `NIXL_UCX_VRAM_LOCAL_STAGING=1` now auto-enables `vram_staging` and logs a warning once if the
+  user forgot to set `NIXL_UCX_VRAM_STAGING=1`.
 - `registerMem(VRAM_SEG)` can now allocate source-owned file-backed shared staging pools, `mmap`
   them, `cudaHostRegister` the pool, and still UCX-register each slot for remote staged fallback.
-- Public staged metadata now includes a `host_id`.
+- Public staged metadata now includes `host_id`, local shared enablement, shared region id, shared
+  path, and mapping size.
 - Initiator selects the local shared path only when local staging is enabled, the source slots are
-  shared, and target metadata reports the same host id.
+  shared, target metadata reports the same host id, and target metadata also indicates local shared
+  staging support.
 - Added internal `STAGED_LOCAL_WRITE_READY` AM. The READY message carries the source shared path,
-  source slot id, source slot generation, slot offset, mapping size, and target GPU address.
+  source shared region id, source slot id, source slot generation, slot offset, mapping size, and
+  target GPU address.
+- Target validates READY against metadata previously loaded for the source agent before opening or
+  mapping the advertised file. It checks source agent, region id, path, slot id, slot offset,
+  mapping size, and chunk size.
+- Target constrains source shared paths to `local_staging_shm_dir` using canonical path checks and
+  opens attached files with `O_NOFOLLOW`.
 - Target maps and CUDA-registers the source shared file, then performs H2D and ACKs only after
   target GPU memory has been updated.
 - Added a target-side attachment cache, so each source shared file is opened, mmapped, and
-  CUDA-registered once per backend lifetime instead of once per chunk.
+  CUDA-registered once per loaded source region instead of once per chunk.
+- Local shared attachments are removed when their remote staged metadata is unloaded, when a remote
+  agent disconnects, or when the backend is destroyed.
 - If local shared READY returns an ACK error and fallback is enabled, the initiator retries that
   chunk through the existing UCX staged host path using the already-filled source staging slot.
 - Profile output now includes local shared chunks/bytes, local ACK errors, fallback count, target
@@ -697,8 +720,7 @@ Current limitations:
 
 - Only `NIXL_WRITE` is supported.
 - Target-owned shared staging is not implemented yet.
-- Local shared attachment cleanup is tied to backend destruction; stale file cleanup after process
-  crash still needs robustness work.
+- Stale shared-file cleanup after process crash still needs robustness work.
 - Local-to-UCX staged fallback is implemented for ACK-error recovery and has a debug-only attach
   failure injection path for deterministic validation.
 - Target H2D still runs synchronously in the AM callback path.
@@ -740,6 +762,20 @@ local staging disabled regression smoke, 16 MiB x 1:
 post-profile/fallback validation, 512 MiB x 8 transfers, 16 MiB chunks, 4 slots:
   transfer_loop_gib_per_sec = 21.99
   transfer_loop_sec = 0.1819
+  target verification = passed
+
+post-safety-boundary validation, 512 MiB x 8 transfers, 16 MiB chunks, 4 slots:
+  includes metadata-bound READY validation, path boundary checks, and attachment lifecycle cleanup
+  transfer_loop_gib_per_sec = 23.65
+  transfer_loop_sec = 0.1691
+  target verification = passed
+
+auto-enable smoke, 16 MiB x 1:
+  NIXL_UCX_VRAM_LOCAL_STAGING = 1
+  explicit vram_staging / NIXL_UCX_VRAM_STAGING disabled
+  backend auto-enabled UCX VRAM staging
+  initiator rdma_write_posted = 0
+  initiator flush_posted = 0
   target verification = passed
 
 profile smoke, 16 MiB x 1:

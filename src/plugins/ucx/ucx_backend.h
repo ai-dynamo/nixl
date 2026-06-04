@@ -221,6 +221,7 @@ protected:
         bool targetH2DWorker = false;
         bool sourceD2HPrefetch = false;
         bool localStaging = false;
+        bool localStagingAutoEnabled = false;
         bool localStagingFallback = true;
         std::string localStagingShmDir = "/dev/shm/nixl";
     };
@@ -364,6 +365,7 @@ private:
     sendStagedLocalWriteReady(const std::string &remote_agent,
                               uint64_t transfer_id,
                               uint64_t chunk_id,
+                              uint64_t source_region_id,
                               uint64_t source_slot_id,
                               uint64_t source_slot_generation,
                               const std::string &source_shared_path,
@@ -411,10 +413,21 @@ private:
 
     struct LocalSharedAttachment {
         std::string path;
+        std::string remoteAgent;
         void *base = nullptr;
         size_t mappingSize = 0;
         int fd = -1;
         bool hostRegistered = false;
+    };
+
+    struct LocalSharedRegionInfo {
+        std::string remoteAgent;
+        uint64_t regionId = 0;
+        std::string sharedPath;
+        size_t mappingSize = 0;
+        size_t slotSize = 0;
+        size_t slotCount = 0;
+        size_t refCount = 0;
     };
 
     void
@@ -426,13 +439,39 @@ private:
     void
     stagedH2DWorkerLoop() const;
 
+    void
+    registerLocalSharedRegion(const std::string &remote_agent,
+                              const nixlBackendMD *metadata) const;
+
+    void
+    unregisterLocalSharedRegion(const nixlBackendMD *metadata) const;
+
+    [[nodiscard]] bool
+    validateLocalSharedReady(const std::string &remote_agent,
+                             uint64_t region_id,
+                             const std::string &shared_path,
+                             uint64_t slot_id,
+                             size_t slot_offset,
+                             size_t mapping_size,
+                             size_t size) const;
+
     nixl_status_t
-    getLocalSharedAttachment(const std::string &path,
+    getLocalSharedAttachment(const std::string &remote_agent,
+                             const std::string &path,
                              size_t mapping_size,
                              std::shared_ptr<LocalSharedAttachment> &attachment) const;
 
     void
     cleanupLocalSharedAttachments();
+
+    void
+    cleanupLocalSharedAttachmentsForAgent(const std::string &remote_agent);
+
+    void
+    cleanupLocalSharedAttachmentPath(const std::string &path) const;
+
+    static void
+    releaseLocalSharedAttachment(std::shared_ptr<LocalSharedAttachment> &attachment);
 
     static ucs_status_t
     stagedSlotReqAmCb(void *arg,
@@ -557,6 +596,7 @@ private:
     mutable std::mutex localSharedAttachMutex_;
     mutable std::unordered_map<std::string, std::shared_ptr<LocalSharedAttachment>>
         localSharedAttachments_;
+    mutable std::unordered_map<std::string, LocalSharedRegionInfo> localSharedRegions_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
