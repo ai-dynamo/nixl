@@ -62,9 +62,11 @@ static nixl_mem_t
 resolveVramSegment() {
 #if HAVE_CUDA
     return VRAM_SEG;
+#elif HAVE_ROCM
+    return VRAM_SEG;
 #else
     if (neuronCoreCount() > 0) return VRAM_SEG;
-    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+    std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
 }

@@ -374,10 +374,10 @@ xferBenchConfig::loadParams(void) {
         enable_vmm = NB_ARG(enable_vmm);
 
         if (enable_vmm) {
-#if defined(HAVE_ROCM)
+#if HAVE_ROCM
             std::cerr << "VMM is not supported with ROCm" << std::endl;
             return -1;
-#elif defined(HAVE_CUDA) && !defined(HAVE_CUDA_FABRIC)
+#elif HAVE_CUDA && !HAVE_CUDA_FABRIC
             std::cerr << "VMM is not supported in CUDA version " << CUDA_VERSION << std::endl;
             return -1;
 #endif
