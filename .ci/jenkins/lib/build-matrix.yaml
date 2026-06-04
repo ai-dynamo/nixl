@@ -43,24 +43,20 @@ env:
   TEST_TIMEOUT: 30
   UCX_TLS: "^shm"
   STORAGE_DRIVER: 'overlay'
-  CI_IMAGE_TAG: "20260506-3"
-
+  CI_IMAGE_TAG: "20260603-1"
 
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-25.06-cuda12.9-ubuntu24.04", tag: "${CI_IMAGE_TAG}",
-     deps: ['.gitlab/build.sh', '.ci/scripts/common.sh'],
-     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
+     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-25.10-cuda13.0-ubuntu24.04", tag: "${CI_IMAGE_TAG}",
-     deps: ['.gitlab/build.sh', '.ci/scripts/common.sh'],
-     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
+     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-13.0.1-ubuntu22.04", tag: "${CI_IMAGE_TAG}",
-     deps: ['.gitlab/build.sh', '.ci/scripts/common.sh'],
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/nvidia/cuda:13.0.1-devel-ubuntu22.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
+     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/nvidia/cuda:13.0.1-devel-ubuntu22.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
     }
 
 matrix:

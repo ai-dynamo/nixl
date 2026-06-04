@@ -851,21 +851,21 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    size_t total_bytes = 0;
+    for (int i = 0; i < local_descs.descCount(); ++i) {
+        if (local_descs[i].len != remote_descs[i].len) [[unlikely]] {
+            NIXL_ERROR_FUNC << "length mismatch at index " << i;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        total_bytes += local_descs[i].len;
+    }
+
     NIXL_SHARED_LOCK_GUARD(data->lock);
     const auto rem_sec_it = data->remoteSections_.find(remote_agent);
     if (data->remoteSections_.end() == rem_sec_it) {
         NIXL_ERROR_FUNC << "metadata for remote agent '" << remote_agent << "' not found";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
-    }
-
-    size_t total_bytes = 0;
-    for (int i = 0; i < local_descs.descCount(); ++i) {
-        if (__builtin_expect(local_descs[i].len != remote_descs[i].len, 0)) {
-            NIXL_ERROR_FUNC << "length mismatch at index " << i;
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        total_bytes += local_descs[i].len;
     }
 
     if (!extra_params || extra_params->backends.size() == 0) {
@@ -897,8 +897,11 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO: merge descriptors back to back in memory (like makeXferReq).
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    std::unique_ptr<nixlXferReqH> handle = std::make_unique<nixlXferReqH>(
-        remote_agent, operation, local_descs.getType(), remote_descs.getType());
+    auto handle = std::make_unique<nixlXferReqH>(remote_agent,
+                                                 operation,
+                                                 local_descs.getType(),
+                                                 remote_descs.getType(),
+                                                 local_descs.descCount());
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.

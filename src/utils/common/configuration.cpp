@@ -16,6 +16,7 @@
  */
 
 #include "configuration.h"
+#include "exception.h"
 
 namespace nixl::config {
 
@@ -31,7 +32,7 @@ namespace {
             return toml::parse_file(file.native());
         }
         catch (const std::exception &e) {
-            internal::throwRuntimeError("Error ", e.what(), " reading TOML config file ", file);
+            throwRuntimeError("Error ", e.what(), " reading TOML config file ", file);
         }
     }
 
