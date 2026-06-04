@@ -155,7 +155,7 @@ public:
         nixl_status_t out_ret = NIXL_SUCCESS;
         for (nixlUcxReq req : requests_) {
             const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
-            if (__builtin_expect(ret == NIXL_SUCCESS, 0)) {
+            if (ret == NIXL_SUCCESS) [[likely]] {
                 worker_->reqRelease(req);
             } else if (ret == NIXL_IN_PROG) {
                 if (out_ret == NIXL_SUCCESS) {
@@ -1169,7 +1169,7 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
         const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
         const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
         auto &rmd_ep = rmd->conn->getEp(worker_id);
-        if (__builtin_expect(rmd_ep.get() != &ep, 0)) {
+        if (rmd_ep.get() != &ep) [[unlikely]] {
             break;
         }
 
@@ -1180,7 +1180,7 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
             ep.write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
 
         if (ret == NIXL_IN_PROG) {
-            if (__builtin_expect(result.req != nullptr, 1)) {
+            if (result.req != nullptr) [[likely]] {
                 ucp_request_free(result.req);
             }
             result.req = req;
@@ -1311,12 +1311,12 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
     const nixlUcxBackendReqH::Notif notif(std::move(int_handle->notif).value());
     int_handle->notif.reset();
 
-    if (__builtin_expect(handle_status != NIXL_SUCCESS, 0)) {
+    if (handle_status != NIXL_SUCCESS) [[unlikely]] {
         return handle_status;
     }
 
     const ucx_connection_ptr_t conn = getConnection(notif.agent);
-    if (__builtin_expect(!conn, 0)) {
+    if (!conn) [[unlikely]] {
         return NIXL_ERR_NOT_FOUND;
     }
 
