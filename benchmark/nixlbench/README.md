@@ -316,7 +316,7 @@ cmake --install sdk/identity
 # Add Mellanox repository and install DOCA
 wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-ubuntu2404_amd64.deb -O doca-host.deb
 sudo dpkg -i doca-host.deb
-sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
+sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
 ```
 
 **GUSLI (Optional - for GUSLI backend):**
