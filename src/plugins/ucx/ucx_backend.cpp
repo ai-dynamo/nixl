@@ -2009,6 +2009,51 @@ localSharedRegionKey(const std::string &remote_agent, uint64_t region_id) {
     return remote_agent + "#" + std::to_string(region_id);
 }
 
+struct RawAmSendCtx {
+    std::string *buffer = nullptr;
+};
+
+void
+rawAmSendCallback(void *request, ucs_status_t status, void *user_data) {
+    if (status != UCS_OK) {
+        NIXL_ERROR << "UCX AM reply send failed with status " << status << " ("
+                   << ucs_status_string(status) << ")";
+    }
+
+    auto *ctx = static_cast<RawAmSendCtx *>(user_data);
+    delete ctx->buffer;
+    delete ctx;
+    if (request != nullptr) {
+        ucp_request_free(request);
+    }
+}
+
+nixl_status_t
+sendRawAmOnEp(ucp_ep_h ep, nixl::ucx::am_cb_op_t msg_id, std::string *buffer) {
+    if (ep == nullptr || buffer == nullptr) {
+        delete buffer;
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    auto *ctx = new RawAmSendCtx{buffer};
+    ucp_request_param_t param = {0};
+    param.op_attr_mask |=
+        UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA;
+    param.flags = UCP_AM_SEND_FLAG_EAGER;
+    param.cb.send = rawAmSendCallback;
+    param.user_data = ctx;
+
+    const ucs_status_ptr_t request =
+        ucp_am_send_nbx(ep, unsigned(msg_id), nullptr, 0, buffer->data(), buffer->size(), &param);
+    if (UCS_PTR_IS_PTR(request)) {
+        return NIXL_IN_PROG;
+    }
+
+    const ucs_status_t status = UCS_PTR_STATUS(request);
+    rawAmSendCallback(nullptr, status, ctx);
+    return nixl::ucx::ucsToNixlStatus(status);
+}
+
 } // namespace
 
 void
@@ -2083,7 +2128,24 @@ nixlUcxEngine::validateLocalSharedReady(const std::string &remote_agent,
     const std::lock_guard lock(localSharedAttachMutex_);
     const auto it = localSharedRegions_.find(localSharedRegionKey(remote_agent, region_id));
     if (it == localSharedRegions_.end()) {
-        return false;
+        const auto canonical_dir = canonicalPath(vramStagingConfig_.localStagingShmDir);
+        const auto canonical_path = canonicalPath(shared_path);
+        if (!canonical_dir || !canonical_path ||
+            !pathIsUnderDirectory(*canonical_path, *canonical_dir) ||
+            canonical_path->find(remote_agent) == std::string::npos ||
+            canonical_path->find(std::to_string(region_id)) == std::string::npos ||
+            size > vramStagingConfig_.chunkSize) {
+            return false;
+        }
+
+        const size_t slot_span = roundUp(vramStagingConfig_.chunkSize, pageSize());
+        if (slot_id > std::numeric_limits<size_t>::max() / slot_span) {
+            return false;
+        }
+        const size_t expected_offset = static_cast<size_t>(slot_id) * slot_span;
+        return slot_offset == expected_offset &&
+               slot_offset <= mapping_size &&
+               size <= mapping_size - slot_offset;
     }
 
     const auto &region = it->second;
@@ -2128,7 +2190,12 @@ nixlUcxEngine::stagedH2DWorkerLoop() const {
         }
 
         const nixl_status_t ack_status =
-            sendStagedAck(task.remoteAgent, task.transferId, task.chunkId, task.leaseId, status);
+            sendStagedAck(task.remoteAgent,
+                          task.transferId,
+                          task.chunkId,
+                          task.leaseId,
+                          status,
+                          task.replyEp);
         if (ack_status != NIXL_SUCCESS && ack_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to send UCX staged ACK transfer_id=" << task.transferId
                        << " chunk_id=" << task.chunkId << " status=" << ack_status;
@@ -2836,7 +2903,7 @@ nixlUcxEngine::sendStagedSlotReq(const std::string &remote_agent,
                       0,
                       (void *)buffer->data(),
                       buffer->size(),
-                      UCP_AM_SEND_FLAG_EAGER,
+                      UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
                       req,
                       deleter);
 }
@@ -2847,9 +2914,13 @@ nixlUcxEngine::sendStagedSlotGrant(const std::string &remote_agent,
                                    uint64_t chunk_id,
                                    uint64_t slot_id,
                                    uint64_t lease_id,
-                                   nixl_status_t status) const {
-    const auto conn = getConnection(remote_agent);
-    if (!conn) {
+                                   nixl_status_t status,
+                                   ucp_ep_h reply_ep) const {
+    ucx_connection_ptr_t conn = nullptr;
+    if (reply_ep == nullptr) {
+        conn = getConnection(remote_agent);
+    }
+    if (reply_ep == nullptr && conn == nullptr) {
         NIXL_ERROR << "Cannot send UCX staged SLOT_GRANT to unknown agent " << remote_agent
                    << " transfer_id=" << transfer_id << " chunk_id=" << chunk_id;
         return NIXL_ERR_NOT_FOUND;
@@ -2875,6 +2946,12 @@ nixlUcxEngine::sendStagedSlotGrant(const std::string &remote_agent,
                << " chunk_id=" << chunk_id << " remote_agent=" << remote_agent
                << " slot_id=" << slot_id << " lease_id=" << lease_id
                << " status=" << status;
+
+    if (reply_ep != nullptr) {
+        return sendRawAmOnEp(reply_ep,
+                             nixl::ucx::am_cb_op_t::STAGED_SLOT_GRANT,
+                             buffer);
+    }
 
     return conn->getEp(0)->sendAm(nixl::ucx::am_cb_op_t::STAGED_SLOT_GRANT,
                                   nullptr,
@@ -2974,7 +3051,7 @@ nixlUcxEngine::sendStagedWriteReady(const std::string &remote_agent,
                       0,
                       (void *)buffer->data(),
                       buffer->size(),
-                      UCP_AM_SEND_FLAG_EAGER,
+                      UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
                       req,
                       deleter);
 }
@@ -3029,7 +3106,7 @@ nixlUcxEngine::sendStagedLocalWriteReady(const std::string &remote_agent,
                       0,
                       (void *)buffer->data(),
                       buffer->size(),
-                      UCP_AM_SEND_FLAG_EAGER,
+                      UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
                       req,
                       deleter);
 }
@@ -3039,9 +3116,13 @@ nixlUcxEngine::sendStagedAck(const std::string &remote_agent,
                              uint64_t transfer_id,
                              uint64_t chunk_id,
                              uint64_t lease_id,
-                             nixl_status_t status) const {
-    const auto conn = getConnection(remote_agent);
-    if (!conn) {
+                             nixl_status_t status,
+                             ucp_ep_h reply_ep) const {
+    ucx_connection_ptr_t conn = nullptr;
+    if (reply_ep == nullptr) {
+        conn = getConnection(remote_agent);
+    }
+    if (reply_ep == nullptr && conn == nullptr) {
         NIXL_ERROR << "Cannot send UCX staged ACK to unknown agent " << remote_agent
                    << " transfer_id=" << transfer_id;
         return NIXL_ERR_NOT_FOUND;
@@ -3066,6 +3147,10 @@ nixlUcxEngine::sendStagedAck(const std::string &remote_agent,
                << " chunk_id=" << chunk_id << " remote_agent=" << remote_agent
                << " lease_id=" << lease_id << " status=" << status;
 
+    if (reply_ep != nullptr) {
+        return sendRawAmOnEp(reply_ep, nixl::ucx::am_cb_op_t::STAGED_ACK, buffer);
+    }
+
     return conn->getEp(0)->sendAm(nixl::ucx::am_cb_op_t::STAGED_ACK,
                                   nullptr,
                                   0,
@@ -3077,7 +3162,7 @@ nixlUcxEngine::sendStagedAck(const std::string &remote_agent,
 }
 
 nixl_status_t
-nixlUcxEngine::handleStagedSlotReq(const nixl_blob_t &message) const {
+nixlUcxEngine::handleStagedSlotReq(const nixl_blob_t &message, ucp_ep_h reply_ep) const {
     nixlSerDes ser_des;
     if (ser_des.importStr(message) != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to deserialize UCX staged SLOT_REQ message";
@@ -3127,7 +3212,13 @@ nixlUcxEngine::handleStagedSlotReq(const nixl_blob_t &message) const {
 
     if (!remote_agent.empty()) {
         const nixl_status_t send_status =
-            sendStagedSlotGrant(remote_agent, transfer_id, chunk_id, slot_id, lease_id, status);
+            sendStagedSlotGrant(remote_agent,
+                                transfer_id,
+                                chunk_id,
+                                slot_id,
+                                lease_id,
+                                status,
+                                reply_ep);
         if (send_status != NIXL_SUCCESS && send_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to send UCX staged SLOT_GRANT transfer_id=" << transfer_id
                        << " chunk_id=" << chunk_id << " status=" << send_status;
@@ -3200,7 +3291,7 @@ nixlUcxEngine::handleStagedSlotRelease(const nixl_blob_t &message) const {
 }
 
 nixl_status_t
-nixlUcxEngine::handleStagedWriteReady(const nixl_blob_t &message) const {
+nixlUcxEngine::handleStagedWriteReady(const nixl_blob_t &message, ucp_ep_h reply_ep) const {
     const bool profile_enabled = stagingProfileEnabled();
     const uint64_t callback_start_us = profile_enabled ? profileNowUs() : 0;
     uint64_t h2d_us = 0;
@@ -3269,6 +3360,7 @@ nixlUcxEngine::handleStagedWriteReady(const nixl_blob_t &message) const {
                 task.region = h2d_region;
                 task.hostAddr = ready.hostAddr;
                 task.remoteAgent = remote_agent;
+                task.replyEp = reply_ep;
                 task.transferId = transfer_id;
                 task.chunkId = chunk_id;
                 task.slotId = slot_id;
@@ -3314,7 +3406,7 @@ nixlUcxEngine::handleStagedWriteReady(const nixl_blob_t &message) const {
 
     if (!remote_agent.empty()) {
         const nixl_status_t ack_status =
-            sendStagedAck(remote_agent, transfer_id, chunk_id, lease_id, status);
+            sendStagedAck(remote_agent, transfer_id, chunk_id, lease_id, status, reply_ep);
         if (ack_status != NIXL_SUCCESS && ack_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to send UCX staged ACK transfer_id=" << transfer_id
                        << " chunk_id=" << chunk_id << " status=" << ack_status;
@@ -3343,7 +3435,7 @@ nixlUcxEngine::handleStagedWriteReady(const nixl_blob_t &message) const {
 }
 
 nixl_status_t
-nixlUcxEngine::handleStagedLocalWriteReady(const nixl_blob_t &message) const {
+nixlUcxEngine::handleStagedLocalWriteReady(const nixl_blob_t &message, ucp_ep_h reply_ep) const {
     const bool profile_enabled = stagingProfileEnabled();
     const uint64_t callback_start_us = profile_enabled ? profileNowUs() : 0;
     uint64_t h2d_us = 0;
@@ -3478,7 +3570,12 @@ nixlUcxEngine::handleStagedLocalWriteReady(const nixl_blob_t &message) const {
 
     if (!remote_agent.empty()) {
         const nixl_status_t ack_status =
-            sendStagedAck(remote_agent, transfer_id, chunk_id, source_slot_generation, status);
+            sendStagedAck(remote_agent,
+                          transfer_id,
+                          chunk_id,
+                          source_slot_generation,
+                          status,
+                          reply_ep);
         if (ack_status != NIXL_SUCCESS && ack_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to send UCX local staged ACK transfer_id=" << transfer_id
                        << " chunk_id=" << chunk_id << " status=" << ack_status;
@@ -4981,7 +5078,9 @@ nixlUcxEngine::stagedSlotReqAmCb(void *arg,
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
     const std::string ser_str((char *)data, length);
-    engine->handleStagedSlotReq(ser_str);
+    const ucp_ep_h reply_ep =
+        (param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP) ? param->reply_ep : nullptr;
+    engine->handleStagedSlotReq(ser_str, reply_ep);
     return UCS_OK;
 }
 
@@ -5054,7 +5153,9 @@ nixlUcxEngine::stagedWriteReadyAmCb(void *arg,
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
     const std::string ser_str((char *)data, length);
-    engine->handleStagedWriteReady(ser_str);
+    const ucp_ep_h reply_ep =
+        (param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP) ? param->reply_ep : nullptr;
+    engine->handleStagedWriteReady(ser_str, reply_ep);
     return UCS_OK;
 }
 
@@ -5071,7 +5172,9 @@ nixlUcxEngine::stagedLocalWriteReadyAmCb(void *arg,
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
     const std::string ser_str((char *)data, length);
-    engine->handleStagedLocalWriteReady(ser_str);
+    const ucp_ep_h reply_ep =
+        (param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP) ? param->reply_ep : nullptr;
+    engine->handleStagedLocalWriteReady(ser_str, reply_ep);
     return UCS_OK;
 }
 

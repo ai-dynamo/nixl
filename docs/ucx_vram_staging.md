@@ -34,6 +34,9 @@ agent API.
 For the related single-node no-P2P GPU-to-GPU case, see
 [`local_vram_staging.md`](local_vram_staging.md).
 
+For the SGLang single-node and multi-node PD validation runbook, see
+[`sglang_pd_staging_integration.md`](sglang_pd_staging_integration.md).
+
 ## Goals
 
 - Preserve the existing NIXL API surface for applications.

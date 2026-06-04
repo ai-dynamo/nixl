@@ -29,6 +29,9 @@ The intended application-facing model is unchanged:
 - The transfer completion is reported only after the destination GPU memory has been updated.
 - SGLang does not need to parse backend metadata or add a separate copy path.
 
+For the SGLang single-node and multi-node PD validation runbook, see
+[`sglang_pd_staging_integration.md`](sglang_pd_staging_integration.md).
+
 ## Problem
 
 On consumer GPU systems, two local GPUs may not have CUDA peer access:

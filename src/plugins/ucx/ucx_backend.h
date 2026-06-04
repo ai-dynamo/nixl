@@ -337,7 +337,8 @@ private:
                         uint64_t chunk_id,
                         uint64_t slot_id,
                         uint64_t lease_id,
-                        nixl_status_t status) const;
+                        nixl_status_t status,
+                        ucp_ep_h reply_ep = nullptr) const;
 
     nixl_status_t
     sendStagedSlotRelease(const std::string &remote_agent,
@@ -382,24 +383,26 @@ private:
                   uint64_t transfer_id,
                   uint64_t chunk_id,
                   uint64_t lease_id,
-                  nixl_status_t status) const;
+                  nixl_status_t status,
+                  ucp_ep_h reply_ep = nullptr) const;
 
     nixl_status_t
-    handleStagedSlotReq(const nixl_blob_t &message) const;
+    handleStagedSlotReq(const nixl_blob_t &message, ucp_ep_h reply_ep = nullptr) const;
 
     nixl_status_t
     handleStagedSlotRelease(const nixl_blob_t &message) const;
 
     nixl_status_t
-    handleStagedWriteReady(const nixl_blob_t &message) const;
+    handleStagedWriteReady(const nixl_blob_t &message, ucp_ep_h reply_ep = nullptr) const;
 
     nixl_status_t
-    handleStagedLocalWriteReady(const nixl_blob_t &message) const;
+    handleStagedLocalWriteReady(const nixl_blob_t &message, ucp_ep_h reply_ep = nullptr) const;
 
     struct StagedH2DTask {
         nixlBackendMD *region = nullptr;
         void *hostAddr = nullptr;
         std::string remoteAgent;
+        ucp_ep_h replyEp = nullptr;
         uint64_t transferId = 0;
         uint64_t chunkId = 0;
         uint64_t slotId = 0;
