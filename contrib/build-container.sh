@@ -241,4 +241,7 @@ BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
+# --provenance/--sbom default to true under buildx and add a slow attestation-manifest
+# export/unpack step at push time (which was tipping the ARM build over the job timeout).
+# CI images don't need attestations, so disable them.
+docker build --provenance=false --sbom=false --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
