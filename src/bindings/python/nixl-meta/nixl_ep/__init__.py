@@ -41,14 +41,16 @@ def _load_ep_module() -> str:
                 f"torch reports CUDA {cuda_major} but {pip_name} is not installed"
             ) from e
     # CPU-only torch — use whatever backend is installed
+    errors: list[BaseException] = []
     for mod_name in ("nixl_ep_cu13", "nixl_ep_cu12"):
         try:
             return importlib.import_module(mod_name).__name__
-        except ModuleNotFoundError as e:
-            if e.name != mod_name:
+        except (ImportError, OSError) as e:
+            if isinstance(e, ModuleNotFoundError) and e.name != mod_name:
                 raise
+            errors.append(e)
             continue
-    raise ImportError("No nixl_ep CUDA backend found")
+    raise ImportError("No usable nixl_ep CUDA backend found") from errors[0]
 
 
 _pkg = sys.modules[_load_ep_module()]
