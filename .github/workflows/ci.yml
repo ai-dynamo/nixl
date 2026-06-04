@@ -90,7 +90,7 @@ jobs:
   build:
     needs: version
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-${{ matrix.runner }}-v1
-    timeout-minutes: 60
+    timeout-minutes: 120  # ARM manylinux builds everything from source (~60min); was timing out at the push step
     strategy:
       fail-fast: false
       matrix:
