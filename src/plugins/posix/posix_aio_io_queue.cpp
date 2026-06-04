@@ -142,13 +142,13 @@ nixlPosixIOQueueAIO::doCheckCompleted(void) {
         int error;
         ssize_t ret = 0;
         if (status != 0) {
-            NIXL_ERROR << "aio_error failed: " << nixl_strerror(-status);
+            NIXL_DEBUG << "aio_error failed: " << nixl_strerror(-status);
             error = 1;
         } else {
             ret = aio_return(&io->aio_);
             error = (ret < 0 || ret != static_cast<ssize_t>(io->aio_.aio_nbytes));
             if (error) {
-                NIXL_ERROR << "aio_return incomplete: " << ret << " expected "
+                NIXL_DEBUG << "aio_return incomplete: " << ret << " expected "
                            << io->aio_.aio_nbytes;
             }
         }

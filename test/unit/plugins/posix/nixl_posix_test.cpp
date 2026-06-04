@@ -35,6 +35,8 @@
 #include <cstdio>
 #include <getopt.h>
 #include <csignal>
+#include <chrono>
+#include <thread>
 #include <sys/resource.h>
 
 namespace {
@@ -1127,6 +1129,195 @@ short_write_case(const std::string &test_files_dir_path_abs_path,
     return rc;
 }
 
+// Two transfers share one backend's io queue. A (ios exceed the file-size cap) must
+// fail; B (a large, valid write) must still succeed. A scoped cancel of A's ios must
+// not disturb B's un-submitted ios.
+int
+concurrent_cancel_scoping_case(const std::string &dir,
+                               const std::string &queue,
+                               const std::string &param_key) {
+    print_segment_title(phase_title(absl::StrFormat("Cancel scoping: %s", queue)));
+
+    // paired with the 20us poll_pause below: ~3s backstop before declaring a stall
+    constexpr int max_poll_iters = 150000;
+    const size_t cap = 2 * page_size;
+    const size_t a_size = 4 * page_size; // > cap -> short write, A fails
+    const size_t b_size = page_size; // <= cap -> B succeeds
+    const int a_desc = 4;
+    const int b_desc = 512; // large: leaves un-submitted ios when A's cancel fires
+
+    nixl_b_params_t params;
+    params[param_key] = "true";
+
+    nixlAgentConfig cfg(false);
+    nixlAgent agent("POSIXScopingTester", cfg);
+    nixlBackendH *posix = nullptr;
+    if (agent.createBackend("POSIX", params, posix) != NIXL_SUCCESS) {
+        std::cout << queue << ": backend unavailable, skipping" << std::endl;
+        return -1;
+    }
+
+    tempFile fd_a(dir + "/scope_a_" + queue + "_" + test_file_name, O_RDWR | O_CREAT | O_TRUNC);
+    tempFile fd_b(dir + "/scope_b_" + queue + "_" + test_file_name, O_RDWR | O_CREAT | O_TRUNC);
+
+    nixl_reg_dlist_t dram_reg(DRAM_SEG);
+    nixl_reg_dlist_t file_reg(FILE_SEG);
+    nixl_xfer_dlist_t dram_a(DRAM_SEG), file_a(FILE_SEG);
+    nixl_xfer_dlist_t dram_b(DRAM_SEG), file_b(FILE_SEG);
+
+    std::vector<std::unique_ptr<void, PosixMemalignDeleter>> bufs;
+    auto add =
+        [&](int n, size_t sz, int fd, nixl_xfer_dlist_t &dram_x, nixl_xfer_dlist_t &file_x) -> int {
+        for (int i = 0; i < n; i++) {
+            void *ptr;
+            if (posix_memalign(&ptr, page_size, sz) != 0) {
+                std::cerr << "DRAM allocation failed" << std::endl;
+                return 1;
+            }
+            bufs.emplace_back(ptr);
+            fill_test_pattern(ptr, read_write_test_phrase, sz);
+
+            nixlBlobDesc dram_desc;
+            dram_desc.addr = (uintptr_t)ptr;
+            dram_desc.len = sz;
+            dram_desc.devId = 0;
+            dram_reg.addDesc(dram_desc);
+            dram_x.addDesc(dram_desc);
+
+            nixlBlobDesc file_desc;
+            file_desc.addr = 0;
+            file_desc.len = sz;
+            file_desc.devId = fd;
+            file_reg.addDesc(file_desc);
+            file_x.addDesc(file_desc);
+        }
+        return 0;
+    };
+
+    if (add(a_desc, a_size, fd_a, dram_a, file_a) != 0) {
+        return 1;
+    }
+    if (add(b_desc, b_size, fd_b, dram_b, file_b) != 0) {
+        return 1;
+    }
+
+    if (agent.registerMem(dram_reg) != NIXL_SUCCESS ||
+        agent.registerMem(file_reg) != NIXL_SUCCESS) {
+        std::cerr << "Failed to register memory" << std::endl;
+        return 1;
+    }
+
+    nixlXferReqH *req_a = nullptr;
+    nixlXferReqH *req_b = nullptr;
+    if (agent.createXferReq(NIXL_WRITE, dram_a, file_a, "POSIXScopingTester", req_a) !=
+            NIXL_SUCCESS ||
+        agent.createXferReq(NIXL_WRITE, dram_b, file_b, "POSIXScopingTester", req_b) !=
+            NIXL_SUCCESS) {
+        std::cerr << "Failed to create transfer requests" << std::endl;
+        return 1;
+    }
+
+    signal(SIGXFSZ, SIG_IGN);
+    struct rlimit saved{};
+    getrlimit(RLIMIT_FSIZE, &saved);
+    struct rlimit rl{cap, saved.rlim_max};
+    if (setrlimit(RLIMIT_FSIZE, &rl) != 0) {
+        std::cerr << "setrlimit(RLIMIT_FSIZE) failed" << std::endl;
+        agent.releaseXferReq(req_a);
+        agent.releaseXferReq(req_b);
+        return 1;
+    }
+
+    nixl_status_t st_a = agent.postXferReq(req_a);
+    nixl_status_t st_b = agent.postXferReq(req_b);
+
+    // drive A (the failing transfer) to terminal first -- this fires cancel(A)
+    // while B still has outstanding ios on the shared queue
+    // yield each iteration: a busy-spin here starves the kernel io completion
+    // workers, so B's buffered writes never drain before max_poll_iters
+    constexpr auto poll_pause = std::chrono::microseconds(20);
+    int iters = 0;
+    while (st_a == NIXL_IN_PROG && iters++ < max_poll_iters) {
+        st_a = agent.getXferStatus(req_a);
+        std::this_thread::sleep_for(poll_pause);
+    }
+    iters = 0;
+    while (st_b == NIXL_IN_PROG && iters++ < max_poll_iters) {
+        st_b = agent.getXferStatus(req_b);
+        std::this_thread::sleep_for(poll_pause);
+    }
+
+    setrlimit(RLIMIT_FSIZE, &saved);
+
+    std::cout << queue << ": A=" << nixlEnumStrings::statusStr(st_a)
+              << " B=" << nixlEnumStrings::statusStr(st_b) << std::endl;
+
+    int rc = 0;
+    if (st_a >= 0) {
+        std::cerr << queue << ": failing transfer A was not reported as error" << std::endl;
+        rc = 1;
+    }
+    if (st_b != NIXL_SUCCESS) {
+        std::cerr << queue << ": concurrent transfer B disturbed by A's cancel (status "
+                  << nixlEnumStrings::statusStr(st_b) << ")" << std::endl;
+        rc = 1;
+    } else if (lseek(fd_b, 0, SEEK_END) != (off_t)b_size) {
+        std::cerr << queue << ": transfer B did not fully write its data" << std::endl;
+        rc = 1;
+    }
+
+    agent.releaseXferReq(req_a);
+    agent.releaseXferReq(req_b);
+    {
+        nixl_reg_dlist_t fa(FILE_SEG), fb(FILE_SEG);
+        nixlBlobDesc da;
+        da.addr = 0;
+        da.len = a_size;
+        da.devId = fd_a;
+        fa.addDesc(da);
+        nixlBlobDesc db;
+        db.addr = 0;
+        db.len = b_size;
+        db.devId = fd_b;
+        fb.addDesc(db);
+        for (int i = 0; i < a_desc; i++) {
+            agent.deregisterMem(fa);
+        }
+        for (int i = 0; i < b_desc; i++) {
+            agent.deregisterMem(fb);
+        }
+    }
+    agent.deregisterMem(dram_reg);
+    return rc;
+}
+
+int
+test_concurrent_cancel_scoping(std::string dir) {
+    const std::pair<const char *, const char *> queues[] = {
+        {"AIO", "use_aio"},
+        {"io_uring", "use_uring"},
+        {"POSIXAIO", "use_posix_aio"},
+    };
+
+    int failures = 0;
+    int ran = 0;
+    for (const auto &[queue, param_key] : queues) {
+        int rc = concurrent_cancel_scoping_case(dir, queue, param_key);
+        if (rc >= 0) {
+            ran++;
+        }
+        if (rc == 1) {
+            failures++;
+        }
+    }
+
+    if (ran == 0) {
+        std::cerr << "No POSIX io queue backend available to test" << std::endl;
+        return 1;
+    }
+    return failures == 0 ? 0 : 1;
+}
+
 int
 test_short_write_enospc(std::string test_files_dir_path_abs_path) {
     const std::pair<const char *, const char *> queues[] = {
@@ -1137,8 +1328,9 @@ test_short_write_enospc(std::string test_files_dir_path_abs_path) {
 
     int failures = 0;
     int ran = 0;
-    // 1 = single-io path; 8 = multi-io batch that must fully drain on fault
-    for (int n_desc : {1, 8}) {
+    // 1 = single-io path; 8 = multi-io batch; 200 = >64 batch with an un-submitted
+    // remainder that the cancel path must clear and recover
+    for (int n_desc : {1, 8, 200}) {
         for (const auto &[queue, param_key] : queues) {
             int rc = short_write_case(test_files_dir_path_abs_path, queue, param_key, n_desc);
             if (rc >= 0) {
@@ -1273,6 +1465,14 @@ main (int argc, char *argv[]) {
     ret = test_short_write_enospc(test_files_dir_path_abs_path);
     if (ret != 0) {
         std::cerr << "Short-write/ENOSPC Test failed" << std::endl;
+        return 1;
+    }
+
+    phase_num = 1;
+
+    ret = test_concurrent_cancel_scoping(test_files_dir_path_abs_path);
+    if (ret != 0) {
+        std::cerr << "Concurrent cancel scoping Test failed" << std::endl;
         return 1;
     }
 

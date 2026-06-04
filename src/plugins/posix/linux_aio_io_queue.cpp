@@ -165,7 +165,7 @@ nixlPosixIOQueueLinuxAIO::doCheckCompleted(void) {
         long res = static_cast<long>(events[i].res);
         const int error = (res < 0 || static_cast<unsigned long>(res) != iocb->u.c.nbytes);
         if (error) {
-            NIXL_ERROR << absl::StrFormat(
+            NIXL_DEBUG << absl::StrFormat(
                 "AIO operation incomplete: result %ld, expected %lu", res, iocb->u.c.nbytes);
         }
         if (io->clb_) {
