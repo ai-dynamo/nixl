@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -46,6 +46,9 @@ pip install nixl
 This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
 ## Prerequisites for source build (Linux)
+
+NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
+
 ### Ubuntu:
 
 `$ sudo apt install build-essential cmake pkg-config`
@@ -160,6 +163,21 @@ Common build options:
 - `static_plugins`: Comma-separated list of plugins to build statically
 - `enable_plugins`: Comma-separated list of plugins to build (e.g. `-Denable_plugins=UCX,POSIX`). Cannot be used with `disable_plugins`.
 - `disable_plugins`: Comma-separated list of plugins to exclude (e.g. `-Ddisable_plugins=GDS`). Cannot be used with `enable_plugins`.
+- `wheel_variant`: Override the Python wheel variant suffix (e.g. `-Dwheel_variant=rocm` yields `nixl_rocm`). Empty (default) = autodetect from the CUDA major version.
+
+#### Building for AMD ROCm
+
+NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or not a ROCm toolchain is present. GPU-side ROCm/HIP build support for the benchmark suite lives in nixlbench — see PR #1647 for the `use_rocm` / `rocm_path` options there. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
+
+**Plugins on ROCm hosts (CUDA toolchain absent):**
+- `UCX` — primary transport for AMD GPU memory (requires UCX built with `--with-rocm`).
+- `POSIX`, `OBJ`, `AZURE_BLOB`, `HF3FS`, `MOONCAKE`, `GUSLI`, `UCCL` — vendor-neutral; build unchanged.
+- `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — skip automatically because their CUDA / cuFile / DOCA dependencies are not found.
+
+**Known gaps (will be addressed in follow-up PRs):**
+- `nixlbench` (the NIXL benchmark tool) needs CUDA-driver-API → HIP translation work before it builds on ROCm. Use `examples/cpp/nixl_etcd_example` for transfer validation in the meantime.
+- `LIBFABRIC` plugin disabled on ROCm pending header refactor.
+- No NVSHMEM-equivalent backend yet (rocSHMEM analog is a candidate for a future plugin).
 
 #### Environment Variables
 

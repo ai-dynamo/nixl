@@ -98,6 +98,12 @@ wait_for_status() {
             set -x
             return 0
         fi
+        # Fail fast on terminal FAILED, don't wait out the timeout.
+        if [ "$status" = "FAILED" ]; then
+            echo -e "\nJob reached terminal status FAILED after ${SECONDS}s"
+            set -x
+            return 1
+        fi
         printf "."
         sleep $interval
     done
@@ -120,9 +126,11 @@ POD=$(aws batch describe-jobs --jobs "$JOB_ID" --query 'jobs[0].eksProperties.po
 echo "Streaming logs from pod: $POD"
 kubectl -n ucx-ci-batch-nodes logs -f "$POD" || kubectl -n ucx-ci-batch-nodes logs "$POD" --previous || true
 
-# Check final job status
-echo "Waiting for job completion (timeout: 10m)..."
-if ! wait_for_status "SUCCEEDED" 600 10; then
+# logs -f can return early (apiserver GOAWAY), so cover the full build+test.
+# Wait 5m past the in-pod TEST_TIMEOUT (60m) so this layer strictly wraps it
+# and can observe the resulting FAILED instead of timing out alongside it.
+echo "Waiting for job completion (timeout: 65m)..."
+if ! wait_for_status "SUCCEEDED" 3900 10; then
     echo "Failure running NIXL tests"
     exit 1
 fi
