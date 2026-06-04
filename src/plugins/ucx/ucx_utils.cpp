@@ -47,6 +47,7 @@ get_ucx_backend_common_options() {
     params.emplace(nixl_ucx_staging_slot_window_param_name, "0");
     params.emplace(nixl_ucx_staging_batch_flush_param_name, "false");
     params.emplace(nixl_ucx_staging_target_h2d_worker_param_name, "false");
+    params.emplace(nixl_ucx_staging_source_d2h_prefetch_param_name, "false");
     return params;
 }
 

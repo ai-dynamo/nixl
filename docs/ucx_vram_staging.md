@@ -88,6 +88,7 @@ staging_cuda_copy_streams=1
 staging_slot_request_window=32
 staging_batch_flush=false
 staging_target_h2d_worker=false
+staging_source_d2h_prefetch=true
 ```
 
 Suggested environment variables:
@@ -101,6 +102,7 @@ NIXL_UCX_STAGING_CUDA_COPY_STREAMS=1
 NIXL_UCX_STAGING_SLOT_REQUEST_WINDOW=32
 NIXL_UCX_STAGING_BATCH_FLUSH=0
 NIXL_UCX_STAGING_TARGET_H2D_WORKER=0
+NIXL_UCX_STAGING_SOURCE_D2H_PREFETCH=1
 ```
 
 The existing direct UCX path remains the default. Staged mode is opt-in.
@@ -140,6 +142,11 @@ Current local implementation status:
   callback into a target-side worker thread. The worker uses `cudaMemcpyAsync`, CUDA events, and
   `staging_cuda_copy_streams` target streams, then sends ACK only after the event completes. It is
   disabled by default because current measurements do not show a throughput gain.
+- Added `staging_source_d2h_prefetch` / `NIXL_UCX_STAGING_SOURCE_D2H_PREFETCH`. When enabled, the
+  initiator starts source GPU-to-host `cudaMemcpyAsync` into local staging slots before requesting a
+  target staging lease. Once the D2H event is complete, the chunk enters `LOCAL_READY`; only then
+  does it request a target slot. This avoids holding target leases while source D2H is still
+  running.
 - Added staged WRITE support for multiple descriptor pairs. Each local/remote descriptor pair must
   have the same nonzero length; the backend splits each pair into staged chunks and uses the same
   target-side slot lease protocol per chunk.
@@ -155,6 +162,10 @@ Current limitations:
 - Target H2D is still performed synchronously in the internal active-message handler by default.
 - Batch flush is experimental and disabled by default.
 - Target-side H2D worker is experimental and disabled by default.
+- Source-side D2H prefetch assumes the application has made source GPU data visible before posting
+  the NIXL transfer. This is the same high-level data-readiness assumption as the synchronous path,
+  but it is more sensitive to missing CUDA stream dependencies because it uses a backend-owned
+  nonblocking CUDA stream.
 - Malformed READY cleanup, lease timeout, remote disconnect recovery, and poison/reclaim policy for
   `ERROR` slots are still future robustness work.
 
@@ -849,11 +860,37 @@ profile enabled, window=32:        18.52 GiB/s, slot_req_sent=3,113,  grant_inpr
 profile off,     window=32:        18.34-18.63 GiB/s
 ```
 
-The best current tuned point is `chunk_size=16 MiB`, `slots_per_gpu=4`,
+Without source D2H prefetch, the best tuned point was `chunk_size=16 MiB`, `slots_per_gpu=4`,
 `staging_slot_request_window=32`, and around eight concurrent WRITE requests. A window exactly equal
 to the target slot count removes most control-plane retries but underfills the pipeline. A wider
 window keeps more work available and is faster even though the target still returns some
 `NIXL_IN_PROG` slot grants.
+
+Source D2H prefetch measurements on an idle GPU pair (`0-26` physical GPU2 to `0-41` physical GPU0)
+with `chunk_size=16 MiB`, `slots_per_gpu=4`, `concurrency=8`, and `staging_slot_request_window=32`:
+
+```text
+ucx_devices=mlx5_2, source_d2h_prefetch=false:                       18.39 GiB/s
+ucx_devices=mlx5_2, source_d2h_prefetch=true,  cuda_copy_streams=1:  22.02 GiB/s
+ucx_devices=mlx5_2, source_d2h_prefetch=true,  cuda_copy_streams=2:  22.01 GiB/s
+ucx_devices=mlx5_2, source_d2h_prefetch=true,  cuda_copy_streams=4:  21.30 GiB/s
+UCX default HCA selection, source_d2h_prefetch=true, streams=1:      23.34 GiB/s
+```
+
+The profile run for `source_d2h_prefetch=true` showed the intended state-machine change:
+
+```text
+slot_req_sent=32 per 512 MiB request
+slot_grant_inprog=0
+remote_window_miss=0
+transfer_loop_gib_per_sec=21.90 with profiling enabled
+```
+
+This validates the main hypothesis: requesting the target slot only after source D2H is ready
+improves target lease turnover and removes remote grant retries. `local_slot_miss` increases in the
+profile because the prefetch path uses the local staging pool as the flow-control window; this is
+busy polling rather than a correctness issue. The next scheduler cleanup should replace that busy
+retry with a local-ready queue or event-driven scheduling.
 
 Batch-flush measurements with `staging_slot_request_window=32`:
 
@@ -897,16 +934,17 @@ ib_write_bw dual rail:    about 392 Gb/s aggregate
 GPU pinned H2D/D2H:       about 25.2 / 24.6 GiB/s per host
 staged transfer-only:     about 17.4 GiB/s
 bounded-window staged:    about 18.6 GiB/s
+source-prefetch staged:   about 22.0-23.3 GiB/s
 ```
 
 The remaining gap is therefore not explained by pinned memory registration or TCP fallback. The
-current staged v1 default path still uses synchronous `cudaMemcpy` and performs target H2D in the
-UCX active-message callback. The async H2D worker removes callback blocking but is not a throughput
+current best staged path uses source D2H prefetch, synchronous target H2D, per-chunk flush, and
+bounded slot requests. The async target H2D worker removes callback blocking but is not a throughput
 win on the current setup. The next performance work should focus on:
 
-1. converting source-side D2H to `cudaMemcpyAsync` plus CUDA events,
-2. reducing slot-grant retry churn with a lease-grant queue or target-side pending queue,
-3. measuring smaller/larger slot counts with the async target path to confirm slot pressure,
+1. replacing local-slot busy retry with a local-ready queue or event-driven scheduler,
+2. adding a target pending grant queue so no-slot requests do not need initiator retries,
+3. rechecking multi-rail HCA selection and counters under source-prefetch mode,
 4. revisiting flush coalescing only after slots are not held idle.
 
 ### Phase 4: READ Support

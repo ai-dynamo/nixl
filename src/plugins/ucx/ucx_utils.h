@@ -45,6 +45,8 @@ inline constexpr std::string_view nixl_ucx_staging_batch_flush_param_name =
     "staging_batch_flush";
 inline constexpr std::string_view nixl_ucx_staging_target_h2d_worker_param_name =
     "staging_target_h2d_worker";
+inline constexpr std::string_view nixl_ucx_staging_source_d2h_prefetch_param_name =
+    "staging_source_d2h_prefetch";
 inline constexpr std::string_view nixl_ucx_vram_staging_env_name = "NIXL_UCX_VRAM_STAGING";
 inline constexpr std::string_view nixl_ucx_staging_chunk_size_env_name =
     "NIXL_UCX_STAGING_CHUNK_SIZE";
@@ -59,6 +61,8 @@ inline constexpr std::string_view nixl_ucx_staging_batch_flush_env_name =
     "NIXL_UCX_STAGING_BATCH_FLUSH";
 inline constexpr std::string_view nixl_ucx_staging_target_h2d_worker_env_name =
     "NIXL_UCX_STAGING_TARGET_H2D_WORKER";
+inline constexpr std::string_view nixl_ucx_staging_source_d2h_prefetch_env_name =
+    "NIXL_UCX_STAGING_SOURCE_D2H_PREFETCH";
 
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
 // field only from UCX 1.22

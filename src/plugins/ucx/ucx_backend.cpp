@@ -607,6 +607,8 @@ cudaRestoreDevice(int previous_device) {
 struct nixlUcxStagedChunk {
     enum class State {
         PENDING,
+        LOCAL_D2H_POSTED,
+        LOCAL_READY,
         SLOT_REQ_POSTED,
         WAIT_SLOT_GRANT,
         RDMA_POSTED,
@@ -655,6 +657,8 @@ struct nixlUcxStagedChunk {
     std::atomic<nixl_status_t> ackStatus{NIXL_IN_PROG};
     uint64_t slotReqPostedUs = 0;
     std::atomic<uint64_t> grantArrivedUs{0};
+    cudaEvent_t d2hEvent = nullptr;
+    uint64_t d2hPostedUs = 0;
     uint64_t rdmaPostedUs = 0;
     uint64_t readyPostedUs = 0;
     uint64_t ackWaitStartUs = 0;
@@ -670,6 +674,11 @@ struct nixlUcxStagedFlushBatch {
 
 class nixlUcxStagedBackendReqH : public nixlUcxBackendReqH {
 public:
+    struct SourceD2HStreams {
+        std::vector<cudaStream_t> streams;
+        size_t next = 0;
+    };
+
     enum class State {
         INIT,
         RUNNING,
@@ -684,6 +693,11 @@ public:
 
     void
     releaseLocalSlot(nixlUcxStagedChunk &chunk) {
+        if (chunk.d2hEvent) {
+            cudaEventSynchronize(chunk.d2hEvent);
+            cudaEventDestroy(chunk.d2hEvent);
+            chunk.d2hEvent = nullptr;
+        }
         if (chunk.localMetadata && chunk.localSlotHeld) {
             chunk.localMetadata->releaseSlot(chunk.localSlotId);
             chunk.localSlotHeld = false;
@@ -771,6 +785,17 @@ public:
         }
         flushBatches.clear();
         openFlushBatch.reset();
+        for (auto &[gpu_dev, d2h_streams] : sourceD2HStreams) {
+            int previous_device = -1;
+            const nixl_status_t status = cudaSetDeviceForCopy(gpu_dev, previous_device);
+            for (cudaStream_t stream : d2h_streams.streams) {
+                if (status == NIXL_SUCCESS) {
+                    cudaStreamDestroy(stream);
+                }
+            }
+            cudaRestoreDevice(previous_device);
+        }
+        sourceD2HStreams.clear();
         nixlUcxBackendReqH::release();
     }
 
@@ -781,6 +806,7 @@ public:
     std::vector<std::unique_ptr<nixlUcxStagedChunk>> chunks;
     std::vector<std::unique_ptr<nixlUcxStagedFlushBatch>> flushBatches;
     std::unique_ptr<nixlUcxStagedFlushBatch> openFlushBatch;
+    std::unordered_map<uint64_t, SourceD2HStreams> sourceD2HStreams;
     nixlUcxStagedProfile profile;
     bool profileLogged = false;
     bool pendingRegistered = false;
@@ -1434,6 +1460,8 @@ nixlUcxEngine::makeVramStagingConfig(const nixl_b_params_t *custom_params) {
                                                config.batchFlush);
     config.targetH2DWorker = nixl_b_params_get_bool(
         custom_params, nixl_ucx_staging_target_h2d_worker_param_name, config.targetH2DWorker);
+    config.sourceD2HPrefetch = nixl_b_params_get_bool(
+        custom_params, nixl_ucx_staging_source_d2h_prefetch_param_name, config.sourceD2HPrefetch);
     config.enabled = nixl_env_get_bool(nixl_ucx_vram_staging_env_name, config.enabled);
     config.chunkSize = nixl_env_get_size(nixl_ucx_staging_chunk_size_env_name, config.chunkSize);
     config.slotsPerGpu = nixl_env_get_size(nixl_ucx_staging_slots_env_name, config.slotsPerGpu);
@@ -1447,6 +1475,9 @@ nixlUcxEngine::makeVramStagingConfig(const nixl_b_params_t *custom_params) {
         nixl_env_get_bool(nixl_ucx_staging_batch_flush_env_name, config.batchFlush);
     config.targetH2DWorker = nixl_env_get_bool(nixl_ucx_staging_target_h2d_worker_env_name,
                                                config.targetH2DWorker);
+    config.sourceD2HPrefetch =
+        nixl_env_get_bool(nixl_ucx_staging_source_d2h_prefetch_env_name,
+                          config.sourceD2HPrefetch);
     return config;
 }
 
@@ -1511,6 +1542,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
                   << " slot_request_window=" << vramStagingConfig_.slotRequestWindow
                   << " batch_flush=" << vramStagingConfig_.batchFlush
                   << " target_h2d_worker=" << vramStagingConfig_.targetH2DWorker
+                  << " source_d2h_prefetch=" << vramStagingConfig_.sourceD2HPrefetch
                   << " force_progress_thread=" << vramStagingConfig_.forceProgressThread;
         if (vramStagingConfig_.targetH2DWorker) {
             startStagedH2DWorker();
@@ -3120,8 +3152,38 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
         return NIXL_SUCCESS;
     };
 
-    auto start_granted_chunk = [&](nixlUcxStagedChunk &chunk) -> nixl_status_t {
-        if (!chunk.localMetadata || !chunk.remoteMetadata) {
+    auto get_source_d2h_stream = [&](uint64_t gpu_dev, cudaStream_t &stream) -> nixl_status_t {
+        auto &streams = staged_handle->sourceD2HStreams[gpu_dev];
+        if (streams.streams.empty()) {
+            int previous_device = -1;
+            nixl_status_t status = cudaSetDeviceForCopy(gpu_dev, previous_device);
+            if (status != NIXL_SUCCESS) {
+                return status;
+            }
+
+            const size_t stream_count = std::max<size_t>(1, vramStagingConfig_.cudaCopyStreams);
+            streams.streams.reserve(stream_count);
+            for (size_t i = 0; i < stream_count; ++i) {
+                cudaStream_t new_stream = nullptr;
+                const cudaError_t cuda_ret =
+                    cudaStreamCreateWithFlags(&new_stream, cudaStreamNonBlocking);
+                if (cuda_ret != cudaSuccess) {
+                    cudaRestoreDevice(previous_device);
+                    NIXL_ERROR << "UCX staged source D2H stream creation failed for gpu_dev="
+                               << gpu_dev << ": " << cudaGetErrorString(cuda_ret);
+                    return NIXL_ERR_BACKEND;
+                }
+                streams.streams.push_back(new_stream);
+            }
+            cudaRestoreDevice(previous_device);
+        }
+
+        stream = streams.streams[streams.next++ % streams.streams.size()];
+        return NIXL_SUCCESS;
+    };
+
+    auto start_local_d2h_prefetch = [&](nixlUcxStagedChunk &chunk) -> nixl_status_t {
+        if (!chunk.localMetadata) {
             return NIXL_ERR_MISMATCH;
         }
 
@@ -3134,36 +3196,135 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
         chunk.localSlotId = *local_slot_id;
         chunk.localSlotHeld = true;
 
-        int previous_device = -1;
-        nixl_status_t ret = cudaSetDeviceForCopy(chunk.localGpuDev, previous_device);
+        cudaStream_t stream = nullptr;
+        nixl_status_t ret = get_source_d2h_stream(chunk.localGpuDev, stream);
         if (ret != NIXL_SUCCESS) {
-            staged_handle->releaseChunkSlots(chunk);
+            staged_handle->releaseLocalSlot(chunk);
             return ret;
+        }
+
+        int previous_device = -1;
+        ret = cudaSetDeviceForCopy(chunk.localGpuDev, previous_device);
+        if (ret != NIXL_SUCCESS) {
+            staged_handle->releaseLocalSlot(chunk);
+            return ret;
+        }
+
+        cudaEvent_t event = nullptr;
+        cudaError_t cuda_ret = cudaEventCreateWithFlags(&event, cudaEventDisableTiming);
+        if (cuda_ret != cudaSuccess) {
+            cudaRestoreDevice(previous_device);
+            staged_handle->releaseLocalSlot(chunk);
+            NIXL_ERROR << "UCX staged source D2H event creation failed for transfer_id="
+                       << staged_handle->transferId << " chunk_id=" << chunk.id << ": "
+                       << cudaGetErrorString(cuda_ret);
+            return NIXL_ERR_BACKEND;
         }
 
         nixlUcxStagedSlot &local_slot = chunk.localMetadata->slots[chunk.localSlotId];
         const auto local_gpu_addr = reinterpret_cast<void *>(chunk.localGpuAddr);
-        const uint64_t d2h_start_us = profileNowUs();
-        const cudaError_t cuda_ret =
-            cudaMemcpy(local_slot.hostAddr, local_gpu_addr, chunk.size, cudaMemcpyDeviceToHost);
-        staged_handle->profile.d2hUs += profileNowUs() - d2h_start_us;
+        cuda_ret = cudaMemcpyAsync(local_slot.hostAddr,
+                                   local_gpu_addr,
+                                   chunk.size,
+                                   cudaMemcpyDeviceToHost,
+                                   stream);
+        if (cuda_ret == cudaSuccess) {
+            cuda_ret = cudaEventRecord(event, stream);
+        }
         cudaRestoreDevice(previous_device);
+
         if (cuda_ret != cudaSuccess) {
-            NIXL_ERROR << "UCX staged D2H failed for transfer_id="
+            NIXL_ERROR << "UCX staged async D2H submit failed for transfer_id="
                        << staged_handle->transferId << " chunk_id=" << chunk.id << ": "
                        << cudaGetErrorString(cuda_ret);
-            sendStagedSlotRelease(staged_handle->remoteAgent,
-                                  staged_handle->transferId,
-                                  chunk.id,
-                                  chunk.remoteSlotId,
-                                  chunk.leaseId,
-                                  chunk.remoteGpuAddr,
-                                  chunk.remoteGpuDev,
-                                  chunk.size);
-            staged_handle->releaseChunkSlots(chunk);
+            cudaEventDestroy(event);
+            staged_handle->releaseLocalSlot(chunk);
             return NIXL_ERR_BACKEND;
         }
 
+        chunk.d2hEvent = event;
+        chunk.d2hPostedUs = profileNowUs();
+        chunk.state = nixlUcxStagedChunk::State::LOCAL_D2H_POSTED;
+        return NIXL_SUCCESS;
+    };
+
+    auto check_local_d2h_prefetch = [&](nixlUcxStagedChunk &chunk) -> nixl_status_t {
+        if (!chunk.d2hEvent) {
+            return NIXL_ERR_MISMATCH;
+        }
+
+        const cudaError_t query = cudaEventQuery(chunk.d2hEvent);
+        if (query == cudaErrorNotReady) {
+            return NIXL_IN_PROG;
+        }
+
+        cudaEventDestroy(chunk.d2hEvent);
+        chunk.d2hEvent = nullptr;
+        if (query != cudaSuccess) {
+            NIXL_ERROR << "UCX staged async D2H failed for transfer_id="
+                       << staged_handle->transferId << " chunk_id=" << chunk.id << ": "
+                       << cudaGetErrorString(query);
+            staged_handle->releaseLocalSlot(chunk);
+            return NIXL_ERR_BACKEND;
+        }
+
+        if (chunk.d2hPostedUs != 0) {
+            staged_handle->profile.d2hUs += profileNowUs() - chunk.d2hPostedUs;
+        }
+        chunk.state = nixlUcxStagedChunk::State::LOCAL_READY;
+        return NIXL_SUCCESS;
+    };
+
+    auto start_granted_chunk = [&](nixlUcxStagedChunk &chunk) -> nixl_status_t {
+        if (!chunk.localMetadata || !chunk.remoteMetadata) {
+            return NIXL_ERR_MISMATCH;
+        }
+
+        nixl_status_t ret = NIXL_SUCCESS;
+        if (!vramStagingConfig_.sourceD2HPrefetch) {
+            const auto local_slot_id = chunk.localMetadata->acquireSlot();
+            if (!local_slot_id) {
+                ++staged_handle->profile.localSlotMiss;
+                return NIXL_IN_PROG;
+            }
+
+            chunk.localSlotId = *local_slot_id;
+            chunk.localSlotHeld = true;
+
+            int previous_device = -1;
+            ret = cudaSetDeviceForCopy(chunk.localGpuDev, previous_device);
+            if (ret != NIXL_SUCCESS) {
+                staged_handle->releaseChunkSlots(chunk);
+                return ret;
+            }
+
+            nixlUcxStagedSlot &local_slot = chunk.localMetadata->slots[chunk.localSlotId];
+            const auto local_gpu_addr = reinterpret_cast<void *>(chunk.localGpuAddr);
+            const uint64_t d2h_start_us = profileNowUs();
+            const cudaError_t cuda_ret =
+                cudaMemcpy(local_slot.hostAddr, local_gpu_addr, chunk.size, cudaMemcpyDeviceToHost);
+            staged_handle->profile.d2hUs += profileNowUs() - d2h_start_us;
+            cudaRestoreDevice(previous_device);
+            if (cuda_ret != cudaSuccess) {
+                NIXL_ERROR << "UCX staged D2H failed for transfer_id="
+                           << staged_handle->transferId << " chunk_id=" << chunk.id << ": "
+                           << cudaGetErrorString(cuda_ret);
+                sendStagedSlotRelease(staged_handle->remoteAgent,
+                                      staged_handle->transferId,
+                                      chunk.id,
+                                      chunk.remoteSlotId,
+                                      chunk.leaseId,
+                                      chunk.remoteGpuAddr,
+                                      chunk.remoteGpuDev,
+                                      chunk.size);
+                staged_handle->releaseChunkSlots(chunk);
+                return NIXL_ERR_BACKEND;
+            }
+        } else if (!chunk.localSlotHeld) {
+            return NIXL_ERR_MISMATCH;
+        }
+
+        nixlUcxStagedSlot &local_slot = chunk.localMetadata->slots[chunk.localSlotId];
         const size_t worker_id = staged_handle->getWorkerId();
         const auto *rmd = chunk.remoteMetadata;
         if (chunk.remoteSlotId >= rmd->slotRkeys.size() ||
@@ -3354,6 +3515,19 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
         for (const auto &chunk_ptr : staged_handle->chunks) {
             nixlUcxStagedChunk &chunk = *chunk_ptr;
             if (chunk.state == nixlUcxStagedChunk::State::PENDING) {
+                const nixl_status_t status = vramStagingConfig_.sourceD2HPrefetch ?
+                    start_local_d2h_prefetch(chunk) :
+                    send_slot_request(chunk);
+                if (status == NIXL_IN_PROG) {
+                    continue;
+                }
+                if (status != NIXL_SUCCESS) {
+                    return status;
+                }
+            }
+
+            if (vramStagingConfig_.sourceD2HPrefetch &&
+                chunk.state == nixlUcxStagedChunk::State::LOCAL_READY) {
                 const nixl_status_t status = send_slot_request(chunk);
                 if (status == NIXL_IN_PROG) {
                     continue;
@@ -3386,6 +3560,18 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
             for (const auto &chunk_ptr : staged_handle->chunks) {
                 nixlUcxStagedChunk &chunk = *chunk_ptr;
 
+                if (chunk.state == nixlUcxStagedChunk::State::LOCAL_D2H_POSTED) {
+                    const nixl_status_t status = check_local_d2h_prefetch(chunk);
+                    if (status == NIXL_IN_PROG) {
+                        continue;
+                    }
+                    if (status != NIXL_SUCCESS) {
+                        chunk.state = nixlUcxStagedChunk::State::FAILED;
+                        return fail(status);
+                    }
+                    made_progress = true;
+                }
+
                 if (chunk.state == nixlUcxStagedChunk::State::SLOT_REQ_POSTED) {
                     const nixl_status_t status = chunk.req->status();
                     if (status == NIXL_IN_PROG) {
@@ -3409,7 +3595,9 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
                     if (grant_status == NIXL_IN_PROG) {
                         ++staged_handle->profile.slotGrantInProg;
                         staged_handle->releaseRemoteWindow(chunk);
-                        chunk.state = nixlUcxStagedChunk::State::PENDING;
+                        chunk.state = vramStagingConfig_.sourceD2HPrefetch ?
+                            nixlUcxStagedChunk::State::LOCAL_READY :
+                            nixlUcxStagedChunk::State::PENDING;
                         chunk.grantArrived.store(false);
                         defer_schedule = true;
                         continue;

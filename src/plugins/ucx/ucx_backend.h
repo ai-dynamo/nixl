@@ -219,6 +219,7 @@ protected:
         size_t slotRequestWindow = 0;
         bool batchFlush = false;
         bool targetH2DWorker = false;
+        bool sourceD2HPrefetch = false;
     };
 
     [[nodiscard]] bool
