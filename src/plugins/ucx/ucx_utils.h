@@ -47,6 +47,11 @@ inline constexpr std::string_view nixl_ucx_staging_target_h2d_worker_param_name 
     "staging_target_h2d_worker";
 inline constexpr std::string_view nixl_ucx_staging_source_d2h_prefetch_param_name =
     "staging_source_d2h_prefetch";
+inline constexpr std::string_view nixl_ucx_vram_local_staging_param_name = "vram_local_staging";
+inline constexpr std::string_view nixl_ucx_local_staging_shm_dir_param_name =
+    "local_staging_shm_dir";
+inline constexpr std::string_view nixl_ucx_local_staging_fallback_param_name =
+    "local_staging_fallback";
 inline constexpr std::string_view nixl_ucx_vram_staging_env_name = "NIXL_UCX_VRAM_STAGING";
 inline constexpr std::string_view nixl_ucx_staging_chunk_size_env_name =
     "NIXL_UCX_STAGING_CHUNK_SIZE";
@@ -63,6 +68,14 @@ inline constexpr std::string_view nixl_ucx_staging_target_h2d_worker_env_name =
     "NIXL_UCX_STAGING_TARGET_H2D_WORKER";
 inline constexpr std::string_view nixl_ucx_staging_source_d2h_prefetch_env_name =
     "NIXL_UCX_STAGING_SOURCE_D2H_PREFETCH";
+inline constexpr std::string_view nixl_ucx_vram_local_staging_env_name =
+    "NIXL_UCX_VRAM_LOCAL_STAGING";
+inline constexpr std::string_view nixl_ucx_local_staging_shm_dir_env_name =
+    "NIXL_UCX_LOCAL_STAGING_SHM_DIR";
+inline constexpr std::string_view nixl_ucx_local_staging_fallback_env_name =
+    "NIXL_UCX_LOCAL_STAGING_FALLBACK";
+inline constexpr std::string_view nixl_ucx_local_staging_force_attach_fail_env_name =
+    "NIXL_UCX_LOCAL_STAGING_FORCE_ATTACH_FAIL";
 
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
 // field only from UCX 1.22

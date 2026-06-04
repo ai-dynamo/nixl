@@ -34,3 +34,10 @@ telemetry_reader = executable('telemetry_reader',
            dependencies: [nixl_dep, nixl_common_deps],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            install: true)
+
+if cuda_dep.found()
+    local_vram_staging_probe = executable('local_vram_staging_probe',
+               'local_vram_staging_probe.cpp',
+               dependencies: [cuda_dep, thread_dep],
+               install: true)
+endif

@@ -220,6 +220,9 @@ protected:
         bool batchFlush = false;
         bool targetH2DWorker = false;
         bool sourceD2HPrefetch = false;
+        bool localStaging = false;
+        bool localStagingFallback = true;
+        std::string localStagingShmDir = "/dev/shm/nixl";
     };
 
     [[nodiscard]] bool
@@ -358,6 +361,21 @@ private:
                          nixlUcxReq *req) const;
 
     nixl_status_t
+    sendStagedLocalWriteReady(const std::string &remote_agent,
+                              uint64_t transfer_id,
+                              uint64_t chunk_id,
+                              uint64_t source_slot_id,
+                              uint64_t source_slot_generation,
+                              const std::string &source_shared_path,
+                              size_t source_slot_offset,
+                              size_t source_mapping_size,
+                              uintptr_t remote_gpu_addr,
+                              uint64_t remote_gpu_dev,
+                              size_t size,
+                              const std::unique_ptr<nixlUcxEp> &ep,
+                              nixlUcxReq *req) const;
+
+    nixl_status_t
     sendStagedAck(const std::string &remote_agent,
                   uint64_t transfer_id,
                   uint64_t chunk_id,
@@ -372,6 +390,9 @@ private:
 
     nixl_status_t
     handleStagedWriteReady(const nixl_blob_t &message) const;
+
+    nixl_status_t
+    handleStagedLocalWriteReady(const nixl_blob_t &message) const;
 
     struct StagedH2DTask {
         nixlBackendMD *region = nullptr;
@@ -388,6 +409,14 @@ private:
         uint64_t callbackUs = 0;
     };
 
+    struct LocalSharedAttachment {
+        std::string path;
+        void *base = nullptr;
+        size_t mappingSize = 0;
+        int fd = -1;
+        bool hostRegistered = false;
+    };
+
     void
     startStagedH2DWorker();
 
@@ -396,6 +425,14 @@ private:
 
     void
     stagedH2DWorkerLoop() const;
+
+    nixl_status_t
+    getLocalSharedAttachment(const std::string &path,
+                             size_t mapping_size,
+                             std::shared_ptr<LocalSharedAttachment> &attachment) const;
+
+    void
+    cleanupLocalSharedAttachments();
 
     static ucs_status_t
     stagedSlotReqAmCb(void *arg,
@@ -428,6 +465,14 @@ private:
                          void *data,
                          size_t length,
                          const ucp_am_recv_param_t *param);
+
+    static ucs_status_t
+    stagedLocalWriteReadyAmCb(void *arg,
+                              const void *header,
+                              size_t header_length,
+                              void *data,
+                              size_t length,
+                              const ucp_am_recv_param_t *param);
 
     static ucs_status_t
     stagedAckAmCb(void *arg,
@@ -495,11 +540,23 @@ private:
     mutable std::atomic<uint64_t> stagedProfileTargetBytes_{0};
     mutable std::atomic<uint64_t> stagedProfileTargetH2DUs_{0};
     mutable std::atomic<uint64_t> stagedProfileTargetCallbackUs_{0};
+    mutable std::atomic<uint64_t> stagedProfileLocalReadyCount_{0};
+    mutable std::atomic<uint64_t> stagedProfileLocalErrors_{0};
+    mutable std::atomic<uint64_t> stagedProfileLocalBytes_{0};
+    mutable std::atomic<uint64_t> stagedProfileLocalH2DUs_{0};
+    mutable std::atomic<uint64_t> stagedProfileLocalCallbackUs_{0};
+    mutable std::atomic<uint64_t> localSharedAttachCacheHits_{0};
+    mutable std::atomic<uint64_t> localSharedAttachCacheMisses_{0};
+    mutable std::atomic<uint64_t> localSharedAttachFailures_{0};
+    mutable std::atomic<uint64_t> localSharedAttachUs_{0};
     mutable std::mutex stagedH2DMutex_;
     mutable std::condition_variable stagedH2DCv_;
     mutable std::deque<StagedH2DTask> stagedH2DQueue_;
     mutable bool stagedH2DStop_ = false;
     std::thread stagedH2DThread_;
+    mutable std::mutex localSharedAttachMutex_;
+    mutable std::unordered_map<std::string, std::shared_ptr<LocalSharedAttachment>>
+        localSharedAttachments_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;

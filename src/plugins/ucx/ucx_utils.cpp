@@ -48,6 +48,9 @@ get_ucx_backend_common_options() {
     params.emplace(nixl_ucx_staging_batch_flush_param_name, "false");
     params.emplace(nixl_ucx_staging_target_h2d_worker_param_name, "false");
     params.emplace(nixl_ucx_staging_source_d2h_prefetch_param_name, "false");
+    params.emplace(nixl_ucx_vram_local_staging_param_name, "false");
+    params.emplace(nixl_ucx_local_staging_shm_dir_param_name, "/dev/shm/nixl");
+    params.emplace(nixl_ucx_local_staging_fallback_param_name, "true");
     return params;
 }
 

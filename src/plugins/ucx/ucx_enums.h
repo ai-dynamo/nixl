@@ -76,6 +76,7 @@ enum class am_cb_op_t {
     STAGED_SLOT_GRANT,
     STAGED_SLOT_RELEASE,
     STAGED_WRITE_READY,
+    STAGED_LOCAL_WRITE_READY,
     STAGED_ACK,
 };
 
@@ -92,6 +93,8 @@ toStringView(const am_cb_op_t t) noexcept {
         return "STAGED_SLOT_RELEASE";
     case am_cb_op_t::STAGED_WRITE_READY:
         return "STAGED_WRITE_READY";
+    case am_cb_op_t::STAGED_LOCAL_WRITE_READY:
+        return "STAGED_LOCAL_WRITE_READY";
     case am_cb_op_t::STAGED_ACK:
         return "STAGED_ACK";
     }
