@@ -923,6 +923,7 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
     return true;
 }
 
+/** Allocate and register memory descriptors for each thread. */
 std::vector<std::vector<xferBenchIOV>>
 xferBenchNixlWorker::allocateMemory(int num_threads) {
     std::vector<std::vector<xferBenchIOV>> iov_lists;
@@ -949,6 +950,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
     opt_args.backends.push_back(backend_engine);
 
     if (xferBenchConfig::isObjStorageBackend()) {
+        buffer_size = xferBenchConfig::max_block_size;
+
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
