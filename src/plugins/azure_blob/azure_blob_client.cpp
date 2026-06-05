@@ -74,7 +74,8 @@ getCaBundle(nixl_b_params_t *custom_params) {
     }
 
     // Return empty string if not provided, which means use default CA bundle
-    const std::string ca_bundle = nixl::config::getValueDefaulted<std::string>("AZURE_CA_BUNDLE", "");
+    const std::string ca_bundle =
+        nixl::config::getValueDefaulted<std::string>("AZURE_CA_BUNDLE", "");
     if (!ca_bundle.empty()) {
         return ca_bundle;
     }
