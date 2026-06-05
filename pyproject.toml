@@ -34,6 +34,9 @@ dependencies = ["torch", "numpy"]
 [tool.mypy]
 mypy_path = ["src/bindings/python/nixl-meta"]
 ignore_missing_imports = true
+# Meta dispatcher (nixl-meta/nixl_ep/) and EP sources (examples/device/ep/nixl_ep/)
+# share the module name; explicit_package_bases avoids duplicate-module errors.
+explicit_package_bases = true
 
 [tool.isort]
 profile = "black"

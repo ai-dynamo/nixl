@@ -34,16 +34,25 @@ source_root = meson.project_source_root()
 root_license_path = join_paths(source_root, 'LICENSE')
 license_path = fs.copyfile(root_license_path)
 
-nixl_sources = files('nixl/__init__.py')
-
 subdir('nixl')
+subdir('nixl_ep')
 
 uv = find_program('uv', required: false)
 if uv.found()
   wheel_name = 'nixl-@0@-py3-none-any.whl'.format(meson.project_version())
+  # Inputs point at build-dir copies (return values of fs.copyfile in subdirs)
+  # so ninja runs copies before `uv build` and picks up source edits.
   meta_wheel = custom_target(
     'build_nixl_meta',
-    input: [pyproject_toml, readme_md, license_path] + nixl_sources,
+    input: [
+      pyproject_toml,
+      readme_md,
+      license_path,
+      nixl_init_copy,
+      nixl_api_copy,
+      nixl_logging_copy,
+      nixl_ep_init_copy,
+    ],
     output: [wheel_name],
     command: [uv, 'build', '--wheel', '--out-dir', build_dir, build_dir],
     install: false,
