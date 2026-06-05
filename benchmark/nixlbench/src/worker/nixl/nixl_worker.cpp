@@ -1480,7 +1480,7 @@ prepareSlot(nixlAgent *agent,
 
     if (!slot.req) {
         nixl_status_t rc;
-        if (xferBenchConfig::prepped_xfer) {
+        if (xferBenchConfig::prepared_xfer) {
             if (!slot.prep_local_dlist) {
                 nixl_xfer_dlist_t ld(GET_SEG_TYPE(true));
                 nixl_xfer_dlist_t rd(GET_SEG_TYPE(false));
@@ -1534,12 +1534,25 @@ postSlot(nixlAgent *agent, xferBenchStats &thread_stats, slotState &slot) {
 }
 
 // Tear down the request and (if --reregister_mem) the registration so the
-// next prepareSlot exercises the full lifecycle.
+// next prepareSlot exercises the full lifecycle. For --prepared_xfer the
+// prepped dlists are released too, forcing prepareSlot to re-run prepXferDlist
+// so the per-iteration prepare cost matches the createXferReq baseline.
 static nixl_status_t
 recycleSlot(nixlAgent *agent, nixlBackendH *backend_engine, slotState &slot) {
     if (slot.req) {
         agent->releaseXferReq(slot.req);
         slot.req = nullptr;
+    }
+    if (xferBenchConfig::prepared_xfer) {
+        if (slot.prep_local_dlist) {
+            agent->releasedDlistH(slot.prep_local_dlist);
+            slot.prep_local_dlist = nullptr;
+        }
+        if (slot.prep_remote_dlist) {
+            agent->releasedDlistH(slot.prep_remote_dlist);
+            slot.prep_remote_dlist = nullptr;
+        }
+        slot.indices.clear();
     }
     if (xferBenchConfig::reregister_mem && slot.registered) {
         nixl_status_t rc =

@@ -86,7 +86,7 @@ NB_ARG_BOOL(recreate_xfer,
             false,
             "Recreate xfer each iteration (default: false for all backends, true for GUSLI)");
 NB_ARG_BOOL(reregister_mem, false, "Register and deregister memory on every iteration");
-NB_ARG_BOOL(prepped_xfer, false, "Use prepared transfer API (prepare+make)");
+NB_ARG_BOOL(prepared_xfer, false, "Use prepared transfer API (prepare+make), incompatible with reregister_mem");
 NB_ARG_INT32(pipeline_depth, 1, "Number of transfer requests in flight simultaneously");
 NB_ARG_INT32(large_blk_iter_ftr,
              16,
@@ -282,7 +282,7 @@ std::string xferBenchConfig::filepath = "";
 std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
 bool xferBenchConfig::reregister_mem = false;
-bool xferBenchConfig::prepped_xfer = false;
+bool xferBenchConfig::prepared_xfer = false;
 int xferBenchConfig::pipeline_depth = 1;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
@@ -507,7 +507,7 @@ xferBenchConfig::loadParams(void) {
     storage_enable_direct = NB_ARG(storage_enable_direct);
     recreate_xfer = NB_ARG(recreate_xfer);
     reregister_mem = NB_ARG(reregister_mem);
-    prepped_xfer = NB_ARG(prepped_xfer);
+    prepared_xfer = NB_ARG(prepared_xfer);
     pipeline_depth = NB_ARG(pipeline_depth);
     if (pipeline_depth < 1) {
         std::cerr << "pipeline_depth must be >= 1" << std::endl;
@@ -530,8 +530,8 @@ xferBenchConfig::loadParams(void) {
                   << " Setting recreate_xfer to true." << std::endl;
         recreate_xfer = true;
     }
-    if (prepped_xfer && reregister_mem) {
-        std::cerr << "prepped_xfer is incompatible with reregister_mem: the prepared "
+    if (prepared_xfer && reregister_mem) {
+        std::cerr << "prepared_xfer is incompatible with reregister_mem: the prepared "
                      "descriptor list handles pin the registration."
                   << std::endl;
         return -1;
@@ -682,8 +682,8 @@ xferBenchConfig::printConfig() {
                     std::to_string(recreate_xfer));
         printOption("Re-register memory each iteration (--reregister_mem=[0,1])",
                     std::to_string(reregister_mem));
-        printOption("Prepped xfer (prep+make) (--prepped_xfer=[0,1])",
-                    std::to_string(prepped_xfer));
+        printOption("Prepared xfer (prep+make) (--prepared_xfer=[0,1])",
+                    std::to_string(prepared_xfer));
         printOption("Pipeline depth (--pipeline_depth=N)", std::to_string(pipeline_depth));
         printOption("Use hugepages (--use_hugepages=[0,1])", std::to_string(use_hugepages));
 
