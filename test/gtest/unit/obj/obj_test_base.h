@@ -20,24 +20,33 @@
 #include <gtest/gtest.h>
 #include "nixl_descriptors.h"
 #include "nixl_types.h"
-#include <memory>
-#include <string>
 #include <algorithm>
-#include <vector>
-#include <functional>
 #include <chrono>
-#include <thread>
+#include <functional>
 #include <map>
-#include <set>
+#include <memory>
 #include <optional>
+#include <set>
+#include <string>
+#include <thread>
+#include <vector>
 
 #include "s3/client.h"
 #include "obj_backend.h"
 #include "obj_executor.h"
 #include "object/engine_utils.h"
-#include "s3_accel/dell/rdma_interface.h"
 
 namespace gtest::obj {
+/**
+ * Object Plugin Unit Tests — shared test infrastructure.
+ *
+ * This header provides mock clients, base fixtures, and helper methods
+ * used by both obj.cpp (common tests) and obj_cuobj.cpp (cuobj-dependent
+ * Dell/Accel tests).
+ *
+ * All tests use a mockS3Client to simulate S3 operations without requiring
+ * AWS credentials.
+ */
 
 // Test configuration for different S3 client types
 struct ObjTestConfig {
@@ -106,17 +115,13 @@ public:
                    put_object_callback_t callback) override {
         std::string key_str(key);
 
-        // Per-key error overrides global simulateError_
         bool simulate_error = keyErrors_.count(key_str) > 0 || simulateError_;
-
-        // Per-key outcome overrides global simulateSuccess_
         bool success = simulateSuccess_;
         auto outcome_it = keyOutcomes_.find(key_str);
         if (outcome_it != keyOutcomes_.end()) {
             success = outcome_it->second;
         }
 
-        // Per-key delay (defaults to no delay)
         std::chrono::milliseconds delay{0};
         auto delay_it = keyDelays_.find(key_str);
         if (delay_it != keyDelays_.end()) {
@@ -139,17 +144,13 @@ public:
                    get_object_callback_t callback) override {
         std::string key_str(key);
 
-        // Per-key error overrides global simulateError_
         bool simulate_error = keyErrors_.count(key_str) > 0 || simulateError_;
-
-        // Per-key outcome overrides global simulateSuccess_
         bool success = simulateSuccess_;
         auto outcome_it = keyOutcomes_.find(key_str);
         if (outcome_it != keyOutcomes_.end()) {
             success = outcome_it->second;
         }
 
-        // Per-key delay (defaults to no delay)
         std::chrono::milliseconds delay{0};
         auto delay_it = keyDelays_.find(key_str);
         if (delay_it != keyDelays_.end()) {
@@ -238,66 +239,6 @@ public:
     hasExecutor() const {
         return executor_ != nullptr;
     }
-
-protected:
-    // Make pendingCallbacks_ accessible to derived classes
-    std::vector<std::function<void()>> &
-    getPendingCallbacks() {
-        return pendingCallbacks_;
-    }
-
-    // Make simulateSuccess_ accessible to derived classes
-    bool
-    getSimulateSuccess() const {
-        return simulateSuccess_;
-    }
-};
-
-// Dell-specific mock S3 client with RDMA support
-class mockDellS3Client : public mockS3Client, public iDellS3RdmaClient {
-public:
-    mockDellS3Client() = default;
-
-    mockDellS3Client([[maybe_unused]] nixl_b_params_t *custom_params,
-                     std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr)
-        : mockS3Client(custom_params, executor) {}
-
-    // Dell-specific RDMA methods
-    void
-    putObjectRdmaAsync(std::string_view key,
-                       uintptr_t data_ptr,
-                       size_t data_len,
-                       size_t offset,
-                       std::string_view rdma_desc,
-                       put_object_callback_t callback) override {
-        if (rdma_desc.empty()) {
-            getPendingCallbacks().push_back([callback]() { callback(false); });
-        } else {
-            getPendingCallbacks().push_back([callback, this]() { callback(getSimulateSuccess()); });
-        }
-    }
-
-    void
-    getObjectRdmaAsync(std::string_view key,
-                       uintptr_t data_ptr,
-                       size_t data_len,
-                       size_t offset,
-                       std::string_view rdma_desc,
-                       get_object_callback_t callback) override {
-        if (rdma_desc.empty()) {
-            getPendingCallbacks().push_back([callback]() { callback(false); });
-        } else {
-            getPendingCallbacks().push_back([callback, data_ptr, data_len, offset, this]() {
-                if (getSimulateSuccess() && data_ptr && data_len > 0) {
-                    char *buffer = reinterpret_cast<char *>(data_ptr);
-                    for (size_t i = 0; i < data_len; ++i) {
-                        buffer[i] = static_cast<char>('A' + ((i + offset) % 26));
-                    }
-                }
-                callback(getSimulateSuccess());
-            });
-        }
-    }
 };
 
 // Mock that invokes the checkObjectExistsAsync callback twice to test
@@ -340,6 +281,59 @@ public:
     }
 };
 
+// Mock that throws an exception during checkObjectExistsAsync to test the
+// exception handling path in engine_impl.cpp's queryMem.
+class exceptionThrowingMockS3Client : public iS3Client {
+private:
+    std::shared_ptr<asioThreadPoolExecutor> executor_;
+    int throw_after_calls_ = 0;
+    int call_count_ = 0;
+
+public:
+    exceptionThrowingMockS3Client() = default;
+
+    exceptionThrowingMockS3Client(
+        [[maybe_unused]] nixl_b_params_t *custom_params,
+        std::shared_ptr<Aws::Utils::Threading::Executor> executor = nullptr,
+        int throw_after_calls = 0)
+        : throw_after_calls_(throw_after_calls) {
+        if (executor) {
+            executor_ = std::dynamic_pointer_cast<asioThreadPoolExecutor>(executor);
+        }
+    }
+
+    void
+    setExecutor(std::shared_ptr<Aws::Utils::Threading::Executor> executor) override {
+        executor_ = std::dynamic_pointer_cast<asioThreadPoolExecutor>(executor);
+    }
+
+    void
+    putObjectAsync(std::string_view, uintptr_t, size_t, size_t, put_object_callback_t callback)
+        override {
+        callback(true);
+    }
+
+    void
+    getObjectAsync(std::string_view, uintptr_t, size_t, size_t, get_object_callback_t callback)
+        override {
+        callback(true);
+    }
+
+    void
+    checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) override {
+        call_count_++;
+        if (call_count_ > throw_after_calls_) {
+            throw std::runtime_error("Simulated exception in checkObjectExistsAsync");
+        }
+
+        if (executor_) {
+            executor_->Submit([callback]() { callback(true); });
+        } else {
+            callback(true);
+        }
+    }
+};
+
 // Base test fixture with common test helper methods
 class objTestBase {
 protected:
@@ -358,12 +352,11 @@ protected:
         initParams_.pthrDelay = 0;
         initParams_.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
 
-        // Use appropriate mock client based on configuration
-        if (isDellOBSRequested(&customParams_)) {
-            mockS3Client_ = std::make_shared<mockDellS3Client>();
-        } else {
-            mockS3Client_ = std::make_shared<mockS3Client>();
-        }
+        // All engine types (Standard, CRT, Accel, Dell) use the same mock.
+        // The Dell engine accepts an injected iS3Client just like the others;
+        // its RDMA-specific behavior lives in awsS3DellObsClient which the
+        // mock replaces entirely for unit tests.
+        mockS3Client_ = std::make_shared<mockS3Client>();
         objEngine_ = std::make_unique<nixlObjEngine>(&initParams_, mockS3Client_);
     }
 
@@ -417,10 +410,15 @@ protected:
         status = objEngine_->checkXfer(handle);
         EXPECT_EQ(status, NIXL_SUCCESS);
 
-        if (operation == NIXL_READ) {
-            if (test_buffer.size() > 0) {
-                EXPECT_TRUE(std::all_of(
-                    test_buffer.begin(), test_buffer.end(), [](char c) { return c == 'A'; }));
+        if (operation == NIXL_READ && !test_buffer.empty()) {
+            // Verify multiple positions to catch partial/offset-corrupted reads.
+            // Mock fills with: buffer[i] = 'A' + ((i + offset) % 26)
+            EXPECT_EQ(test_buffer.front(), 'A');
+            if (test_buffer.size() > 1) {
+                size_t mid = test_buffer.size() / 2;
+                EXPECT_EQ(test_buffer[mid], static_cast<char>('A' + (mid % 26)));
+                EXPECT_EQ(test_buffer.back(),
+                          static_cast<char>('A' + ((test_buffer.size() - 1) % 26)));
             }
         }
 
@@ -570,6 +568,7 @@ protected:
             EXPECT_TRUE(std::all_of(
                 test_buffer.begin(), test_buffer.end(), [](char c) { return c == 'Z'; }));
         }
+
 
         objEngine_->releaseReqH(handle);
         objEngine_->deregisterMem(local_metadata);

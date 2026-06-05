@@ -34,15 +34,25 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
             local_agent,
             remote_agent);
 
-    if (local.getType() != DRAM_SEG) {
-        NIXL_ERROR << absl::StrFormat("Error: Local memory type must be DRAM_SEG, got %d",
-                                      local.getType());
+    // Accept DRAM_SEG (all engines) and VRAM_SEG (vendor engines that
+    // report it in getSupportedMems, e.g. Dell ObjectScale).
+    if (local.getType() != DRAM_SEG && local.getType() != VRAM_SEG) {
+        NIXL_ERROR << absl::StrFormat(
+            "Error: Local memory type must be DRAM_SEG or VRAM_SEG, got %d", local.getType());
         return false;
     }
 
     if (remote.getType() != OBJ_SEG) {
         NIXL_ERROR << absl::StrFormat("Error: Remote memory type must be OBJ_SEG, got %d",
                                       remote.getType());
+        return false;
+    }
+
+    if (local.descCount() != remote.descCount()) {
+        NIXL_ERROR << absl::StrFormat(
+            "Error: Local and remote descriptor counts must match, got %d vs %d",
+            local.descCount(),
+            remote.descCount());
         return false;
     }
 
