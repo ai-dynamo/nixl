@@ -404,7 +404,9 @@ jobs:
   upload-arm-wheels:
     needs: build
     if: ${{ github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
-    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-arm-v1
+    # amd runner: the jfrog-cli-v2-jf image is amd64-only. This job only uploads the
+    # already-built arm wheel files (downloaded as artifacts), so the host arch is irrelevant.
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     timeout-minutes: 30
     env:
       ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
