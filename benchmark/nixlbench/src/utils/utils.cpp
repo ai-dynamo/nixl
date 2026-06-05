@@ -86,7 +86,9 @@ NB_ARG_BOOL(recreate_xfer,
             false,
             "Recreate xfer each iteration (default: false for all backends, true for GUSLI)");
 NB_ARG_BOOL(reregister_mem, false, "Register and deregister memory on every iteration");
-NB_ARG_BOOL(prepared_xfer, false, "Use prepared transfer API (prepare+make), incompatible with reregister_mem");
+NB_ARG_BOOL(prepared_xfer,
+            false,
+            "Use prepared transfer API (prepare+make), incompatible with reregister_mem");
 NB_ARG_INT32(pipeline_depth, 1, "Number of transfer requests in flight simultaneously");
 NB_ARG_INT32(large_blk_iter_ftr,
              16,
