@@ -226,6 +226,14 @@ public:
     }
 };
 
+void
+initTestBlobEngine(const nixlBackendInitParams *init_params,
+                   std::shared_ptr<iBlobClient> client,
+                   std::unique_ptr<nixlAzureBlobEngine> &out) {
+    ASSERT_NE(client, nullptr) << "initTestBlobEngine: blob client must not be null";
+    out = std::make_unique<nixlAzureBlobEngine>(init_params, std::move(client));
+}
+
 class azureBlobTestFixture : public testing::Test {
 protected:
     std::unique_ptr<nixlAzureBlobEngine> blobEngine_;
@@ -246,7 +254,7 @@ protected:
 
         // Initialize nixlAzureBlobEngine with the mock IBlobClient
         // The engine will create its own executor and call setExecutor on the mock client
-        blobEngine_ = std::make_unique<nixlAzureBlobEngine>(&initParams_, mockBlobClient_);
+        initTestBlobEngine(&initParams_, mockBlobClient_, blobEngine_);
     }
 
     void
@@ -946,7 +954,7 @@ protected:
         initParams_.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
 
         auto mockClient = std::make_shared<doubleCallbackMockBlobClient>();
-        blobEngine_ = std::make_unique<nixlAzureBlobEngine>(&initParams_, mockClient);
+        initTestBlobEngine(&initParams_, mockClient, blobEngine_);
     }
 };
 
@@ -976,6 +984,7 @@ TEST_F(azureBlobDoubleCallbackFixture, QueryMemDuplicateCallback) {
 
 class azureBlobExceptionFixture : public testing::Test {
 protected:
+    std::unique_ptr<nixlAzureBlobEngine> blobEngine_;
     nixlBackendInitParams initParams_;
     nixl_b_params_t customParams_;
 
@@ -996,7 +1005,7 @@ TEST_F(azureBlobExceptionFixture, QueryMemExceptionDuringLaunch) {
     // This verifies the fix for the use-after-free race: the catch block should
     // wait for all in-flight callbacks to complete before returning.
     auto mockClient = std::make_shared<exceptionThrowingMockBlobClient>(2);
-    auto blobEngine = std::make_unique<nixlAzureBlobEngine>(&initParams_, mockClient);
+    initTestBlobEngine(&initParams_, mockClient, blobEngine_);
 
     nixl_reg_dlist_t descs(OBJ_SEG);
     descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-key-1"));
@@ -1005,7 +1014,7 @@ TEST_F(azureBlobExceptionFixture, QueryMemExceptionDuringLaunch) {
     descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-key-4"));
 
     std::vector<nixl_query_resp_t> resp;
-    nixl_status_t status = blobEngine->queryMem(descs, resp);
+    nixl_status_t status = blobEngine_->queryMem(descs, resp);
 
     // Should return error due to exception during launch
     EXPECT_EQ(status, NIXL_ERR_BACKEND);
@@ -1017,14 +1026,14 @@ TEST_F(azureBlobExceptionFixture, QueryMemExceptionDuringLaunch) {
 TEST_F(azureBlobExceptionFixture, QueryMemExceptionOnFirstCall) {
     // Test exception on the very first async request launch.
     auto mockClient = std::make_shared<exceptionThrowingMockBlobClient>(0);
-    auto blobEngine = std::make_unique<nixlAzureBlobEngine>(&initParams_, mockClient);
+    initTestBlobEngine(&initParams_, mockClient, blobEngine_);
 
     nixl_reg_dlist_t descs(OBJ_SEG);
     descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-immediate-1"));
     descs.addDesc(nixlBlobDesc(nixlBasicDesc(), "exception-immediate-2"));
 
     std::vector<nixl_query_resp_t> resp;
-    nixl_status_t status = blobEngine->queryMem(descs, resp);
+    nixl_status_t status = blobEngine_->queryMem(descs, resp);
 
     EXPECT_EQ(status, NIXL_ERR_BACKEND);
     EXPECT_EQ(resp.size(), 2);
