@@ -202,11 +202,20 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
     topology = std::make_unique<nixlLibfabricTopology>();
 
     // Determine system runtime type once at initialization
+#if defined(HAVE_CUDA)
     if (topology->getNumNvidiaAccel() > 0) {
         runtime_ = FI_HMEM_CUDA;
         NIXL_INFO << "System runtime: CUDA for " << topology->getNumNvidiaAccel()
                   << " NVIDIA GPU(s)";
-    } else if (topology->getNumAwsAccel() > 0) {
+    } else
+#endif
+#if defined(HAVE_ROCM)
+        if (topology->getNumAmdAccel() > 0) {
+        runtime_ = FI_HMEM_ROCR;
+        NIXL_INFO << "System runtime: ROCR for " << topology->getNumAmdAccel() << " AMD GPU(s)";
+    } else
+#endif
+        if (topology->getNumAwsAccel() > 0) {
         runtime_ = FI_HMEM_NEURON;
         NIXL_INFO << "System runtime: NEURON for " << topology->getNumAwsAccel()
                   << " AWS Trainium device(s)";
@@ -772,7 +781,7 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
 
     enum fi_hmem_iface iface = FI_HMEM_SYSTEM;
     if (mem_type == VRAM_SEG) {
-        iface = topology->getMrAttrIface(device_id);
+        iface = runtime_;
     }
 
     // Resize output vectors to match all rails

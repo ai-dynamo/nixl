@@ -195,6 +195,42 @@ else
 endif
 taskflow_proj = dependency('taskflow', fallback: ['taskflow', 'taskflow_dep'])
 
+use_rocm = get_option('use_rocm')
+
+if use_rocm
+    rocm_path = get_option('rocm_path')
+    if rocm_path == ''
+        rocm_path = '/opt/rocm'
+        if not fs.exists(rocm_path)
+            error('ROCm not found at default location /opt/rocm. Override with -Drocm_path=<path>.')
+        endif
+    endif
+
+    rocm_lib_path = rocm_path + '/lib'
+    rocm_inc_path = rocm_path + '/include'
+
+    if not fs.exists(rocm_inc_path)
+        error('ROCm include path not found: ' + rocm_inc_path)
+    endif
+    if not fs.exists(rocm_lib_path)
+        error('ROCm lib path not found: ' + rocm_lib_path)
+    endif
+
+    hip_runtime_dep = cpp.find_library('amdhip64', dirs: rocm_lib_path, required: true)
+    rocm_dep = declare_dependency(
+        dependencies : [hip_runtime_dep],
+        include_directories : include_directories(rocm_inc_path))
+
+    doca_gpunetio_dep = disabler()
+    cuda_wheel_dir = 'nixl_rocm'
+    message('ROCm build enabled:', rocm_path)
+
+    # Alias cuda_dep to rocm_dep so all downstream cuda_dep.found() checks cascade.
+    # CUDA-specific plugins (GDS, GDS_MT, GPUNETIO) are gated on cuda_dep AND other
+    # CUDA-only deps (cufile, DOCA), so they will self-disable on ROCm hosts.
+    cuda_dep = rocm_dep
+else
+
 cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
@@ -324,6 +360,8 @@ else
     cuda_wheel_dir = 'nixl_cu12'
 endif
 
+endif # end of use_rocm else block
+
 # Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix
 # without otherwise affecting the build. Non-empty value wins over the
 # autodetected CUDA-major value above: e.g. -Dwheel_variant=rocm -> nixl_rocm.
@@ -396,7 +434,7 @@ endif
 # UCX GPU device API detection
 nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
-if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
+if not use_rocm and ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     cuda = meson.get_compiler('cuda')
     # TODO: Expose doca_gpunetio_dep through UCX
     have_gpu_side = cuda.compiles('''
