@@ -103,8 +103,7 @@ template<> struct tomlTraits<std::chrono::milliseconds> {
         if (const auto *node = view.as_time()) {
             const auto &time = node->get();
             return std::chrono::milliseconds((time.hour * 3600000) + (time.minute * 60000) +
-                                             (time.second * 1000) +
-                                             (time.nanosecond / 1000000));
+                                             (time.second * 1000) + (time.nanosecond / 1000000));
         }
         if (const auto *node = view.as_integer()) {
             return std::chrono::milliseconds(node->get());
@@ -116,4 +115,3 @@ template<> struct tomlTraits<std::chrono::milliseconds> {
 } // namespace nixl::config
 
 #endif
-

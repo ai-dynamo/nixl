@@ -58,9 +58,7 @@ namespace internal {
     void
     warnIgnoreToml(const std::string &path);
 
-    template<typename T>
-    struct convertTraits
-    {
+    template<typename T> struct convertTraits {
         [[nodiscard]] static decltype(auto)
         convert(const std::string &value) {
             return configTraits<T>::convert(value);

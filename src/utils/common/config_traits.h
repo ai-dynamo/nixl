@@ -39,8 +39,7 @@ template<typename, typename = void> struct configTraits;
 template<> struct configTraits<bool> {
     [[nodiscard]] static bool
     convert(const std::string &value) {
-        static const std::vector<std::string> positive = {
-            "y", "yes", "on", "1", "true", "enable"};
+        static const std::vector<std::string> positive = {"y", "yes", "on", "1", "true", "enable"};
 
         static const std::vector<std::string> negative = {
             "n", "no", "off", "0", "false", "disable"};
