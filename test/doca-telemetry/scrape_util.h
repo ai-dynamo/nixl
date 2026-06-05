@@ -17,59 +17,15 @@
 #ifndef NIXL_TEST_DOCA_TELEMETRY_SCRAPE_UTIL_H
 #define NIXL_TEST_DOCA_TELEMETRY_SCRAPE_UTIL_H
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
 #include <chrono>
 #include <cstdint>
 #include <sstream>
 #include <string>
 #include <thread>
 
+#include "loopback_connection.h"
+
 namespace nixl::doca_test {
-
-// Minimal HTTP/1.1 GET over 127.0.0.1:<port>; returns the response body (empty
-// on failure).
-inline std::string
-httpGet(uint16_t port, const std::string &path) {
-    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        return {};
-    }
-
-    const struct timeval tv{3, 0};
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = ::inet_addr("127.0.0.1");
-    if (::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
-        ::close(fd);
-        return {};
-    }
-
-    const std::string req =
-        "GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
-    ::send(fd, req.data(), req.size(), 0);
-
-    std::string response;
-    char buf[4096];
-    while (true) {
-        const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
-        if (n <= 0) {
-            break;
-        }
-        response.append(buf, n);
-    }
-    ::close(fd);
-
-    const auto pos = response.find("\r\n\r\n");
-    return pos == std::string::npos ? std::string{} : response.substr(pos + 4);
-}
 
 // Poll /metrics until it contains `needle`, or timeout.
 inline std::string
@@ -77,7 +33,7 @@ scrapeUntil(uint16_t port, const std::string &needle, std::chrono::seconds timeo
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     std::string body;
     do {
-        body = httpGet(port, "/metrics");
+        body = loopbackConnection::httpGet(port, "/metrics");
         if (body.find(needle) != std::string::npos) {
             return body;
         }
@@ -124,28 +80,6 @@ metricValue(const std::string &body, const std::string &metric) {
         }
     }
     return -1.0;
-}
-
-// Ask the OS for a free TCP port on the loopback interface.
-inline uint16_t
-findFreePort() {
-    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        return 0;
-    }
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = ::inet_addr("127.0.0.1");
-    addr.sin_port = 0;
-    uint16_t port = 0;
-    if (::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0) {
-        socklen_t len = sizeof(addr);
-        if (::getsockname(fd, reinterpret_cast<sockaddr *>(&addr), &len) == 0) {
-            port = ntohs(addr.sin_port);
-        }
-    }
-    ::close(fd);
-    return port;
 }
 
 } // namespace nixl::doca_test

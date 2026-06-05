@@ -27,7 +27,7 @@
 
 #include <gtest/gtest.h>
 
-using nixl::doca_test::findFreePort;
+using nixl::doca_test::loopbackConnection;
 using nixl::doca_test::metricValue;
 using nixl::doca_test::scrapeUntil;
 
@@ -42,7 +42,7 @@ class docaNixlExporterTest : public ::testing::Test {
 protected:
     void
     SetUp() override {
-        port_ = findFreePort();
+        port_ = loopbackConnection::findFreePort();
         ASSERT_NE(port_, 0) << "failed to allocate a free TCP port";
 
         // The exporter reads these on construction (getBindAddress); bind to
