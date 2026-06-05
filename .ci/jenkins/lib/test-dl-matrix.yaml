@@ -175,6 +175,9 @@ steps:
       dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      slurmEnv: [
+        'UCX_IB_REG_METHODS=rcache'
+      ]
 
   - name: Run DL Nixlbench tests
     containerSelector: "{name: 'build_helper_dl'}"
