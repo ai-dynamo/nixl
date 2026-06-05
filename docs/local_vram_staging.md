@@ -435,11 +435,14 @@ For source-owned staging, the READY message should additionally carry:
 ```text
 source_slot_id
 source_slot_generation
+source_region_cookie
 source_slot_offset
 ```
 
 The target must validate that the advertised source slot belongs to the registered source shared
-region. The source must not reuse that slot until ACK.
+region. The region cookie is generated when the source creates the shared staging pool and is
+published in metadata; READY must carry the same cookie so stale or mismatched shared files are
+rejected. The source must not reuse that slot until ACK.
 
 For target-owned staging, the READY message should additionally carry:
 
@@ -694,16 +697,16 @@ backend:
 - `registerMem(VRAM_SEG)` can now allocate source-owned file-backed shared staging pools, `mmap`
   them, `cudaHostRegister` the pool, and still UCX-register each slot for remote staged fallback.
 - Public staged metadata now includes `host_id`, local shared enablement, shared region id, shared
-  path, and mapping size.
+  region cookie, shared path, and mapping size.
 - Initiator selects the local shared path only when local staging is enabled, the source slots are
   shared, target metadata reports the same host id, and target metadata also indicates local shared
   staging support.
 - Added internal `STAGED_LOCAL_WRITE_READY` AM. The READY message carries the source shared path,
-  source shared region id, source slot id, source slot generation, slot offset, mapping size, and
-  target GPU address.
+  source shared region id, source shared region cookie, source slot id, source slot generation,
+  slot offset, mapping size, and target GPU address.
 - Target validates READY against metadata previously loaded for the source agent before opening or
   mapping the advertised file. It checks source agent, region id, path, slot id, slot offset,
-  mapping size, and chunk size.
+  mapping size, region cookie, and chunk size.
 - Target constrains source shared paths to `local_staging_shm_dir` using canonical path checks and
   opens attached files with `O_NOFOLLOW`.
 - Target maps and CUDA-registers the source shared file, then performs H2D and ACKs only after

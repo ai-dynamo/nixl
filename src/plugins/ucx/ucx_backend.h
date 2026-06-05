@@ -341,6 +341,12 @@ private:
                         ucp_ep_h reply_ep = nullptr) const;
 
     nixl_status_t
+    sendStagedControlAm(const std::string &remote_agent,
+                        ucp_ep_h reply_ep,
+                        nixl::ucx::am_cb_op_t msg_id,
+                        std::string *buffer) const;
+
+    nixl_status_t
     sendStagedSlotRelease(const std::string &remote_agent,
                           uint64_t transfer_id,
                           uint64_t chunk_id,
@@ -367,6 +373,7 @@ private:
                               uint64_t transfer_id,
                               uint64_t chunk_id,
                               uint64_t source_region_id,
+                              const std::string &source_region_cookie,
                               uint64_t source_slot_id,
                               uint64_t source_slot_generation,
                               const std::string &source_shared_path,
@@ -426,6 +433,7 @@ private:
     struct LocalSharedRegionInfo {
         std::string remoteAgent;
         uint64_t regionId = 0;
+        std::string regionCookie;
         std::string sharedPath;
         size_t mappingSize = 0;
         size_t slotSize = 0;
@@ -452,6 +460,7 @@ private:
     [[nodiscard]] bool
     validateLocalSharedReady(const std::string &remote_agent,
                              uint64_t region_id,
+                             const std::string &region_cookie,
                              const std::string &shared_path,
                              uint64_t slot_id,
                              size_t slot_offset,
