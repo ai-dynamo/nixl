@@ -85,6 +85,8 @@ NB_ARG_INT32(num_iter, 1000, "Max iterations");
 NB_ARG_BOOL(recreate_xfer,
             false,
             "Recreate xfer each iteration (default: false for all backends, true for GUSLI)");
+NB_ARG_BOOL(reregister_mem, false, "Register and deregister memory on every iteration");
+NB_ARG_INT32(pipeline_depth, 1, "Number of transfer requests in flight simultaneously");
 NB_ARG_INT32(large_blk_iter_ftr,
              16,
              "factor to reduce test iteration when testing large block size(>1MB)");
@@ -99,6 +101,7 @@ NB_ARG_INT32(num_target_dev, 1, "Number of device in target process");
 NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 NB_ARG_UINT64(progress_threads, 0, "Number of progress threads");
 NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
+NB_ARG_BOOL(use_hugepages, false, "Allocate data buffers using hugepages (2MB pages)");
 
 // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
 NB_ARG_STRING(filepath, "", "File path for storage operations");
@@ -199,6 +202,11 @@ NB_ARG_STRING(azure_blob_connection_string,
               "Connection string for Azure Blob backend (alternative to connect to Azurite for "
               "local testing)");
 
+// INFINIA options - only used when backend is INFINIA
+NB_ARG_STRING(infinia_config_file,
+              "",
+              "Path to INFINIA-specific config file (simple key=value format)");
+
 // HF3FS options - only used when backend is HF3FS
 NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool");
 
@@ -253,6 +261,7 @@ int xferBenchConfig::num_threads = 0;
 bool xferBenchConfig::enable_pt = false;
 size_t xferBenchConfig::progress_threads = 0;
 bool xferBenchConfig::enable_vmm = false;
+bool xferBenchConfig::use_hugepages = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::asio_address = "127.0.0.1";
@@ -271,6 +280,8 @@ int xferBenchConfig::posix_kernel_queue_size = 0;
 std::string xferBenchConfig::filepath = "";
 std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
+bool xferBenchConfig::reregister_mem = false;
+int xferBenchConfig::pipeline_depth = 1;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
 std::string xferBenchConfig::obj_secret_key = "";
@@ -288,6 +299,7 @@ std::string xferBenchConfig::obj_accelerated_type = "";
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 std::string xferBenchConfig::azure_blob_connection_string = "";
+std::string xferBenchConfig::infinia_config_file = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
@@ -455,6 +467,11 @@ xferBenchConfig::loadParams(void) {
             azure_blob_container_name = NB_ARG(azure_blob_container_name);
             azure_blob_connection_string = NB_ARG(azure_blob_connection_string);
         }
+
+        // Load INFINIA-specific configurations if backend is INFINIA
+        if (backend == XFERBENCH_BACKEND_INFINIA) {
+            infinia_config_file = NB_ARG(infinia_config_file);
+        }
     }
 
     initiator_seg_type = NB_ARG(initiator_seg_type);
@@ -471,6 +488,10 @@ xferBenchConfig::loadParams(void) {
     start_batch_size = NB_ARG(start_batch_size);
     max_batch_size = NB_ARG(max_batch_size);
     num_iter = NB_ARG(num_iter);
+    if (num_iter < 1) {
+        std::cerr << "num_iter must be >= 1" << std::endl;
+        return -1;
+    }
     large_blk_iter_ftr = NB_ARG(large_blk_iter_ftr);
     warmup_iter = NB_ARG(warmup_iter);
     num_threads = NB_ARG(num_threads);
@@ -483,8 +504,26 @@ xferBenchConfig::loadParams(void) {
     posix_api_type = NB_ARG(posix_api_type);
     storage_enable_direct = NB_ARG(storage_enable_direct);
     recreate_xfer = NB_ARG(recreate_xfer);
+    reregister_mem = NB_ARG(reregister_mem);
+    pipeline_depth = NB_ARG(pipeline_depth);
+    if (pipeline_depth < 1) {
+        std::cerr << "pipeline_depth must be >= 1" << std::endl;
+        return -1;
+    }
+    use_hugepages = NB_ARG(use_hugepages);
+    if (use_hugepages && (total_buffer_size % HUGEPAGE_SIZE) != 0) {
+        size_t hugepage_aligned_size = ROUND_UP(total_buffer_size, HUGEPAGE_SIZE);
+        std::cout << "Rounding total_buffer_size from " << total_buffer_size << " to "
+                  << hugepage_aligned_size << " for 2MB hugepage alignment." << std::endl;
+        total_buffer_size = hugepage_aligned_size;
+    }
     if (!recreate_xfer && XFERBENCH_BACKEND_GUSLI == backend) {
         std::cout << "GUSLI backend requires per-iteration request creation due to library bug."
+                  << " Setting recreate_xfer to true." << std::endl;
+        recreate_xfer = true;
+    }
+    if (!recreate_xfer && reregister_mem) {
+        std::cout << "reregister_mem requires per-iteration request creation."
                   << " Setting recreate_xfer to true." << std::endl;
         recreate_xfer = true;
     }
@@ -502,6 +541,19 @@ xferBenchConfig::loadParams(void) {
             std::cout << "Using address " << asio_address << " port " << asio_port
                       << " for ASIO runtime" << std::endl;
         }
+    }
+
+    // Validate backend-specific configurations
+    if (backend == XFERBENCH_BACKEND_INFINIA && check_consistency) {
+        std::cerr << "Error: Consistency check is not supported for INFINIA backend" << std::endl;
+        std::cerr << "       The INFINIA backend uses native object storage operations that do not"
+                  << std::endl;
+        std::cerr
+            << "       support the file-based consistency verification used by other backends."
+            << std::endl;
+        std::cerr << "Hint: Remove --check_consistency flag when using --backend INFINIA"
+                  << std::endl;
+        return -1;
     }
 
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
@@ -619,6 +671,10 @@ xferBenchConfig::printConfig() {
         printOption("Enable VMM (--enable_vmm=[0,1])", std::to_string(enable_vmm));
         printOption("Recreate xfer each iteration (--recreate_xfer=[0,1])",
                     std::to_string(recreate_xfer));
+        printOption("Re-register memory each iteration (--reregister_mem=[0,1])",
+                    std::to_string(reregister_mem));
+        printOption("Pipeline depth (--pipeline_depth=N)", std::to_string(pipeline_depth));
+        printOption("Use hugepages (--use_hugepages=[0,1])", std::to_string(use_hugepages));
 
         // Print GDS options if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
@@ -750,14 +806,17 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 }
 
 bool
 xferBenchConfig::isObjStorageBackend() {
     return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 };
+
 
 /**********
  * xferBench Utils
@@ -1225,6 +1284,10 @@ xferBenchUtils::buildAwsCredentials() {
 
 bool
 xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
+        // INFINIA backends don't need external CLI put
+        return true;
+    }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
         return putObjS3(buffer_size, name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
@@ -1238,6 +1301,10 @@ xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
 
 bool
 xferBenchUtils::getObj(const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
+        // INFINIA backends don't need external CLI get
+        return true;
+    }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
         return getObjS3(name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
@@ -1251,6 +1318,9 @@ xferBenchUtils::getObj(const std::string &name) {
 
 bool
 xferBenchUtils::rmObj(const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
+        return true;
+    }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
         return rmObjS3(name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {

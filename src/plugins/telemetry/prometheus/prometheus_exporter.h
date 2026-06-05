@@ -54,21 +54,43 @@ public:
 
 private:
     struct CounterEntry {
-        prometheus::Family<prometheus::Counter> *family = nullptr;
-        prometheus::Counter *metric = nullptr;
+        CounterEntry(prometheus::Family<prometheus::Counter> *family, prometheus::Counter *metric)
+            : family(family),
+              metric(metric) {}
+
+        CounterEntry(const CounterEntry &) = delete;
+        CounterEntry &
+        operator=(const CounterEntry &) = delete;
+        CounterEntry(CounterEntry &&) = delete;
+        CounterEntry &
+        operator=(CounterEntry &&) = delete;
 
         ~CounterEntry() {
             if (family && metric) family->Remove(metric);
         }
+
+        prometheus::Family<prometheus::Counter> *family = nullptr;
+        prometheus::Counter *metric = nullptr;
     };
 
     struct GaugeEntry {
-        prometheus::Family<prometheus::Gauge> *family = nullptr;
-        prometheus::Gauge *metric = nullptr;
+        GaugeEntry(prometheus::Family<prometheus::Gauge> *family, prometheus::Gauge *metric)
+            : family(family),
+              metric(metric) {}
+
+        GaugeEntry(const GaugeEntry &) = delete;
+        GaugeEntry &
+        operator=(const GaugeEntry &) = delete;
+        GaugeEntry(GaugeEntry &&) = delete;
+        GaugeEntry &
+        operator=(GaugeEntry &&) = delete;
 
         ~GaugeEntry() {
             if (family && metric) family->Remove(metric);
         }
+
+        prometheus::Family<prometheus::Gauge> *family = nullptr;
+        prometheus::Gauge *metric = nullptr;
     };
 
     const std::string agent_name_;
@@ -83,10 +105,10 @@ private:
     initializeMetrics();
 
     void
-    registerCounter(const std::string &name, const std::string &help, const std::string &category);
+    registerCounter(const std::string &name, const std::string &help);
 
     void
-    registerGauge(const std::string &name, const std::string &help, const std::string &category);
+    registerGauge(const std::string &name, const std::string &help);
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H

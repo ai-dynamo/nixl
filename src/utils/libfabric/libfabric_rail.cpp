@@ -1107,7 +1107,8 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                              fi_addr_t dest_addr,
                              uint64_t remote_addr,
                              uint64_t remote_key,
-                             nixlLibfabricReq *req) const {
+                             nixlLibfabricReq *req,
+                             uint64_t fi_flags) const {
     // Validation
     if (!req) {
         NIXL_ERROR << "Invalid request for write on rail " << rail_id;
@@ -1123,19 +1124,31 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
     int ret = -FI_EAGAIN;
     int attempt = 0;
 
+    struct iovec iov{};
+
+    iov.iov_base = const_cast<void *>(local_buffer);
+    iov.iov_len = length;
+
+    struct fi_rma_iov rma_iov{};
+
+    rma_iov.addr = remote_addr;
+    rma_iov.len = length;
+    rma_iov.key = remote_key;
+    struct fi_msg_rma msg = {};
+    msg.msg_iov = &iov;
+    msg.desc = &local_desc;
+    msg.iov_count = 1;
+    msg.addr = dest_addr;
+    msg.rma_iov = &rma_iov;
+    msg.rma_iov_count = 1;
+    msg.context = &req->ctx;
+    msg.data = immediate_data;
+
     while (true) {
-        // Libfabric fi_writedata call
+        // Libfabric fi_writemsg call (supports FI_MORE flag)
         {
             const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
-            ret = fi_writedata(endpoint,
-                               local_buffer,
-                               length,
-                               local_desc,
-                               immediate_data,
-                               dest_addr,
-                               remote_addr,
-                               remote_key,
-                               &req->ctx);
+            ret = fi_writemsg(endpoint, &msg, fi_flags | FI_REMOTE_CQ_DATA);
         }
 
         if (ret == 0) {

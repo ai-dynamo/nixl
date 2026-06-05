@@ -16,10 +16,10 @@
 # Using globally defined has_posix_plugin from the root meson.build
 if has_posix_plugin
     nixl_posix_app = executable('nixl_posix_test', 'nixl_posix_test.cpp',
-                                dependencies: [nixl_dep, nixl_infra, absl_log_dep],
-                                include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                                dependencies: [nixl_dep, nixl_infra,
+                                               file_utils_interface, absl_log_dep],
+                                include_directories: [nixl_inc_dirs, utils_inc_dirs,
+                                                      include_directories('..')],
                                 install: true)
-
-    # Register the test with the test suite
     test('posix_plugin_test', nixl_posix_app)
 endif

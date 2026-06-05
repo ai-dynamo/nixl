@@ -28,11 +28,4 @@ isAcceleratedRequested(nixl_b_params_t *custom_params) {
     return nixl::getBackendParamDefaulted(custom_params, "accelerated", false);
 }
 
-[[nodiscard]] inline bool
-isDellOBSRequested(nixl_b_params_t *custom_params) {
-    return isAcceleratedRequested(custom_params) &&
-        (nixl::getBackendParamOptional<std::string>(custom_params, "type") == "dell");
-}
-
-
 #endif

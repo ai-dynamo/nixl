@@ -16,10 +16,12 @@
  */
 #include <cassert>
 #include <cufile.h>
+#include <absl/strings/str_format.h>
 #include "gds_backend.h"
 #include "gds_utils.h"
 #include "common/backend.h"
 #include "common/nixl_log.h"
+#include "file/file_path_mode.h"
 #include "file/file_utils.h"
 #include <unordered_map>
 #include <memory>
@@ -71,67 +73,53 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
                                          const nixl_mem_t &nixl_mem,
                                          nixlBackendMD* &out)
 {
-    nixl_status_t status = NIXL_SUCCESS;
-    nixlGdsMetadata *md = new nixlGdsMetadata();
+    if (nixl_mem == FILE_SEG) {
+        std::unique_ptr<nixlGdsMetadata> md;
+        try {
+            md = std::make_unique<nixlGdsMetadata>(nixl::FileFd(mem.devId, mem.metaInfo));
+        }
+        catch (const std::system_error &e) {
+            NIXL_ERROR << "GDS path-mode open failed: " << e.what();
+            return NIXL_ERR_BACKEND;
+        }
+        int fd = md->file_fd.fd();
+
+        if (auto it = gds_file_map.find(fd); it != gds_file_map.end()) {
+            md->handle = it->second;
+            md->handle.size = mem.len;
+            md->handle.metadata = mem.metaInfo;
+        } else {
+            nixl_status_t s = gds_utils->registerFileHandle(fd, mem.len, mem.metaInfo, md->handle);
+            if (s != NIXL_SUCCESS) {
+                return s; // ~FileFd via unique_ptr drop closes the owned fd
+            }
+            gds_file_map[fd] = md->handle;
+        }
+        out = md.release();
+        return NIXL_SUCCESS;
+    }
+
+    auto md = std::make_unique<nixlGdsMetadata>();
     md->type = nixl_mem;
-    cudaError_t error_id;
 
-    switch (nixl_mem) {
-        case FILE_SEG: {
-            // Check if we already have a file handle for this devId
-            auto it = gds_file_map.find(mem.devId);
-            if (it != gds_file_map.end()) {
-                md->handle = it->second;
-                md->handle.size = mem.len;
-                md->handle.metadata = mem.metaInfo;
-                break;
-            }
-
-            status = gds_utils->registerFileHandle(mem.devId, mem.len,
-                                                   mem.metaInfo, md->handle);
-            if (status == NIXL_SUCCESS) {
-                gds_file_map[mem.devId] = md->handle;
-            }
-            break;
+    if (nixl_mem == VRAM_SEG) {
+        if (cudaError_t e = cudaSetDevice(mem.devId); e != cudaSuccess) {
+            NIXL_ERROR << "cudaSetDevice returned " << cudaGetErrorString(e) << " for device ID "
+                       << mem.devId;
+            return NIXL_ERR_BACKEND;
         }
-
-        case VRAM_SEG: {
-            error_id = cudaSetDevice(mem.devId);
-            if (error_id != cudaSuccess) {
-                NIXL_ERROR << "cudaSetDevice returned " << cudaGetErrorString(error_id)
-                          << " for device ID " << mem.devId;
-                delete md;
-                return NIXL_ERR_BACKEND;
-            }
-            status = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
-            if (status == NIXL_SUCCESS) {
-                md->buf.base = (void *)mem.addr;
-                md->buf.size = mem.len;
-            }
-            break;
-        }
-
-        case DRAM_SEG: {
-            status = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
-            if (status == NIXL_SUCCESS) {
-                md->buf.base = (void *)mem.addr;
-                md->buf.size = mem.len;
-            }
-            break;
-        }
-
-        default:
-            status = NIXL_ERR_BACKEND;
-            break;
+    } else if (nixl_mem != DRAM_SEG) {
+        return NIXL_ERR_BACKEND;
     }
 
-    if (status != NIXL_SUCCESS) {
-        delete md;
-        return status;
+    if (nixl_status_t s = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
+        s != NIXL_SUCCESS) {
+        return s;
     }
-
-    out = (nixlBackendMD*)md;
-    return status;
+    md->buf.base = (void *)mem.addr;
+    md->buf.size = mem.len;
+    out = md.release();
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
@@ -140,11 +128,21 @@ nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
     if (md->type == FILE_SEG) {
         gds_utils->deregisterFileHandle(md->handle);
         gds_file_map.erase(md->handle.fd);
-        // No need to close fd since we're not opening files
     } else {
         gds_utils->deregisterBufHandle(md->buf.base);
     }
-    delete md;  // Clean up the metadata object
+    delete md;
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlGdsEngine::resolveFileHandle(const nixlMetaDesc &d, gdsFileHandle &fh) const {
+    auto *md = static_cast<const nixlGdsMetadata *>(d.metadataP);
+    if (!md || md->type != FILE_SEG) {
+        NIXL_ERROR << "GDS: missing FILE_SEG metadata at xfer time";
+        return NIXL_ERR_NOT_FOUND;
+    }
+    fh = md->handle;
     return NIXL_SUCCESS;
 }
 
@@ -196,13 +194,10 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
             total_size = remote[i].len;
             base_offset = (size_t)local[i].addr;
 
-            auto it = gds_file_map.find(local[i].devId);
-            if (it == gds_file_map.end()) {
-                NIXL_ERROR << "File handle not found";
+            if (resolveFileHandle(local[i], fh) != NIXL_SUCCESS) {
                 delete gds_handle;
                 return NIXL_ERR_NOT_FOUND;
             }
-            fh = it->second;
         } else {
             base_addr = (void*)local[i].addr;
             if (!base_addr) {
@@ -212,13 +207,10 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
             total_size = local[i].len;
             base_offset = (size_t)remote[i].addr;
 
-            auto it = gds_file_map.find(remote[i].devId);
-            if (it == gds_file_map.end()) {
-                NIXL_ERROR << "File handle not found";
+            if (resolveFileHandle(remote[i], fh) != NIXL_SUCCESS) {
                 delete gds_handle;
                 return NIXL_ERR_NOT_FOUND;
             }
-            fh = it->second;
         }
 
         // Split large transfers into multiple requests

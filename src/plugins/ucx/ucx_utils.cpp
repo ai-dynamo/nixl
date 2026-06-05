@@ -200,6 +200,10 @@ using nixl_ucx_am_cb_ctx_ptr_t = std::unique_ptr<nixl_ucx_am_cb_ctx_t>;
 
 void
 nixlUcxEp::sendAmCallback(void *request, ucs_status_t status, void *user_data) {
+    if (status != UCS_OK) {
+        NIXL_ERROR << "UCX AM send failed with status " << status << " ("
+                   << ucs_status_string(status) << ")";
+    }
     auto ctx = static_cast<nixl_ucx_am_cb_ctx_t *>(user_data);
     ctx->second(request, ctx->first);
     delete ctx;
@@ -425,6 +429,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
 
     if (ucpVersion_ >= UCP_VERSION(1, 21)) {
         config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_device_channels));
+        config.modify("MAX_HCA_PER_GPU", "auto");
     }
 
     const auto &hw_info = nixl::hwInfo::instance();
@@ -569,7 +574,7 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
 
         if (attr.mem_type == UCS_MEMORY_TYPE_HOST) {
             NIXL_ERROR << "VRAM memory is detected as host by UCX. "
-                          "UCX is likely not configured with CUDA support. "
+                          "UCX is likely not configured with CUDA/ROCm support. "
                           "VRAM registration cannot proceed.";
             ucp_mem_unmap(ctx, mem.memh);
             return -1;
