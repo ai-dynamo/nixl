@@ -23,7 +23,6 @@
 
 #include <cstdint>
 #include <dlfcn.h>
-#include <limits>
 #include <cstring>
 #include <unistd.h>
 
@@ -35,8 +34,6 @@
 #include <stdexcept>
 #include <thread>
 
-#include "absl/strings/numbers.h"
-
 /****************************************
  * Neuron Address Query
  *****************************************/
@@ -45,27 +42,6 @@ namespace {
 constexpr size_t NIXL_LIBFABRIC_DEFAULT_POST_THREADS = 0;
 constexpr size_t NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE = 1024;
 constexpr size_t NIXL_LIBFABRIC_POST_THREAD_HW_MULTIPLIER = 4;
-
-static_assert(sizeof(size_t) == sizeof(uint64_t),
-              "LIBFABRIC backend size parsing assumes 64-bit size_t");
-
-size_t
-getSizeParam(const nixl_b_params_t &params, const std::string &key, size_t default_value) {
-    auto it = params.find(key);
-    if (it == params.end()) {
-        return default_value;
-    }
-
-    uint64_t parsed_value = 0;
-    if (!absl::SimpleAtoi(it->second, &parsed_value) ||
-        parsed_value > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
-        NIXL_WARN << "Invalid " << key << " value '" << it->second
-                  << "', using default: " << default_value;
-        return default_value;
-    }
-
-    return static_cast<size_t>(parsed_value);
-}
 
 size_t
 getMaxPostThreadCount() {
@@ -480,16 +456,17 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes (default)";
     }
 
-    post_thread_count_ =
-        getSizeParam(getCustomParams(), "num_threads", NIXL_LIBFABRIC_DEFAULT_POST_THREADS);
+    post_thread_count_ = NIXL_LIBFABRIC_DEFAULT_POST_THREADS;
+    LibfabricUtils::getCustomIntParam(getCustomParams(), "num_threads", post_thread_count_);
     const size_t max_post_thread_count = getMaxPostThreadCount();
     if (post_thread_count_ > max_post_thread_count) {
         NIXL_WARN << "Capping libfabric post thread count from " << post_thread_count_ << " to "
                   << max_post_thread_count;
         post_thread_count_ = max_post_thread_count;
     }
-    post_split_batch_size_ = getSizeParam(
-        getCustomParams(), "split_batch_size", NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE);
+    post_split_batch_size_ = NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE;
+    LibfabricUtils::getCustomIntParam(
+        getCustomParams(), "split_batch_size", post_split_batch_size_);
     if (post_thread_count_ > 0) {
         post_thread_pool_ = std::make_unique<nixlLibfabricPostThreadPool>(post_thread_count_);
         NIXL_DEBUG << "Libfabric descriptor post thread pool enabled with "
