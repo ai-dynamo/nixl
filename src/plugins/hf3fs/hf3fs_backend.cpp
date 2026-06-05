@@ -24,6 +24,7 @@
 #include "hf3fs_backend.h"
 #include "hf3fs_log.h"
 #include "common/nixl_log.h"
+#include "file/file_path_mode.h"
 #include "file/file_utils.h"
 
 #define NUM_CQES 1024
@@ -185,11 +186,18 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
         break;
     }
     case FILE_SEG: {
-        int fd = mem.devId;
+        std::unique_ptr<nixlHf3fsFileMetadata> md;
+        try {
+            md = std::make_unique<nixlHf3fsFileMetadata>(nixl::FileFd(mem.devId, mem.metaInfo));
+        }
+        catch (const std::system_error &e) {
+            HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,
+                             absl::StrFormat("HF3FS path-mode open failed: %s", e.what()));
+        }
+        int fd = md->file_fd.fd();
 
         // if the same file is reused - no need to re-register
-        auto it = hf3fs_file_set.find(fd);
-        if (it == hf3fs_file_set.end()) {
+        if (hf3fs_file_set.find(fd) == hf3fs_file_set.end()) {
             int ret = 0;
             status = hf3fs_utils->registerFileHandle(fd, &ret);
             if (status != NIXL_SUCCESS) {
@@ -199,11 +207,10 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             hf3fs_file_set.insert(fd);
         }
 
-        nixlHf3fsFileMetadata *md = new nixlHf3fsFileMetadata();
         md->handle.fd = fd;
         md->handle.size = mem.len;
         md->handle.metadata = mem.metaInfo;
-        out = (nixlBackendMD *)md;
+        out = md.release();
         break;
     }
     default:
@@ -299,8 +306,8 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
     }
 
     for (int i = 0; i < file_cnt; i++) {
-        // Get file descriptor from the proper list
-        int file_descriptor = (*file_list)[i].devId;
+        auto file_md = static_cast<nixlHf3fsFileMetadata *>((*file_list)[i].metadataP);
+        int file_descriptor = file_md->file_fd.fd();
         addr = (void*) (*mem_list)[i].addr;
         size = (*mem_list)[i].len;
         offset = (size_t) (*file_list)[i].addr;  // Offset in file
