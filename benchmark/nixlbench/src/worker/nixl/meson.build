@@ -21,6 +21,8 @@ nixl_worker_sources = [
 nixl_worker_deps = [openmp_dep, nixl_lib, nixl_build, nixl_serdes, tomlplusplus_dep]
 if cuda_available
   nixl_worker_deps += [cuda_dep]
+elif rocm_available
+  nixl_worker_deps += [rocm_dep]
 endif
 
 nixl_worker_lib = static_library('nixl_worker',
