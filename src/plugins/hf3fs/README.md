@@ -38,3 +38,9 @@ This plugin will try to shared the user provided memory direcrly with the 3FS ba
 mmap() requires the memory to be page-aligned, and size has to be multiple of page size.
 
 If the user-provided memory could not be shared, the plugin will allocate it's own memory to shared with 3FS backend process and copy the data between user-provided memory and the shared memory.
+
+## File registration
+
+`FILE_SEG` accepts either fd-in-`devId` (fd-mode) or a
+`"<modes>:<path>"` string in `metaInfo` (path-mode); see
+[`src/utils/file/README.md`](../../utils/file/README.md#path-mode-file-registration).

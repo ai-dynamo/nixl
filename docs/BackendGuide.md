@@ -73,6 +73,11 @@ Note that loadRemoteConnInfo does not initiate the connection, if the user wants
 
 Each backend inherits from nixlBackendMD base class to store any metadata required per registration. A pointer to an object of this class will be the output of registerMem, and the only input to deregisterMem.
 
+For backends that support `FILE_SEG`, NIXL ships a shared **path-mode**
+helper (`nixl::parsePathMeta()` + `nixlFilePathMD`) that lets callers
+register files by path in `nixlBlobDesc::metaInfo` instead of by
+pre-opened fd; see [`src/utils/file/README.md`](../src/utils/file/README.md#path-mode-file-registration).
+
 ### Metadata Management:
 
 * getPublicData(): Provide a serialized byte array for remote identifier for a registered memory
