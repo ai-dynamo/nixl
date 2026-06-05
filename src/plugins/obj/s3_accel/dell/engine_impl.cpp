@@ -15,7 +15,16 @@
 #include <chrono>
 #include <algorithm>
 
+#include "obj_engine_registry.h"
+
 namespace {
+
+objAccelEngineRegistrar reg_dell(
+    "dell",
+    [](const nixlBackendInitParams *p) { return std::make_unique<S3DellObsObjEngineImpl>(p); },
+    [](const nixlBackendInitParams *p, std::shared_ptr<iS3Client> s3, std::shared_ptr<iS3Client>) {
+        return std::make_unique<S3DellObsObjEngineImpl>(p, std::move(s3));
+    });
 
 /**
  * RDMA context structure for cuObject operations.
@@ -47,11 +56,12 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
         return false;
     }
 
-    if (remote_agent != local_agent)
+    if (remote_agent != local_agent) {
         NIXL_WARN << absl::StrFormat(
             "Warning: Remote agent doesn't match the requesting agent (%s). Got %s",
             local_agent,
             remote_agent);
+    }
 
     if ((local.getType() != DRAM_SEG) && (local.getType() != VRAM_SEG)) {
         NIXL_ERROR << absl::StrFormat(
@@ -374,8 +384,9 @@ S3DellObsObjEngineImpl::registerMem(const nixlBlobDesc &mem,
     }
 
     auto supported_mems = {OBJ_SEG, DRAM_SEG, VRAM_SEG};
-    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end())
+    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end()) {
         return NIXL_ERR_NOT_SUPPORTED;
+    }
 
     if (nixl_mem == OBJ_SEG) {
         std::unique_ptr<nixlObsObjMetadata> obj_md = std::make_unique<nixlObsObjMetadata>(

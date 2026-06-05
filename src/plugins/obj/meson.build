@@ -16,6 +16,8 @@
 obj_sources = [
     'obj_backend.cpp',
     'obj_backend.h',
+    'obj_engine_registry.cpp',
+    'obj_engine_registry.h',
     'obj_plugin.cpp',
     '../../utils/object/engine_utils.h',
     's3/client.cpp',
@@ -34,7 +36,9 @@ if not is_variable('obj_utils_interface')
     subdir_done()
 endif
 
-plugin_deps += [obj_utils_interface, dependency('asio', required: true)]
+plugin_deps = [nixl_infra, nixl_common_dep, obj_utils_interface, dependency('asio', required: true)]
+compile_defs = []
+compile_flags = []
 
 if cuobj_dep.found()
     message('Found CUObjClient Library. Enabling S3 Accelerated engines')
@@ -50,7 +54,7 @@ if cuobj_dep.found()
     ]
     plugin_deps += [ cuobj_dep ]
 else
-    message ('Could not find CUObjClient Library. Skipping S3 Accelerated engines')
+    message('Could not find CUObjClient Library. Skipping S3 Accelerated engines')
 endif
 
 if 'OBJ' in static_plugins
@@ -67,7 +71,7 @@ else
         'OBJ',
         obj_sources,
         dependencies: plugin_deps,
-        cpp_args: compile_defs + ['-fPIC'],
+        cpp_args: compile_defs + compile_flags + ['-fPIC'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
         name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
@@ -81,4 +85,8 @@ else
     endif
 endif
 
-obj_backend_interface = declare_dependency(link_with: obj_backend_lib)
+if 'OBJ' in static_plugins
+    obj_backend_interface = declare_dependency(link_whole: obj_backend_lib)
+else
+    obj_backend_interface = declare_dependency(link_with: obj_backend_lib)
+endif
