@@ -17,7 +17,8 @@
 #ifndef NIXL_SRC_UTILS_COMMON_BACKEND_H
 #define NIXL_SRC_UTILS_COMMON_BACKEND_H
 
-#include "configuration.h"
+#include "config_traits.h"
+#include "exception.h"
 #include "nixl_types.h"
 
 #include <optional>
@@ -36,10 +37,10 @@ getBackendParamOptional(const nixl_b_params_t &params, const std::string &key) {
     }
 
     try {
-        return config::convertTraits<T>::convert(it->second);
+        return config::configTraits<T>::convert(it->second);
     }
     catch (const std::exception &e) {
-        throw std::runtime_error(e.what() + (" converting backend parameter " + key));
+        throwRuntimeError(e.what(), " converting backend parameter ", key);
     }
 }
 
