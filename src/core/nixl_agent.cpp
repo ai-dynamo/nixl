@@ -373,6 +373,13 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         }
     }
 
+    if (backend->supportsSendRecv()) {
+        if (!backend->supportsRemote()) {
+            NIXL_ERROR_FUNC << "backend '" << type << "' supports send/recv but not remote";
+            return NIXL_ERR_BACKEND;
+        }
+    }
+
     for (auto &elm : backend->getSupportedMems()) {
         // First time creating this backend handle, so unique
         // The order of creation sets the preference order

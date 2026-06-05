@@ -159,7 +159,7 @@ public:
         nixl_status_t out_ret = NIXL_SUCCESS;
         for (nixlUcxReq req : requests_) {
             const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
-            if (ret == NIXL_SUCCESS, 0) [[likely]] {
+            if (ret == NIXL_SUCCESS) [[likely]] {
                 worker_->reqRelease(req);
             } else if (ret == NIXL_IN_PROG) [[likely]] {
                 if (out_ret == NIXL_SUCCESS) {
