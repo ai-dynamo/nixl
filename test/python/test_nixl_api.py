@@ -215,20 +215,12 @@ def test_tag_xfer_send_recv(backend_name):
         agent2.add_remote_agent(agent1.get_agent_metadata())
         remote_added = True
 
-        send_descs = agent1.get_xfer_descs(
-            [(addr1, mem_size, 0)], mem_type="DRAM"
-        )
-        recv_descs = agent2.get_xfer_descs(
-            [(addr2, mem_size, 0)], mem_type="DRAM"
-        )
+        send_descs = agent1.get_xfer_descs([(addr1, mem_size, 0)], mem_type="DRAM")
+        recv_descs = agent2.get_xfer_descs([(addr2, mem_size, 0)], mem_type="DRAM")
 
         tag = b"python-tag-xfer"
-        recv_handle = agent2.initialize_tag_xfer(
-            "RECV", recv_descs, tag, agent1.name
-        )
-        send_handle = agent1.initialize_tag_xfer(
-            "SEND", send_descs, tag, agent2.name
-        )
+        recv_handle = agent2.initialize_tag_xfer("RECV", recv_descs, tag, agent1.name)
+        send_handle = agent1.initialize_tag_xfer("SEND", send_descs, tag, agent2.name)
 
         states = [
             (agent2, recv_handle, agent2.transfer(recv_handle)),

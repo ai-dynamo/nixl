@@ -697,8 +697,9 @@ PYBIND11_MODULE(_bindings, m) {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
-                for (uintptr_t backend : backends)
+                for (uintptr_t backend : backends) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                }
 
                 nixl_status_t ret = agent.createTagXferReq(
                     operation, local_descs, tag, remote_agent, handle, &extra_params);
