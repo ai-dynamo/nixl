@@ -164,6 +164,11 @@ azureBlobClient::putBlobAsync(std::string_view blob_name,
             callback(true);
         }
         catch (const std::exception &e) {
+            NIXL_ERROR << "putBlobAsync error: " << e.what();
+            callback(false);
+        }
+        catch (...) {
+            NIXL_ERROR << "putBlobAsync: unknown exception";
             callback(false);
         }
     });
@@ -189,6 +194,11 @@ azureBlobClient::getBlobAsync(std::string_view blob_name,
             callback(true);
         }
         catch (const std::exception &e) {
+            NIXL_ERROR << "getBlobAsync error: " << e.what();
+            callback(false);
+        }
+        catch (...) {
+            NIXL_ERROR << "getBlobAsync: unknown exception";
             callback(false);
         }
     });
@@ -213,6 +223,10 @@ azureBlobClient::checkBlobExistsAsync(std::string_view blob_name, check_blob_cal
         }
         catch (const std::exception &e) {
             NIXL_ERROR << "checkBlobExistsAsync error: " << e.what();
+            callback(std::nullopt);
+        }
+        catch (...) {
+            NIXL_ERROR << "checkBlobExistsAsync: unknown exception";
             callback(std::nullopt);
         }
     });
