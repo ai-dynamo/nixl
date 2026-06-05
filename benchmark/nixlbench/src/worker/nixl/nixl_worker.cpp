@@ -1534,9 +1534,7 @@ postSlot(nixlAgent *agent, xferBenchStats &thread_stats, slotState &slot) {
 }
 
 // Tear down the request and (if --reregister_mem) the registration so the
-// next prepareSlot exercises the full lifecycle. For --prepared_xfer the
-// prepped dlists are released too, forcing prepareSlot to re-run prepXferDlist
-// so the per-iteration prepare cost matches the createXferReq baseline.
+// next prepareSlot exercises the full lifecycle.
 static nixl_status_t
 recycleSlot(nixlAgent *agent, nixlBackendH *backend_engine, slotState &slot) {
     if (slot.req) {
