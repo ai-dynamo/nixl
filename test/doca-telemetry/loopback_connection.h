@@ -73,7 +73,8 @@ public:
     // Write the whole buffer, retrying short writes and transient errors
     // (EINTR/EAGAIN/EWOULDBLOCK) after a short sleep. MSG_NOSIGNAL avoids a
     // SIGPIPE if the peer closed early. A write deadline bounds the retries.
-    void
+    // Returns true only if the entire buffer was written before the deadline.
+    [[nodiscard]] bool
     send(const std::string &data) const {
         const auto write_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         size_t off = 0;
@@ -87,8 +88,9 @@ public:
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }
-            break; // hard error
+            return false; // hard error
         }
+        return off == data.size();
     }
 
     // Read until the peer closes the connection (Connection: close). Under
@@ -150,8 +152,10 @@ public:
             return {};
         }
 
-        conn.send("GET " + path + " HTTP/1.1\r\nHost: " + loopbackAddr +
-                  "\r\nConnection: close\r\n\r\n");
+        if (!conn.send("GET " + path + " HTTP/1.1\r\nHost: " + loopbackAddr +
+                       "\r\nConnection: close\r\n\r\n")) {
+            return {};
+        }
 
         const std::string response = conn.recvUntilClosed();
         const auto pos = response.find("\r\n\r\n");
