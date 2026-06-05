@@ -18,7 +18,12 @@
 #include <iostream>
 #include <cmath>
 #include <errno.h>
+#include <fcntl.h>
+#include <memory>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <unistd.h>
 #include "posix_backend.h"
 #include <absl/log/log.h>
 #include <absl/strings/str_format.h>
@@ -211,7 +216,8 @@ nixlPosixBackendReqH::postXfer() {
     for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
          local_it != local.end() && remote_it != remote.end();
          ++local_it, ++remote_it) {
-        nixl_status_t status = io_queue_->enqueue(remote_it->devId,
+        int fd = static_cast<nixlPosixFileMD *>(remote_it->metadataP)->file_fd.fd();
+        nixl_status_t status = io_queue_->enqueue(fd,
                                                   reinterpret_cast<void *>(local_it->addr),
                                                   remote_it->len,
                                                   remote_it->addr,
@@ -260,14 +266,26 @@ nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
                              const nixl_mem_t &nixl_mem,
                              nixlBackendMD *&out) {
     auto supported_mems = getSupportedMems();
-    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) != supported_mems.end())
+    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) != supported_mems.end()) {
+        out = nullptr;
+        if (nixl_mem == FILE_SEG) {
+            try {
+                out = new nixlPosixFileMD(nixl::FileFd(mem.devId, mem.metaInfo));
+            }
+            catch (const std::system_error &e) {
+                NIXL_ERROR << "POSIX path-mode open failed: " << e.what();
+                return NIXL_ERR_BACKEND;
+            }
+        }
         return NIXL_SUCCESS;
+    }
 
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
 nixl_status_t
-nixlPosixEngine::deregisterMem(nixlBackendMD *) {
+nixlPosixEngine::deregisterMem(nixlBackendMD *meta) {
+    delete meta;
     return NIXL_SUCCESS;
 }
 

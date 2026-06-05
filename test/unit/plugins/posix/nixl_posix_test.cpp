@@ -29,6 +29,8 @@
 #include "nixl_params.h"
 #include "nixl_descriptors.h"
 #include "common/nixl_time.h"
+#include "file/file_path_mode.h"
+#include "path_mode_common.h"
 #include <stdexcept>
 #include <cstdio>
 #include <getopt.h>
@@ -768,6 +770,70 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
     return 0;
 }
 
+// Path-mode parser unit checks (POSIX-only since it owns parsePathMeta tests).
+static void
+checkPathModeParser() {
+    using nixl::parsePathMeta;
+    {
+        const auto s = parsePathMeta("ro:/tmp/x");
+        assert(s && s->path == "/tmp/x" && s->flags == O_RDONLY);
+    }
+    {
+        const auto s = parsePathMeta("rw:/tmp/x");
+        assert(s && s->flags == O_RDWR);
+    }
+    {
+        const auto s = parsePathMeta("rw,direct:/tmp/x");
+        assert(s && s->flags == (O_RDWR | O_DIRECT));
+    }
+    {
+        const auto s = parsePathMeta("ro,direct,sync,noatime:/tmp/x");
+        assert(s && s->flags == (O_RDONLY | O_DIRECT | O_SYNC | O_NOATIME));
+    }
+    {
+        const auto s = parsePathMeta("rw,create:/tmp/x");
+        assert(s && s->flags == (O_RDWR | O_CREAT) && s->mode == 0644);
+    }
+    assert(!parsePathMeta("").has_value());
+    assert(!parsePathMeta("no-colon").has_value());
+    assert(!parsePathMeta("ro:").has_value());
+    assert(!parsePathMeta("xx:/tmp/x").has_value());
+    assert(!parsePathMeta("rw,foo:/tmp/x").has_value());
+    assert(!parsePathMeta("kv-0042.bin").has_value());
+    std::cout << "parsePathMeta: OK" << std::endl;
+}
+
+// `rw,create:` should produce a new file at registerMem.
+static int
+runPathModeCreateCheck() {
+    constexpr const char *kCreateFile = "/tmp/nixl_posix_path_mode_create.bin";
+    std::remove(kCreateFile);
+    nixlAgentConfig cfg;
+    nixlAgent agent("POSIXPathModeCreate", cfg);
+    nixl_b_params_t params;
+    nixlBackendH *be = nullptr;
+    if (agent.createBackend("POSIX", params, be) != NIXL_SUCCESS) {
+        return 1;
+    }
+    nixl_reg_dlist_t d(FILE_SEG);
+    nixlBlobDesc desc;
+    desc.addr = 0;
+    desc.len = 4096;
+    desc.devId = 0;
+    desc.metaInfo = std::string("rw,create:") + kCreateFile;
+    d.addDesc(desc);
+    if (agent.registerMem(d) != NIXL_SUCCESS) {
+        return 1;
+    }
+    if (!std::filesystem::exists(kCreateFile)) {
+        return 1;
+    }
+    agent.deregisterMem(d);
+    std::remove(kCreateFile);
+    std::cout << "O_CREAT path-mode: OK" << std::endl;
+    return 0;
+}
+
 int
 main (int argc, char *argv[]) {
     if (page_size <= 0) {
@@ -783,8 +849,9 @@ main (int argc, char *argv[]) {
     std::string test_files_dir_path = default_test_files_dir_path;
     bool use_direct_io = false;
     bool use_uring = false;
+    bool run_path_mode_smoke = true;
 
-    while ((opt = getopt (argc, argv, "n:s:d:DUh")) != -1) {
+    while ((opt = getopt(argc, argv, "n:s:d:DUPh")) != -1) {
         switch (opt) {
         case 'n':
             num_transfers = std::stoi (optarg);
@@ -801,11 +868,14 @@ main (int argc, char *argv[]) {
         case 'U':
             use_uring = true;
             break;
+        case 'P':
+            run_path_mode_smoke = false;
+            break;
         case 'h':
         default:
-            std::cout << absl::StrFormat ("Usage: %s [-n num_transfers] [-s transfer_size] [-d "
-                                          "test_files_dir_path] [-D] [-U]",
-                                          argv[0])
+            std::cout << absl::StrFormat("Usage: %s [-n num_transfers] [-s transfer_size] [-d "
+                                         "test_files_dir_path] [-D] [-U] [-P]",
+                                         argv[0])
                       << std::endl;
             std::cout << absl::StrFormat (
                              "  -n num_transfers      Number of transfers (default: %d)",
@@ -822,6 +892,8 @@ main (int argc, char *argv[]) {
                       << std::endl;
             std::cout << absl::StrFormat ("  -D Use O_DIRECT for file I/O") << std::endl;
             std::cout << absl::StrFormat("  -U Explicitly use the io_uring backend") << std::endl;
+            std::cout << absl::StrFormat("  -P Skip path-mode smoke (enabled by default)")
+                      << std::endl;
             std::cout << absl::StrFormat ("  -h Show this help message") << std::endl;
             return (opt == 'h') ? 0 : 1;
         }
@@ -830,6 +902,18 @@ main (int argc, char *argv[]) {
     if (!has_supported_test_queue(use_uring)) {
         print_unsupported_test_queue_error(use_uring);
         return 1;
+    }
+
+    if (run_path_mode_smoke) {
+        checkPathModeParser();
+        if (int rc = runPathModeCreateCheck(); rc != 0) {
+            return rc;
+        }
+        if (int rc = nixl_test::runPathModeSmoke(
+                "POSIXPathModeSmoke", "POSIX", "/tmp/nixl_posix_path_mode_smoke.bin", 4096);
+            rc != 0) {
+            return rc;
+        }
     }
 
     // Convert directory path to absolute path using std::filesystem

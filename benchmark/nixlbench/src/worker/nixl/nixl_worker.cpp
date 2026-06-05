@@ -24,12 +24,15 @@
 #if HAVE_CUDA
 #include <cuda.h>
 #include <cuda_runtime.h>
+#elif HAVE_ROCM
+#include <hip/hip_runtime.h>
 #endif
 #include <fcntl.h>
 #include <filesystem>
 #include <iomanip>
 #include <memory>
 #include <sstream>
+#include <unordered_set>
 #include "utils/neuron.h"
 #include "utils/utils.h"
 #include <unistd.h>
@@ -59,9 +62,11 @@ static nixl_mem_t
 resolveVramSegment() {
 #if HAVE_CUDA
     return VRAM_SEG;
+#elif HAVE_ROCM
+    return VRAM_SEG;
 #else
     if (neuronCoreCount() > 0) return VRAM_SEG;
-    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+    std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
 }
@@ -314,6 +319,17 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["container_name"] = xferBenchConfig::azure_blob_container_name;
         backend_params["connection_string"] = xferBenchConfig::azure_blob_connection_string;
         std::cout << "AZURE_BLOB backend" << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INFINIA)) {
+        // INFINIA backend - configuration via config file
+        if (!xferBenchConfig::infinia_config_file.empty()) {
+            backend_params["config_file"] = xferBenchConfig::infinia_config_file;
+            std::cout << "INFINIA backend with config file: "
+                      << xferBenchConfig::infinia_config_file << std::endl;
+        } else {
+            std::cout << "INFINIA backend (plugin will use environment variables or defaults)"
+                      << std::endl;
+            std::cout << "  Tip: Use --infinia_config_file to specify a config file" << std::endl;
+        }
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -615,6 +631,22 @@ cleanupVramCuda(xferBenchIOV &iov) {
 
 #endif /* HAVE_CUDA */
 
+#if HAVE_ROCM
+static std::optional<xferBenchIOV>
+getVramDescRocm(int devid, size_t buffer_size, uint8_t memset_value) {
+    void *addr;
+    CHECK_CUDA_ERROR(hipMalloc(&addr, buffer_size), "Failed to allocate ROCm buffer");
+    CHECK_CUDA_ERROR(hipMemset(addr, memset_value, buffer_size), "Failed to set device memory");
+    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
+}
+
+static void
+cleanupVramRocm(xferBenchIOV &iov) {
+    CHECK_CUDA_ERROR(hipSetDevice(iov.devId), "Failed to set device");
+    CHECK_CUDA_ERROR(hipFree((void *)iov.addr), "Failed to deallocate ROCm buffer");
+}
+#endif /* HAVE_ROCM */
+
 static std::optional<xferBenchIOV>
 getVramDesc(int devid, size_t buffer_size, bool isInit) {
     uint8_t memset_value =
@@ -631,8 +663,11 @@ getVramDesc(int devid, size_t buffer_size, bool isInit) {
     } else {
         return getVramDescCuda(devid, buffer_size, memset_value);
     }
+#elif HAVE_ROCM
+    CHECK_CUDA_ERROR(hipSetDevice(devid), "Failed to set device");
+    return getVramDescRocm(devid, buffer_size, memset_value);
 #else
-    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+    std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     return std::nullopt;
 #endif
 }
@@ -808,8 +843,10 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
 
 #if HAVE_CUDA
     cleanupVramCuda(iov);
+#elif HAVE_ROCM
+    cleanupVramRocm(iov);
 #else
-    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+    std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
 #endif
 }
 
@@ -911,6 +948,7 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
     return true;
 }
 
+/** Allocate and register memory descriptors for each thread. */
 std::vector<std::vector<xferBenchIOV>>
 xferBenchNixlWorker::allocateMemory(int num_threads) {
     std::vector<std::vector<xferBenchIOV>> iov_lists;
@@ -937,6 +975,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
     opt_args.backends.push_back(backend_engine);
 
     if (xferBenchConfig::isObjStorageBackend()) {
+        buffer_size = xferBenchConfig::max_block_size;
+
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -955,7 +995,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     }
                 }
 
-                basic_desc = initBasicDescObj(buffer_size, i, unique_name);
+                int obj_dev_id = list_idx * num_devices + i;
+                basic_desc = initBasicDescObj(buffer_size, obj_dev_id, unique_name);
                 if (basic_desc) {
                     std::cout << "Creating obj: " << unique_name << std::endl;
                     iov_list.push_back(basic_desc.value());
@@ -1094,9 +1135,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
             for (auto &iov : iov_list) {
                 if (isInitiator()) {
-                    memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
+                    memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, iov.len);
                 } else if (isTarget()) {
-                    memset((void *)iov.addr, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+                    memset((void *)iov.addr, XFERBENCH_TARGET_BUFFER_ELEMENT, iov.len);
                 }
             }
         }
@@ -1111,6 +1152,47 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
 
 
     opt_args.backends.push_back(backend_engine);
+
+    // Ordering invariants:
+    // 1. Deregister remote IOVs before local IOVs
+    //    (remote registrations may reference local buffers).
+    // 2. Call deregisterMem() before each IOV cleanup
+    //    (cleanup destroys resources that backends need).
+    if (xferBenchConfig::isObjStorageBackend()) {
+        for (auto &iov_list : remote_iovs) {
+            nixl_reg_dlist_t desc_list(OBJ_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+            for (auto &iov : iov_list) {
+                cleanupBasicDescObj(iov);
+            }
+        }
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
+        for (auto &iov_list : remote_iovs) {
+            nixl_reg_dlist_t desc_list(BLK_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+            for (auto &iov : iov_list) {
+                cleanupBasicDescBlk(iov);
+            }
+        }
+    } else if (xferBenchConfig::isStorageBackend()) {
+        for (auto &iov_list : remote_iovs) {
+            nixl_reg_dlist_t desc_list(FILE_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+        }
+        // Close each backing fd exactly once, after all deregistrations complete.
+        std::unordered_set<int> closed_fds;
+        for (auto &iov_list : remote_iovs) {
+            for (auto &iov : iov_list) {
+                if (closed_fds.insert(iov.devId).second) {
+                    cleanupBasicDescFile(iov);
+                }
+            }
+        }
+    }
+
     for (auto &iov_list : iov_lists) {
         nixl_reg_dlist_t desc_list(seg_type);
         iovListToNixlRegDlist(iov_list, desc_list);
@@ -1128,35 +1210,6 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
                 std::cerr << "Unsupported mem type: " << seg_type << std::endl;
                 exit(EXIT_FAILURE);
             }
-        }
-    }
-
-    if (xferBenchConfig::isObjStorageBackend()) {
-        for (auto &iov_list : remote_iovs) {
-            for (auto &iov : iov_list) {
-                cleanupBasicDescObj(iov);
-            }
-            nixl_reg_dlist_t desc_list(OBJ_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
-        }
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
-        for (auto &iov_list : remote_iovs) {
-            for (auto &iov : iov_list) {
-                cleanupBasicDescBlk(iov);
-            }
-            nixl_reg_dlist_t desc_list(BLK_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
-        }
-    } else if (xferBenchConfig::isStorageBackend()) {
-        for (auto &iov_list : remote_iovs) {
-            for (auto &iov : iov_list) {
-                cleanupBasicDescFile(iov);
-            }
-            nixl_reg_dlist_t desc_list(FILE_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
     }
 }
@@ -1234,19 +1287,22 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
-        for (auto &iov_list : local_iovs) {
+        for (size_t list_idx = 0; list_idx < local_iovs.size(); list_idx++) {
+            const auto &iov_list = local_iovs[list_idx];
             std::vector<xferBenchIOV> remote_iov_list;
-            int devidx = 0;
-            for (auto &iov : iov_list) {
+            size_t num_devices = iov_list.size();
+            for (size_t devidx = 0; devidx < num_devices; devidx++) {
+                const auto &iov = iov_list[devidx];
                 if (xferBenchConfig::isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
-                    basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
+                    int obj_dev_id = list_idx * num_devices + devidx;
+                    basic_desc = initBasicDescObj(iov.len, obj_dev_id, iov.metaInfo);
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
                     }
                 } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
                     xferBenchIOV iov_remote(iov);
-                    iov_remote.addr = gusli_devices[devidx++].dev_offset + file_offset;
+                    iov_remote.addr = gusli_devices[devidx].dev_offset + file_offset;
                     iov_remote.len = block_size;
                     iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);

@@ -27,11 +27,11 @@ if has_posix_plugin
     endif
 
     nixl_posix_app = executable('nixl_posix_test', 'nixl_posix_test.cpp',
-                                dependencies: [nixl_dep, nixl_infra, absl_log_dep],
-                                include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                                dependencies: [nixl_dep, nixl_infra,
+                                               file_utils_interface, absl_log_dep],
+                                include_directories: [nixl_inc_dirs, utils_inc_dirs,
+                                                      include_directories('..')],
                                 cpp_args: posix_test_compile_defs,
                                 install: true)
-
-    # Register the test with the test suite
     test('posix_plugin_test', nixl_posix_app)
 endif
