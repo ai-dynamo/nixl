@@ -42,6 +42,16 @@
 #include <cuda_runtime.h>
 #endif
 
+#ifdef HAVE_ROCM
+#include <hip/hip_runtime_api.h>
+// HIP defines __noinline__ as a macro, which breaks __has_attribute(__noinline__)
+// in other headers (e.g. tomlplusplus). Undefine it immediately so downstream
+// headers that use __noinline__ as a plain identifier work correctly.
+#ifdef __noinline__
+#undef __noinline__
+#endif
+#endif
+
 // Forward declarations
 class nixlLibfabricEngine;
 class nixlLibfabricPostThreadPool;
@@ -70,6 +80,31 @@ public:
     /** Set the current CUDA context */
     int
     cudaSetCtx();
+};
+#endif
+
+#ifdef HAVE_ROCM
+/** ROCm/HIP context management for libfabric backend */
+class nixlLibfabricRocmCtx {
+private:
+    int devId_;
+
+public:
+    nixlLibfabricRocmCtx() noexcept : devId_(-1) {}
+
+    /** Reset ROCm device selection to initial state */
+    void
+    rocmResetCtxPtr() noexcept {
+        devId_ = -1;
+    }
+
+    /** Update ROCm device selection for given memory address and device */
+    [[nodiscard]] nixl_status_t
+    rocmUpdateCtxPtr(void *address, int expected_dev);
+
+    /** Set the current HIP device */
+    [[nodiscard]] nixl_status_t
+    rocmSetCtx();
 };
 #endif
 
@@ -283,6 +318,11 @@ private:
     mutable std::mutex cuda_ctx_mutex_; // Protects cudaCtx_ and cuda_addr_wa_.
 #endif
 
+#ifdef HAVE_ROCM
+    // ROCm/HIP context management
+    std::unique_ptr<nixlLibfabricRocmCtx> rocmCtx_;
+#endif
+
     void
     postShutdownCompletion();
     // Progress thread for rail CQs
@@ -314,14 +354,16 @@ private:
 
 #ifdef HAVE_CUDA
     // CUDA context management methods
-    void
-    vramInitCtx();
     int
     vramUpdateCtx(void *address, uint64_t devId, bool &restart_reqd);
     int
     vramApplyCtx();
+#endif
+
+#if defined(HAVE_ROCM) || defined(HAVE_CUDA)
+    // CUDA and ROCm/HIP context management methods
     void
-    vramFiniCtx();
+    vramInitCtx();
 #endif
 
 public:
