@@ -70,9 +70,25 @@ public:
         return fd_ >= 0;
     }
 
+    // Write the whole buffer, retrying short writes and transient errors
+    // (EINTR/EAGAIN/EWOULDBLOCK) after a short sleep. MSG_NOSIGNAL avoids a
+    // SIGPIPE if the peer closed early. A write deadline bounds the retries.
     void
     send(const std::string &data) const {
-        ::send(fd_, data.data(), data.size(), 0);
+        const auto write_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        size_t off = 0;
+        while (off < data.size() && std::chrono::steady_clock::now() < write_deadline) {
+            const ssize_t n = ::send(fd_, data.data() + off, data.size() - off, MSG_NOSIGNAL);
+            if (n > 0) {
+                off += static_cast<size_t>(n);
+                continue;
+            }
+            if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            }
+            break; // hard error
+        }
     }
 
     // Read until the peer closes the connection (Connection: close). Under
