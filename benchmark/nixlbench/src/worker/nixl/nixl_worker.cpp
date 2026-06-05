@@ -47,16 +47,6 @@
 #define MAP_HUGE_2MB (21 << 26) // 2MB hugepage size encoding
 #endif
 
-#define CHECK_NIXL_ERROR(result, message)                                                     \
-    do {                                                                                      \
-        const nixl_status_t _r = (result);                                                    \
-        if (0 != _r) {                                                                        \
-            std::cerr << "NIXL: " << message << " (" << nixlEnumStrings::statusStr(_r) << ")" \
-                      << std::endl;                                                           \
-            exit(EXIT_FAILURE);                                                               \
-        }                                                                                     \
-    } while (0)
-
 static nixl_mem_t
 resolveVramSegment() {
 #if HAVE_CUDA
@@ -350,77 +340,6 @@ xferBenchNixlWorker::~xferBenchNixlWorker() {
         delete agent;
         agent = nullptr;
     }
-}
-
-// Convert vector of xferBenchIOV to nixl_reg_dlist_t
-static void
-iovListToNixlRegDlist(const std::vector<xferBenchIOV> &iov_list, nixl_reg_dlist_t &dlist) {
-    nixlBlobDesc desc;
-    for (const auto &iov : iov_list) {
-        desc.addr = iov.addr;
-        desc.len = iov.len;
-        desc.devId = iov.devId;
-        desc.metaInfo = iov.metaInfo;
-        dlist.addDesc(desc);
-    }
-}
-
-NixlMemRegion::NixlMemRegion(nixlAgent *agent,
-                             nixlBackendH *backend,
-                             nixl_mem_t seg_type,
-                             std::vector<xferBenchIOV> iovs,
-                             std::function<void(xferBenchIOV &)> cleanup)
-    : agent_(agent),
-      backend_(backend),
-      seg_type_(seg_type),
-      iovs_(std::move(iovs)),
-      cleanup_(std::move(cleanup)) {
-    if (backend_) {
-        cached_opt_args_.backends.push_back(backend_);
-    }
-}
-
-NixlMemRegion::~NixlMemRegion() {
-    release();
-}
-
-NixlMemRegion::NixlMemRegion(NixlMemRegion &&o) noexcept
-    : agent_(std::exchange(o.agent_, nullptr)),
-      backend_(o.backend_),
-      seg_type_(o.seg_type_),
-      iovs_(std::move(o.iovs_)),
-      cleanup_(std::move(o.cleanup_)),
-      cached_opt_args_(std::move(o.cached_opt_args_)) {}
-
-NixlMemRegion &
-NixlMemRegion::operator=(NixlMemRegion &&o) noexcept {
-    if (this != &o) {
-        release();
-        agent_ = std::exchange(o.agent_, nullptr);
-        backend_ = o.backend_;
-        seg_type_ = o.seg_type_;
-        iovs_ = std::move(o.iovs_);
-        cleanup_ = std::move(o.cleanup_);
-        cached_opt_args_ = std::move(o.cached_opt_args_);
-    }
-    return *this;
-}
-
-void
-NixlMemRegion::release() {
-    if (!agent_) {
-        return;
-    }
-    nixl_reg_dlist_t desc_list(seg_type_);
-    iovListToNixlRegDlist(iovs_, desc_list);
-    CHECK_NIXL_ERROR(agent_->deregisterMem(desc_list, &cached_opt_args_), "deregisterMem failed");
-    for (auto &iov : iovs_) {
-        if (cleanup_) {
-            cleanup_(iov);
-        }
-    }
-    agent_ = nullptr;
-    iovs_.clear();
 }
 
 // Convert nixl_xfer_dlist_t to vector of xferBenchIOV
