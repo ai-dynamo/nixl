@@ -91,18 +91,18 @@ fi
 PKG_NAME="nixl-cu${CUDA_MAJOR}"
 ./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
 if [ "$BUILD_NIXL_EP" = "true" ]; then
-    uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION \
+    uv build --wheel --out-dir "$TMP_DIR" --python "$PYTHON_VERSION" \
         -Csetup-args=-Dbuild_nixl_ep=true \
         -Csetup-args=-Dbuild_examples=true
 else
-    uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
+    uv build --wheel --out-dir "$TMP_DIR" --python "$PYTHON_VERSION"
 fi
 
 # Bundle libraries
-mkdir $TMP_DIR/dist
-auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' --exclude 'libefa*' --exclude 'libhwloc*' --exclude 'libfabric*' --exclude 'libtorch*' --exclude 'libc10*' --exclude 'libdoca*' $TMP_DIR/nixl*.whl --plat $WHL_PLATFORM --wheel-dir $TMP_DIR/dist
-./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR $TMP_DIR/dist/*.whl
-cp $TMP_DIR/dist/*.whl $OUTPUT_DIR
+mkdir "$TMP_DIR/dist"
+auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' --exclude 'libefa*' --exclude 'libhwloc*' --exclude 'libfabric*' --exclude 'libtorch*' --exclude 'libc10*' --exclude 'libdoca*' --exclude 'libred_client*' --exclude 'libred_async*' --exclude 'liblz4*' "$TMP_DIR"/nixl*.whl --plat "$WHL_PLATFORM" --wheel-dir "$TMP_DIR/dist"
+./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir "$UCX_PLUGINS_DIR" --nixl-plugins-dir "$NIXL_PLUGINS_DIR" "$TMP_DIR"/dist/*.whl
+cp "$TMP_DIR"/dist/*.whl "$OUTPUT_DIR"
 
 # Clean up
 rm -rf "$TMP_DIR"
