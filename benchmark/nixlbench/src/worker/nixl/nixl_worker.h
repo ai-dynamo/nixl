@@ -33,6 +33,7 @@ struct xferFileState {
     int fd;
     uint64_t file_size;
     uint64_t offset;
+    std::string filename;
 };
 
 // Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
@@ -79,7 +80,7 @@ class xferBenchNixlWorker: public xferBenchWorker {
         void
         cleanupBasicDescVram(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
-        initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
+        initBasicDescFile(size_t buffer_size, xferFileState &fstate, int file_idx);
         void cleanupBasicDescFile(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
         initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
