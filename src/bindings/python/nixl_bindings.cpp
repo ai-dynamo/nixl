@@ -167,6 +167,8 @@ PYBIND11_MODULE(_bindings, m) {
     py::enum_<nixl_xfer_op_t>(m, "nixl_xfer_op_t")
         .value("NIXL_READ", NIXL_READ)
         .value("NIXL_WRITE", NIXL_WRITE)
+        .value("NIXL_SEND", NIXL_SEND)
+        .value("NIXL_RECV", NIXL_RECV)
         .export_values();
 
     py::enum_<nixl_cost_t>(m, "nixl_cost_t")
@@ -682,6 +684,32 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("remote_descs"),
             py::arg("remote_agent"),
             py::arg("notif_msg") = std::string(""),
+            py::arg("backend") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "createTagXferReq",
+            [](nixlAgent &agent,
+               const nixl_xfer_op_t operation,
+               const nixl_xfer_dlist_t &local_descs,
+               const std::string &tag,
+               const std::string &remote_agent,
+               const std::vector<uintptr_t> &backends) -> uintptr_t {
+                nixlXferReqH *handle = nullptr;
+                nixl_opt_args_t extra_params;
+
+                for (uintptr_t backend : backends)
+                    extra_params.backends.push_back((nixlBackendH *)backend);
+
+                nixl_status_t ret = agent.createTagXferReq(
+                    operation, local_descs, tag, remote_agent, handle, &extra_params);
+
+                throw_nixl_exception(ret);
+                return (uintptr_t)handle;
+            },
+            py::arg("operation"),
+            py::arg("local_descs"),
+            py::arg("tag"),
+            py::arg("remote_agent"),
             py::arg("backend") = std::vector<uintptr_t>({}),
             py::call_guard<py::gil_scoped_release>())
         .def(

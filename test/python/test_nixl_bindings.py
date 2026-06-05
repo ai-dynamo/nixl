@@ -61,6 +61,12 @@ def test_list():
     test_list.addDesc((2000, 100, 0))
 
 
+def test_send_recv_op_bindings():
+    assert nixl.NIXL_SEND == nixl.nixl_xfer_op_t.NIXL_SEND
+    assert nixl.NIXL_RECV == nixl.nixl_xfer_op_t.NIXL_RECV
+    assert hasattr(nixl.nixlAgent, "createTagXferReq")
+
+
 def test_agent():
     os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
     name1 = "Agent1"
