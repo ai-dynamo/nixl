@@ -39,15 +39,13 @@ struct xferFileState {
 
     xferFileState() = default;
 
-    xferFileState(int fd, uint64_t file_size, uint64_t offset)
+    xferFileState(int fd, uint64_t file_size, uint64_t offset) noexcept
         : fd(fd),
           file_size(file_size),
           offset(offset) {}
 
     ~xferFileState() {
-        if (fd >= 0) {
-            ::close(fd);
-        }
+        closeFd();
     }
 
     xferFileState(xferFileState &&o) noexcept
@@ -58,9 +56,7 @@ struct xferFileState {
     xferFileState &
     operator=(xferFileState &&o) noexcept {
         if (this != &o) {
-            if (fd >= 0) {
-                ::close(fd);
-            }
+            closeFd();
             fd = std::exchange(o.fd, -1);
             file_size = o.file_size;
             offset = o.offset;
@@ -71,6 +67,14 @@ struct xferFileState {
     xferFileState(const xferFileState &) = delete;
     xferFileState &
     operator=(const xferFileState &) = delete;
+
+private:
+    void
+    closeFd() noexcept {
+        if (fd >= 0) {
+            ::close(fd);
+        }
+    }
 };
 
 class NixlMemRegion {
@@ -106,6 +110,7 @@ public:
         return iovs_;
     }
 
+private:
     void
     release();
 };
