@@ -82,11 +82,6 @@ public:
         stopAndJoin();
     }
 
-    size_t
-    size() const {
-        return workers_.size();
-    }
-
     void
     submit(std::function<void()> task) {
         {
@@ -469,8 +464,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         getCustomParams(), "split_batch_size", post_split_batch_size_);
     if (post_thread_count_ > 0) {
         post_thread_pool_ = std::make_unique<nixlLibfabricPostThreadPool>(post_thread_count_);
-        NIXL_DEBUG << "Libfabric descriptor post thread pool enabled with "
-                   << post_thread_pool_->size()
+        NIXL_DEBUG << "Libfabric descriptor post thread pool enabled with " << post_thread_count_
                    << " threads, split_batch_size=" << post_split_batch_size_;
     } else {
         NIXL_DEBUG << "Libfabric descriptor post thread pool disabled";
@@ -1115,7 +1109,6 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
                                          const nixl_meta_dlist_t &local,
                                          const nixl_meta_dlist_t &remote,
                                          const std::shared_ptr<nixlLibfabricConnection> &conn,
-                                         const std::string &remote_agent,
                                          nixlLibfabricBackendH *backend_handle,
                                          int start_idx,
                                          int end_idx,
@@ -1131,11 +1124,9 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
     if (is_cuda_vram) {
         const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
         use_cuda_addr_wa = cuda_addr_wa_;
-        if (use_cuda_addr_wa && cudaCtx_) {
-            if (!cudaCtx_->cudaSetCtx()) {
-                NIXL_ERROR << "Failed to set CUDA context before posting descriptors";
-                return NIXL_ERR_BACKEND;
-            }
+        if (use_cuda_addr_wa && cudaCtx_ && !cudaCtx_->cudaSetCtx()) {
+            NIXL_ERROR << "Failed to set CUDA context before posting descriptors";
+            return NIXL_ERR_BACKEND;
         }
     }
 #endif
@@ -1144,17 +1135,9 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         auto *local_md = static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP);
         auto *remote_md = static_cast<nixlLibfabricPublicMetadata *>(remote[desc_idx].metadataP);
 
-        // Get transfer info for THIS descriptor
         void *transfer_addr = (void *)local[desc_idx].addr;
         size_t transfer_size = local[desc_idx].len;
         int device_id = local[desc_idx].devId;
-
-        NIXL_DEBUG << "Processing descriptor " << desc_idx << " device " << device_id
-                   << " local_addr: " << transfer_addr << " size=" << transfer_size
-                   << " remote_addr=" << (void *)remote[desc_idx].addr;
-
-        NIXL_DEBUG << "DEBUG: remote_agent='" << remote_agent << "' localAgent='" << localAgent
-                   << "'";
 
 #ifdef HAVE_CUDA
         if (is_cuda_vram && !use_cuda_addr_wa && device_id != current_cuda_device) {
@@ -1169,10 +1152,7 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         }
 #endif
 
-        // Prepare and submit transfer for remote agents
-        // Use descriptor's specific target address
         uint64_t remote_target_addr = remote[desc_idx].addr;
-
         uint64_t remote_registered_base = remote_md->remote_buf_addr_;
 
         size_t desc_submitted_count = 0;
@@ -1189,9 +1169,7 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             conn->rail_remote_addr_list_,
             conn->agent_index_,
             backend_handle->post_xfer_id,
-            [backend_handle]() {
-                backend_handle->increment_completed_requests();
-            }, // Completion callback
+            [backend_handle]() { backend_handle->increment_completed_requests(); },
             desc_submitted_count,
             desc_idx,
             desc_count,
@@ -1204,10 +1182,6 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         }
 
         submitted_count += desc_submitted_count;
-
-        NIXL_DEBUG << "Successfully processed descriptor " << desc_idx << " with "
-                   << desc_submitted_count
-                   << " requests submitted (range accumulated: " << submitted_count << ")";
     }
 
     return NIXL_SUCCESS;
@@ -1307,7 +1281,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                                                    local,
                                                    remote,
                                                    conn,
-                                                   remote_agent,
                                                    backend_handle,
                                                    0,
                                                    desc_count,
@@ -1327,9 +1300,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         size_t remaining = num_chunks;
         size_t submitted_chunks = 0;
 
-        NIXL_DEBUG << "Processing " << desc_count << " descriptors across " << num_chunks
-                   << " libfabric post worker chunks";
-
         try {
             for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
                 const int start_idx = static_cast<int>(chunk_idx * chunk_size);
@@ -1345,7 +1315,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                                                      local,
                                                      remote,
                                                      conn,
-                                                     remote_agent,
                                                      backend_handle,
                                                      start_idx,
                                                      end_idx,

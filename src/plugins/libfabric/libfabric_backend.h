@@ -303,7 +303,6 @@ private:
                         const nixl_meta_dlist_t &local,
                         const nixl_meta_dlist_t &remote,
                         const std::shared_ptr<nixlLibfabricConnection> &conn,
-                        const std::string &remote_agent,
                         nixlLibfabricBackendH *backend_handle,
                         int start_idx,
                         int end_idx,
