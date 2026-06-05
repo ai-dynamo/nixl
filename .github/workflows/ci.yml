@@ -22,6 +22,8 @@ name: NIXL CI
 
 on:
   pull_request:
+    # 'labeled' so adding the ci-release-test label triggers a run with the label in context
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
     tags: ['v*']
