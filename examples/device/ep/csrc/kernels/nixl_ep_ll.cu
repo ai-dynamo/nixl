@@ -35,7 +35,7 @@ namespace nixl_ep {
 __device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst_rank) {
     if (dst_rank == ctx.rank) return (void*) dst_ptr;
 
-    void *remote_ptr = nixlGetPtr(ctx.remote_mvh, dst_rank);
+    void *remote_ptr = ctx.p2p_ptrs[dst_rank];
     if (remote_ptr == nullptr) return nullptr;
 
     return (void*) ((uint64_t) remote_ptr + ctx.offset_get(dst_ptr));
@@ -1109,6 +1109,29 @@ void update_mask_buffer(int* mask_buffer_ptr, int rank, bool mask, cudaStream_t 
     constexpr int kNumThreads = 32;
     SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
     LAUNCH_KERNEL(&cfg, update_mask_buffer<kNumThreads>, mask_buffer_ptr, rank, mask);
+}
+
+
+template <int kNumThreads> __launch_bounds__(kNumThreads, 1)
+__global__ void cache_p2p_ptrs_kernel(nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
+    const auto thread_id = static_cast<int>(threadIdx.x);
+    auto nixl_ctx = *nixl_ctx_ptr;
+
+    for (int rank_id = thread_id; rank_id < nixl_ctx.max_num_ranks; rank_id += kNumThreads) {
+        if (rank_id == nixl_ctx.rank) {
+            nixl_ctx.p2p_ptrs[rank_id] = nixl_ctx.rdma_buffer_ptr;
+        } else {
+            nixl_ctx.p2p_ptrs[rank_id] =
+                nixl_ctx.remote_mvh == nullptr ? nullptr : nixlGetPtr(nixl_ctx.remote_mvh, rank_id);
+        }
+    }
+}
+
+void cache_p2p_ptrs(gpu_nixl_ctx* nixl_ctx, cudaStream_t stream) {
+    constexpr int num_sms = 1;
+    constexpr int kNumThreads = 128;
+    SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
+    LAUNCH_KERNEL(&cfg, cache_p2p_ptrs_kernel<kNumThreads>, nixl_ctx);
 }
 
 

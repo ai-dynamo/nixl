@@ -1340,6 +1340,10 @@ void Buffer::_nixl_ep_memory_views_create(void) {
         }
     }
     CUDA_CHECK(cudaMemcpy(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx), cudaMemcpyHostToDevice));
+    ep_kernels::cache_p2p_ptrs(gpu_ctx_ptr, comm_stream);
+    // Hook-mode LL kernels launch on the compute stream, so make the
+    // refreshed cache visible before this control-path call returns.
+    CUDA_CHECK(cudaStreamSynchronize(comm_stream));
 }
 
 void Buffer::_nixl_ep_memory_views_destroy(void) {
@@ -1354,12 +1358,16 @@ void Buffer::_nixl_ep_memory_views_destroy(void) {
 }
 
 void Buffer::_nixl_ep_init(void) {
+    CUDA_CHECK(cudaMalloc(&p2p_ptrs, max_num_ranks * sizeof(void*)));
+    CUDA_CHECK(cudaMemset(p2p_ptrs, 0, max_num_ranks * sizeof(void*)));
+
     gpu_ctx = {
         .sync_buffer_ptr = sync_buffer_ptr,
         .sync_count_ptr = sync_count_ptr,
         .last_ht_barrier_counter = last_ht_barrier_counter,
         .local_ht_barrier_counter_ptr = local_ht_barrier_counter,
         .rdma_buffer_ptr = rdma_buffer_ptr,
+        .p2p_ptrs = p2p_ptrs,
         .max_num_ranks = max_num_ranks,
         .num_rdma_ranks = num_rdma_ranks,
         .rank = rank,
@@ -1370,6 +1378,10 @@ void Buffer::_nixl_ep_init(void) {
 
 void Buffer::_nixl_ep_destroy(void) {
     _nixl_ep_memory_views_destroy();
+    if (p2p_ptrs != nullptr) {
+        cudaFree(p2p_ptrs);
+        p2p_ptrs = nullptr;
+    }
     if (gpu_ctx_ptr != nullptr) {
         cudaFree(gpu_ctx_ptr);
         gpu_ctx_ptr = nullptr;

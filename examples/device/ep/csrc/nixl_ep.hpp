@@ -158,6 +158,7 @@ private:
     NixlPeerInfo my_peer_info;
     nixl_ep::gpu_nixl_ctx gpu_ctx;
     nixl_ep::gpu_nixl_ctx* gpu_ctx_ptr = nullptr;
+    void** p2p_ptrs = nullptr;
     uint64_t* last_ht_barrier_counter = nullptr;
     uint64_t* local_ht_barrier_counter = nullptr;
 
