@@ -88,22 +88,31 @@ private:
     [[nodiscard]] bool
     isActive() const noexcept;
 
+    // Resolve the configured exporter and create it. Returns nullptr when no
+    // sink is configured (telemetry stays inactive); throws on a genuine
+    // plugin-load / exporter-creation failure. Used to initialize the const
+    // exporter_ from the member initializer list.
+    [[nodiscard]] std::unique_ptr<nixlTelemetryExporter>
+    makeExporter() const;
     void
-    initializeTelemetry();
+    startExportTask();
     void
     registerPeriodicTask(periodicTask &task);
     void
     updateData(nixl_telemetry_event_type_t event_type, uint64_t value);
     bool
     writeEventHelper();
-    std::unique_ptr<nixlTelemetryExporter> exporter_;
+
+    // Declared in initialization order: agentName_ and maxBufferedEvents_ are
+    // consumed by makeExporter() when constructing exporter_.
+    const std::string agentName_;
+    const size_t maxBufferedEvents_;
+    const std::unique_ptr<nixlTelemetryExporter> exporter_;
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
     std::vector<nixlTelemetryEvent> events_;
-    size_t maxBufferedEvents_;
     std::mutex mutex_;
     asio::thread_pool pool_;
     periodicTask writeTask_;
-    std::string agentName_;
 };
 
 #endif
