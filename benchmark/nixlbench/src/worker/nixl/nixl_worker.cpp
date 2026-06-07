@@ -1412,6 +1412,159 @@ getRemoteSegType() {
     return GET_SEG_TYPE(false);
 }
 
+// Fill a transfer buffer with a single byte. For VRAM the fill targets the
+// device that owns the buffer, so multi-GPU runs poison the right device.
+static void
+fillTransferBuffer(nixl_mem_t seg_type, uintptr_t addr, size_t len, uint8_t value, int dev_id) {
+    if (seg_type != VRAM_SEG) {
+        std::memset(reinterpret_cast<void *>(addr), value, len);
+        return;
+    }
+    if (neuronCoreCount() > 0) {
+        std::vector<uint8_t> src(len, value);
+        CHECK_NEURON_ERROR(
+            neuronMemcpy(reinterpret_cast<void *>(addr), src.data(), len, neuronMemcpyHostToDevice),
+            "fillTransferBuffer: neuronMemcpy failed");
+        return;
+    }
+#if HAVE_CUDA
+    CHECK_CUDA_ERROR(cudaSetDevice(dev_id), "fillTransferBuffer: cudaSetDevice failed");
+    CHECK_CUDA_ERROR(cudaMemset(reinterpret_cast<void *>(addr), value, len),
+                     "fillTransferBuffer: cudaMemset failed");
+#elif HAVE_ROCM
+    CHECK_CUDA_ERROR(hipSetDevice(dev_id), "fillTransferBuffer: hipSetDevice failed");
+    CHECK_CUDA_ERROR(hipMemset(reinterpret_cast<void *>(addr), value, len),
+                     "fillTransferBuffer: hipMemset failed");
+#else
+    (void)dev_id;
+    std::cerr << "VRAM consistency check needs CUDA, ROCm or Neuron" << std::endl;
+    exit(EXIT_FAILURE);
+#endif
+}
+
+// Return a host-readable view of a transfer buffer. DRAM is returned in place;
+// VRAM is copied from its owning device into host_scratch (never dereferenced
+// as host memory directly).
+static const uint8_t *
+hostView(nixl_mem_t seg_type,
+         uintptr_t addr,
+         size_t len,
+         std::vector<uint8_t> &host_scratch,
+         int dev_id) {
+    if (seg_type != VRAM_SEG) {
+        return reinterpret_cast<const uint8_t *>(addr);
+    }
+    host_scratch.resize(len);
+    if (neuronCoreCount() > 0) {
+        CHECK_NEURON_ERROR(
+            neuronMemcpy(
+                host_scratch.data(), reinterpret_cast<void *>(addr), len, neuronMemcpyDeviceToHost),
+            "hostView: neuronMemcpy failed");
+        return host_scratch.data();
+    }
+#if HAVE_CUDA
+    CHECK_CUDA_ERROR(cudaSetDevice(dev_id), "hostView: cudaSetDevice failed");
+    CHECK_CUDA_ERROR(
+        cudaMemcpy(
+            host_scratch.data(), reinterpret_cast<void *>(addr), len, cudaMemcpyDeviceToHost),
+        "hostView: cudaMemcpy failed");
+#elif HAVE_ROCM
+    CHECK_CUDA_ERROR(hipSetDevice(dev_id), "hostView: hipSetDevice failed");
+    CHECK_CUDA_ERROR(
+        hipMemcpy(host_scratch.data(), reinterpret_cast<void *>(addr), len, hipMemcpyDeviceToHost),
+        "hostView: hipMemcpy failed");
+#else
+    (void)dev_id;
+    std::cerr << "VRAM consistency check needs CUDA, ROCm or Neuron" << std::endl;
+    exit(EXIT_FAILURE);
+#endif
+    return host_scratch.data();
+}
+
+// Verify a storage WRITE without touching local disk.
+//
+// The data has just been written to the remote backend. Rather than download
+// the object to a local file and re-read it (the file/device path other storage
+// backends use), read the objects back over the same transport into the
+// initiator buffers and compare them to the byte the initiator wrote
+// (XFERBENCH_INITIATOR_BUFFER_ELEMENT). This verifies the round-trip end to end
+// and needs no local copy, so it also covers backends that materialize none.
+//
+// The buffers are poisoned with a different byte first, so a read that moves
+// nothing is caught instead of passing by coincidence. `local_lists` are the
+// initiator buffers; `remote_lists` the matching object descriptors.
+bool
+xferBenchNixlWorker::verifyWriteByReadback(std::vector<std::vector<xferBenchIOV>> &local_lists,
+                                           std::vector<std::vector<xferBenchIOV>> &remote_lists) {
+    constexpr uint8_t poison = 0x00;
+    static_assert(poison != XFERBENCH_INITIATOR_BUFFER_ELEMENT,
+                  "poison value must differ from the initiator sentinel");
+
+    if (local_lists.size() != remote_lists.size()) {
+        std::cerr << "verifyWriteByReadback: list count mismatch (" << local_lists.size()
+                  << " local vs " << remote_lists.size() << " remote)" << std::endl;
+        return false;
+    }
+
+    bool pass = true;
+    for (size_t list_idx = 0; list_idx < local_lists.size(); list_idx++) {
+        if (local_lists[list_idx].size() != remote_lists[list_idx].size()) {
+            std::cerr << "verifyWriteByReadback: descriptor count mismatch in list " << list_idx
+                      << std::endl;
+            return false;
+        }
+
+        for (const auto &iov : local_lists[list_idx]) {
+            fillTransferBuffer(seg_type, iov.addr, iov.len, poison, iov.devId);
+        }
+
+        nixl_xfer_dlist_t local_desc(seg_type);
+        nixl_xfer_dlist_t remote_desc(getRemoteSegType());
+        prepareTransferDescriptors(
+            local_desc, remote_desc, local_lists[list_idx], remote_lists[list_idx]);
+
+        std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
+        nixl_opt_args_t params;
+        nixlXferReqH *req = nullptr;
+        nixl_status_t rc =
+            agent->createXferReq(NIXL_READ, local_desc, remote_desc, target, req, &params);
+        if (NIXL_SUCCESS != rc) {
+            std::cerr << "verifyWriteByReadback: createXferReq failed for list " << list_idx
+                      << std::endl;
+            return false;
+        }
+        rc = agent->postXferReq(req);
+        if (NIXL_SUCCESS != rc && NIXL_IN_PROG != rc) {
+            std::cerr << "verifyWriteByReadback: postXferReq failed for list " << list_idx
+                      << std::endl;
+            agent->releaseXferReq(req);
+            return false;
+        }
+        while (NIXL_IN_PROG == agent->getXferStatus(req)) {}
+        agent->releaseXferReq(req);
+
+        size_t iov_idx = 0;
+        for (const auto &iov : local_lists[list_idx]) {
+            std::vector<uint8_t> host_scratch;
+            const uint8_t *bytes = hostView(seg_type, iov.addr, iov.len, host_scratch, iov.devId);
+            for (size_t b = 0; b < iov.len; b++) {
+                if (bytes[b] != XFERBENCH_INITIATOR_BUFFER_ELEMENT) {
+                    std::cerr << "Consistency check failed for iov " << list_idx << ":" << iov_idx
+                              << " at byte " << b << std::endl;
+                    pass = false;
+                    break;
+                }
+            }
+            iov_idx++;
+        }
+    }
+
+    if (!pass) {
+        std::cerr << "Consistency check failed" << std::endl;
+    }
+    return pass;
+}
+
 // Register local and remote memory with the agent.
 static nixl_status_t
 registerIterationMem(nixlAgent *agent,
