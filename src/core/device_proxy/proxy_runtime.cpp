@@ -749,10 +749,12 @@ nixlProxyRuntime::startWorkers() {
         NIXL_ERROR << "ProxyRuntime::startWorkers: runtime not initialized";
         return NIXL_ERR_NOT_SUPPORTED;
     }
-    __atomic_store_n(shutdown_word_host_,
-                     static_cast<uint32_t>(nixl_proxy_control_state_t::SHUTDOWN),
-                     __ATOMIC_RELEASE);
-    joinWorkerThreads();
+
+    if (workers_started_) {
+        NIXL_ERROR << "ProxyRuntime::startWorkers: workers already started";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     for (auto &channel : channels_) {
         channel.inflight_requests.clear();
         channel.error_latched = false;
