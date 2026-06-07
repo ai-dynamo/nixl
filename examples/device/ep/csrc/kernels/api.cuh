@@ -46,6 +46,7 @@ struct gpu_nixl_ctx {
     uint64_t *last_ht_barrier_counter;
     uint64_t *local_ht_barrier_counter_ptr;
     void *rdma_buffer_ptr;
+    void **p2p_ptrs;
     int max_num_ranks;
     int num_rdma_ranks;
     int rank;
@@ -246,6 +247,8 @@ void barrier(gpu_nixl_ctx* nixl_ctx, int* mask_buffer_ptr, uint64_t timeout_cycl
 void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* output_mask_tensor, cudaStream_t stream);
 
 void update_mask_buffer(int* mask_buffer_ptr, int rank_to_mask, bool mask, cudaStream_t stream);
+
+void cache_p2p_ptrs(gpu_nixl_ctx* nixl_ctx, cudaStream_t stream);
 
 } // namespace ep_kernels
 
