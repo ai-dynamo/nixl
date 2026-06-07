@@ -7,19 +7,10 @@
 #include "s3_accel/client.h"
 #include "common/nixl_log.h"
 
-#include "obj_engine_registry.h"
-
-namespace {
-
-// "" matches the default from getAccelType() when no "type" key is set in custom params
-objAccelEngineRegistrar reg_s3_accel(
-    "",
-    [](const nixlBackendInitParams *p) { return std::make_unique<S3AccelObjEngineImpl>(p); },
-    [](const nixlBackendInitParams *p, std::shared_ptr<iS3Client> s3, std::shared_ptr<iS3Client>) {
-        return std::make_unique<S3AccelObjEngineImpl>(p, std::move(s3));
-    });
-
-} // namespace
+// S3AccelObjEngineImpl is the shared base for vendor accel engines (e.g. Dell).
+// It is not registered for direct selection: `accelerated=true` with no `type`
+// resolves to the generic engine (see s3_accel/generic/engine_impl.cpp), and
+// vendor engines register under their own type (e.g. "dell").
 
 S3AccelObjEngineImpl::S3AccelObjEngineImpl(const nixlBackendInitParams *init_params)
     : DefaultObjEngineImpl(init_params) {

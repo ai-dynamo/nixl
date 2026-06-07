@@ -85,6 +85,17 @@ public:
      */
     virtual void
     checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) = 0;
+
+    /**
+     * Whether this client's GPU-direct S3-over-RDMA fast path is fully ready
+     * (cuObject fabric connected AND control plane + executor available). The
+     * engine uses this to decide whether VRAM_SEG can be safely advertised:
+     * a GPU pointer must never reach the HTTP path. Defaults to false.
+     */
+    virtual bool
+    supportsRdma() const {
+        return false;
+    }
 };
 
 /**

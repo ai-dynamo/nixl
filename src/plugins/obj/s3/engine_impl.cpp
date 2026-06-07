@@ -28,15 +28,16 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
         return false;
     }
 
-    if (remote_agent != local_agent)
+    if (remote_agent != local_agent) {
         NIXL_WARN << absl::StrFormat(
             "Warning: Remote agent doesn't match the requesting agent (%s). Got %s",
             local_agent,
             remote_agent);
+    }
 
-    if (local.getType() != DRAM_SEG) {
-        NIXL_ERROR << absl::StrFormat("Error: Local memory type must be DRAM_SEG, got %d",
-                                      local.getType());
+    if (local.getType() != DRAM_SEG && local.getType() != VRAM_SEG) {
+        NIXL_ERROR << absl::StrFormat(
+            "Error: Local memory type must be DRAM_SEG or VRAM_SEG, got %d", local.getType());
         return false;
     }
 
@@ -80,17 +81,28 @@ public:
 
 class nixlObjMetadata : public nixlBackendMD {
 public:
-    nixlObjMetadata(nixl_mem_t nixl_mem, uint64_t dev_id, std::string obj_key)
+    // Object segment: maps a device id to an S3 object key.
+    nixlObjMetadata(nixl_mem_t nixl_mem, uint64_t dev_id, const std::string &obj_key)
         : nixlBackendMD(true),
           nixlMem(nixl_mem),
           devId(dev_id),
           objKey(obj_key) {}
 
+    // Memory segment (DRAM/VRAM) pinned for RDMA; records the address to
+    // release on deregister.
+    nixlObjMetadata(nixl_mem_t nixl_mem, uintptr_t addr)
+        : nixlBackendMD(true),
+          nixlMem(nixl_mem),
+          localAddr(addr),
+          rdmaRegistered(true) {}
+
     ~nixlObjMetadata() = default;
 
     nixl_mem_t nixlMem;
-    uint64_t devId;
+    uint64_t devId = 0;
     std::string objKey;
+    uintptr_t localAddr = 0;
+    bool rdmaRegistered = false;
 };
 
 } // namespace
@@ -117,7 +129,9 @@ DefaultObjEngineImpl::DefaultObjEngineImpl(const nixlBackendInitParams *init_par
     // The s3_client_crt parameter is accepted for API consistency with derived
     // engine implementations (e.g., S3CrtObjEngineImpl) but is intentionally unused here.
     (void)s3_client_crt;
-    if (s3Client_) s3Client_->setExecutor(executor_);
+    if (s3Client_) {
+        s3Client_->setExecutor(executor_);
+    }
     NIXL_INFO << "Object storage backend initialized with injected S3 clients";
 }
 
@@ -129,19 +143,38 @@ nixl_status_t
 DefaultObjEngineImpl::registerMem(const nixlBlobDesc &mem,
                                   const nixl_mem_t &nixl_mem,
                                   nixlBackendMD *&out) {
-    nixl_mem_list_t supported_mems = {OBJ_SEG, DRAM_SEG};
-    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end())
+    nixl_mem_list_t supported_mems = getSupportedMems();
+    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end()) {
         return NIXL_ERR_NOT_SUPPORTED;
+    }
 
     if (nixl_mem == OBJ_SEG) {
         std::unique_ptr<nixlObjMetadata> obj_md = std::make_unique<nixlObjMetadata>(
             nixl_mem, mem.devId, mem.metaInfo.empty() ? std::to_string(mem.devId) : mem.metaInfo);
         devIdToObjKey_[mem.devId] = obj_md->objKey;
         out = obj_md.release();
-    } else {
-        out = nullptr;
+        return NIXL_SUCCESS;
     }
 
+    // DRAM_SEG / VRAM_SEG: persistently pin the buffer for RDMA so the client
+    // can mint a token for it. DRAM is best-effort (still usable over HTTP);
+    // VRAM is mandatory (no HTTP path can read a GPU pointer).
+    bool registered = false;
+#ifdef HAVE_CUOBJ_CLIENT
+    // Register only when the client's RDMA fast path is fully ready.
+    if (s3Client_ && s3Client_->supportsRdma()) {
+        if (auto *rdma = nixl_obj_rdma::SharedCuObjClient::instance()) {
+            registered = rdma->registerBuffer(reinterpret_cast<void *>(mem.addr), mem.len);
+        }
+    }
+#endif
+    if (nixl_mem == VRAM_SEG && !registered) {
+        NIXL_ERROR << "VRAM registration requires accelerated=true (generic S3-over-RDMA) and a "
+                      "ready RDMA fast path (cuObject)";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    out = registered ? std::make_unique<nixlObjMetadata>(nixl_mem, mem.addr).release() : nullptr;
     return NIXL_SUCCESS;
 }
 
@@ -150,7 +183,16 @@ DefaultObjEngineImpl::deregisterMem(nixlBackendMD *meta) {
     nixlObjMetadata *obj_md = static_cast<nixlObjMetadata *>(meta);
     if (obj_md) {
         std::unique_ptr<nixlObjMetadata> obj_md_ptr = std::unique_ptr<nixlObjMetadata>(obj_md);
-        devIdToObjKey_.erase(obj_md->devId);
+        if (obj_md->nixlMem == OBJ_SEG) {
+            devIdToObjKey_.erase(obj_md->devId);
+        }
+#ifdef HAVE_CUOBJ_CLIENT
+        else if (obj_md->rdmaRegistered) {
+            if (auto *rdma = nixl_obj_rdma::SharedCuObjClient::instance()) {
+                rdma->deregisterBuffer(reinterpret_cast<void *>(obj_md->localAddr));
+            }
+        }
+#endif
     }
 
     return NIXL_SUCCESS;
@@ -191,7 +233,9 @@ DefaultObjEngineImpl::queryMem(const nixl_reg_dlist_t &descs,
                 desc.metaInfo,
                 [&resp, &has_error, i, promise = state.promise, completed = state.completed](
                     std::optional<bool> exists) {
-                    if (completed->exchange(true)) return;
+                    if (completed->exchange(true)) {
+                        return;
+                    }
                     if (!exists.has_value()) {
                         resp[i] = std::nullopt;
                         has_error.store(true, std::memory_order_relaxed);
@@ -225,8 +269,9 @@ DefaultObjEngineImpl::queryMem(const nixl_reg_dlist_t &descs,
         // Wait for all callbacks to complete their writes to resp/has_error
         // to avoid use-after-free if a callback passed the exchange check
         // but was preempted before writing.
-        for (size_t j = 0; j < futures.size(); ++j)
+        for (size_t j = 0; j < futures.size(); ++j) {
             futures[j].wait();
+        }
         NIXL_ERROR << "Failed to query memory: " << e.what();
         return NIXL_ERR_BACKEND;
     }
@@ -264,8 +309,9 @@ DefaultObjEngineImpl::prepXfer(const nixl_xfer_op_t &operation,
                                const std::string &local_agent,
                                nixlBackendReqH *&handle,
                                const nixl_opt_b_args_t *opt_args) const {
-    if (!isValidPrepXferParams(operation, local, remote, remote_agent, local_agent))
+    if (!isValidPrepXferParams(operation, local, remote, remote_agent, local_agent)) {
         return NIXL_ERR_INVALID_PARAM;
+    }
 
     auto req_h = std::make_unique<nixlObjBackendReqH>();
     handle = req_h.release();
@@ -315,12 +361,13 @@ DefaultObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
             status_promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
         };
 
-        if (operation == NIXL_WRITE)
+        if (operation == NIXL_WRITE) {
             client->putObjectAsync(
                 obj_key_search->second, data_ptr, data_len, offset, status_callback);
-        else
+        } else {
             client->getObjectAsync(
                 obj_key_search->second, data_ptr, data_len, offset, status_callback);
+        }
     }
 
     return NIXL_IN_PROG;
