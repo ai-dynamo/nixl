@@ -1282,8 +1282,8 @@ void Buffer::query_mask_buffer(const torch::Tensor& mask_status) {
     EP_HOST_ASSERT(mask_status.numel() == max_num_ranks && mask_status.scalar_type() == torch::kInt32);
 
     ep_kernels::query_mask_buffer(mask_buffer_ptr, max_num_ranks,
-                                    reinterpret_cast<int*>(mask_status.data_ptr()),
-                                    at::cuda::getCurrentCUDAStream());
+                                  reinterpret_cast<int*>(mask_status.data_ptr()),
+                                  at::cuda::getCurrentCUDAStream());
 }
 
 void Buffer::clean_mask_buffer() {

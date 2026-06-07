@@ -43,16 +43,22 @@ __device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst
 
 namespace ep_kernels {
 
+constexpr int kSmemAlignment = 1024;
+
 template<bool use_warp_sync = false>
 __forceinline__ __device__ bool is_rank_masked(int* mask_buffer_ptr, int rank) {
-    if (mask_buffer_ptr == nullptr) {
-        return false;
-    }
     if constexpr (use_warp_sync) {
-        return __shfl_sync(0xffffffff, ld_acquire_global(mask_buffer_ptr + rank), 0) != 0;
+        int masked = 0;
+        if (get_lane_id() == 0)
+            masked = ld_acquire_global(mask_buffer_ptr + rank);
+        return __shfl_sync(0xffffffff, masked, 0) != 0;
     } else {
         return ld_acquire_global(mask_buffer_ptr + rank) != 0;
     }
+}
+
+__forceinline__ __device__ bool is_rank_masked_smem(const int* rank_mask, int rank) {
+    return rank_mask[rank] != 0;
 }
 
 __device__ __forceinline__ uint64_t doorbell_flag(int idx) {
@@ -323,8 +329,6 @@ DISPATCH_RECV:
                        rank,
                        local_expert_idx,
                        src_rank);
-                if (mask_buffer_ptr == nullptr)
-                    trap();
                 atomicExch(mask_buffer_ptr + src_rank, 1);
             }
 
@@ -851,8 +855,6 @@ COMBINE_RECV:
                        rank,
                        responsible_expert_idx % num_local_experts,
                        src_rank);
-                if (mask_buffer_ptr == nullptr)
-                    trap();
                 atomicExch(mask_buffer_ptr + src_rank, 1);
             }
 
@@ -862,6 +864,11 @@ COMBINE_RECV:
         }
     }
     cg::this_grid().sync();
+    const int rank_mask_smem_bytes = align_up<int>(active_rank_bound * static_cast<int>(sizeof(int)), kSmemAlignment);
+    auto rank_mask_smem = reinterpret_cast<int*>(smem_buffer);
+    if (thread_id < active_rank_bound)
+        rank_mask_smem[thread_id] = ld_acquire_global(mask_buffer_ptr + thread_id);
+    __syncthreads();
 
     // Reassign warp groups
     constexpr int kMaxNumGroups = 2;
@@ -882,7 +889,7 @@ COMBINE_RECV:
         constexpr int kNumBytesPerGroup = kNumStages * kNumTMABufferBytes + kHidden * 2 + kNumStages * kNumDivisionBytes * 3;
 
         // Reallocate shared memory
-        const auto smem_group_buffer = smem_buffer + kNumBytesPerGroup * group_idx;
+        const auto smem_group_buffer = smem_buffer + rank_mask_smem_bytes + kNumBytesPerGroup * group_idx;
         auto full_barriers  = PatternVisitor([=](const int& i) { return reinterpret_cast<uint64_t*>(smem_group_buffer + i * kNumTMABufferBytes); });
         auto empty_barriers = PatternVisitor([=](const int& i) { return reinterpret_cast<uint64_t*>(smem_group_buffer + i * kNumTMABufferBytes + 8); });
         auto tma_ld_buffers = PatternVisitor([=](const int& i) { return reinterpret_cast<uint8_t* >(smem_group_buffer + i * kNumTMABufferBytes + 16); });
@@ -918,7 +925,7 @@ COMBINE_RECV:
                     if (topk_idx_reg < 0)
                         continue;
                     EP_DEVICE_ASSERT(topk_idx_reg < active_expert_bound);
-                    if (is_rank_masked(mask_buffer_ptr, topk_idx_reg / num_local_experts))
+                    if (is_rank_masked_smem(rank_mask_smem, topk_idx_reg / num_local_experts))
                         continue;
 
                     mbarrier_wait<true>(empty_barriers[stage_idx], tma_phase, stage_idx);
@@ -959,7 +966,7 @@ COMBINE_RECV:
                     if (topk_idx_reg < 0)
                         continue;
                     EP_DEVICE_ASSERT(topk_idx_reg < active_expert_bound);
-                    if (is_rank_masked(mask_buffer_ptr, topk_idx_reg / num_local_experts))
+                    if (is_rank_masked_smem(rank_mask_smem, topk_idx_reg / num_local_experts))
                         continue;
                     const auto& topk_weight = __shfl_sync(0xffffffff, topk_weights_by_lane, i);
 
@@ -1028,6 +1035,11 @@ void combine(void* combined_x,
     const auto num_sms = max(ceil_div(active_expert_bound, num_warp_groups),
                              num_recv_per_sm == 0 ? 1 : ceil_div(num_combined_tokens, num_recv_per_sm));
 
+    // We use one thread per active rank to populate the combine receive active rank mask cache.
+    // 1 <= num_warp_groups <= 32, num_warps = num_warp_groups * floor(32 / num_warp_groups) >= 17,
+    // so num_warps * 32 >= 544 threads, well over any reasonable active_rank_bound.
+    EP_HOST_ASSERT(active_rank_bound <= num_warps * 32);
+
     // Check workspace
     auto atomic_clean_flag = static_cast<int*>(workspace);
     EP_HOST_ASSERT(sizeof(int) <= NUM_WORKSPACE_BYTES);
@@ -1048,9 +1060,10 @@ void combine(void* combined_x,
     // Receive buffer size
     const int num_recv_tma_bytes = 16 + hidden * 2;
     const int smem_recv_size = kMaxNumGroups * (kNumStages * num_recv_tma_bytes + hidden * 2 + kNumStages * num_meta_bytes * 3);
+    const int rank_mask_smem_bytes = align_up<int>(active_rank_bound * static_cast<int>(sizeof(int)), kSmemAlignment);
 
     // Total requirement
-    const int smem_size = max(smem_send_size, smem_recv_size);
+    const int smem_size = max(smem_send_size, rank_mask_smem_bytes + smem_recv_size);
 
 #define COMBINE_LAUNCH_CASE(hidden) { \
 auto combine_func = use_logfmt ? \
@@ -1156,8 +1169,6 @@ __forceinline__ __device__ void barrier(nixl_ep::gpu_nixl_ctx nixl_ctx, int* mas
             if (wait_recv_cost > timeout_cycles) {
                 printf("Warning: NixlEP timeout for barrier, rank %d, thread %d, dst_rank %d, expected value %d, actual value %d\n",
                        nixl_ctx.rank, thread_id, dst_rank, expected_cnt, ld_acquire_global(nixl_ctx.sync_buffer_ptr + dst_rank));
-                if (mask_buffer_ptr == nullptr)
-                    trap();
                 atomicExch(mask_buffer_ptr + dst_rank, 1);
             }
         }
