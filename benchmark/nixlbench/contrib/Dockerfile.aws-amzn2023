@@ -1,0 +1,261 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+ARG BASE_IMAGE="nvidia/cuda"
+ARG BASE_IMAGE_TAG="13.0.2-devel-amzn2023"
+
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+
+ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG EFA_VERSION="1.48.0"
+ARG UCX_REF="v1.20.x"
+ARG ARCH="x86_64"
+ARG WHL_PYTHON_VERSIONS="3.12"
+ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
+ARG BUILD_TYPE="release"
+ARG NPROC
+ARG ABSL_TAG="lts_2025_08_14"
+ARG GRPC_TAG="v1.73.0"
+ARG ETCD_VER="v3.6.11"
+ARG ETCD_DOWNLOAD_URL="https://github.com/etcd-io/etcd/releases/download"
+
+RUN dnf install -y \
+    ninja-build \
+    pybind11-devel \
+    clang-devel \
+    cmake \
+    gflags-devel \
+    protobuf-devel \
+    protobuf-compiler \
+    libaio-devel \
+    grpc-plugins \
+    autoconf \
+    automake \
+    libtool \
+    zlib-devel \
+    flex \
+    gtest-devel \
+    gcc-c++ \
+    git \
+    numactl \
+    numactl-devel \
+    hwloc \
+    hwloc-libs \
+    hwloc-devel \
+    openssl-devel
+
+WORKDIR /workspace
+
+RUN curl --retry 3 --retry-delay 2 -fsSL -o aws-efa-installer-${EFA_VERSION}.tar.gz \
+        https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_VERSION}.tar.gz && \
+    tar -xf aws-efa-installer-${EFA_VERSION}.tar.gz && \
+    cd aws-efa-installer && \
+    # EFA installer version > 1.47.0 autodetect NGC containers
+    if printf '%s\n' "1.47.0" "${EFA_VERSION}" | sort -V | head -n1 | grep -qx "${EFA_VERSION}"; then \
+        ./efa_installer.sh -y --skip-kmod --skip-limit-conf --no-verify; \
+    else \
+        ./efa_installer.sh --disable-build-ngc --disable-ngc -y --skip-kmod --skip-limit-conf --no-verify; \
+    fi && \
+    ldconfig && \
+    cd .. && rm -rf aws-efa-installer && rm -f aws-efa-installer-${EFA_VERSION}.tar.gz
+
+ENV EFA_VERSION="${EFA_VERSION}"
+ENV PKG_CONFIG_PATH="/opt/amazon/efa/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
+# Install AWS CLI
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && ./aws/install && rm -rf awscliv2.zip aws
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
+
+RUN git clone https://github.com/openucx/ucx.git && \
+    cd ucx && \
+    git checkout $UCX_REF && \
+    ./autogen.sh && \
+    ./contrib/configure-release \
+        --prefix=/usr/local/ucx \
+        --enable-shared \
+        --disable-static \
+        --disable-doxygen-doc \
+        --enable-optimizations \
+        --enable-cma \
+        --enable-devel-headers \
+        --with-cuda=/usr/local/cuda \
+        --with-verbs \
+        --with-dm \
+        --without-gdrcopy \
+        --with-efa \
+        --enable-mt && \
+    make -j${NPROC:-$(nproc)} && \
+    make -j install-strip && \
+    echo "/usr/local/ucx/lib" > /etc/ld.so.conf.d/ucx.conf && \
+    echo "/usr/local/ucx/lib/ucx" >> /etc/ld.so.conf.d/ucx.conf && \
+    ldconfig && \
+    cd .. && rm -rf ucx
+
+# Build Abseil from source (required for absl/log).
+RUN git clone https://github.com/abseil/abseil-cpp.git && \
+    cd abseil-cpp && \
+    git fetch --depth 1 origin ${ABSL_TAG} && \
+    git checkout ${ABSL_TAG} && \
+    mkdir -p build && cd build && \
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON \
+        -DABSL_PROPAGATE_CXX_STD=ON \
+        -DABSL_ENABLE_INSTALL=ON && \
+    make -j${NPROC:-$(nproc)} && \
+    make install && \
+    ldconfig && \
+    cd ../.. && rm -rf abseil-cpp
+
+# Build gRPC from source against /usr/local Abseil.
+RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+    cd grpc && \
+    mkdir -p cmake/build && \
+    cd cmake/build && \
+    export CMAKE_PREFIX_PATH="/usr/local${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" && \
+    export PKG_CONFIG_PATH="/usr/local/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" && \
+    cmake ../.. \
+        -DgRPC_INSTALL=ON \
+        -DgRPC_BUILD_TESTS=OFF \
+        -DBUILD_SHARED_LIBS=ON \
+        -DCMAKE_CXX_STANDARD=17 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_PREFIX_PATH=/usr/local \
+        -Dabsl_DIR=/usr/local/lib64/cmake/absl \
+        -DgRPC_SSL_PROVIDER=package \
+        -DgRPC_ABSL_PROVIDER=package \
+        -DgRPC_PROTOBUF_PROVIDER=module \
+        -DgRPC_ZLIB_PROVIDER=package && \
+    make -j${NPROC:-$(nproc)} && \
+    make install && \
+    ldconfig && \
+    cd ../../.. && rm -rf grpc
+
+RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+    cd etcd-cpp-apiv3 && \
+    sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
+    mkdir build && cd build && \
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=17 -DCMAKE_PREFIX_PATH=/usr/local && \
+    make -j${NPROC:-$(nproc)} && make install && \
+    cd ../.. && rm -rf etcd-cpp-apiv3
+
+# Install etcd
+RUN ETCD_ARCH=$(case "$(uname -m)" in x86_64) echo "amd64";; aarch64) echo "arm64";; *) echo "$(uname -m)";; esac) && \
+    curl --retry 3 --retry-delay 2 -fsSL -o etcd-${ETCD_VER}-linux-${ETCD_ARCH}.tar.gz \
+        ${ETCD_DOWNLOAD_URL}/${ETCD_VER}/etcd-${ETCD_VER}-linux-${ETCD_ARCH}.tar.gz && \
+    mkdir etcd && \
+    tar -xf etcd-${ETCD_VER}-linux-${ETCD_ARCH}.tar.gz -C etcd --strip-components=1 && \
+    cp etcd/{etcd,etcdctl} /usr/local/bin/ && \
+    chmod +x /usr/local/bin/{etcd,etcdctl} && \
+    rm -rf etcd etcd-${ETCD_VER}-linux-${ETCD_ARCH}.tar.gz
+
+# Install AWS SDK C++ dependencies and build
+RUN dnf install -y libcurl-devel uuid-devel zlib-devel && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
+    mkdir sdk_build && \
+    cd sdk_build && \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    make -j${NPROC:-$(nproc)} && \
+    make install && \
+    cd .. && rm -rf sdk_build aws-sdk-cpp
+
+RUN git clone https://github.com/nvidia/gusli.git && \
+    cd gusli && \
+    make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+    cd .. && rm -rf gusli
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# By default, uv downloads python packages to $HOME/.cache/uv and hard links them
+# from the virtual environment. This means that the files reside in /root/.cache/uv,
+# which is not what we want since some systems mount user home dir into /root,
+# in which case the venv is broken when the container is started.
+# Set a custom cache directory inside /workspace to avoid this.
+ENV UV_CACHE_DIR=/workspace/.cache/uv
+RUN mkdir -p $UV_CACHE_DIR
+# Disable build isolation, i.e. uv should not create a new virtual environment for
+# building wheels.
+ENV UV_NO_BUILD_ISOLATION=1
+# Disable syncing, i.e. uv will not download packages outside uv pip commands.
+ENV UV_NO_SYNC=1
+# Create a new virtual environment
+ENV VIRTUAL_ENV=/workspace/.venv
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
+# Activate the virtual environment
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+# Install python dependencies
+RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
+# Install PyTorch
+RUN CUDA_SHORT_VERSION=cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .) && \
+    FLAGS="--index-url https://download.pytorch.org/whl/$CUDA_SHORT_VERSION" && \
+    uv pip install $FLAGS torch torchvision torchaudio
+# Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
+RUN uv pip install --upgrade 'setuptools>=80.9.0'
+
+COPY --from=nixl . /workspace/nixl
+COPY --from=nixlbench . /workspace/nixlbench
+
+WORKDIR /workspace/nixl
+
+RUN rm -rf build && \
+    mkdir build && \
+    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+    cd build && \
+    ninja && \
+    ninja install
+
+RUN echo "/usr/local/nixl/lib64" > /etc/ld.so.conf.d/nixl.conf && \
+    echo "/usr/local/nixl/lib64/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
+    ldconfig
+
+RUN CUDA_MAJOR=$(echo $CUDA_VERSION | cut -d. -f1) && \
+    ./contrib/tomlutil.py --wheel-name "nixl-cu${CUDA_MAJOR}" pyproject.toml && \
+    uv pip install . && \
+    uv pip install build/src/bindings/python/nixl-meta/nixl-*.whl
+
+WORKDIR /workspace/nixlbench
+
+RUN ls /usr/local/lib
+RUN echo $LD_LIBRARY_PATH
+RUN ldconfig
+
+RUN ls -ll /workspace/nixlbench
+
+RUN rm -rf build && \
+    mkdir build && \
+    meson setup build -Dnixl_path=/usr/local/nixl/ -Dprefix=/usr/local/nixlbench --buildtype=$BUILD_TYPE && \
+    cd build && ninja && ninja install
+
+WORKDIR /workspace/nixl
+
+RUN ls -ll benchmark/kvbench
+
+# Install dependencies for benchmarks
+RUN uv pip install -e benchmark/kvbench
+
+ENV PATH=/usr/local/nixlbench/bin:/usr/local/nixl/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/nixlbench/lib64:$LD_LIBRARY_PATH
+ENV PYTHONPATH=/usr/local/nixlbench/lib/python$DEFAULT_PYTHON_VERSION/site-packages/nixlbench/
+
+# Fix for etcd proto dependencies
+ENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
+WORKDIR /workspace/nixl/benchmark/kvbench
