@@ -15,6 +15,14 @@ public:
                        std::shared_ptr<iS3Client> s3_client,
                        std::shared_ptr<iS3Client> s3_client_crt);
 
+    // The CRT client is an HTTP multipart optimization for large objects and
+    // cannot do GPU-direct RDMA, so the CRT engine does not advertise VRAM_SEG.
+    // GPUDirect transfers require the default (non-CRT) configuration.
+    nixl_mem_list_t
+    getSupportedMems() const override {
+        return {DRAM_SEG, OBJ_SEG};
+    }
+
 protected:
     iS3Client *
     getClient() const override;

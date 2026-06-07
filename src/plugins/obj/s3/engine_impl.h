@@ -7,6 +7,7 @@
 #define OBJ_PLUGIN_S3_ENGINE_IMPL_H
 
 #include "obj_backend.h"
+#include "rdma.h"
 
 class DefaultObjEngineImpl : public nixlObjEngineImpl {
 public:
@@ -16,8 +17,16 @@ public:
                          std::shared_ptr<iS3Client> s3_client_crt);
     ~DefaultObjEngineImpl() override;
 
+    // VRAM_SEG (GPU-direct) is advertised only when the standard client's RDMA
+    // fast path is fully ready (accelerated=true generic S3-over-RDMA + cuObject
+    // fabric + control plane + executor). This is the same predicate the client
+    // uses to take the RDMA branch, so a GPU pointer can never reach the HTTP
+    // path.
     nixl_mem_list_t
     getSupportedMems() const override {
+        if (s3Client_ && s3Client_->supportsRdma()) {
+            return {DRAM_SEG, OBJ_SEG, VRAM_SEG};
+        }
         return {DRAM_SEG, OBJ_SEG};
     }
 
