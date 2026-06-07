@@ -39,6 +39,7 @@
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
 #include "utils/utils.h"
+#include "worker/worker.h"
 
 // Define command line parameters
 #define NB_ARG_STRING(param_name, def_val, help_text) DEFINE_string(param_name, def_val, help_text)
@@ -573,6 +574,14 @@ xferBenchConfig::loadParams(void) {
     }
 
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
+        // The NVSHMEM worker does not implement verifyWriteByReadback(), so a
+        // storage backend (which routes WRITE consistency through it) would fall
+        // back to the base implementation and silently fail. Reject the combo.
+        if (isStorageBackend()) {
+            std::cerr << "Error: NVSHMEM worker does not support storage backends" << std::endl;
+            std::cerr << "Hint: use --worker_type nixl for storage backends" << std::endl;
+            return -1;
+        }
         if (!((XFERBENCH_SEG_TYPE_VRAM == initiator_seg_type) &&
               (XFERBENCH_SEG_TYPE_VRAM == target_seg_type) && (1 == num_threads) &&
               (1 == num_initiator_dev) && (1 == num_target_dev) &&
@@ -1131,6 +1140,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
 
 bool
 xferBenchUtils::validateTransfer(bool is_initiator,
+                                 xferBenchWorker &worker,
                                  std::vector<std::vector<xferBenchIOV>> &local_lists,
                                  std::vector<std::vector<xferBenchIOV>> &remote_lists) {
     if (!xferBenchConfig::check_consistency) {
@@ -1142,7 +1152,12 @@ xferBenchUtils::validateTransfer(bool is_initiator,
             return checkConsistency(local_lists);
         } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
             if (xferBenchConfig::isStorageBackend()) {
-                return checkConsistency(remote_lists);
+                // Verify the write by reading the objects back over the
+                // transport into the local buffers and comparing in memory.
+                // This works for backends that materialize no local file
+                // (object-over-RDMA), and avoids the download-to-local-storage
+                // round-trip the file path would otherwise take.
+                return worker.verifyWriteByReadback(local_lists, remote_lists);
             }
         }
     } else {
