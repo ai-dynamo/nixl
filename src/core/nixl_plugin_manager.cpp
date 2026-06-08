@@ -706,6 +706,11 @@ void nixlPluginManager::registerBuiltinPlugins() {
 #ifdef STATIC_PLUGIN_HF3FS
     NIXL_REGISTER_STATIC_PLUGIN(Backend, HF3FS)
 #endif
+
+#ifdef STATIC_PLUGIN_INFINIA
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, INFINIA)
+#endif
+
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, BUFFER)
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, NOOP)
 }

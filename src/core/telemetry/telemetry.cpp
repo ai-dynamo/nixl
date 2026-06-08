@@ -105,7 +105,9 @@ nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &e
       pool_(1),
       writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false) {
     // A constructed nixlTelemetry always has an exporter (makeExporter throws
-    // otherwise), so the periodic export task is always started.
+    // otherwise), so reserve the event buffer up front and start the periodic
+    // export task.
+    events_.reserve(maxBufferedEvents_);
     startExportTask();
 }
 
