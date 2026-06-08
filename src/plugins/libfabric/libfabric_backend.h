@@ -26,7 +26,6 @@
 #include <condition_variable>
 #include <atomic>
 #include <chrono>
-#include <cstddef>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -42,11 +41,6 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #endif
-
-inline constexpr const char *NIXL_LIBFABRIC_POST_THREADS_PARAM = "num_threads";
-inline constexpr const char *NIXL_LIBFABRIC_POST_SPLIT_BATCH_SIZE_PARAM = "split_batch_size";
-inline constexpr size_t NIXL_LIBFABRIC_DEFAULT_POST_THREADS = 0;
-inline constexpr size_t NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE = 1024;
 
 // Forward declarations
 class nixlLibfabricEngine;
@@ -319,17 +313,6 @@ private:
                         size_t &submitted_count) const;
 
 #ifdef HAVE_CUDA
-    struct CudaPostContext {
-        bool is_cuda_vram = false;
-        bool use_cuda_addr_wa = false;
-        int current_cuda_device = -1;
-    };
-
-    nixl_status_t
-    initCudaPostContext(CudaPostContext &context) const;
-    nixl_status_t
-    prepareCudaDescriptorPost(CudaPostContext &context, int device_id, int desc_idx) const;
-
     // CUDA context management methods
     void
     vramInitCtx();

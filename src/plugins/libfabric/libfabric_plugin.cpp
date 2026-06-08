@@ -19,17 +19,14 @@
 #include "backend/backend_plugin.h"
 #include "libfabric_backend.h"
 
-#include <string>
-
 // Plugin type alias for convenience
 using libfabric_plugin_t = nixlBackendPluginCreator<nixlLibfabricEngine>;
 
 static nixl_b_params_t
 getLibfabricBackendOptions() {
     return {
-        {NIXL_LIBFABRIC_POST_THREADS_PARAM, std::to_string(NIXL_LIBFABRIC_DEFAULT_POST_THREADS)},
-        {NIXL_LIBFABRIC_POST_SPLIT_BATCH_SIZE_PARAM,
-         std::to_string(NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE)},
+        {"num_threads", "0"},
+        {"split_batch_size", "1024"},
     };
 }
 
