@@ -834,6 +834,85 @@ runPathModeCreateCheck() {
     return 0;
 }
 
+// Registering the same region under duplicate descriptors must deregister cleanly.
+static int
+runDuplicateDescriptorDeregCheck(const std::string &dir) {
+    nixlAgentConfig cfg(false);
+    nixlAgent agent("POSIXDupDereg", cfg);
+    nixl_b_params_t params;
+    nixlBackendH *be = nullptr;
+    if (agent.createBackend("POSIX", params, be) != NIXL_SUCCESS) {
+        std::cout << "POSIX backend unavailable, skipping dup-dereg check" << std::endl;
+        return 0;
+    }
+
+    tempFile fd(dir + "/dup_dereg_" + test_file_name, O_RDWR | O_CREAT | O_TRUNC);
+    auto region = [&](off_t off) {
+        nixlBlobDesc d;
+        d.addr = off;
+        d.len = page_size;
+        d.devId = fd;
+        return d;
+    };
+    const nixlBlobDesc A = region(0);
+    const nixlBlobDesc B = region(page_size);
+    const nixlBlobDesc C = region(2 * page_size);
+
+    // A x3, B x2, C x1, interleaved so registration order differs from the
+    // sorted section order
+    nixl_reg_dlist_t reg(FILE_SEG);
+    for (const auto &d : {A, B, A, C, B, A}) {
+        reg.addDesc(d);
+    }
+    if (agent.registerMem(reg) != NIXL_SUCCESS) {
+        std::cerr << "dup-dereg: registerMem failed" << std::endl;
+        return 1;
+    }
+
+    // all-or-nothing: request 4 A's when only 3 exist -- must fail and free
+    // nothing (proven by the clean teardown below)
+    nixl_reg_dlist_t over(FILE_SEG);
+    for (int i = 0; i < 4; i++) {
+        over.addDesc(A);
+    }
+    if (agent.deregisterMem(over) == NIXL_SUCCESS) {
+        std::cerr << "dup-dereg: over-count deregister should have failed" << std::endl;
+        return 1;
+    }
+
+    // partial deregister: drop one of each region, leaving A x2, B x1
+    nixl_reg_dlist_t part(FILE_SEG);
+    for (const auto &d : {A, B, C}) {
+        part.addDesc(d);
+    }
+    if (agent.deregisterMem(part) != NIXL_SUCCESS) {
+        std::cerr << "dup-dereg: partial deregister failed" << std::endl;
+        return 1;
+    }
+
+    // deregister the remainder (A x2, B x1); the section must end up empty
+    nixl_reg_dlist_t rest(FILE_SEG);
+    for (const auto &d : {A, A, B}) {
+        rest.addDesc(d);
+    }
+    if (agent.deregisterMem(rest) != NIXL_SUCCESS) {
+        std::cerr << "dup-dereg: remainder deregister failed" << std::endl;
+        return 1;
+    }
+
+    // nothing is left: a further deregister finds nothing (catches the stale /
+    // leaked entries the buggy path left behind)
+    nixl_reg_dlist_t again(FILE_SEG);
+    again.addDesc(A);
+    if (agent.deregisterMem(again) == NIXL_SUCCESS) {
+        std::cerr << "dup-dereg: section not empty after full deregister" << std::endl;
+        return 1;
+    }
+
+    std::cout << "duplicate-descriptor deregister: OK" << std::endl;
+    return 0;
+}
+
 int
 main (int argc, char *argv[]) {
     if (page_size <= 0) {
@@ -936,6 +1015,11 @@ main (int argc, char *argv[]) {
     ret = test_posix_repost (test_files_dir_path_abs_path, use_uring);
     if (ret != 0) {
         std::cerr << "Repost Test failed" << std::endl;
+        return 1;
+    }
+
+    if (runDuplicateDescriptorDeregCheck(test_files_dir_path_abs_path) != 0) {
+        std::cerr << "Duplicate-descriptor deregister test failed" << std::endl;
         return 1;
     }
 
