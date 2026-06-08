@@ -188,6 +188,7 @@ public:
     static int posix_kernel_queue_size;
     static bool storage_enable_direct;
     static bool reregister_mem;
+    static bool prepared_xfer;
     static int pipeline_depth;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
