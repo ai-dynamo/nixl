@@ -104,7 +104,7 @@ kill -s INT $telePID
 # fi
 
 # shellcheck disable=SC2154
-gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+./bin/gtest --gtest_shuffle --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
 # Run NIXL client-server test
