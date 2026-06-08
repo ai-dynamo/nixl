@@ -23,6 +23,9 @@
 # relying on it (gcc-toolset for CUDA, the CUDA COPY, DOCA el8 rpms).
 # ARCH must be declared before the FROM lines that interpolate it.
 ARG ARCH="x86_64"
+# Pin the manylinux base for reproducible builds (quay.io date tag; same tag
+# exists for every arch). Bump deliberately rather than tracking :latest.
+ARG MANYLINUX_VERSION="2026.06.06-1"
 
 # CUDA toolkit provider: a public NGC CUDA *devel* image, el8/ubi8 to match the
 # AlmaLinux-8 manylinux base (e.g. nvcr.io/nvidia/cuda:12.9.1-devel-ubi8).
@@ -33,7 +36,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS cuda
 
 # Manylinux build base — official PyPA image (public on quay.io; velonix also has
 # a quay ECR pull-through). AlmaLinux 8 / glibc 2.28 => manylinux_2_28 wheels.
-FROM quay.io/pypa/manylinux_2_28_${ARCH}
+FROM quay.io/pypa/manylinux_2_28_${ARCH}:${MANYLINUX_VERSION}
 
 # Re-declare args needed inside this build stage (args before the first FROM are
 # only visible to FROM lines).
