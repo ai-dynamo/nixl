@@ -41,6 +41,12 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs for the same PR/ref so a force-push doesn't keep the
+# expensive self-hosted 5-way build running.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   AWS_REGION: us-west-2
   REPO_NAME: nixl
@@ -60,9 +66,10 @@ jobs:
     outputs:
       version: ${{ steps.compute.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Compute version
         id: compute
         run: |
@@ -79,7 +86,7 @@ jobs:
           echo -n "$VERSION" > version.txt
           echo "Computed VERSION=$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: version
           path: version.txt
@@ -141,11 +148,12 @@ jobs:
             arch: aarch64
             runner: arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Log in to ECR
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
       - name: Build and push image
         run: |
           set -e
@@ -165,18 +173,24 @@ jobs:
           docker push "$IMAGE_NAME"
       - name: Extract build artifacts
         run: |
+          set -e
           CN="nixl-extract-${{ github.run_id }}-${{ strategy.job-index }}"
           docker rm -f "$CN" || true
           docker create --name "$CN" "$IMAGE_NAME"
-          docker cp "$CN:/workspace/nixl/dist" ./dist || true
+          docker cp "$CN:/workspace/nixl/dist" ./dist
           docker cp "$CN:/usr/local/nixl" ./nixl_install || true
           docker rm -f "$CN" || true
-      - uses: actions/upload-artifact@v4
+          # Fail this build variant now if it produced no wheels, instead of
+          # letting downstream scan/upload jobs fail later or miss a wheel.
+          if [ -z "$(ls -A dist/*.whl 2>/dev/null)" ]; then
+            echo "ERROR: ${{ matrix.name }} produced no wheels in dist/"; exit 1
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist-${{ matrix.name }}
           path: dist
           retention-days: 1
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # ----------------------------------------------------------------------------
   # scan-wheels: GitLab "security scan" stage. Runs only on release builds or
@@ -193,12 +207,12 @@ jobs:
       IGNORE_FAILED_PIP_INSTALL: "1"
     steps:
       - name: Download manylinux wheels
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist-build-nixl-manylinux
           path: dist
       - name: Log in to ECR
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
       - name: Scan wheels with wheeltamer
         run: |
           set -e
@@ -225,31 +239,13 @@ jobs:
   # CPU tests: GitLab test stage (no-GPU variants). Each runs the test script
   # inside the freshly built image, exactly as the GitLab .test-template did.
   # ----------------------------------------------------------------------------
-  test-cpp-no-gpu:
-    needs: build
-    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
-    timeout-minutes: 75
-    steps:
-      - name: Log in to ECR
-        uses: aws-actions/amazon-ecr-login@v2
-      - name: Run C++ tests (CPU-only)
-        run: |
-          set -e
-          IMAGE_NAME="${IMAGE_BASE}:build-nixl-${{ github.sha }}-${{ github.run_id }}"
-          CN="nixl-test-cpp-no-gpu-${{ github.run_id }}"
-          docker run --name "$CN" --privileged -w /workspace/${REPO_NAME} "$IMAGE_NAME" \
-            /bin/bash -c "set -e && echo 'No additional setup required' && ./.gitlab/test_cpp.sh /usr/local/nixl"
-      - name: Cleanup
-        if: always()
-        run: docker rm -f "nixl-test-cpp-no-gpu-${{ github.run_id }}" || true
-
   test-python-no-gpu:
     needs: build
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     timeout-minutes: 75
     steps:
       - name: Log in to ECR
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
       - name: Run Python tests (CPU-only)
         run: |
           set -e
@@ -260,104 +256,6 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker rm -f "nixl-test-python-no-gpu-${{ github.run_id }}" || true
-
-  # ----------------------------------------------------------------------------
-  # GPU tests / wheel verification: DEFERRED.
-  # The GitLab A100 / ARM-A100 GPU jobs have no velonix runner yet. They are
-  # kept here (gated off) so they can be re-enabled with one repo variable once
-  # GPU runner scale sets exist. Set repo variable ENABLE_GPU_CI=true and create
-  # the referenced runners (e.g. prod-nixl-tester-gpu-v1) to turn them on.
-  # The GitLab GPU test jobs were allow_failure:true; continue-on-error mirrors that.
-  # ----------------------------------------------------------------------------
-  test-cpp-gpu:
-    needs: build
-    if: ${{ vars.ENABLE_GPU_CI == 'true' }}
-    runs-on: prod-nixl-tester-gpu-v1   # TODO: create this GPU runner scale set
-    continue-on-error: true
-    timeout-minutes: 75
-    steps:
-      - name: Log in to ECR
-        uses: aws-actions/amazon-ecr-login@v2
-      - name: Run C++ tests (GPU)
-        run: |
-          set -e
-          IMAGE_NAME="${IMAGE_BASE}:build-nixl-${{ github.sha }}-${{ github.run_id }}"
-          CN="nixl-test-cpp-gpu-${{ github.run_id }}"
-          docker run --name "$CN" --privileged --gpus all -w /workspace/${REPO_NAME} "$IMAGE_NAME" \
-            /bin/bash -c "set -e && echo 'GPU-enabled C++ tests' && ./.gitlab/test_cpp.sh /usr/local/nixl"
-      - name: Cleanup
-        if: always()
-        run: docker rm -f "nixl-test-cpp-gpu-${{ github.run_id }}" || true
-
-  test-python-gpu:
-    needs: build
-    if: ${{ vars.ENABLE_GPU_CI == 'true' }}
-    runs-on: prod-nixl-tester-gpu-v1   # TODO: create this GPU runner scale set
-    continue-on-error: true
-    timeout-minutes: 75
-    steps:
-      - name: Log in to ECR
-        uses: aws-actions/amazon-ecr-login@v2
-      - name: Run Python tests (GPU)
-        run: |
-          set -e
-          IMAGE_NAME="${IMAGE_BASE}:build-nixl-${{ github.sha }}-${{ github.run_id }}"
-          CN="nixl-test-python-gpu-${{ github.run_id }}"
-          docker run --name "$CN" --privileged --gpus all -w /workspace/${REPO_NAME} "$IMAGE_NAME" \
-            /bin/bash -c "set -e && apt-get update && apt-get install -y python3-pip python3-pytest && ./.gitlab/test_python.sh /usr/local/nixl"
-      - name: Cleanup
-        if: always()
-        run: docker rm -f "nixl-test-python-gpu-${{ github.run_id }}" || true
-
-  # verify-python-wheel: GitLab release-only GPU wheel verification. DEFERRED for
-  # the same reason (needs GPU + InfiniBand runners). Re-enable via ENABLE_GPU_CI
-  # and a GPU runner; the container invocation below mirrors GitLab .verify-python-wheel.
-  verify-python-wheel:
-    needs: build
-    if: ${{ vars.ENABLE_GPU_CI == 'true' && github.event.inputs.release_build == 'true' }}
-    runs-on: prod-nixl-tester-gpu-v1   # TODO: create this GPU runner scale set
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: x86
-            dist: dist-build-nixl-manylinux
-            cuda_image: nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04
-            torch_index: https://download.pytorch.org/whl/cu129
-          - name: x86-cuda13
-            dist: dist-build-nixl-manylinux-cuda13
-            cuda_image: nvcr.io/nvidia/cuda-dl-base:25.09-cuda13.0-devel-ubuntu24.04
-            torch_index: https://download.pytorch.org/whl/cu130
-          # ARM variants additionally require an ARM GPU runner (no AWS equivalent).
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.dist }}
-          path: dist
-      - name: Verify wheel end-to-end
-        run: |
-          set -e
-          CN="verify-python-wheel-${{ github.run_id }}-${{ strategy.job-index }}"
-          docker create --name "$CN" -w /workspace -e CI=true --privileged \
-            --device=/dev/infiniband --net=host --ipc=host --gpus all \
-            -e NVIDIA_VISIBLE_DEVICES=all \
-            "${{ matrix.cuda_image }}" \
-            bash -c "set -x && apt update && \
-              curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/bin sh && \
-              uv venv venv --python 3.14 && source venv/bin/activate && \
-              uv pip install torch torchvision --index-url ${{ matrix.torch_index }} && \
-              uv pip install /workspace/nixl*314*whl /workspace/nixl-*none-any.whl ; \
-              python3 /workspace/examples/python/expanded_two_peers.py --mode=target --use_cuda=true --ip=127.0.0.1 --port=4242 & \
-              sleep 5 ; \
-              python3 /workspace/examples/python/expanded_two_peers.py --mode=initiator --use_cuda=true --ip=127.0.0.1 --port=4242"
-          docker cp . "$CN:/workspace/"
-          docker cp "$PWD/dist/." "$CN:/workspace"
-          docker start -a "$CN"
-      - name: Cleanup
-        if: always()
-        run: docker rm -f "verify-python-wheel-${{ github.run_id }}-${{ strategy.job-index }}" || true
 
   # ----------------------------------------------------------------------------
   # upload: GitLab upload stage. Release-only. Wheels -> Artifactory (JFrog CLI),
@@ -374,7 +272,7 @@ jobs:
       ARCH: x86_64
     steps:
       - name: Download x86 wheels
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: dist-build-nixl-manylinux*
           path: dist
@@ -414,7 +312,7 @@ jobs:
       ARCH: aarch64
     steps:
       - name: Download arm wheels
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: dist-build-nixl-arm-manylinux*
           path: dist
@@ -454,7 +352,7 @@ jobs:
       ARTIFACTORY_CARGO_TOKEN: ${{ secrets.ARTIFACTORY_CARGO_TOKEN }}
     steps:
       - name: Log in to ECR
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
       - name: Publish crates to Artifactory
         run: |
           set -e

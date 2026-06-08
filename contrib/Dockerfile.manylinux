@@ -44,6 +44,11 @@ ARG DEFAULT_PYTHON_VERSION="3.14"
 # now passed explicitly. Used for the torch cuXXX index and the cu12/cu13 wheel split.
 ARG CUDA_VERSION
 ENV CUDA_VERSION=${CUDA_VERSION}
+# CUDA_VERSION is required: an empty value yields a malformed PyTorch index URL
+# (.../whl/cu instead of .../whl/cu129) and breaks the cu12/cu13 wheel split.
+RUN if [ -z "${CUDA_VERSION}" ]; then \
+        echo "ERROR: CUDA_VERSION build-arg is required (e.g. 12.9 or 13.0)" >&2; exit 1; \
+    fi
 
 # Bring the CUDA toolkit onto the manylinux base (dynamo wheel_builder pattern).
 COPY --from=cuda /usr/local/cuda /usr/local/cuda
