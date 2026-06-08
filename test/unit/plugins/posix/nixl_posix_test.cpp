@@ -34,6 +34,8 @@
 #include <stdexcept>
 #include <cstdio>
 #include <getopt.h>
+#include <csignal>
+#include <sys/resource.h>
 
 namespace {
     const size_t page_size = sysconf(_SC_PAGESIZE);
@@ -913,6 +915,161 @@ runDuplicateDescriptorDeregCheck(const std::string &dir) {
     return 0;
 }
 
+// Force a short write (RLIMIT_FSIZE) on one io queue with n_desc descriptors;
+// expect an error and that the queue recovers. Returns -1 if the queue is absent.
+int
+short_write_case(const std::string &test_files_dir_path_abs_path,
+                 const std::string &queue,
+                 const std::string &param_key,
+                 int n_desc) {
+    print_segment_title(
+        phase_title(absl::StrFormat("Short-write / ENOSPC: %s x%d", queue, n_desc)));
+
+    const size_t cap = page_size;
+    const size_t transfer_size = 4 * page_size;
+
+    nixl_b_params_t params;
+    params[param_key] = "true";
+
+    nixlAgentConfig cfg(false);
+    nixlAgent agent("POSIXEnospcTester", cfg);
+    nixlBackendH *posix = nullptr;
+    if (agent.createBackend("POSIX", params, posix) != NIXL_SUCCESS) {
+        std::cout << queue << ": backend unavailable, skipping" << std::endl;
+        return -1;
+    }
+
+    tempFile fd(test_files_dir_path_abs_path + "/enospc_" + queue + "_" + test_file_name,
+                O_RDWR | O_CREAT | O_TRUNC);
+
+    nixl_reg_dlist_t dram_for_posix(DRAM_SEG);
+    nixl_reg_dlist_t file_for_posix(FILE_SEG);
+    nixl_xfer_dlist_t dram_xfer(DRAM_SEG);
+    nixl_xfer_dlist_t file_xfer(FILE_SEG);
+
+    std::vector<std::unique_ptr<void, PosixMemalignDeleter>> bufs;
+    for (int i = 0; i < n_desc; i++) {
+        void *ptr;
+        if (posix_memalign(&ptr, page_size, transfer_size) != 0) {
+            std::cerr << "DRAM allocation failed" << std::endl;
+            return 1;
+        }
+        bufs.emplace_back(ptr);
+        fill_test_pattern(ptr, read_write_test_phrase, transfer_size);
+
+        nixlBlobDesc dram_desc;
+        dram_desc.addr = (uintptr_t)ptr;
+        dram_desc.len = transfer_size;
+        dram_desc.devId = 0;
+        dram_for_posix.addDesc(dram_desc);
+        dram_xfer.addDesc(dram_desc);
+
+        nixlBlobDesc file_desc;
+        file_desc.addr = 0;
+        file_desc.len = transfer_size;
+        file_desc.devId = fd;
+        file_for_posix.addDesc(file_desc);
+        file_xfer.addDesc(file_desc);
+    }
+
+    if (agent.registerMem(dram_for_posix) != NIXL_SUCCESS ||
+        agent.registerMem(file_for_posix) != NIXL_SUCCESS) {
+        std::cerr << "Failed to register memory" << std::endl;
+        return 1;
+    }
+
+    nixlXferReqH *treq = nullptr;
+    if (agent.createXferReq(NIXL_WRITE, dram_xfer, file_xfer, "POSIXEnospcTester", treq) !=
+        NIXL_SUCCESS) {
+        std::cerr << "Failed to create transfer request" << std::endl;
+        return 1;
+    }
+
+    // cap file size to force a short write; ignore SIGXFSZ defensively
+    signal(SIGXFSZ, SIG_IGN);
+    struct rlimit saved{};
+    getrlimit(RLIMIT_FSIZE, &saved);
+    struct rlimit rl{cap, saved.rlim_max};
+    if (setrlimit(RLIMIT_FSIZE, &rl) != 0) {
+        std::cerr << "setrlimit(RLIMIT_FSIZE) failed" << std::endl;
+        agent.releaseXferReq(treq);
+        return 1;
+    }
+
+    nixl_status_t status = agent.postXferReq(treq);
+    while (status == NIXL_IN_PROG) {
+        status = agent.getXferStatus(treq);
+    }
+    setrlimit(RLIMIT_FSIZE, &saved);
+
+    std::cout << queue << ": " << n_desc << " desc, status " << nixlEnumStrings::statusStr(status)
+              << std::endl;
+
+    agent.releaseXferReq(treq);
+
+    int rc = 0;
+    if (status >= 0) {
+        std::cerr << queue << ": short write reported as success -- ENOSPC not propagated"
+                  << std::endl;
+        rc = 1;
+    } else {
+        std::cout << queue << ": short write correctly surfaced as error" << std::endl;
+        // a normal write reusing the same queue must still succeed after the failure
+        nixlXferReqH *treq2 = nullptr;
+        if (agent.createXferReq(NIXL_WRITE, dram_xfer, file_xfer, "POSIXEnospcTester", treq2) !=
+                NIXL_SUCCESS ||
+            treq2 == nullptr) {
+            std::cerr << queue << ": failed to create follow-up transfer request" << std::endl;
+            rc = 1;
+        } else {
+            nixl_status_t status2 = agent.postXferReq(treq2);
+            while (status2 == NIXL_IN_PROG) {
+                status2 = agent.getXferStatus(treq2);
+            }
+            agent.releaseXferReq(treq2);
+            if (status2 != NIXL_SUCCESS || lseek(fd, 0, SEEK_END) != (off_t)transfer_size) {
+                std::cerr << queue << ": transfer after a failed one did not cleanly succeed"
+                          << std::endl;
+                rc = 1;
+            }
+        }
+    }
+
+    agent.deregisterMem(file_for_posix);
+    agent.deregisterMem(dram_for_posix);
+    return rc;
+}
+
+int
+test_short_write_enospc(std::string test_files_dir_path_abs_path) {
+    const std::pair<const char *, const char *> queues[] = {
+        {"AIO", "use_aio"},
+        {"io_uring", "use_uring"},
+        {"POSIXAIO", "use_posix_aio"},
+    };
+
+    int failures = 0;
+    int ran = 0;
+    // 1 = single-io path; 8 = multi-io batch that must fully drain on fault
+    for (int n_desc : {1, 8}) {
+        for (const auto &[queue, param_key] : queues) {
+            int rc = short_write_case(test_files_dir_path_abs_path, queue, param_key, n_desc);
+            if (rc >= 0) {
+                ran++;
+            }
+            if (rc == 1) {
+                failures++;
+            }
+        }
+    }
+
+    if (ran == 0) {
+        std::cerr << "No POSIX io queue backend available to test" << std::endl;
+        return 1;
+    }
+    return failures == 0 ? 0 : 1;
+}
+
 int
 main (int argc, char *argv[]) {
     if (page_size <= 0) {
@@ -1015,6 +1172,14 @@ main (int argc, char *argv[]) {
     ret = test_posix_repost (test_files_dir_path_abs_path, use_uring);
     if (ret != 0) {
         std::cerr << "Repost Test failed" << std::endl;
+        return 1;
+    }
+
+    phase_num = 1;
+
+    ret = test_short_write_enospc(test_files_dir_path_abs_path);
+    if (ret != 0) {
+        std::cerr << "Short-write/ENOSPC Test failed" << std::endl;
         return 1;
     }
 

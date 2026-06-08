@@ -117,14 +117,15 @@ nixlPosixIOQueueUring::doCheckCompleted(void) {
     io_uring_for_each_cqe(&uring, head, cqe) {
         int res = cqe->res;
         nixlPosixIoUringIO *io = reinterpret_cast<nixlPosixIoUringIO *>(io_uring_cqe_get_data(cqe));
+        int error = (res < 0 || static_cast<size_t>(res) != io->len_);
+        if (error) {
+            NIXL_ERROR << absl::StrFormat(
+                "IO operation incomplete: result %d, expected %zu", res, io->len_);
+        }
         if (io->clb_) {
-            io->clb_(io->ctx_, res, 0);
+            io->clb_(io->ctx_, error ? 0 : static_cast<uint32_t>(res), error);
         }
         free_ios_.push_back(io);
-        if (res < 0) {
-            NIXL_ERROR << absl::StrFormat("IO operation failed: %s", nixl_strerror(-res));
-            return NIXL_ERR_BACKEND;
-        }
         count++;
         if (count == MAX_IO_CHECK_COMPLETED_BATCH_SIZE) {
             break;

@@ -160,15 +160,17 @@ nixlPosixIOQueueLinuxAIO::doCheckCompleted(void) {
         struct iocb *iocb = events[i].obj;
         nixlPosixLinuxAioIO *io = (nixlPosixLinuxAioIO *)iocb->data;
 
-        if (events[i].res < 0) {
-            NIXL_ERROR << "AIO operation failed: " << events[i].res;
-            return NIXL_ERR_BACKEND;
+        // io_event.res is unsigned long: read as signed to catch a negative errno;
+        // a short completion (res != len) is a fault too.
+        long res = static_cast<long>(events[i].res);
+        const int error = (res < 0 || static_cast<unsigned long>(res) != iocb->u.c.nbytes);
+        if (error) {
+            NIXL_ERROR << absl::StrFormat(
+                "AIO operation incomplete: result %ld, expected %lu", res, iocb->u.c.nbytes);
         }
-
         if (io->clb_) {
-            io->clb_(io->ctx_, events[i].res, 0);
+            io->clb_(io->ctx_, error ? 0 : static_cast<uint32_t>(res), error);
         }
-
         completed_ios.push_back(io);
     }
 

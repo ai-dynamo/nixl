@@ -131,35 +131,33 @@ nixlPosixIOQueueAIO::doCheckCompleted(void) {
     }
 
     int num_ios = std::min(MAX_IO_CHECK_COMPLETED_BATCH_SIZE, (int)ios_in_flight_.size());
-    for (auto it = ios_in_flight_.begin(); it != ios_in_flight_.end();) {
+    for (auto it = ios_in_flight_.begin(); it != ios_in_flight_.end() && num_ios > 0;) {
         nixlPosixAioIO *io = *it;
         int status = aio_error(&io->aio_);
-        if (status == 0) {
-            ssize_t ret = aio_return(&io->aio_);
-            if (ret < 0 || ret != static_cast<ssize_t>(io->aio_.aio_nbytes)) {
-                NIXL_ERROR << "aio_return failed: " << nixl_strerror(-ret);
-                ios_in_flight_.push_front(io);
-                return NIXL_ERR_BACKEND;
-            }
-            if (io->clb_) {
-                io->clb_(io->ctx_, ret, 0);
-            }
-            it = ios_in_flight_.erase(it);
-            free_ios_.push_back(io);
-        } else if (status == EINPROGRESS) {
-            return NIXL_IN_PROG;
-        } else {
+        if (status == EINPROGRESS) {
+            ++it; // still pending; check the rest of the batch
+            continue;
+        }
+
+        int error;
+        ssize_t ret = 0;
+        if (status != 0) {
             NIXL_ERROR << "aio_error failed: " << nixl_strerror(-status);
-            ios_in_flight_.push_front(io);
-            return NIXL_ERR_BACKEND;
+            error = 1;
+        } else {
+            ret = aio_return(&io->aio_);
+            error = (ret < 0 || ret != static_cast<ssize_t>(io->aio_.aio_nbytes));
+            if (error) {
+                NIXL_ERROR << "aio_return incomplete: " << ret << " expected "
+                           << io->aio_.aio_nbytes;
+            }
         }
-
-        it++;
-
+        if (io->clb_) {
+            io->clb_(io->ctx_, error ? 0 : static_cast<uint32_t>(ret), error);
+        }
+        it = ios_in_flight_.erase(it);
+        free_ios_.push_back(io);
         num_ios--;
-        if (num_ios == 0) {
-            break;
-        }
     }
 
     return ios_in_flight_.empty() ? NIXL_SUCCESS : NIXL_IN_PROG;

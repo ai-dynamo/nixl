@@ -168,6 +168,7 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
       remote(rem),
       queue_depth_(loc.descCount()),
       num_confirmed_ios_(queue_depth_),
+      any_failed_(false),
       io_queue_(io_queue) {
     NIXL_ASSERT(local.descCount());
     NIXL_ASSERT(remote.descCount());
@@ -176,6 +177,9 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
 void
 nixlPosixBackendReqH::ioDone(uint32_t data_size, int error) {
     num_confirmed_ios_++;
+    if (error) {
+        any_failed_ = true;
+    }
     logOnPercentStep(num_confirmed_ios_, queue_depth_);
 }
 
@@ -192,8 +196,9 @@ nixlPosixBackendReqH::prepXfer() {
 
 nixl_status_t
 nixlPosixBackendReqH::checkXfer() {
+    // report the verdict only after all ios drain, so a partial fault leaves no stale state
     if (num_confirmed_ios_ == queue_depth_) {
-        return NIXL_SUCCESS;
+        return any_failed_ ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
     }
 
     nixl_status_t status = io_queue_->poll();
@@ -212,6 +217,7 @@ nixlPosixBackendReqH::postXfer() {
     }
 
     num_confirmed_ios_ = 0;
+    any_failed_ = false;
 
     for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
          local_it != local.end() && remote_it != remote.end();
