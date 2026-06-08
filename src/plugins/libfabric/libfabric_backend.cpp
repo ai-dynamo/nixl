@@ -33,14 +33,13 @@
 #include <numeric>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 /****************************************
  * Neuron Address Query
  *****************************************/
 namespace {
 
-constexpr size_t NIXL_LIBFABRIC_DEFAULT_POST_THREADS = 0;
-constexpr size_t NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE = 1024;
 constexpr size_t NIXL_LIBFABRIC_POST_THREAD_HW_MULTIPLIER = 4;
 
 size_t
@@ -82,16 +81,29 @@ public:
         stopAndJoin();
     }
 
-    void
-    submit(std::function<void()> task) {
+    template<typename Fn>
+    bool
+    submit(Fn &&task) {
         {
             const std::lock_guard<std::mutex> lock(mutex_);
             if (stop_) {
-                throw std::runtime_error("libfabric post thread pool is stopping");
+                NIXL_WARN << "Ignoring libfabric post task submission after thread pool stop";
+                return false;
             }
-            tasks_.emplace_back(std::move(task));
+            try {
+                tasks_.emplace_back(std::forward<Fn>(task));
+            }
+            catch (const std::exception &e) {
+                NIXL_ERROR << "Failed to queue libfabric post task: " << e.what();
+                return false;
+            }
+            catch (...) {
+                NIXL_ERROR << "Failed to queue libfabric post task";
+                return false;
+            }
         }
         cv_.notify_one();
+        return true;
     }
 
 private:
@@ -451,24 +463,7 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes (default)";
     }
 
-    post_thread_count_ = NIXL_LIBFABRIC_DEFAULT_POST_THREADS;
-    LibfabricUtils::getCustomIntParam(getCustomParams(), "num_threads", post_thread_count_);
-    const size_t max_post_thread_count = getMaxPostThreadCount();
-    if (post_thread_count_ > max_post_thread_count) {
-        NIXL_WARN << "Capping libfabric post thread count from " << post_thread_count_ << " to "
-                  << max_post_thread_count;
-        post_thread_count_ = max_post_thread_count;
-    }
-    post_split_batch_size_ = NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE;
-    LibfabricUtils::getCustomIntParam(
-        getCustomParams(), "split_batch_size", post_split_batch_size_);
-    if (post_thread_count_ > 0) {
-        post_thread_pool_ = std::make_unique<nixlLibfabricPostThreadPool>(post_thread_count_);
-        NIXL_DEBUG << "Libfabric descriptor post thread pool enabled with " << post_thread_count_
-                   << " threads, split_batch_size=" << post_split_batch_size_;
-    } else {
-        NIXL_DEBUG << "Libfabric descriptor post thread pool disabled";
-    }
+    initPostThreadPool();
 
     // Initialize Rail Manager which will discover the topology and create all rails.
     try {
@@ -538,6 +533,28 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         NIXL_ERROR << "Failed to initialize libfabric backend: " << e.what();
         cleanup();
         throw;
+    }
+}
+
+void
+nixlLibfabricEngine::initPostThreadPool() {
+    LibfabricUtils::getCustomIntParam(
+        getCustomParams(), NIXL_LIBFABRIC_POST_THREADS_PARAM, post_thread_count_);
+    const size_t max_post_thread_count = getMaxPostThreadCount();
+    if (post_thread_count_ > max_post_thread_count) {
+        NIXL_WARN << "Capping libfabric post thread count from " << post_thread_count_ << " to "
+                  << max_post_thread_count;
+        post_thread_count_ = max_post_thread_count;
+    }
+
+    LibfabricUtils::getCustomIntParam(
+        getCustomParams(), NIXL_LIBFABRIC_POST_SPLIT_BATCH_SIZE_PARAM, post_split_batch_size_);
+    if (post_thread_count_ > 0) {
+        post_thread_pool_ = std::make_unique<nixlLibfabricPostThreadPool>(post_thread_count_);
+        NIXL_DEBUG << "Libfabric descriptor post thread pool enabled with " << post_thread_count_
+                   << " threads, split_batch_size=" << post_split_batch_size_;
+    } else {
+        NIXL_DEBUG << "Libfabric descriptor post thread pool disabled";
     }
 }
 
@@ -1104,6 +1121,43 @@ nixlLibfabricEngine::estimateXferCost(const nixl_xfer_op_t &operation,
     return NIXL_SUCCESS;
 }
 
+#ifdef HAVE_CUDA
+nixl_status_t
+nixlLibfabricEngine::initCudaPostContext(CudaPostContext &context) const {
+    if (!context.is_cuda_vram) {
+        return NIXL_SUCCESS;
+    }
+
+    const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
+    context.use_cuda_addr_wa = cuda_addr_wa_;
+    if (context.use_cuda_addr_wa && cudaCtx_ && !cudaCtx_->cudaSetCtx()) {
+        NIXL_ERROR << "Failed to set CUDA context before posting descriptors";
+        return NIXL_ERR_BACKEND;
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlLibfabricEngine::prepareCudaDescriptorPost(CudaPostContext &context,
+                                               int device_id,
+                                               int desc_idx) const {
+    if (!context.is_cuda_vram || context.use_cuda_addr_wa ||
+        device_id == context.current_cuda_device) {
+        return NIXL_SUCCESS;
+    }
+
+    cudaError_t cuda_ret = cudaSetDevice(device_id);
+    if (cuda_ret != cudaSuccess) {
+        NIXL_ERROR << "Failed to set CUDA device " << device_id << " while posting descriptor "
+                   << desc_idx << ": " << cudaGetErrorString(cuda_ret);
+        return NIXL_ERR_BACKEND;
+    }
+    context.current_cuda_device = device_id;
+    return NIXL_SUCCESS;
+}
+#endif
+
 nixl_status_t
 nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
                                          const nixl_meta_dlist_t &local,
@@ -1118,16 +1172,10 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
     submitted_count = 0;
 
 #ifdef HAVE_CUDA
-    const bool is_cuda_vram = local.getType() == VRAM_SEG && runtime_ == FI_HMEM_CUDA;
-    bool use_cuda_addr_wa = false;
-    int current_cuda_device = -1;
-    if (is_cuda_vram) {
-        const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
-        use_cuda_addr_wa = cuda_addr_wa_;
-        if (use_cuda_addr_wa && cudaCtx_ && !cudaCtx_->cudaSetCtx()) {
-            NIXL_ERROR << "Failed to set CUDA context before posting descriptors";
-            return NIXL_ERR_BACKEND;
-        }
+    CudaPostContext cuda_post_context;
+    cuda_post_context.is_cuda_vram = local.getType() == VRAM_SEG && runtime_ == FI_HMEM_CUDA;
+    if (nixl_status_t status = initCudaPostContext(cuda_post_context); status != NIXL_SUCCESS) {
+        return status;
     }
 #endif
 
@@ -1140,15 +1188,10 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         int device_id = local[desc_idx].devId;
 
 #ifdef HAVE_CUDA
-        if (is_cuda_vram && !use_cuda_addr_wa && device_id != current_cuda_device) {
-            cudaError_t cuda_ret = cudaSetDevice(device_id);
-            if (cuda_ret != cudaSuccess) {
-                NIXL_ERROR << "Failed to set CUDA device " << device_id
-                           << " while posting descriptor " << desc_idx << ": "
-                           << cudaGetErrorString(cuda_ret);
-                return NIXL_ERR_BACKEND;
-            }
-            current_cuda_device = device_id;
+        if (nixl_status_t status =
+                prepareCudaDescriptorPost(cuda_post_context, device_id, desc_idx);
+            status != NIXL_SUCCESS) {
+            return status;
         }
 #endif
 
@@ -1300,13 +1343,12 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         size_t remaining = num_chunks;
         size_t submitted_chunks = 0;
 
-        try {
-            for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
-                const int start_idx = static_cast<int>(chunk_idx * chunk_size);
-                const int end_idx = static_cast<int>(
-                    std::min(static_cast<size_t>(desc_count), (chunk_idx + 1) * chunk_size));
+        for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
+            const int start_idx = static_cast<int>(chunk_idx * chunk_size);
+            const int end_idx = static_cast<int>(
+                std::min(static_cast<size_t>(desc_count), (chunk_idx + 1) * chunk_size));
 
-                post_thread_pool_->submit([&, start_idx, end_idx]() {
+            if (!post_thread_pool_->submit([&, start_idx, end_idx]() {
                     nixl_status_t status = NIXL_SUCCESS;
                     size_t chunk_submitted = 0;
 
@@ -1344,12 +1386,14 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                         remaining--;
                     }
                     done_cv.notify_one();
-                });
-                submitted_chunks++;
+                })) {
+                NIXL_ERROR << "Failed to submit libfabric descriptor post task";
+                break;
             }
+            submitted_chunks++;
         }
-        catch (const std::exception &e) {
-            NIXL_ERROR << "Failed to submit libfabric descriptor post task: " << e.what();
+
+        if (submitted_chunks != num_chunks) {
             std::unique_lock<std::mutex> lock(done_mutex);
             done_cv.wait(lock, [&remaining, num_chunks, submitted_chunks]() {
                 return remaining == num_chunks - submitted_chunks;
