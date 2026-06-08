@@ -75,14 +75,14 @@ put(const nixlMemViewElem &src,
             nixlProxySubmission submission{};
             submission.opcode = nixl_proxy_opcode_t::PUT;
             submission.channel_id = static_cast<uint32_t>(channel_id);
-            submission.flags = flags;
+            submission.flags = static_cast<uint32_t>(flags);
             submission.src_proxy_memview_id = proxyMemViewIdFromHandle(src.mvh);
-            submission.src_index = src.index;
-            submission.src_offset = src.offset;
+            submission.src_index = static_cast<uint32_t>(src.index);
+            submission.src_offset = static_cast<uint32_t>(src.offset);
             submission.dst_proxy_memview_id = proxyMemViewIdFromHandle(dst.mvh);
-            submission.dst_index = dst.index;
-            submission.dst_offset = dst.offset;
-            submission.size = size;
+            submission.dst_index = static_cast<uint32_t>(dst.index);
+            submission.dst_offset = static_cast<uint32_t>(dst.offset);
+            submission.size = static_cast<uint32_t>(size);
             status = ctx->enqueue(submission, xfer_status);
         }
     }
@@ -108,11 +108,11 @@ atomic_add(uint64_t value,
             nixlProxySubmission submission{};
             submission.opcode = nixl_proxy_opcode_t::ATOMIC_ADD;
             submission.channel_id = static_cast<uint32_t>(channel_id);
-            submission.flags = flags;
+            submission.flags = static_cast<uint32_t>(flags);
             submission.dst_proxy_memview_id = proxyMemViewIdFromHandle(counter.mvh);
-            submission.dst_index = counter.index;
-            submission.dst_offset = counter.offset;
-            submission.size = sizeof(uint64_t);
+            submission.dst_index = static_cast<uint32_t>(counter.index);
+            submission.dst_offset = static_cast<uint32_t>(counter.offset);
+            submission.size = static_cast<uint32_t>(sizeof(uint64_t));
             submission.value = value;
             status = ctx->enqueue(submission, xfer_status);
         }
