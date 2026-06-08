@@ -216,12 +216,6 @@ TEST(Config, ConvertUnsigned) {
     testUnsigned<std::uint64_t>();
 }
 
-#if 0
-
-  // ReadConfigFile is temporarily disabled because it always fails when it is
-  // not the first or only test to run. TODO: Enable again with more robust
-  // file handling.
-
 namespace {
 
     const std::string pid = std::to_string(::getpid());
@@ -235,20 +229,34 @@ namespace {
 
 } // namespace
 
+namespace internal {
+
+    void
+    invalidateConfigFileForUnitTest();
+
+} // namespace internal
+
 TEST(Config, ReadConfigFile) {
     const auto pid = ::getpid();
-    const auto file = "nixl_test_" + std::to_string(pid) + ".cfg";
-    const auto path = std::filesystem::temp_directory_path() / file;
+    const auto tmp_path = std::filesystem::temp_directory_path();
+    const auto tmp_file = "nixl_test_" + std::to_string(pid) + ".tmp";
+    const auto cfg_file = "nixl_test_" + std::to_string(pid) + ".cfg";
     {
-        std::ofstream ofs(path, std::ios::out | std::ios::trunc);
+        std::ofstream ofs(tmp_path / tmp_file, std::ios::out | std::ios::trunc);
         ofs << bool_name << " = true\n";
         ofs << number_name << " = 42\n";
         ofs << string_name << " = \"hello\"\n";
         ofs << env1name << " = \"dummy\"\n";
         ofs << env2name << " = 0\n";
     }
+    // Atomically move into place to prevent problems should other tests
+    // run concurrently within the same process (if that ever happens).
+    std::filesystem::rename(tmp_path / tmp_file, tmp_path / cfg_file);
+
+    internal::invalidateConfigFileForUnitTest();
+
     gtest::ScopedEnv vars;
-    vars.addVar("NIXL_CONFIG_FILE", path.native());
+    vars.addVar("NIXL_CONFIG_FILE", (tmp_path / cfg_file).native());
     vars.addVar(env1name, env1value);
     vars.addVar(env2name, env2value);
     {
@@ -273,7 +281,5 @@ TEST(Config, ReadConfigFile) {
         EXPECT_THROW((void)nixl::config::getValue<int>(env2name), std::runtime_error);
     }
 }
-
-#endif
 
 } // namespace nixl::config

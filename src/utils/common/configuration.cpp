@@ -18,6 +18,9 @@
 #include "configuration.h"
 #include "exception.h"
 
+#include <memory>
+#include <mutex>
+
 namespace nixl::config {
 
 namespace {
@@ -74,10 +77,25 @@ namespace {
         return toml::table();
     }
 
-    [[nodiscard]] const toml::table &
-    getConfig() {
-        static const toml::table config = readFile();
-        return config;
+    struct configGlobal {
+        std::mutex mutex;
+        std::shared_ptr<const toml::table> data;
+    };
+
+    [[nodiscard]] configGlobal &
+    getConfigGlobal() {
+        static configGlobal cg;
+        return cg;
+    }
+
+    [[nodiscard]] std::shared_ptr<const toml::table>
+    getConfigFile() {
+        configGlobal &cg = getConfigGlobal();
+        const std::lock_guard ml(cg.mutex);
+        if (!cg.data) {
+            cg.data = std::make_shared<toml::table>(readFile());
+        }
+        return cg.data;
     }
 
 } // namespace
@@ -105,27 +123,35 @@ namespace internal {
         return fallback;
     }
 
-    [[nodiscard]] toml::node_view<const toml::node>
+    [[nodiscard]] tomlFindResult
     findTomlNode(const toml::path &path) {
-        const auto result = getConfig().at_path(path);
+        const auto config = getConfigFile();
+        const auto result = config->at_path(path);
         if (result) {
             NIXL_DEBUG << "Found config file entry '" << path << "'";
         } else {
             NIXL_DEBUG << "Missing config file entry '" << path << "'";
         }
-        return result;
+        return tomlFindResult(result, config);
     }
 
-    [[nodiscard]] toml::node_view<const toml::node>
+    [[nodiscard]] tomlFindResult
     findTomlNode(const std::string &path) {
         return findTomlNode(toml::path(path));
     }
 
     void
     warnIgnoreToml(const std::string &path) {
-        if (getConfig().at_path(toml::path(path))) {
+        if (getConfigFile()->at_path(toml::path(path))) {
             NIXL_DEBUG << "Ignoring config file entry '" << path << "' for environment variable";
         }
+    }
+
+    void
+    invalidateConfigFileForUnitTest() {
+        configGlobal &cg = getConfigGlobal();
+        const std::lock_guard ml(cg.mutex);
+        cg.data.reset();
     }
 
 } // namespace internal
