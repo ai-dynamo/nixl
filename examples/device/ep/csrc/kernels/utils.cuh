@@ -377,7 +377,7 @@ __device__ __forceinline__ void tma_store_1d(const void* smem_ptr, const void* g
 
 template <int N = 0>
 __device__ __forceinline__ void tma_store_wait() {
-    asm volatile("cp.async.bulk.wait_group.read %0;" :: "n"(N) : "memory");
+    asm volatile("cp.async.bulk.wait_group %0;" :: "n"(N) : "memory");
 }
 
 #endif
