@@ -159,6 +159,11 @@ azureBlobClient::putBlobAsync(std::string_view blob_name,
             callback(true);
         }
         catch (const std::exception &e) {
+            NIXL_ERROR << "putBlobAsync error: " << e.what();
+            callback(false);
+        }
+        catch (...) {
+            NIXL_ERROR << "putBlobAsync: unknown exception";
             callback(false);
         }
     });
@@ -184,24 +189,40 @@ azureBlobClient::getBlobAsync(std::string_view blob_name,
             callback(true);
         }
         catch (const std::exception &e) {
+            NIXL_ERROR << "getBlobAsync error: " << e.what();
+            callback(false);
+        }
+        catch (...) {
+            NIXL_ERROR << "getBlobAsync: unknown exception";
             callback(false);
         }
     });
 }
 
-bool
-azureBlobClient::checkBlobExists(std::string_view blob_name) {
-    auto blobClient = blobContainerClient_->GetBlockBlobClient(std::string(blob_name));
-    Azure::Storage::Blobs::GetBlobPropertiesOptions options;
-    try {
-        blobClient.GetProperties(options);
-    }
-    catch (const Azure::Core::RequestFailedException &e) {
-        if (e.StatusCode == Azure::Core::Http::HttpStatusCode::NotFound) {
-            return false;
-        } else {
-            throw std::runtime_error("Failed to check if blob exists: " + std::string(e.what()));
+void
+azureBlobClient::checkBlobExistsAsync(std::string_view blob_name, check_blob_callback_t callback) {
+    std::string blob_name_str(blob_name);
+    asio::post(*executor_, [this, blob_name_str, callback]() {
+        try {
+            auto blobClient = blobContainerClient_->GetBlockBlobClient(blob_name_str);
+            blobClient.GetProperties();
+            callback(true);
         }
-    }
-    return true;
+        catch (const Azure::Core::RequestFailedException &e) {
+            if (e.StatusCode == Azure::Core::Http::HttpStatusCode::NotFound) {
+                callback(false);
+                return;
+            }
+            NIXL_ERROR << "checkBlobExistsAsync error: " << e.what();
+            callback(std::nullopt);
+        }
+        catch (const std::exception &e) {
+            NIXL_ERROR << "checkBlobExistsAsync error: " << e.what();
+            callback(std::nullopt);
+        }
+        catch (...) {
+            NIXL_ERROR << "checkBlobExistsAsync: unknown exception";
+            callback(std::nullopt);
+        }
+    });
 }

@@ -56,6 +56,18 @@
             exit(EXIT_FAILURE);                                                        \
         }                                                                              \
     } while (0)
+#elif HAVE_ROCM
+#include <hip/hip_runtime.h>
+
+#define CHECK_CUDA_ERROR(result, message)                                      \
+    do {                                                                       \
+        const auto _r = (result);                                              \
+        if (_r != hipSuccess) {                                                \
+            std::cerr << "HIP: " << message << " (Error code: " << _r << " - " \
+                      << hipGetErrorString(_r) << ")" << std::endl;            \
+            exit(EXIT_FAILURE);                                                \
+        }                                                                      \
+    } while (0)
 #endif
 
 // TODO: This is true for CX-7, need support for other CX cards and NVLink

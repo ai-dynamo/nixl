@@ -75,7 +75,7 @@ castPosixHandle(nixlBackendReqH *handle) {
     if (!handle) {
         throw nixlPosixBackendReqH::exception("received null handle", NIXL_ERR_INVALID_PARAM);
     }
-    return dynamic_cast<nixlPosixBackendReqH &>(*handle);
+    return static_cast<nixlPosixBackendReqH &>(*handle);
 }
 
 static std::string_view
@@ -168,6 +168,11 @@ nixlPosixBackendReqH::checkXfer() {
 
 nixl_status_t
 nixlPosixBackendReqH::postXfer() {
+    if (__builtin_expect(!io_queue_, 0)) {
+        NIXL_ERROR << "POSIX I/O queue is not initialized";
+        return NIXL_ERR_BACKEND;
+    }
+
     num_confirmed_ios_ = 0;
 
     for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
@@ -207,6 +212,12 @@ nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
     if (io_queue_type_.empty()) {
         initErr = true;
         NIXL_ERROR << "Failed to initialize POSIX backend - no supported io queue type found";
+        return;
+    }
+    if (!io_queue_) {
+        initErr = true;
+        NIXL_ERROR << "Failed to initialize POSIX backend - unavailable io queue type requested: "
+                   << io_queue_type_;
         return;
     }
     NIXL_INFO << absl::StrFormat("POSIX backend initialized using io queue type: %s",
@@ -313,16 +324,9 @@ nixlPosixEngine::checkXfer(nixlBackendReqH *handle) const {
 
 nixl_status_t
 nixlPosixEngine::releaseReqH(nixlBackendReqH *handle) const {
-    try {
-        auto &posix_handle = castPosixHandle(handle);
-        posix_handle.~nixlPosixBackendReqH();
-        return NIXL_SUCCESS;
-    }
-    catch (const nixlPosixBackendReqH::exception &e) {
-        NIXL_ERROR << e.what();
-        return e.code();
-    }
-    return NIXL_ERR_BACKEND;
+    NIXL_ASSERT(handle != nullptr);
+    delete handle;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
