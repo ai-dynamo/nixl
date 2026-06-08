@@ -33,6 +33,8 @@ option('enable_plugins', type: 'string', value: '', description: 'Comma-separate
 option('disable_plugins', type: 'string', value: '', description: 'Comma-separated list of plugins to exclude from build. Cannot be used with enable_plugins.')
 option('build_docs', type: 'boolean', value: false, description: 'Build Doxygen documentation')
 option('release_wheel', type: 'boolean', value: false, description: 'Add nixl-cu12 and nixl-cu13 dependencies to the meta wheel')
+option('python_backend_dir', type: 'string', value: '', description: 'Override Python backend import package directory')
+option('python_backend_package', type: 'string', value: '', description: 'Override Python backend distribution package name')
 option('log_level', type: 'combo', choices: ['trace', 'debug', 'info', 'warning', 'error', 'fatal', 'auto'], value: 'auto', description: 'Log Level (auto: auto-detect based on build type: trace for debug builds, info for release builds)')
 option('rust', type: 'boolean', value: false, description: 'Build Rust bindings')
 

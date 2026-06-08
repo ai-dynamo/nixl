@@ -15,26 +15,20 @@
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
+
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS common-base
+
 ARG OS
-
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
-
-# Set default OS if not provided
-ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
-ARG UCX_REF="v1.21.x"
-ARG BUILD_NIXL_EP="true"
 ARG RDMA_CORE_PREFIX="/usr"
+ARG UCX_REF="v1.21.x"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
-ARG DOCA_PREFIX="/opt/mellanox/doca"
 ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
 ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
-ARG LIBFABRIC_VERSION="v1.21.0"
-ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
@@ -44,6 +38,9 @@ RUN apt-get update -y && \
     apt-get install -y ubuntu-keyring && \
     apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
+    ca-certificates \
+    curl \
+    git \
     ninja-build \
     libclang-dev \
     cmake \
@@ -61,26 +58,19 @@ RUN apt-get update -y && \
     libgtest-dev \
     build-essential \
     python3.12-dev \
+    python3.12-venv \
     clang \
     hwloc \
     libhwloc-dev \
     pkg-config \
+    protobuf-compiler \
+    wget \
     # aws-sdk-cpp dependencies
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev \
     # azure-sdk-for-cpp dependencies
     libxml2-dev
 
-# Add DOCA repository and install packages
-RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
-    MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
-    dpkg -i doca-host.deb && \
-    apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
-
-# Force reinstall of RDMA packages from DOCA repository
-# Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
+# Reinstall RDMA packages so Infiniband headers and providers are consistent.
 # Upgrade is not sufficient if the version is the same since apt skips the installation.
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
@@ -177,6 +167,161 @@ RUN wget --tries=3 --waitretry=5 \
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
+RUN cd /tmp && \
+     git clone --depth 1 https://github.com/google/gtest-parallel.git && \
+     mkdir -p /usr/local/bin && \
+     cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py /usr/local/bin/
+ENV PATH=/usr/local/bin:$PATH
+
+# By default, uv downloads python packages to $HOME/.cache/uv and hard links them
+# from the virtual environment. This means that the files reside in /root/.cache/uv,
+# which is not what we want since some systems mount user home dir into /root,
+# in which case the venv is broken when the container is started.
+# Set a custom cache directory inside /workspace to avoid this.
+ENV UV_CACHE_DIR=/workspace/.cache/uv
+RUN mkdir -p $UV_CACHE_DIR
+# Disable build isolation, i.e. uv should not create a new virtual environment for
+# building wheels. This is faster as it skips installing dependencies twice.
+ENV UV_NO_BUILD_ISOLATION=1
+# Disable syncing, i.e. uv will not download packages outside uv pip commands.
+ENV UV_NO_SYNC=1
+# Create a new virtual environment
+ENV VIRTUAL_ENV=/workspace/.venv
+RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
+# Activate the virtual environment
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+# Install python dependencies
+RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
+# Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
+RUN uv pip install --upgrade 'setuptools>=80.9.0'
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:$RDMA_CORE_PREFIX/lib:$LD_LIBRARY_PATH
+
+# Install pybind11 via apt
+RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
+
+# Set PKG_CONFIG_PATH for shared RDMA/UCX dependencies.
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib/$ARCH-linux-gnu/pkgconfig
+ENV PKG_CONFIG_PATH=$RDMA_CORE_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$UCX_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH
+
+ENV NIXL_PREFIX=$NIXL_PREFIX
+ENV NIXL_PLUGIN_DIR=$NIXL_PLUGIN_DIR
+
+FROM common-base AS rocm-build
+
+ARG ROCM_PATH="/opt/rocm"
+ARG WHEEL_NAME="nixl_rocm"
+ARG BACKEND_DIR="nixl_rocm"
+ARG PYTORCH_INDEX_URL="https://download.pytorch.org/whl/rocm7.2"
+
+ENV ROCM_PATH=$ROCM_PATH
+ENV PATH=$ROCM_PATH/bin:$PATH
+ENV LD_LIBRARY_PATH=$ROCM_PATH/lib:$ROCM_PATH/lib64:$LD_LIBRARY_PATH
+ENV PKG_CONFIG_PATH=$ROCM_PATH/lib/pkgconfig:$ROCM_PATH/lib64/pkgconfig:$PKG_CONFIG_PATH
+
+# rocm/dev-ubuntu-24.04 ships gcc 14, which promotes int-conversion warnings
+# to errors; UCX v1.21.x has upstream bugs in put_offload.c that trip this.
+# Install gcc 13 to match the cuda-build stage (whose CUDA base ships gcc 13)
+# and use it as the default compiler for UCX and NIXL.
+RUN apt-get update -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        gcc-13 g++-13 && \
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100 && \
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100 && \
+    update-alternatives --install /usr/bin/cc cc /usr/bin/gcc 100 && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN cd /usr/local/src && \
+     git clone https://github.com/openucx/ucx.git && \
+     cd ucx && \
+     echo "=== Using UCX_REF=$UCX_REF ===" && \
+     git checkout $UCX_REF && \
+     ./autogen.sh && \
+     ./contrib/configure-release-mt  \
+         --prefix=$UCX_PREFIX        \
+         --enable-shared             \
+         --disable-static            \
+         --disable-doxygen-doc       \
+         --enable-optimizations      \
+         --enable-cma                \
+         --enable-devel-headers      \
+         --with-rocm=$ROCM_PATH      \
+         --with-verbs                \
+         --with-dm                   \
+         --with-efa  &&              \
+     make -j${NPROC:-$(nproc)} &&                \
+     make -j${NPROC:-$(nproc)} install-strip &&  \
+     ldconfig
+
+RUN uv pip install --index-url "$PYTORCH_INDEX_URL" 'torch==2.11.*' 'torchvision==0.26.*' 'torchaudio==2.11.*'
+
+# PyTorch's dep pin can downgrade setuptools; re-upgrade to keep the PEP 639
+# license parser used by nixl-meta's pyproject.toml.
+RUN uv pip install --upgrade 'setuptools>=80.9.0'
+
+WORKDIR /workspace/nixl
+COPY . /workspace/nixl
+
+RUN rm -rf build && \
+    mkdir build && \
+    meson setup \
+        -Ducx_path=$UCX_PREFIX \
+        -Ddisable_gds_backend=true \
+        -Ddisable_plugins=LIBFABRIC,GDS,GDS_MT,GPUNETIO \
+        -Dbuild_nixl_ep=false \
+        -Dpython_backend_dir=$BACKEND_DIR \
+        -Dpython_backend_package=$WHEEL_NAME \
+        build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
+    cd build && \
+    ninja && \
+    ninja install
+
+RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
+    echo "$NIXL_PLUGIN_DIR" >> /etc/ld.so.conf.d/nixl.conf && \
+    ldconfig
+
+RUN cd src/bindings/rust && cargo build --release --locked
+
+RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
+    export UV_INDEX="$PYTORCH_INDEX_URL" && \
+    mkdir -p dist && \
+    ./contrib/build-wheel.sh \
+    --python-version $DEFAULT_PYTHON_VERSION \
+    --platform manylinux_2_39_$ARCH \
+    --ucx-plugins-dir $UCX_PLUGIN_DIR \
+    --nixl-plugins-dir $NIXL_PLUGIN_DIR \
+    --output-dir /workspace/nixl/dist \
+    --wheel-name $WHEEL_NAME \
+    --backend-dir $BACKEND_DIR
+
+RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
+RUN PYTHON_ABI_TAG="$(echo "$DEFAULT_PYTHON_VERSION" | tr -d .)" && \
+    uv pip install dist/*cp${PYTHON_ABI_TAG}*.whl dist/nixl-*-none-any.whl
+
+FROM common-base AS cuda-build
+
+ARG BUILD_NIXL_EP="true"
+ARG DOCA_PREFIX="/opt/mellanox/doca"
+ARG LIBFABRIC_VERSION="v1.21.0"
+ARG LIBFABRIC_INSTALL_PATH="/usr/local"
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$LD_LIBRARY_PATH
+ENV PKG_CONFIG_PATH=$DOCA_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
+
+# CUDA-only: DOCA/GPUNetIO packages.
+RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
+    MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
+    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    dpkg -i doca-host.deb && \
+    apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+
+# Reinstall RDMA packages from the DOCA repository for the CUDA image.
+RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
+    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+    libnuma-dev librdmacm-dev ibverbs-providers
+
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx && \
@@ -202,13 +347,7 @@ RUN cd /usr/local/src && \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
 
-RUN cd /tmp && \
-     git clone --depth 1 https://github.com/google/gtest-parallel.git && \
-     mkdir -p /usr/local/bin && \
-     cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py /usr/local/bin/
-ENV PATH=/usr/local/bin:$PATH
-
-# Build libfabric from source
+# CUDA-only: build libfabric with CUDA HMEM/GDRCopy support.
 RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
@@ -229,44 +368,16 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
-# By default, uv downloads python packages to $HOME/.cache/uv and hard links them
-# from the virtual environment. This means that the files reside in /root/.cache/uv,
-# which is not what we want since some systems mount user home dir into /root,
-# in which case the venv is broken when the container is started.
-# Set a custom cache directory inside /workspace to avoid this.
-ENV UV_CACHE_DIR=/workspace/.cache/uv
-RUN mkdir -p $UV_CACHE_DIR
-# Disable build isolation, i.e. uv should not create a new virtual environment for
-# building wheels. This is faster as it skips installing dependencies twice.
-ENV UV_NO_BUILD_ISOLATION=1
-# Disable syncing, i.e. uv will not download packages outside uv pip commands.
-ENV UV_NO_SYNC=1
-# Create a new virtual environment
-ENV VIRTUAL_ENV=/workspace/.venv
-RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
-# Activate the virtual environment
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-# Install python dependencies
-RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
-# Install PyTorch
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
     uv pip install torch torchvision torchaudio
-# Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
+
+# PyTorch's dep pin can downgrade setuptools; re-upgrade to keep the PEP 639
+# license parser used by nixl-meta's pyproject.toml.
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$RDMA_CORE_PREFIX/lib:$LD_LIBRARY_PATH
-
-# Install pybind11 via apt
-RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
-
-# Set PKG_CONFIG_PATH for NIXL EP dependencies (rdma-core, UCX, DOCA)
-ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib/$ARCH-linux-gnu/pkgconfig
-ENV PKG_CONFIG_PATH=$RDMA_CORE_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$UCX_PREFIX/lib/pkgconfig:$DOCA_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
-
-ENV NIXL_PREFIX=$NIXL_PREFIX
 RUN rm -rf build && \
     mkdir build && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \
@@ -284,8 +395,7 @@ RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "$NIXL_PLUGIN_DIR" >> /etc/ld.so.conf.d/nixl.conf && \
     ldconfig
 
-# Set environment variables for NIXL EP
-ENV NIXL_PLUGIN_DIR=$NIXL_PLUGIN_DIR
+# CUDA-only: NIXL EP examples are built only when BUILD_NIXL_EP=true.
 ENV PYTHONPATH=/workspace/nixl/build/examples/device/ep
 
 RUN cd src/bindings/rust && cargo build --release --locked
@@ -303,4 +413,5 @@ RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
     $EP_BUILD_FLAG
 
 RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
-RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl dist/nixl-*-none-any.whl
+RUN PYTHON_ABI_TAG="$(echo "$DEFAULT_PYTHON_VERSION" | tr -d .)" && \
+    uv pip install dist/*cp${PYTHON_ABI_TAG}*.whl dist/nixl-*-none-any.whl
