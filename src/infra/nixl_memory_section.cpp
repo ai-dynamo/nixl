@@ -109,7 +109,7 @@ nixl_status_t
 nixlMemSection::addElement(const nixlRemoteDesc &query,
                            nixlBackendEngine *backend,
                            nixl_remote_meta_dlist_t &resp) const {
-    const section_key_t sec_key{VRAM_SEG, backend};
+    const section_key_t sec_key{resp.getType(), backend};
     const auto it = sectionMap.find(sec_key);
     if (it == sectionMap.end()) {
         return NIXL_ERR_NOT_FOUND;
