@@ -27,6 +27,10 @@
 
 namespace nixl::ucx {
 
+enum class am_recv_mode_t : bool { RNDV, EAGER };
+
+enum class am_data_mode_t { POST_RNDV, POST_EAGER, RNDV_POST, EAGER_POST };
+
 inline constexpr std::string_view invalid_string = "INVALID";
 
 enum class mt_mode_t {
@@ -72,6 +76,7 @@ toStringView(const ep_state_t t) noexcept {
 
 enum class am_cb_op_t {
     NOTIF_STR,
+    SEND_RECV,
 };
 
 [[nodiscard]] constexpr std::string_view
@@ -79,6 +84,8 @@ toStringView(const am_cb_op_t t) noexcept {
     switch (t) {
     case am_cb_op_t::NOTIF_STR:
         return "NOTIF_STR";
+    case am_cb_op_t::SEND_RECV:
+        return "SEND_RECV";
     }
     return nixl::ucx::invalid_string;
 }

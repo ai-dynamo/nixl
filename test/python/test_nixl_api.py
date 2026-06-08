@@ -128,13 +128,15 @@ def test_nixl_conf_bad_sync_mode():
 
 
 def test_make_invalid_op(one_empty_agent, two_xfer_lists):
-    # Only READ/WRITE are supported
+    # Unknown operations are rejected before reaching the native bindings.
     with pytest.raises(KeyError):
         one_empty_agent.make_prepped_xfer("RD", 0, [], 0, [])
 
     list1, list2 = two_xfer_lists
     with pytest.raises(KeyError):
         one_empty_agent.initialize_xfer("WR", list1, list2, "nobody")
+    with pytest.raises(KeyError):
+        one_empty_agent.initialize_tag_xfer("SR", list1, b"tag", "nobody")
 
 
 def test_invalid_plugin_name(one_agent):
@@ -179,6 +181,73 @@ def test_empty_notif_tag(two_connected_agents):
     while not found:
         # empty bytes will consume any message
         found = agent2.check_remote_xfer_done(agent1.name, b"")
+
+
+@pytest.mark.timeout(5)
+def test_tag_xfer_send_recv(backend_name):
+    if backend_name != "UCX":
+        pytest.skip("Tagged SEND/RECV is currently implemented by the UCX backend")
+
+    agent1 = nixl_agent(
+        str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+    )
+    agent2 = nixl_agent(
+        str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+    )
+
+    mem_size = 128
+    addr1 = utils.malloc_passthru(mem_size)
+    addr2 = utils.malloc_passthru(mem_size)
+    send_handle = None
+    recv_handle = None
+    reg1 = None
+    reg2 = None
+    remote_added = False
+
+    try:
+        utils.ba_buf(addr1, mem_size)
+        reg1 = agent1.get_reg_descs([(addr1, mem_size, 0, "")], mem_type="DRAM")
+        reg2 = agent2.get_reg_descs([(addr2, mem_size, 0, "")], mem_type="DRAM")
+        agent1.register_memory(reg1)
+        agent2.register_memory(reg2)
+
+        agent1.add_remote_agent(agent2.get_agent_metadata())
+        agent2.add_remote_agent(agent1.get_agent_metadata())
+        remote_added = True
+
+        send_descs = agent1.get_xfer_descs([(addr1, mem_size, 0)], mem_type="DRAM")
+        recv_descs = agent2.get_xfer_descs([(addr2, mem_size, 0)], mem_type="DRAM")
+
+        tag = b"python-tag-xfer"
+        recv_handle = agent2.initialize_tag_xfer("RECV", recv_descs, tag, agent1.name)
+        send_handle = agent1.initialize_tag_xfer("SEND", send_descs, tag, agent2.name)
+
+        states = [
+            (agent2, recv_handle, agent2.transfer(recv_handle)),
+            (agent1, send_handle, agent1.transfer(send_handle)),
+        ]
+        for agent, handle, state in states:
+            assert state in ("DONE", "PROC")
+            while state == "PROC":
+                state = agent.check_xfer_state(handle)
+                assert state in ("DONE", "PROC")
+            assert state == "DONE"
+
+        utils.verify_transfer(addr1, addr2, mem_size)
+    finally:
+        if send_handle is not None:
+            agent1.release_xfer_handle(send_handle)
+        if recv_handle is not None:
+            agent2.release_xfer_handle(recv_handle)
+        if remote_added:
+            agent1.remove_remote_agent(agent2.name)
+            agent2.remove_remote_agent(agent1.name)
+        if reg1 is not None:
+            agent1.deregister_memory(reg1)
+        if reg2 is not None:
+            agent2.deregister_memory(reg2)
+        utils.free_passthru(addr1)
+        utils.free_passthru(addr2)
 
 
 def test_improper_get_xfer_descs(one_empty_agent, one_reg_list):

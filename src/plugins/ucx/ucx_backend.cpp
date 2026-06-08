@@ -15,176 +15,21 @@
  * limitations under the License.
  */
 
+#include "request.h"
 #include "ucx_backend.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
-#include "common/nixl_log.h"
+#include "common/util.h"
 
 #include <optional>
 #include <limits>
 #include <future>
-#include <set>
 #include <string.h>
 #include <unistd.h>
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include <asio.hpp>
-
-/****************************************
- * Backend request management
-*****************************************/
-
-class nixlUcxBackendReqH : public nixlBackendReqH {
-private:
-    std::set<ucx_connection_ptr_t> connections_;
-    std::vector<nixlUcxReq> requests_;
-    nixlUcxWorker *worker_;
-    size_t workerId_;
-
-    [[nodiscard]] nixl_status_t
-    checkConnection(const nixl_status_t status = NIXL_SUCCESS) const {
-        NIXL_ASSERT(!connections_.empty());
-        for (const auto &conn : connections_) {
-            const nixl_status_t conn_status = conn->getEp(workerId_)->checkTxState();
-            if (conn_status != NIXL_SUCCESS) {
-                return conn_status;
-            }
-        }
-        return status;
-    }
-
-protected:
-    void
-    setWorker(nixlUcxWorker *worker, size_t worker_id) {
-        NIXL_ASSERT(worker_ == nullptr || worker == nullptr);
-        worker_ = worker;
-        workerId_ = worker_id;
-    }
-
-public:
-    // Notification to be sent after completion of all requests
-    struct Notif {
-        const std::string agent;
-        const nixl_blob_t payload;
-
-        Notif(const std::string &remote_agent, const nixl_blob_t &msg)
-            : agent(remote_agent),
-              payload(msg) {}
-    };
-
-    std::optional<Notif> notif;
-
-    nixlUcxBackendReqH(nixlUcxWorker *worker, size_t worker_id)
-        : worker_(worker),
-          workerId_(worker_id) {}
-
-    void
-    reserve(size_t size) {
-        requests_.reserve(size);
-        NIXL_ASSERT(connections_.empty());
-    }
-
-    [[nodiscard]] nixl_status_t
-    append(nixl_status_t status, nixlUcxReq req, const ucx_connection_ptr_t &conn) {
-        switch (status) {
-        case NIXL_IN_PROG:
-            requests_.push_back(req);
-            connections_.insert(conn);
-            break;
-        case NIXL_SUCCESS:
-            connections_.insert(conn);
-            break;
-        default:
-            // Error. Release all previously initiated ops and exit:
-            release();
-            return status;
-        }
-        return NIXL_SUCCESS;
-    }
-
-    [[nodiscard]] const std::set<ucx_connection_ptr_t> &
-    getConnections() const noexcept {
-        return connections_;
-    }
-
-    [[nodiscard]] virtual bool
-    isComposite() const noexcept {
-        return false;
-    }
-
-    virtual void
-    release() {
-        // TODO: Error log: uncompleted requests found! Cancelling ...
-        for (nixlUcxReq req : requests_) {
-            const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
-            if (ret == NIXL_IN_PROG) {
-                // TODO: Need process this properly.
-                // it may not be enough to cancel UCX request
-                worker_->reqCancel(req);
-            }
-            worker_->reqRelease(req);
-        }
-        requests_.clear();
-        connections_.clear();
-    }
-
-    [[nodiscard]] virtual nixl_status_t
-    status() {
-        if (requests_.empty()) {
-            /* No pending transmissions */
-            connections_.clear();
-            return NIXL_SUCCESS;
-        }
-
-        worker_->progressLoop();
-
-        /* If last request is incomplete, return NIXL_IN_PROG early without
-         * checking other requests */
-        nixlUcxReq req = requests_.back();
-        const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
-        if (ret == NIXL_IN_PROG) {
-            return NIXL_IN_PROG;
-        } else if (ret != NIXL_SUCCESS) {
-            return checkConnection(ret);
-        }
-
-        /* Last request completed successfully, all the others must be in the
-         * same state. TODO: remove extra checks? */
-        size_t incomplete_reqs = 0;
-        nixl_status_t out_ret = NIXL_SUCCESS;
-        for (nixlUcxReq req : requests_) {
-            const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
-            if (ret == NIXL_SUCCESS) [[likely]] {
-                worker_->reqRelease(req);
-            } else if (ret == NIXL_IN_PROG) {
-                if (out_ret == NIXL_SUCCESS) {
-                    out_ret = NIXL_IN_PROG;
-                }
-                requests_[incomplete_reqs++] = req;
-            } else {
-                // Any other ret value is ERR and will be returned
-                out_ret = checkConnection(ret);
-            }
-        }
-
-        requests_.resize(incomplete_reqs);
-        if (requests_.empty()) {
-            connections_.clear();
-        }
-        return out_ret;
-    }
-
-    [[nodiscard]] nixlUcxWorker *
-    getWorker() const noexcept {
-        return worker_;
-    }
-
-    [[nodiscard]] size_t
-    getWorkerId() const noexcept {
-        return workerId_;
-    }
-};
 
 /****************************************
  * Progress thread management
@@ -839,6 +684,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
 
     auto &uw = uws.front();
     workerAddr = uw->epAddr();
+    uw->regAmCallback(
+        nixl::ucx::am_cb_op_t::SEND_RECV, recvAmCb, this, UCP_AM_FLAG_PERSISTENT_DATA);
     uw->regAmCallback(nixl::ucx::am_cb_op_t::NOTIF_STR, notifAmCb, this);
 }
 
@@ -1080,6 +927,8 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        nixlBackendReqH* &handle,
                                        const nixl_opt_b_args_t* opt_args) const
 {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     if (local.descCount() == 0 || remote.descCount() == 0) {
         NIXL_ERROR << "Local or remote descriptor list is empty";
         return NIXL_ERR_INVALID_PARAM;
@@ -1157,6 +1006,8 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
                                   size_t worker_id,
                                   size_t start_idx,
                                   size_t end_idx) {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     batchResult result = {NIXL_SUCCESS, 0, nullptr};
 
     for (size_t i = start_idx; i < end_idx; ++i) {
@@ -1174,7 +1025,7 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
 
         ++result.size;
         nixlUcxReq req;
-        const nixl_status_t ret = operation == NIXL_READ ?
+        const nixl_status_t ret = (operation == NIXL_READ) ?
             ep.read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
             ep.write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
 
@@ -1210,9 +1061,6 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     const size_t worker_id = int_handle->getWorkerId();
 
-    if (operation != NIXL_WRITE && operation != NIXL_READ) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
 
     /* Assuming we have a single EP, we need 3 requests: one pending request,
      * one flush request, and one notification request */
@@ -1258,9 +1106,12 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
                         const std::string &remote_agent,
                         nixlBackendReqH *&handle,
                         const nixl_opt_b_args_t *opt_args) const {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     const size_t lcnt = local.descCount();
     const size_t rcnt = remote.descCount();
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+
     nixl_status_t ret;
 
     if (lcnt != rcnt) {
@@ -1298,8 +1149,195 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     return ret;
 }
 
+nixl_status_t
+nixlUcxEngine::prepTagSend(const nixl_meta_dlist_t &local,
+                           const std::string &tag,
+                           const std::string &remote_agent,
+                           nixlBackendReqH *&handle,
+                           const nixl_opt_b_args_t *opt_args) const {
+    NIXL_ASSERT(!tag.empty());
+    NIXL_ASSERT(!local.isEmpty());
+
+    const auto worker_id = getWorkerId(opt_args);
+
+    NIXL_DEBUG << "UCX AM SEND PREP " << remote_agent << " tag " << tag;
+
+    handle = new nixlUcxBackendReqH(getWorker(worker_id).get(), worker_id, local.descCount());
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::prepTagRecv(const nixl_meta_dlist_t &local,
+                           const std::string &tag,
+                           const std::string &remote_agent,
+                           nixlBackendReqH *&nixl_handle,
+                           const nixl_opt_b_args_t *opt_args) const {
+    NIXL_ASSERT(!tag.empty());
+    NIXL_ASSERT(!local.isEmpty());
+
+    const size_t worker_id = 0;
+
+    NIXL_DEBUG << "UCX AM RECV PREP " << remote_agent << " tag " << tag;
+
+    nixl_handle = new nixl::ucx::recvRequestH(getWorker(worker_id).get(), worker_id, local);
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::prepTagXfer(const nixl_xfer_op_t operation,
+                           const nixl_meta_dlist_t &local,
+                           const std::string &tag,
+                           const std::string &remote_agent,
+                           nixlBackendReqH *&handle,
+                           const nixl_opt_b_args_t *opt_args) const {
+    if (tag.empty()) {
+        NIXL_ERROR_FUNC << "non-empty tag required for send or recv";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (local.isEmpty()) {
+        NIXL_ERROR_FUNC << "non-empty descriptor list required for send or recv";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    switch (operation) {
+    case NIXL_SEND:
+        return prepTagSend(local, tag, remote_agent, handle, opt_args);
+    case NIXL_RECV:
+        return prepTagRecv(local, tag, remote_agent, handle, opt_args);
+    case NIXL_READ:
+    case NIXL_WRITE:
+        break;
+    }
+    NIXL_ERROR_FUNC << "invalid tag operation " << operation;
+    return NIXL_ERR_INVALID_PARAM;
+}
+
+namespace {
+
+[[nodiscard]] std::uint32_t
+sendAmCustomFlags(const nixl_opt_b_args_t *opt_args) noexcept {
+    if (opt_args) {
+        if (opt_args->customParam == "eager") {
+            return UCP_AM_SEND_FLAG_EAGER;
+        }
+        if (opt_args->customParam == "rndv") {
+            return UCP_AM_SEND_FLAG_RNDV;
+        }
+    }
+    // TODO: Change this to 0 once we can assume UCX #11468?
+    return UCP_AM_SEND_FLAG_RNDV;
+}
+
+} // namespace
+
+nixl_status_t
+nixlUcxEngine::postTagSend(const nixl_meta_dlist_t &local,
+                           const std::string &tag,
+                           const std::string &remote_agent,
+                           nixlBackendReqH *&nixl_handle,
+                           const nixl_opt_b_args_t *opt_args) const {
+    NIXL_DEBUG << "UCX AM SEND POST " << remote_agent << " tag " << tag;
+
+    const auto conn = getConnection(remote_agent);
+    if (!conn) {
+        NIXL_ERROR << "UCX AM SEND POST no connection to " << remote_agent;
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    const auto ucx_handle = static_cast<nixlUcxBackendReqH *>(nixl_handle);
+    const auto &ep = conn->getEp(ucx_handle->getWorkerId());
+
+    nixlSerDes cache;
+    cache.addStr("name", localAgent);
+    cache.addStr("tag", tag);
+
+    for (int i = 0; i < local.descCount(); ++i) {
+        const auto &desc = local[i];
+
+        nixlSerDes ser_des(cache);
+        ser_des.addBuf("size", &desc.len, sizeof(desc.len));
+        const std::string header = ser_des.exportStr();
+
+        nixlUcxReq request;
+        const auto status = ep->sendAm(nixl::ucx::am_cb_op_t::SEND_RECV,
+                                       const_cast<char *>(header.data()),
+                                       header.size(),
+                                       reinterpret_cast<void *>(desc.addr),
+                                       desc.len,
+                                       UCP_AM_SEND_FLAG_COPY_HEADER | sendAmCustomFlags(opt_args),
+                                       &request);
+
+        NIXL_DEBUG << "UCX AM SEND POST index " << i << " status " << status;
+
+        if (ucx_handle->append(status, request, conn) != NIXL_SUCCESS) {
+            return status;
+        }
+    }
+
+    return ucx_handle->status();
+}
+
+nixl_status_t
+nixlUcxEngine::postTagRecv(const nixl_meta_dlist_t &local,
+                           const std::string &tag,
+                           const std::string &remote_agent,
+                           nixlBackendReqH *&nixl_handle,
+                           const nixl_opt_b_args_t *opt_args) const {
+    NIXL_DEBUG << "UCX AM RECV POST " << remote_agent << " tag " << tag;
+
+    const auto ucx_handle = dynamic_cast<nixl::ucx::recvRequestH *>(nixl_handle);
+
+    const auto conn = getConnection(remote_agent);
+    if (!conn) {
+        NIXL_ERROR << "UCX AM RECV POST no connection to " << remote_agent;
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    ucx_handle->prefill(conn);
+
+    return recvMap_.postRecv(uws.front()->get(), remote_agent, tag, ucx_handle);
+}
+
+nixl_status_t
+nixlUcxEngine::postTagXfer(const nixl_xfer_op_t operation,
+                           const nixl_meta_dlist_t &local,
+                           const std::string &tag,
+                           const std::string &remote_agent,
+                           nixlBackendReqH *&handle,
+                           const nixl_opt_b_args_t *opt_args) const {
+    if (tag.empty()) {
+        NIXL_ERROR_FUNC << "non-empty tag required for send or recv";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (local.isEmpty()) {
+        NIXL_ERROR_FUNC << "non-empty descriptor list required for send or recv";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    switch (operation) {
+    case NIXL_SEND:
+        return postTagSend(local, tag, remote_agent, handle, opt_args);
+    case NIXL_RECV:
+        return postTagRecv(local, tag, remote_agent, handle, opt_args);
+    case NIXL_READ:
+    case NIXL_WRITE:
+        break;
+    }
+    NIXL_ERROR_FUNC << "invalid tag operation " << operation;
+    return NIXL_ERR_INVALID_PARAM;
+}
+
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
+    if (const auto h = dynamic_cast<nixl::ucx::recvRequestH *>(handle)) {
+        const std::lock_guard lg(h->mutex);
+        return h->status();
+    }
+
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     const nixl_status_t handle_status = int_handle->status();
 
@@ -1332,11 +1370,16 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
-    const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
-    int_handle->release();
-
-    /* TODO: return to a pool instead. */
-    delete int_handle;
+    if (const auto h = dynamic_cast<nixl::ucx::recvRequestH *>(handle)) {
+        recvMap_.erase(h);
+        h->release();
+        delete h;
+    } else if (const auto h = dynamic_cast<nixlUcxBackendReqH *>(handle)) {
+        h->release();
+        delete h;
+    } else {
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
     return NIXL_SUCCESS;
 }
@@ -1355,6 +1398,51 @@ void
 nixlUcxEngine::progressLoop() {
     while (progress() != 0)
         ;
+}
+
+ucs_status_t
+nixlUcxEngine::recvAmImpl(const std::string &remote,
+                          const std::string &tag,
+                          void *data,
+                          const std::size_t size) {
+    NIXL_ASSERT(!uws.empty());
+    NIXL_ASSERT(uws.front());
+    NIXL_ASSERT(uws.front()->get());
+
+    NIXL_DEBUG << "UCX AM RECV from " << remote << " tag " << tag;
+    return recvMap_.recvRndv(uws.front()->get(), remote, tag, data, size);
+}
+
+ucs_status_t
+nixlUcxEngine::recvAmCb(void *arg,
+                        const void *header,
+                        size_t header_length,
+                        void *data,
+                        size_t length,
+                        const ucp_am_recv_param_t *param) {
+    nixlSerDes ser_des;
+    const std::string ser_str(static_cast<const char *>(header), header_length);
+    ser_des.importStr(ser_str);
+    const std::string remote = ser_des.getStr("name");
+    const std::string tag = ser_des.getStr("tag");
+
+    NIXL_DEBUG << "UCX AM RECV " << header << " " << header_length << " " << data << " " << length
+               << " " << param->recv_attr;
+
+    if (remote.empty() || tag.empty()) {
+        NIXL_ERROR_FUNC << "UCX AM RECV received empty header field";
+        // Any cleanup needed? For rndv?
+        return UCS_ERR_INVALID_PARAM;
+    }
+
+    // The callback is registered with UCP_AM_FLAG_PERSISTENT_DATA to
+    // ensure UCP_AM_RECV_ATTR_FLAG_DATA is set in the non-rndv case.
+    NIXL_ASSERT(param->recv_attr & (UCP_AM_RECV_ATTR_FLAG_RNDV | UCP_AM_RECV_ATTR_FLAG_DATA));
+
+    // const auto mode = (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV) ?
+    // nixl::ucx::am_recv_mode_t::RNDV : nixl::ucx::am_recv_mode_t::EAGER;
+    const auto engine = static_cast<nixlUcxEngine *>(arg);
+    return engine->recvAmImpl(remote, tag, data, length);
 }
 
 /****************************************

@@ -195,7 +195,7 @@ nixlUcxEp::disconnect_nb() {
  * Active message handling
  * =========================================== */
 
-using nixl_ucx_am_cb_ctx_t = std::pair<void *, nixlUcxEp::am_deleter_t>;
+using nixl_ucx_am_cb_ctx_t = std::pair<void *, nixlUcxEp::am_cleanup_t>;
 using nixl_ucx_am_cb_ctx_ptr_t = std::unique_ptr<nixl_ucx_am_cb_ctx_t>;
 
 void
@@ -217,7 +217,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
                   size_t len,
                   uint32_t flags,
                   nixlUcxReq *req,
-                  const am_deleter_t &deleter) {
+                  const am_cleanup_t &cleanup) {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         return status;
@@ -229,8 +229,8 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
     param.flags = flags;
 
     nixl_ucx_am_cb_ctx_ptr_t ctx;
-    if (deleter) {
-        ctx = std::make_unique<nixl_ucx_am_cb_ctx_t>(buffer, deleter);
+    if (cleanup) {
+        ctx = std::make_unique<nixl_ucx_am_cb_ctx_t>(buffer, cleanup);
         param.op_attr_mask |= UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA;
         param.cb.send = sendAmCallback;
         param.user_data = ctx.get();
@@ -244,8 +244,8 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
             *req = static_cast<nixlUcxReq>(request);
         }
         return NIXL_IN_PROG;
-    } else if (deleter) {
-        deleter(nullptr, buffer);
+    } else if (cleanup) {
+        cleanup(nullptr, buffer);
     }
 
     return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
@@ -422,7 +422,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         config.modifyAlways("NET_DEVICES", devs_str.c_str());
     }
 
-    config.modify("RNDV_THRESH", "inf");
+    config.modify("CMA_MEMORY_INVALIDATE", "y");
     config.modify("MAX_RMA_RAILS", "2");
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
     config.modify("RCACHE_MAX_UNRELEASED", "1024");
@@ -638,7 +638,10 @@ nixlUcxContext::warnAboutHardwareSupportMismatch() const {
  * =========================================== */
 
 int
-nixlUcxWorker::regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg) {
+nixlUcxWorker::regAmCallback(nixl::ucx::am_cb_op_t msg_id,
+                             ucp_am_recv_callback_t cb,
+                             void *arg,
+                             const unsigned flags) {
     ucp_am_handler_param_t params = {0};
 
     params.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_CB |
@@ -647,6 +650,11 @@ nixlUcxWorker::regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_
     params.id = unsigned(msg_id);
     params.cb = cb;
     params.arg = arg;
+
+    if (flags) {
+        params.field_mask |= UCP_AM_HANDLER_PARAM_FIELD_FLAGS;
+        params.flags = flags;
+    }
 
     const ucs_status_t status = ucp_worker_set_am_recv_handler(worker.get(), &params);
 

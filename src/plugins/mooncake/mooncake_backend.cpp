@@ -18,6 +18,7 @@
 #include "serdes/serdes.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "common/util.h"
 
 #include <arpa/inet.h>
 #include <bits/stdint-uintn.h>
@@ -237,6 +238,8 @@ nixlMooncakeEngine::prepXfer(const nixl_xfer_op_t &operation,
                              const std::string &remote_agent,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     auto priv = new nixlMooncakeBackendReqH();
     priv->batch_id = INVALID_BATCH;
     handle = priv;
@@ -250,6 +253,8 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                              const std::string &remote_agent,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     auto priv = (nixlMooncakeBackendReqH *)handle;
     int segment_id;
     {

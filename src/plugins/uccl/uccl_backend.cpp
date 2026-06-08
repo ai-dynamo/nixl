@@ -16,6 +16,9 @@
  */
 #include "uccl_backend.h"
 #include "serdes/serdes.h"
+#include "common/nixl_log.h"
+#include "common/util.h"
+
 #include <iostream>
 #include <cstdlib>
 #include <cstring>
@@ -506,6 +509,8 @@ nixlUcclEngine::prepXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     nixlUcclBackendMD *lmd;
     nixlUcclBackendMD *rmd;
     handle = nullptr;
@@ -595,6 +600,8 @@ nixlUcclEngine::postXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
+    NIXL_ASSERT(nixl::isReadWrite(operation));
+
     nixlUcclReqH *uccl_handle;
     nixlUcclBackendMD *lmd;
 

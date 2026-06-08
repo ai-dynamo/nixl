@@ -19,6 +19,7 @@
 
 #include <vector>
 #include <cstring>
+#include <string>
 #include <iostream>
 #include <thread>
 #include <mutex>
@@ -32,26 +33,15 @@
 #include "nixl.h"
 
 #include "backend/backend_engine.h"
+#include "common/nixl_log.h"
 #include "common/nixl_time.h"
 
 #include "mem_list.h"
+#include "recv_map.h"
 #include "rkey.h"
+#include "types.h"
 #include "ucx_enums.h"
 #include "ucx_utils.h"
-
-class nixlUcxConnection : public nixlBackendConnMD {
-    private:
-        std::vector<std::unique_ptr<nixlUcxEp>> eps;
-
-    public:
-        [[nodiscard]] const std::unique_ptr<nixlUcxEp>& getEp(size_t ep_id) const noexcept {
-            return eps[ep_id];
-        }
-
-    friend class nixlUcxEngine;
-};
-
-using ucx_connection_ptr_t = std::shared_ptr<nixlUcxConnection>;
 
 // A private metadata has to implement get, and has all the metadata
 class nixlUcxPrivateMetadata : public nixlBackendMD {
@@ -111,6 +101,11 @@ public:
 
     bool
     supportsNotif() const override {
+        return true;
+    }
+
+    bool
+    supportsSendRecv() const override {
         return true;
     }
 
@@ -174,6 +169,22 @@ public:
              const std::string &remote_agent,
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args = nullptr) const override;
+
+    nixl_status_t
+    prepTagXfer(nixl_xfer_op_t operation,
+                const nixl_meta_dlist_t &local,
+                const std::string &tag,
+                const std::string &remote_agent,
+                nixlBackendReqH *&handle,
+                const nixl_opt_b_args_t *opt_args = nullptr) const override;
+
+    nixl_status_t
+    postTagXfer(nixl_xfer_op_t operation,
+                const nixl_meta_dlist_t &local,
+                const std::string &tag,
+                const std::string &remote_agent,
+                nixlBackendReqH *&handle,
+                const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
     nixl_status_t
     checkXfer(nixlBackendReqH *handle) const override;
@@ -247,6 +258,18 @@ private:
     nixl_status_t
     internalMDHelper(const nixl_blob_t &blob, const std::string &agent, nixlBackendMD *&output);
 
+    // TODO: Do derived classes need locking here?
+    [[nodiscard]] ucs_status_t
+    recvAmImpl(const std::string &remote, const std::string &tag, void *data, std::size_t size);
+
+    static ucs_status_t
+    recvAmCb(void *arg,
+             const void *header,
+             size_t header_length,
+             void *data,
+             size_t length,
+             const ucp_am_recv_param_t *param);
+
     // Notifications
     static ucs_status_t
     notifAmCb(void *arg,
@@ -280,6 +303,34 @@ private:
                        size_t start_idx,
                        size_t end_idx);
 
+    nixl_status_t
+    prepTagSend(const nixl_meta_dlist_t &local,
+                const std::string &tag,
+                const std::string &remote_agent,
+                nixlBackendReqH *&handle,
+                const nixl_opt_b_args_t *opt_args) const;
+
+    nixl_status_t
+    prepTagRecv(const nixl_meta_dlist_t &local,
+                const std::string &tag,
+                const std::string &remote_agent,
+                nixlBackendReqH *&handle,
+                const nixl_opt_b_args_t *opt_args) const;
+
+    nixl_status_t
+    postTagSend(const nixl_meta_dlist_t &local,
+                const std::string &tag,
+                const std::string &remote_agent,
+                nixlBackendReqH *&handle,
+                const nixl_opt_b_args_t *opt_args) const;
+
+    nixl_status_t
+    postTagRecv(const nixl_meta_dlist_t &local,
+                const std::string &tag,
+                const std::string &remote_agent,
+                nixlBackendReqH *&handle,
+                const nixl_opt_b_args_t *opt_args) const;
+
     /**
      * Get the worker ID from the optional arguments.
      * Returns std::nullopt if the 'worker_id' option extraction fails.
@@ -292,6 +343,8 @@ private:
     std::vector<std::unique_ptr<nixlUcxWorker>> uws;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
+
+    mutable nixl::ucx::recvMap recvMap_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;

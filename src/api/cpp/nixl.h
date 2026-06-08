@@ -290,6 +290,14 @@ class nixlAgent {
         postXferReq (nixlXferReqH* req_hndl,
                      const nixl_opt_args_t* extra_params = nullptr) const;
 
+        nixl_status_t
+        createTagXferReq(const nixl_xfer_op_t operation,
+                         const nixl_xfer_dlist_t &local_descs,
+                         const std::string &tag,
+                         const std::string &remote_agent,
+                         nixlXferReqH *&req_hndl,
+                         const nixl_opt_args_t *extra_params = nullptr) const;
+
         /**
          * @brief  Check the status of transfer request `req_hndl`
          *
