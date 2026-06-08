@@ -112,10 +112,6 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
     // Enqueue a transfer submission into the MPSC work ring for the selected
     // channel, spinning if the ring is full.  Optionally records a completion
     // token in *xfer_status for later polling via pollXferStatus().
-    //
-    // producer_idx lives in HBM; consumer_idx lives in pinned host memory
-    // (accessible from device via UVA mapped pointer).  Both are accessed with
-    // system-scope atomics so the CPU proxy worker sees the update coherently.
     __device__ inline nixl_status_t
     enqueue(nixlProxySubmission submission, nixlGpuXferStatusH *xfer_status = nullptr) {
         if (submission.channel_id >= num_channels) {
@@ -140,19 +136,21 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
             }
         }
 
-        cuda::atomic_ref<uint64_t, cuda::thread_scope_system> op_idx(ring->running_op_idx);
-        submission.op_idx = op_idx.fetch_add(1, cuda::memory_order_relaxed);
-        ring->records[my_slot % ring->depth] = submission;
+        cuda::atomic_ref<uint64_t, cuda::thread_scope_system> running_op_idx(
+            ring->running_op_idx);
+        const uint64_t submission_op_idx =
+            running_op_idx.fetch_add(1, cuda::memory_order_relaxed);
+        const uint32_t slot = my_slot % ring->depth;
 
         // Signal this slot is ready for the consumer.  The release
         // guarantees the record write above is visible before the
-        // consumer reads it via an acquire load on ready_flag.
-        cuda::atomic_ref<uint32_t, cuda::thread_scope_system> ready(
-            ring->records[my_slot % ring->depth].ready_flag);
-        ready.store(1, cuda::memory_order_release);
+        // consumer reads op_idx via an acquire load. op_idx == 0 means empty.
+        cuda::atomic_ref<uint64_t, cuda::thread_scope_system> record_op_idx(
+            ring->records[slot].op_idx);
+        record_op_idx.store(submission_op_idx, cuda::memory_order_release);
 
         if (xfer_status != nullptr) {
-            ProxyXferStatus pxs{channel_view.completion_slot, submission.op_idx};
+            ProxyXferStatus pxs{channel_view.completion_slot, submission_op_idx};
             memcpy(xfer_status->storage, &pxs, sizeof(ProxyXferStatus));
         }
 

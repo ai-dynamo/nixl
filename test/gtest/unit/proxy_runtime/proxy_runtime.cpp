@@ -377,8 +377,9 @@ TEST_F(ProxyRuntimeTest, WorkerSubmitsPreparedTransportDescriptors) {
     submission.size = 32;
 
     auto *ring = runtime_.deviceChannelViews()[0].work_ring;
+    submission.op_idx = 0;
     ring->records[0] = submission;
-    __atomic_store_n(&ring->records[0].ready_flag, 1u, __ATOMIC_RELEASE);
+    __atomic_store_n(&ring->records[0].op_idx, uint64_t{11}, __ATOMIC_RELEASE);
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
     while (std::chrono::steady_clock::now() < deadline) {
@@ -445,8 +446,9 @@ TEST_F(ProxyRuntimeTest, WorkerSubmitsPreparedAtomicAddDescriptor) {
     submission.value = 42;
 
     auto *ring = runtime_.deviceChannelViews()[0].work_ring;
+    submission.op_idx = 0;
     ring->records[0] = submission;
-    __atomic_store_n(&ring->records[0].ready_flag, 1u, __ATOMIC_RELEASE);
+    __atomic_store_n(&ring->records[0].op_idx, uint64_t{11}, __ATOMIC_RELEASE);
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
     while (std::chrono::steady_clock::now() < deadline) {

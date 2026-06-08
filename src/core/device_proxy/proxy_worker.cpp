@@ -83,14 +83,17 @@ ProxyWorker::tryDequeue(nixlProxyChannelState &channel, nixlProxySubmission &sub
     uint32_t local_consumer_idx =
         __atomic_load_n(channel.consumer_idx_host_, __ATOMIC_RELAXED);
     uint32_t slot = local_consumer_idx % ring->depth;
-    // ready_flag is the GPU-to-CPU signal that the record is written
+    // op_idx is the GPU-to-CPU signal that the record is written
     // (pairs with release store in device enqueue).  No producer_idx
     // read on host — it is GPU-internal for slot allocation.
-    if (!__atomic_load_n(&ring->records[slot].ready_flag, __ATOMIC_ACQUIRE)) {
+    const uint64_t op_idx = __atomic_load_n(&ring->records[slot].op_idx, __ATOMIC_ACQUIRE);
+    if (op_idx == 0) {
         return false;
     }
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
     submission = ring->records[slot];
-    __atomic_store_n(&ring->records[slot].ready_flag, 0, __ATOMIC_RELAXED);
+    submission.op_idx = op_idx;
+    __atomic_store_n(&ring->records[slot].op_idx, 0, __ATOMIC_RELAXED);
     __atomic_store_n(channel.consumer_idx_host_,
                      local_consumer_idx + 1,
                      __ATOMIC_RELEASE);
