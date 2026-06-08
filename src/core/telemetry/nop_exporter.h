@@ -14,25 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TELEMETRY_NOOP_EXPORTER_H
-#define NIXL_SRC_CORE_TELEMETRY_NOOP_EXPORTER_H
+#ifndef NIXL_SRC_CORE_TELEMETRY_NOP_EXPORTER_H
+#define NIXL_SRC_CORE_TELEMETRY_NOP_EXPORTER_H
 
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
 #include "nixl_types.h"
 
 /**
- * @class nixlTelemetryNoopExporter
+ * @class nixlTelemetryNopExporter
  * @brief Telemetry exporter that drains and discards events.
  *
  * Keeps telemetry active (so the datapath records events and getXferTelemetry()
  * works) but writes nowhere. This lets the overhead of the telemetry collection
  * path be measured in isolation, without any export/serialization/IO cost.
- * Selected via NIXL_TELEMETRY_EXPORTER=NOOP.
+ * Selected via NIXL_TELEMETRY_EXPORTER=NOP.
  */
-class nixlTelemetryNoopExporter : public nixlTelemetryExporter {
+class nixlTelemetryNopExporter : public nixlTelemetryExporter {
 public:
-    explicit nixlTelemetryNoopExporter(const nixlTelemetryExporterInitParams &init_params) noexcept
+    explicit nixlTelemetryNopExporter(const nixlTelemetryExporterInitParams &init_params) noexcept
         : nixlTelemetryExporter(init_params) {}
 
     nixl_status_t
@@ -42,4 +42,4 @@ public:
     }
 };
 
-#endif // NIXL_SRC_CORE_TELEMETRY_NOOP_EXPORTER_H
+#endif // NIXL_SRC_CORE_TELEMETRY_NOP_EXPORTER_H

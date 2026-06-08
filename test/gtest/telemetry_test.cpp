@@ -146,21 +146,21 @@ TEST_F(telemetryTest, CreateReturnsNullWithoutSink) {
     envHelper_.addVar(TELEMETRY_DIR_VAR, testDir_.string()); // restore for TearDown symmetry
 }
 
-TEST_F(telemetryTest, NoopExporterIsActiveAndWritesNothing) {
-    // NIXL_TELEMETRY_EXPORTER=NOOP keeps telemetry active (event collection and
+TEST_F(telemetryTest, NopExporterIsActiveAndWritesNothing) {
+    // NIXL_TELEMETRY_EXPORTER=NOP keeps telemetry active (event collection and
     // in-band getXferTelemetry) without writing anywhere, so the overhead of the
     // collection path can be measured in isolation. It takes precedence over
     // NIXL_TELEMETRY_DIR and produces no output file.
-    envHelper_.addVar(TELEMETRY_EXPORTER_VAR, "NOOP");
+    envHelper_.addVar(TELEMETRY_EXPORTER_VAR, "NOP");
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 
     auto telemetry = nixlTelemetry::create(testFile_);
-    ASSERT_NE(telemetry, nullptr) << "NOOP exporter must keep telemetry active";
+    ASSERT_NE(telemetry, nullptr) << "NOP exporter must keep telemetry active";
 
     EXPECT_NO_THROW(telemetry->updateTxBytes(1024));
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    // The NOOP exporter discards events, so no buffer file is created.
+    // The NOP exporter discards events, so no buffer file is created.
     EXPECT_FALSE(fs::exists(testDir_.string() + "/" + testFile_));
 
     envHelper_.popVar(); // TELEMETRY_RUN_INTERVAL_VAR

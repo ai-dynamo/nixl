@@ -15,13 +15,13 @@
  * limitations under the License.
  */
 
-#include "noop_exporter.h"
+#include "nop_exporter.h"
 #include "telemetry/telemetry_plugin.h"
 
 // Plugin type alias for convenience
-using noop_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryNoopExporter>;
+using nop_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryNopExporter>;
 
 nixlTelemetryPlugin *
-createStaticNOOPPlugin() {
-    return noop_exporter_plugin_t::create(nixl_telemetry_plugin_api_version::V2, "noop", "1.0.0");
+createStaticNOPPlugin() {
+    return nop_exporter_plugin_t::create(nixl_telemetry_plugin_api_version::V2, "nop", "1.0.0");
 }

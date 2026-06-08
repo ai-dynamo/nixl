@@ -74,7 +74,7 @@ Telemetry is configured by environment variables:
 - `NIXL_TELEMETRY_ENABLE` can be set to `y`/`yes`/`on`/`true`/`enable`/`1` to be enabled, and `n`/`no`/`off`/`false`/`disable`/`0` (or not set) to be disabled. Matching is case insensitive.
 - Telemetry is active only when an exporter or sink can be created. If telemetry is requested but neither `NIXL_TELEMETRY_EXPORTER` nor `NIXL_TELEMETRY_DIR` is configured, telemetry collection is disabled.
 - If telemetry is enabled but no exporter is set, or the exporter name is empty, then behaviour depends on `NIXL_TELEMETRY_DIR` as explained below.
-- Set `NIXL_TELEMETRY_EXPORTER=NOOP` to keep telemetry active (events are collected and `getXferTelemetry()` works) while discarding all output. It needs no sink and writes nothing, so it can be used to measure the overhead of the telemetry collection path in isolation.
+- Set `NIXL_TELEMETRY_EXPORTER=NOP` to keep telemetry active (events are collected and `getXferTelemetry()` works) while discarding all output. It needs no sink and writes nothing, so it can be used to measure the overhead of the telemetry collection path in isolation.
 
 ## Cyclic Buffer
 

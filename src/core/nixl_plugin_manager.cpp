@@ -712,5 +712,5 @@ void nixlPluginManager::registerBuiltinPlugins() {
 #endif
 
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, BUFFER)
-    NIXL_REGISTER_STATIC_PLUGIN(Telemetry, NOOP)
+    NIXL_REGISTER_STATIC_PLUGIN(Telemetry, NOP)
 }
