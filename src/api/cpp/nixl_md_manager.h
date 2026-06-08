@@ -27,19 +27,10 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
-#include <utility>
 
 class nixlAgent;
-
-/**
- * @brief Transport selected by the manager. Currently always P2P;
- *        ETCD is not yet supported.
- */
-enum class nixl_md_backend_t {
-    P2P,
-    ETCD,
-};
 
 /**
  * @class nixlMDManager
@@ -54,9 +45,7 @@ enum class nixl_md_backend_t {
  */
 class nixlMDManager {
 public:
-    nixlMDManager(nixlAgent &agent, std::string self_name) noexcept
-        : agent_(agent),
-          self_name_(std::move(self_name)) {}
+    explicit nixlMDManager(nixlAgent &agent) noexcept : agent_(agent) {}
 
     /**
      * @brief Register a P2P peer's reachable address.
@@ -161,14 +150,19 @@ public:
     checkRemoteMD(const std::string &agent_name, const nixl_xfer_dlist_t &descs) const;
 
     /**
-     * @brief Backend transport in use. Currently always returns
-     *        `nixl_md_backend_t::P2P`; ETCD is not yet supported.
+     * @brief Name of the metadata transport in use. Currently always `P2P`;
+     *        ETCD is not yet supported.
      *
-     * @return nixl_md_backend_t The active transport.
+     * Returns a name rather than an enum so new backends can be added without
+     * editing a closed public type (mirrors nixl_backend_t for transfer
+     * backends). When the backend layer lands this should report the active
+     * backend's own name instead of a literal.
+     *
+     * @return std::string_view The active transport name.
      */
-    [[nodiscard]] nixl_md_backend_t
+    [[nodiscard]] std::string_view
     getBackend() const noexcept {
-        return nixl_md_backend_t::P2P;
+        return "P2P";
     }
 
     nixlMDManager(nixlMDManager &&) = delete;
@@ -179,16 +173,24 @@ public:
     operator=(const nixlMDManager &) = delete;
 
 private:
+    // Registry entry for a tracked agent. The registry itself (name -> entry)
+    // is backend-agnostic; the ip/port are P2P-only addressing and are unused
+    // by centralized backends. They belong with the P2P transport long term
+    // (a future P2P backend), not in shared manager state.
     struct Peer {
         std::string ip;
         std::uint16_t port;
+
+        [[nodiscard]] bool
+        operator==(const Peer &other) const noexcept {
+            return ip == other.ip && port == other.port;
+        }
     };
 
     [[nodiscard]] bool
     lookupPeer(const std::string &agent_name, Peer &out) const;
 
     nixlAgent &agent_;
-    const std::string self_name_;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, Peer> peers_;
 };

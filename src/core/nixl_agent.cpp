@@ -149,13 +149,24 @@ makeAgentTracer(const std::string &name) {
     return nixl::trace::makeTracer(nixl::trace::TracerConfig{name, std::move(requested_backends)});
 }
 
+std::unique_ptr<nixlMDManager>
+makeMDManager(nixlAgent &agent) {
+    if (!nixl::config::checkExistence("NIXL_MD_MANAGER")) {
+        return nullptr;
+    }
+    return std::make_unique<nixlMDManager>(agent);
+}
+
 } // namespace
 
-nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
+nixlAgentData::nixlAgentData(nixlAgent &agent,
+                             const std::string &name,
+                             const nixlAgentConfig &config)
     : name_(name),
       config_(config),
       useEtcd_(detectEtcd()),
       needsCommThread_(useEtcd_ || config.useListenThread),
+      mdManager_(makeMDManager(agent)),
       lock(effectiveSyncMode(config.syncMode, needsCommThread_)),
       tracer_(makeAgentTracer(name)) {
 #if HAVE_ETCD
@@ -184,9 +195,8 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 }
 
 /*** nixlAgent implementation ***/
-nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
-    data(std::make_unique<nixlAgentData>(name, cfg))
-{
+nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
+    : data(std::make_unique<nixlAgentData>(*this, name, cfg)) {
     if(cfg.useListenThread) {
         data->listener = std::make_unique<nixlMDStreamListener>(cfg.listenPort);
         data->listener->setupListener(); // throws on bind/listen failure
@@ -196,10 +206,6 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
         data->commThreadStop = false;
         data->agentShutdown = false;
         data->commThread = std::thread(&nixlAgentData::commWorker, data.get(), std::ref(*this));
-    }
-
-    if (nixl::config::checkExistence("NIXL_MD_MANAGER")) {
-        data->mdManager_ = std::make_unique<nixlMDManager>(*this, name);
     }
 }
 
@@ -238,6 +244,11 @@ nixlAgent::~nixlAgent() {
 
         data->listener.reset();
     }
+}
+
+const std::string &
+nixlAgent::getName() const noexcept {
+    return data->name_;
 }
 
 nixl_status_t

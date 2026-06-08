@@ -70,9 +70,10 @@ class nixlAgentData {
         const nixlAgentConfig config_;
         const bool useEtcd_;
         const bool needsCommThread_;
-        // Constructed in the nixlAgent ctor when NIXL_MD_MANAGER is set;
-        // null (and getMDManager reports NIXL_ERR_NOT_SUPPORTED) otherwise.
-        std::unique_ptr<nixlMDManager> mdManager_;
+        // Constructed in this object's initializer list when NIXL_MD_MANAGER
+        // is set; null (and getMDManager reports NIXL_ERR_NOT_SUPPORTED)
+        // otherwise.
+        const std::unique_ptr<nixlMDManager> mdManager_;
         nixlLock        lock;
         std::atomic<bool> efaWarningChecked = false;
 
@@ -133,7 +134,7 @@ class nixlAgentData {
         warnAboutEfaHardwareMismatch();
 
     public:
-        nixlAgentData(const std::string &name, const nixlAgentConfig &config);
+        nixlAgentData(nixlAgent &agent, const std::string &name, const nixlAgentConfig &config);
 
         void
         addErrorTelemetry(nixl_status_t err_status) {

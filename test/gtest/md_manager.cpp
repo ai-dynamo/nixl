@@ -21,6 +21,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -287,7 +288,7 @@ TEST_F(MDManagerFixture, UnregisterTriggersInvalidate) {
 
 TEST_F(MDManagerFixture, BackendIsP2P) {
     auto &a = agents_[0];
-    EXPECT_EQ(a.mdm->getBackend(), nixl_md_backend_t::P2P);
+    EXPECT_EQ(a.mdm->getBackend(), std::string_view("P2P"));
 }
 
 } // namespace gtest::md_manager
