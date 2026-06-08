@@ -79,9 +79,11 @@ s.close()
 run_nixlbench_two_workers_asio() {
     args="$@"
     asio_port=$(get_random_tcp_port)
-    command_line="./bin/nixlbench --runtime_type=ASIO --asio_port=$asio_port $DEFAULT_NB_PARAMS $args"
+    command_line="${NIXL_RUN_PREFIX:-}./bin/nixlbench --runtime_type=ASIO --asio_port=$asio_port $DEFAULT_NB_PARAMS $args"
     parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 4 ; $command_line"
 }
+
+GDB_WRAP="gdb -batch -ex 'set pagination off' -ex run -ex 'thread apply all bt' --args "
 
 for op_type in READ WRITE; do
     for initiator in $seg_types; do
@@ -95,7 +97,7 @@ if $HAS_GPU ; then
     for op_type in READ WRITE; do
         for initiator in $seg_types; do
             for target in $seg_types; do
-                run_nixlbench_two_workers_asio --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+                NIXL_RUN_PREFIX="$GDB_WRAP" run_nixlbench_two_workers_asio --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
             done
         done
     done
@@ -104,7 +106,7 @@ fi
 run_nixlbench_two_workers_etcd() {
     args="$@"
     benchmark_group=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
-    command_line="./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group $benchmark_group $args"
+    command_line="${NIXL_RUN_PREFIX:-}./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group $benchmark_group $args"
     parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 4 ; $command_line"
 }
 
@@ -122,7 +124,7 @@ if $HAS_GPU ; then
     for op_type in READ WRITE; do
         for initiator in $seg_types; do
             for target in $seg_types; do
-                run_nixlbench_two_workers_etcd --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+                NIXL_RUN_PREFIX="$GDB_WRAP" run_nixlbench_two_workers_etcd --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
             done
         done
     done
