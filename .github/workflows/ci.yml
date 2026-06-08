@@ -9,21 +9,16 @@ name: NIXL CI
 # Repository configuration required (Settings -> Secrets and variables -> Actions):
 #   Variables:
 #     NIXL_ECR_IMAGE        - ECR image base, e.g.
-#                             210086341041.dkr.ecr.us-west-2.amazonaws.com/nixl-ci
-#     ENABLE_GPU_CI         - set to "true" to enable the (currently deferred)
-#                             GPU test/verify jobs once GPU runners exist.
+#                             210086341041.dkr.ecr.us-west-2.amazonaws.com/nixl
 #   Secrets:
-#     GITLAB_REGISTRY_USER  - user for gitlab-master.nvidia.com:5005 (manylinux
-#     GITLAB_REGISTRY_TOKEN   base images + wheeltamer scan image)
 #     ARTIFACTORY_URL       - JFrog Artifactory base URL (release uploads)
 #     ARTIFACTORY_PYPI_TOKEN
 #     ARTIFACTORY_CARGO_TOKEN
 # AWS/ECR push auth comes from the runner pod's IRSA service account, not a secret.
+# Build base + wheeltamer scan images come from NGC + ECR (no GitLab dependency).
 
 on:
   pull_request:
-    # 'labeled' so adding the ci-release-test label triggers a run with the label in context
-    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
     tags: ['v*']
@@ -53,9 +48,7 @@ env:
   WHL_PYTHON_VERSIONS: "3.10,3.11,3.12,3.13,3.14"
   IMAGE_BASE: ${{ vars.NIXL_ECR_IMAGE }}
   # Release flag, normalized to a plain "true"/"false" string usable in shells.
-  # TEMPORARY (remove before merge): the 'ci-release-test' label forces the release
-  # path — wheel + crate PUBLISH to Artifactory — to run on a labeled PR.
-  RELEASE_BUILD: ${{ github.event.inputs.release_build == true || github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+  RELEASE_BUILD: ${{ github.event.inputs.release_build == true || github.event.inputs.release_build == 'true' }}
 
 jobs:
   # ----------------------------------------------------------------------------
@@ -198,7 +191,7 @@ jobs:
   # ----------------------------------------------------------------------------
   scan-wheels:
     needs: build
-    if: ${{ github.event.inputs.security_scan == 'true' || github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    if: ${{ github.event.inputs.security_scan == 'true' || github.event.inputs.release_build == 'true' }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     env:
       PACKAGE_LICENSE: "Apache-2.0"
@@ -263,7 +256,7 @@ jobs:
   # ----------------------------------------------------------------------------
   upload-x86-wheels:
     needs: build
-    if: ${{ github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    if: ${{ github.event.inputs.release_build == 'true' }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     timeout-minutes: 30
     env:
@@ -301,7 +294,7 @@ jobs:
 
   upload-arm-wheels:
     needs: build
-    if: ${{ github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    if: ${{ github.event.inputs.release_build == 'true' }}
     # amd runner: the jfrog-cli-v2-jf image is amd64-only. This job only uploads the
     # already-built arm wheel files (downloaded as artifacts), so the host arch is irrelevant.
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
@@ -344,7 +337,7 @@ jobs:
     # GitLab marked this job `when: manual` on release builds. The `release`
     # environment provides the equivalent manual approval gate (configure
     # required reviewers under Settings -> Environments -> release).
-    if: ${{ github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    if: ${{ github.event.inputs.release_build == 'true' }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     environment: release
     env:
