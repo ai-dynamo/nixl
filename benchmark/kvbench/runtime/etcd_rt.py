@@ -95,7 +95,7 @@ class _EtcdDistUtils(_RTUtils):
         try:
             self.client = etcd3.client(host=host, port=port)
         except Exception as e:
-            raise ValueError(f"Failed to initialize ETCD client: {e}")
+            raise ValueError(f"Failed to initialize ETCD client: {e}") from e
 
         # Rank 0 wipes prefix, then signals ready. Others wait for signal.
         init_key = f"{self.prefix}/__init_ready__"
@@ -153,9 +153,7 @@ class _EtcdDistUtils(_RTUtils):
             ):
                 current_val = self._get_int_val(key)
                 if timeout_sec and time.time() - start_time > timeout_sec:
-                    missing_ranks = (
-                        [r for r in ranks[current_val:]] if current_val else ranks[1:]
-                    )
+                    missing_ranks = ranks[current_val:] if current_val else ranks[1:]
                     raise TimeoutError(
                         f"[Rank {self.rank}] Barrier timed out after {timeout_sec:.0f}s: {current_val}/{len(ranks)} ranks arrived. "
                         f"Missing ranks: {missing_ranks[:10]}{'...' if len(missing_ranks) > 10 else ''}"
@@ -180,9 +178,7 @@ class _EtcdDistUtils(_RTUtils):
                 if timeout_sec and time.time() - start_time > timeout_sec:
                     current_val = self._get_int_val(key) or 0
                     missing_ranks = (
-                        [r for r in ranks[current_val:]]
-                        if current_val < len(ranks)
-                        else []
+                        ranks[current_val:] if current_val < len(ranks) else []
                     )
                     raise TimeoutError(
                         f"[Rank {self.rank}] Barrier timed out after {timeout_sec:.0f}s: {current_val}/{len(ranks)} ranks arrived. "

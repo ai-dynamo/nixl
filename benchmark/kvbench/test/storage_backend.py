@@ -307,9 +307,10 @@ class FilesystemBackend(StorageBackend):
 
             shard_fds = []
             shard_paths = []
-            for s in range(n_shards):
-                fpath = self._get_file_path(tp_idx, rank, shard=s)
-                actual_read = min(shard_read, read_size - s * shard_read)
+            shard_actual_reads = []
+            for shard in range(n_shards):
+                fpath = self._get_file_path(tp_idx, rank, shard=shard)
+                actual_read = min(shard_read, read_size - shard * shard_read)
                 actual_read = max(actual_read, 0)
                 actual_size = actual_read + shard_write
                 if actual_size <= 0:
@@ -319,6 +320,7 @@ class FilesystemBackend(StorageBackend):
                 fd = self._open_and_register_file(fpath, actual_size)
                 shard_fds.append(fd)
                 shard_paths.append(str(fpath))
+                shard_actual_reads.append(actual_read)
 
             handle = StorageHandle(
                 tp_idx=tp_idx,
@@ -332,6 +334,12 @@ class FilesystemBackend(StorageBackend):
                     "shard_paths": shard_paths,
                     "shard_read_size": shard_read,
                     "shard_write_size": shard_write,
+                    # Per-shard actual read region size. The trailing shard's
+                    # read region may be shorter than shard_read when read_size
+                    # is not divisible by n_shards; writes for that shard must
+                    # start at this actual offset, not at shard_read, or they
+                    # would land past EOF of the (smaller) shard file.
+                    "shard_actual_reads": shard_actual_reads,
                 },
             )
 
@@ -516,8 +524,8 @@ class FilesystemBackend(StorageBackend):
         shard_fds = handle.backend_data.get("shard_fds")
 
         if shard_fds and len(shard_fds) > 1:
-            shard_read = handle.backend_data["shard_read_size"]
             shard_write = handle.backend_data["shard_write_size"]
+            shard_actual_reads = handle.backend_data["shard_actual_reads"]
             handles = []
             for i, fd in enumerate(shard_fds):
                 offset_in_buf = i * shard_write
@@ -525,7 +533,11 @@ class FilesystemBackend(StorageBackend):
                 if size <= 0:
                     break
                 buf_slice = buffer[offset_in_buf : offset_in_buf + size]
-                xfer = self._create_handle("WRITE", fd, shard_read, size, buf_slice)
+                # Write goes immediately after this shard's read region. For
+                # the trailing shard that region may be shorter than
+                # shard_read_size, so use the per-shard value.
+                write_offset = shard_actual_reads[i]
+                xfer = self._create_handle("WRITE", fd, write_offset, size, buf_slice)
                 handles.append(xfer)
             return handles
         else:
