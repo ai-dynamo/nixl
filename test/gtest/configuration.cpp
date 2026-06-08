@@ -227,11 +227,7 @@ TEST(Config, BackendBasics) {
     const std::string unknown = "unknownkey";
 
     const nixl_b_params_t p = {
-        {negative, "-42"},
-        {positive, "129"},
-        {string, value},
-        {boolean, "no"}
-    };
+        {negative, "-42"}, {positive, "129"}, {string, value}, {boolean, "no"}};
 
     // Test Optional
     {
@@ -248,9 +244,7 @@ TEST(Config, BackendBasics) {
         const auto r = nixl::getBackendParamOptional<bool>(&p, unknown);
         EXPECT_FALSE(r.has_value());
     }
-    {
-        EXPECT_THROW((void)nixl::getBackendParamOptional<int>(&p, string), std::runtime_error);
-    }
+    { EXPECT_THROW((void)nixl::getBackendParamOptional<int>(&p, string), std::runtime_error); }
     {
         const auto r = nixl::getBackendParamOptional<bool>(nullptr, boolean);
         EXPECT_FALSE(r.has_value());
@@ -268,9 +262,7 @@ TEST(Config, BackendBasics) {
         const std::string r = nixl::getBackendParamDefaulted<std::string>(p, string, "wrong");
         EXPECT_EQ(r, value);
     }
-    {
-        EXPECT_THROW((void)nixl::getBackendParamDefaulted(&p, boolean, 0), std::runtime_error);
-    }
+    { EXPECT_THROW((void)nixl::getBackendParamDefaulted(&p, boolean, 0), std::runtime_error); }
     {
         const int v = 12345;
         const unsigned r = nixl::getBackendParamDefaulted(nullptr, value, v);
