@@ -22,7 +22,7 @@ ARG OS
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG RDMA_CORE_PREFIX="/usr"
-ARG UCX_REF="v1.21.x"
+ARG UCX_REF="940c1c1d9"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
 ARG NIXL_PREFIX="/usr/local/nixl"
@@ -211,6 +211,16 @@ ENV NIXL_PLUGIN_DIR=$NIXL_PLUGIN_DIR
 
 FROM common-base AS rocm-build
 
+# ARGs from common-base must be re-declared in each child stage to be accessible.
+ARG ARCH="x86_64"
+ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG UCX_REF="940c1c1d9"
+ARG UCX_PREFIX="/usr"
+ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
+ARG NIXL_PREFIX="/usr/local/nixl"
+ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
+ARG NPROC
+ARG BUILD_TYPE="release"
 ARG ROCM_PATH="/opt/rocm"
 ARG WHEEL_NAME="nixl_rocm"
 ARG BACKEND_DIR="nixl_rocm"
@@ -221,10 +231,8 @@ ENV PATH=$ROCM_PATH/bin:$PATH
 ENV LD_LIBRARY_PATH=$ROCM_PATH/lib:$ROCM_PATH/lib64:$LD_LIBRARY_PATH
 ENV PKG_CONFIG_PATH=$ROCM_PATH/lib/pkgconfig:$ROCM_PATH/lib64/pkgconfig:$PKG_CONFIG_PATH
 
-# rocm/dev-ubuntu-24.04 ships gcc 14, which promotes int-conversion warnings
-# to errors; UCX v1.21.x has upstream bugs in put_offload.c that trip this.
-# Install gcc 13 to match the cuda-build stage (whose CUDA base ships gcc 13)
-# and use it as the default compiler for UCX and NIXL.
+# rocm/dev-ubuntu-24.04 ships gcc 14; install gcc 13 to match the cuda-build
+# stage and avoid -Werror promotion issues in UCX.
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         gcc-13 g++-13 && \
@@ -302,6 +310,16 @@ RUN PYTHON_ABI_TAG="$(echo "$DEFAULT_PYTHON_VERSION" | tr -d .)" && \
 
 FROM common-base AS cuda-build
 
+# ARGs from common-base must be re-declared in each child stage to be accessible.
+ARG ARCH="x86_64"
+ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG UCX_REF="940c1c1d9"
+ARG UCX_PREFIX="/usr"
+ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
+ARG NIXL_PREFIX="/usr/local/nixl"
+ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
+ARG NPROC
+ARG BUILD_TYPE="release"
 ARG BUILD_NIXL_EP="true"
 ARG DOCA_PREFIX="/opt/mellanox/doca"
 ARG LIBFABRIC_VERSION="v1.21.0"

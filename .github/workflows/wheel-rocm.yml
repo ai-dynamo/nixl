@@ -1,10 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Builds the nixl_rocm backend wheel on tagged releases and uploads it as a
-# release asset. Built end-to-end from contrib/Dockerfile (rocm-build stage)
-# via contrib/build-container.sh --rocm, so the wheel matches what users
-# get from the published container.
+# Builds the nixl_rocm wheel on tagged releases and uploads it as a release asset.
 
 name: wheel-rocm
 
