@@ -27,7 +27,6 @@
 #include <atomic>
 #include <chrono>
 #include <unordered_map>
-#include <unordered_set>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -218,7 +217,6 @@ private:
 
     // Receiver Side XFER_ID Tracking
     std::mutex receiver_tracking_mutex_;
-    std::unordered_set<uint32_t> received_remote_writes_; // All received XFER_IDs (global)
 
     // Notification Queuing
     struct PendingNotification {
