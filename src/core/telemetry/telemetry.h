@@ -61,7 +61,7 @@ public:
     static std::unique_ptr<nixlTelemetry>
     create(const std::string &agent_name);
 
-    explicit nixlTelemetry(const std::string &agent_name);
+    nixlTelemetry(const std::string &agent_name, const std::string &exporter_name);
 
     ~nixlTelemetry();
 
@@ -85,15 +85,13 @@ public:
     addPostTime(std::chrono::microseconds post_time);
 
 private:
-    [[nodiscard]] bool
-    isActive() const noexcept;
-
-    // Resolve the configured exporter and create it. Returns nullptr when no
-    // sink is configured (telemetry stays inactive); throws on a genuine
-    // plugin-load / exporter-creation failure. Used to initialize the const
-    // exporter_ from the member initializer list.
+    // Load the named telemetry plugin and create its exporter. Throws on a
+    // genuine plugin-load / exporter-creation failure. Used to initialize the
+    // const exporter_ from the member-initializer list, so a constructed
+    // nixlTelemetry always has a valid exporter (create() decides up front
+    // whether telemetry should exist at all).
     [[nodiscard]] std::unique_ptr<nixlTelemetryExporter>
-    makeExporter() const;
+    makeExporter(const std::string &exporter_name) const;
     void
     startExportTask();
     void

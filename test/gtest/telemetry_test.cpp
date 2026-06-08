@@ -98,13 +98,13 @@ protected:
 
 TEST_F(telemetryTest, BasicInitialization) {
     EXPECT_NO_THROW({
-        nixlTelemetry telemetry(testFile_);
+        nixlTelemetry telemetry(testFile_, "BUFFER");
         validateState();
     });
 }
 
 TEST_F(telemetryTest, InitializationWithEmptyFileName) {
-    EXPECT_THROW({ nixlTelemetry telemetry(""); }, std::invalid_argument);
+    EXPECT_THROW({ nixlTelemetry telemetry("", "BUFFER"); }, std::invalid_argument);
 }
 
 TEST_F(telemetryTest, CustomBufferSize) {
@@ -113,7 +113,7 @@ TEST_F(telemetryTest, CustomBufferSize) {
     envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "32");
 
     EXPECT_NO_THROW({
-        nixlTelemetry telemetry(testFile_);
+        nixlTelemetry telemetry(testFile_, "BUFFER");
         validateState();
     });
     capacity_ = tmp_capacity;
@@ -123,20 +123,27 @@ TEST_F(telemetryTest, CustomBufferSize) {
 TEST_F(telemetryTest, InvalidBufferSize) {
     envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "0");
 
-    EXPECT_THROW({ nixlTelemetry telemetry(testFile_); }, std::invalid_argument);
+    EXPECT_THROW({ nixlTelemetry telemetry(testFile_, "BUFFER"); }, std::invalid_argument);
     envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, NonexistentExporterThrows) {
     // An explicitly requested exporter that cannot be loaded must surface the
     // failure rather than silently disabling telemetry.
-    envHelper_.addVar(TELEMETRY_EXPORTER_VAR, "nixl_nonexistent_exporter");
 
     // The plugin manager logs an expected warning when the .so is not found.
     gtest::LogIgnoreGuard ignore_missing_plugin("Plugin file does not exist");
 
-    EXPECT_THROW({ nixlTelemetry telemetry(testFile_); }, std::runtime_error);
-    envHelper_.popVar();
+    EXPECT_THROW(
+        { nixlTelemetry telemetry(testFile_, "nixl_nonexistent_exporter"); }, std::runtime_error);
+}
+
+TEST_F(telemetryTest, CreateReturnsNullWithoutSink) {
+    // With no exporter and no telemetry dir configured, create() resolves no
+    // sink and returns nullptr without constructing a telemetry instance.
+    envHelper_.popVar(); // drop NIXL_TELEMETRY_DIR set by SetUp
+    EXPECT_EQ(nixlTelemetry::create(testFile_), nullptr);
+    envHelper_.addVar(TELEMETRY_DIR_VAR, testDir_.string()); // restore for TearDown symmetry
 }
 
 TEST_F(telemetryTest, NoopExporterIsActiveAndWritesNothing) {
@@ -163,7 +170,7 @@ TEST_F(telemetryTest, NoopExporterIsActiveAndWritesNothing) {
 // Test transfer bytes tracking
 TEST_F(telemetryTest, TransferBytesTracking) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
-    nixlTelemetry telemetry(testFile_);
+    nixlTelemetry telemetry(testFile_, "BUFFER");
 
     EXPECT_NO_THROW(telemetry.updateTxBytes(1024));
     EXPECT_NO_THROW(telemetry.updateRxBytes(1024));
@@ -229,21 +236,21 @@ TEST_F(telemetryTest, TelemetryEventStructure) {
 TEST_F(telemetryTest, ShortRunInterval) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 
-    EXPECT_NO_THROW({ nixlTelemetry telemetry(testFile_); });
+    EXPECT_NO_THROW({ nixlTelemetry telemetry(testFile_, "BUFFER"); });
     envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, LargeRunInterval) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "10000");
 
-    EXPECT_NO_THROW({ nixlTelemetry telemetry(testFile_); });
+    EXPECT_NO_THROW({ nixlTelemetry telemetry(testFile_, "BUFFER"); });
     envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, BufferOverflowHandling) {
     envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "4");
 
-    nixlTelemetry telemetry(testFile_);
+    nixlTelemetry telemetry(testFile_, "BUFFER");
 
     for (int i = 0; i < 10; ++i) {
         EXPECT_NO_THROW(telemetry.updateTxBytes(i * 100));
@@ -259,7 +266,7 @@ TEST_F(telemetryTest, CustomTelemetryDirectory) {
 
     EXPECT_NO_THROW({
         std::string telemetry_file = "test_telemetry";
-        nixlTelemetry telemetry(telemetry_file);
+        nixlTelemetry telemetry(telemetry_file, "BUFFER");
 
         std::string file_path = custom_dir.string() + "/" + telemetry_file;
 
@@ -272,7 +279,7 @@ TEST_F(telemetryTest, CustomTelemetryDirectory) {
 TEST_F(telemetryTest, ConcurrentAccess) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
     testFile_ = "test_concurrent_access";
-    nixlTelemetry telemetry(testFile_);
+    nixlTelemetry telemetry(testFile_, "BUFFER");
 
     const int num_threads = 4;
     const int operations_per_thread = 100;
@@ -316,7 +323,7 @@ TEST_F(telemetryTest, ConcurrentAccess) {
 TEST_F(telemetryTest, TelemetryAgentEventsOne) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 
-    nixlTelemetry telemetry(testFile_);
+    nixlTelemetry telemetry(testFile_, "BUFFER");
 
     // Add some agent events
     telemetry.updateTxBytes(1024);
@@ -345,7 +352,7 @@ TEST_F(telemetryTest, TelemetryAgentEventsOne) {
 TEST_F(telemetryTest, TelemetryAgentEventsTwo) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 
-    nixlTelemetry telemetry(testFile_);
+    nixlTelemetry telemetry(testFile_, "BUFFER");
 
     // Add agent events
     telemetry.updateTxBytes(1024);
