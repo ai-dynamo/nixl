@@ -32,7 +32,7 @@ namespace cg = cooperative_groups;
 
 namespace nixl_ep {
 
-__device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst_rank) {
+__device__ __forceinline__ void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst_rank) {
     if (dst_rank == ctx.rank) return (void*) dst_ptr;
 
     void *remote_ptr = nixlGetPtr(ctx.remote_mvh, dst_rank);
@@ -280,9 +280,10 @@ DISPATCH_RECV:
         return;
 
     // For send-and-recv kernels, we need a grid sync for making `packed_recv_count` visible
-    if (phases & EP_SEND_PHASE)
+    if (phases & EP_SEND_PHASE) {
+        NIXL_EP_GRID_SYNC_PRESYNC(); // Workaround for cg::this_grid().sync() hang under nvcc -G ( when -G is not used, this line is equivalent to NOP)
         cg::this_grid().sync();
-
+    }
     // Receiving and packing
     if (responsible_expert_idx < active_expert_bound) {
         const auto src_rank = responsible_expert_idx / num_local_experts;

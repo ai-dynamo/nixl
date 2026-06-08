@@ -35,6 +35,7 @@ option('build_docs', type: 'boolean', value: false, description: 'Build Doxygen 
 option('release_wheel', type: 'boolean', value: false, description: 'Add nixl-cu12 and nixl-cu13 dependencies to the meta wheel')
 option('log_level', type: 'combo', choices: ['trace', 'debug', 'info', 'warning', 'error', 'fatal', 'auto'], value: 'auto', description: 'Log Level (auto: auto-detect based on build type: trace for debug builds, info for release builds)')
 option('rust', type: 'boolean', value: false, description: 'Build Rust bindings')
+option('nvcc_device_debug', type: 'boolean', value: false, description: 'Add -G flag to nvcc for CUDA device debug info')
 
 # Tests
 option('build_tests', type: 'boolean', value: true, description: 'Build all tests')
