@@ -974,11 +974,10 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     iov_list.push_back(basic_desc.value());
                 }
             }
-            nixl_reg_dlist_t desc_list(OBJ_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_regs_.emplace_back(
-                agent, backend_engine, OBJ_SEG, std::move(iov_list), [this](xferBenchIOV &iov) {
+                *agent, backend_engine, OBJ_SEG, std::move(iov_list), [this](xferBenchIOV &iov) {
                     cleanupBasicDescObj(iov);
                 });
         }
@@ -1009,10 +1008,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     iov_list.push_back(basic_desc.value());
                 }
             }
-            nixl_reg_dlist_t desc_list(BLK_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, BLK_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_regs_.emplace_back(agent, backend_engine, BLK_SEG, std::move(iov_list));
+            remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
         }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
@@ -1059,10 +1057,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                 file_idx += 1;
                 if (file_idx >= num_files) file_idx = 0;
             }
-            nixl_reg_dlist_t desc_list(FILE_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, FILE_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_regs_.emplace_back(agent, backend_engine, FILE_SEG, std::move(iov_list));
+            remote_regs_.emplace_back(*agent, backend_engine, FILE_SEG, std::move(iov_list));
         }
     }
 
@@ -1097,8 +1094,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
         }
 
-        nixl_reg_dlist_t desc_list(seg_type);
-        iovListToNixlRegDlist(iov_list, desc_list);
+        nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, seg_type);
         CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
 
         std::function<void(xferBenchIOV &)> local_cleanup;
@@ -1113,7 +1109,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             break;
         }
         local_regs_.emplace_back(
-            agent, backend_engine, seg_type, iov_list, std::move(local_cleanup));
+            *agent, backend_engine, seg_type, iov_list, std::move(local_cleanup));
 
         /*
          * Workaround for a GUSLI registration bug which resets memory to 0, this initialization
@@ -1354,15 +1350,13 @@ registerIterationMem(nixlAgent *agent,
     nixl_opt_args_t reg_args;
     reg_args.backends.push_back(backend_engine);
 
-    nixl_reg_dlist_t local_reg(GET_SEG_TYPE(true));
-    iovListToNixlRegDlist(local_iov, local_reg);
+    nixl_reg_dlist_t local_reg = iovListToNixlRegDlist(local_iov, GET_SEG_TYPE(true));
     nixl_status_t rc = agent->registerMem(local_reg, &reg_args);
     if (rc != NIXL_SUCCESS) {
         return rc;
     }
 
-    nixl_reg_dlist_t remote_reg(getRemoteSegType());
-    iovListToNixlRegDlist(remote_iov, remote_reg);
+    nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
     rc = agent->registerMem(remote_reg, &reg_args);
     if (rc != NIXL_SUCCESS) {
         return rc;
@@ -1380,15 +1374,13 @@ deregisterIterationMem(nixlAgent *agent,
     nixl_opt_args_t reg_args;
     reg_args.backends.push_back(backend_engine);
 
-    nixl_reg_dlist_t local_reg(GET_SEG_TYPE(true));
-    iovListToNixlRegDlist(local_iov, local_reg);
+    nixl_reg_dlist_t local_reg = iovListToNixlRegDlist(local_iov, GET_SEG_TYPE(true));
     nixl_status_t rc = agent->deregisterMem(local_reg, &reg_args);
     if (rc != NIXL_SUCCESS) {
         return rc;
     }
 
-    nixl_reg_dlist_t remote_reg(getRemoteSegType());
-    iovListToNixlRegDlist(remote_iov, remote_reg);
+    nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
     rc = agent->deregisterMem(remote_reg, &reg_args);
     if (rc != NIXL_SUCCESS) {
         return rc;

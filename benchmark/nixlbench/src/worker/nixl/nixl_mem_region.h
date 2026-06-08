@@ -37,17 +37,20 @@
         }                                                                                     \
     } while (0)
 
-// Convert vector of xferBenchIOV to nixl_reg_dlist_t
-inline void
-iovListToNixlRegDlist(const std::vector<xferBenchIOV> &iov_list, nixl_reg_dlist_t &dlist) {
-    nixlBlobDesc desc;
-    for (const auto &iov : iov_list) {
+// Convert a vector of xferBenchIOV into a nixl_reg_dlist_t of the given segment type.
+inline nixl_reg_dlist_t
+iovListToNixlRegDlist(const std::vector<xferBenchIOV> &iov_list, nixl_mem_t seg_type) {
+    // Size the list up front to avoid re-allocations while filling it.
+    nixl_reg_dlist_t dlist(seg_type, iov_list.size());
+    for (size_t i = 0; i < iov_list.size(); ++i) {
+        const xferBenchIOV &iov = iov_list[i];
+        nixlBlobDesc &desc = dlist[i];
         desc.addr = iov.addr;
         desc.len = iov.len;
         desc.devId = iov.devId;
         desc.metaInfo = iov.metaInfo;
-        dlist.addDesc(desc);
     }
+    return dlist;
 }
 
 // RAII wrapper around a backing file descriptor: closes the fd on destruction.
@@ -92,6 +95,7 @@ private:
     closeFd() noexcept {
         if (fd >= 0) {
             ::close(fd);
+            fd = -1;
         }
     }
 };
@@ -99,7 +103,7 @@ private:
 // RAII wrapper around a NIXL memory registration: deregisters the memory and
 // runs the per-IOV cleanup on destruction.
 class NixlMemRegion {
-    nixlAgent *agent_ = nullptr;
+    nixlAgent &agent_;
     nixlBackendH *backend_ = nullptr;
     nixl_mem_t seg_type_ = DRAM_SEG;
     std::vector<xferBenchIOV> iovs_;
@@ -107,16 +111,17 @@ class NixlMemRegion {
     nixl_opt_args_t cached_opt_args_;
 
 public:
-    NixlMemRegion() = default;
-    NixlMemRegion(nixlAgent *agent,
+    NixlMemRegion(nixlAgent &agent,
                   nixlBackendH *backend,
                   nixl_mem_t seg_type,
                   std::vector<xferBenchIOV> iovs,
                   std::function<void(xferBenchIOV &)> cleanup = nullptr);
     ~NixlMemRegion();
     NixlMemRegion(NixlMemRegion &&o) noexcept;
+    // Move-only; a reference member makes the region non-assignable, which is
+    // fine since it is only ever emplaced into / cleared from vectors.
     NixlMemRegion &
-    operator=(NixlMemRegion &&o) noexcept;
+    operator=(NixlMemRegion &&o) = delete;
     NixlMemRegion(const NixlMemRegion &) = delete;
     NixlMemRegion &
     operator=(const NixlMemRegion &) = delete;
