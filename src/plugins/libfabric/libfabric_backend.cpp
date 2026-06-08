@@ -1186,17 +1186,11 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
 
 nixl_status_t
 nixlLibfabricEngine::releaseReqH(nixlBackendReqH *handle) const {
-    // Add any necessary cleanup for libfabric specific request handling
-    // For example, if we're using a custom request structure:
-    // nixlLibfabricReqH* req = static_cast<nixlLibfabricReqH*>(handle);
-    // // Perform any necessary cleanup
-    // delete req;
-
     if (!handle) {
         return NIXL_SUCCESS;
     }
 
-    // Let NIXL framework handle the deletion
+    delete static_cast<nixlLibfabricBackendH *>(handle);
     NIXL_DEBUG << "releaseReqH completed successfully";
     return NIXL_SUCCESS;
 }
