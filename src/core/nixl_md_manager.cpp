@@ -27,6 +27,7 @@ namespace {
 // Build the nixl_opt_args_t for a peer. Takes ip by value and moves it in to
 // avoid a redundant copy. Kept .cpp-local rather than passing the manager's
 // private Peer struct, which would pull this helper into the installed header.
+[[nodiscard]]
 nixl_opt_args_t
 makePeerArgs(std::string ip, std::uint16_t port, const nixl_opt_args_t *base = nullptr) {
     nixl_opt_args_t args = base ? *base : nixl_opt_args_t{};
@@ -39,7 +40,7 @@ makePeerArgs(std::string ip, std::uint16_t port, const nixl_opt_args_t *base = n
 
 bool
 nixlMDManager::lookupPeer(const std::string &agent_name, Peer &out) const {
-    std::lock_guard<std::mutex> lk(mutex_);
+    const std::lock_guard lock(mutex_);
     auto it = peers_.find(agent_name);
     if (it == peers_.end()) {
         return false;
@@ -59,30 +60,30 @@ nixlMDManager::registerMDPeer(const std::string &agent_name,
     // nixl_listener.cpp), so reject malformed addresses up front.
     in_addr parsed;
     if (inet_pton(AF_INET, ip.c_str(), &parsed) != 1) {
-        NIXL_DEBUG << "[" << self_name_ << "] registerMDPeer: invalid IPv4 address '" << ip
+        NIXL_DEBUG << "[" << agent_.getName() << "] registerMDPeer: invalid IPv4 address '" << ip
                    << "' for " << agent_name;
         return NIXL_ERR_INVALID_PARAM;
     }
     // 0 means "use the listener-side default", matching the existing
     // nixl_opt_args_t::port default.
     const std::uint16_t resolved_port = (port == 0) ? default_comm_port : port;
-    std::lock_guard<std::mutex> lk(mutex_);
+    const std::lock_guard lock(mutex_);
     // Same address is idempotent; rebinding a name is rejected (unregister first).
     const auto it = peers_.find(agent_name);
     if (it != peers_.end()) {
         if (it->second.ip == ip && it->second.port == resolved_port) {
-            NIXL_DEBUG << "[" << self_name_ << "] registerMDPeer: " << agent_name
+            NIXL_DEBUG << "[" << agent_.getName() << "] registerMDPeer: " << agent_name
                        << " already bound to " << ip << ":" << resolved_port << " (idempotent)";
             return NIXL_SUCCESS;
         }
-        NIXL_DEBUG << "[" << self_name_ << "] registerMDPeer: rejecting rebind of " << agent_name
-                   << " from " << it->second.ip << ":" << it->second.port << " to " << ip << ":"
-                   << resolved_port;
+        NIXL_DEBUG << "[" << agent_.getName() << "] registerMDPeer: rejecting rebind of "
+                   << agent_name << " from " << it->second.ip << ":" << it->second.port << " to "
+                   << ip << ":" << resolved_port;
         return NIXL_ERR_NOT_ALLOWED;
     }
     peers_[agent_name] = Peer{ip, resolved_port};
-    NIXL_DEBUG << "[" << self_name_ << "] registerMDPeer: " << agent_name << " -> " << ip << ":"
-               << resolved_port;
+    NIXL_DEBUG << "[" << agent_.getName() << "] registerMDPeer: " << agent_name << " -> " << ip
+               << ":" << resolved_port;
     return NIXL_SUCCESS;
 }
 
@@ -90,7 +91,7 @@ nixl_status_t
 nixlMDManager::unregisterMDPeer(const std::string &agent_name) {
     Peer peer;
     if (!lookupPeer(agent_name, peer)) {
-        NIXL_DEBUG << "[" << self_name_ << "] unregisterMDPeer: " << agent_name
+        NIXL_DEBUG << "[" << agent_.getName() << "] unregisterMDPeer: " << agent_name
                    << " not registered (no-op)";
         return NIXL_SUCCESS;
     }
@@ -101,18 +102,18 @@ nixlMDManager::unregisterMDPeer(const std::string &agent_name) {
     const auto args = makePeerArgs(peer.ip, peer.port);
     const nixl_status_t s = agent_.invalidateLocalMD(&args);
     if (s != NIXL_SUCCESS) {
-        NIXL_DEBUG << "[" << self_name_ << "] unregisterMDPeer: invalidate for " << agent_name
+        NIXL_DEBUG << "[" << agent_.getName() << "] unregisterMDPeer: invalidate for " << agent_name
                    << " failed: " << s;
         return s;
     }
     // Compare-then-erase: guard against a concurrent registerMDPeer
     // having replaced the entry while invalidate was in flight.
-    std::lock_guard<std::mutex> lk(mutex_);
+    const std::lock_guard lock(mutex_);
     auto it = peers_.find(agent_name);
-    if (it != peers_.end() && it->second.ip == peer.ip && it->second.port == peer.port) {
+    if (it != peers_.end() && it->second == peer) {
         peers_.erase(it);
     }
-    NIXL_DEBUG << "[" << self_name_ << "] unregisterMDPeer: " << agent_name << " removed";
+    NIXL_DEBUG << "[" << agent_.getName() << "] unregisterMDPeer: " << agent_name << " removed";
     return NIXL_SUCCESS;
 }
 
@@ -128,7 +129,7 @@ nixlMDManager::sendLocalMD(const std::string &agent_name) const {
     // across a network call. Worst case the send targets the just-removed
     // address, which is acceptable.
     const auto args = makePeerArgs(std::move(peer.ip), peer.port);
-    NIXL_DEBUG << "[" << self_name_ << "] sendLocalMD: " << agent_name;
+    NIXL_DEBUG << "[" << agent_.getName() << "] sendLocalMD: " << agent_name;
     return agent_.sendLocalMD(&args);
 }
 
@@ -141,7 +142,7 @@ nixlMDManager::sendLocalPartialMD(const std::string &agent_name,
         return NIXL_ERR_NOT_FOUND;
     }
     const auto args = makePeerArgs(std::move(peer.ip), peer.port, md_extra_params);
-    NIXL_DEBUG << "[" << self_name_ << "] sendLocalPartialMD: " << agent_name;
+    NIXL_DEBUG << "[" << agent_.getName() << "] sendLocalPartialMD: " << agent_name;
     return agent_.sendLocalPartialMD(descs, &args);
 }
 
@@ -152,7 +153,7 @@ nixlMDManager::fetchRemoteMD(const std::string &agent_name) const {
         return NIXL_ERR_NOT_FOUND;
     }
     const auto args = makePeerArgs(std::move(peer.ip), peer.port);
-    NIXL_DEBUG << "[" << self_name_ << "] fetchRemoteMD: " << agent_name;
+    NIXL_DEBUG << "[" << agent_.getName() << "] fetchRemoteMD: " << agent_name;
     return agent_.fetchRemoteMD(agent_name, &args);
 }
 
@@ -163,13 +164,13 @@ nixlMDManager::invalidateLocalMD(const std::string &agent_name) const {
         return NIXL_ERR_NOT_FOUND;
     }
     const auto args = makePeerArgs(std::move(peer.ip), peer.port);
-    NIXL_DEBUG << "[" << self_name_ << "] invalidateLocalMD: " << agent_name;
+    NIXL_DEBUG << "[" << agent_.getName() << "] invalidateLocalMD: " << agent_name;
     return agent_.invalidateLocalMD(&args);
 }
 
 nixl_status_t
 nixlMDManager::checkRemoteMD(const std::string &agent_name, const nixl_xfer_dlist_t &descs) const {
     // TRACE (not DEBUG): callers typically poll this in a loop.
-    NIXL_TRACE << "[" << self_name_ << "] checkRemoteMD: " << agent_name;
+    NIXL_TRACE << "[" << agent_.getName() << "] checkRemoteMD: " << agent_name;
     return agent_.checkRemoteMD(agent_name, descs);
 }
