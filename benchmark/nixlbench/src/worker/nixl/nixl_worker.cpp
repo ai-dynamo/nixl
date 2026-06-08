@@ -24,6 +24,8 @@
 #if HAVE_CUDA
 #include <cuda.h>
 #include <cuda_runtime.h>
+#elif HAVE_ROCM
+#include <hip/hip_runtime.h>
 #endif
 #include <fcntl.h>
 #include <filesystem>
@@ -60,9 +62,11 @@ static nixl_mem_t
 resolveVramSegment() {
 #if HAVE_CUDA
     return VRAM_SEG;
+#elif HAVE_ROCM
+    return VRAM_SEG;
 #else
     if (neuronCoreCount() > 0) return VRAM_SEG;
-    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+    std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
 }
@@ -315,6 +319,17 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["container_name"] = xferBenchConfig::azure_blob_container_name;
         backend_params["connection_string"] = xferBenchConfig::azure_blob_connection_string;
         std::cout << "AZURE_BLOB backend" << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INFINIA)) {
+        // INFINIA backend - configuration via config file
+        if (!xferBenchConfig::infinia_config_file.empty()) {
+            backend_params["config_file"] = xferBenchConfig::infinia_config_file;
+            std::cout << "INFINIA backend with config file: "
+                      << xferBenchConfig::infinia_config_file << std::endl;
+        } else {
+            std::cout << "INFINIA backend (plugin will use environment variables or defaults)"
+                      << std::endl;
+            std::cout << "  Tip: Use --infinia_config_file to specify a config file" << std::endl;
+        }
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -616,6 +631,22 @@ cleanupVramCuda(xferBenchIOV &iov) {
 
 #endif /* HAVE_CUDA */
 
+#if HAVE_ROCM
+static std::optional<xferBenchIOV>
+getVramDescRocm(int devid, size_t buffer_size, uint8_t memset_value) {
+    void *addr;
+    CHECK_CUDA_ERROR(hipMalloc(&addr, buffer_size), "Failed to allocate ROCm buffer");
+    CHECK_CUDA_ERROR(hipMemset(addr, memset_value, buffer_size), "Failed to set device memory");
+    return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
+}
+
+static void
+cleanupVramRocm(xferBenchIOV &iov) {
+    CHECK_CUDA_ERROR(hipSetDevice(iov.devId), "Failed to set device");
+    CHECK_CUDA_ERROR(hipFree((void *)iov.addr), "Failed to deallocate ROCm buffer");
+}
+#endif /* HAVE_ROCM */
+
 static std::optional<xferBenchIOV>
 getVramDesc(int devid, size_t buffer_size, bool isInit) {
     uint8_t memset_value =
@@ -632,8 +663,11 @@ getVramDesc(int devid, size_t buffer_size, bool isInit) {
     } else {
         return getVramDescCuda(devid, buffer_size, memset_value);
     }
+#elif HAVE_ROCM
+    CHECK_CUDA_ERROR(hipSetDevice(devid), "Failed to set device");
+    return getVramDescRocm(devid, buffer_size, memset_value);
 #else
-    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+    std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     return std::nullopt;
 #endif
 }
@@ -809,8 +843,10 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
 
 #if HAVE_CUDA
     cleanupVramCuda(iov);
+#elif HAVE_ROCM
+    cleanupVramRocm(iov);
 #else
-    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+    std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
 #endif
 }
 

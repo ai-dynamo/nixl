@@ -29,6 +29,8 @@
 
 #if HAVE_CUDA
 #include <cuda_runtime.h>
+#elif HAVE_ROCM
+#include <hip/hip_runtime.h>
 #endif
 #include <fcntl.h>
 #include <filesystem>
@@ -202,6 +204,11 @@ NB_ARG_STRING(azure_blob_connection_string,
               "Connection string for Azure Blob backend (alternative to connect to Azurite for "
               "local testing)");
 
+// INFINIA options - only used when backend is INFINIA
+NB_ARG_STRING(infinia_config_file,
+              "",
+              "Path to INFINIA-specific config file (simple key=value format)");
+
 // HF3FS options - only used when backend is HF3FS
 NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool");
 
@@ -294,6 +301,7 @@ std::string xferBenchConfig::obj_accelerated_type = "";
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 std::string xferBenchConfig::azure_blob_connection_string = "";
+std::string xferBenchConfig::infinia_config_file = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
@@ -371,12 +379,15 @@ xferBenchConfig::loadParams(void) {
         device_list = NB_ARG(device_list);
         enable_vmm = NB_ARG(enable_vmm);
 
-#if defined(HAVE_CUDA) && !defined(HAVE_CUDA_FABRIC)
         if (enable_vmm) {
+#if HAVE_ROCM
+            std::cerr << "VMM is not supported with ROCm" << std::endl;
+            return -1;
+#elif HAVE_CUDA && !HAVE_CUDA_FABRIC
             std::cerr << "VMM is not supported in CUDA version " << CUDA_VERSION << std::endl;
             return -1;
-        }
 #endif
+        }
         // Load GDS-specific configurations if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
             gds_batch_pool_size = NB_ARG(gds_batch_pool_size);
@@ -461,6 +472,11 @@ xferBenchConfig::loadParams(void) {
             azure_blob_container_name = NB_ARG(azure_blob_container_name);
             azure_blob_connection_string = NB_ARG(azure_blob_connection_string);
         }
+
+        // Load INFINIA-specific configurations if backend is INFINIA
+        if (backend == XFERBENCH_BACKEND_INFINIA) {
+            infinia_config_file = NB_ARG(infinia_config_file);
+        }
     }
 
     initiator_seg_type = NB_ARG(initiator_seg_type);
@@ -530,6 +546,19 @@ xferBenchConfig::loadParams(void) {
             std::cout << "Using address " << asio_address << " port " << asio_port
                       << " for ASIO runtime" << std::endl;
         }
+    }
+
+    // Validate backend-specific configurations
+    if (backend == XFERBENCH_BACKEND_INFINIA && check_consistency) {
+        std::cerr << "Error: Consistency check is not supported for INFINIA backend" << std::endl;
+        std::cerr << "       The INFINIA backend uses native object storage operations that do not"
+                  << std::endl;
+        std::cerr
+            << "       support the file-based consistency verification used by other backends."
+            << std::endl;
+        std::cerr << "Hint: Remove --check_consistency flag when using --backend INFINIA"
+                  << std::endl;
+        return -1;
     }
 
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
@@ -782,14 +811,17 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 }
 
 bool
 xferBenchConfig::isObjStorageBackend() {
     return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 };
+
 
 /**********
  * xferBench Utils
@@ -823,8 +855,11 @@ copyVramToHost(void *host_addr, const void *device_addr, size_t len) {
 #if HAVE_CUDA
     CHECK_CUDA_ERROR(cudaMemcpy(host_addr, (void *)device_addr, len, cudaMemcpyDeviceToHost),
                      "cudaMemcpy failed");
+#elif HAVE_ROCM
+    CHECK_CUDA_ERROR(hipMemcpy(host_addr, (void *)device_addr, len, hipMemcpyDeviceToHost),
+                     "hipMemcpy failed");
 #else
-    std::cerr << "VRAM not supported without CUDA or Neuron" << std::endl;
+    std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     exit(EXIT_FAILURE);
 #endif
 }
@@ -1257,6 +1292,10 @@ xferBenchUtils::buildAwsCredentials() {
 
 bool
 xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
+        // INFINIA backends don't need external CLI put
+        return true;
+    }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
         return putObjS3(buffer_size, name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
@@ -1270,6 +1309,10 @@ xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
 
 bool
 xferBenchUtils::getObj(const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
+        // INFINIA backends don't need external CLI get
+        return true;
+    }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
         return getObjS3(name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
@@ -1283,6 +1326,9 @@ xferBenchUtils::getObj(const std::string &name) {
 
 bool
 xferBenchUtils::rmObj(const std::string &name) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
+        return true;
+    }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
         return rmObjS3(name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {

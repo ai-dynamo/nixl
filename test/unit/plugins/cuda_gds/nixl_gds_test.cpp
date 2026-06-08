@@ -30,6 +30,7 @@
 #include "nixl_params.h"
 #include "nixl.h"
 #include "common/nixl_time.h"
+#include "path_mode_common.h"
 
 // Default values
 #define DEFAULT_NUM_TRANSFERS 250
@@ -64,23 +65,29 @@ size_t parse_size(const char* size_str) {
 }
 
 void print_usage(const char* program_name) {
-    std::cerr << "Usage: " << program_name << " [options] <directory_path>\n"
-              << "Options:\n"
-              << "  -d, --dram              Use DRAM for memory operations\n"
-              << "  -v, --vram              Use VRAM for memory operations (default)\n"
-              << "  -n, --num-transfers N   Number of transfers to perform (default: " << DEFAULT_NUM_TRANSFERS << ")\n"
-              << "  -s, --size SIZE         Size of each transfer (default: " << DEFAULT_TRANSFER_SIZE << " bytes)\n"
-              << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
-              << "  -r, --no-read           Skip read test\n"
-              << "  -w, --no-write          Skip write test\n"
-              << "  -p, --pool-size SIZE    Size of batch pool (default: 8, range: 1-32)\n"
-              << "  -b, --batch-limit SIZE  Maximum requests per batch  (default: 128, Max allowed: 1-128)\n"
-              << "  -m, --max-req-size SIZE Maximum size per request (default: 16M, Max allowed: 16M)\n"
-              << "  -t, --iterations N      Number of iterations for each transfer (default: " << DEFAULT_ITERATIONS << ")\n"
-              << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
-              << "  -h, --help              Show this help message\n"
-              << "\nExample:\n"
-              << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M -t 5 -D /path/to/dir\n";
+    std::cerr
+        << "Usage: " << program_name << " [options] <directory_path>\n"
+        << "Options:\n"
+        << "  -d, --dram              Use DRAM for memory operations\n"
+        << "  -v, --vram              Use VRAM for memory operations (default)\n"
+        << "  -n, --num-transfers N   Number of transfers to perform (default: "
+        << DEFAULT_NUM_TRANSFERS << ")\n"
+        << "  -s, --size SIZE         Size of each transfer (default: " << DEFAULT_TRANSFER_SIZE
+        << " bytes)\n"
+        << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
+        << "  -r, --no-read           Skip read test\n"
+        << "  -w, --no-write          Skip write test\n"
+        << "  -p, --pool-size SIZE    Size of batch pool (default: 8, range: 1-32)\n"
+        << "  -b, --batch-limit SIZE  Maximum requests per batch  (default: 128, Max allowed: "
+           "1-128)\n"
+        << "  -m, --max-req-size SIZE Maximum size per request (default: 16M, Max allowed: 16M)\n"
+        << "  -t, --iterations N      Number of iterations for each transfer (default: "
+        << DEFAULT_ITERATIONS << ")\n"
+        << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
+        << "  -P, --no-path-mode-smoke Skip the path-mode smoke (enabled by default)\n"
+        << "  -h, --help              Show this help message\n"
+        << "\nExample:\n"
+        << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M -t 5 -D /path/to/dir\n";
 }
 
 void printProgress(float progress) {
@@ -195,6 +202,12 @@ std::string format_duration(nixlTime::us_t us) {
     return ss.str();
 }
 
+static int
+runPathModeSmoke() {
+    return nixl_test::runPathModeSmoke(
+        "GDSPathModeSmoke", "GDS", "/tmp/nixl_gds_path_mode_smoke.bin", 4096);
+}
+
 int main(int argc, char *argv[])
 {
     nixl_status_t               ret = NIXL_SUCCESS;
@@ -214,30 +227,30 @@ int main(int argc, char *argv[])
     bool                        skip_write = false;
     unsigned int                pool_size = 8;
     unsigned int                batch_limit = 128;
-    size_t                      max_request_size = 16 * 1024 * 1024;
+    size_t max_request_size = 16 * 1024 * 1024;
     nixlTime::us_t              total_time(0);
     double                      total_data_gb = 0;
     bool                        use_direct = false;
-    unsigned int                iterations = DEFAULT_ITERATIONS;
+    unsigned int iterations = DEFAULT_ITERATIONS;
+    bool run_path_mode_smoke = true;
 
     // Parse command line options
-    static struct option long_options[] = {
-        {"dram",            no_argument,       0, 'd'},
-        {"vram",            no_argument,       0, 'v'},
-        {"num-transfers",   required_argument, 0, 'n'},
-        {"size",           required_argument, 0, 's'},
-        {"no-read",        no_argument,       0, 'r'},
-        {"no-write",       no_argument,       0, 'w'},
-        {"pool-size",      required_argument, 0, 'p'},
-        {"batch-limit",    required_argument, 0, 'b'},
-        {"max-req-size",   required_argument, 0, 'm'},
-        {"iterations",     required_argument, 0, 't'},
-        {"direct",         no_argument,       0, 'D'},
-        {"help",           no_argument,       0, 'h'},
-        {0,                0,                 0,  0}
-    };
+    static struct option long_options[] = {{"dram", no_argument, 0, 'd'},
+                                           {"vram", no_argument, 0, 'v'},
+                                           {"num-transfers", required_argument, 0, 'n'},
+                                           {"size", required_argument, 0, 's'},
+                                           {"no-read", no_argument, 0, 'r'},
+                                           {"no-write", no_argument, 0, 'w'},
+                                           {"pool-size", required_argument, 0, 'p'},
+                                           {"batch-limit", required_argument, 0, 'b'},
+                                           {"max-req-size", required_argument, 0, 'm'},
+                                           {"iterations", required_argument, 0, 't'},
+                                           {"direct", no_argument, 0, 'D'},
+                                           {"no-path-mode-smoke", no_argument, 0, 'P'},
+                                           {"help", no_argument, 0, 'h'},
+                                           {0, 0, 0, 0}};
 
-    while ((opt = getopt_long(argc, argv, "dvn:s:rwp:b:m:t:Dh", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dvn:s:rwp:b:m:t:DPh", long_options, NULL)) != -1) {
         switch (opt) {
             case 'd':
                 use_dram = true;
@@ -292,6 +305,9 @@ int main(int argc, char *argv[])
             case 'D':
                 use_direct = true;
                 break;
+            case 'P':
+                run_path_mode_smoke = false;
+                break;
             case 'h':
                 print_usage(argv[0]);
                 return 0;
@@ -304,6 +320,12 @@ int main(int argc, char *argv[])
     if (skip_read && skip_write) {
         std::cerr << "Error: Cannot skip both read and write tests\n";
         return 1;
+    }
+
+    if (run_path_mode_smoke) {
+        if (int rc = runPathModeSmoke(); rc != 0) {
+            return rc;
+        }
     }
 
     // Check if directory path is provided
