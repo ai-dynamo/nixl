@@ -58,7 +58,7 @@ public:
      * @throws std::invalid_argument / std::runtime_error on genuine
      *         configuration or plugin-load errors.
      */
-    static std::unique_ptr<nixlTelemetry>
+    [[nodiscard]] static std::unique_ptr<nixlTelemetry>
     create(const std::string &agent_name);
 
     nixlTelemetry(const std::string &agent_name, const std::string &exporter_name);
