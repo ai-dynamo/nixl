@@ -12,8 +12,8 @@ timeout_minutes: 240
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  limits: "{memory: 16Gi, cpu: 8000m}"
-  requests: "{memory: 8Gi, cpu: 4000m}"
+  limits: "{memory: 24Gi, cpu: 12000m}"
+  requests: "{memory: 24Gi, cpu: 12000m}"
 
 runs_on_dockers:
   - { name: "podman", url: "quay.io/podman/stable:v5.7.1", privileged: true }
@@ -27,6 +27,8 @@ matrix:
 
 # Configuration
 env:
+  NPROC: 24
+  GRPC_NPROC: 24
   REGISTRY_HOST_NAME: "artifactory.nvidia.com"
   REGISTRY_REPO_NAME: "sw-nbu-swx-nixl-docker-local"
   REGISTRY_REPO_PATH: "verification"

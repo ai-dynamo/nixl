@@ -25,8 +25,12 @@
 #include <vector>
 
 #include "backend/backend_engine.h"
+#include "file/file_path_mode.h"
 #include "io_queue.h"
 #include "sync.h"
+
+// POSIX reuses the shared owned-fd base (no extra per-descriptor state).
+using nixlPosixFileMD = nixlFilePathMD;
 
 class nixlPosixBackendReqH : public nixlBackendReqH {
 private:
