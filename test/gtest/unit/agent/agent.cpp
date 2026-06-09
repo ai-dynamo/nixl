@@ -334,6 +334,97 @@ namespace agent {
                              << timed1_ns << " ns2=" << timed2_ns << " ratio=" << ratio << ")";
     }
 
+    // Deregistering duplicate descriptors must release each copy exactly once on both paths:
+    // the local section (deregisterMem) and the mirrored self section (unloadMD).
+    TEST_F(singleAgentSessionFixture, DeregisterDuplicateDescriptorsTest) {
+        constexpr int kDup = 3;
+
+        nixl_b_params_t params;
+        nixlBackendH *backend;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        nixl_opt_args_t extra_params;
+        extra_params.backends.push_back(backend);
+
+        // Distinct local and self MDs per registration so the two cleanup paths are told apart.
+        char local_md[kDup] = {};
+        char self_md[kDup] = {};
+        int reg_idx = 0;
+
+        auto &engine = const_cast<mocks::GMockBackendEngine &>(agent_helper_->getGMockEngine());
+        EXPECT_CALL(engine, registerMem(testing::_, testing::_, testing::_))
+            .Times(kDup)
+            .WillRepeatedly([&](const nixlBlobDesc &, const nixl_mem_t &, nixlBackendMD *&out) {
+                out = reinterpret_cast<nixlBackendMD *>(&local_md[reg_idx++]);
+                return NIXL_SUCCESS;
+            });
+        EXPECT_CALL(engine, loadLocalMD(testing::_, testing::_))
+            .Times(kDup)
+            .WillRepeatedly([&](nixlBackendMD *input, nixlBackendMD *&output) {
+                const auto i = reinterpret_cast<char *>(input) - local_md;
+                output = reinterpret_cast<nixlBackendMD *>(&self_md[i]);
+                return NIXL_SUCCESS;
+            });
+
+        for (int i = 0; i < kDup; ++i) {
+            EXPECT_CALL(engine, deregisterMem(reinterpret_cast<nixlBackendMD *>(&local_md[i])))
+                .Times(1);
+            EXPECT_CALL(engine, unloadMD(reinterpret_cast<nixlBackendMD *>(&self_md[i]))).Times(1);
+        }
+
+        blob region;
+        nixl_reg_dlist_t reg(DRAM_SEG);
+        for (int i = 0; i < kDup; ++i) {
+            reg.addDesc(region.getDesc());
+        }
+        ASSERT_EQ(agent_->registerMem(reg, &extra_params), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->deregisterMem(reg, &extra_params), NIXL_SUCCESS);
+    }
+
+    // A deregister containing an unregistered descriptor must fail and free nothing
+    // (all-or-nothing).
+    TEST_F(singleAgentSessionFixture, DeregisterMissingDescriptorFreesNothing) {
+        nixl_b_params_t params;
+        nixlBackendH *backend;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        nixl_opt_args_t extra_params;
+        extra_params.backends.push_back(backend);
+
+        char local_md[2] = {};
+        int reg_idx = 0;
+        auto &engine = const_cast<mocks::GMockBackendEngine &>(agent_helper_->getGMockEngine());
+        EXPECT_CALL(engine, registerMem(testing::_, testing::_, testing::_))
+            .WillRepeatedly([&](const nixlBlobDesc &, const nixl_mem_t &, nixlBackendMD *&out) {
+                out = reinterpret_cast<nixlBackendMD *>(&local_md[reg_idx++]);
+                return NIXL_SUCCESS;
+            });
+        EXPECT_CALL(engine, loadLocalMD(testing::_, testing::_))
+            .WillRepeatedly([](nixlBackendMD *input, nixlBackendMD *&output) {
+                output = input;
+                return NIXL_SUCCESS;
+            });
+
+        blob registered, missing;
+        nixl_reg_dlist_t reg(DRAM_SEG);
+        reg.addDesc(registered.getDesc());
+        reg.addDesc(registered.getDesc());
+        ASSERT_EQ(agent_->registerMem(reg, &extra_params), NIXL_SUCCESS);
+
+        // {A, A, missing}: the unregistered descriptor must abort both cleanup paths.
+        EXPECT_CALL(engine, deregisterMem(testing::_)).Times(0);
+        EXPECT_CALL(engine, unloadMD(testing::_)).Times(0);
+
+        nixl_reg_dlist_t bad(DRAM_SEG);
+        bad.addDesc(registered.getDesc());
+        bad.addDesc(registered.getDesc());
+        bad.addDesc(missing.getDesc());
+        EXPECT_NE(agent_->deregisterMem(bad, &extra_params), NIXL_SUCCESS);
+
+        // Verify the Times(0) now -- fixture teardown deregisters the still-registered copies.
+        testing::Mock::VerifyAndClearExpectations(&engine);
+    }
+
     INSTANTIATE_TEST_SUITE_P(DramRegisterMemoryInstantiation,
                              singleAgentWithMemParamFixture,
                              testing::Values(DRAM_SEG));
