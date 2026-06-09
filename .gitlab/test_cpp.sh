@@ -107,6 +107,12 @@ kill -s INT $telePID
 gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
+# DOCA telemetry exporter tests: present only when built with the DOCA SDK
+# (TELEMETRY_DOCA). Self-contained - each binds a free loopback port via
+# findFreePort(); DOCA + CollectX libs resolve through ldconfig.
+if [ -x ./bin/doca_test ]; then ./bin/doca_test; fi
+if [ -x ./bin/doca_nixl_test ]; then ./bin/doca_nixl_test; fi
+
 # Run NIXL client-server test
 nixl_test_port=$(get_next_tcp_port)
 parallel --line-buffer --halt now,fail=1 ::: "./bin/nixl_test target" "sleep 3 ; ./bin/nixl_test initiator" ::: "127.0.0.1 $nixl_test_port"

@@ -20,16 +20,16 @@
 #include "doca_exporter.h"
 #include "telemetry_event.h"
 
+#include <array>
 #include <cstdint>
 #include <cstdlib>
-#include <iostream>
+#include <optional>
 #include <string>
 
 #include <gtest/gtest.h>
 
 using nixl::doca_test::loopbackConnection;
-using nixl::doca_test::metricValue;
-using nixl::doca_test::scrapeUntil;
+using nixl::doca_test::scrapeUntilValue;
 
 namespace {
 
@@ -61,36 +61,44 @@ protected:
     uint16_t port_ = 0;
 };
 
-// Drive the real NIXL DOCA exporter end-to-end: push per-operation counter
-// deltas through exportEvent, flush, then scrape the CollectX-backed Prometheus
-// endpoint. A counter event (AGENT_TX_BYTES) must accumulate into a monotonic
-// cumulative total (add_counter_increment), and flush must make the few samples
-// visible (they would not fill the buffer to trigger an auto-flush).
-TEST_F(docaNixlExporterTest, CounterAccumulatesAndFlushServes) {
-    const nixlTelemetryExporterInitParams params{"nixl_doca_exporter_test", 4096};
+// Drive the real NIXL DOCA exporter end-to-end and verify EVERY pushed value is
+// accounted for at the CollectX-backed Prometheus endpoint. The exported counter
+// is cumulative (add_counter_increment), so the final total must equal the exact
+// sum of all pushed deltas: any dropped or duplicated sample shifts that sum and
+// fails the check. Deltas are deliberately distinct so the sum is sensitive to a
+// single bad sample. One flush + one settle-and-scrape -- no per-iteration
+// rescraping (the final total is the stable invariant; intermediate cumulative
+// values aren't reliably observable through CollectX's async/coalescing flush).
+TEST_F(docaNixlExporterTest, CounterAccumulatesAllPushedValues) {
+    constexpr char agentName[] = "nixl_doca_exporter_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
     nixlTelemetryDocaExporter exporter(params);
-
-    constexpr uint64_t delta = 1000;
-    constexpr int iterations = 3;
-    for (int i = 0; i < iterations; ++i) {
-        const nixlTelemetryEvent event(nixl_telemetry_event_type_t::AGENT_TX_BYTES, delta);
-        ASSERT_EQ(exporter.exportEvent(event), NIXL_SUCCESS);
-    }
-
-    // A handful of samples will not fill the CollectX buffer, so the endpoint
-    // would stay empty without this explicit flush.
-    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
 
     const std::string metric = std::string(
         nixlEnumStrings::telemetryEventTypeStr(nixl_telemetry_event_type_t::AGENT_TX_BYTES));
-    const std::string body = scrapeUntil(port_, metric, std::chrono::seconds(12));
-    std::cout << "=== NIXL DOCA exporter /metrics scrape (port " << port_ << ") ===\n"
-              << body << "\n=== end scrape ===" << std::endl;
+    // The exporter tags every sample with the agent_name label, so look the
+    // series up by name + that label rather than by name alone.
+    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
 
-    EXPECT_NE(body.find(metric), std::string::npos)
-        << metric << " not served at the DOCA Prometheus endpoint after flush";
-    EXPECT_EQ(metricValue(body, metric), static_cast<double>(delta * iterations))
-        << "per-operation deltas must accumulate into a cumulative counter";
+    constexpr std::array<uint64_t, 5> deltas{1000, 250, 4096, 1, 75000};
+    uint64_t expected_total = 0;
+    for (const uint64_t delta : deltas) {
+        const nixlTelemetryEvent event(nixl_telemetry_event_type_t::AGENT_TX_BYTES, delta);
+        ASSERT_EQ(exporter.exportEvent(event), NIXL_SUCCESS);
+        expected_total += delta;
+    }
+    // A handful of samples never fill the CollectX buffer, so the endpoint would
+    // stay empty without an explicit flush.
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    const auto metrics = scrapeUntilValue(
+        port_, metric, static_cast<double>(expected_total), std::chrono::seconds(12), labels);
+    const std::optional<double> observed = metrics.latestValue(metric, labels);
+    ASSERT_TRUE(observed.has_value())
+        << metric << "{agent_name=" << agentName << "} not served at the endpoint after flush";
+    EXPECT_EQ(*observed, static_cast<double>(expected_total))
+        << "cumulative counter must equal the sum of all " << deltas.size() << " pushed deltas ("
+        << expected_total << "); a drop or duplicate would miss this total";
 }
 
 int
