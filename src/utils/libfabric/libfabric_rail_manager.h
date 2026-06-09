@@ -215,7 +215,7 @@ public:
                              const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
                              uint16_t agent_idx,
                              uint16_t xfer_id,
-                             std::function<void()> completion_callback,
+                             std::function<void(nixl_status_t)> completion_callback,
                              size_t &submitted_count_out,
                              int desc_idx,
                              int desc_count,
@@ -250,13 +250,14 @@ public:
                        nixlLibfabricReq *req,
                        fi_addr_t dest_addr,
                        uint16_t agent_idx = 0,
-                       std::function<void()> completion_callback = nullptr);
+                       std::function<void(nixl_status_t)> completion_callback = nullptr);
     // Progress APIs
     /** Process completions on active rails only (optimized for CPU overhead)
      * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
      */
     nixl_status_t
     progressActiveRails();
+
     /** Validate that all rails are properly initialized
      * @return NIXL_SUCCESS if all rails initialized, error code otherwise
      */

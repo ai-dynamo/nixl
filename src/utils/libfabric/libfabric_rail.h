@@ -51,7 +51,7 @@ struct nixlLibfabricReq {
     bool in_use; ///< Pool management flag
     size_t chunk_offset; ///< Chunk offset for DATA requests
     size_t chunk_size; ///< Chunk size for DATA requests
-    std::function<void()> completion_callback; ///< Completion callback function
+    std::function<void(nixl_status_t)> completion_callback; ///< Completion callback function
     void *local_addr; ///< Local memory address for transfers
     uint64_t remote_addr; ///< Remote memory address for transfers
     struct fid_mr *local_mr; ///< Local memory registration for transfers

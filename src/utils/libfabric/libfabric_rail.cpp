@@ -738,6 +738,17 @@ nixlLibfabricRail::progressCompletionQueue() const {
                 NIXL_ERROR << "CQ read failed on rail " << rail_id
                            << " with error: " << fi_strerror(err_entry.err)
                            << " prov_errno: " << err_entry.prov_errno << " len: " << err_entry.len;
+
+                // Notify the owning handle of the error and release the request
+                if (err_entry.op_context) {
+                    nixlLibfabricReq *req = findRequestFromContext(err_entry.op_context);
+                    if (req && req->in_use) {
+                        if (req->completion_callback) {
+                            req->completion_callback(NIXL_ERR_BACKEND);
+                        }
+                        releaseRequest(req);
+                    }
+                }
             } else {
                 NIXL_ERROR << "fi_cq_readerr failed with " << err_ret;
             }
@@ -846,7 +857,7 @@ nixlLibfabricRail::processLocalSendCompletion(struct fi_cq_data_entry *comp) con
         // Call completion callback if it exists
         if (req->completion_callback) {
             NIXL_TRACE << "Calling completion callback for send request " << req->xfer_id;
-            req->completion_callback();
+            req->completion_callback(NIXL_SUCCESS);
             NIXL_TRACE << "Completion callback completed for send";
         }
         releaseRequest(req);
@@ -873,7 +884,7 @@ nixlLibfabricRail::processLocalTransferCompletion(struct fi_cq_data_entry *comp,
         if (req->completion_callback) {
             NIXL_TRACE << "Calling completion callback for " << operation_type << " request "
                        << req->xfer_id;
-            req->completion_callback();
+            req->completion_callback(NIXL_SUCCESS);
             NIXL_TRACE << "Completion callback completed for " << operation_type;
         }
         releaseRequest(req);
