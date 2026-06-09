@@ -31,6 +31,26 @@ ARG BASE_IMAGE="nvcr.io/nvidia/cuda"
 ARG BASE_IMAGE_TAG
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS cuda
 
+# --- INFINIA plugin libs (DDN "red") — PRE-STAGED, enable once mirrored to ECR ----
+# The INFINIA plugin only builds when libred_client.so is found at /opt/ddn/red/lib
+# (src/plugins/meson.build does cc.find_library('red_client', dirs:['/opt/ddn/red/lib'])
+# and silently skips the plugin otherwise — which is why it's missing from the wheel).
+# The libs live in harbor.mellanox.com/nixl/infinia-libs (NOT reachable from the AWS CI
+# runners), so mirror that image into ECR — one time per INFINIA version, from a host
+# that sees both harbor and AWS:
+#   docker pull harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1
+#   ECR=210086341041.dkr.ecr.us-west-2.amazonaws.com/nixl/infinia-libs
+#   docker tag harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1 $ECR:v2.4.0-beta.1
+#   aws ecr get-login-password --region us-west-2 | docker login --username AWS \
+#     --password-stdin 210086341041.dkr.ecr.us-west-2.amazonaws.com
+#   docker push $ECR:v2.4.0-beta.1
+# The dedicated nixl/infinia-libs ECR repo (no-delete lifecycle) is provisioned in
+# velonix terraform/aws/envs/staging/ecr.tf. The runner's existing IRSA already grants
+# pull (account-wide ECR), so no workflow/IAM change is needed. Bump the tag when DDN
+# bumps the INFINIA version (and re-run the mirror push).
+ARG INFINIA_LIBS_IMAGE="210086341041.dkr.ecr.us-west-2.amazonaws.com/nixl/infinia-libs:v2.4.0-beta.1"
+FROM ${INFINIA_LIBS_IMAGE} AS infinia
+
 # Manylinux build base — official PyPA image (public on quay.io; velonix also has
 # a quay ECR pull-through). AlmaLinux 8 / glibc 2.28 => manylinux_2_28 wheels.
 FROM quay.io/pypa/manylinux_2_28_${ARCH}
@@ -50,6 +70,16 @@ COPY --from=cuda /usr/local/cuda /usr/local/cuda
 ENV CUDA_HOME=/usr/local/cuda \
     PATH=/usr/local/cuda/bin:${PATH} \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH:-}
+
+# INFINIA libs — uncomment together with the `infinia` stage above. The mirrored image
+# lays the libs out per-arch under /infinia/${ARCH}/ (lib/ + include/); copying that to
+# /opt/ddn/red puts libred_client.so / libred_async.so + headers where meson looks, so
+# it auto-detects and builds the INFINIA plugin into the wheel (default
+# -Dinfinia_path=/opt/ddn/red, no flag change needed). NOTE: auditwheel will then bundle
+# libred_client/libred_async into the wheel unless they're added to the auditwheel
+# --exclude list in the wheel-build step.
+ARG INFINIA_DEST=/opt/ddn/red
+COPY --from=infinia /infinia/${ARCH}/ ${INFINIA_DEST}/
 
 # CUDA needs gcc <= 14. The PyPA manylinux base + system "Development Tools" can
 # pull in a gcc that CUDA rejects, so pin gcc-toolset-14 on PATH ahead of the
