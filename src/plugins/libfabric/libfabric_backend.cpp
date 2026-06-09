@@ -388,6 +388,7 @@ nixlLibfabricEngine::vramApplyCtxEx(bool &use_cuda_addr_wa) const {
 nixlLibfabricBackendH::nixlLibfabricBackendH(nixl_xfer_op_t op, const std::string &remote_agent)
     : completed_requests_(0),
       submitted_requests_(0),
+      error_status_(NIXL_SUCCESS),
       operation_(op),
       remote_agent_(remote_agent),
       total_notif_msg_len(0) {
@@ -408,6 +409,7 @@ void
 nixlLibfabricBackendH::init_request_tracking(size_t num_requests) {
     submitted_requests_.store(num_requests);
     completed_requests_.store(0);
+    error_status_.store(NIXL_SUCCESS);
     NIXL_DEBUG << "Initialized request tracking for " << num_requests << " requests";
 }
 
@@ -432,6 +434,17 @@ void
 nixlLibfabricBackendH::adjust_total_submitted_requests(size_t actual_count) {
     submitted_requests_.store(actual_count);
     NIXL_DEBUG << "Adjusted total requests to actual count: " << actual_count;
+}
+
+void
+nixlLibfabricBackendH::set_error(nixl_status_t status) {
+    nixl_status_t expected = NIXL_SUCCESS;
+    error_status_.compare_exchange_strong(expected, status);
+}
+
+nixl_status_t
+nixlLibfabricBackendH::get_error_status() const {
+    return error_status_.load();
 }
 
 bool
@@ -1353,7 +1366,12 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             conn->rail_remote_addr_list_,
             imm_agent_idx,
             backend_handle->post_xfer_id,
-            [backend_handle]() { backend_handle->increment_completed_requests(); },
+            [backend_handle](nixl_status_t status) {
+                backend_handle->increment_completed_requests();
+                if (status != NIXL_SUCCESS) {
+                    backend_handle->set_error(status);
+                }
+            }, // Completion callback
             desc_submitted_count,
             desc_idx,
             xfer_base_offset,
@@ -1630,6 +1648,13 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
 
     // Then check for completions after processing any pending completions
     if (backend_handle->is_completed()) {
+        // Check if any request completed with error
+        nixl_status_t err = backend_handle->get_error_status();
+        if (err != NIXL_SUCCESS) {
+            NIXL_ERROR << "Transfer completed with CQ error";
+            return err;
+        }
+
         NIXL_DEBUG << "Data transfer completed successfully";
         if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ) {
             nixl_status_t notif_status = notifSendPriv(backend_handle->remote_agent_,
