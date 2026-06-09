@@ -18,9 +18,6 @@
 #include "configuration.h"
 #include "exception.h"
 
-#include <memory>
-#include <mutex>
-
 namespace nixl::config {
 
 namespace {
@@ -77,25 +74,15 @@ namespace {
         return toml::table();
     }
 
-    struct configGlobal {
-        std::mutex mutex;
-        std::shared_ptr<const toml::table> data;
-    };
-
-    [[nodiscard]] configGlobal &
-    getConfigGlobal() {
-        static configGlobal cg;
-        return cg;
+    [[nodiscard]] toml::table &
+    staticConfig() {
+        static toml::table config = readFile();
+        return config;
     }
 
-    [[nodiscard]] std::shared_ptr<const toml::table>
-    getConfigFile() {
-        configGlobal &cg = getConfigGlobal();
-        const std::lock_guard ml(cg.mutex);
-        if (!cg.data) {
-            cg.data = std::make_shared<toml::table>(readFile());
-        }
-        return cg.data;
+    [[nodiscard]] const toml::table &
+    getConfig() {
+        return staticConfig();
     }
 
 } // namespace
@@ -123,35 +110,37 @@ namespace internal {
         return fallback;
     }
 
-    [[nodiscard]] tomlFindResult
+    [[nodiscard]] toml::node_view<const toml::node>
     findTomlNode(const toml::path &path) {
-        const auto config = getConfigFile();
-        const auto result = config->at_path(path);
+        const auto result = getConfig().at_path(path);
         if (result) {
             NIXL_DEBUG << "Found config file entry '" << path << "'";
         } else {
             NIXL_DEBUG << "Missing config file entry '" << path << "'";
         }
-        return tomlFindResult(result, config);
+        return result;
     }
 
-    [[nodiscard]] tomlFindResult
+    [[nodiscard]] toml::node_view<const toml::node>
     findTomlNode(const std::string &path) {
         return findTomlNode(toml::path(path));
     }
 
     void
     warnIgnoreToml(const std::string &path) {
-        if (getConfigFile()->at_path(toml::path(path))) {
+        if (getConfig().at_path(toml::path(path))) {
             NIXL_DEBUG << "Ignoring config file entry '" << path << "' for environment variable";
         }
     }
 
+    // The refresh function's handling of the config is NOT multi-thread-safe;
+    // this function should only be used by the one unit test that needs it,
+    // and when it is used then nothing else that might access the config is
+    // is allowed to run in parallel in the same process in other threads.
+
     void
-    invalidateConfigFileForUnitTest() {
-        configGlobal &cg = getConfigGlobal();
-        const std::lock_guard ml(cg.mutex);
-        cg.data.reset();
+    refreshConfigFileForUnitTest() {
+        staticConfig() = readFile();
     }
 
 } // namespace internal

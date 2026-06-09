@@ -231,29 +231,26 @@ namespace {
 
 namespace internal {
 
+    // This function is safe to be called because no other thread is accessing the config.
+
     void
-    invalidateConfigFileForUnitTest();
+    refreshConfigFileForUnitTest();
 
 } // namespace internal
 
 TEST(Config, ReadConfigFile) {
     const auto pid = ::getpid();
-    const auto tmp_path = std::filesystem::temp_directory_path();
-    const auto tmp_file = "nixl_test_" + std::to_string(pid) + ".tmp";
-    const auto cfg_file = "nixl_test_" + std::to_string(pid) + ".cfg";
+    const auto file = "nixl_test_" + std::to_string(pid) + ".cfg";
+    const auto path = std::filesystem::temp_directory_path() / file;
     {
-        std::ofstream ofs(tmp_path / tmp_file, std::ios::out | std::ios::trunc);
+        std::ofstream ofs(path, std::ios::out | std::ios::trunc);
         ofs << bool_name << " = true\n";
         ofs << number_name << " = 42\n";
         ofs << string_name << " = \"hello\"\n";
         ofs << env1name << " = \"dummy\"\n";
         ofs << env2name << " = 0\n";
     }
-    // Atomically move into place to prevent problems should other tests
-    // run concurrently within the same process (if that ever happens).
-    std::filesystem::rename(tmp_path / tmp_file, tmp_path / cfg_file);
-
-    internal::invalidateConfigFileForUnitTest();
+    internal::refreshConfigFileForUnitTest();
 
     gtest::ScopedEnv vars;
     vars.addVar("NIXL_CONFIG_FILE", (tmp_path / cfg_file).native());

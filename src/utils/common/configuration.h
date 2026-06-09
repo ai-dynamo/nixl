@@ -24,7 +24,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
-#include <memory>
 #include <optional>
 #include <string>
 #include <strings.h>
@@ -56,22 +55,10 @@ namespace internal {
     [[nodiscard]] std::string
     getenvDefaulted(const std::string &name, const std::string &fallback);
 
-    struct tomlFindResult {
-        tomlFindResult(const toml::node_view<const toml::node> &view,
-                       const std::shared_ptr<const toml::table> &data)
-            : view(view),
-              keep_view_alive(data) {}
-
-        const toml::node_view<const toml::node> view;
-
-    private:
-        const std::shared_ptr<const toml::table> keep_view_alive;
-    };
-
-    [[nodiscard]] tomlFindResult
+    [[nodiscard]] toml::node_view<const toml::node>
     findTomlNode(const toml::path &path);
 
-    [[nodiscard]] tomlFindResult
+    [[nodiscard]] toml::node_view<const toml::node>
     findTomlNode(const std::string &path);
 
     void
@@ -263,11 +250,9 @@ getValueWithStatus(type &result, const std::string &env) {
         return NIXL_SUCCESS;
     }
 
-    const internal::tomlFindResult find_result = internal::findTomlNode(env);
-
-    if (find_result.view) {
+    if (const auto view = internal::findTomlNode(env)) {
         try {
-            result = traits<std::decay_t<type>>::convert(find_result.view);
+            result = traits<std::decay_t<type>>::convert(view);
         }
         catch (const std::exception &e) {
             NIXL_DEBUG << "Unable to convert config value '" << env << "' to target type "
@@ -288,10 +273,8 @@ getValue(const std::string &env) {
         return result;
     }
 
-    const internal::tomlFindResult find_result = internal::findTomlNode(env);
-
-    if (find_result.view) {
-        return traits<type>::convert(find_result.view);
+    if (const auto view = internal::findTomlNode(env)) {
+        return traits<type>::convert(view);
     }
     throwRuntimeError("Missing config entry '", env, "'");
 }
@@ -305,10 +288,8 @@ getValueOptional(const std::string &env) {
         return result;
     }
 
-    const internal::tomlFindResult find_result = internal::findTomlNode(env);
-
-    if (find_result.view) {
-        return traits<type>::convert(find_result.view);
+    if (const auto view = internal::findTomlNode(env)) {
+        return traits<type>::convert(view);
     }
     return std::nullopt;
 }
@@ -331,8 +312,7 @@ getNonEmptyString(const std::string &env) {
 
 [[nodiscard]] inline bool
 checkExistence(const std::string &env) {
-    const internal::tomlFindResult find_result = internal::findTomlNode(env);
-    return (std::getenv(env.c_str()) != nullptr) || bool(find_result.view);
+    return (std::getenv(env.c_str()) != nullptr) || bool(internal::findTomlNode(env));
 }
 
 } // namespace nixl::config
