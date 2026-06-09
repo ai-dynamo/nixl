@@ -29,6 +29,10 @@ ARG ARCH="x86_64"
 # Reachable from the AWS runners; replaces the internal GitLab base image.
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda"
 ARG BASE_IMAGE_TAG
+# INFINIA libs image — declared here in the global (pre-first-FROM) scope because an ARG
+# used in a FROM line is only visible if declared before the first FROM. See the INFINIA
+# block below for what this is and how it's mirrored.
+ARG INFINIA_LIBS_IMAGE="210086341041.dkr.ecr.us-west-2.amazonaws.com/nixl/infinia-libs:v2.4.0-beta.1"
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS cuda
 
 # --- INFINIA plugin libs (DDN "red") — PRE-STAGED, enable once mirrored to ECR ----
@@ -47,8 +51,8 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS cuda
 # The dedicated nixl/infinia-libs ECR repo (no-delete lifecycle) is provisioned in
 # velonix terraform/aws/envs/staging/ecr.tf. The runner's existing IRSA already grants
 # pull (account-wide ECR), so no workflow/IAM change is needed. Bump the tag when DDN
-# bumps the INFINIA version (and re-run the mirror push).
-ARG INFINIA_LIBS_IMAGE="210086341041.dkr.ecr.us-west-2.amazonaws.com/nixl/infinia-libs:v2.4.0-beta.1"
+# bumps the INFINIA version (and re-run the mirror push). The ARG is declared in the
+# global pre-FROM block at the top of this file (required to use it in a FROM line).
 FROM ${INFINIA_LIBS_IMAGE} AS infinia
 
 # Manylinux build base — official PyPA image (public on quay.io; velonix also has
