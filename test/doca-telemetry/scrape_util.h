@@ -35,9 +35,9 @@ namespace nixl::doca_test {
 
 using labelSet = std::map<std::string, std::string>;
 
-// A single sample of a time series: a value and, when the exposition carries one
-// (DOCA/CollectX appends a millisecond timestamp after the value), the sample
-// timestamp.
+// A single sample of a time series: a value and, when the exposition carries one,
+// a timestamp (stored verbatim). DOCA tracks time internally in microseconds, but
+// the Prometheus text exposition DOCA serves uses milliseconds.
 struct sample {
     double value = 0.0;
     std::optional<uint64_t> timestamp;
@@ -171,23 +171,39 @@ private:
             return false;
         }
         out = *parsed;
+        std::optional<labelSet> labels = parseLabels(match[2].str());
+        if (!labels) {
+            return false;
+        }
         id.name = match[1].str();
-        id.labels = parseLabels(match[2].str());
+        id.labels = std::move(*labels);
         return true;
     }
 
-    // Extract the key="value" pairs from a label block (the text inside `{}`). The
-    // regex matches each pair and skips the ", " separators, so there is no manual
-    // splitting or whitespace trimming.
-    [[nodiscard]] static labelSet
+    // Extract the key="value" pairs from a label block (the text inside `{}`).
+    // Returns nullopt if the block is malformed -- anything other than well-formed
+    // pairs separated by commas/whitespace -- so a bad exposition line is rejected
+    // rather than silently parsed into partial labels (these are regression tests).
+    [[nodiscard]] static std::optional<labelSet>
     parseLabels(const std::string &block) {
         // Custom raw-string delimiter so the pattern's )" does not close it early.
         static const std::regex labelRe(R"re(([^=,\s]+)\s*=\s*"([^"]*)")re");
         labelSet labels;
+        size_t cursor = 0;
         for (auto it = std::sregex_iterator(block.begin(), block.end(), labelRe);
              it != std::sregex_iterator();
              ++it) {
-            labels.emplace((*it)[1].str(), (*it)[2].str());
+            const auto &match = *it;
+            // Only commas/whitespace may separate (and precede) the matched pairs.
+            if (block.find_first_not_of(", \t", cursor) < static_cast<size_t>(match.position())) {
+                return std::nullopt;
+            }
+            labels.emplace(match[1].str(), match[2].str());
+            cursor = static_cast<size_t>(match.position() + match.length());
+        }
+        // Any leftover after the last pair must also be only commas/whitespace.
+        if (block.find_first_not_of(", \t", cursor) != std::string::npos) {
+            return std::nullopt;
         }
         return labels;
     }

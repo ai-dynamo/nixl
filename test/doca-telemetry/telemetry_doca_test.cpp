@@ -43,9 +43,9 @@ protected:
 
 // Raw DOCA Metrics API proof, mirroring the DOCA prometheus_example sample:
 // stand up schema/source/metrics, accumulate a counter via add_counter_increment,
-// flush explicitly, and confirm the CollectX-backed Prometheus endpoint serves
-// the cumulative value. Establishes that DOCA + CollectX work in-process (the
-// gRPC duplicate-flag clash is resolved by CollectX >= 1.26).
+// flush explicitly, and confirm the DOCA Prometheus endpoint serves the
+// cumulative value. Establishes that the DOCA telemetry exporter works in-process
+// (the gRPC duplicate-flag clash is resolved in current DOCA).
 TEST_F(docaTelemetryTest, RawDocaApiServesAccumulatingCounter) {
     // PROMETHEUS_ENDPOINT must be set before schema_init (per the DOCA sample).
     const std::string endpoint = "http://127.0.0.1:" + std::to_string(port_);

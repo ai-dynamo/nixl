@@ -109,7 +109,7 @@ gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port=
 
 # DOCA telemetry exporter tests: present only when built with the DOCA SDK
 # (TELEMETRY_DOCA). Self-contained - each binds a free loopback port via
-# findFreePort(); DOCA + CollectX libs resolve through ldconfig.
+# findFreePort(); the DOCA telemetry exporter libs resolve through ldconfig.
 if [ -x ./bin/doca_test ]; then ./bin/doca_test; fi
 if [ -x ./bin/doca_nixl_test ]; then ./bin/doca_nixl_test; fi
 

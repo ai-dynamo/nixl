@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # Standalone DOCA telemetry tests. They intentionally avoid linking nixl core
-# (no etcd/gRPC), so each process carries only CollectX's gRPC (no duplicate-flag
+# (no etcd/gRPC), so each process carries only the DOCA exporter's gRPC (no duplicate-flag
 # clash with nixl's gRPC). Built under the same gate as the exporter plugin in
 # src/plugins/telemetry/meson.build: the doca-telemetry-exporter/doca-common
 # pkg-config dependencies plus the TELEMETRY_DOCA plugin toggle.

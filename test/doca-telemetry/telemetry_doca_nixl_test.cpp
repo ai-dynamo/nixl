@@ -62,13 +62,13 @@ protected:
 };
 
 // Drive the real NIXL DOCA exporter end-to-end and verify EVERY pushed value is
-// accounted for at the CollectX-backed Prometheus endpoint. The exported counter
+// accounted for at the DOCA Prometheus endpoint. The exported counter
 // is cumulative (add_counter_increment), so the final total must equal the exact
 // sum of all pushed deltas: any dropped or duplicated sample shifts that sum and
 // fails the check. Deltas are deliberately distinct so the sum is sensitive to a
 // single bad sample. One flush + one settle-and-scrape -- no per-iteration
 // rescraping (the final total is the stable invariant; intermediate cumulative
-// values aren't reliably observable through CollectX's async/coalescing flush).
+// values aren't reliably observable through DOCA's async/coalescing flush).
 TEST_F(docaNixlExporterTest, CounterAccumulatesAllPushedValues) {
     constexpr char agentName[] = "nixl_doca_exporter_test";
     const nixlTelemetryExporterInitParams params{agentName, 4096};
@@ -87,8 +87,8 @@ TEST_F(docaNixlExporterTest, CounterAccumulatesAllPushedValues) {
         ASSERT_EQ(exporter.exportEvent(event), NIXL_SUCCESS);
         expected_total += delta;
     }
-    // A handful of samples never fill the CollectX buffer, so the endpoint would
-    // stay empty without an explicit flush.
+    // A handful of samples never fill the DOCA metrics buffer, so the endpoint
+    // would stay empty without an explicit flush.
     ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
 
     const auto metrics = scrapeUntilValue(
