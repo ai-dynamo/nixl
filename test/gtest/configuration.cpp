@@ -250,12 +250,11 @@ TEST(Config, ReadConfigFile) {
         ofs << env1name << " = \"dummy\"\n";
         ofs << env2name << " = 0\n";
     }
-    internal::refreshConfigFileForUnitTest();
-
     gtest::ScopedEnv vars;
     vars.addVar("NIXL_CONFIG_FILE", path.native());
     vars.addVar(env1name, env1value);
     vars.addVar(env2name, env2value);
+    internal::refreshConfigFileForUnitTest();
     {
         const auto value = nixl::config::getValue<bool>(bool_name);
         EXPECT_TRUE(value);
