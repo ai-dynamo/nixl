@@ -23,8 +23,8 @@
 
 namespace gtest {
 namespace nixl {
-    constexpr const char* ucx_err_handling_mode_key  = "ucx_error_handling_mode";
-    constexpr const char* ucx_err_handling_mode_peer = "peer";
+    constexpr const char *ucx_err_handling_mode_key = "ucx_error_handling_mode";
+    constexpr const char *ucx_err_handling_mode_none = "none";
 
     static nixlBackendH *
     createUcxBackend(nixlAgent &agent,
@@ -43,7 +43,7 @@ namespace nixl {
         EXPECT_EQ(NIXL_SUCCESS, status);
 
         nixlBackendH* backend_handle = nullptr;
-        EXPECT_EQ(ucx_err_handling_mode_peer, params[ucx_err_handling_mode_key]);
+        EXPECT_EQ(ucx_err_handling_mode_none, params[ucx_err_handling_mode_key]);
         params["num_workers"] = std::to_string(num_workers);
         params["num_threads"] = std::to_string(num_threads);
         // If threadpool is configured always force split

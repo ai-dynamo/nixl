@@ -141,6 +141,9 @@ class nixl_thread_sync_t(Enum):
 @param backends List of backend names for agent to initialize.
         Default is UCX, other backends can be added to the list, or after
         agent creation, can be initialized with create_backend.
+@param ucx_error_handling_mode Error handling mode for UCX and OBJ backend endpoints.
+        String value; valid values are "none" (default) and "peer".
+        Invalid values, including None, raise ValueError.
 @param sync_mode Thread synchronization mode to use for the agent.
         If None, sync_mode is set based on the enable_listen flag.
 """
@@ -155,6 +158,7 @@ class nixl_agent_config:
         capture_telemetry: bool = False,
         num_threads: int = 0,
         backends: list[str] = ["UCX"],
+        ucx_error_handling_mode: str = "none",
         sync_mode: Optional[nixl_thread_sync_t] = None,
     ):
         # TODO: add backend init parameters
@@ -164,6 +168,12 @@ class nixl_agent_config:
         self.port = listen_port
         self.capture_telemetry = capture_telemetry
         self.num_threads = num_threads
+        if ucx_error_handling_mode not in ("none", "peer"):
+            raise ValueError(
+                "ucx_error_handling_mode must be 'none' or 'peer' "
+                f"(got {ucx_error_handling_mode!r})"
+            )
+        self.ucx_error_handling_mode = ucx_error_handling_mode
         if sync_mode is not None and not isinstance(sync_mode, nixl_thread_sync_t):
             raise TypeError(
                 f"sync_mode must be a nixl_thread_sync_t (got {type(sync_mode).__name__!r})"
@@ -216,6 +226,7 @@ class nixl_agent:
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
         self.name = agent_name
+        self.ucx_error_handling_mode = nixl_conf.ucx_error_handling_mode
         self._leaked_xfer_handles: list[int] = []
         self.notifs: dict[str, list[bytes]] = {}
         self.backends: dict[str, nixl_backend_handle] = {}
@@ -243,7 +254,7 @@ class nixl_agent:
                 # TODO: improve population of init from nixl_conf
                 init: dict[str, str] = {}
                 if nixl_conf.num_threads > 0:
-                    if bknd == "UCX" or bknd == "OBJ":
+                    if bknd in ("UCX", "OBJ"):
                         init["num_threads"] = str(nixl_conf.num_threads)
                     elif bknd == "GDS_MT":
                         init["thread_count"] = str(nixl_conf.num_threads)
@@ -379,7 +390,14 @@ class nixl_agent:
     @param initParams Dictionary of initialization parameters.
     """
 
-    def create_backend(self, backend: str, initParams: dict[str, str] = {}):
+    def create_backend(
+        self, backend: str, initParams: Optional[dict[str, str]] = None
+    ) -> None:
+        if initParams is None:
+            initParams = {}
+        if backend in ("UCX", "OBJ") and "ucx_error_handling_mode" not in initParams:
+            initParams = initParams.copy()
+            initParams["ucx_error_handling_mode"] = self.ucx_error_handling_mode
         self.backends[backend] = self.agent.createBackend(backend, initParams)
 
         (backend_options, mem_types) = self.agent.getBackendParams(
