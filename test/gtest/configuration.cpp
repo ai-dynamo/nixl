@@ -216,6 +216,60 @@ TEST(Config, ConvertUnsigned) {
     testUnsigned<std::uint64_t>();
 }
 
+#include "common/backend.h"
+
+TEST(Config, BackendBasics) {
+    const std::string negative = "negative";
+    const std::string positive = "positive";
+    const std::string string = "string";
+    const std::string boolean = "boolean";
+    const std::string value = "transmogrify";
+    const std::string unknown = "unknownkey";
+
+    const nixl_b_params_t p = {
+        {negative, "-42"}, {positive, "129"}, {string, value}, {boolean, "no"}};
+
+    // Test Optional
+    {
+        const auto r = nixl::getBackendParamOptional<int>(p, negative);
+        EXPECT_TRUE(r.has_value());
+        EXPECT_EQ(*r, -42);
+    }
+    {
+        const auto r = nixl::getBackendParamOptional<unsigned>(&p, positive);
+        EXPECT_TRUE(r.has_value());
+        EXPECT_EQ(*r, 129);
+    }
+    {
+        const auto r = nixl::getBackendParamOptional<bool>(&p, unknown);
+        EXPECT_FALSE(r.has_value());
+    }
+    { EXPECT_THROW((void)nixl::getBackendParamOptional<int>(&p, string), std::runtime_error); }
+    {
+        const auto r = nixl::getBackendParamOptional<bool>(nullptr, boolean);
+        EXPECT_FALSE(r.has_value());
+    }
+    // Test Defaulted
+    {
+        const bool r = nixl::getBackendParamDefaulted(p, boolean, true);
+        EXPECT_FALSE(r);
+    }
+    {
+        const bool r = nixl::getBackendParamDefaulted(&p, unknown, true);
+        EXPECT_TRUE(r);
+    }
+    {
+        const std::string r = nixl::getBackendParamDefaulted<std::string>(p, string, "wrong");
+        EXPECT_EQ(r, value);
+    }
+    { EXPECT_THROW((void)nixl::getBackendParamDefaulted(&p, boolean, 0), std::runtime_error); }
+    {
+        const int v = 12345;
+        const unsigned r = nixl::getBackendParamDefaulted(nullptr, value, v);
+        EXPECT_EQ(r, v);
+    }
+}
+
 #if 0
 
   // ReadConfigFile is temporarily disabled because it always fails when it is

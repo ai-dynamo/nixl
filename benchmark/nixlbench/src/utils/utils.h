@@ -56,6 +56,18 @@
             exit(EXIT_FAILURE);                                                        \
         }                                                                              \
     } while (0)
+#elif HAVE_ROCM
+#include <hip/hip_runtime.h>
+
+#define CHECK_CUDA_ERROR(result, message)                                      \
+    do {                                                                       \
+        const auto _r = (result);                                              \
+        if (_r != hipSuccess) {                                                \
+            std::cerr << "HIP: " << message << " (Error code: " << _r << " - " \
+                      << hipGetErrorString(_r) << ")" << std::endl;            \
+            exit(EXIT_FAILURE);                                                \
+        }                                                                      \
+    } while (0)
 #endif
 
 // TODO: This is true for CX-7, need support for other CX cards and NVLink
@@ -85,6 +97,7 @@
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
+#define XFERBENCH_BACKEND_INFINIA "INFINIA"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -175,6 +188,7 @@ public:
     static int posix_kernel_queue_size;
     static bool storage_enable_direct;
     static bool reregister_mem;
+    static bool prepared_xfer;
     static int pipeline_depth;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
@@ -198,6 +212,7 @@ public:
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
     static std::string azure_blob_connection_string;
+    static std::string infinia_config_file;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;

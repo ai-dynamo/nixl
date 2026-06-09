@@ -18,6 +18,7 @@
 #include "ucx_backend.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
+#include "common/backend.h"
 #include "common/nixl_log.h"
 
 #include <optional>
@@ -155,7 +156,7 @@ public:
         nixl_status_t out_ret = NIXL_SUCCESS;
         for (nixlUcxReq req : requests_) {
             const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
-            if (__builtin_expect(ret == NIXL_SUCCESS, 0)) {
+            if (ret == NIXL_SUCCESS) [[likely]] {
                 worker_->reqRelease(req);
             } else if (ret == NIXL_IN_PROG) {
                 if (out_ret == NIXL_SUCCESS) {
@@ -635,11 +636,13 @@ private:
 
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params)
     : nixlUcxEngine(init_params) {
-    size_t num_threads = nixl_b_params_get(init_params.customParams, "num_threads", 0);
+    const size_t num_threads =
+        nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
     numSharedWorkers_ = getWorkers().size() - num_threads;
     NIXL_ASSERT(numSharedWorkers_ > 0);
 
-    splitBatchSize_ = nixl_b_params_get(init_params.customParams, "split_batch_size", 1024);
+    splitBatchSize_ =
+        nixl::getBackendParamDefaulted(init_params.customParams, "split_batch_size", 1024u);
 
     if (init_params.enableProgTh) {
         sharedThread_ =
@@ -782,7 +785,8 @@ nixlUcxThreadPoolEngine::getNotifs(notif_list_t &notif_list) {
 std::unique_ptr<nixlUcxEngine>
 nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
     nixlUcxEngine *engine;
-    size_t num_threads = nixl_b_params_get(init_params.customParams, "num_threads", 0);
+    const size_t num_threads =
+        nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
     if (num_threads > 0) {
         engine = new nixlUcxThreadPoolEngine(init_params);
     } else if (init_params.enableProgTh) {
@@ -799,30 +803,28 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
-    if (custom_params->count("device_list")!=0)
-        devs = absl::StrSplit((*custom_params)["device_list"], ", ");
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "device_list")) {
+        devs = absl::StrSplit(*opt, ", ");
+    }
 
-    size_t num_workers = nixl_b_params_get(custom_params, "num_workers", 1);
-    size_t num_threads = nixl_b_params_get(custom_params, "num_threads", 0);
-    size_t num_device_channels = nixl_b_params_get(custom_params, "ucx_num_device_channels", 4);
+    size_t num_workers = nixl::getBackendParamDefaulted(custom_params, "num_workers", 1u);
+    const size_t num_threads = nixl::getBackendParamDefaulted(custom_params, "num_threads", 0u);
+    const size_t num_device_channels =
+        nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 4u);
 
     if (num_workers <= num_threads) {
         /* There must be at least one shared worker */
         num_workers = num_threads + 1;
     }
 
-    ucp_err_handling_mode_t err_handling_mode;
-    const auto err_handling_mode_it =
-        custom_params->find(std::string(nixl_ucx_err_handling_param_name));
-    if (err_handling_mode_it == custom_params->end()) {
-        err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
-    } else {
-        err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
+    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(
+            custom_params, std::string(nixl_ucx_err_handling_param_name))) {
+        err_handling_mode = ucx_err_mode_from_string(*opt);
     }
 
-    const auto engine_config_it = custom_params->find("engine_config");
     const auto engine_config =
-        (engine_config_it != custom_params->end()) ? engine_config_it->second : "";
+        nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
 
     uc = std::make_unique<nixlUcxContext>(devs,
                                           init_params.enableProgTh,
@@ -1168,7 +1170,7 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
         const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
         const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
         auto &rmd_ep = rmd->conn->getEp(worker_id);
-        if (__builtin_expect(rmd_ep.get() != &ep, 0)) {
+        if (rmd_ep.get() != &ep) [[unlikely]] {
             break;
         }
 
@@ -1179,7 +1181,7 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
             ep.write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
 
         if (ret == NIXL_IN_PROG) {
-            if (__builtin_expect(result.req != nullptr, 1)) {
+            if (result.req != nullptr) [[likely]] {
                 ucp_request_free(result.req);
             }
             result.req = req;
@@ -1310,12 +1312,12 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
     const nixlUcxBackendReqH::Notif notif(std::move(int_handle->notif).value());
     int_handle->notif.reset();
 
-    if (__builtin_expect(handle_status != NIXL_SUCCESS, 0)) {
+    if (handle_status != NIXL_SUCCESS) [[unlikely]] {
         return handle_status;
     }
 
     const ucx_connection_ptr_t conn = getConnection(notif.agent);
-    if (__builtin_expect(!conn, 0)) {
+    if (!conn) [[unlikely]] {
         return NIXL_ERR_NOT_FOUND;
     }
 

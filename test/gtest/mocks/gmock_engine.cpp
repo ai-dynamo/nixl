@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@ namespace mocks {
 nixl_b_params_t custom_params;
 const nixlBackendInitParams init_params{.customParams = &custom_params};
 const std::string gmock_engine_key = "gmock_engine_key";
+char gmock_dummy_mvh;
 
 GMockBackendEngine::GMockBackendEngine() : nixlBackendEngine(&init_params) {
     using testing::Return;
@@ -40,6 +41,12 @@ GMockBackendEngine::GMockBackendEngine() : nixlBackendEngine(&init_params) {
     ON_CALL(*this, postXfer(_, _, _, _, _, _)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, checkXfer(_)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, releaseReqH(_)).WillByDefault(Return(NIXL_SUCCESS));
+    ON_CALL(*this, prepMemView(_, _, _))
+        .WillByDefault(
+            [](const nixl_remote_meta_dlist_t &, nixlMemViewH &mvh, const nixl_opt_b_args_t *) {
+                mvh = &gmock_dummy_mvh;
+                return NIXL_SUCCESS;
+            });
     ON_CALL(*this, getPublicData(_, _)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, getConnInfo(_)).WillByDefault([&](std::string &str) {
         str = "mock_backend_plugin_conn_info";
