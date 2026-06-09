@@ -43,6 +43,9 @@ credentials:
   - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USERNAME'
     passwordVariable: 'ARTIFACTORY_PASSWORD'
+  - credentialsId: 'ucx-gitlab-token'
+    type: 'string'
+    variable: 'GITLAB_REGISTRY_TOKEN'
 
 pipeline_start:
   shell: action
@@ -62,7 +65,9 @@ pipeline_start:
 steps:
   - name: Prepare
     containerSelector: "{name: 'podman'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId:
+      - 'svc-nixl-new-artifactory-token'
+      - 'ucx-gitlab-token'
     run: |
       # Setup podman and dependencies
       set -x
@@ -72,6 +77,11 @@ steps:
       ln -sfT $(type -p podman) /usr/bin/docker
       # Login to Artifactory
       echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+      # Login to the GitLab registry so DLFW base images hosted there can be pulled.
+      # GitLab accepts any username with a read_registry token, so the username is a placeholder.
+      if [ -n "${GITLAB_REGISTRY_TOKEN:-}" ]; then
+        echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 -u nixl-ci --password-stdin
+      fi
 
       yum install -y gettext
 
