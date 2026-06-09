@@ -70,12 +70,10 @@ RUN apt-get update -y && \
     # azure-sdk-for-cpp dependencies
     libxml2-dev
 
-# Add DOCA repository and install packages, then force-reinstall RDMA packages from that repo.
-# The RDMA reinstall fixes a broken libibverbs-dev that otherwise breaks Infiniband support
-# (--reinstall is needed because apt skips when the version is unchanged).
-# Skip the whole block when the base image already ships DOCA: adding the repo and upgrading
-# would bump the pre-installed DOCA, and reinstalling RDMA from the default repos would
-# mismatch the base DOCA stack - the exact version conflict we want to avoid.
+# Add DOCA repository and install packages. Skip when the base image already ships DOCA:
+# adding the repo and upgrading would bump the pre-installed DOCA - the version conflict
+# we want to avoid. The RDMA dev packages are handled unconditionally below since they are
+# build dependencies regardless of where DOCA came from.
 RUN if dpkg -s doca-sdk-gpunetio >/dev/null 2>&1; then \
         echo "DOCA SDK already installed in base image, skipping to avoid version conflict"; \
     else \
@@ -85,11 +83,16 @@ RUN if dpkg -s doca-sdk-gpunetio >/dev/null 2>&1; then \
         dpkg -i doca-host.deb && \
         apt-get update && \
         apt-get upgrade -y && \
-        apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev && \
-        DEBIAN_FRONTEND=noninteractive apt-get -y install \
-            --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
-            libnuma-dev librdmacm-dev ibverbs-providers; \
+        apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev; \
     fi
+
+# Force reinstall of RDMA packages. These are build dependencies (e.g. libfabric --enable-efa
+# needs libibverbs-dev) and must be present even when DOCA comes from the base image.
+# Reinstall fixes a broken libibverbs-dev that otherwise breaks Infiniband support;
+# --reinstall is needed because apt skips when the version is unchanged.
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get -y install \
+    --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+    libnuma-dev librdmacm-dev ibverbs-providers
 
 WORKDIR /workspace
 
