@@ -84,7 +84,7 @@ validateAgentName(const std::string &agent_name);
 resolveMaxBufferedEvents();
 } // namespace
 
-std::unique_ptr<nixlTelemetry>
+[[nodiscard]] std::unique_ptr<nixlTelemetry>
 nixlTelemetry::create(const std::string &agent_name) {
     const std::optional<std::string> exporter_name = getExporterName();
 
@@ -170,7 +170,7 @@ resolveMaxBufferedEvents() {
 
 } // namespace
 
-std::unique_ptr<nixlTelemetryExporter>
+[[nodiscard]] std::unique_ptr<nixlTelemetryExporter>
 nixlTelemetry::makeExporter(const std::string &exporter_name) const {
     auto &plugin_manager = nixlPluginManager::getInstance();
     std::shared_ptr<const nixlTelemetryPluginHandle> plugin_handle =
