@@ -867,7 +867,7 @@ COMBINE_RECV:
     const int rank_mask_smem_bytes = align_up<int>(active_rank_bound * static_cast<int>(sizeof(int)), kSmemAlignment);
     auto rank_mask_smem = reinterpret_cast<int*>(smem_buffer);
     if (thread_id < active_rank_bound)
-        rank_mask_smem[thread_id] = ld_acquire_global(mask_buffer_ptr + thread_id);
+        rank_mask_smem[thread_id] = mask_buffer_ptr[thread_id];
     __syncthreads();
 
     // Reassign warp groups
