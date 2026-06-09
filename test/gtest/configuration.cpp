@@ -253,7 +253,7 @@ TEST(Config, ReadConfigFile) {
     internal::refreshConfigFileForUnitTest();
 
     gtest::ScopedEnv vars;
-    vars.addVar("NIXL_CONFIG_FILE", (tmp_path / cfg_file).native());
+    vars.addVar("NIXL_CONFIG_FILE", path.native());
     vars.addVar(env1name, env1value);
     vars.addVar(env2name, env2value);
     {
