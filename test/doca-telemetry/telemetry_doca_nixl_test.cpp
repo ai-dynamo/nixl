@@ -101,6 +101,69 @@ TEST_F(docaNixlExporterTest, CounterAccumulatesAllPushedValues) {
         << expected_total << "); a drop or duplicate would miss this total";
 }
 
+// A gauge is absolute (add_gauge), unlike the cumulative counter above: the
+// endpoint must reflect the LAST pushed value, not the sum. Push a sequence of
+// distinct values and confirm only the final one is served -- if the exporter
+// wrongly accumulated, the served value would be the sum and this would fail.
+TEST_F(docaNixlExporterTest, GaugeReflectsLastPushedValue) {
+    constexpr char agentName[] = "nixl_doca_exporter_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    const std::string metric = std::string(nixlEnumStrings::telemetryEventTypeStr(
+        nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED));
+    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+
+    constexpr std::array<uint64_t, 4> values{4096, 65536, 1024, 8192};
+    for (const uint64_t v : values) {
+        const nixlTelemetryEvent event(nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED, v);
+        ASSERT_EQ(exporter.exportEvent(event), NIXL_SUCCESS);
+    }
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    const uint64_t expected = values.back();
+    const auto metrics = scrapeUntilValue(
+        port_, metric, static_cast<double>(expected), std::chrono::seconds(12), labels);
+    const std::optional<double> observed = metrics.latestValue(metric, labels);
+    ASSERT_TRUE(observed.has_value())
+        << metric << "{agent_name=" << agentName << "} not served at the endpoint after flush";
+    EXPECT_EQ(*observed, static_cast<double>(expected))
+        << "a gauge must reflect the last pushed value (" << expected << "), not a sum";
+}
+
+// Two agents export the SAME metric name; the DOCA exporter tags each sample
+// with its agent_name, producing two distinct series that differ only by label.
+// A single scrape must keep them apart: a name + agent_name lookup returns that
+// agent's value, while a name-only lookup is ambiguous. Both exporters share the
+// process-wide DOCA context (one Prometheus endpoint), as in a real multi-agent
+// process.
+TEST_F(docaNixlExporterTest, DistinguishesSeriesByAgentLabel) {
+    constexpr char agentAlpha[] = "agent_alpha";
+    constexpr char agentBeta[] = "agent_beta";
+    constexpr auto txBytes = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
+
+    nixlTelemetryDocaExporter exporterAlpha(nixlTelemetryExporterInitParams{agentAlpha, 4096});
+    nixlTelemetryDocaExporter exporterBeta(nixlTelemetryExporterInitParams{agentBeta, 4096});
+
+    ASSERT_EQ(exporterAlpha.exportEvent(nixlTelemetryEvent(txBytes, 700)), NIXL_SUCCESS);
+    ASSERT_EQ(exporterBeta.exportEvent(nixlTelemetryEvent(txBytes, 4)), NIXL_SUCCESS);
+    // Both exporters share the one process-wide DOCA context/source, so a single
+    // flush on either drains both agents' buffered samples.
+    ASSERT_EQ(exporterAlpha.flush(), NIXL_SUCCESS);
+
+    const std::string metric = std::string(nixlEnumStrings::telemetryEventTypeStr(txBytes));
+
+    // Wait for alpha's series, then read both from that one parsed scrape.
+    const auto metrics = scrapeUntilValue(
+        port_, metric, 700.0, std::chrono::seconds(12), {{"agent_name", agentAlpha}});
+    EXPECT_EQ(metrics.latestValue(metric, {{"agent_name", agentAlpha}}),
+              std::optional<double>(700.0));
+    EXPECT_EQ(metrics.latestValue(metric, {{"agent_name", agentBeta}}), std::optional<double>(4.0));
+    // Same name, two label sets -> a name-only lookup cannot pick one.
+    EXPECT_EQ(metrics.latestValue(metric), std::nullopt)
+        << metric << " is exported by two agents; a name-only lookup must be ambiguous";
+}
+
 int
 main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
