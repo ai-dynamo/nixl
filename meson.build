@@ -16,7 +16,7 @@
 project('nixl', 'CPP', version: '1.2.0',
     default_options: ['buildtype=release',
                 'werror=true',
-                'cpp_std=c++17',
+                'cpp_std=c++20',
                 'prefix=/opt/nvidia/nvda_nixl'],
     meson_version: '>= 0.64.0'
 )
@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA']
 
 enabled_plugins = {}
 
@@ -257,6 +257,8 @@ if cuda_dep.found()
     # Refer to https://mesonbuild.com/Cuda-module.html
     add_project_arguments('-forward-unknown-to-host-compiler', language: 'cuda')
     add_project_arguments('-rdc=true', language: 'cuda')
+    # Build all CUDA targets with C++20 to match the core's standard and ABI.
+    add_project_arguments('-std=c++20', language: 'cuda')
 
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
     message('nvcc version: ' + nvcc.version())
@@ -280,8 +282,15 @@ if cuda_dep.found()
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
-    warning('CUDA not found, cannot autodetect wheel dir; defaulting to nixl_cu12')
     cuda_wheel_dir = 'nixl_cu12'
+endif
+
+# Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix
+# without otherwise affecting the build. Non-empty value wins over the
+# autodetected CUDA-major value above: e.g. -Dwheel_variant=rocm -> nixl_rocm.
+wheel_variant = get_option('wheel_variant').strip()
+if wheel_variant != ''
+    cuda_wheel_dir = 'nixl_' + wheel_variant
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery

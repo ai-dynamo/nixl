@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,15 +28,17 @@
 #include <mutex>
 #include "gds_utils.h"
 #include "backend/backend_engine.h"
+#include "file/file_path_mode.h"
 
-class nixlGdsMetadata : public nixlBackendMD {
-    public:
-        gdsFileHandle handle;
-        gdsMemBuf buf;
-        nixl_mem_t type;
+class nixlGdsMetadata : public nixlFilePathMD {
+public:
+    gdsFileHandle handle;
+    gdsMemBuf buf;
+    nixl_mem_t type;
 
-        nixlGdsMetadata() : nixlBackendMD(true) { }
-        ~nixlGdsMetadata() { }
+    nixlGdsMetadata() = default;
+
+    explicit nixlGdsMetadata(nixl::FileFd &&fd) : nixlFilePathMD(std::move(fd)), type(FILE_SEG) {}
 };
 
 class GdsTransferRequestH {
@@ -97,9 +99,13 @@ class nixlGdsEngine : public nixlBackendEngine {
 
         nixlGdsIOBatch* getBatchFromPool(unsigned int size) const;
         void returnBatchToPool(nixlGdsIOBatch* batch) const;
-        nixl_status_t createAndSubmitBatch(const std::vector<GdsTransferRequestH>& requests,
-                                           size_t start_idx, size_t batch_size,
-                                           std::vector<nixlGdsIOBatch*>& batch_list) const;
+        nixl_status_t
+        createAndSubmitBatch(const std::vector<GdsTransferRequestH> &requests,
+                             size_t start_idx,
+                             size_t batch_size,
+                             std::vector<nixlGdsIOBatch *> &batch_list) const;
+        nixl_status_t
+        resolveFileHandle(const nixlMetaDesc &d, gdsFileHandle &fh) const;
         nixl_status_t createBatches(const nixl_xfer_op_t &operation,
                                    const nixl_meta_dlist_t &local,
                                    const nixl_meta_dlist_t &remote,

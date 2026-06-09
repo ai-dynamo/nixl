@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +28,7 @@
 #include <thread>
 #include "hf3fs_utils.h"
 #include "backend/backend_engine.h"
+#include "file/file_path_mode.h"
 
 class nixlHf3fsShmException : public std::runtime_error {
 public:
@@ -56,8 +57,13 @@ class nixlHf3fsMetadata : public nixlBackendMD {
 class nixlHf3fsFileMetadata : public nixlHf3fsMetadata {
 public:
     hf3fsFileHandle handle;
+    nixl::FileFd file_fd;
 
     nixlHf3fsFileMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE) {}
+
+    explicit nixlHf3fsFileMetadata(nixl::FileFd &&fd)
+        : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE),
+          file_fd(std::move(fd)) {}
 };
 
 class nixlHf3fsDramMetadata : public nixlHf3fsMetadata {
