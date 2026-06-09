@@ -50,7 +50,9 @@ Broadcom Thor).
 ## nixlbench
 
 The `nixlbench` benchmark binary is not built by the container by
-default. To build it inside the running container:
+default. To build it inside the running container (`$NIXL_PREFIX` and
+`$ROCM_PATH` are set by the container; outside Docker, export them or
+substitute `/usr/local/nixl` and `/opt/rocm` directly):
 
 ```bash
 cd benchmark/nixlbench
