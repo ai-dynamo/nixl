@@ -182,8 +182,9 @@ private:
 
     // Extract the key="value" pairs from a label block (the text inside `{}`).
     // Returns nullopt if the block is malformed -- anything other than well-formed
-    // pairs separated by commas/whitespace -- so a bad exposition line is rejected
-    // rather than silently parsed into partial labels (these are regression tests).
+    // pairs separated by commas/whitespace, or a repeated label key -- so a bad
+    // exposition line is rejected rather than silently parsed into partial or
+    // first-wins labels (these are regression tests).
     [[nodiscard]] static std::optional<labelSet>
     parseLabels(const std::string &block) {
         // Custom raw-string delimiter so the pattern's )" does not close it early.
@@ -198,7 +199,10 @@ private:
             if (block.find_first_not_of(", \t", cursor) < static_cast<size_t>(match.position())) {
                 return std::nullopt;
             }
-            labels.emplace(match[1].str(), match[2].str());
+            // A duplicate label key within one series is malformed; reject it.
+            if (!labels.emplace(match[1].str(), match[2].str()).second) {
+                return std::nullopt;
+            }
             cursor = static_cast<size_t>(match.position() + match.length());
         }
         // Any leftover after the last pair must also be only commas/whitespace.
