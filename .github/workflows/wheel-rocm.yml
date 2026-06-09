@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Builds the nixl_rocm wheel on tagged releases and uploads it as a release asset.
+
+name: wheel-rocm
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build'
+        required: false
+        type: string
+
+concurrency:
+  group: wheel-rocm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-wheel:
+    name: Build nixl_rocm wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build ROCm container
+        run: ./contrib/build-container.sh --rocm --tag nixl-rocm:wheel --no-cache
+
+      - name: Extract wheels
+        run: |
+          mkdir -p dist
+          id=$(docker create nixl-rocm:wheel)
+          docker cp "$id":/workspace/nixl/dist/. dist/
+          docker rm "$id"
+          ls -la dist/
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nixl-rocm-wheels
+          path: dist/*.whl
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: dist/*.whl

@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# TODO: replace this compile-only host CI with end-to-end transfer validation
+# on a self-hosted MI300X/MI355X runner once available.
+
+name: rocm-build-check
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'benchmark/nixlbench/**'
+      - 'contrib/Dockerfile'
+      - 'contrib/build-container.sh'
+      - 'contrib/build-wheel.sh'
+      - 'meson.build'
+      - 'meson_options.txt'
+      - '.github/workflows/rocm-build-check.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ROCm container build + smoke
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build ROCm container
+        run: ./contrib/build-container.sh --rocm --tag nixl-rocm:ci --no-cache
+
+      - name: Smoke - import nixl, dispatch to nixl_rocm backend
+        run: |
+          docker run --rm nixl-rocm:ci \
+            bash -lc "python -c 'import nixl; print(nixl._pkg.__name__)' | grep -x nixl_rocm"
+
+      - name: Smoke - wheels present
+        run: |
+          docker run --rm nixl-rocm:ci \
+            bash -lc "ls /workspace/nixl/dist/nixl_rocm-*.whl /workspace/nixl/dist/nixl-*-none-any.whl"
