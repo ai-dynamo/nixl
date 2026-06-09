@@ -49,11 +49,8 @@ RUN apt-get update -y && \
     libhwloc-dev \
     build-essential
 
-# Add the DOCA repository and upgrade unconditionally: the base image's RDMA packages
-# (libibverbs, rdma-core, ...) are MLNX/DOCA builds not present in the Ubuntu repos, so the
-# RDMA reinstall below can only resolve them once this repo is added and installed versions
-# are aligned to it. Only the DOCA SDK install itself is skipped when the base already ships
-# it, to avoid the redundant reinstall of those dev packages.
+# Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
+# Skip only the DOCA SDK install when the base image already ships it.
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
     wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
@@ -66,11 +63,9 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "am
         apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev; \
     fi
 
-# Force reinstall of RDMA packages. These are build dependencies (e.g. libfabric --enable-efa
-# needs libibverbs-dev) and must be present even when DOCA comes from the base image.
-# Reinstall fixes a broken libibverbs-dev that otherwise breaks Infiniband support;
-# --reinstall is needed because apt skips when the version is unchanged.
-RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get -y install \
+# Reinstall RDMA build deps (libfabric --enable-efa needs libibverbs-dev), required even when
+# DOCA is from the base image. --reinstall because apt skips equal versions.
+RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
     libnuma-dev librdmacm-dev ibverbs-providers
 
@@ -231,7 +226,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Keep uv's download cache under /workspace so it is not tied to /root (some hosts mount $HOME over /root).
+# Keep uv's cache in /workspace, not /root (some hosts mount $HOME over /root).
 ENV UV_CACHE_DIR=/workspace/.cache/uv
 RUN mkdir -p $UV_CACHE_DIR
 # Disable build isolation, i.e. uv should not create a new virtual environment for
@@ -239,20 +234,22 @@ RUN mkdir -p $UV_CACHE_DIR
 ENV UV_NO_BUILD_ISOLATION=1
 # Disable syncing, i.e. uv will not download packages outside uv pip commands.
 ENV UV_NO_SYNC=1
-# Ubuntu marks system Python as EXTERNALLY-MANAGED (PEP 668); allow installs in this image.
+# Allow installs into PEP 668 externally-managed system Python.
 ENV UV_BREAK_SYSTEM_PACKAGES=1
-# Install Python tools into the system interpreter (no project venv).
-RUN uv pip install --system --python python${DEFAULT_PYTHON_VERSION} --upgrade \
+# All uv pip commands target the system interpreter.
+ENV UV_PYTHON=python${DEFAULT_PYTHON_VERSION}
+# Build tools into system Python (no venv).
+RUN uv pip install --system --upgrade \
     meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
-# PyTorch: use system torch if present, else install for system Python.
+# Use system torch if present (>=2.7), else install it.
 RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then \
         echo "Using PyTorch from system site-packages"; \
     else \
         export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
-        uv pip install --system --python python${DEFAULT_PYTHON_VERSION} torch torchvision torchaudio; \
+        uv pip install --system torch torchvision torchaudio; \
     fi
-# Upgrade setuptools for PEP 639 (license format) compatibility
-RUN uv pip install --system --python python${DEFAULT_PYTHON_VERSION} --upgrade 'setuptools>=80.9.0'
+# setuptools for PEP 639 license metadata
+RUN uv pip install --system --upgrade 'setuptools>=80.9.0'
 
 COPY --from=nixl . /workspace/nixl
 COPY --from=nixlbench . /workspace/nixlbench
@@ -272,8 +269,8 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 
 RUN CUDA_MAJOR=$(echo $CUDA_VERSION | cut -d. -f1) && \
     ./contrib/tomlutil.py --wheel-name "nixl-cu${CUDA_MAJOR}" pyproject.toml && \
-    uv pip install --system --python python${DEFAULT_PYTHON_VERSION} . && \
-    uv pip install --system --python python${DEFAULT_PYTHON_VERSION} \
+    uv pip install --system . && \
+    uv pip install --system \
         build/src/bindings/python/nixl-meta/nixl-*.whl
 
 WORKDIR /workspace/nixlbench
@@ -294,7 +291,7 @@ WORKDIR /workspace/nixl
 RUN ls -ll benchmark/kvbench
 
 # Install dependencies for benchmarks
-RUN uv pip install --system --python python${DEFAULT_PYTHON_VERSION} -e benchmark/kvbench
+RUN uv pip install --system -e benchmark/kvbench
 
 ENV PATH=/usr/local/nixlbench/bin:/usr/local/nixl/bin:$PATH
 ENV LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
