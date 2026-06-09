@@ -421,14 +421,29 @@ class FilesystemBackend(StorageBackend):
             backends=[self._nixl_backend],
         )
 
+    @staticmethod
+    def _is_sharded(handle: StorageHandle) -> bool:
+        shard_fds = handle.backend_data.get("shard_fds")
+        return bool(shard_fds) and len(shard_fds) > 1
+
     def get_read_handle(
         self,
         handle: StorageHandle,
         buffer: Any,
     ) -> Any:
-        """Get NIXL transfer handle for reading from file."""
+        """Get a single NIXL transfer handle that covers the whole read region.
+
+        Not supported for sharded backends (multiple shard files per rank) —
+        a single handle would only touch the first shard. Use
+        get_read_handles() instead, which returns one handle per shard.
+        """
         if handle.read_size == 0:
             return None
+        if self._is_sharded(handle):
+            raise ValueError(
+                "get_read_handle() does not support sharded storage "
+                "(rank has multiple shard files). Use get_read_handles() instead."
+            )
         return self._create_handle(
             "READ", handle.backend_data["fd"], 0, handle.read_size, buffer
         )
@@ -438,9 +453,17 @@ class FilesystemBackend(StorageBackend):
         handle: StorageHandle,
         buffer: Any,
     ) -> Any:
-        """Get NIXL transfer handle for writing to file."""
+        """Get a single NIXL transfer handle that covers the whole write region.
+
+        Not supported for sharded backends — see get_read_handle().
+        """
         if handle.write_size == 0:
             return None
+        if self._is_sharded(handle):
+            raise ValueError(
+                "get_write_handle() does not support sharded storage "
+                "(rank has multiple shard files). Use get_write_handles() instead."
+            )
         fd = handle.backend_data["fd"]
         write_offset = handle.read_size
         return self._create_handle("WRITE", fd, write_offset, handle.write_size, buffer)
@@ -468,18 +491,16 @@ class FilesystemBackend(StorageBackend):
         if handle.read_size == 0:
             return []
 
-        if num_handles <= 1:
-            h = self.get_read_handle(handle, buffer)
-            return [h] if h else []
-
         total = handle.read_size
-        shard_fds = handle.backend_data.get("shard_fds")
 
-        if shard_fds and len(shard_fds) > 1:
-            # Sharded: each handle reads from its own file/fd
+        # Sharded mode always uses one handle per shard; num_handles is
+        # ignored because mixing fds within a shard buys nothing on NFS.
+        # Check this BEFORE the num_handles<=1 singular fallback, since
+        # get_read_handle() can't represent a sharded read.
+        if self._is_sharded(handle):
             shard_read = handle.backend_data["shard_read_size"]
             handles = []
-            for i, fd in enumerate(shard_fds):
+            for i, fd in enumerate(handle.backend_data["shard_fds"]):
                 offset_in_buf = i * shard_read
                 size = min(shard_read, total - offset_in_buf)
                 if size <= 0:
@@ -489,22 +510,26 @@ class FilesystemBackend(StorageBackend):
                 xfer = self._create_handle("READ", fd, 0, size, buf_slice)
                 handles.append(xfer)
             return handles
-        else:
-            # Single file: split into regions (same fd, limited by NFS)
-            fd = handle.backend_data["fd"]
-            align = max(self._block_size, 4096) if self._block_size > 0 else 4096
-            chunk_per_handle = ((total // num_handles + align - 1) // align) * align
 
-            handles = []
-            for i in range(num_handles):
-                offset = i * chunk_per_handle
-                size = min(chunk_per_handle, total - offset)
-                if size <= 0:
-                    break
-                buf_slice = buffer[offset : offset + size]
-                xfer = self._create_handle("READ", fd, offset, size, buf_slice)
-                handles.append(xfer)
-            return handles
+        if num_handles <= 1:
+            h = self.get_read_handle(handle, buffer)
+            return [h] if h else []
+
+        # Single file: split into regions (same fd, limited by NFS)
+        fd = handle.backend_data["fd"]
+        align = max(self._block_size, 4096) if self._block_size > 0 else 4096
+        chunk_per_handle = ((total // num_handles + align - 1) // align) * align
+
+        handles = []
+        for i in range(num_handles):
+            offset = i * chunk_per_handle
+            size = min(chunk_per_handle, total - offset)
+            if size <= 0:
+                break
+            buf_slice = buffer[offset : offset + size]
+            xfer = self._create_handle("READ", fd, offset, size, buf_slice)
+            handles.append(xfer)
+        return handles
 
     def get_write_handles(
         self,
@@ -516,18 +541,15 @@ class FilesystemBackend(StorageBackend):
         if handle.write_size == 0:
             return []
 
-        if num_handles <= 1:
-            h = self.get_write_handle(handle, buffer)
-            return [h] if h else []
-
         total = handle.write_size
-        shard_fds = handle.backend_data.get("shard_fds")
 
-        if shard_fds and len(shard_fds) > 1:
+        # Sharded mode: one handle per shard regardless of num_handles.
+        # See the symmetric note in get_read_handles().
+        if self._is_sharded(handle):
             shard_write = handle.backend_data["shard_write_size"]
             shard_actual_reads = handle.backend_data["shard_actual_reads"]
             handles = []
-            for i, fd in enumerate(shard_fds):
+            for i, fd in enumerate(handle.backend_data["shard_fds"]):
                 offset_in_buf = i * shard_write
                 size = min(shard_write, total - offset_in_buf)
                 if size <= 0:
@@ -540,24 +562,28 @@ class FilesystemBackend(StorageBackend):
                 xfer = self._create_handle("WRITE", fd, write_offset, size, buf_slice)
                 handles.append(xfer)
             return handles
-        else:
-            fd = handle.backend_data["fd"]
-            write_offset = handle.read_size
-            align = max(self._block_size, 4096) if self._block_size > 0 else 4096
-            chunk_per_handle = ((total // num_handles + align - 1) // align) * align
 
-            handles = []
-            for i in range(num_handles):
-                offset = i * chunk_per_handle
-                size = min(chunk_per_handle, total - offset)
-                if size <= 0:
-                    break
-                buf_slice = buffer[offset : offset + size]
-                xfer = self._create_handle(
-                    "WRITE", fd, write_offset + offset, size, buf_slice
-                )
-                handles.append(xfer)
-            return handles
+        if num_handles <= 1:
+            h = self.get_write_handle(handle, buffer)
+            return [h] if h else []
+
+        fd = handle.backend_data["fd"]
+        write_offset = handle.read_size
+        align = max(self._block_size, 4096) if self._block_size > 0 else 4096
+        chunk_per_handle = ((total // num_handles + align - 1) // align) * align
+
+        handles = []
+        for i in range(num_handles):
+            offset = i * chunk_per_handle
+            size = min(chunk_per_handle, total - offset)
+            if size <= 0:
+                break
+            buf_slice = buffer[offset : offset + size]
+            xfer = self._create_handle(
+                "WRITE", fd, write_offset + offset, size, buf_slice
+            )
+            handles.append(xfer)
+        return handles
 
     def close(self):
         """Close all files and deregister from NIXL."""

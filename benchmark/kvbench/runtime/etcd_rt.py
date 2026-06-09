@@ -48,9 +48,9 @@ class _EtcdDistUtils(_RTUtils):
         self,
         etcd_endpoints: str = "http://localhost:2379",
         prefix: str = "/nixl/kvbench",
+        namespace_explicit: bool = False,
     ):
         super().__init__()
-        self.prefix = prefix
         self.ops_counter: dict[str, dict[Any, int]] = defaultdict(
             lambda: defaultdict(int)
         )
@@ -69,6 +69,27 @@ class _EtcdDistUtils(_RTUtils):
             raise ValueError(
                 "Rank and world size not found in environment variables SLURM_PROCID/SLURM_NTASKS or RANK/WORLD_SIZE"
             )
+
+        # If the caller did not pin NIXL_ETCD_NAMESPACE explicitly, append a
+        # shared per-run token derived from the job scheduler so two
+        # concurrent runs on the same etcd don't wipe each other's keys
+        # during rank 0's delete_prefix(). All ranks of the same job must
+        # resolve the same token, so we only consult env vars that are
+        # broadcast across the whole job (not the rank-local ones).
+        if not namespace_explicit:
+            for env_var in ("SLURM_JOB_ID", "SLURM_JOBID", "PMIX_NAMESPACE"):
+                token = os.environ.get(env_var)
+                if token:
+                    prefix = f"{prefix.rstrip('/')}/run-{token}"
+                    logger.info(
+                        "NIXL_ETCD_NAMESPACE not set; auto-namespacing with "
+                        "%s=%s → prefix=%s",
+                        env_var,
+                        token,
+                        prefix,
+                    )
+                    break
+        self.prefix = prefix
 
         # Parse endpoint host & port
         url_pattern = r"^(https?://)?([^:]+)(?::(\d+))?$"
@@ -191,7 +212,7 @@ class _EtcdDistUtils(_RTUtils):
     def get_world_size(self) -> int:
         return self.world_size
 
-    def allgather_obj(self, obj: Any, timeout_sec: float = 120) -> List[Any]:
+    def allgather_obj(self, obj: Any, timeout_sec: float = 600) -> List[Any]:
         allgather_ix = self.ops_counter["allgather"]["world"]
         self.ops_counter["allgather"]["world"] += 1
 
@@ -221,7 +242,7 @@ class _EtcdDistUtils(_RTUtils):
 
         return result
 
-    def alltoall_obj(self, send_objs: List[Any], timeout_sec: float = 120) -> List[Any]:
+    def alltoall_obj(self, send_objs: List[Any], timeout_sec: float = 600) -> List[Any]:
         alltoall_ix = self.ops_counter["alltoall"]["world"]
         self.ops_counter["alltoall"]["world"] += 1
 
@@ -257,7 +278,7 @@ class _EtcdDistUtils(_RTUtils):
         vals: List[float | int],
         op: ReduceOp,
         root: int = 0,
-        timeout_sec: float = 120,
+        timeout_sec: float = 600,
     ) -> List[float | int]:
         self.barrier(timeout_sec=timeout_sec)
         self.client.put(f"{self.prefix}/all_reduce/{self.rank}", pickle.dumps(vals))
@@ -318,16 +339,18 @@ class _EtcdDistUtils(_RTUtils):
         return hash(key)
 
 
-if not os.environ.get("NIXL_ETCD_NAMESPACE"):
+_namespace_explicit = bool(os.environ.get("NIXL_ETCD_NAMESPACE"))
+if not _namespace_explicit:
     logger.warning(
-        "Environment variable NIXL_ETCD_NAMESPACE is not set, using default prefix /nixl/kvbench. "
-        "Note that it can lead to conflicts if multiple instances of KVBench are running. "
-        "To avoid this, set NIXL_ETCD_NAMESPACE to a unique value for each instance of KVBench. "
-        'For example, export NIXL_ETCD_NAMESPACE="/nixl/kvbench/$(uuidgen)"'
+        "Environment variable NIXL_ETCD_NAMESPACE is not set; will try to "
+        "auto-namespace using SLURM_JOB_ID/PMIX_NAMESPACE. If none are set "
+        'either, export NIXL_ETCD_NAMESPACE="/nixl/kvbench/$(uuidgen)" to '
+        "avoid conflicts with other concurrent KVBench runs."
     )
 
 
 etcd_dist_utils = _EtcdDistUtils(
     etcd_endpoints=os.environ.get("NIXL_ETCD_ENDPOINTS", "http://localhost:2379"),
     prefix=os.environ.get("NIXL_ETCD_NAMESPACE", "/nixl/kvbench"),
+    namespace_explicit=_namespace_explicit,
 )
