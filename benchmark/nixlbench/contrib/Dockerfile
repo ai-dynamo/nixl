@@ -240,7 +240,7 @@ ENV UV_BREAK_SYSTEM_PACKAGES=1
 RUN uv pip install --system --python python${DEFAULT_PYTHON_VERSION} --upgrade \
     meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # PyTorch: use system torch if present, else install for system Python.
-RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch" 2>/dev/null; then \
+RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then \
         echo "Using PyTorch from system site-packages"; \
     else \
         export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
