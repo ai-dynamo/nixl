@@ -42,7 +42,8 @@ nixlLibfabricTopology::nixlLibfabricTopology()
       hwloc_topology(nullptr),
       avg_numa_speed(0),
       avg_nic_speed(0),
-      avg_nic_upstream_speed(0) {
+      avg_nic_upstream_speed(0),
+      has_pcie_devices_(false) {
 
     NIXL_TRACE << "Starting automatic topology discovery";
 
@@ -75,15 +76,20 @@ nixlLibfabricTopology::discoverTopology() {
     if (status != NIXL_SUCCESS) {
         return status;
     }
-    // For EFA devices, build PCIe to Libfabric device mapping and full topology
-    if (provider_name == "efa") {
-        // Build PCIe to Libfabric device mapping
-        status = buildPcieToLibfabricMapping();
-        if (status != NIXL_SUCCESS) {
+    // build the topology mapping regardless of provider
+    status = buildPcieToLibfabricMapping();
+    if (status != NIXL_SUCCESS) {
+        if (provider_name == "efa") {
             NIXL_ERROR << "Failed to build PCIe to Libfabric mapping - this is required for EFA "
                           "topology discovery";
-            return status;
+        } else {
+            NIXL_ERROR << "Failed to build PCIe to libfabric mapping (provider: " << provider_name
+                       << ")";
         }
+        return status;
+    }
+    // For EFA devices, build PCIe to Libfabric device mapping and full topology
+    if (provider_name == "efa") {
         // Discover hardware topology using hwloc
         status = discoverHwlocTopology();
         if (status != NIXL_SUCCESS) {
@@ -270,7 +276,9 @@ nixlLibfabricTopology::printTopologyInfo() const {
         std::stringstream ss;
         ss << "Accelerator-PCI " << pair.first << " → [";
         for (size_t i = 0; i < pair.second.size(); ++i) {
-            if (i > 0) ss << ", ";
+            if (i > 0) {
+                ss << ", ";
+            }
             ss << pair.second[i];
         }
         ss << "]";
@@ -497,6 +505,7 @@ nixlLibfabricTopology::buildPcieToLibfabricMapping() {
 
     for (struct fi_info *cur = info; cur; cur = cur->next) {
         if (cur->domain_attr && cur->domain_attr->name && cur->nic && cur->nic->bus_attr) {
+            has_pcie_devices_ = true;
             std::string libfabric_name = cur->domain_attr->name;
             // Extract PCIe address from bus_attr if available
             if (cur->nic->bus_attr->bus_type == FI_BUS_PCI &&
@@ -620,7 +629,9 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
                 NIXL_TRACE << "PCI " << pci_bus_id << " (Accelerator " << accel_index << ") → "
                            << accel_efa_devices.size() << " EFA devices: [";
                 for (size_t i = 0; i < accel_efa_devices.size(); ++i) {
-                    if (i > 0) NIXL_TRACE << ", ";
+                    if (i > 0) {
+                        NIXL_TRACE << ", ";
+                    }
                     NIXL_TRACE << accel_efa_devices[i];
                 }
                 NIXL_TRACE << "]";
@@ -1226,7 +1237,9 @@ nixlLibfabricTopology::groupNicsWithAccel(const std::vector<NicInfo> &discovered
         if (num_groups > 0 && !accel.empty()) {
             // Sort NICs by bus ID for consistent assignment
             std::sort(nics.begin(), nics.end(), [](const NicInfo &a, const NicInfo &b) {
-                if (a.bus_id != b.bus_id) return a.bus_id < b.bus_id;
+                if (a.bus_id != b.bus_id) {
+                    return a.bus_id < b.bus_id;
+                }
                 return a.device_id < b.device_id;
             });
 
