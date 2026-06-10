@@ -745,6 +745,7 @@ nixlLibfabricRailManager::deserializeMemoryKeys(const std::string &serialized_da
     nixlSerDes ser_des;
     const nixl_status_t import_status = ser_des.importStr(serialized_data);
     if (import_status != NIXL_SUCCESS) {
+        NIXL_ERROR << "deserializeMemoryKeys: importStr failed, status=" << import_status;
         return import_status;
     }
     // Load all rail keys instead of just one
@@ -798,6 +799,7 @@ nixlLibfabricRailManager::deserializeConnectionInfo(
     nixlSerDes ser_des;
     const nixl_status_t import_status = ser_des.importStr(serialized_data);
     if (import_status != NIXL_SUCCESS) {
+        NIXL_ERROR << "deserializeConnectionInfo: importStr failed, status=" << import_status;
         return import_status;
     }
 
