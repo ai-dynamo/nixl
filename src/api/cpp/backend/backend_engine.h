@@ -35,6 +35,7 @@ class nixlBackendEngine {
         // Members that cannot be modified by a child backend and parent bookkeep
         nixl_backend_t  backendType;
         nixl_b_params_t customParams;
+        const uint64_t backendId_;
         std::vector<nixlTelemetryEvent> telemetryEvents_;
         std::mutex telemetryEventsMutex_;
 
@@ -77,6 +78,7 @@ class nixlBackendEngine {
         explicit nixlBackendEngine(const nixlBackendInitParams *init_params)
             : backendType(init_params->type),
               customParams(*init_params->customParams),
+              backendId_(init_params->backendId_),
               localAgent(init_params->localAgent),
               enableTelemetry_(init_params->enableTelemetry_) {}
 
@@ -92,6 +94,11 @@ class nixlBackendEngine {
         getTelemetryEvents() {
             std::lock_guard<std::mutex> lock(telemetryEventsMutex_);
             return std::move(telemetryEvents_);
+        }
+
+        uint64_t
+        getBackendId() const noexcept {
+            return backendId_;
         }
 
         bool getInitErr() const noexcept { return initErr; }

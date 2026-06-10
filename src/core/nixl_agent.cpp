@@ -291,6 +291,11 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    if (data->backendsById_.size() >= nixlBackendMask::MAX_BACKENDS) {
+        NIXL_ERROR_FUNC << "maximum number of backends reached";
+        return NIXL_ERR_BACKEND;
+    }
+
     // Check if the plugin is in an illegal combination with another plugin backend already created
     for (const auto &combination : illegal_plugin_combinations) {
         if (std::find(combination.begin(), combination.end(), type) != combination.end()) {
@@ -313,6 +318,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.pthrDelay = data->config_.pthrDelay;
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
+    init_params.backendId_ = data->backendsById_.size();
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
@@ -381,6 +387,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     bknd_hndl = it->second.get();
 
     data->backendEngines_.try_emplace(type, std::move(backend));
+    data->backendsById_.push_back(data->backendEngines_[type].get());
 
     // TODO: Check if backend supports ProgThread
     //       when threading is in agent
@@ -492,7 +499,8 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
     }
 
     // Doing best effort, and returning err if any
-    for (auto &backend : backend_set) {
+    for (size_t id : backend_set) {
+        nixlBackendEngine *backend = data->backendsById_[id];
         if (backend->supportsLocal()) {
             const auto it = data->remoteSections_.find(data->name_);
             if (it != data->remoteSections_.end()) {
@@ -579,8 +587,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
                           nixlDlistH* &dlist_hndl,
                           const nixl_opt_args_t* extra_params) const {
 
-    // Using a set as order is not important to revert the operation
-    backend_set_t *backend_set;
+    backend_set_t backend_set;
     const bool init_side = (agent_name == NIXL_INIT_AGENT);
 
     NIXL_LOCK_GUARD(data->lock);
@@ -597,17 +604,16 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
                                           static_cast<nixlMemSection &>(rem_sec_it->second);
 
     if (!extra_params || (extra_params->backends.size() == 0)) {
-        backend_set = section.queryBackends(descs.getType());
-
-        if (!backend_set || backend_set->empty()) {
+        const backend_set_t *avail = section.queryBackends(descs.getType());
+        if (!avail || avail->empty()) {
             NIXL_ERROR_FUNC << "no available backends for mem type '" << descs.getType() << "'";
             data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
             return NIXL_ERR_NOT_FOUND;
         }
+        backend_set = *avail;
     } else {
-        backend_set = new backend_set_t();
         for (auto &elm : extra_params->backends) {
-            backend_set->insert(elm->engine);
+            backend_set.insert(elm->engine);
         }
     }
 
@@ -615,15 +621,12 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 
     std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_dlist_t>> dlists;
 
-    for (const auto &backend : *backend_set) {
+    for (size_t id : backend_set) {
+        nixlBackendEngine *backend = data->backendsById_[id];
         nixl_meta_dlist_t dlist(descs.getType());
         if (section.populate(descs, backend, dlist) == NIXL_SUCCESS) {
             dlists.try_emplace(backend, std::make_unique<nixl_meta_dlist_t>(std::move(dlist)));
         }
-    }
-
-    if (extra_params && (extra_params->backends.size() > 0)) {
-        delete backend_set;
     }
 
     if (dlists.empty()) {
@@ -879,10 +882,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
             return NIXL_ERR_NOT_FOUND;
         }
 
-        for (auto & elm : *local_set)
-            if (remote_set->count(elm) != 0) {
-                backend_set.insert(elm);
-            }
+        backend_set = *local_set & *remote_set;
 
         if (backend_set.empty()) {
             NIXL_ERROR_FUNC << "no potential backend found to be able to do the transfer";
@@ -905,7 +905,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
-    for (auto &backend : backend_set) {
+    for (size_t id : backend_set) {
+        nixlBackendEngine *backend = data->backendsById_[id];
         // If populate fails, it clears the resp before return
         ret1 = data->localSection_.populate(local_descs, backend, handle->initiatorDescs);
         ret2 = rem_sec_it->second.populate(remote_descs, backend, handle->targetDescs);
@@ -1425,7 +1426,7 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
         selected_engines.insert(backend);
     }
 
-    if (selected_engines.size() == 0 && descs.descCount() > 0) {
+    if (selected_engines.empty() && descs.descCount() > 0) {
         NIXL_ERROR_FUNC << "no backends support the requested descriptors";
         return NIXL_ERR_BACKEND;
     }
@@ -1763,7 +1764,8 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
         // Engine has not been selected yet, try to find a backend that can add an element to the
         // remote metadata
         const auto backends = data->getBackends(extra_params, it->second, mem_type);
-        for (const auto &backend : backends) {
+        for (size_t id : backends) {
+            nixlBackendEngine *backend = data->backendsById_[id];
             const auto status = it->second.addElement(desc, backend, remote_meta_dlist);
             if (status == NIXL_SUCCESS) {
                 NIXL_DEBUG << "Selected backend: " << backend->getType();
@@ -1807,7 +1809,8 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     const auto backends = data->getBackends(extra_params, data->localSection_, mem_type);
-    for (const auto &backend : backends) {
+    for (size_t id : backends) {
+        nixlBackendEngine *backend = data->backendsById_[id];
         const auto status = data->localSection_.populate(dlist, backend, meta_dlist);
         if (status == NIXL_SUCCESS) {
             NIXL_DEBUG << "Selected backend: " << backend->getType();

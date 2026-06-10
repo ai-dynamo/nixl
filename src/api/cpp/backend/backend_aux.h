@@ -53,6 +53,7 @@ class nixlBackendInitParams {
         nixlTime::us_t    pthrDelay;
         nixl_thread_sync_t syncMode;
         bool enableTelemetry_;
+        uint64_t backendId_ = 0;
 };
 
 // Pure virtual class to have a common pointer type

@@ -30,7 +30,84 @@
 #include "backend/backend_engine.h"
 
 using section_key_t = std::pair<nixl_mem_t, nixlBackendEngine*>;
-using backend_set_t = std::set<nixlBackendEngine*>;
+
+// Compact set of backend engines, addressed by each engine's id (bit position).
+// Range-iteration yields ids (i.e. positions) of the contained engines.
+class nixlBackendMask {
+public:
+    static constexpr unsigned MAX_BACKENDS = 64;
+
+    class iterator {
+    public:
+        explicit iterator(uint64_t bits) noexcept : bits_(bits) {}
+
+        size_t
+        operator*() const noexcept {
+            return __builtin_ctzll(bits_);
+        }
+
+        iterator &
+        operator++() noexcept {
+            bits_ &= bits_ - 1;
+            return *this;
+        }
+
+        bool
+        operator!=(iterator other) const noexcept {
+            return bits_ != other.bits_;
+        }
+
+    private:
+        uint64_t bits_;
+    };
+
+    void
+    insert(const nixlBackendEngine *be) noexcept {
+        bits_ |= uint64_t{1} << be->getBackendId();
+    }
+
+    void
+    erase(const nixlBackendEngine *be) noexcept {
+        bits_ &= ~(uint64_t{1} << be->getBackendId());
+    }
+
+    bool
+    contains(const nixlBackendEngine *be) const noexcept {
+        return (bits_ & (uint64_t{1} << be->getBackendId())) != 0;
+    }
+
+    bool
+    empty() const noexcept {
+        return bits_ == 0;
+    }
+
+    iterator
+    begin() const noexcept {
+        return iterator(bits_);
+    }
+
+    iterator
+    end() const noexcept {
+        return iterator(0);
+    }
+
+    nixlBackendMask &
+    operator&=(nixlBackendMask other) noexcept {
+        bits_ &= other.bits_;
+        return *this;
+    }
+
+    friend nixlBackendMask
+    operator&(nixlBackendMask lhs, nixlBackendMask rhs) noexcept {
+        return lhs &= rhs;
+    }
+
+private:
+    uint64_t bits_ = 0;
+};
+
+using nixl_backend_mask_t = nixlBackendMask;
+using backend_set_t = nixlBackendMask;
 
 struct nixlEngineDeleter {
     void

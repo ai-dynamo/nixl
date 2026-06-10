@@ -31,7 +31,7 @@ nixlMemSection::emplace(const nixl_mem_t nixl_mem, nixlBackendEngine *backend) {
     const section_key_t sec_key(nixl_mem, backend);
     const auto [it, inserted] = sectionMap.try_emplace(sec_key, sec_key.first);
     if (inserted) {
-        memToBackend[sec_key.first].emplace(sec_key.second);
+        memToBackend[sec_key.first].insert(sec_key.second);
     }
     return it->second;
 }
@@ -302,14 +302,11 @@ nixl_status_t nixlLocalSection::serializePartial(nixlSerDes* serializer,
     }
 
     // TODO: consider concatenating 2 serializers instead of using mem_elms_to_serialize
-    for (const auto &backend : backends) {
-        const section_key_t sec_key(nixl_mem, backend);
-        const auto it = sectionMap.find(sec_key);
-        if (it == sectionMap.end()) {
+    for (const auto &[sec_key, base] : sectionMap) {
+        if (sec_key.first != nixl_mem || !backends.contains(sec_key.second)) {
             continue;
         }
 
-        const nixlSecDescList &base = it->second;
         std::vector<nixlSectionDesc> descs;
         descs.reserve(mem_elms.descCount());
         for (const auto &desc : mem_elms) {

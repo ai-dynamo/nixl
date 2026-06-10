@@ -97,6 +97,7 @@ class nixlAgentData {
         // The order of the following data members is crucial for destruction.
         // Bookkeeping for local connection metadata and user handles per backend
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
+        std::vector<nixlBackendEngine *> backendsById_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
         backend_map_t backendEngines_;
         std::unordered_map<std::string, nixlRemoteSection> remoteSections_;
