@@ -29,6 +29,7 @@
 #endif
 #include <fcntl.h>
 #include <filesystem>
+#include <atomic>
 #include <iomanip>
 #include <memory>
 #include <numeric>
@@ -962,19 +963,49 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
 
+        // Pre-populate objects for READ benchmarks. Each putObj is one HTTP PUT
+        // (network-bound), so seed all objects concurrently; the descriptor /
+        // registration bookkeeping below stays sequential. Errors are recorded
+        // in a flag rather than exit()-ing inside the OpenMP region.
+        if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+            std::vector<std::string> obj_names;
+            obj_names.reserve((size_t)num_threads * num_devices);
+            for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+                for (i = 0; i < num_devices; i++) {
+                    obj_names.push_back("nixlbench_obj" + std::to_string(list_idx) + "_" +
+                                        std::to_string(i) + "_" + std::to_string(timestamp));
+                }
+            }
+
+            std::atomic<bool> put_failed(false);
+#pragma omp parallel for num_threads(num_threads)
+            for (size_t idx = 0; idx < obj_names.size(); idx++) {
+                if (put_failed.load(std::memory_order_relaxed)) {
+                    continue;
+                }
+                if (!xferBenchUtils::putObj(buffer_size, obj_names[idx])) {
+                    std::cerr << "Failed to put object: " << obj_names[idx]
+                              << " -- cannot pre-populate objects for READ benchmark, aborting."
+                              << std::endl;
+                    put_failed.store(true, std::memory_order_relaxed);
+                }
+            }
+            if (put_failed.load()) {
+                // Best-effort cleanup of objects seeded before the failure so a
+                // partial pre-population doesn't leak benchmark objects.
+                for (const auto &obj_name : obj_names) {
+                    xferBenchUtils::rmObj(obj_name);
+                }
+                exit(EXIT_FAILURE);
+            }
+        }
+
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
                 std::string unique_name = "nixlbench_obj" + std::to_string(list_idx) + "_" +
                     std::to_string(i) + "_" + std::to_string(timestamp);
-
-                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-                    if (!xferBenchUtils::putObj(buffer_size, unique_name)) {
-                        std::cerr << "Failed to put object: " << unique_name << std::endl;
-                        continue;
-                    }
-                }
 
                 int obj_dev_id = list_idx * num_devices + i;
                 basic_desc = initBasicDescObj(buffer_size, obj_dev_id, unique_name);
