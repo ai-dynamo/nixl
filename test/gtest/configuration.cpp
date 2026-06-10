@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include "common/backend.h"
 #include "common/configuration.h"
 #include "gtest/gtest.h"
 #include "common.h"
@@ -216,8 +217,6 @@ TEST(Config, ConvertUnsigned) {
     testUnsigned<std::uint64_t>();
 }
 
-#include "common/backend.h"
-
 TEST(Config, BackendBasics) {
     const std::string negative = "negative";
     const std::string positive = "positive";
@@ -270,12 +269,6 @@ TEST(Config, BackendBasics) {
     }
 }
 
-#if 0
-
-  // ReadConfigFile is temporarily disabled because it always fails when it is
-  // not the first or only test to run. TODO: Enable again with more robust
-  // file handling.
-
 namespace {
 
     const std::string pid = std::to_string(::getpid());
@@ -288,6 +281,15 @@ namespace {
     const std::string env2value = "not_an_int";
 
 } // namespace
+
+namespace internal {
+
+    // This function is safe to be called because no other thread is accessing the config.
+
+    void
+    refreshConfigFileForUnitTest();
+
+} // namespace internal
 
 TEST(Config, ReadConfigFile) {
     const auto pid = ::getpid();
@@ -305,6 +307,7 @@ TEST(Config, ReadConfigFile) {
     vars.addVar("NIXL_CONFIG_FILE", path.native());
     vars.addVar(env1name, env1value);
     vars.addVar(env2name, env2value);
+    internal::refreshConfigFileForUnitTest();
     {
         const auto value = nixl::config::getValue<bool>(bool_name);
         EXPECT_TRUE(value);
@@ -327,7 +330,5 @@ TEST(Config, ReadConfigFile) {
         EXPECT_THROW((void)nixl::config::getValue<int>(env2name), std::runtime_error);
     }
 }
-
-#endif
 
 } // namespace nixl::config
