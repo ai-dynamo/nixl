@@ -32,6 +32,14 @@ ucx_backend_dependencies = [asio_dep,
                             thread_dep,
                             ucx_dep]
 
+ucx_backend_cpp_args = []
+
+# CUDA driver API, used to warn when registered VRAM cannot take the cuda_ipc fast path.
+if cuda_dep.found()
+    ucx_backend_dependencies += [cuda_dep]
+    ucx_backend_cpp_args += ['-DHAVE_CUDA']
+endif
+
 ucx_backend_include_directories = [nixl_inc_dirs,
                                    utils_inc_dirs]
 
@@ -41,6 +49,7 @@ if 'UCX' in static_plugins
                dependencies: ucx_backend_dependencies,
                include_directories: ucx_backend_include_directories,
                install: false,
+               cpp_args : ucx_backend_cpp_args,
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
     ucx_backend_lib = shared_library('UCX',
@@ -48,7 +57,7 @@ else
                dependencies: ucx_backend_dependencies,
                include_directories: ucx_backend_include_directories,
                install: true,
-               cpp_args : ['-fPIC'],
+               cpp_args : ucx_backend_cpp_args + ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                install_dir: plugin_install_dir,
                build_rpath: get_option('ucx_path') != '' ? get_option('ucx_path') + '/lib' : '',
