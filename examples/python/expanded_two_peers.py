@@ -25,7 +25,7 @@ except ImportError:
     import logging
 
     logger = logging.getLogger(__name__)
-    logger.error("NIXL API missing install NIXL.")
+    logger.exception("NIXL API is missing. Please install NIXL or RIXL.")
     NIXL_AVAILABLE = False
 
 
