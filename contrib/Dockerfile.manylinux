@@ -75,13 +75,16 @@ ENV CUDA_HOME=/usr/local/cuda \
     PATH=/usr/local/cuda/bin:${PATH} \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH:-}
 
-# INFINIA libs — uncomment together with the `infinia` stage above. The mirrored image
-# lays the libs out per-arch under /infinia/${ARCH}/ (lib/ + include/); copying that to
-# /opt/ddn/red puts libred_client.so / libred_async.so + headers where meson looks, so
-# it auto-detects and builds the INFINIA plugin into the wheel (default
-# -Dinfinia_path=/opt/ddn/red, no flag change needed). NOTE: auditwheel will then bundle
-# libred_client/libred_async into the wheel unless they're added to the auditwheel
-# --exclude list in the wheel-build step.
+# INFINIA libs (paired with the `infinia` stage above). The mirrored image lays the libs
+# out per-arch under /infinia/${ARCH}/ (lib/ + include/); copying that to /opt/ddn/red
+# puts libred_client.so / libred_async.so + headers where meson looks, so it auto-detects
+# and builds the INFINIA plugin into the wheel (default -Dinfinia_path=/opt/ddn/red).
+# NOTE: libred_client/libred_async are DDN proprietary and are intentionally NOT
+# redistributed — contrib/build-wheel.sh already auditwheel --excludes them, so the wheel
+# ships only the INFINIA plugin (libplugin_INFINIA.so), which loads libred_* at runtime
+# from a customer's DDN install via its RUNPATH (/opt/ddn/red/lib). The plugin's other
+# transitive deps (liburing.so.2, libldap.so.2, etc.) are why this Dockerfile installs/
+# builds them above: they must resolve at link time even though libred itself is excluded.
 ARG INFINIA_DEST=/opt/ddn/red
 COPY --from=infinia /infinia/${ARCH}/ ${INFINIA_DEST}/
 
