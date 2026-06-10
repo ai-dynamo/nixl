@@ -43,15 +43,24 @@ __device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst
 
 namespace ep_kernels {
 
-template<bool use_warp_sync = false>
+template<bool use_warp_sync = false, bool use_acquire = true>
 __forceinline__ __device__ bool is_rank_masked(int* mask_buffer_ptr, int rank) {
     if (mask_buffer_ptr == nullptr) {
         return false;
     }
     if constexpr (use_warp_sync) {
-        return __shfl_sync(0xffffffff, ld_acquire_global(mask_buffer_ptr + rank), 0) != 0;
+        if constexpr (use_acquire) {
+            return __shfl_sync(
+                       0xffffffff, ld_acquire_global(mask_buffer_ptr + rank), 0) != 0;
+        } else {
+            return __shfl_sync(0xffffffff, mask_buffer_ptr[rank], 0) != 0;
+        }
     } else {
-        return ld_acquire_global(mask_buffer_ptr + rank) != 0;
+        if constexpr (use_acquire) {
+            return ld_acquire_global(mask_buffer_ptr + rank) != 0;
+        } else {
+            return mask_buffer_ptr[rank] != 0;
+        }
     }
 }
 
@@ -918,7 +927,8 @@ COMBINE_RECV:
                     if (topk_idx_reg < 0)
                         continue;
                     EP_DEVICE_ASSERT(topk_idx_reg < active_expert_bound);
-                    if (is_rank_masked(mask_buffer_ptr, topk_idx_reg / num_local_experts))
+                    if (is_rank_masked<false, false>(
+                            mask_buffer_ptr, topk_idx_reg / num_local_experts))
                         continue;
 
                     mbarrier_wait<true>(empty_barriers[stage_idx], tma_phase, stage_idx);
@@ -959,7 +969,8 @@ COMBINE_RECV:
                     if (topk_idx_reg < 0)
                         continue;
                     EP_DEVICE_ASSERT(topk_idx_reg < active_expert_bound);
-                    if (is_rank_masked(mask_buffer_ptr, topk_idx_reg / num_local_experts))
+                    if (is_rank_masked<false, false>(
+                            mask_buffer_ptr, topk_idx_reg / num_local_experts))
                         continue;
                     const auto& topk_weight = __shfl_sync(0xffffffff, topk_weights_by_lane, i);
 
