@@ -20,19 +20,21 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include <dlfcn.h>
+#include <exception>
 #include <filesystem>
 #include <dirent.h>
 #include <unistd.h>  // For access() and F_OK
 #include <fstream>
 #include <string>
 #include <map>
-#include <dlfcn.h>
 
 using lock_guard = const std::lock_guard<std::mutex>;
 
 const std::string backendPluginPrefix = "libplugin_";
 const std::string telemetryPluginPrefix = "libtelemetry_exporter_";
 const std::string kPluginSuffix = ".so";
+const std::string kUcxPluginName = "UCX";
+const std::string kUcxDeepBindVar = "NIXL_UCX_DEEPBIND";
 
 // pluginHandle implementation
 nixlBackendPluginHandle::nixlBackendPluginHandle(void *handle, nixlBackendPlugin *plugin)
@@ -236,13 +238,43 @@ loadPluginList(const std::string &filename) {
     return plugins;
 }
 
+namespace {
+bool
+shouldDeepBindPlugin(const std::string &plugin_name) {
+    if (plugin_name != kUcxPluginName) {
+        return false;
+    }
+
+    try {
+        return nixl::config::getValueDefaulted<bool>(kUcxDeepBindVar, true);
+    }
+    catch (const std::exception &e) {
+        NIXL_WARN << "Invalid " << kUcxDeepBindVar
+                  << " value, enabling RTLD_DEEPBIND: " << e.what();
+        return true;
+    }
+}
+} // namespace
+
 std::shared_ptr<const nixlPluginHandle>
-nixlPluginManager::loadPluginFromPath(const std::string &plugin_path, nixlPluginLoaderFunc loader) {
+nixlPluginManager::loadPluginFromPath(const std::string &plugin_path,
+                                      nixlPluginLoaderFunc loader,
+                                      bool deepbind) {
     // Open the plugin file with RTLD_NODELETE to prevent glibc from physically unloading
     // the library on dlclose. This is required because plugins link dynamically against Abseil,
     // which uses thread_local and static initialization that are unsafe to unload dynamically
     // and trigger glibc bugs on older versions (e.g. Ubuntu 22.04 / glibc 2.35).
-    void *handle = dlopen(plugin_path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
+    int flags = RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE;
+    if (deepbind) {
+#ifdef RTLD_DEEPBIND
+        flags |= RTLD_DEEPBIND;
+#else
+        NIXL_WARN << "RTLD_DEEPBIND requested for " << plugin_path
+                  << " but is not supported on this platform";
+#endif
+    }
+
+    void *handle = dlopen(plugin_path.c_str(), flags);
     if (!handle) {
         NIXL_INFO << "Failed to load plugin from " << plugin_path << ": " << dlerror();
         return nullptr;
@@ -383,7 +415,8 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
     if (path_it != explicit_plugin_paths_.end()) {
         const std::string &plugin_path = path_it->second;
         if (std::filesystem::exists(plugin_path)) {
-            auto plugin_handle = loadPluginFromPath(plugin_path, backendLoader);
+            auto plugin_handle =
+                loadPluginFromPath(plugin_path, backendLoader, shouldDeepBindPlugin(plugin_name));
             if (plugin_handle) {
                 auto backend_plugin =
                     std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
@@ -405,7 +438,8 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
             continue;
         }
 
-        auto plugin_handle = loadPluginFromPath(plugin_path, backendLoader);
+        auto plugin_handle =
+            loadPluginFromPath(plugin_path, backendLoader, shouldDeepBindPlugin(plugin_name));
         if (plugin_handle) {
             auto backend_plugin =
                 std::dynamic_pointer_cast<const nixlBackendPluginHandle>(plugin_handle);
