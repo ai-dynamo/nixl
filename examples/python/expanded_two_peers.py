@@ -11,10 +11,22 @@ import sys
 import numpy as np
 import torch
 
-from nixl._api import nixl_agent, nixl_agent_config
-from nixl.logging import get_logger
+try:
+    try:
+        from nixl._api import nixl_agent, nixl_agent_config
+        from nixl.logging import get_logger
+    except ImportError:
+        from rixl._api import nixl_agent, nixl_agent_config
+        from rixl.logging import get_logger
 
-logger = get_logger(__name__)
+    logger = get_logger(__name__)
+    NIXL_AVAILABLE = True
+except ImportError:
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.error("NIXL API missing install NIXL.")
+    NIXL_AVAILABLE = False
 
 
 def parse_args():
@@ -33,6 +45,10 @@ def parse_args():
 
 
 if __name__ == "__main__":
+    if not NIXL_AVAILABLE:
+        logger.warning("Skipping example - NIXL bindings not available")
+        sys.exit(0)
+
     args = parse_args()
 
     # initiator use default port

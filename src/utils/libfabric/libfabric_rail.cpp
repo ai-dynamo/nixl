@@ -1342,6 +1342,13 @@ nixlLibfabricRail::registerMemory(void *buffer,
                 mr_attr.device.cuda = device_id;
                 NIXL_DEBUG << "CUDA memory registration - iface: FI_HMEM_CUDA, device.cuda: "
                            << device_id;
+            } else if (iface == FI_HMEM_ROCR) {
+                // AMD ROCr memory registration
+                // ROCr uses HSA agent handles for device identification
+                // The device_id corresponds to the GPU index (0-based)
+                mr_attr.device.rocr = device_id;
+                NIXL_DEBUG << "ROCr memory registration - iface: FI_HMEM_ROCR, device.rocr: "
+                           << device_id;
             } else if (iface == FI_HMEM_NEURON) {
                 /*
                  * Store a sentinel; libfabric requires this to be initialized.

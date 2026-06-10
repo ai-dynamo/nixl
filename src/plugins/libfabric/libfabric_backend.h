@@ -38,8 +38,16 @@
 #include "libfabric/libfabric_common.h"
 
 #ifdef HAVE_CUDA
+#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+#include <hip/hip_runtime_api.h>
+// Define CUDA types as HIP equivalents for AMD
+typedef hipCtx_t CUcontext;
+typedef hipDevice_t CUdevice;
+#else
 #include <cuda.h>
 #include <cuda_runtime.h>
+#endif
 #endif
 
 // Forward declarations

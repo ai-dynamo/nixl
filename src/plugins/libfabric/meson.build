@@ -16,6 +16,14 @@
 
 # LibFabric plugin configuration
 
+# Hipify sources that include cuda_runtime.h for ROCm/HIP builds
+hipify_cmd = find_program('hipify-perl')
+hipify_src = generator(hipify_cmd,
+                       output : ['@BASENAME@_hip.cpp'],
+                       arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
+
+libfabric_backend_hip_src = hipify_src.process('libfabric_backend.cpp', extra_args: '-o')
+
 # Enable libfabric utils layer
 libfabric_plugin_deps = [
     nixl_infra,
@@ -38,7 +46,7 @@ endif
 if 'LIBFABRIC' in static_plugins
     libfabric_backend_lib = static_library(
         'LIBFABRIC',
-        'libfabric_backend.cpp',
+        libfabric_backend_hip_src,
         'libfabric_backend.h',
         'libfabric_plugin.cpp',
         dependencies: libfabric_plugin_deps,
@@ -50,7 +58,7 @@ if 'LIBFABRIC' in static_plugins
 else
     libfabric_backend_lib = shared_library(
         'LIBFABRIC',
-        'libfabric_backend.cpp',
+        libfabric_backend_hip_src,
         'libfabric_backend.h',
         'libfabric_plugin.cpp',
         dependencies: libfabric_plugin_deps,
