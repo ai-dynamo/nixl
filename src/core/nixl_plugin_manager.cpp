@@ -703,6 +703,10 @@ void nixlPluginManager::registerBuiltinPlugins() {
     NIXL_REGISTER_STATIC_PLUGIN(Backend, MOONCAKE)
 #endif
 
+#ifdef STATIC_PLUGIN_RADOS_NKV
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, RADOS_NKV)
+#endif
+
 #ifdef STATIC_PLUGIN_HF3FS
     NIXL_REGISTER_STATIC_PLUGIN(Backend, HF3FS)
 #endif

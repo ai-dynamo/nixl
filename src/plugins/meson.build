@@ -140,4 +140,8 @@ if enabled_plugins.get('GPUNETIO')
     endif
 endif
 
+if enabled_plugins.get('RADOS_NKV')
+    subdir('rados-nkv')
+endif
+
 subdir('telemetry')

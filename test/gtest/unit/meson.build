@@ -29,6 +29,10 @@ unit_test_deps += [agent_unit_test_dep]
 subdir('descriptors')
 unit_test_deps += [descriptors_unit_test_dep]
 
+# RADOS_NKV key derivation is SPDK-free, so its unit test always builds/runs.
+subdir('rados-nkv')
+unit_test_deps += [rados_nkv_unit_test_dep]
+
 cpp = meson.get_compiler('cpp')
 azure_storage_blobs = cpp.find_library('azure-storage-blobs', required: false)
 if enabled_plugins.get('AZURE_BLOB') and azure_storage_blobs.found()
