@@ -209,6 +209,7 @@ public:
     static size_t obj_crt_min_limit;
     static bool obj_accelerated_enable;
     static std::string obj_accelerated_type;
+    static size_t obj_num_threads;
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
     static std::string azure_blob_connection_string;
@@ -234,6 +235,8 @@ public:
     isStorageBackend();
     static bool
     isObjStorageBackend();
+    static bool
+    isRestBackend();
 
 protected:
     static int
@@ -385,6 +388,10 @@ public:
     getObjS3(const std::string &name);
     static bool
     rmObjS3(const std::string &name);
+    static bool
+    putObjRest(size_t buffer_size, const std::string &name);
+    static bool
+    rmObjRest(const std::string &name);
 
     static bool
     checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
