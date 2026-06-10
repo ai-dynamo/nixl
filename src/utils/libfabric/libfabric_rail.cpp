@@ -1521,7 +1521,32 @@ nixlLibfabricRail::registerMemory(void *buffer,
             }
         }
 
-        mr_cache_.try_emplace(buf_addr, mr, actual_key, length, mem_type, device_id);
+        auto [cache_it, inserted] =
+            mr_cache_.try_emplace(buf_addr, mr, actual_key, length, mem_type, device_id);
+        if (!inserted) {
+            // A concurrent registerMemory() call won the race between the
+            // first cache check (line ~1300) and this insert. Our locally
+            // registered MR is now redundant: close it to avoid leaking the
+            // libfabric handle and any pinned GDR memory it holds, then
+            // hand the caller the already-cached registration so a later
+            // deregisterMemory() can find and tear it down via the cache.
+            const int close_ret = fi_close(&mr->fid);
+            if (close_ret != 0) {
+                NIXL_ERROR << "MRRC: fi_close failed on redundant MR for buf=" << buffer
+                           << " rail=" << rail_id << ": " << fi_strerror(-close_ret);
+            }
+            cache_it->second.ref_count.fetch_add(1, std::memory_order_relaxed);
+            // Correct the metrics: this call ended up reusing a cached
+            // entry, so it is a hit, not a miss. We already incremented
+            // mr_cache_misses_ earlier on the optimistic miss path.
+            mr_cache_hits_.fetch_add(1, std::memory_order_relaxed);
+            mr_cache_misses_.fetch_sub(1, std::memory_order_relaxed);
+            *mr_out = cache_it->second.mr;
+            *key_out = cache_it->second.key;
+            NIXL_DEBUG << "MRRC late-hit (concurrent race): rail=" << rail_id
+                       << " buffer=" << buffer << " key=" << cache_it->second.key;
+            return NIXL_SUCCESS;
+        }
         NIXL_DEBUG << "MRRC cache insert: rail=" << rail_id << " buffer=" << buffer
                    << " key=" << actual_key << " cache_size=" << mr_cache_.size();
     }
@@ -1572,8 +1597,12 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
     }
 
     if (!found_in_cache) {
-        // MR not in cache - caller may be trying to deregister an MR from another rail
-        NIXL_ERROR << "MRRC: Attempted to deregister uncached MR on rail " << rail_id;
+        // MR not in cache - this is expected for cross-rail MRs and edge-case
+        // cleanup paths (the rail manager calls deregisterMemory on every
+        // selected rail and tolerates per-rail NOT_FOUND). Log at debug level
+        // so legitimate cross-rail/cleanup cases don't pollute production logs.
+        NIXL_DEBUG << "MRRC: deregister on rail " << rail_id
+                   << " skipped (MR not registered on this rail)";
         return NIXL_ERR_NOT_FOUND;
     }
 

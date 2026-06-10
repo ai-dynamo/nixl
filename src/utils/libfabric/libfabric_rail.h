@@ -309,19 +309,30 @@ public:
     deregisterMemory(struct fid_mr *mr) const;
 
     // Memory Registration Cache Statistics
-    /** Get number of MR cache hits */
+    /**
+     * @brief Get the number of MR cache hits.
+     * @return Total number of times registerMemory() reused a cached MR on
+     *         this rail (including late-race concurrent hits).
+     */
     uint64_t
     getMRCacheHits() const {
         return mr_cache_hits_.load(std::memory_order_relaxed);
     }
 
-    /** Get number of MR cache misses */
+    /**
+     * @brief Get the number of MR cache misses.
+     * @return Total number of times registerMemory() had to issue a fresh
+     *         fi_mr_reg on this rail.
+     */
     uint64_t
     getMRCacheMisses() const {
         return mr_cache_misses_.load(std::memory_order_relaxed);
     }
 
-    /** Get current MR cache size */
+    /**
+     * @brief Get the current number of entries in the MR cache.
+     * @return Number of cache entries currently held by this rail.
+     */
     size_t
     getMRCacheSize() const;
 
