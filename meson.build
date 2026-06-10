@@ -285,16 +285,11 @@ else
     cuda_wheel_dir = 'nixl_cu12'
 endif
 
-# wheel_variant (added in #1642): simple override of the wheel-name suffix
-# (e.g. -Dwheel_variant=rocm -> nixl_rocm).
 wheel_variant = get_option('wheel_variant').strip()
 if wheel_variant != ''
     cuda_wheel_dir = 'nixl_' + wheel_variant
 endif
 
-# python_backend_dir / python_backend_package: finer-grained overrides used by
-# contrib/build-container.sh + contrib/build-wheel.sh. python_backend_dir wins
-# over wheel_variant when set.
 python_backend_dir_opt = get_option('python_backend_dir')
 if python_backend_dir_opt != ''
     cuda_wheel_dir = python_backend_dir_opt
