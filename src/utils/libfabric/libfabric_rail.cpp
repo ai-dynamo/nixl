@@ -1301,8 +1301,7 @@ nixlLibfabricRail::registerMemory(void *buffer,
         if (it != mr_cache_.end()) {
             MRCacheEntry &entry = it->second;
             // Validate that cached entry matches requested parameters
-            if (entry.length == length && entry.mem_type == mem_type &&
-                entry.gpu_id == device_id) {
+            if (entry.length == length && entry.mem_type == mem_type && entry.gpu_id == device_id) {
                 // Cache hit - increment reference count and return cached MR
                 entry.ref_count.fetch_add(1, std::memory_order_relaxed);
                 *mr_out = entry.mr;
@@ -1327,9 +1326,8 @@ nixlLibfabricRail::registerMemory(void *buffer,
                     // Keep the stale entry rather than leaking it silently.
                     return NIXL_ERR_BACKEND;
                 }
-                NIXL_WARN << "MRRC: evicted stale entry on rail " << rail_id
-                          << " buffer=" << buffer << " cached_len=" << entry.length
-                          << " requested_len=" << length;
+                NIXL_WARN << "MRRC: evicted stale entry on rail " << rail_id << " buffer=" << buffer
+                          << " cached_len=" << entry.length << " requested_len=" << length;
                 mr_cache_.erase(it);
             } else {
                 NIXL_ERROR << "MRRC: cache entry mismatch with active ref on rail " << rail_id
@@ -1473,10 +1471,10 @@ nixlLibfabricRail::registerMemory(void *buffer,
                     return NIXL_MR_CACHE_MAX_ENTRIES_DEFAULT;
                 }
                 return parsed;
-            } catch (const std::exception &e) {
-                NIXL_WARN << "NIXL_MR_CACHE_MAX_ENTRIES='" << max_str
-                          << "' could not be parsed (" << e.what()
-                          << "); falling back to default";
+            }
+            catch (const std::exception &e) {
+                NIXL_WARN << "NIXL_MR_CACHE_MAX_ENTRIES='" << max_str << "' could not be parsed ("
+                          << e.what() << "); falling back to default";
                 return NIXL_MR_CACHE_MAX_ENTRIES_DEFAULT;
             }
         }();
@@ -1495,8 +1493,8 @@ nixlLibfabricRail::registerMemory(void *buffer,
                 if (it->second.ref_count.load(std::memory_order_acquire) == 0) {
                     const int ret = fi_close(&it->second.mr->fid);
                     if (ret != 0) {
-                        NIXL_ERROR << "MRRC: fi_close failed during eviction on rail "
-                                   << rail_id << ": " << fi_strerror(-ret)
+                        NIXL_ERROR << "MRRC: fi_close failed during eviction on rail " << rail_id
+                                   << ": " << fi_strerror(-ret)
                                    << " — preserving cache entry to avoid leak";
                         ++it;
                         continue;
