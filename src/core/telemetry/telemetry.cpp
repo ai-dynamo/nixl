@@ -86,9 +86,13 @@ nixlTelemetry::nixlTelemetry(const std::string &agent_name)
 nixlTelemetry::~nixlTelemetry() {
     writeTask_.enabled_ = false;
     try {
-        writeTask_.timer_.cancel();
+        // The pool thread re-arms writeTask_.timer_ from its own callback
+        // (registerPeriodicTask -> async_wait), so cancelling the timer here on
+        // the main thread races that re-arm. Stop and join the pool first; once
+        // join() returns no other thread touches the timer, so cancel() is safe.
         pool_.stop();
         pool_.join();
+        writeTask_.timer_.cancel();
     }
     catch (const asio::system_error &e) {
         NIXL_DEBUG << "Failed to cancel telemetry write timer: " << e.what();
