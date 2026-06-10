@@ -378,6 +378,10 @@
           default: "v1.21.x"
           description: "UCX version to use (tag like v1.21.x, branch name, or commit hash)"
       - string:
+          name: "DOCA_VERSION"
+          default: "upstream"
+          description: "DOCA version to use (tag like v3.2.0, branch name, or commit hash)"
+      - string:
           name: "BASE_IMAGE"
           default: "nvcr.io/nvidia/cuda-dl-base"
           description: "Base Docker image for the container build"
