@@ -19,6 +19,10 @@ if cuobj_dep.found()
     obj_test_sources += ['mock_dell_s3_client.cpp', 'obj_cuobj.cpp']
 endif
 
+if cuobj_dep.found() and dependency('libcurl', required: false).found()
+    obj_test_sources += ['rest_client.cpp', 'rest_client_concurrency.cpp']
+endif
+
 obj_unit_test_dep = declare_dependency(
     sources: obj_test_sources,
     include_directories: [
