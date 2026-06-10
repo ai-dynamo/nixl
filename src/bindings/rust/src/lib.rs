@@ -501,6 +501,15 @@ pub trait NixlDescriptor: MemoryRegion {
 
     /// Get the device ID for this memory region
     fn device_id(&self) -> u64;
+
+    /// Get optional metadata for this descriptor.
+    ///
+    /// Metadata is used by some backends (e.g., OBJ for object storage keys).
+    /// Returns owned bytes since they're copied during registration anyway.
+    /// Default implementation returns empty vec.
+    fn metadata(&self) -> Vec<u8> {
+        Vec::new()
+    }
 }
 
 /// A trait for types that can be registered with NIXL
