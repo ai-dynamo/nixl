@@ -107,7 +107,7 @@ ARG GRPC_TAG="v1.73.0"
 ARG NPROC
 
 RUN yum groupinstall -y 'Development Tools' &&  \
-    dnf install -y almalinux-release-synergy && \
+    dnf install -y almalinux-release-synergy epel-release && \
     dnf config-manager --set-enabled powertools && \
     dnf install -y \
     boost \
@@ -124,6 +124,10 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     libaio \
     libaio-devel \
     libtool-ltdl \
+    libuuid-devel \
+    jansson \
+    libjose \
+    xxhash-libs \
     ninja-build \
     openssl \
     openssl-devel \
@@ -175,6 +179,43 @@ ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:/usr/local/openssl3/lib:$LD_LIBRA
 ENV OPENSSL_ROOT_DIR="/usr/local/openssl3"
 ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64:/usr/local/openssl3/lib"
 ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
+
+# --- INFINIA (libred_client) transitive deps not packaged at the right soname on EL8 ---
+# liburing 2.x: EL8 only ships liburing.so.1 (1.0.7); libred_client needs liburing.so.2.
+RUN cd /tmp && \
+    LIBURING_VERSION=2.6 && \
+    wget -q "https://github.com/axboe/liburing/archive/refs/tags/liburing-${LIBURING_VERSION}.tar.gz" && \
+    tar -xzf "liburing-${LIBURING_VERSION}.tar.gz" && \
+    cd "liburing-liburing-${LIBURING_VERSION}" && \
+    ./configure --prefix=/usr/local && \
+    make -j"${NPROC:-$(nproc)}" && \
+    make install && \
+    echo "/usr/local/lib"   >  /etc/ld.so.conf.d/usrlocal.conf && \
+    echo "/usr/local/lib64" >> /etc/ld.so.conf.d/usrlocal.conf && \
+    ldconfig && \
+    rm -rf /tmp/liburing*
+
+# OpenLDAP 2.6 client libs: EL8 ships 2.4 (libldap-2.4.so.2); libred_client needs the
+# 2.6 soname libldap.so.2 (+ liblber.so.2). Build client libs only, against openssl3.
+RUN cd /tmp && \
+    OPENLDAP_VERSION=2.6.8 && \
+    wget -q "https://www.openldap.org/software/download/OpenLDAP/openldap-release/openldap-${OPENLDAP_VERSION}.tgz" && \
+    tar -xzf "openldap-${OPENLDAP_VERSION}.tgz" && \
+    cd "openldap-${OPENLDAP_VERSION}" && \
+    ./configure --prefix=/usr/local --enable-shared --disable-static --disable-slapd \
+        --without-cyrus-sasl --with-tls=openssl \
+        CPPFLAGS="-I/usr/local/openssl3/include" \
+        LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
+    make depend && \
+    make -j"${NPROC:-$(nproc)}" && \
+    make install && \
+    ldconfig && \
+    rm -rf /tmp/openldap-${OPENLDAP_VERSION}*
+
+# Let the linker (gcc LIBRARY_PATH) and loader/auditwheel (LD_LIBRARY_PATH) find the
+# INFINIA libs at /opt/ddn/red/lib and the source-built transitive deps in /usr/local.
+ENV LD_LIBRARY_PATH="/opt/ddn/red/lib:/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH"
+ENV LIBRARY_PATH="/opt/ddn/red/lib:/usr/local/lib:/usr/local/lib64:${LIBRARY_PATH:-}"
 
 WORKDIR /workspace
 
