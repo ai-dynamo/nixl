@@ -22,7 +22,7 @@ hipify_src = generator(hipify_cmd,
                        output : ['@BASENAME@_hip.cpp'],
                        arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
 
-libfabric_backend_hip_src = hipify_src.process('libfabric_backend.cpp', extra_args: '-o')
+libfabric_backend_hip_src = hipify_src.process('libfabric_backend.cpp', extra_args: ['-o'])
 
 # Enable libfabric utils layer
 libfabric_plugin_deps = [

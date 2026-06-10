@@ -324,7 +324,7 @@ testBasicTopology() {
 #ifdef CUDA_FOUND
                 // Get PCI bus ID for this GPU
                 cudaDeviceProp prop;
-                (void)cudaGetDeviceProperties(&prop, gpu_id);
+                cudaGetDeviceProperties(&prop, gpu_id);
 
                 char pci_bus_id[32];
                 snprintf(pci_bus_id,

@@ -20,8 +20,8 @@ hipify_src = generator(hipify_cmd,
                        output : ['@BASENAME@_hip.cpp'],
                        arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
 
-libfabric_topology_hip_src = hipify_src.process('libfabric_topology.cpp', extra_args: '-o')
-libfabric_rail_manager_hip_src = hipify_src.process('libfabric_rail_manager.cpp', extra_args: '-o')
+libfabric_topology_hip_src = hipify_src.process('libfabric_topology.cpp', extra_args: ['-o'])
+libfabric_rail_manager_hip_src = hipify_src.process('libfabric_rail_manager.cpp', extra_args: ['-o'])
 
 # Source files
 libfabric_utils_sources = [

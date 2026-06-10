@@ -20,7 +20,7 @@ hipify_src = generator(hipify_cmd,
                        output : ['@BASENAME@_hip.cpp'],
                        arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
 
-libfabric_topology_test_hip_src = hipify_src.process('libfabric_topology_test.cpp', extra_args: '-o')
+libfabric_topology_test_hip_src = hipify_src.process('libfabric_topology_test.cpp', extra_args: ['-o'])
 
 libfabric_utils_dep = [ libfabric_dep, nixl_common_deps, serdes_interface ]
 libfabric_test_cpp_args = []
