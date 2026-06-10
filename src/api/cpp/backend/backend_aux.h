@@ -44,15 +44,15 @@ using nixl_opt_b_args_t = nixlBackendOptionalArgs;
 // from the user, we should make nixlBackendEngine/nixlAgent friend classes.
 class nixlBackendInitParams {
     public:
-        std::string       localAgent;
+        std::string localAgent;
 
-        nixl_backend_t    type;
-        nixl_b_params_t*  customParams;
+        nixl_backend_t type;
+        nixl_b_params_t *customParams = nullptr;
 
-        bool              enableProgTh;
-        nixlTime::us_t    pthrDelay;
+        bool enableProgTh = false;
+        nixlTime::us_t pthrDelay = 0;
         nixl_thread_sync_t syncMode;
-        bool enableTelemetry_;
+        bool enableTelemetry_ = false;
 };
 
 // Pure virtual class to have a common pointer type
