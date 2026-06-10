@@ -69,7 +69,7 @@ class nixlAgentData {
         const bool needsCommThread_;
         nixlLock        lock;
         bool telemetryEnabled = false;
-        bool efaWarningChecked = false;
+        std::atomic<bool> efaWarningChecked = false;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
