@@ -483,7 +483,7 @@
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
 # Job template for the LLM (vLLM / SGLang) container build pipeline.
-# Builds 3 image variants (vllm-nixl, sglang-nixl, sglang-cu13-nixl) from a
+# Builds 4 image variants (vllm-nixl, vllm-cu12-nixl, sglang-nixl, sglang-cu13-nixl) from a
 # published NIXL wheel set, for x86_64 and aarch64, and publishes multi-arch
 # manifests. Mirrors the manual procedure documented at
 # README.md
@@ -502,11 +502,11 @@
             conf_file=.ci/jenkins/lib/build-llm-container-matrix.yaml
     description: >
       <b>NIXL LLM container build</b><br/>
-      • Builds 3 inference container variants per release: <b>vllm-nixl</b>, <b>sglang-nixl</b>, <b>sglang-cu13-nixl</b><br/>
+      • Builds 4 inference container variants per release: <b>vllm-nixl</b>, <b>vllm-cu12-nixl</b>, <b>sglang-nixl</b>, <b>sglang-cu13-nixl</b><br/>
       • Builds for x86_64 and aarch64 (aarch64 via podman with QEMU)<br/>
       • Publishes multi-arch manifests after both arches succeed<br/>
       • Wheels pulled from <code>sw-dynamo-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/&lt;arch&gt;/</code><br/>
-      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>llm/{{vllm-nixl,sglang-nixl,sglang-cu13-nixl}}</code><br/>
+      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>llm/{{vllm-nixl,vllm-cu12-nixl,sglang-nixl,sglang-cu13-nixl}}</code><br/>
       • For <b>rc0</b> leave the <code>BASE_IMAGE_*</code> params empty to use upstream defaults<br/>
       • For <b>rcN, N&gt;0</b> set each <code>BASE_IMAGE_*</code> to the matching rc0 image to isolate the verification to the NIXL change<br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
@@ -518,12 +518,14 @@
           choices:
             - "all"
             - "vllm"
+            - "vllm-cu12"
             - "sglang"
             - "sglang-cu13"
           description: >
             Which image variants to build:<br/>
-            • <b>all</b>: build all 3 variants (default)<br/>
+            • <b>all</b>: build all 4 variants (default)<br/>
             • <b>vllm</b>: only vllm-nixl<br/>
+            • <b>vllm-cu12</b>: only vllm-cu12-nixl<br/>
             • <b>sglang</b>: only sglang-nixl (cu12)<br/>
             • <b>sglang-cu13</b>: only sglang-cu13-nixl
       - string:
@@ -556,6 +558,13 @@
             Leave empty for <b>rc0</b> (uses Dockerfile default <code>docker.io/vllm/vllm-openai:latest</code>).<br/>
             For <b>rcN, N&gt;0</b> set to the corresponding rc0 image, e.g.<br/>
             <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/llm/vllm-nixl:1.1.0-rc0</code>
+      - string:
+          name: "BASE_IMAGE_VLLM_CU12"
+          default: ""
+          description: >
+            Optional override for the vllm-cu12 base image build-arg.<br/>
+            Leave empty to use upstream <code>docker.io/vllm/vllm-openai:v0.22.1-cu129</code> (rc0 default).<br/>
+            For <b>rcN, N&gt;0</b> pin to the rc0 vllm-cu12 image.
       - string:
           name: "BASE_IMAGE_SGLANG"
           default: ""
