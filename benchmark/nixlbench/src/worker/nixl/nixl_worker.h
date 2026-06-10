@@ -19,7 +19,6 @@
 #define NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H
 
 #include "config.h"
-#include <functional>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -72,22 +71,14 @@ class xferBenchNixlWorker: public xferBenchWorker {
     private:
         std::optional<xferBenchIOV>
         initBasicDescDram(size_t buffer_size, int mem_dev_id);
-        void
-        cleanupBasicDescDram(xferBenchIOV &basic_desc);
-        std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);
-        void
-        cleanupBasicDescVram(xferBenchIOV &basic_desc);
+        std::optional<xferBenchIOV>
+        initBasicDescVram(size_t buffer_size, int mem_dev_id);
         std::optional<xferBenchIOV>
         initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
-        void cleanupBasicDescFile(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
         initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
-        void
-        cleanupBasicDescObj(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
         initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
-        void
-        cleanupBasicDescBlk(xferBenchIOV &basic_desc);
         bool
         ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
 };

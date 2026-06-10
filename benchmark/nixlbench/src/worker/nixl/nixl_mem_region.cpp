@@ -22,13 +22,11 @@
 NixlMemRegion::NixlMemRegion(nixlAgent &agent,
                              nixlBackendH *backend,
                              nixl_mem_t seg_type,
-                             std::vector<xferBenchIOV> iovs,
-                             std::function<void(xferBenchIOV &)> cleanup)
+                             std::vector<xferBenchIOV> iovs)
     : agent_(agent),
       backend_(backend),
       seg_type_(seg_type),
-      iovs_(std::move(iovs)),
-      cleanup_(std::move(cleanup)) {
+      iovs_(std::move(iovs)) {
     if (backend_) {
         cached_opt_args_.backends.push_back(backend_);
     }
@@ -43,7 +41,6 @@ NixlMemRegion::NixlMemRegion(NixlMemRegion &&o) noexcept
       backend_(o.backend_),
       seg_type_(o.seg_type_),
       iovs_(std::move(o.iovs_)),
-      cleanup_(std::move(o.cleanup_)),
       cached_opt_args_(std::move(o.cached_opt_args_)) {
     // Empty iovs_ is the "nothing to release" sentinel; guarantee the
     // moved-from region won't deregister on destruction.
@@ -58,9 +55,7 @@ NixlMemRegion::release() {
     const nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iovs_, seg_type_);
     CHECK_NIXL_ERROR(agent_.deregisterMem(desc_list, &cached_opt_args_), "deregisterMem failed");
     for (auto &iov : iovs_) {
-        if (cleanup_) {
-            cleanup_(iov);
-        }
+        cleanupIov(seg_type_, iov);
     }
     iovs_.clear();
 }

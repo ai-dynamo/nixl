@@ -799,15 +799,15 @@ xferBenchNixlWorker::initBasicDescObj(size_t buffer_size, int mem_dev_id, std::s
     return std::optional<xferBenchIOV>(std::in_place, 0, buffer_size, mem_dev_id, name);
 }
 
-void
-xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
+static void
+cleanupBasicDescDram(xferBenchIOV &iov) {
     // Reclaim ownership of the buffer handed out by initBasicDescDram(); the
     // returned wrapper goes out of scope here and frees the buffer.
     nixlAlloc::adopt(reinterpret_cast<void *>(iov.addr), iov.len);
 }
 
-void
-xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
+static void
+cleanupBasicDescVram(xferBenchIOV &iov) {
     if (neuronCoreCount() > 0) {
         cleanupVramNeuron(iov);
         return;
@@ -822,16 +822,30 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
 #endif
 }
 
-void
-xferBenchNixlWorker::cleanupBasicDescFile(xferBenchIOV &iov) {
-    close(iov.devId);
-}
-
-void
-xferBenchNixlWorker::cleanupBasicDescObj(xferBenchIOV &iov) {
+static void
+cleanupBasicDescObj(xferBenchIOV &iov) {
     if (!xferBenchUtils::rmObj(iov.metaInfo)) {
         std::cerr << "Failed to remove object: " << iov.metaInfo << std::endl;
         exit(EXIT_FAILURE);
+    }
+}
+
+// FILE fds are owned by xferFileState and BLK descriptors own nothing, so both
+// fall through to the no-op default.
+void
+cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov) {
+    switch (seg_type) {
+    case DRAM_SEG:
+        cleanupBasicDescDram(iov);
+        break;
+    case VRAM_SEG:
+        cleanupBasicDescVram(iov);
+        break;
+    case OBJ_SEG:
+        cleanupBasicDescObj(iov);
+        break;
+    default:
+        break;
     }
 }
 
@@ -843,12 +857,6 @@ xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t
     // The device ID corresponds to the block device UUID (e.g., 11 for local file, 14 for
     // /dev/zero)
     return std::optional<xferBenchIOV>(std::in_place, dev_offset, buffer_size, mem_dev_id);
-}
-
-void
-xferBenchNixlWorker::cleanupBasicDescBlk(xferBenchIOV &iov) {
-    // No cleanup needed for block device descriptors
-    // The block device backend handles the device lifecycle
 }
 
 bool
@@ -976,10 +984,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
             nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_regs_.emplace_back(
-                *agent, backend_engine, OBJ_SEG, std::move(iov_list), [this](xferBenchIOV &iov) {
-                    cleanupBasicDescObj(iov);
-                });
+            remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(iov_list));
         }
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         // GUSLI backend uses block device descriptors
@@ -1097,19 +1102,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, seg_type);
         CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
 
-        std::function<void(xferBenchIOV &)> local_cleanup;
-        switch (seg_type) {
-        case DRAM_SEG:
-            local_cleanup = [this](xferBenchIOV &iov) { cleanupBasicDescDram(iov); };
-            break;
-        case VRAM_SEG:
-            local_cleanup = [this](xferBenchIOV &iov) { cleanupBasicDescVram(iov); };
-            break;
-        default:
-            break;
-        }
-        local_regs_.emplace_back(
-            *agent, backend_engine, seg_type, iov_list, std::move(local_cleanup));
+        local_regs_.emplace_back(*agent, backend_engine, seg_type, iov_list);
 
         /*
          * Workaround for a GUSLI registration bug which resets memory to 0, this initialization

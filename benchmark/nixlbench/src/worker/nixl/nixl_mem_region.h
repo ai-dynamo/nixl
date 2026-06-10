@@ -19,7 +19,6 @@
 #define NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_MEM_REGION_H
 
 #include <cstdlib>
-#include <functional>
 #include <iostream>
 #include <utility>
 #include <vector>
@@ -100,6 +99,10 @@ private:
     }
 };
 
+// Per-IOV cleanup for the given segment type; no-op for types that own nothing.
+void
+cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov);
+
 // RAII wrapper around a NIXL memory registration: deregisters the memory and
 // runs the per-IOV cleanup on destruction.
 class NixlMemRegion {
@@ -107,15 +110,13 @@ class NixlMemRegion {
     nixlBackendH *backend_ = nullptr;
     nixl_mem_t seg_type_ = DRAM_SEG;
     std::vector<xferBenchIOV> iovs_;
-    std::function<void(xferBenchIOV &)> cleanup_;
     nixl_opt_args_t cached_opt_args_;
 
 public:
     NixlMemRegion(nixlAgent &agent,
                   nixlBackendH *backend,
                   nixl_mem_t seg_type,
-                  std::vector<xferBenchIOV> iovs,
-                  std::function<void(xferBenchIOV &)> cleanup = nullptr);
+                  std::vector<xferBenchIOV> iovs);
     ~NixlMemRegion();
     NixlMemRegion(NixlMemRegion &&o) noexcept;
     // Move-only; a reference member makes the region non-assignable, which is
