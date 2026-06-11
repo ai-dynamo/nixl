@@ -57,6 +57,8 @@ run_nixlbench_one_worker() {
 
 for op_type in READ WRITE; do
     run_nixlbench_one_worker --backend POSIX --op_type $op_type --check_consistency
+    run_nixlbench_one_worker --backend POSIX --op_type $op_type \
+        --check_consistency --storage_enable_path_mode
 done
 
 if $HAS_GPU ; then

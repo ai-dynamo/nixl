@@ -711,7 +711,7 @@ openFileWithFlags(const std::string &file_name, int flags) {
         return std::nullopt;
     }
 
-    return xferFileState{fd, file_size, 0};
+    return xferFileState{fd, file_size, 0, file_name};
 }
 
 // Create file descriptors from explicit filenames or auto-generate
@@ -777,12 +777,33 @@ createFileFds(std::string name, int num_files, const std::vector<std::string> &f
     return fds;
 }
 
+// Make path-mode string (flags)*:path
+static std::string
+pathModeMetaInfo(const std::string &filename) {
+    std::string modes = (XFERBENCH_OP_READ == xferBenchConfig::op_type) ? "ro" : "rw,create";
+    if (xferBenchConfig::storage_enable_direct) {
+        modes += ",direct";
+    }
+    return modes + ":" + filename;
+}
+
 std::optional<xferBenchIOV>
-xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id) {
+xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate, int file_idx) {
     int fd = fstate.fd;
     uint64_t start_offset = fstate.offset;
     uint64_t end_offset = fstate.offset + buffer_size;
-    auto ret = std::optional<xferBenchIOV>(std::in_place, fstate.offset, buffer_size, fd);
+
+    std::optional<xferBenchIOV> ret;
+    if (xferBenchConfig::storage_enable_path_mode) {
+        // Path mode: spec in metaInfo, backend owns fd; synthetic per-file devId (file_idx+1).
+        ret = std::optional<xferBenchIOV>(std::in_place,
+                                          start_offset,
+                                          buffer_size,
+                                          file_idx + 1,
+                                          pathModeMetaInfo(fstate.filename));
+    } else {
+        ret = std::optional<xferBenchIOV>(std::in_place, start_offset, buffer_size, fd);
+    }
 
     fstate.offset = end_offset;
 
@@ -853,6 +874,10 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
 
 void
 xferBenchNixlWorker::cleanupBasicDescFile(xferBenchIOV &iov) {
+    // Path mode: devId isn't an fd (backend owns it); seed fds closed in deallocateMemory.
+    if (xferBenchConfig::storage_enable_path_mode) {
+        return;
+    }
     close(iov.devId);
 }
 
@@ -1078,7 +1103,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
                 std::optional<xferBenchIOV> basic_desc;
-                basic_desc = initBasicDescFile(buffer_size, remote_fds[file_idx], i);
+                basic_desc = initBasicDescFile(buffer_size, remote_fds[file_idx], file_idx);
                 if (basic_desc) {
                     iov_list.push_back(basic_desc.value());
                 }
@@ -1116,7 +1141,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
 
             if (basic_desc) {
-                if (!remote_iovs.empty()) {
+                // Don't copy a path spec onto DRAM/VRAM -- it'd be mis-parsed on a non-FILE_SEG
+                // register.
+                if (!remote_iovs.empty() && !xferBenchConfig::storage_enable_path_mode) {
                     basic_desc.value().metaInfo = remote_iovs[list_idx][i].metaInfo;
                 }
                 iov_list.push_back(basic_desc.value());
@@ -1184,11 +1211,20 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
         // Close each backing fd exactly once, after all deregistrations complete.
+        // In path mode cleanupBasicDescFile is a no-op (devId is synthetic, not an
+        // fd); the seed fds opened by createFileFds are closed below instead.
         std::unordered_set<int> closed_fds;
         for (auto &iov_list : remote_iovs) {
             for (auto &iov : iov_list) {
                 if (closed_fds.insert(iov.devId).second) {
                     cleanupBasicDescFile(iov);
+                }
+            }
+        }
+        if (xferBenchConfig::storage_enable_path_mode) {
+            for (auto &fstate : remote_fds) {
+                if (fstate.fd >= 0) {
+                    close(fstate.fd);
                 }
             }
         }
@@ -1311,7 +1347,14 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = file_offset;
                     iov_remote.len = block_size;
-                    iov_remote.devId = remote_fds[fd_idx].fd;
+                    // Path mode: devId (file_idx+1) must match registration; re-attach metaInfo for
+                    // --check_consistency.
+                    if (xferBenchConfig::storage_enable_path_mode) {
+                        iov_remote.devId = static_cast<int>(fd_idx + 1);
+                        iov_remote.metaInfo = pathModeMetaInfo(remote_fds[fd_idx].filename);
+                    } else {
+                        iov_remote.devId = remote_fds[fd_idx].fd;
+                    }
                     remote_iov_list.push_back(iov_remote);
                     fd_idx++;
                     if (fd_idx >= remote_fds.size()) {
