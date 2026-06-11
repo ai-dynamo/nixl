@@ -47,6 +47,8 @@ inline constexpr std::string_view nixl_ucx_staging_target_h2d_worker_param_name 
     "staging_target_h2d_worker";
 inline constexpr std::string_view nixl_ucx_staging_source_d2h_prefetch_param_name =
     "staging_source_d2h_prefetch";
+inline constexpr std::string_view nixl_ucx_staging_lease_timeout_param_name =
+    "staging_lease_timeout_ms";
 inline constexpr std::string_view nixl_ucx_vram_local_staging_param_name = "vram_local_staging";
 inline constexpr std::string_view nixl_ucx_local_staging_shm_dir_param_name =
     "local_staging_shm_dir";
@@ -68,6 +70,8 @@ inline constexpr std::string_view nixl_ucx_staging_target_h2d_worker_env_name =
     "NIXL_UCX_STAGING_TARGET_H2D_WORKER";
 inline constexpr std::string_view nixl_ucx_staging_source_d2h_prefetch_env_name =
     "NIXL_UCX_STAGING_SOURCE_D2H_PREFETCH";
+inline constexpr std::string_view nixl_ucx_staging_lease_timeout_env_name =
+    "NIXL_UCX_STAGING_LEASE_TIMEOUT_MS";
 inline constexpr std::string_view nixl_ucx_vram_local_staging_env_name =
     "NIXL_UCX_VRAM_LOCAL_STAGING";
 inline constexpr std::string_view nixl_ucx_local_staging_shm_dir_env_name =

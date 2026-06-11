@@ -22,6 +22,7 @@
 #include <iostream>
 #include <thread>
 #include <mutex>
+#include <shared_mutex>
 #include <memory>
 #include <condition_variable>
 #include <atomic>
@@ -220,6 +221,11 @@ protected:
         bool batchFlush = false;
         bool targetH2DWorker = false;
         bool sourceD2HPrefetch = false;
+        // Reclaim REMOTE_RESERVED leases older than this when no free slot is left
+        // (dead-initiator backstop). 0 disables reclaim. Must stay much larger than
+        // any possible single RDMA write so a slow initiator cannot corrupt a
+        // re-granted slot.
+        size_t leaseTimeoutMs = 60000;
         bool localStaging = false;
         bool localStagingAutoEnabled = false;
         bool localStagingFallback = true;
@@ -293,7 +299,8 @@ private:
     unregisterPendingStagedReq(uint64_t transfer_id, nixlBackendReqH *handle) const;
 
     void
-    completePendingStagedSlotGrant(uint64_t transfer_id,
+    completePendingStagedSlotGrant(const std::string &remote_agent,
+                                   uint64_t transfer_id,
                                    uint64_t chunk_id,
                                    uint64_t slot_id,
                                    uint64_t lease_id,
@@ -307,9 +314,6 @@ private:
 
     void
     registerStagedRegion(nixlBackendMD *metadata);
-
-    void
-    unregisterStagedRegion(nixlBackendMD *metadata);
 
     nixl_status_t
     postStagedWrite(const nixl_meta_dlist_t &local,
@@ -610,7 +614,11 @@ private:
         localSharedAttachments_;
     mutable std::unordered_map<std::string, LocalSharedRegionInfo> localSharedRegions_;
 
-    // Map of agent name to saved nixlUcxConnection info
+    // Map of agent name to saved nixlUcxConnection info.
+    // Guarded by remoteConnMapMutex_: read from app threads and from staged AM
+    // callbacks on the progress thread, while SGLang-style dynamic peer setup can
+    // insert/erase concurrently.
+    mutable std::shared_mutex remoteConnMapMutex_;
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
 };
 

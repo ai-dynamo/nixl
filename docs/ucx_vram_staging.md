@@ -95,6 +95,7 @@ staging_slot_request_window=32
 staging_batch_flush=false
 staging_target_h2d_worker=false
 staging_source_d2h_prefetch=true
+staging_lease_timeout_ms=60000
 ```
 
 Suggested environment variables:
@@ -109,6 +110,7 @@ NIXL_UCX_STAGING_SLOT_REQUEST_WINDOW=32
 NIXL_UCX_STAGING_BATCH_FLUSH=0
 NIXL_UCX_STAGING_TARGET_H2D_WORKER=0
 NIXL_UCX_STAGING_SOURCE_D2H_PREFETCH=1
+NIXL_UCX_STAGING_LEASE_TIMEOUT_MS=60000
 ```
 
 The existing direct UCX path remains the default. Staged mode is opt-in.
@@ -159,6 +161,36 @@ Current local implementation status:
 - Added C++ smoke coverage for the prepped transfer path (`prepXferDlist + makeXferReq`) used by
   SGLang's fast KV transfer path.
 - Kept staged mode opt-in. The default direct UCX path remains unchanged.
+- Hardened lease lifecycle for production PD use:
+  - An initiator that receives a `STAGED_SLOT_GRANT` for an unknown or already-released
+    transfer now answers with `STAGED_SLOT_RELEASE` instead of leaking the target lease.
+    The release carries zero gpu fields; the target resolves such releases by
+    slot/lease id across all staged regions.
+  - Staged failure cleanup and `releaseReqH` now also release chunks whose grant
+    arrived but was not yet processed by the request state machine.
+  - Staged failure cleanup and `releaseReqH` unregister the pending transfer before
+    touching chunk state, so late grants/ACKs take the unknown-transfer path instead
+    of racing with teardown.
+  - Error ACKs are matched by transfer id and chunk id; only success ACKs require an
+    exact lease match. A target that fails before it can echo a valid lease no longer
+    leaves the initiator chunk in `WAIT_ACK` forever. `leaseId` is atomic.
+  - `deregisterMem` performs the active-slot check and the staged region removal in
+    one `stagedRegionMutex_` critical section, closing the window where a concurrent
+    `STAGED_SLOT_REQ` could grant a lease on a region being deregistered.
+  - `remoteConnMap` is guarded by a `std::shared_mutex`; staged AM callbacks on the
+    progress thread and dynamic peer registration (SGLang bootstrap) no longer race
+    on the connection map.
+  - Added dead-initiator lease reclaim:
+    - `disconnect(remote_agent)` releases every `REMOTE_RESERVED` and `ERROR` lease
+      still owned by that agent, even when the target never had a connection to it.
+    - When `STAGED_SLOT_REQ` finds no free slot, the target lazily reclaims `ERROR`
+      slots and `REMOTE_RESERVED` leases older than `staging_lease_timeout_ms` /
+      `NIXL_UCX_STAGING_LEASE_TIMEOUT_MS` (default 60000, 0 disables). `REMOTE_H2D`
+      is never reclaimed because a local copy is still reading the slot. The timeout
+      must stay much larger than any single RDMA write duration; a reclaimed lease
+      whose original owner is slow but alive would otherwise risk a late write into
+      a re-granted slot. The stale owner's READY is always rejected by lease
+      validation.
 
 Current limitations:
 
@@ -172,8 +204,10 @@ Current limitations:
   the NIXL transfer. This is the same high-level data-readiness assumption as the synchronous path,
   but it is more sensitive to missing CUDA stream dependencies because it uses a backend-owned
   nonblocking CUDA stream.
-- Malformed READY cleanup, lease timeout, remote disconnect recovery, and poison/reclaim policy for
-  `ERROR` slots are still future robustness work.
+- Dead-initiator reclaim is lazy and coarse: leaked slots are recovered only when a later
+  `STAGED_SLOT_REQ` finds the pool exhausted, after `staging_lease_timeout_ms`. There is no
+  proactive keepalive-based peer death detection; the target side has no UCX endpoint to the
+  initiator in the SGLang topology, so endpoint error callbacks cannot be used there.
 
 ## Registration Model
 
