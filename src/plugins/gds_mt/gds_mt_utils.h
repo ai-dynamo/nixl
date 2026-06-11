@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,9 +22,11 @@
 #include <nixl.h>
 #include <cufile.h>
 
+#include "file/file_path_mode.h"
+
 class gdsMtFileHandle {
 public:
-    gdsMtFileHandle (int fd);
+    explicit gdsMtFileHandle(nixl::FileFd &&fd);
     ~gdsMtFileHandle();
 
     gdsMtFileHandle (const gdsMtFileHandle &) = delete;
@@ -34,7 +36,7 @@ public:
     gdsMtFileHandle &
     operator= (gdsMtFileHandle &&) = delete;
 
-    int fd{-1};
+    nixl::FileFd file_fd;
     CUfileHandle_t cu_fhandle{nullptr};
 };
 

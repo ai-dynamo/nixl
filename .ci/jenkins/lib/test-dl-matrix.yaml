@@ -52,7 +52,7 @@ env:
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   TEST_TIMEOUT: 50
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260601-1"
+  CI_IMAGE_TAG: "20260604-1"
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
@@ -175,6 +175,9 @@ steps:
       dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      slurmEnv: [
+        'UCX_IB_REG_METHODS=rcache'
+      ]
 
   - name: Run DL Nixlbench tests
     containerSelector: "{name: 'build_helper_dl'}"
