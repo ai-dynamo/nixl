@@ -92,11 +92,17 @@ backends/PRs):
 | `nixl::postXferReq.write` | `CommSend` | `remote_agent`, `bytes` |
 | `nixl::postXferReq.read` | `CommRecv` | `remote_agent`, `bytes` |
 | `nixl::xfer.complete` | `Metadata` (marker) | - |
+| `nixl::makeConnection` | `Generic` | `remote_agent` |
+| `nixl::genNotif` | `Metadata` | `remote_agent` |
+| `nixl::getNotifs` | `Metadata` | - |
 
-> Note: NVTX ranges carry only a name and color (set when the range opens), so
-> attributes are currently **not** recorded by the NVTX backend; they are intended for
-> offline backends (e.g. Chakra). Spans cover the synchronous call only; the
-> `nixl::xfer.complete` marker is emitted when `getXferStatus` first observes success.
+> Note: An NVTX range's name and color are fixed when the range opens. Attributes
+> (added afterwards) are therefore surfaced by the NVTX backend as `key=value`
+> **marks inside the range** (visible on the Nsight timeline); a structured NVTX
+> payload schema is a future enhancement. Dependencies (`addCtrlDep`/`addDataDep`)
+> have no NVTX representation and are recorded only by offline backends (e.g. Chakra).
+> Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
+> when `getXferStatus` first observes success.
 
 ## Profiling with Nsight Systems
 

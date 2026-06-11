@@ -78,16 +78,24 @@ namespace {
             nvtxDomainRangePop(domain_);
         }
 
-        // NVTX ranges carry only a name/color (set at push time), so post-hoc
-        // attributes and dependencies are no-ops here; offline backends record them.
+        // An NVTX range's message/color are fixed at push time, so attributes
+        // (added afterwards) are surfaced as "key=value" marks inside the range.
+        // They show on the Nsight timeline; a structured NVTX payload schema is a
+        // future enhancement. Dependencies have no NVTX representation (no-op).
         void
-        addAttribute(std::string_view, std::string_view) override {}
+        addAttribute(std::string_view key, std::string_view value) override {
+            emitAttr(key, value);
+        }
 
         void
-        addAttribute(std::string_view, std::int64_t) override {}
+        addAttribute(std::string_view key, std::int64_t value) override {
+            emitAttr(key, std::to_string(value));
+        }
 
         void
-        addAttribute(std::string_view, double) override {}
+        addAttribute(std::string_view key, double value) override {
+            emitAttr(key, std::to_string(value));
+        }
 
         void
         addCtrlDep(SpanId) override {}
@@ -101,6 +109,16 @@ namespace {
         }
 
     private:
+        // Surface one attribute as a "key=value" mark inside the active range.
+        void
+        emitAttr(std::string_view key, std::string_view value) {
+            std::string kv;
+            kv.reserve(key.size() + value.size() + 1);
+            kv.append(key).append("=").append(value);
+            nvtxEventAttributes_t ev = makeEvent(kv.c_str(), Kind::Metadata, Color{});
+            nvtxDomainMarkEx(domain_, &ev);
+        }
+
         nvtxDomainHandle_t domain_;
     };
 

@@ -242,6 +242,7 @@ TEST(Tracing, NvtxBackendSmoke) {
         auto span = tracer->beginSpan("nixl::test.span", nixl::trace::Kind::CommSend);
         span.addAttribute("bytes", std::int64_t{1024});
         span.addAttribute("peer", std::string_view{"peer_agent"});
+        span.addAttribute("ratio", 0.5);
     }
     tracer->mark("nixl::test.mark");
 #else

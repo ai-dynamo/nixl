@@ -719,6 +719,16 @@ TEST_P(TestTransferTracing, NvtxTransferLoop) {
     runTracingTransferTest();
 }
 
+// Exercises the genNotif/getNotifs trace call sites under active NVTX.
+TEST_P(TestTransferTracing, NvtxNotifications) {
+    doNotificationTest(getAgent(0),
+                       getAgentName(0),
+                       getAgent(1),
+                       getAgentName(1),
+                       /*repeat=*/4,
+                       /*num_threads=*/1);
+}
+
 NIXL_INSTANTIATE_TEST(ucx_tracing, TestTransferTracing, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_tracing_no_pt, TestTransferTracing, "UCX", false, 2, 0, "");
 
