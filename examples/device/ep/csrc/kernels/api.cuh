@@ -248,7 +248,7 @@ void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* output_mask_ten
 
 void update_mask_buffer(int* mask_buffer_ptr, int rank_to_mask, bool mask, cudaStream_t stream);
 
-void cache_p2p_ptrs(gpu_nixl_ctx* nixl_ctx, cudaStream_t stream);
+void cache_p2p_ptr(gpu_nixl_ctx* nixl_ctx, int rank_id, cudaStream_t stream);
 
 } // namespace ep_kernels
 

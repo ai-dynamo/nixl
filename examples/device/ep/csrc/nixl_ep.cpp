@@ -504,6 +504,9 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std:
 
         _nixl_ep_memory_views_create();
 
+        for (int remote_rank : new_ranks)
+            ep_kernels::cache_p2p_ptr(gpu_ctx_ptr, remote_rank, comm_stream);
+
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 
@@ -529,6 +532,7 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
         EP_HOST_ASSERT(removed_rank != rank);
         EP_HOST_ASSERT(_is_rank_connected(removed_rank));
         update_mask_buffer(removed_rank, true);  // mask=true
+        CUDA_CHECK(cudaMemset(gpu_ctx.p2p_ptrs + removed_rank, 0, sizeof(void*)));
     }
 
     _nixl_ep_memory_views_destroy();
@@ -1340,10 +1344,6 @@ void Buffer::_nixl_ep_memory_views_create(void) {
         }
     }
     CUDA_CHECK(cudaMemcpy(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx), cudaMemcpyHostToDevice));
-    ep_kernels::cache_p2p_ptrs(gpu_ctx_ptr, comm_stream);
-    // Hook-mode LL kernels launch on the compute stream, so make the
-    // refreshed cache visible before this control-path call returns.
-    CUDA_CHECK(cudaStreamSynchronize(comm_stream));
 }
 
 void Buffer::_nixl_ep_memory_views_destroy(void) {

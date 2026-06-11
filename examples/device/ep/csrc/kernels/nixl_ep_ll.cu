@@ -1123,22 +1123,18 @@ void update_mask_buffer(int* mask_buffer_ptr, int rank, bool mask, cudaStream_t 
 }
 
 
-template <int kNumThreads> __launch_bounds__(kNumThreads, 1)
-__global__ void cache_p2p_ptrs_kernel(nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
-    const auto thread_id = static_cast<int>(threadIdx.x);
+__global__ void cache_p2p_ptr_kernel(nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr,
+                                     int rank_id) {
     auto nixl_ctx = *nixl_ctx_ptr;
-
-    for (int rank_id = thread_id; rank_id < nixl_ctx.max_num_ranks; rank_id += kNumThreads) {
-        nixl_ctx.p2p_ptrs[rank_id] =
-            nixl_ctx.remote_mvh == nullptr ? nullptr : nixlGetPtr(nixl_ctx.remote_mvh, rank_id);
-    }
+    nixl_ctx.p2p_ptrs[rank_id] =
+        nixl_ctx.remote_mvh == nullptr ? nullptr : nixlGetPtr(nixl_ctx.remote_mvh, rank_id);
 }
 
-void cache_p2p_ptrs(gpu_nixl_ctx* nixl_ctx, cudaStream_t stream) {
+void cache_p2p_ptr(gpu_nixl_ctx* nixl_ctx, int rank_id, cudaStream_t stream) {
     constexpr int num_sms = 1;
-    constexpr int kNumThreads = 128;
+    constexpr int kNumThreads = 1;
     SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
-    LAUNCH_KERNEL(&cfg, cache_p2p_ptrs_kernel<kNumThreads>, nixl_ctx);
+    LAUNCH_KERNEL(&cfg, cache_p2p_ptr_kernel, nixl_ctx, rank_id);
 }
 
 
