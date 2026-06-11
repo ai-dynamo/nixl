@@ -4319,6 +4319,10 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
 
         chunk.grantArrived.store(false);
         chunk.grantStatus.store(NIXL_IN_PROG);
+        // Stamp before the send: grant_is_stale assumes this time precedes the
+        // target's grant timestamp, which only holds if it is taken before the
+        // SLOT_REQ leaves this process.
+        chunk.slotReqPostedUs = profileNowUs();
 
         nixlUcxReq req = nullptr;
         const nixl_status_t send_status =
@@ -4332,12 +4336,12 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
                               &req);
         const nixl_status_t append_status = chunk.req->append(send_status, req, conn);
         if (append_status != NIXL_SUCCESS) {
+            chunk.slotReqPostedUs = 0;
             staged_handle->releaseRemoteWindow(chunk);
             return append_status;
         }
 
         ++staged_handle->profile.slotReqSent;
-        chunk.slotReqPostedUs = profileNowUs();
         chunk.state = nixlUcxStagedChunk::State::SLOT_REQ_POSTED;
         return NIXL_SUCCESS;
     };
@@ -4918,13 +4922,18 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
                         return fail(grant_status);
                     }
 
-                    ++staged_handle->profile.slotGrantSuccess;
-                    const uint64_t grant_arrived_us = chunk.grantArrivedUs.load();
-                    if (grant_arrived_us > chunk.slotReqPostedUs) {
-                        staged_handle->profile.grantWaitUs +=
-                            grant_arrived_us - chunk.slotReqPostedUs;
+                    if (!chunk.remoteSlotHeld) {
+                        // Count each grant once: after a local-slot miss the chunk
+                        // stays in WAIT_SLOT_GRANT with grantArrived still set, and
+                        // re-entries would recount the same grant.
+                        ++staged_handle->profile.slotGrantSuccess;
+                        const uint64_t grant_arrived_us = chunk.grantArrivedUs.load();
+                        if (grant_arrived_us > chunk.slotReqPostedUs) {
+                            staged_handle->profile.grantWaitUs +=
+                                grant_arrived_us - chunk.slotReqPostedUs;
+                        }
+                        chunk.remoteSlotHeld = true;
                     }
-                    chunk.remoteSlotHeld = true;
                     const nixl_status_t start_status = start_granted_chunk(chunk);
                     if (start_status == NIXL_IN_PROG) {
                         continue;
