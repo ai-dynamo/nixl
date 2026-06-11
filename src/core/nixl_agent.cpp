@@ -21,6 +21,7 @@
 #include <numeric>
 
 #include "nixl.h"
+#include "nixl_md_manager.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
 #include "transfer_request.h"
@@ -121,13 +122,28 @@ effectiveSyncMode(nixl_thread_sync_t requested, bool needs_comm_thread) {
     return requested;
 }
 
+std::unique_ptr<nixlMDManager>
+makeMDManager(nixlAgent &agent,
+              const std::string &name,
+              std::chrono::microseconds etcd_watch_timeout) {
+    if (!nixl::config::checkExistence("NIXL_MD_MANAGER")) {
+        return nullptr;
+    }
+    // The name is passed in (not read via agent.getName()) because the owning
+    // nixlAgent's data pointer is not yet assigned during this construction.
+    return std::make_unique<nixlMDManager>(agent, name, etcd_watch_timeout);
+}
+
 } // namespace
 
-nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
+nixlAgentData::nixlAgentData(nixlAgent &agent,
+                             const std::string &name,
+                             const nixlAgentConfig &config)
     : name_(name),
       config_(config),
       useEtcd_(detectEtcd()),
       needsCommThread_(useEtcd_ || config.useListenThread),
+      mdManager_(makeMDManager(agent, name, config.etcdWatchTimeout)),
       lock(effectiveSyncMode(config.syncMode, needsCommThread_)) {
 #if HAVE_ETCD
     NIXL_DEBUG << "NIXL ETCD is " << (useEtcd_ ? "enabled" : "disabled");
@@ -158,9 +174,8 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 }
 
 /*** nixlAgent implementation ***/
-nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
-    data(std::make_unique<nixlAgentData>(name, cfg))
-{
+nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
+    : data(std::make_unique<nixlAgentData>(*this, name, cfg)) {
     if(cfg.useListenThread) {
         data->listener = std::make_unique<nixlMDStreamListener>(cfg.listenPort);
         data->listener->setupListener(); // throws on bind/listen failure
@@ -200,6 +215,11 @@ nixlAgent::~nixlAgent() {
 
         data->listener.reset();
     }
+}
+
+const std::string &
+nixlAgent::getName() const noexcept {
+    return data->name_;
 }
 
 nixl_status_t
@@ -1708,6 +1728,18 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
 
     // This is a checker method, returning not found is not an error to be logged
     return NIXL_ERR_NOT_FOUND;
+}
+
+nixl_status_t
+nixlAgent::getMDManager(nixlMDManager *&out) {
+    // mdManager_ is constructed once in the ctor when NIXL_MD_MANAGER is set,
+    // so this is a const lookup with no locking or lazy init.
+    if (!data->mdManager_) {
+        out = nullptr;
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+    out = data->mdManager_.get();
+    return NIXL_SUCCESS;
 }
 
 backend_set_t
