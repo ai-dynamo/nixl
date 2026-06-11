@@ -30,6 +30,9 @@ fs = import('fs')
 cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
+# device api
+ucx_device_include_path = get_option('ucx_device_include_path')
+ucx_device_cuda_arch_list = get_option('ucx_device_cuda_arch_list').strip()
 # ETCD
 etcd_inc_path = get_option('etcd_inc_path')
 etcd_lib_path = get_option('etcd_lib_path')
@@ -189,10 +192,51 @@ if not cuda_available and not rocm_available
     warning('Neither CUDA nor ROCm found. VRAM support will be disabled.')
 endif
 
+ucx_device_cpp_args = []
+ucx_device_cuda_args = []
+ucx_device_override_options = []
+build_nixlbench_kernels = false
+if ucx_device_include_path != ''
+    if not cuda_available
+        warning('Ignoring -Ducx_device_include_path because CUDA is unavailable.')
+    elif nvshmem_available
+        warning('Ignoring -Ducx_device_include_path because NVSHMEM build path is enabled.')
+    else
+        add_languages('cuda', native: false)
+        build_nixlbench_kernels = true
+        ucx_device_cpp_args = ['-I' + ucx_device_include_path]
+        if ucx_device_cuda_arch_list == 'auto'
+            ucx_device_cuda_arch_list = '80,90,100,103,120'
+        endif
+        ucx_device_cuda_args = ['-I' + ucx_device_include_path]
+        selected_cuda_archs = []
+        foreach cuda_arch : ucx_device_cuda_arch_list.split(',')
+            cuda_arch = cuda_arch.strip()
+            if cuda_arch == ''
+                continue
+            endif
+            if cuda_arch.startswith('sm_')
+                cuda_arch = cuda_arch.replace('sm_', '')
+            endif
+            # Validate format early so invalid option values fail fast.
+            cuda_arch.to_int()
+            ucx_device_cuda_args += ['-gencode=arch=compute_' + cuda_arch + ',code=sm_' + cuda_arch]
+            selected_cuda_archs += ['sm_' + cuda_arch]
+        endforeach
+        if selected_cuda_archs.length() == 0
+            error('No CUDA targets selected for UCX device kernels')
+        endif
+        message('UCX device kernel CUDA targets: ' + ', '.join(selected_cuda_archs))
+        ucx_device_override_options = ['optimization=0']
+        add_project_arguments(ucx_device_cpp_args, language: 'cpp')
+    endif
+endif
+
 # Subprojects
 subdir('src/utils')
 subdir('src/runtime')
 subdir('src/worker')
+subdir('src/kernels')
 
 # Configure header file
 configure_file(
@@ -203,6 +247,7 @@ configure_file(
         'HAVE_CUDA': cuda_available ? '1' : '0',
         'HAVE_ROCM': rocm_available ? '1' : '0',
         'HAVE_CUDA_FABRIC': cuda_fabric_available ? '1' : '0',
+        'HAVE_UCX_DEVICE_KERNEL': build_nixlbench_kernels ? '1' : '0',
     },
     install: true,
     install_dir: get_option('includedir') / 'nixlbench'
@@ -217,6 +262,9 @@ if cuda_available
     deps += [cuda_dep]
 elif rocm_available
     deps += [rocm_dep]
+endif
+if build_nixlbench_kernels
+    deps += [nixlbench_kernels_dep]
 endif
 if nvshmem_available
     deps += [nvshmem_lib]
