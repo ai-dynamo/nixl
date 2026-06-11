@@ -43,11 +43,12 @@ class nixlMetadataBackend;
  *
  * The owning nixlAgent constructs the manager when NIXL_MD_MANAGER is set
  * and hands it out via nixlAgent::getMDManager(). The transport is chosen at
- * construction: ETCD when NIXL_ETCD_ENDPOINTS is set (via a core-internal
- * nixlMetadataBackend), otherwise P2P. The manager stores a per-name registry;
- * P2P resolves each name to {ip, port} and delegates to the matching nixlAgent
- * method, while ETCD keys metadata by name in the store and ignores the
- * address fields.
+ * construction (via a core-internal nixlMetadataBackend): ETCD when
+ * NIXL_ETCD_ENDPOINTS is set, else TCPStore when NIXL_TCPSTORE_ENDPOINTS is
+ * set, otherwise P2P. The manager stores a per-name registry; P2P resolves
+ * each name to {ip, port} and delegates to the matching nixlAgent method,
+ * while the centralized backends key metadata by name in the store and ignore
+ * the address fields.
  */
 class nixlMDManager {
 public:
@@ -59,14 +60,16 @@ public:
      *                           to prefix trace logs. Passed in (rather than
      *                           read via agent.getName()) because the owning
      *                           agent is still being constructed at this point.
-     * @param etcd_watch_timeout Watch timeout forwarded to the ETCD backend.
+     * @param kv_backend_timeout Timeout forwarded to the centralized backend
+     *                           (ETCD watch timeout / TCPStore connect+op
+     *                           timeout); unused on P2P.
      *
-     * In ETCD mode the backend connects eagerly (health gate); construction
-     * throws if the store is unreachable.
+     * For a centralized backend the connection is eager (health gate);
+     * construction throws if the store is unreachable.
      */
     nixlMDManager(nixlAgent &agent,
                   std::string self_name,
-                  std::chrono::microseconds etcd_watch_timeout);
+                  std::chrono::microseconds kv_backend_timeout);
 
     ~nixlMDManager();
 
@@ -175,7 +178,8 @@ public:
 
     /**
      * @brief Name of the metadata transport in use, selected at construction
-     *        (`"ETCD"` when an ETCD backend is active, otherwise `"P2P"`).
+     *        (`"ETCD"` or `"TCPStore"` when a centralized backend is active,
+     *        otherwise `"P2P"`).
      *
      * Returns a name rather than an enum so new backends can be added without
      * editing a closed public type (mirrors nixl_backend_t for transfer
@@ -223,9 +227,10 @@ private:
     void
     drainInvalidated() const;
 
-    // ETCD is active when a backend object exists; P2P leaves backend_ null.
+    // A centralized KV backend (ETCD or TCPStore) is active when a backend
+    // object exists; P2P leaves backend_ null.
     [[nodiscard]] bool
-    usingEtcd() const noexcept {
+    usingKvBackend() const noexcept {
         return backend_ != nullptr;
     }
 

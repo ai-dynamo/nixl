@@ -59,6 +59,8 @@ nixl_core_srcs = [
     'nixl_md_manager.cpp',
     'nixl_plugin_manager.cpp',
     'nixl_listener.cpp',
+    'backends/tcpstore_client.cpp',
+    'backends/tcpstore_metadata_backend.cpp',
     'telemetry/telemetry.cpp',
     'telemetry/buffer_exporter.cpp',
     'telemetry/buffer_plugin.cpp',

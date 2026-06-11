@@ -72,6 +72,13 @@ public:
     [[nodiscard]] virtual nixl_status_t
     watch(const std::string &key_prefix, watch_callback_t cb) = 0;
 
+    // Whether watch() actually delivers events. Watch-less backends (e.g.
+    // TCPStore) return false so the manager can skip invalidation bookkeeping.
+    [[nodiscard]] virtual bool
+    hasWatch() const {
+        return true;
+    }
+
     // Native batched fetch; base falls back to per-key fetch and reports each
     // key's result in per_key_status.
     virtual void

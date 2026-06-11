@@ -430,4 +430,141 @@ TEST_F(MDManagerEtcdFixture, WatchDrivenInvalidation) {
               NIXL_ERR_NOT_FOUND);
 }
 
+// TCPStore-backed manager. Skipped unless NIXL_TCPSTORE_ENDPOINTS (host:port)
+// points to a running TCPStore server. NIXL_ETCD_ENDPOINTS is unset so the
+// manager selects TCPStore even when ETCD is also configured in the ambient
+// environment (ETCD otherwise wins).
+class MDManagerTcpStoreFixture : public testing::Test {
+protected:
+    struct AgentContext {
+        std::string name;
+        nixlMDManager *mdm = nullptr;
+        nixlBackendH *backend_handle = nullptr;
+        std::vector<MemBuffer> buffers;
+        std::unique_ptr<nixlAgent> agent;
+
+        void
+        createBackend() {
+            ASSERT_EQ(agent->createBackend("UCX", {}, backend_handle), NIXL_SUCCESS);
+            ASSERT_NE(backend_handle, nullptr);
+        }
+
+        void
+        initAndRegisterBuffers(size_t count, size_t size) {
+            for (size_t i = 0; i < count; i++) {
+                buffers.emplace_back(size);
+            }
+            nixl_reg_dlist_t dlist(DRAM_SEG);
+            for (const auto &buf : buffers) {
+                dlist.addDesc(buf.getBlobDesc());
+            }
+            const LogIgnoreGuard lig_efa_warn(
+                "Amazon EFA\\(s\\) were detected, but the UCX backend was configured");
+            ASSERT_EQ(agent->registerMem(dlist), NIXL_SUCCESS);
+        }
+    };
+
+    void
+    SetUp() override {
+        if (::getenv("NIXL_TCPSTORE_ENDPOINTS") == nullptr) {
+            GTEST_SKIP() << "NIXL_TCPSTORE_ENDPOINTS not set; skipping TCPStore backend tests";
+        }
+        env_.addVar("NIXL_MD_MANAGER", "1");
+
+        // Unique per-fixture-instance names so leftover keys from one test do
+        // not bleed into the next against a shared store.
+        static int run = 0;
+        const std::string suffix = "_" + std::to_string(run++);
+
+        for (int i = 0; i < AGENT_COUNT_; i++) {
+            AgentContext ctx;
+            ctx.name = "mdm_tcpstore_agent_" + std::to_string(i) + suffix;
+
+            nixlAgentConfig cfg;
+            cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
+            ctx.agent = std::make_unique<nixlAgent>(ctx.name, cfg);
+
+            ASSERT_EQ(ctx.agent->getMDManager(ctx.mdm), NIXL_SUCCESS);
+            ASSERT_NE(ctx.mdm, nullptr);
+
+            ctx.createBackend();
+            ctx.initAndRegisterBuffers(BUFF_COUNT_, BUFF_SIZE_);
+
+            agents_.push_back(std::move(ctx));
+        }
+    }
+
+    void
+    TearDown() override {
+        agents_.clear();
+    }
+
+    static constexpr int AGENT_COUNT_ = 2;
+    static constexpr size_t BUFF_COUNT_ = 4;
+    static constexpr size_t BUFF_SIZE_ = 1024;
+
+    // Force TCPStore selection regardless of ambient NIXL_ETCD_ENDPOINTS.
+    ScopedUnsetEnv no_etcd_{"NIXL_ETCD_ENDPOINTS"};
+    ScopedEnv env_;
+    std::vector<AgentContext> agents_;
+};
+
+TEST_F(MDManagerTcpStoreFixture, BackendIsTcpStore) {
+    EXPECT_EQ(agents_[0].mdm->getBackend(), std::string_view("TCPStore"));
+}
+
+TEST_F(MDManagerTcpStoreFixture, RegisterIgnoresAddress) {
+    // Centralized backend accepts registration without an address.
+    EXPECT_EQ(agents_[0].mdm->registerMDPeer("peer_no_addr", "", 0), NIXL_SUCCESS);
+}
+
+TEST_F(MDManagerTcpStoreFixture, SendAndFetchRoundTrip) {
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    ASSERT_EQ(src.mdm->registerMDPeer(dst.name, "", 0), NIXL_SUCCESS);
+    ASSERT_EQ(dst.mdm->registerMDPeer(src.name, "", 0), NIXL_SUCCESS);
+
+    ASSERT_EQ(src.mdm->sendLocalMD(dst.name), NIXL_SUCCESS);
+    // Fetch is synchronous (check, then get), so the metadata is loaded by the
+    // time fetchRemoteMD returns.
+    ASSERT_EQ(dst.mdm->fetchRemoteMD(src.name), NIXL_SUCCESS);
+    EXPECT_EQ(dst.mdm->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+}
+
+TEST_F(MDManagerTcpStoreFixture, PartialRequiresLabel) {
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    ASSERT_EQ(src.mdm->registerMDPeer(dst.name, "", 0), NIXL_SUCCESS);
+
+    nixl_reg_dlist_t descs(DRAM_SEG);
+    for (const auto &buf : src.buffers) {
+        descs.addDesc(buf.getBlobDesc());
+    }
+
+    // No label is rejected on the centralized backend.
+    EXPECT_EQ(src.mdm->sendLocalPartialMD(dst.name, descs), NIXL_ERR_INVALID_PARAM);
+
+    nixl_opt_args_t params;
+    params.metadataLabel = "memView1";
+    EXPECT_EQ(src.mdm->sendLocalPartialMD(dst.name, descs, &params), NIXL_SUCCESS);
+}
+
+TEST_F(MDManagerTcpStoreFixture, InvalidateRemovesPublishedMetadata) {
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    ASSERT_EQ(src.mdm->registerMDPeer(dst.name, "", 0), NIXL_SUCCESS);
+    ASSERT_EQ(dst.mdm->registerMDPeer(src.name, "", 0), NIXL_SUCCESS);
+
+    ASSERT_EQ(src.mdm->sendLocalMD(dst.name), NIXL_SUCCESS);
+    ASSERT_EQ(dst.mdm->fetchRemoteMD(src.name), NIXL_SUCCESS);
+
+    // TCPStore has no watch, so invalidation is observed on the next fetch: the
+    // published key is gone, so a fresh fetch reports NOT_FOUND.
+    ASSERT_EQ(src.mdm->invalidateLocalMD(dst.name), NIXL_SUCCESS);
+    EXPECT_EQ(dst.mdm->fetchRemoteMD(src.name), NIXL_ERR_NOT_FOUND);
+}
+
 } // namespace gtest::md_manager

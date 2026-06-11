@@ -22,6 +22,8 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 
+#include "backends/tcpstore_metadata_backend.h"
+
 #if HAVE_ETCD
 #include "backends/etcd_metadata_backend.h"
 #endif
@@ -30,6 +32,10 @@
 #include <utility>
 
 namespace {
+
+// Default KV namespace prefix. Mirrors NIXL_ETCD_NAMESPACE_DEFAULT, which is
+// only defined when the ETCD backend is compiled in (HAVE_ETCD).
+constexpr char kDefaultMdNamespace[] = "/nixl/agents/";
 
 // Build the nixl_opt_args_t for a peer. Takes ip by value and moves it in to
 // avoid a redundant copy. Kept .cpp-local rather than passing the manager's
@@ -46,17 +52,29 @@ makePeerArgs(std::string ip, std::uint16_t port, const nixl_opt_args_t *base = n
 
 nixlMDManager::nixlMDManager(nixlAgent &agent,
                              std::string self_name,
-                             [[maybe_unused]] std::chrono::microseconds etcd_watch_timeout)
+                             std::chrono::microseconds kv_backend_timeout)
     : agent_(agent),
       selfName_(std::move(self_name)) {
+    bool kv_selected = false;
 #if HAVE_ETCD
     if (nixl::config::checkExistence("NIXL_ETCD_ENDPOINTS")) {
+        if (nixl::config::checkExistence("NIXL_TCPSTORE_ENDPOINTS")) {
+            NIXL_DEBUG << "[" << selfName_
+                       << "] NIXL_ETCD_ENDPOINTS and NIXL_TCPSTORE_ENDPOINTS both set; using ETCD";
+        }
         namespacePrefix_ = nixl::config::getValueDefaulted<std::string>(
             "NIXL_ETCD_NAMESPACE", NIXL_ETCD_NAMESPACE_DEFAULT);
         backend_ =
-            std::make_unique<nixlEtcdMetadataBackend>(makeKey(selfName_, ""), etcd_watch_timeout);
+            std::make_unique<nixlEtcdMetadataBackend>(makeKey(selfName_, ""), kv_backend_timeout);
+        kv_selected = true;
     }
 #endif
+    if (!kv_selected && nixl::config::checkExistence("NIXL_TCPSTORE_ENDPOINTS")) {
+        namespacePrefix_ = nixl::config::getValueDefaulted<std::string>("NIXL_TCPSTORE_NAMESPACE",
+                                                                        kDefaultMdNamespace);
+        backend_ = std::make_unique<nixlTcpStoreMetadataBackend>(makeKey(selfName_, ""),
+                                                                 kv_backend_timeout);
+    }
 }
 
 nixlMDManager::~nixlMDManager() = default;
@@ -73,9 +91,10 @@ nixlMDManager::makeKey(const std::string &agent_name, const std::string &label) 
 
 void
 nixlMDManager::drainInvalidated() const {
-    // Only the ETCD watch path enqueues; on P2P the queue is always empty, so
-    // skip taking the lock on the (polled) checkRemoteMD hot path.
-    if (!usingEtcd()) {
+    // Only a watch-capable KV backend enqueues; on P2P (no backend) and
+    // watch-less KV like TCPStore the queue is always empty, so skip taking the
+    // lock on the (polled) checkRemoteMD hot path.
+    if (!backend_ || !backend_->hasWatch()) {
         return;
     }
     std::vector<std::string> tmp;
@@ -112,8 +131,7 @@ nixlMDManager::registerMDPeer(const std::string &agent_name,
     if (agent_name.empty()) {
         return NIXL_ERR_INVALID_PARAM;
     }
-#if HAVE_ETCD
-    if (usingEtcd()) {
+    if (usingKvBackend()) {
         // Centralized backend: the address is ignored (and so not validated),
         // only the name matters. Re-registering a known name is an idempotent
         // no-op rather than a silent overwrite.
@@ -121,11 +139,10 @@ nixlMDManager::registerMDPeer(const std::string &agent_name,
         const std::uint64_t epoch = ++registerEpoch_;
         auto [it, inserted] = peers_.try_emplace(agent_name, Peer{ip, port, epoch});
         it->second.epoch = epoch; // refresh on the idempotent path too
-        NIXL_DEBUG << "[" << selfName_ << "] registerMDPeer (etcd): " << agent_name
+        NIXL_DEBUG << "[" << selfName_ << "] registerMDPeer (kv): " << agent_name
                    << (inserted ? " registered" : " already registered (idempotent)");
         return NIXL_SUCCESS;
     }
-#endif
     if (ip.empty()) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -170,8 +187,7 @@ nixlMDManager::unregisterMDPeer(const std::string &agent_name) {
                    << " not registered (no-op)";
         return NIXL_SUCCESS;
     }
-#if HAVE_ETCD
-    if (usingEtcd()) {
+    if (usingKvBackend()) {
         // Centralized backend: just forget the peer locally (use
         // invalidateLocalMD to withdraw our own metadata).
         const std::lock_guard<std::mutex> lk(mutex_);
@@ -179,11 +195,9 @@ nixlMDManager::unregisterMDPeer(const std::string &agent_name) {
         if (it != peers_.end() && it->second == peer) {
             peers_.erase(it);
         }
-        NIXL_DEBUG << "[" << selfName_ << "] unregisterMDPeer (etcd): " << agent_name
-                   << " forgotten";
+        NIXL_DEBUG << "[" << selfName_ << "] unregisterMDPeer (kv): " << agent_name << " forgotten";
         return NIXL_SUCCESS;
     }
-#endif
     // Tell the remote to drop our metadata before removing the local entry.
     // Keep the entry if the call is rejected so the caller can retry.
     // peer.ip is reused below for the compare-then-erase, so it is copied
@@ -212,17 +226,15 @@ nixlMDManager::sendLocalMD(const std::string &agent_name) const {
     if (!lookupPeer(agent_name, peer)) {
         return NIXL_ERR_NOT_FOUND;
     }
-#if HAVE_ETCD
-    if (usingEtcd()) {
+    if (usingKvBackend()) {
         nixl_blob_t blob;
         const nixl_status_t ret = agent_.getLocalMD(blob);
         if (ret < 0) {
             return ret;
         }
-        NIXL_DEBUG << "[" << selfName_ << "] sendLocalMD (etcd): publishing for " << agent_name;
+        NIXL_DEBUG << "[" << selfName_ << "] sendLocalMD (kv): publishing for " << agent_name;
         return backend_->publish(makeKey(selfName_, default_metadata_label), blob);
     }
-#endif
     // lookupPeer copies {ip, port}, so the lock is released before the call
     // below. A concurrent unregister/re-register can change the registry in
     // this gap; we intentionally use the snapshot rather than hold the lock
@@ -241,10 +253,9 @@ nixlMDManager::sendLocalPartialMD(const std::string &agent_name,
     if (!lookupPeer(agent_name, peer)) {
         return NIXL_ERR_NOT_FOUND;
     }
-#if HAVE_ETCD
-    if (usingEtcd()) {
+    if (usingKvBackend()) {
         if (!md_extra_params || md_extra_params->metadataLabel.empty()) {
-            NIXL_ERROR << "metadata label is required for etcd send of local partial metadata";
+            NIXL_ERROR << "metadata label is required for kv send of local partial metadata";
             return NIXL_ERR_INVALID_PARAM;
         }
         nixl_blob_t blob;
@@ -252,11 +263,10 @@ nixlMDManager::sendLocalPartialMD(const std::string &agent_name,
         if (ret < 0) {
             return ret;
         }
-        NIXL_DEBUG << "[" << selfName_ << "] sendLocalPartialMD (etcd): publishing label '"
+        NIXL_DEBUG << "[" << selfName_ << "] sendLocalPartialMD (kv): publishing label '"
                    << md_extra_params->metadataLabel << "' for " << agent_name;
         return backend_->publish(makeKey(selfName_, md_extra_params->metadataLabel), blob);
     }
-#endif
     const auto args = makePeerArgs(std::move(peer.ip), peer.port, md_extra_params);
     NIXL_DEBUG << "[" << selfName_ << "] sendLocalPartialMD: " << agent_name;
     return agent_.sendLocalPartialMD(descs, &args);
@@ -268,10 +278,9 @@ nixlMDManager::fetchRemoteMD(const std::string &agent_name) const {
     if (!lookupPeer(agent_name, peer)) {
         return NIXL_ERR_NOT_FOUND;
     }
-#if HAVE_ETCD
-    if (usingEtcd()) {
+    if (usingKvBackend()) {
         drainInvalidated();
-        NIXL_DEBUG << "[" << selfName_ << "] fetchRemoteMD (etcd): " << agent_name;
+        NIXL_DEBUG << "[" << selfName_ << "] fetchRemoteMD (kv): " << agent_name;
         nixl_blob_t blob;
         nixl_status_t ret = backend_->fetch(makeKey(agent_name, default_metadata_label), blob);
         if (ret != NIXL_SUCCESS) {
@@ -284,7 +293,8 @@ nixlMDManager::fetchRemoteMD(const std::string &agent_name) const {
         }
         // Watch the peer's subtree; a DELETE invalidates our cached copy. The
         // callback runs on the backend's watcher thread, so it only enqueues;
-        // draining happens on later fetch/check calls.
+        // draining happens on later fetch/check calls. Watch-less backends
+        // (TCPStore) treat this as a no-op and rely on republish.
         return backend_->watch(
             makeKey(agent_name, ""),
             [this, agent_name](const std::string &, nixl_watch_event_t event, const nixl_blob_t &) {
@@ -294,7 +304,6 @@ nixlMDManager::fetchRemoteMD(const std::string &agent_name) const {
                 }
             });
     }
-#endif
     const auto args = makePeerArgs(std::move(peer.ip), peer.port);
     NIXL_DEBUG << "[" << selfName_ << "] fetchRemoteMD: " << agent_name;
     return agent_.fetchRemoteMD(agent_name, &args);
@@ -306,13 +315,11 @@ nixlMDManager::invalidateLocalMD(const std::string &agent_name) const {
     if (!lookupPeer(agent_name, peer)) {
         return NIXL_ERR_NOT_FOUND;
     }
-#if HAVE_ETCD
-    if (usingEtcd()) {
+    if (usingKvBackend()) {
         // Single published copy: remove our whole subtree (legacy behavior).
-        NIXL_DEBUG << "[" << selfName_ << "] invalidateLocalMD (etcd): removing published metadata";
+        NIXL_DEBUG << "[" << selfName_ << "] invalidateLocalMD (kv): removing published metadata";
         return backend_->remove(makeKey(selfName_, ""));
     }
-#endif
     const auto args = makePeerArgs(std::move(peer.ip), peer.port);
     NIXL_DEBUG << "[" << selfName_ << "] invalidateLocalMD: " << agent_name;
     return agent_.invalidateLocalMD(&args);
