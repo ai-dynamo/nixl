@@ -21,6 +21,7 @@
 #include "nixl_descriptors.h"
 #include "mem_section.h"
 #include "backend/backend_engine.h"
+#include "common/nixl_log.h"
 #include "nixl_types.h"
 #include "serdes/serdes.h"
 
@@ -234,7 +235,10 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
     }
 
     for (size_t idx : indices) {
-        backend->deregisterMem(target[idx].metadataP);
+        const nixl_status_t ret = backend->deregisterMem(target[idx].metadataP);
+        if (ret != NIXL_SUCCESS) {
+            NIXL_WARN << "backend deregisterMem failed with status " << ret;
+        }
     }
 
     target.remDescs(std::move(indices));

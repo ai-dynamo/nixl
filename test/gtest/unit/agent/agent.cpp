@@ -270,6 +270,26 @@ namespace agent {
         EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
     }
 
+    TEST_P(singleAgentWithMemParamFixture, DeregisterMemoryIgnoresBackendFailure) {
+        using testing::_;
+        using testing::Return;
+
+        nixl_b_params_t params;
+        nixlBackendH *backend;
+        EXPECT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        blob blob;
+        nixl_opt_args_t extra_params;
+        nixl_reg_dlist_t reg_dlist(GetParam());
+        EXPECT_EQ(agent_helper_->initAndRegisterMemory(blob, reg_dlist, extra_params, backend),
+                  NIXL_SUCCESS);
+
+        auto &engine = const_cast<mocks::GMockBackendEngine &>(agent_helper_->getGMockEngine());
+        EXPECT_CALL(engine, deregisterMem(_)).WillOnce(Return(NIXL_ERR_BACKEND));
+
+        EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+    }
+
     TEST_F(singleAgentSessionFixture, RegisterDeregisterMemRepeatedTest) {
         constexpr int kWarmupIters = 3;
         constexpr int kTimedIters = 64;
