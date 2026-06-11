@@ -453,6 +453,7 @@ struct nixlUcxStagedProfile {
     uint64_t slotGrantInProg = 0;
     uint64_t localSlotMiss = 0;
     uint64_t remoteWindowMiss = 0;
+    uint64_t staleGrantReleases = 0;
     uint64_t localSharedChunks = 0;
     uint64_t localSharedBytes = 0;
     uint64_t localSharedAckErrors = 0;
@@ -989,12 +990,14 @@ public:
         }
     }
 
-    void
+    // Returns false when the grant could not be bound to a chunk; a successful
+    // grant left unbound must be released by the caller or the target slot leaks.
+    [[nodiscard]] bool
     markGrant(uint64_t chunk_id, uint64_t slot_id, uint64_t lease_id, nixl_status_t status) {
         if (chunk_id >= chunks.size()) {
             NIXL_WARN << "Received UCX staged slot grant for out-of-range chunk id " << chunk_id
                       << " transfer_id=" << transferId << " chunks=" << chunks.size();
-            return;
+            return false;
         }
 
         auto &chunk = *chunks[chunk_id];
@@ -1003,6 +1006,7 @@ public:
         chunk.grantStatus.store(status);
         chunk.grantArrivedUs.store(profileNowUs());
         chunk.grantArrived.store(true);
+        return true;
     }
 
     void
@@ -3009,20 +3013,25 @@ nixlUcxEngine::completePendingStagedSlotGrant(const std::string &remote_agent,
         if (it != pendingStagedReqs_.end()) {
             auto *handle = dynamic_cast<nixlUcxStagedBackendReqH *>(it->second);
             if (handle) {
-                handle->markGrant(chunk_id, slot_id, lease_id, status);
-                return;
+                if (handle->markGrant(chunk_id, slot_id, lease_id, status)) {
+                    return;
+                }
+                // markGrant logged the out-of-range chunk id; fall through and
+                // release the unbound grant.
+            } else {
+                NIXL_WARN << "Received UCX staged slot grant for non-staged transfer id "
+                          << transfer_id;
             }
-            NIXL_WARN << "Received UCX staged slot grant for non-staged transfer id "
-                      << transfer_id;
         } else {
             NIXL_WARN << "Received UCX staged slot grant for unknown transfer id " << transfer_id
                       << " chunk_id=" << chunk_id;
         }
     }
 
-    // The transfer is gone (released or failed before the grant arrived). Return the
-    // lease, otherwise the target slot stays REMOTE_RESERVED forever. The zero gpu
-    // fields tell the target to resolve the lease by slot/lease id alone.
+    // The grant could not be bound to a live chunk (transfer gone, non-staged
+    // handle, or out-of-range chunk id). Return the lease, otherwise the target
+    // slot stays REMOTE_RESERVED until timeout reclaim. The zero gpu fields tell
+    // the target to resolve the lease by slot/lease id alone.
     if (status == NIXL_SUCCESS) {
         sendStagedSlotRelease(remote_agent, transfer_id, chunk_id, slot_id, lease_id, 0, 0, 0);
     }
@@ -4277,6 +4286,7 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
                   << " slot_grant_inprog=" << staged_handle->profile.slotGrantInProg
                   << " local_slot_miss=" << staged_handle->profile.localSlotMiss
                   << " remote_window_miss=" << staged_handle->profile.remoteWindowMiss
+                  << " stale_grant_releases=" << staged_handle->profile.staleGrantReleases
                   << " local_shared_chunks=" << staged_handle->profile.localSharedChunks
                   << " local_shared_bytes=" << staged_handle->profile.localSharedBytes
                   << " local_shared_ack_errors="
@@ -4455,9 +4465,58 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
         return NIXL_SUCCESS;
     };
 
+    // Initiator-side stale-grant guard. The target reclaims REMOTE_RESERVED leases
+    // after leaseTimeoutMs, so refuse to use a grant once half of that budget has
+    // elapsed. Age is measured from slotReqPostedUs, which starts before the
+    // target's grant timestamp, so the guard errs on the conservative side. Both
+    // sides are assumed to run with the same staging_lease_timeout_ms. This narrows,
+    // but cannot fully close, the corruption window: a process frozen after the RDMA
+    // write was posted can still write into a reclaimed slot.
+    const auto grant_is_stale = [&](const nixlUcxStagedChunk &chunk) -> bool {
+        if (vramStagingConfig_.leaseTimeoutMs == 0 || chunk.slotReqPostedUs == 0) {
+            return false;
+        }
+        const uint64_t guard_us =
+            static_cast<uint64_t>(vramStagingConfig_.leaseTimeoutMs) * 1000 / 2;
+        return profileNowUs() - chunk.slotReqPostedUs >= guard_us;
+    };
+
+    auto release_stale_grant = [&](nixlUcxStagedChunk &chunk) {
+        ++staged_handle->profile.staleGrantReleases;
+        NIXL_WARN << "Releasing stale UCX staged slot grant transfer_id="
+                  << staged_handle->transferId << " chunk_id=" << chunk.id
+                  << " slot_id=" << chunk.remoteSlotId << " lease_id=" << chunk.leaseId
+                  << " age_us=" << (profileNowUs() - chunk.slotReqPostedUs);
+        sendStagedSlotRelease(staged_handle->remoteAgent,
+                              staged_handle->transferId,
+                              chunk.id,
+                              chunk.remoteSlotId,
+                              chunk.leaseId,
+                              chunk.remoteGpuAddr,
+                              chunk.remoteGpuDev,
+                              chunk.size);
+        staged_handle->releaseRemoteSlot(chunk);
+        chunk.grantArrived.store(false);
+        chunk.grantStatus.store(NIXL_IN_PROG);
+        chunk.leaseId = 0;
+        if (vramStagingConfig_.sourceD2HPrefetch && chunk.localSlotHeld) {
+            // Prefetched data in the local slot is still valid; only the remote
+            // grant is stale. Request a fresh slot.
+            chunk.state = nixlUcxStagedChunk::State::LOCAL_READY;
+        } else {
+            staged_handle->releaseLocalSlot(chunk);
+            chunk.state = nixlUcxStagedChunk::State::PENDING;
+        }
+    };
+
     auto start_granted_chunk = [&](nixlUcxStagedChunk &chunk) -> nixl_status_t {
         if (!chunk.localMetadata || !chunk.remoteMetadata) {
             return NIXL_ERR_MISMATCH;
+        }
+
+        if (grant_is_stale(chunk)) {
+            release_stale_grant(chunk);
+            return NIXL_IN_PROG;
         }
 
         nixl_status_t ret = NIXL_SUCCESS;
@@ -4519,6 +4578,14 @@ nixlUcxEngine::checkStagedXfer(nixlBackendReqH *handle) const {
                                   chunk.size);
             staged_handle->releaseChunkSlots(chunk);
             return NIXL_ERR_MISMATCH;
+        }
+
+        // Final stale check at the last moment before the data-plane write: the
+        // synchronous D2H above (or a long local-slot wait across polls) may have
+        // consumed a large part of the lease budget.
+        if (grant_is_stale(chunk)) {
+            release_stale_grant(chunk);
+            return NIXL_IN_PROG;
         }
 
         const auto &ep = rmd->conn->getEp(worker_id);

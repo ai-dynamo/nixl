@@ -222,9 +222,12 @@ protected:
         bool targetH2DWorker = false;
         bool sourceD2HPrefetch = false;
         // Reclaim REMOTE_RESERVED leases older than this when no free slot is left
-        // (dead-initiator backstop). 0 disables reclaim. Must stay much larger than
-        // any possible single RDMA write so a slow initiator cannot corrupt a
-        // re-granted slot.
+        // (dead-initiator backstop). 0 disables reclaim. The budget must cover the
+        // whole grant -> READY span (local slot wait, D2H, RDMA, flush), all driven
+        // by application polling. The initiator refuses to use a grant once half of
+        // this budget has elapsed since its SLOT_REQ was posted (stale-grant guard),
+        // so the remaining half must cover the worst-case post-write RDMA + flush +
+        // READY span.
         size_t leaseTimeoutMs = 60000;
         bool localStaging = false;
         bool localStagingAutoEnabled = false;

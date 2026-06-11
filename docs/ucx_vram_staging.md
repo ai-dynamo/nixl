@@ -187,10 +187,22 @@ Current local implementation status:
       slots and `REMOTE_RESERVED` leases older than `staging_lease_timeout_ms` /
       `NIXL_UCX_STAGING_LEASE_TIMEOUT_MS` (default 60000, 0 disables). `REMOTE_H2D`
       is never reclaimed because a local copy is still reading the slot. The timeout
-      must stay much larger than any single RDMA write duration; a reclaimed lease
-      whose original owner is slow but alive would otherwise risk a late write into
-      a re-granted slot. The stale owner's READY is always rejected by lease
-      validation.
+      budget must cover the whole grant -> READY span: local staging slot wait,
+      source D2H, RDMA write, flush, and the READY message, all driven by
+      application polling. It is not bounded by a single RDMA write duration.
+    - Initiator-side stale-grant guard: once half of `staging_lease_timeout_ms` has
+      elapsed since the chunk's `STAGED_SLOT_REQ` was posted, the initiator refuses
+      to use the grant; it sends `STAGED_SLOT_RELEASE` and requests a fresh slot.
+      The age is measured from the request post time, which starts before the
+      target's grant timestamp, so the guard is conservative; it is re-checked at
+      the last moment before the RDMA write is posted. Both sides must run with the
+      same `staging_lease_timeout_ms`. This narrows, but does not fully close, the
+      corruption window: a process frozen after posting the RDMA write can still
+      write into a reclaimed slot if the freeze outlasts the remaining budget.
+      Lease validation rejects the stale READY but cannot stop already-posted data.
+    - A successful `STAGED_SLOT_GRANT` that cannot be bound to a live chunk
+      (unknown transfer, non-staged handle, or out-of-range chunk id) is released
+      back to the target instead of being dropped.
 
 Current limitations:
 
