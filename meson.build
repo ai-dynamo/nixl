@@ -393,6 +393,49 @@ if get_option('buildtype') == 'release'
     add_project_arguments('-DNDEBUG', language: 'cpp')
 endif
 
+# ---- Tracing (nixl::trace) -------------------------------------------------
+# Two gates: compile-time (which backends are built into libnixl, below) and
+# runtime (which compiled-in backends the caller activates, via the Agent).
+nixl_trace_enabled = get_option('with_trace')
+nixl_trace_nvtx_enabled = false
+nixl_trace_deps = []
+
+if nixl_trace_enabled
+    add_project_arguments('-DNIXL_TRACE_ENABLED', language: ['cpp', 'cuda'])
+
+    requested_trace_backends = []
+    foreach b : get_option('trace_backends').split(',')
+        b_stripped = b.strip()
+        if b_stripped != ''
+            requested_trace_backends += [b_stripped]
+        endif
+    endforeach
+
+    # NVTX: header-only; ships with the CUDA toolkit (nvtx3). Detect-then-disable
+    # gracefully so non-CUDA / werror builds stay green. A vendored nvtx3 wrap
+    # fallback can be added later if needed.
+    if 'nvtx' in requested_trace_backends
+        if cuda_dep.found()
+            nvtx_inc_dep = cuda_dep.partial_dependency(includes: true, compile_args: true)
+            if cpp.has_header('nvtx3/nvToolsExt.h', dependencies: nvtx_inc_dep)
+                add_project_arguments('-DNIXL_TRACE_BACKEND_NVTX', language: ['cpp', 'cuda'])
+                nixl_trace_deps += [ nvtx_inc_dep ]
+                nixl_trace_nvtx_enabled = true
+                message('nixl::trace: NVTX backend enabled (CUDA-bundled nvtx3 headers)')
+            else
+                warning('nixl::trace: nvtx requested but nvtx3 headers not found; NVTX backend disabled')
+            endif
+        else
+            warning('nixl::trace: nvtx requested but CUDA not found; NVTX backend disabled')
+        endif
+    endif
+
+    summary({
+        'Tracing facade'   : nixl_trace_enabled,
+        'NVTX backend'     : nixl_trace_nvtx_enabled,
+    }, section: 'Tracing', bool_yn: true)
+endif
+
 static_plugins = []
 
 # Check for static plugins, then set compiler flags to enable
@@ -446,6 +489,8 @@ if get_option('install_headers')
   install_headers('src/core/agent_data.h', install_dir: prefix_inc)
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
   install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
+  install_headers('src/api/cpp/tracing/trace.h', install_dir: prefix_inc + '/tracing')
+  install_headers('src/api/cpp/tracing/trace_macros.h', install_dir: prefix_inc + '/tracing')
 
   if ucx_gpu_device_api_available
     install_headers('src/api/gpu/ucx/nixl_device.cuh', install_dir: prefix_inc + '/gpu/ucx')

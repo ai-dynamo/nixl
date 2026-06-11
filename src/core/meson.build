@@ -58,16 +58,29 @@ if libtransfer_engine.found() and not disable_mooncake_backend and 'Mooncake' in
     nixl_lib_deps += [ mooncake_backend_interface, cuda_dep ]
 endif
 
+# Tracing (nixl::trace). The core is always compiled; individual backends are
+# gated at configure time (see root meson.build).
+nixl_lib_sources = [
+    'nixl_agent.cpp',
+    'nixl_enum_strings.cpp',
+    'nixl_plugin_manager.cpp',
+    'nixl_listener.cpp',
+    'telemetry/telemetry.cpp',
+    'telemetry/buffer_exporter.cpp',
+    'telemetry/buffer_plugin.cpp',
+    'telemetry/nop_plugin.cpp',
+    'tracing/tracer.cpp',
+]
+
+if nixl_trace_nvtx_enabled
+    nixl_lib_sources += ['tracing/nvtx_backend.cpp']
+endif
+
+nixl_lib_deps += nixl_trace_deps
+
 nixl_lib = library('nixl',
-                   'nixl_agent.cpp',
-                   'nixl_enum_strings.cpp',
-                   'nixl_plugin_manager.cpp',
-                   'nixl_listener.cpp',
-                   'telemetry/telemetry.cpp',
-                   'telemetry/buffer_exporter.cpp',
-                   'telemetry/buffer_plugin.cpp',
-                   'telemetry/nop_plugin.cpp',
-                   include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
+                   nixl_lib_sources,
+                   include_directories: [ nixl_inc_dirs, utils_inc_dirs, include_directories('tracing') ],
                    link_args: ['-lstdc++fs'],
                    dependencies: nixl_lib_deps,
                    install: true,

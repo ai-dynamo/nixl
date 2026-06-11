@@ -48,6 +48,13 @@ struct nixlAgentConfig {
     nixl_thread_sync_t syncMode = kDefaultSyncMode;
     /** @var Capture telemetry info regardless of environment variables*/
     bool captureTelemetry = kDefaultCaptureTelemetry;
+    /**
+     * @var Tracing backends to activate for this agent (comma-separated, e.g.
+     *      "nvtx" or "nvtx,chakra"). Empty disables tracing. A backend is only
+     *      activated when it is also compiled in. The NIXL_TRACE_BACKENDS
+     *      environment variable, when set, overrides this value.
+     */
+    std::string traceBackends;
 
     /**
      * @var Progress thread event waiting timeout.
