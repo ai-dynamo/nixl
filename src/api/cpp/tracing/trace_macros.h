@@ -43,8 +43,9 @@
 
 #define NIXL_TRACE_MARK_KIND(tracer_ptr, mark_name, mark_kind)  \
     do {                                                        \
-        if (auto *nixl_trace_tracer_ = (tracer_ptr))            \
+        if (auto *nixl_trace_tracer_ = (tracer_ptr)) {          \
             nixl_trace_tracer_->mark((mark_name), (mark_kind)); \
+        }                                                       \
     } while (0)
 
 #define NIXL_TRACE_MARK(tracer_ptr, mark_name) \
@@ -52,8 +53,9 @@
 
 #define NIXL_TRACE_ATTR(attr_key, attr_value)                        \
     do {                                                             \
-        if (nixl_trace_span_.active())                               \
+        if (nixl_trace_span_.active()) {                             \
             nixl_trace_span_.addAttribute((attr_key), (attr_value)); \
+        }                                                            \
     } while (0)
 
 #else // !NIXL_TRACE_ENABLED

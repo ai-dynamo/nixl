@@ -31,7 +31,7 @@ execution-trace tools.
   `Generic`, `Compute`, `MemoryR`, `MemoryW`, `CommSend`, `CommRecv`, `CommColl`,
   `Metadata`.
 
-The public API lives in `nixl/tracing/trace.h` and `nixl/tracing/trace_macros.h`.
+The public API lives in `tracing/trace.h` and `tracing/trace_macros.h`.
 
 ## Two gates: compile-time and runtime
 
