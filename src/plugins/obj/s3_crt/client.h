@@ -10,6 +10,9 @@
 #include <string_view>
 #include <cstdint>
 #include <aws/s3-crt/S3CrtClient.h>
+#include <aws/crt/io/EventLoopGroup.h>
+#include <aws/crt/io/HostResolver.h>
+#include <aws/crt/io/Bootstrap.h>
 #include <aws/core/utils/memory/stl/AWSString.h>
 #include <aws/core/Aws.h>
 #include "s3/client.h"
@@ -55,6 +58,9 @@ public:
     checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) override;
 
 private:
+    Aws::Crt::Io::EventLoopGroup crtEventLoopGroup_;
+    Aws::Crt::Io::DefaultHostResolver crtHostResolver_;
+    std::shared_ptr<Aws::Crt::Io::ClientBootstrap> crtBootstrap_;
     std::unique_ptr<Aws::S3Crt::S3CrtClient> s3CrtClient_;
 };
 
