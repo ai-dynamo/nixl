@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('python')
+if get_option('build_python_bindings')
+    subdir('python')
+endif
 
 # Shared library exposing the nixl C API (nixl_capi_* symbols).
 # Always built so LD_PRELOAD can override stub symbols at runtime when
