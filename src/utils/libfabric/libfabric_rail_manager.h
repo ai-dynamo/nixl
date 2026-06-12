@@ -219,7 +219,8 @@ public:
                              size_t &submitted_count_out,
                              int desc_idx,
                              int desc_count,
-                             size_t base_offset);
+                             size_t base_offset,
+                             int device_id = -1);
 
     /** Reserve a base offset for a transfer to ensure stable rail assignment
      *  across all descriptors in the transfer. Call once per postXfer. */

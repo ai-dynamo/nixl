@@ -1082,7 +1082,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
             submitted_count,
             desc_idx,
             desc_count,
-            xfer_base_offset);
+            xfer_base_offset,
+            local[desc_idx].devId);
 
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx

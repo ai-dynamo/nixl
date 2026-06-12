@@ -24,6 +24,9 @@
 #include <cstring>
 #include <stdexcept>
 #include <stack>
+#ifdef HAVE_CUDA
+#include <cuda_runtime.h>
+#endif
 
 // RequestPool Base Class Implementation
 
@@ -712,8 +715,8 @@ nixlLibfabricRail::setXferIdCallback(std::function<void(uint32_t)> callback) {
 
 // Per-rail completion processing - handles one rail's CQ with configurable blocking behavior
 nixl_status_t
-nixlLibfabricRail::progressCompletionQueue() const {
-    // Completion processing
+nixlLibfabricRail::progressCompletionQueue() {
+    // Completion processing FIRST — process arrivals before posting new items
     struct fi_cq_data_entry completions[NIXL_LIBFABRIC_CQ_BATCH_SIZE];
 
     int ret;
@@ -747,7 +750,8 @@ nixlLibfabricRail::progressCompletionQueue() const {
     // CQ lock released here - completion is now local data
 
     if (ret == -FI_EAGAIN) {
-        return NIXL_IN_PROG; // No completions available
+        // SQ full - do inline CQ progress to free slots, then retry
+        // No completions - fall through to drainPostQueue
     }
 
     if (ret > 0) {
@@ -762,10 +766,12 @@ nixlLibfabricRail::progressCompletionQueue() const {
         }
 
         NIXL_DEBUG << "Processed " << ret << " completions on rail " << rail_id;
-        return NIXL_SUCCESS;
     }
 
-    return NIXL_ERR_BACKEND; // Unexpected case
+    // PT-owns-endpoint: drain pending posts AFTER processing completions
+    drainPostQueue();
+
+    return (ret > 0) ? NIXL_SUCCESS : NIXL_IN_PROG;
 }
 
 // Route completion to appropriate handler (rail-specific)
@@ -1018,9 +1024,7 @@ nixlLibfabricRail::postRecv(nixlLibfabricReq *req) const {
 }
 
 nixl_status_t
-nixlLibfabricRail::postSend(uint64_t immediate_data,
-                            fi_addr_t dest_addr,
-                            nixlLibfabricReq *req) const {
+nixlLibfabricRail::postSend(uint64_t immediate_data, fi_addr_t dest_addr, nixlLibfabricReq *req) {
     if (req->buffer_size == 0 || req->buffer_size > NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE) {
         NIXL_ERROR << "Invalid message size=" << req->buffer_size
                    << " (max: " << NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE << ")";
@@ -1063,6 +1067,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
         }
 
         if (ret == -FI_EAGAIN) {
+            // SQ full - do inline CQ progress to free slots, then retry
             // Resource temporarily unavailable - retry indefinitely for all providers
             attempt++;
 
@@ -1099,6 +1104,110 @@ nixlLibfabricRail::postSend(uint64_t immediate_data,
     return NIXL_ERR_BACKEND;
 }
 
+/****************************************
+ * PT-owns-endpoint: post queue methods
+ ****************************************/
+
+void
+nixlLibfabricRail::enqueuePost(const nixlLibfabricPostRequest &req) {
+    while (!post_ring_.push(req)) {
+        std::this_thread::yield();
+    }
+}
+
+nixl_status_t
+nixlLibfabricRail::drainPostQueue() {
+    nixlLibfabricPostRequest pr;
+    int posted = 0;
+    [[maybe_unused]] int current_cuda_device = -1;
+
+    while (post_ring_.pop(pr)) {
+        int ret = -FI_EAGAIN;
+
+        while (ret == -FI_EAGAIN) {
+            if (pr.type == nixlLibfabricPostRequest::WRITE) {
+                struct iovec iov{};
+                iov.iov_base = pr.local_addr;
+                iov.iov_len = pr.length;
+
+                struct fi_rma_iov rma_iov{};
+                rma_iov.addr = pr.remote_addr;
+                rma_iov.len = pr.length;
+                rma_iov.key = pr.remote_key;
+
+                void *desc = pr.local_desc;
+                struct fi_msg_rma msg = {};
+                msg.msg_iov = &iov;
+                msg.desc = &desc;
+                msg.iov_count = 1;
+                msg.addr = pr.dest_addr;
+                msg.rma_iov = &rma_iov;
+                msg.rma_iov_count = 1;
+                msg.context = &pr.req->ctx;
+                msg.data = pr.immediate_data;
+
+                ret = fi_writemsg(endpoint, &msg, pr.fi_flags | FI_REMOTE_CQ_DATA);
+            } else {
+                struct iovec iov{};
+                iov.iov_base = pr.local_addr;
+                iov.iov_len = pr.length;
+
+                struct fi_rma_iov rma_iov{};
+                rma_iov.addr = pr.remote_addr;
+                rma_iov.len = pr.length;
+                rma_iov.key = pr.remote_key;
+
+                void *desc = pr.local_desc;
+                struct fi_msg_rma msg = {};
+                msg.msg_iov = &iov;
+                msg.desc = &desc;
+                msg.iov_count = 1;
+                msg.addr = pr.dest_addr;
+                msg.rma_iov = &rma_iov;
+                msg.rma_iov_count = 1;
+                msg.context = &pr.req->ctx;
+
+                ret = fi_readmsg(endpoint, &msg, pr.fi_flags);
+            }
+
+            if (ret == -FI_EAGAIN) {
+                struct fi_cq_data_entry cq_buf[16];
+                int cq_ret = fi_cq_read(cq, cq_buf, 16);
+                if (cq_ret > 0) {
+                    for (int c = 0; c < cq_ret; c++) {
+                        processCompletionQueueEntry(&cq_buf[c]);
+                    }
+                }
+            }
+        }
+
+        if (ret != 0) {
+            NIXL_ERROR << "drainPostQueue: post failed ret=" << ret << " (" << fi_strerror(-ret)
+                       << ") on rail " << rail_id;
+            if (pr.req && pr.req->completion_callback) {
+                pr.req->completion_callback();
+            }
+            continue;
+        }
+        posted++;
+        if (posted % 32 == 0) {
+            struct fi_cq_data_entry cq_buf[16];
+            int cq_ret = fi_cq_read(cq, cq_buf, 16);
+            if (cq_ret > 0) {
+                for (int c = 0; c < cq_ret; c++) {
+                    processCompletionQueueEntry(&cq_buf[c]);
+                }
+            } else if (cq_ret < 0 && cq_ret != -FI_EAGAIN) {
+                struct fi_cq_err_entry err_entry = {};
+                fi_cq_readerr(cq, &err_entry, 0);
+                NIXL_ERROR << "CQ error in drain interleave on rail " << rail_id << ": "
+                           << fi_strerror(err_entry.err);
+            }
+        }
+    }
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t
 nixlLibfabricRail::postWrite(const void *local_buffer,
                              size_t length,
@@ -1108,7 +1217,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                              uint64_t remote_addr,
                              uint64_t remote_key,
                              nixlLibfabricReq *req,
-                             uint64_t fi_flags) const {
+                             uint64_t fi_flags) {
     // Validation
     if (!req) {
         NIXL_ERROR << "Invalid request for write on rail " << rail_id;
@@ -1160,6 +1269,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
         }
 
         if (ret == -FI_EAGAIN) {
+            // SQ full - do inline CQ progress to free slots, then retry
             // Resource temporarily unavailable - retry indefinitely for all providers
             attempt++;
 
@@ -1203,7 +1313,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
                             fi_addr_t dest_addr,
                             uint64_t remote_addr,
                             uint64_t remote_key,
-                            nixlLibfabricReq *req) const {
+                            nixlLibfabricReq *req) {
     // Validation
     if (!req) {
         NIXL_ERROR << "Invalid request for read on rail " << rail_id;
@@ -1242,6 +1352,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
         }
 
         if (ret == -FI_EAGAIN) {
+            // SQ full - do inline CQ progress to free slots, then retry
             // Resource temporarily unavailable - retry indefinitely for all providers
             attempt++;
 
