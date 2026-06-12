@@ -118,3 +118,61 @@ def test_multinode_checkpoint_reproducer_supports_ibgda_auto_device():
     assert main_source.index("configure_ucx_gda_auto_device(args, env)") < (
         main_source.index("import_nixl_ep()")
     )
+
+
+def test_multinode_checkpoint_reproducer_supports_intranode_ucx():
+    script = (
+        _repo_root()
+        / "examples/device/ep/tests/checkpoint_preserve_va_multinode.py"
+    )
+    source = script.read_text()
+
+    for expected in (
+        "--ucx-intranode",
+        "NIXL_EP_UCX_INTRANODE",
+        'INTRANODE_DEFAULT_UCX_TLS = "sm,cuda_ipc,cuda_copy,self"',
+        "INTRANODE_SHARED_MEMORY_TLS",
+        "validate_intranode_ucx_tls",
+        "configure_ucx_intranode_transport(args)",
+        'os.environ["UCX_TLS"] = ucx_tls',
+        'os.environ["UCX_NET_DEVICES"] = "all"',
+        "--ucx-intranode conflicts with --force-ucx-tcp",
+        "--ucx-intranode configures pure same-node CUDA IPC/NVL",
+    ):
+        assert expected in source
+
+    assert 'if "all" in tls:' in source
+    assert '"cuda_ipc" not in tls' in source
+    assert "tls.isdisjoint(INTRANODE_SHARED_MEMORY_TLS)" in source
+
+    transport_source = source[
+        source.index("def configure_ucx_transport(args: argparse.Namespace)")
+    :]
+    assert transport_source.index("configure_ucx_intranode_transport(args)") < (
+        transport_source.index("if args.ucx_tls:")
+    )
+
+
+def test_ep_memory_view_failures_have_actionable_intranode_diagnostics():
+    binding_cpp = _repo_root() / "examples/device/ep/csrc/nixl_ep.cpp"
+    source = binding_cpp.read_text()
+
+    for expected in (
+        "check_ep_mem_view_status",
+        "Failed to prepare ",
+        "NIXL_EP_UCX_INTRANODE=1",
+        "UCX_TLS=sm,cuda_ipc,cuda_copy,self",
+        "UCX_NET_DEVICES=all",
+        "--ucx-gda-auto-device",
+        "Failed to create device memory list(remote): No ",
+        "such device",
+    ):
+        assert expected in source
+
+    assert "prepMemView(remote_descs, gpu_ctx.remote_mvh" in source
+    assert '"remote");' in source
+    remote_assert = (
+        "prepMemView(remote_descs, gpu_ctx.remote_mvh, "
+        "&nixl_agent_info->extra_params) == NIXL_SUCCESS"
+    )
+    assert remote_assert not in source

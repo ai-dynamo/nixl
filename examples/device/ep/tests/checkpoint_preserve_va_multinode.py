@@ -30,9 +30,10 @@ script follows the Dynamo snapshot-control contract: after pause it writes
 TCPStore connection, resumes NIXL EP, validates graph-visible addresses, and
 replays the pre-captured CUDA graph after ``restore-complete``. Use
 ``--force-ucx-tcp`` or ``NIXL_EP_FORCE_UCX_TCP=1`` to force UCX away from RDMA
-on clusters without RDMA device access. Use ``--ucx-gda-auto-device`` or
-``NIXL_EP_UCX_GDA_AUTO_DEVICE=1`` to opt into IBGDA preflight and automatic
-``UCX_NET_DEVICES`` selection.
+on clusters without RDMA device access. Use ``--ucx-intranode`` or
+``NIXL_EP_UCX_INTRANODE=1`` for same-node CUDA IPC/NVLink runs. Use
+``--ucx-gda-auto-device`` or ``NIXL_EP_UCX_GDA_AUTO_DEVICE=1`` to opt into
+IBGDA preflight and automatic ``UCX_NET_DEVICES`` selection.
 """
 
 from __future__ import annotations
@@ -64,6 +65,11 @@ SNAPSHOT_CONTROL_ENV = "DYN_SNAPSHOT_CONTROL_DIR"
 READY_FOR_CHECKPOINT = "ready-for-checkpoint"
 SNAPSHOT_COMPLETE = "snapshot-complete"
 RESTORE_COMPLETE = "restore-complete"
+INTRANODE_ENV = "NIXL_EP_UCX_INTRANODE"
+INTRANODE_DEFAULT_UCX_TLS = "sm,cuda_ipc,cuda_copy,self"
+INTRANODE_SHARED_MEMORY_TLS = frozenset(
+    ("sm", "posix", "sysv", "cma", "knem", "xpmem")
+)
 GDA_AUTO_DEVICE_ENV = "NIXL_EP_UCX_GDA_AUTO_DEVICE"
 GDA_RETAIN_ENV_VARS = (
     "UCX_IB_GDA_RETAIN_INACTIVE_CTX",
@@ -229,6 +235,20 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--ucx-intranode",
+        action="store_true",
+        default=env_flag(INTRANODE_ENV),
+        help=(
+            "Configure UCX for same-node NIXL EP low-latency runs. The "
+            "script sets UCX_TLS=sm,cuda_ipc,cuda_copy,self before importing "
+            "nixl_ep and clears stale network-device restrictions with "
+            "UCX_NET_DEVICES=all. Use --ucx-tls to override the TLS list; "
+            "the override must still include cuda_ipc plus a shared-memory "
+            "active-message transport. Defaults to "
+            f"${INTRANODE_ENV}."
+        ),
+    )
+    parser.add_argument(
         "--ucx-gda-auto-device",
         action="store_true",
         default=env_flag(GDA_AUTO_DEVICE_ENV),
@@ -270,12 +290,79 @@ def create_store(args: argparse.Namespace, env: RankEnv) -> dist.TCPStore:
     )
 
 
+def parse_ucx_tls(ucx_tls: str) -> set[str]:
+    return {
+        item.strip().split(":", maxsplit=1)[0].lower()
+        for item in ucx_tls.split(",")
+        if item.strip()
+    }
+
+
+def validate_intranode_ucx_tls(ucx_tls: str) -> None:
+    tls = parse_ucx_tls(ucx_tls)
+    if "all" in tls:
+        raise ValueError(
+            "--ucx-intranode requires an explicit UCX_TLS allow-list; "
+            f"got {ucx_tls!r}"
+        )
+    if any(item.startswith("^") for item in tls):
+        raise ValueError(
+            "--ucx-intranode requires an explicit UCX_TLS allow-list; "
+            f"got exclusion list {ucx_tls!r}"
+        )
+    if "cuda_ipc" not in tls:
+        raise ValueError(
+            "--ucx-intranode requires UCX_TLS to include cuda_ipc for "
+            f"same-node GPU memory views; got {ucx_tls!r}"
+        )
+    if tls.isdisjoint(INTRANODE_SHARED_MEMORY_TLS):
+        allowed = ",".join(sorted(INTRANODE_SHARED_MEMORY_TLS))
+        raise ValueError(
+            "--ucx-intranode requires UCX_TLS to include a shared-memory "
+            "active-message transport for metadata/control "
+            f"({allowed}); got {ucx_tls!r}"
+        )
+
+
+def configure_ucx_intranode_transport(args: argparse.Namespace) -> None:
+    ucx_tls = args.ucx_tls or INTRANODE_DEFAULT_UCX_TLS
+    validate_intranode_ucx_tls(ucx_tls)
+
+    previous_tls = os.environ.get("UCX_TLS")
+    os.environ["UCX_TLS"] = ucx_tls
+    print(
+        f"[transport] set UCX_TLS={ucx_tls} for intranode CUDA IPC/NVL"
+        + (f" (overrode {previous_tls})" if previous_tls else ""),
+        flush=True,
+    )
+
+    previous_devices = os.environ.get("UCX_NET_DEVICES")
+    os.environ["UCX_NET_DEVICES"] = "all"
+    print(
+        "[transport] set UCX_NET_DEVICES=all for intranode CUDA IPC/NVL"
+        + (f" (overrode {previous_devices})" if previous_devices else ""),
+        flush=True,
+    )
+
+
 def configure_ucx_transport(args: argparse.Namespace) -> None:
     if args.ucx_gda_auto_device and args.force_ucx_tcp:
         raise ValueError("--ucx-gda-auto-device conflicts with --force-ucx-tcp")
+    if args.ucx_intranode and args.force_ucx_tcp:
+        raise ValueError("--ucx-intranode conflicts with --force-ucx-tcp")
+    if args.ucx_intranode and args.ucx_gda_auto_device:
+        raise ValueError(
+            "--ucx-intranode configures pure same-node CUDA IPC/NVL and "
+            "conflicts with --ucx-gda-auto-device. Use --ucx-gda-auto-device "
+            "alone for a same-node IBGDA/RDMA fallback."
+        )
 
     if args.ucx_gda_auto_device:
         configure_ucx_gda_pre_import()
+
+    if args.ucx_intranode:
+        configure_ucx_intranode_transport(args)
+        return
 
     if args.ucx_tls:
         os.environ["UCX_TLS"] = args.ucx_tls

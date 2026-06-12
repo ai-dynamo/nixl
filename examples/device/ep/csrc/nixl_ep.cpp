@@ -26,6 +26,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <cuda_runtime.h>
 #include <memory>
@@ -67,6 +68,37 @@ void sleep_ms(int milliseconds) {
 uint64_t milliseconds_to_cycles(uint64_t milliseconds, int device_clock_rate_khz) {
     EP_HOST_ASSERT(device_clock_rate_khz > 0);
     return milliseconds * static_cast<uint64_t>(device_clock_rate_khz);
+}
+
+std::string nixl_status_message(nixl_status_t status) {
+    std::ostringstream ss;
+    ss << nixlEnumStrings::statusStr(status) << " (" << status << ")";
+    return ss.str();
+}
+
+void check_nixl_status(nixl_status_t status, const std::string& operation) {
+    if (status != NIXL_SUCCESS) {
+        throw std::runtime_error(operation + " failed: " + nixl_status_message(status));
+    }
+}
+
+void check_ep_mem_view_status(nixl_status_t status, const std::string& view_name) {
+    if (status == NIXL_SUCCESS)
+        return;
+
+    std::ostringstream ss;
+    ss << "Failed to prepare " << view_name << " NIXL EP memory view: "
+       << nixl_status_message(status)
+       << ". For same-node low-latency EP runs, configure UCX with cuda_ipc "
+          "plus a shared-memory active-message transport, for example "
+          "NIXL_EP_UCX_INTRANODE=1 or "
+          "UCX_TLS=sm,cuda_ipc,cuda_copy,self with UCX_NET_DEVICES=all. "
+          "If UCX reports 'Failed to create device memory list(remote): No "
+          "such device', the installed UCX GPU device API may not support "
+          "pure CUDA IPC memory views; use --ucx-gda-auto-device to select "
+          "the CUDA-local IBGDA device plus its ordinary HCA, or rebuild UCX "
+          "with CUDA IPC device API support.";
+    throw std::runtime_error(ss.str());
 }
 
 } // namespace
@@ -1450,10 +1482,16 @@ void Buffer::_nixl_ep_memory_views_create(void) {
         barrier_descs.addDesc(nixlRemoteDesc((uintptr_t)nixl_peer_info[r].sync_buffer_ptr, max_num_ranks * sizeof(int), nixl_peer_info[r].device_id, remote_agent_name));
     }
 
-    EP_HOST_ASSERT(nixl_agent_info->agent->prepMemView(local_descs, gpu_ctx.local_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+    check_ep_mem_view_status(
+        nixl_agent_info->agent->prepMemView(local_descs, gpu_ctx.local_mvh, &nixl_agent_info->extra_params),
+        "local");
     if (!remote_ranks.empty()) {
-        EP_HOST_ASSERT(nixl_agent_info->agent->prepMemView(remote_descs, gpu_ctx.remote_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
-        EP_HOST_ASSERT(nixl_agent_info->agent->prepMemView(barrier_descs, gpu_ctx.barrier_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+        check_ep_mem_view_status(
+            nixl_agent_info->agent->prepMemView(remote_descs, gpu_ctx.remote_mvh, &nixl_agent_info->extra_params),
+            "remote");
+        check_ep_mem_view_status(
+            nixl_agent_info->agent->prepMemView(barrier_descs, gpu_ctx.barrier_mvh, &nixl_agent_info->extra_params),
+            "barrier");
 
         if (!low_latency_mode && max_num_ranks > NUM_MAX_NVL_PEERS) {
             nixl_remote_dlist_t ht_barrier_descs(VRAM_SEG);
@@ -1461,7 +1499,9 @@ void Buffer::_nixl_ep_memory_views_create(void) {
                 std::string remote_agent_name = remote_set.count(r) ? nixl_agent_info->remote_agent_names[r] : nixl_null_agent;
                 ht_barrier_descs.addDesc(nixlRemoteDesc((uintptr_t)nixl_peer_info[r].ht_barrier_ptr, sizeof(uint64_t), nixl_peer_info[r].device_id, remote_agent_name));
             }
-            EP_HOST_ASSERT(nixl_agent_info->agent->prepMemView(ht_barrier_descs, gpu_ctx.ht_barrier_mvh, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+            check_ep_mem_view_status(
+                nixl_agent_info->agent->prepMemView(ht_barrier_descs, gpu_ctx.ht_barrier_mvh, &nixl_agent_info->extra_params),
+                "high-throughput barrier");
         }
     }
     CUDA_CHECK(cudaMemcpy(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx), cudaMemcpyHostToDevice));
@@ -1554,14 +1594,22 @@ void Buffer::_nixl_agent_init() {
         nixlBlobDesc(reinterpret_cast<uintptr_t>(sync_count_ptr), max_num_ranks * sizeof(int), device_id, ""));
     nixl_agent_info->ht_barrier_reg_descs.clear();
 
-    EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->rdma_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
-    EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->sync_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
-    EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->sync_count_reg_descs, &nixl_agent_info->extra_params) == NIXL_SUCCESS);
+    check_nixl_status(
+        agent->registerMem(nixl_agent_info->rdma_reg_descs, &nixl_agent_info->extra_params),
+        "register RDMA memory");
+    check_nixl_status(
+        agent->registerMem(nixl_agent_info->sync_reg_descs, &nixl_agent_info->extra_params),
+        "register sync memory");
+    check_nixl_status(
+        agent->registerMem(nixl_agent_info->sync_count_reg_descs, &nixl_agent_info->extra_params),
+        "register sync-count memory");
 
     if (local_ht_barrier_counter) {
         nixl_agent_info->ht_barrier_reg_descs.addDesc(
             nixlBlobDesc((uintptr_t)(local_ht_barrier_counter), sizeof(uint64_t), get_local_device_id(), ""));
-        EP_HOST_ASSERT(agent->registerMem(nixl_agent_info->ht_barrier_reg_descs) == NIXL_SUCCESS);
+        check_nixl_status(
+            agent->registerMem(nixl_agent_info->ht_barrier_reg_descs),
+            "register high-throughput barrier memory");
     }
 
     if (getenv("NIXL_ETCD_ENDPOINTS")) {
