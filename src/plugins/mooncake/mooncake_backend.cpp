@@ -268,6 +268,10 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         }
         priv->batch_id = batch_id;
         priv->request_count = 0;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            active_batch_ids_.insert(batch_id);
+        }
     }
 
     size_t request_count = local.descCount();
@@ -311,8 +315,11 @@ nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
         // Each batch_id has the batch size, and cannot process more requests
         // than the batch size. So, free the batch id here to workaround the issue
         // where the same nixlBackendReqH could be used to post multiple transfer.
-        freeBatchID(engine_, priv->batch_id);
+        const auto batch_id = priv->batch_id;
+        freeBatchID(engine_, batch_id);
         priv->batch_id = INVALID_BATCH;
+        std::lock_guard<std::mutex> lock(mutex_);
+        active_batch_ids_.erase(batch_id);
     }
     return has_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
 }
@@ -321,10 +328,43 @@ nixl_status_t
 nixlMooncakeEngine::releaseReqH(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
     if (priv->batch_id != INVALID_BATCH) {
-        freeBatchID(engine_, priv->batch_id);
+        const auto batch_id = priv->batch_id;
+        freeBatchID(engine_, batch_id);
+        std::lock_guard<std::mutex> lock(mutex_);
+        active_batch_ids_.erase(batch_id);
     }
     delete priv;
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlMooncakeEngine::checkpointPauseGraphStable() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!active_batch_ids_.empty()) {
+        NIXL_ERROR << "Mooncake graph-stable checkpoint pause is unsupported: "
+                   << active_batch_ids_.size()
+                   << " transfer batch(es) are still active.";
+        return NIXL_ERR_NOT_ALLOWED;
+    }
+
+    NIXL_ERROR
+        << "Mooncake graph-stable checkpoint pause is unsupported. "
+        << "Preserving CUDA virtual addresses is insufficient because "
+        << "Mooncake owns opaque transport, QP, MR, rkey, IPC, remote segment, "
+        << "registration, and batch state that cannot yet be quiesced and "
+        << "refreshed in place through the NIXL plugin.";
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
+nixl_status_t
+nixlMooncakeEngine::checkpointResumeGraphStable() const {
+    NIXL_ERROR
+        << "Mooncake graph-stable checkpoint resume is unsupported. "
+        << "The NIXL Mooncake plugin cannot safely refresh opaque Mooncake "
+        << "transport, QP, MR, rkey, IPC, remote segment, registration, and "
+        << "batch state in place without invalidating CUDA graph-visible "
+        << "addresses.";
+    return NIXL_ERR_NOT_SUPPORTED;
 }
 
 nixl_status_t

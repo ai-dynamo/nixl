@@ -32,6 +32,21 @@ Mooncake transfer engine is a high-performance, zero-copy data transfer library.
 1. The `ProgTh[read]` features are not supported.
 2. The current version of Mooncake Transfer Engine manages metadata exchange by itself, which is different from NIXL.
 3. The sum of the number of release requests for each handle allocated by `prepXfer()` should be less than `kMaxRequestCount(1024)`.
+4. CUDA-graph-stable checkpoint pause/resume is not supported. The backend exposes fail-closed `checkpointPauseGraphStable()` and `checkpointResumeGraphStable()` hooks that return `NIXL_ERR_NOT_SUPPORTED` (or `NIXL_ERR_NOT_ALLOWED` if transfer batches are still active).
+
+## CUDA-Graph-Stable Checkpointing
+
+Preserving CUDA virtual addresses is necessary but not sufficient for safe Mooncake checkpoint/resume. Mooncake owns opaque transport state that can be embedded in CUDA-graph-visible execution paths, including QPs, memory registrations, rkeys, IPC handles, remote segments, segment cache entries, and active batch IDs.
+
+A future implementation must provide all of the following semantics before a checkpoint flow can replay existing CUDA graphs after restore:
+
+- Quiesce all outstanding transfers and reject pause while request handles or batch IDs are active.
+- Retain graph-visible buffers at the same virtual addresses.
+- Release or invalidate network and IPC resources without freeing graph-visible buffers.
+- Recreate QPs, memory registrations, rkeys, IPC handles, remote segments, and Transfer Engine registrations.
+- Refresh all graph-visible metadata in place before resume.
+
+Until those semantics exist in Mooncake Transfer Engine and are plumbed through this backend, checkpoint integrations must fail closed instead of treating Mooncake as graph-stable.
 
 > [!IMPORTANT]
 > We are working for refactoring Mooncake Transfer Engine to make it more adaptful and useful.

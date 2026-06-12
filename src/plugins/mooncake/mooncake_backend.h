@@ -111,6 +111,12 @@ public:
     nixl_status_t
     genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
+    nixl_status_t
+    checkpointPauseGraphStable() const;
+
+    nixl_status_t
+    checkpointResumeGraphStable() const;
+
 private:
     struct AgentInfo {
         int segment_id;
@@ -121,6 +127,7 @@ private:
     const std::string local_agent_name_;
     std::unordered_map<uint64_t, nixlMooncakeBackendMD *> mem_reg_info_;
     std::unordered_map<std::string, AgentInfo> connected_agents_;
+    mutable std::unordered_set<uint64_t> active_batch_ids_;
 };
 
 #endif
