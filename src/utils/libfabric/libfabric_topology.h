@@ -44,6 +44,7 @@ private:
     // System information
     int num_aws_accel; // AWS Trainium accelerators
     int num_nvidia_accel; // NVIDIA GPU accelerators
+    int num_amd_accel; // AMD GPU accelerators
     int num_numa_nodes;
     int num_devices;
 
@@ -146,6 +147,8 @@ private:
     bool
     isNeuronAccel(hwloc_obj_t obj) const;
     bool
+    isAmdAccel(hwloc_obj_t obj) const;
+    bool
     isEfaDevice(hwloc_obj_t obj) const;
 
     // retrieves line speed of NIC from map
@@ -211,6 +214,11 @@ public:
         return num_nvidia_accel;
     }
 
+    int
+    getNumAmdAccel() const {
+        return num_amd_accel;
+    }
+
     const std::vector<std::string> &
     getAllDevices() const {
         return all_devices;
@@ -232,7 +240,13 @@ public:
 
     enum fi_hmem_iface
     getMrAttrIface(int device_id) const {
-        return (device_id < num_nvidia_accel) ? FI_HMEM_CUDA : FI_HMEM_NEURON;
+        if (device_id < num_nvidia_accel) {
+            return FI_HMEM_CUDA;
+        } else if (device_id < num_nvidia_accel + num_amd_accel) {
+            return FI_HMEM_ROCR;
+        } else {
+            return FI_HMEM_NEURON;
+        }
     }
 
     /** @brief Invalid NUMA node id constant. */

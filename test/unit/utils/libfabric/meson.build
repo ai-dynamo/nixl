@@ -14,6 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Hipify sources that include cuda_runtime.h for ROCm/HIP builds
+hipify_cmd = find_program('hipify-perl')
+hipify_src = generator(hipify_cmd,
+                       output : ['@BASENAME@_hip.cpp'],
+                       arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
+
+libfabric_topology_test_hip_src = hipify_src.process('libfabric_topology_test.cpp', extra_args: ['-o'])
+
 libfabric_utils_dep = [ libfabric_dep, nixl_common_deps, serdes_interface ]
 libfabric_test_cpp_args = []
 
@@ -34,7 +42,7 @@ if get_option('buildtype') != 'release'
         '-Wl,--wrap=fi_fabric' ]
 
     libfabric_topology_test_bin = executable('libfabric_topology_test',
-               'libfabric_topology_test.cpp',
+               libfabric_topology_test_hip_src,
                dependencies: libfabric_utils_dep,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                link_with: libfabric_utils_lib,
