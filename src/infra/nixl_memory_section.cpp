@@ -181,7 +181,7 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
             }
         }
 
-        *lp = normalizeSecDesc(mem, nixl_mem); // Copy the basic desc part
+        *lp = mem; // Copy the basic desc part
 
         local_batch.push_back(local_sec);
 
