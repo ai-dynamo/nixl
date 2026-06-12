@@ -50,7 +50,7 @@ struct gpu_nixl_ctx {
     int num_rdma_ranks;
     int rank;
 
-    __device__ inline uint64_t offset_get(uint64_t ptr) {
+    __device__ inline uint64_t offset_get(uint64_t ptr) const {
         return ptr - reinterpret_cast<uint64_t>(rdma_buffer_ptr);
     }
 };
