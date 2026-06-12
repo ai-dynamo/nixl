@@ -327,7 +327,7 @@ testBasicTopology() {
                 cudaError_t err = cudaGetDeviceProperties(&prop, gpu_id);
                 if (err != cudaSuccess) {
                     NIXL_WARN << "   Failed to get properties for GPU " << gpu_id
-                            << ": " << cudaGetErrorString(err);
+                              << ": " << cudaGetErrorString(err);
                     continue;
                 }
 
