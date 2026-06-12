@@ -332,9 +332,19 @@ public:
     progressCompletionQueue() const;
 
     // Callback registration methods
-    /** Set callback for notification message processing */
+    /** Set callback for notification message processing.
+     *  Signature: (serialized_notif, sender_agent_idx_in_our_table).
+     *  sender_agent_idx is the agent_idx field decoded from the fi_senddata's
+     *  imm_data — the sender's local index in our agent_names_ table, which
+     *  the sender learned via NIXL_LIBFABRIC_MSG_HANDSHAKE. */
     void
-    setNotificationCallback(std::function<void(const std::string &)> callback);
+    setNotificationCallback(std::function<void(const std::string &, uint16_t)> callback);
+
+    /** Set callback for handshake-message processing.
+     *  Called with the serialized handshake payload on receipt of a
+     *  NIXL_LIBFABRIC_MSG_HANDSHAKE control message. */
+    void
+    setHandshakeCallback(std::function<void(const std::string &)> callback);
 
     /**
      * @brief Enable or disable a progress thread that handles CQ draining.
@@ -345,9 +355,12 @@ public:
     void
     setProgressThreadEnabled(bool enabled);
 
-    /** Set callback for XFER_ID tracking */
+    /** Set callback for XFER_ID tracking.
+     *  Signature: (imm_data, sender_agent_idx_in_our_table). sender_agent_idx
+     *  is decoded from the imm_data the sender shipped with fi_writedata,
+     *  via the handshake-negotiated agent_idx encoding. */
     void
-    setXferIdCallback(std::function<void(uint32_t)> callback);
+    setXferIdCallback(std::function<void(uint32_t, uint16_t)> callback);
 
     // Optimized resource management methods
     /** Allocate control request with size validation */
@@ -383,10 +396,12 @@ private:
     // Whether a progress thread is handling CQ draining
     bool progress_thread_enabled_ = false;
 
-    // Callback functions
-    std::function<void(const std::string &)> notificationCallback;
-    // XFER_ID tracking callback
-    std::function<void(uint32_t)> xferIdCallback;
+    // Callback functions. Receive completions carry the sender's agent_idx
+    // (its index in OUR table, as told to it via the handshake) decoded from
+    // the imm_data the sender shipped.
+    std::function<void(const std::string &, uint16_t)> notificationCallback;
+    std::function<void(uint32_t, uint16_t)> xferIdCallback;
+    std::function<void(const std::string &)> handshakeCallback;
 
     // Separate request pools for optimal performance
     ControlRequestPool control_request_pool_;
