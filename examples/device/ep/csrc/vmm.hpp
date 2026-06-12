@@ -20,6 +20,8 @@
 #include <cuda.h>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <optional>
 
 namespace nixl_ep {
 
@@ -41,7 +43,42 @@ public:
         return reinterpret_cast<void *>(static_cast<std::uintptr_t>(ptr_));
     }
 
+    void
+    release_physical_preserve_va();
+
+    void
+    remap_physical_at_preserved_va();
+
+    [[nodiscard]] bool
+    can_preserve_va() const noexcept {
+        return !is_cuda_malloc_ && ptr_;
+    }
+
+    [[nodiscard]] bool
+    is_mapped() const noexcept {
+        return is_cuda_malloc_ || vmm_mapped_;
+    }
+
+    [[nodiscard]] CUmemFabricHandle
+    export_fabric_handle() const;
+
+    [[nodiscard]] static std::unique_ptr<vmm_region>
+    import_fabric_handle(const CUmemFabricHandle &fabric_handle, size_t size);
+
 private:
+    vmm_region() = default;
+
+    struct cuda_alloc_ctx;
+
+    [[nodiscard]] static const cuda_alloc_ctx &
+    get_cuda_alloc_ctx();
+
+    void
+    map_handle(std::optional<CUdeviceptr> fixed_addr);
+
+    void
+    reserve_and_map(std::optional<CUdeviceptr> fixed_addr);
+
     void
     release() noexcept;
 

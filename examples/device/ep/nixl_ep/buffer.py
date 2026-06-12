@@ -21,7 +21,7 @@
 import os
 from contextlib import contextmanager
 from datetime import timedelta
-from typing import TYPE_CHECKING, Callable, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -206,6 +206,58 @@ class Buffer:
 
         assert tensor.numel() >= size.numel()
         return tensor[: size.numel()].view(size)
+
+    def get_graph_visible_addresses(self) -> Dict[str, int]:
+        """
+        Return CUDA virtual addresses that can be embedded in captured graphs.
+        """
+        return self.runtime.get_graph_visible_addresses()
+
+    def validate_graph_visible_addresses(self, expected: Dict[str, int]) -> bool:
+        """
+        Check whether graph-visible CUDA virtual addresses still match.
+        """
+        return self.runtime.validate_graph_visible_addresses(expected)
+
+    def checkpoint_pause_preserve_va(self) -> Dict[str, int]:
+        """
+        Tear down non-checkpointable NIXL state while keeping CUDA VAs reserved.
+
+        Returns:
+            A snapshot of graph-visible CUDA virtual addresses before pausing.
+        """
+        expected = self.get_graph_visible_addresses()
+        self.runtime.checkpoint_pause_preserve_va()
+        return expected
+
+    def checkpoint_resume_preserve_va(
+        self,
+        remote_ranks: Optional[List[int]] = None,
+        activate: bool = True,
+        expected_addresses: Optional[Dict[str, int]] = None,
+    ) -> None:
+        """
+        Recreate NIXL state after checkpoint restore at the preserved CUDA VAs.
+        """
+        remote_ranks = [] if remote_ranks is None else remote_ranks
+        if not self.low_latency_mode and remote_ranks:
+            self.runtime.checkpoint_resume_preserve_va([], None, activate)
+            self._ht_connect_ranks(remote_ranks)
+        elif self.tcp_store_group is not None and remote_ranks:
+            self.runtime.checkpoint_resume_preserve_va([], None, activate)
+            with self._fetch_remote_metadata_from_tcp_store(remote_ranks) as remote_mds:
+                self.runtime.connect_ranks(remote_ranks, remote_mds, [], activate)
+        else:
+            self.runtime.checkpoint_resume_preserve_va(
+                remote_ranks, None, activate
+            )
+
+        if expected_addresses is not None:
+            if not self.validate_graph_visible_addresses(expected_addresses):
+                raise RuntimeError(
+                    "NIXL-EP graph-visible CUDA virtual addresses changed "
+                    "across checkpoint resume"
+                )
 
     @staticmethod
     def _unpack_bias(bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]):

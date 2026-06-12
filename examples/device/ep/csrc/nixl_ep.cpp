@@ -31,7 +31,9 @@
 #include <memory>
 #include <optional>
 #include <pybind11/functional.h>
+#include <pybind11/stl.h>
 #include <torch/python.h>
+#include <unordered_map>
 
 #include "nixl_ep.hpp"
 #include "kernels/api.cuh"
@@ -49,6 +51,8 @@
 #include <net/if.h>
 #include <sstream>
 #include <unordered_set>
+
+namespace py = pybind11;
 
 #define NIXL_ETCD_WATCH_TIMEOUT std::chrono::microseconds(1000000000) // 1000 seconds
 
@@ -148,8 +152,11 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
 
     if (num_nvl_bytes > 0) {
         // Local IPC: alloc local memory and set local IPC handles
-        CUDA_CHECK(cudaMalloc(&buffer_ptrs[nvl_rank], num_nvl_bytes + barrier_signal_bytes + buffer_ptr_bytes + barrier_signal_ptr_bytes));
-        CUDA_CHECK(cudaIpcGetMemHandle(&ipc_handles[nvl_rank], buffer_ptrs[nvl_rank]));
+        m_nvl_alloc = std::make_unique<vmm_region>(
+            num_nvl_bytes + barrier_signal_bytes + buffer_ptr_bytes +
+            barrier_signal_ptr_bytes);
+        buffer_ptrs[nvl_rank] = m_nvl_alloc->ptr();
+        ipc_handles[nvl_rank] = m_nvl_alloc->export_fabric_handle();
         buffer_ptrs_gpu = reinterpret_cast<void**>(static_cast<uint8_t*>(buffer_ptrs[nvl_rank]) + num_nvl_bytes + barrier_signal_bytes);
 
         // Set barrier signals
@@ -204,11 +211,17 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     sync_count_ptr = static_cast<int *>(m_sync_count_alloc->ptr());
     CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, num_sync_buffer_bytes));
     CUDA_CHECK(cudaMemset(sync_count_ptr, 0, num_sync_buffer_bytes));
+    m_gpu_ctx_alloc = std::make_unique<vmm_region>(sizeof(gpu_nixl_ctx));
+    gpu_ctx_ptr = static_cast<gpu_nixl_ctx *>(m_gpu_ctx_alloc->ptr());
 
     if (!low_latency_mode) {
-        CUDA_CHECK(cudaMalloc(&local_ht_barrier_counter, sizeof(uint64_t)));
+        m_local_ht_barrier_alloc = std::make_unique<vmm_region>(sizeof(uint64_t));
+        local_ht_barrier_counter =
+            static_cast<uint64_t *>(m_local_ht_barrier_alloc->ptr());
         CUDA_CHECK(cudaMemset(local_ht_barrier_counter, 0, sizeof(uint64_t)));
-        CUDA_CHECK(cudaMalloc(&last_ht_barrier_counter, sizeof(uint64_t)));
+        m_last_ht_barrier_alloc = std::make_unique<vmm_region>(sizeof(uint64_t));
+        last_ht_barrier_counter =
+            static_cast<uint64_t *>(m_last_ht_barrier_alloc->ptr());
         CUDA_CHECK(cudaMemset(last_ht_barrier_counter, 0, sizeof(uint64_t)));
     }
 
@@ -261,8 +274,9 @@ int Buffer::get_local_device_id() const {
     return device_id;
 }
 
-pybind11::bytearray Buffer::get_local_ipc_handle() const {
-    return {ipc_handles[nvl_rank].reserved, CUDA_IPC_HANDLE_SIZE};
+pybind11::bytes Buffer::get_local_ipc_handle() const {
+    return pybind11::bytes(reinterpret_cast<const char *>(&ipc_handles[nvl_rank]),
+                           sizeof(CUmemFabricHandle));
 }
 
 torch::Tensor Buffer::get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset, bool use_rdma_buffer) const {
@@ -277,18 +291,54 @@ torch::Stream Buffer::get_comm_stream() const {
     return comm_stream;
 }
 
+std::unordered_map<std::string, uintptr_t> Buffer::get_graph_visible_addresses() const {
+    std::unordered_map<std::string, uintptr_t> addresses = {
+        {"rdma_buffer", reinterpret_cast<uintptr_t>(rdma_buffer_ptr)},
+        {"rdma_buffer_ptr", reinterpret_cast<uintptr_t>(rdma_buffer_ptr)},
+        {"mask_buffer", reinterpret_cast<uintptr_t>(mask_buffer_ptr)},
+        {"mask_buffer_ptr", reinterpret_cast<uintptr_t>(mask_buffer_ptr)},
+        {"sync_buffer", reinterpret_cast<uintptr_t>(sync_buffer_ptr)},
+        {"sync_buffer_ptr", reinterpret_cast<uintptr_t>(sync_buffer_ptr)},
+        {"sync_count_buffer", reinterpret_cast<uintptr_t>(sync_count_ptr)},
+        {"sync_count_ptr", reinterpret_cast<uintptr_t>(sync_count_ptr)},
+        {"workspace", reinterpret_cast<uintptr_t>(workspace)},
+        {"gpu_ctx", reinterpret_cast<uintptr_t>(gpu_ctx_ptr)},
+        {"gpu_ctx_ptr", reinterpret_cast<uintptr_t>(gpu_ctx_ptr)},
+    };
+
+    if (num_nvl_bytes > 0 && 0 <= nvl_rank && nvl_rank < NUM_MAX_NVL_PEERS) {
+        addresses["nvl_buffer"] = reinterpret_cast<uintptr_t>(buffer_ptrs[nvl_rank]);
+        addresses["nvl_buffer_ptr"] = reinterpret_cast<uintptr_t>(buffer_ptrs[nvl_rank]);
+        addresses["buffer_ptrs_gpu"] = reinterpret_cast<uintptr_t>(buffer_ptrs_gpu);
+        addresses["barrier_signal_ptrs_gpu"] =
+            reinterpret_cast<uintptr_t>(barrier_signal_ptrs_gpu);
+    }
+    if (!low_latency_mode) {
+        addresses["local_ht_barrier_counter"] =
+            reinterpret_cast<uintptr_t>(local_ht_barrier_counter);
+        addresses["last_ht_barrier_counter"] =
+            reinterpret_cast<uintptr_t>(last_ht_barrier_counter);
+    }
+
+    return addresses;
+}
+
+bool Buffer::validate_graph_visible_addresses(
+        const std::unordered_map<std::string, uintptr_t>& expected) const {
+    const auto current = get_graph_visible_addresses();
+    for (const auto& [name, address] : expected) {
+        const auto it = current.find(name);
+        if (it == current.end() || it->second != address)
+            return false;
+    }
+    return true;
+}
+
 void Buffer::destroy() {
     auto warn_cuda = [](cudaError_t status, const char *operation) noexcept {
         if (status != cudaSuccess) {
             std::cerr << "WARNING: destroy() failed to " << operation << ": "
                       << cudaGetErrorString(status) << '\n';
-        }
-    };
-
-    auto warn_nixl = [](nixl_status_t status, const char* operation) noexcept {
-        if (status != NIXL_SUCCESS) {
-            std::cerr << "WARNING: destroy() failed to " << operation
-                      << ": " << nixlEnumStrings::statusStr(status) << '\n';
         }
     };
 
@@ -302,44 +352,31 @@ void Buffer::destroy() {
     _nixl_ep_destroy();
 
     if (num_nvl_bytes > 0) {
-        intranode::barrier(barrier_signal_ptrs_gpu, nvl_rank, num_nvl_ranks, timeout_cycles, comm_stream);
-        warn_cuda(cudaDeviceSynchronize(), "synchronize device after intranode barrier");
+        if (!checkpoint_paused) {
+            intranode::barrier(
+                barrier_signal_ptrs_gpu, nvl_rank, num_nvl_ranks,
+                timeout_cycles, comm_stream);
+            warn_cuda(cudaDeviceSynchronize(),
+                      "synchronize device after intranode barrier");
 
-        // Close remote IPC
-        if (is_available()) {
-            for (int i = 0; i < num_nvl_ranks; ++ i) if (i != nvl_rank)
-                warn_cuda(cudaIpcCloseMemHandle(buffer_ptrs[i]), "close remote IPC handle");
+            // Close remote IPC
+            if (is_available()) {
+                for (int i = 0; i < num_nvl_ranks; ++ i) if (i != nvl_rank) {
+                    m_remote_nvl_allocs[i].reset();
+                    buffer_ptrs[i] = nullptr;
+                    barrier_signal_ptrs[i] = nullptr;
+                }
+            }
         }
 
-        // Free local buffer
-        warn_cuda(cudaFree(buffer_ptrs[nvl_rank]), "free local NVL buffer");
+        m_nvl_alloc.reset();
+        buffer_ptrs[nvl_rank] = nullptr;
+        buffer_ptrs_gpu = nullptr;
+        barrier_signal_ptrs[nvl_rank] = nullptr;
+        barrier_signal_ptrs_gpu = nullptr;
     }
 
-    if (nixl_agent_info and nixl_agent_info->agent != nullptr) {
-        if (getenv("NIXL_ETCD_ENDPOINTS")) {
-            warn_nixl(nixl_agent_info->agent->invalidateLocalMD(),
-                      "invalidate local metadata");
-        }
-        warn_nixl(nixl_agent_info->agent->deregisterMem(
-                      nixl_agent_info->rdma_reg_descs,
-                      &nixl_agent_info->extra_params),
-                  "deregister RDMA memory");
-        warn_nixl(nixl_agent_info->agent->deregisterMem(
-                      nixl_agent_info->sync_reg_descs,
-                      &nixl_agent_info->extra_params),
-                  "deregister sync memory");
-        warn_nixl(nixl_agent_info->agent->deregisterMem(
-                      nixl_agent_info->sync_count_reg_descs,
-                      &nixl_agent_info->extra_params),
-                  "deregister sync-count memory");
-        if (local_ht_barrier_counter != nullptr) {
-            warn_nixl(nixl_agent_info->agent->deregisterMem(
-                          nixl_agent_info->ht_barrier_reg_descs),
-                      "deregister ht barrier memory");
-        }
-
-        nixl_agent_info.reset();
-    }
+    _nixl_agent_destroy(false);
 
     m_rdma_alloc.reset();
     rdma_buffer_ptr = nullptr;
@@ -349,11 +386,13 @@ void Buffer::destroy() {
     sync_buffer_ptr = nullptr;
     m_sync_count_alloc.reset();
     sync_count_ptr = nullptr;
+    m_gpu_ctx_alloc.reset();
+    gpu_ctx_ptr = nullptr;
 
     if (!low_latency_mode) {
-        warn_cuda(cudaFree(local_ht_barrier_counter), "free local ht barrier counter");
+        m_local_ht_barrier_alloc.reset();
         local_ht_barrier_counter = nullptr;
-        warn_cuda(cudaFree(last_ht_barrier_counter), "free last ht barrier counter");
+        m_last_ht_barrier_alloc.reset();
         last_ht_barrier_counter = nullptr;
         warn_cuda(cudaFreeHost(const_cast<int*>(moe_recv_counter)), "free moe receive counter");
         moe_recv_counter = nullptr;
@@ -441,19 +480,24 @@ void Buffer::_nixl_agents_peer_info_gather(std::vector<int>& ranks) {
     }
 }
 
-void Buffer::_ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles = {}) {
+void Buffer::_ipc_handles_sync(const std::vector<std::optional<pybind11::bytes>> &all_gathered_handles = {}) {
     if (num_nvl_bytes > 0) {
         EP_HOST_ASSERT(all_gathered_handles.size() == max_num_ranks);
         for (int i = 0, offset = rdma_rank * num_nvl_ranks; i < num_nvl_ranks; ++ i) {
             EP_HOST_ASSERT(all_gathered_handles[offset + i].has_value());
             auto handle_str = std::string(all_gathered_handles[offset + i].value());
-            EP_HOST_ASSERT(handle_str.size() == CUDA_IPC_HANDLE_SIZE);
+            EP_HOST_ASSERT(handle_str.size() == sizeof(CUmemFabricHandle));
             if (offset + i != rank) {
-                std::memcpy(ipc_handles[i].reserved, handle_str.c_str(), CUDA_IPC_HANDLE_SIZE);
-                CUDA_CHECK(cudaIpcOpenMemHandle(&buffer_ptrs[i], ipc_handles[i], cudaIpcMemLazyEnablePeerAccess));
+                std::memcpy(&ipc_handles[i], handle_str.c_str(), sizeof(CUmemFabricHandle));
+                m_remote_nvl_allocs[i] = vmm_region::import_fabric_handle(
+                    ipc_handles[i],
+                    num_nvl_bytes + NUM_MAX_NVL_PEERS * sizeof(int) +
+                        NUM_MAX_NVL_PEERS * sizeof(void *) +
+                        NUM_MAX_NVL_PEERS * sizeof(int *));
+                buffer_ptrs[i] = m_remote_nvl_allocs[i]->ptr();
                 barrier_signal_ptrs[i] = reinterpret_cast<int*>(static_cast<uint8_t*>(buffer_ptrs[i]) + num_nvl_bytes);
             } else {
-                EP_HOST_ASSERT(std::memcmp(ipc_handles[i].reserved, handle_str.c_str(), CUDA_IPC_HANDLE_SIZE) == 0);
+                EP_HOST_ASSERT(std::memcmp(&ipc_handles[i], handle_str.c_str(), sizeof(CUmemFabricHandle)) == 0);
             }
         }
 
@@ -465,8 +509,9 @@ void Buffer::_ipc_handles_sync(const std::vector<std::optional<pybind11::bytearr
 }
 
 void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds,
-    const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles, bool activate) {
+    const std::vector<std::optional<pybind11::bytes>> &all_gathered_handles, bool activate) {
     EP_HOST_ASSERT(!remote_ranks_list.empty());
+    EP_HOST_ASSERT(!checkpoint_paused && "cannot connect ranks while checkpoint paused");
     EP_HOST_ASSERT(!remote_mds.has_value() || remote_mds->size() == remote_ranks_list.size());
 
     if (!low_latency_mode && num_nvl_bytes > 0) {
@@ -518,8 +563,87 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std:
     available = true;
 }
 
+void Buffer::checkpoint_pause_preserve_va() {
+    if (checkpoint_paused)
+        return;
+    if (!available) {
+        throw std::runtime_error(
+            "NIXL-EP graph-stable checkpoint pause requires an available buffer");
+    }
+    if (!_can_preserve_graph_vas()) {
+        throw std::runtime_error(
+            "NIXL-EP graph-stable checkpoint pause requires CUDA VMM-preserved buffers");
+    }
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+    if (num_nvl_bytes > 0) {
+        for (int i = 0; i < num_nvl_ranks; ++i) {
+            if (i != nvl_rank) {
+                m_remote_nvl_allocs[i].reset();
+                buffer_ptrs[i] = nullptr;
+                barrier_signal_ptrs[i] = nullptr;
+            }
+        }
+    }
+    _nixl_ep_destroy();
+    _nixl_agent_destroy(false);
+    remote_ranks.clear();
+    nixl_peer_info.assign(max_num_ranks, NixlPeerInfo{});
+    nixl_peer_info[rank] = my_peer_info;
+    active_ranks.assign(max_num_ranks, false);
+    active_ranks[rank] = true;
+    set_active_rank_bound(rank + 1);
+    _release_graph_physical_memory();
+    checkpoint_paused = true;
+    available = false;
+}
+
+void Buffer::checkpoint_resume_preserve_va(const std::vector<int>& remote_ranks_list,
+                                           const std::optional<std::vector<nixl_blob_t>>& remote_mds,
+                                           bool activate) {
+    if (!checkpoint_paused)
+        return;
+    if (remote_mds.has_value() && remote_mds->size() != remote_ranks_list.size()) {
+        throw std::runtime_error("remote metadata count must match remote rank count");
+    }
+
+    _remap_graph_physical_memory();
+    if (m_nvl_alloc)
+        ipc_handles[nvl_rank] = m_nvl_alloc->export_fabric_handle();
+    _zero_graph_buffers();
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    my_peer_info.rdma_buffer_ptr = rdma_buffer_ptr;
+    my_peer_info.device_id = get_local_device_id();
+    my_peer_info.sync_buffer_ptr = sync_buffer_ptr;
+    my_peer_info.ht_barrier_ptr = local_ht_barrier_counter;
+    my_peer_info.rank = rank;
+
+    nixl_peer_info.assign(max_num_ranks, NixlPeerInfo{});
+    nixl_peer_info[rank] = my_peer_info;
+    active_ranks.assign(max_num_ranks, false);
+    active_ranks[rank] = true;
+    set_active_rank_bound(rank + 1);
+
+    _nixl_agent_init();
+    _nixl_ep_init();
+    checkpoint_paused = false;
+    available = true;
+
+    if (!remote_ranks_list.empty()) {
+        connect_ranks(remote_ranks_list, remote_mds, {}, activate);
+        if (remote_ranks.empty())
+            _nixl_ep_memory_views_create();
+    } else {
+        _nixl_ep_memory_views_create();
+    }
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+}
+
 void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
     EP_HOST_ASSERT(!remote_ranks_list.empty());
+    EP_HOST_ASSERT(!checkpoint_paused && "cannot disconnect ranks while checkpoint paused");
     EP_HOST_ASSERT(remote_ranks_list.size() <= remote_ranks.size());
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -751,7 +875,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
                                  buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens,
                                  barrier_signal_ptrs_gpu, rank, comm_stream,
                                  config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
-                                 num_nvl_bytes, timeout_cycles, true, low_latency_mode, gpu_ctx);
+                                 num_nvl_bytes, timeout_cycles, true, low_latency_mode, gpu_ctx_ptr);
     } else {
         rdma_channel_prefix_matrix = torch::empty({num_rdma_ranks, num_channels}, dtype(torch::kInt32).device(torch::kCUDA));
         recv_rdma_rank_prefix_sum = torch::empty({num_rdma_ranks}, dtype(torch::kInt32).device(torch::kCUDA));
@@ -774,7 +898,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
                                    buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens,
                                    barrier_signal_ptrs_gpu, rank, comm_stream,
                                    config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
-                                   num_nvl_bytes, timeout_cycles, low_latency_mode, gpu_ctx);
+                                   num_nvl_bytes, timeout_cycles, low_latency_mode, gpu_ctx_ptr);
 
         // Synchronize total received tokens and tokens per expert
         auto start_time = std::chrono::high_resolution_clock::now();
@@ -858,7 +982,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
                         rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens, config.num_max_rdma_chunked_recv_tokens,
                         buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
                         rank, num_ranks, cached_mode,
-                        comm_stream, num_channels, timeout_cycles, low_latency_mode, gpu_ctx);
+                        comm_stream, num_channels, timeout_cycles, low_latency_mode, gpu_ctx_ptr);
 
     // Wait streams
     std::optional<EventHandle> event;
@@ -973,7 +1097,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
                              buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens,
                              barrier_signal_ptrs_gpu, rank, comm_stream,
                              config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
-                             num_nvl_bytes, timeout_cycles, false, low_latency_mode, gpu_ctx);
+                             num_nvl_bytes, timeout_cycles, false, low_latency_mode, gpu_ctx_ptr);
 
     // Assign bias pointers
     auto bias_opts = std::vector<std::optional<torch::Tensor>>({bias_0, bias_1});
@@ -997,7 +1121,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
                        num_tokens, num_combined_tokens, hidden, num_topk,
                        rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens, config.num_max_rdma_chunked_recv_tokens,
                        buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
-                       rank, num_ranks, comm_stream, num_channels, timeout_cycles, low_latency_mode, gpu_ctx);
+                       rank, num_ranks, comm_stream, num_channels, timeout_cycles, low_latency_mode, gpu_ctx_ptr);
 
     // Wait streams
     std::optional<EventHandle> event;
@@ -1343,6 +1467,13 @@ void Buffer::_nixl_ep_memory_views_create(void) {
 }
 
 void Buffer::_nixl_ep_memory_views_destroy(void) {
+    if (!nixl_agent_info || nixl_agent_info->agent == nullptr) {
+        gpu_ctx.local_mvh = nullptr;
+        gpu_ctx.remote_mvh = nullptr;
+        gpu_ctx.barrier_mvh = nullptr;
+        gpu_ctx.ht_barrier_mvh = nullptr;
+        return;
+    }
     if (gpu_ctx.local_mvh) nixl_agent_info->agent->releaseMemView(gpu_ctx.local_mvh);
     if (gpu_ctx.remote_mvh) nixl_agent_info->agent->releaseMemView(gpu_ctx.remote_mvh);
     if (gpu_ctx.barrier_mvh) nixl_agent_info->agent->releaseMemView(gpu_ctx.barrier_mvh);
@@ -1354,6 +1485,7 @@ void Buffer::_nixl_ep_memory_views_destroy(void) {
 }
 
 void Buffer::_nixl_ep_init(void) {
+    EP_HOST_ASSERT(gpu_ctx_ptr != nullptr);
     gpu_ctx = {
         .sync_buffer_ptr = sync_buffer_ptr,
         .sync_count_ptr = sync_count_ptr,
@@ -1364,16 +1496,14 @@ void Buffer::_nixl_ep_init(void) {
         .num_rdma_ranks = num_rdma_ranks,
         .rank = rank,
     };
-    CUDA_CHECK(cudaMalloc(&gpu_ctx_ptr, sizeof(gpu_nixl_ctx)));
     CUDA_CHECK(cudaMemcpy(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx), cudaMemcpyHostToDevice));
 }
 
 void Buffer::_nixl_ep_destroy(void) {
     _nixl_ep_memory_views_destroy();
-    if (gpu_ctx_ptr != nullptr) {
-        cudaFree(gpu_ctx_ptr);
-        gpu_ctx_ptr = nullptr;
-    }
+    gpu_ctx = {};
+    if (gpu_ctx_ptr != nullptr && m_gpu_ctx_alloc && m_gpu_ctx_alloc->is_mapped())
+        CUDA_CHECK(cudaMemset(gpu_ctx_ptr, 0, sizeof(gpu_nixl_ctx)));
 }
 
 void Buffer::_nixl_agent_init() {
@@ -1442,6 +1572,113 @@ void Buffer::_nixl_agent_init() {
     }
 }
 
+void Buffer::_nixl_agent_destroy(bool preserve_local_metadata) {
+    auto warn_nixl = [](nixl_status_t status, const char* operation) noexcept {
+        if (status != NIXL_SUCCESS) {
+            std::cerr << "WARNING: failed to " << operation
+                      << ": " << nixlEnumStrings::statusStr(status) << '\n';
+        }
+    };
+
+    if (!nixl_agent_info || nixl_agent_info->agent == nullptr)
+        return;
+
+    if (!preserve_local_metadata && getenv("NIXL_ETCD_ENDPOINTS")) {
+        warn_nixl(nixl_agent_info->agent->invalidateLocalMD(),
+                  "invalidate local metadata");
+    }
+    warn_nixl(nixl_agent_info->agent->deregisterMem(
+                  nixl_agent_info->rdma_reg_descs,
+                  &nixl_agent_info->extra_params),
+              "deregister RDMA memory");
+    warn_nixl(nixl_agent_info->agent->deregisterMem(
+                  nixl_agent_info->sync_reg_descs,
+                  &nixl_agent_info->extra_params),
+              "deregister sync memory");
+    warn_nixl(nixl_agent_info->agent->deregisterMem(
+                  nixl_agent_info->sync_count_reg_descs,
+                  &nixl_agent_info->extra_params),
+              "deregister sync-count memory");
+    if (local_ht_barrier_counter != nullptr) {
+        warn_nixl(nixl_agent_info->agent->deregisterMem(
+                      nixl_agent_info->ht_barrier_reg_descs),
+                  "deregister ht barrier memory");
+    }
+
+    nixl_agent_info.reset();
+}
+
+bool Buffer::_can_preserve_graph_vas(void) const noexcept {
+    return m_rdma_alloc && m_rdma_alloc->can_preserve_va() &&
+           m_mask_alloc && m_mask_alloc->can_preserve_va() &&
+           m_sync_alloc && m_sync_alloc->can_preserve_va() &&
+           m_sync_count_alloc && m_sync_count_alloc->can_preserve_va() &&
+           m_workspace_alloc && m_workspace_alloc->can_preserve_va() &&
+           m_gpu_ctx_alloc && m_gpu_ctx_alloc->can_preserve_va() &&
+           (num_nvl_bytes == 0 ||
+            (m_nvl_alloc && m_nvl_alloc->can_preserve_va())) &&
+           (low_latency_mode ||
+            (m_local_ht_barrier_alloc &&
+             m_local_ht_barrier_alloc->can_preserve_va() &&
+             m_last_ht_barrier_alloc &&
+             m_last_ht_barrier_alloc->can_preserve_va()));
+}
+
+void Buffer::_release_graph_physical_memory(void) {
+    if (!_can_preserve_graph_vas())
+        throw std::runtime_error("NIXL-EP graph VA preservation requires CUDA VMM allocations");
+
+    m_gpu_ctx_alloc->release_physical_preserve_va();
+    m_sync_count_alloc->release_physical_preserve_va();
+    m_sync_alloc->release_physical_preserve_va();
+    m_mask_alloc->release_physical_preserve_va();
+    m_workspace_alloc->release_physical_preserve_va();
+    m_rdma_alloc->release_physical_preserve_va();
+    if (m_nvl_alloc)
+        m_nvl_alloc->release_physical_preserve_va();
+    if (m_local_ht_barrier_alloc)
+        m_local_ht_barrier_alloc->release_physical_preserve_va();
+    if (m_last_ht_barrier_alloc)
+        m_last_ht_barrier_alloc->release_physical_preserve_va();
+}
+
+void Buffer::_remap_graph_physical_memory(void) {
+    m_rdma_alloc->remap_physical_at_preserved_va();
+    m_workspace_alloc->remap_physical_at_preserved_va();
+    if (m_nvl_alloc)
+        m_nvl_alloc->remap_physical_at_preserved_va();
+    m_mask_alloc->remap_physical_at_preserved_va();
+    m_sync_alloc->remap_physical_at_preserved_va();
+    m_sync_count_alloc->remap_physical_at_preserved_va();
+    if (m_local_ht_barrier_alloc)
+        m_local_ht_barrier_alloc->remap_physical_at_preserved_va();
+    if (m_last_ht_barrier_alloc)
+        m_last_ht_barrier_alloc->remap_physical_at_preserved_va();
+    m_gpu_ctx_alloc->remap_physical_at_preserved_va();
+}
+
+void Buffer::_zero_graph_buffers(void) {
+    CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
+    CUDA_CHECK(cudaMemset(workspace, 0, NUM_WORKSPACE_BYTES));
+    if (num_nvl_bytes > 0) {
+        CUDA_CHECK(cudaMemset(buffer_ptrs[nvl_rank],
+                              0,
+                              num_nvl_bytes +
+                                  NUM_MAX_NVL_PEERS * sizeof(int) +
+                                  NUM_MAX_NVL_PEERS * sizeof(void *) +
+                                  NUM_MAX_NVL_PEERS * sizeof(int *)));
+    }
+    CUDA_CHECK(cudaMemset(mask_buffer_ptr, 0xff, max_num_ranks * sizeof(int)));
+    CUDA_CHECK(cudaMemset(mask_buffer_ptr + rank, 0, sizeof(int)));
+    CUDA_CHECK(cudaMemset(sync_buffer_ptr, 0, max_num_ranks * sizeof(int)));
+    CUDA_CHECK(cudaMemset(sync_count_ptr, 0, max_num_ranks * sizeof(int)));
+    if (local_ht_barrier_counter)
+        CUDA_CHECK(cudaMemset(local_ht_barrier_counter, 0, sizeof(uint64_t)));
+    if (last_ht_barrier_counter)
+        CUDA_CHECK(cudaMemset(last_ht_barrier_counter, 0, sizeof(uint64_t)));
+    CUDA_CHECK(cudaMemset(gpu_ctx_ptr, 0, sizeof(gpu_nixl_ctx)));
+}
+
 void Buffer::_nixl_agents_disconnect(const std::vector<int>& ranks) {
     for (int remote_rank : ranks) {
         EP_HOST_ASSERT(remote_rank != rank);
@@ -1500,9 +1737,26 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def(pybind11::init<int, bool, bool, int>())
         .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers)
         .def("barrier", &nixl_ep::Buffer::barrier)
-        .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles, bool activate) {
+        .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, const std::vector<std::optional<pybind11::bytes>> &all_gathered_handles, bool activate) {
             buffer.connect_ranks(remote_ranks, nixl_ep::convert_mds(remote_mds), all_gathered_handles, activate);
-        }, py::arg("remote_ranks"), py::arg("remote_mds") = std::nullopt, py::arg("ipc_handles") = std::vector<std::optional<pybind11::bytearray>>{}, py::arg("activate") = true)
+        }, py::arg("remote_ranks"), py::arg("remote_mds") = std::nullopt, py::arg("ipc_handles") = std::vector<std::optional<pybind11::bytes>>{}, py::arg("activate") = true)
+        .def("checkpoint_pause_preserve_va",
+             &nixl_ep::Buffer::checkpoint_pause_preserve_va)
+        .def("checkpoint_resume_preserve_va",
+             [](nixl_ep::Buffer &buffer,
+                const std::vector<int>& remote_ranks,
+                const std::optional<std::vector<pybind11::bytes>>& remote_mds,
+                bool activate) {
+                 buffer.checkpoint_resume_preserve_va(
+                     remote_ranks, nixl_ep::convert_mds(remote_mds), activate);
+             },
+             py::arg("remote_ranks") = std::vector<int>{},
+             py::arg("remote_mds") = std::nullopt,
+             py::arg("activate") = true)
+        .def("get_graph_visible_addresses",
+             &nixl_ep::Buffer::get_graph_visible_addresses)
+        .def("validate_graph_visible_addresses",
+             &nixl_ep::Buffer::validate_graph_visible_addresses)
         .def("disconnect_ranks", &nixl_ep::Buffer::disconnect_ranks)
         .def("is_available", &nixl_ep::Buffer::is_available)
         .def("get_num_rdma_ranks", &nixl_ep::Buffer::get_num_rdma_ranks)

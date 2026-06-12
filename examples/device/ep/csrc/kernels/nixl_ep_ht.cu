@@ -156,7 +156,8 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
                                 int** barrier_signal_ptrs,
                                 int rank,
                                 uint64_t timeout_cycles,
-                                nixl_ep::gpu_nixl_ctx nixl_ctx) {
+                                nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
+    const auto nixl_ctx = *nixl_ctx_ptr;
     auto sm_id = static_cast<int>(blockIdx.x);
     auto thread_id = static_cast<int>(threadIdx.x), warp_id = thread_id / 32, lane_id = get_lane_id();
     auto num_threads = static_cast<int>(blockDim.x), num_warps = num_threads / 32;
@@ -404,7 +405,7 @@ void notify_dispatch(const int* num_tokens_per_rank,
                      int64_t num_nvl_bytes,
                      uint64_t timeout_cycles,
                      bool low_latency_mode,
-                     nixl_ep::gpu_nixl_ctx nixl_ctx) {
+                     nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
 #define NOTIFY_DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                                    \
     {                                                                                                                                  \
         auto notify_dispatch_func = low_latency_mode ? notify_dispatch<true, num_rdma_ranks> : notify_dispatch<false, num_rdma_ranks>; \
@@ -511,7 +512,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
              int rank,
              int num_ranks,
              uint64_t timeout_cycles,
-             nixl_ep::gpu_nixl_ctx nixl_ctx) {
+             nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
+    const auto nixl_ctx = *nixl_ctx_ptr;
     enum class WarpRole { kRDMASender, kRDMASenderCoordinator, kRDMAAndNVLForwarder, kForwarderCoordinator, kNVLReceivers };
 
     const auto num_sms = static_cast<int>(gridDim.x);
@@ -1283,7 +1285,7 @@ void dispatch(void* recv_x,
               int num_channels,
               uint64_t timeout_cycles,
               bool low_latency_mode,
-              gpu_nixl_ctx nixl_ctx) {
+              gpu_nixl_ctx* nixl_ctx) {
     constexpr int kNumDispatchRDMASenderWarps = 7;
     constexpr int kNumTMABytesPerWarp = 16384;
     constexpr int smem_size = kNumTMABytesPerWarp * NUM_MAX_NVL_PEERS;
@@ -1365,7 +1367,8 @@ __global__ void cached_notify(const int rdma_clean_offset,
                               int num_ranks,
                               uint64_t timeout_cycles,
                               bool is_cached_dispatch,
-                              gpu_nixl_ctx nixl_ctx) {
+                              gpu_nixl_ctx* nixl_ctx_ptr) {
+    const auto nixl_ctx = *nixl_ctx_ptr;
     auto sm_id = static_cast<int>(blockIdx.x);
     auto thread_id = static_cast<int>(threadIdx.x);
     auto num_threads = static_cast<int>(blockDim.x);
@@ -1530,7 +1533,7 @@ void cached_notify(int hidden_int4,
                    uint64_t timeout_cycles,
                    bool is_cached_dispatch,
                    bool low_latency_mode,
-                   gpu_nixl_ctx nixl_ctx) {
+                   gpu_nixl_ctx* nixl_ctx) {
     const int num_threads = std::max(128, 32 * num_channels);
     const int num_warps = num_threads / 32;
     const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
@@ -1782,7 +1785,8 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                                                                         int rank,
                                                                         int num_ranks,
                                                                         uint64_t timeout_cycles,
-                                                                        gpu_nixl_ctx nixl_ctx) {
+                                                                        gpu_nixl_ctx* nixl_ctx_ptr) {
+    const auto nixl_ctx = *nixl_ctx_ptr;
     enum class WarpRole { kNVLSender, kNVLAndRDMAForwarder, kRDMAReceiver, kCoordinator };
 
     const auto sm_id = static_cast<int>(blockIdx.x);
@@ -2357,7 +2361,7 @@ void combine(cudaDataType_t type,
              int num_channels,
              uint64_t timeout_cycles,
              bool low_latency_mode,
-             gpu_nixl_ctx nixl_ctx) {
+             gpu_nixl_ctx* nixl_ctx) {
     constexpr int kNumCombineForwarderWarps = 24;
     constexpr int kNumTMABytesPerSenderWarp = 16384;
     constexpr int kNumTMABytesPerForwarderWarp = 9248;

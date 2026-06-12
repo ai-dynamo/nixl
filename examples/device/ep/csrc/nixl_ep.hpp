@@ -30,12 +30,14 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/pytypes.h>
 #include <torch/types.h>
+#include <cstdint>
 #include <optional>
 #include <tuple>
 #include <vector>
 #include <string>
 
 #include <memory>
+#include <unordered_map>
 #include "config.hpp"
 #include "event.hpp"
 #include "kernels/configs.cuh"
@@ -86,12 +88,12 @@ private:
     uint64_t timeout_ms = 30000;
 
     // NVLink Buffer
-    int64_t num_nvl_bytes;
+    int64_t num_nvl_bytes = 0;
     void* buffer_ptrs[NUM_MAX_NVL_PEERS] = {nullptr};
     void** buffer_ptrs_gpu = nullptr;
 
     // RDMA Buffer
-    int64_t num_rdma_bytes;
+    int64_t num_rdma_bytes = 0;
     void* rdma_buffer_ptr = nullptr;
 
     int *mask_buffer_ptr = nullptr;
@@ -104,13 +106,17 @@ private:
     std::unique_ptr<vmm_region> m_sync_alloc;
     std::unique_ptr<vmm_region> m_sync_count_alloc;
     std::unique_ptr<vmm_region> m_workspace_alloc;
+    std::unique_ptr<vmm_region> m_gpu_ctx_alloc;
+    std::unique_ptr<vmm_region> m_nvl_alloc;
+    std::unique_ptr<vmm_region> m_local_ht_barrier_alloc;
+    std::unique_ptr<vmm_region> m_last_ht_barrier_alloc;
 
     // Device info and communication
-    int device_id;
-    int num_device_sms;
+    int device_id = 0;
+    int num_device_sms = 0;
     uint64_t timeout_cycles = 0;
-    int rank, rdma_rank, nvl_rank;
-    int max_num_ranks;
+    int rank, rdma_rank = 0, nvl_rank = 0;
+    int max_num_ranks = 0;
     std::vector<int> remote_ranks; /* global ranks */
     // Host-side active rank state over max_num_ranks. This can differ from
     // the runtime device mask, which kernels may update on faults/timeouts.
@@ -121,7 +127,8 @@ private:
     int active_rank_bound = 0;
     int num_rdma_ranks = 0, num_nvl_ranks = 0;
     int num_experts_per_rank = 0;
-    cudaIpcMemHandle_t ipc_handles[NUM_MAX_NVL_PEERS];
+    CUmemFabricHandle ipc_handles[NUM_MAX_NVL_PEERS];
+    std::unique_ptr<vmm_region> m_remote_nvl_allocs[NUM_MAX_NVL_PEERS];
 
     // Stream for communication
     at::cuda::CUDAStream comm_stream;
@@ -160,9 +167,11 @@ private:
     nixl_ep::gpu_nixl_ctx* gpu_ctx_ptr = nullptr;
     uint64_t* last_ht_barrier_counter = nullptr;
     uint64_t* local_ht_barrier_counter = nullptr;
+    bool checkpoint_paused = false;
 
     /* Common private funcs */
     void _nixl_agent_init();
+    void _nixl_agent_destroy(bool preserve_local_metadata);
     void _nixl_agents_connect(const std::vector<int>& ranks, const std::vector<nixl_blob_t>& remote_mds = {});
     void _nixl_agents_disconnect(const std::vector<int>& ranks);
     void _nixl_agents_peer_info_gather(std::vector<int>& ranks);
@@ -172,19 +181,27 @@ private:
     void _nixl_ep_memory_views_create(void);
     void _nixl_ep_memory_views_destroy(void);
     void _nixl_ep_destroy(void);
+    void _release_graph_physical_memory(void);
+    void _remap_graph_physical_memory(void);
+    void _zero_graph_buffers(void);
+    bool _can_preserve_graph_vas(void) const noexcept;
     bool _is_rank_connected(int rank_id) const;
     void set_active_rank_bound(int bound);
     void _refresh_active_rank_bound();
 
     /* high-throughput mode private funcs */
-    void _ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles);
+    void _ipc_handles_sync(const std::vector<std::optional<pybind11::bytes>> &all_gathered_handles);
 
 public:
     Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms);
 
     void update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes = 0);
 
-    void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, const std::vector<std::optional<pybind11::bytearray>>& all_gathered_handles = {}, bool activate = true);
+    void checkpoint_pause_preserve_va();
+
+    void checkpoint_resume_preserve_va(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, bool activate = true);
+
+    void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, const std::vector<std::optional<pybind11::bytes>>& all_gathered_handles = {}, bool activate = true);
 
     void disconnect_ranks(const std::vector<int>& remote_ranks_list);
 
@@ -204,12 +221,15 @@ public:
 
     int get_local_device_id() const;
 
-    pybind11::bytearray get_local_ipc_handle() const;
+    pybind11::bytes get_local_ipc_handle() const;
 
     torch::Tensor get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset, bool use_rdma_buffer = false) const;
 
     torch::Stream get_comm_stream() const;
 
+    std::unordered_map<std::string, uintptr_t> get_graph_visible_addresses() const;
+
+    bool validate_graph_visible_addresses(const std::unordered_map<std::string, uintptr_t>& expected) const;
 
     void destroy();
 

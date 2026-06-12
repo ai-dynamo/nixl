@@ -107,7 +107,7 @@ void notify_dispatch(const int* num_tokens_per_rank,
                      int64_t num_nvl_bytes,
                      uint64_t timeout_cycles,
                      bool low_latency_mode,
-                     gpu_nixl_ctx nixl_ctx);
+                     gpu_nixl_ctx* nixl_ctx);
 
 void dispatch(void* recv_x,
               float* recv_x_scales,
@@ -147,7 +147,7 @@ void dispatch(void* recv_x,
               int num_channels,
               uint64_t timeout_cycles,
               bool low_latency_mode,
-              gpu_nixl_ctx nixl_ctx);
+              gpu_nixl_ctx* nixl_ctx);
 
 void cached_notify(int hidden_int4,
                    int num_scales,
@@ -172,7 +172,7 @@ void cached_notify(int hidden_int4,
                    uint64_t timeout_cycles,
                    bool is_cached_dispatch,
                    bool low_latency_mode,
-                   gpu_nixl_ctx nixl_ctx);
+                   gpu_nixl_ctx* nixl_ctx);
 
 void combine(cudaDataType_t type,
              void* combined_x,
@@ -204,7 +204,7 @@ void combine(cudaDataType_t type,
              int num_channels,
              uint64_t timeout_cycles,
              bool low_latency_mode,
-             gpu_nixl_ctx nixl_ctx);
+             gpu_nixl_ctx* nixl_ctx);
 
 } // namespace ht
 
