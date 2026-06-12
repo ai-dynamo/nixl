@@ -222,15 +222,24 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
 
     nixlSecDescList &target = it->second;
 
-    // First check if the mem_elms are present in the list,
-    // don't deregister anything in case any is missing.
+    // Resolve all elements first (all-or-nothing); duplicate descriptors share a getIndex
+    // match, so map each to a distinct entry -- otherwise one entry is freed repeatedly.
     std::vector<size_t> indices;
     indices.reserve(mem_elms.descCount());
+    std::map<size_t, size_t> claimed; // first-match index -> entries already taken
     for (auto &elm : mem_elms) {
-        int index = target.getIndex(elm);
-        if (index < 0)
+        const int match = target.getIndex(elm);
+        if (match < 0) {
             return NIXL_ERR_NOT_FOUND;
-        indices.push_back(static_cast<size_t>(index));
+        }
+        const size_t first = static_cast<size_t>(match);
+        const size_t idx = first + claimed[first]++;
+        // idx must still name the same region as first (mutual covers == equality)
+        if (idx >= static_cast<size_t>(target.descCount()) ||
+            !(target[idx].covers(target[first]) && target[first].covers(target[idx]))) {
+            return NIXL_ERR_NOT_FOUND;
+        }
+        indices.push_back(idx);
     }
 
     for (size_t idx : indices) {
