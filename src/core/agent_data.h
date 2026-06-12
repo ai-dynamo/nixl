@@ -68,7 +68,6 @@ class nixlAgentData {
         const bool useEtcd_;
         const bool needsCommThread_;
         nixlLock        lock;
-        bool telemetryEnabled = false;
         bool efaWarningChecked = false;
 
         // some handle that can be used to instantiate an object from the lib

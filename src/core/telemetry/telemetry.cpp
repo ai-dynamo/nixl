@@ -73,14 +73,42 @@ constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 constexpr const char *defaultTelemetryPlugin = "BUFFER";
 
-nixlTelemetry::nixlTelemetry(const std::string &agent_name)
-    : pool_(1),
-      writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false),
-      agentName_(agent_name) {
-    if (agent_name.empty()) {
-        throw std::invalid_argument("Expected non-empty agent name in nixl telemetry create");
+namespace {
+// Defined below; declared here for use by create() and the constructor's
+// member-initializer list.
+[[nodiscard]] std::optional<std::string>
+getExporterName();
+[[nodiscard]] std::string
+validateAgentName(const std::string &agent_name);
+[[nodiscard]] size_t
+resolveMaxBufferedEvents();
+} // namespace
+
+[[nodiscard]] std::unique_ptr<nixlTelemetry>
+nixlTelemetry::create(const std::string &agent_name) {
+    const std::optional<std::string> exporter_name = getExporterName();
+
+    // No exporter/sink configured: telemetry is intentionally disabled, so do
+    // not construct a nixlTelemetry at all (avoids spinning up its thread pool
+    // only to tear it down).
+    if (!exporter_name) {
+        return nullptr;
     }
-    initializeTelemetry();
+
+    return std::make_unique<nixlTelemetry>(agent_name, *exporter_name);
+}
+
+nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &exporter_name)
+    : agentName_(validateAgentName(agent_name)),
+      maxBufferedEvents_(resolveMaxBufferedEvents()),
+      exporter_(makeExporter(exporter_name)),
+      pool_(1),
+      writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false) {
+    // A constructed nixlTelemetry always has an exporter (makeExporter throws
+    // otherwise), so reserve the event buffer up front and start the periodic
+    // export task.
+    events_.reserve(maxBufferedEvents_);
+    startExportTask();
 }
 
 nixlTelemetry::~nixlTelemetry() {
@@ -113,7 +141,7 @@ getExporterName() {
 
     if (!nixl::config::checkExistence(telemetryDirVar)) {
         NIXL_DEBUG << telemetryDirVar
-                   << " is not set, NIXL telemetry is enabled without any exporter";
+                   << " is not set and no exporter was specified; NIXL telemetry is disabled";
         return std::nullopt;
     }
 
@@ -122,46 +150,51 @@ getExporterName() {
     return defaultTelemetryPlugin;
 }
 
-} // namespace
+[[nodiscard]] std::string
+validateAgentName(const std::string &agent_name) {
+    if (agent_name.empty()) {
+        throw std::invalid_argument("Expected non-empty agent name in nixl telemetry create");
+    }
+    return agent_name;
+}
 
-void
-nixlTelemetry::initializeTelemetry() {
-    maxBufferedEvents_ = nixl::config::getValueDefaulted<size_t>(TELEMETRY_BUFFER_SIZE_VAR,
-                                                                 DEFAULT_TELEMETRY_BUFFER_SIZE);
-
-    if (maxBufferedEvents_ == 0) {
+[[nodiscard]] size_t
+resolveMaxBufferedEvents() {
+    const size_t max_events = nixl::config::getValueDefaulted<size_t>(
+        TELEMETRY_BUFFER_SIZE_VAR, DEFAULT_TELEMETRY_BUFFER_SIZE);
+    if (max_events == 0) {
         throw std::invalid_argument("Telemetry buffer size cannot be 0");
     }
+    return max_events;
+}
 
-    const std::optional<std::string> exporter_name = getExporterName();
+} // namespace
 
-    if (!exporter_name) {
-        return;
-    }
-
+[[nodiscard]] std::unique_ptr<nixlTelemetryExporter>
+nixlTelemetry::makeExporter(const std::string &exporter_name) const {
     auto &plugin_manager = nixlPluginManager::getInstance();
     std::shared_ptr<const nixlTelemetryPluginHandle> plugin_handle =
-        plugin_manager.loadTelemetryPlugin(*exporter_name);
+        plugin_manager.loadTelemetryPlugin(exporter_name);
 
     if (plugin_handle == nullptr) {
-        throw std::runtime_error("Failed to load telemetry plugin: " + *exporter_name);
+        throw std::runtime_error("Failed to load telemetry plugin: " + exporter_name);
     }
 
     const nixlTelemetryExporterInitParams init_params{agentName_, maxBufferedEvents_};
-    exporter_ = plugin_handle->createExporter(init_params);
-    if (!exporter_) {
-        NIXL_ERROR << "Failed to create telemetry exporter: " << *exporter_name;
-        return;
+    auto exporter = plugin_handle->createExporter(init_params);
+    if (!exporter) {
+        throw std::runtime_error("Failed to create telemetry exporter: " + exporter_name);
     }
 
-    events_.reserve(maxBufferedEvents_);
+    NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << exporter_name;
+    return exporter;
+}
 
-    NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << *exporter_name;
-
+void
+nixlTelemetry::startExportTask() {
     const auto run_interval =
         nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
 
-    // Update write task interval and start it
     writeTask_.callback_ = [this]() { return writeEventHelper(); };
     writeTask_.interval_ = run_interval;
     writeTask_.enabled_ = true;
