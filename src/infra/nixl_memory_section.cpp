@@ -208,6 +208,35 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
     return ret;
 }
 
+namespace {
+// Map each element to a distinct entry sharing its descriptor; duplicates share a getIndex match.
+// Returns false (resolving nothing) on any missing/over-counted element, keeping callers
+// all-or-nothing.
+bool
+resolveDuplicateIndices(const nixl_reg_dlist_t &mem_elms,
+                        const nixlSecDescList &target,
+                        std::vector<size_t> &indices) {
+    indices.clear();
+    indices.reserve(mem_elms.descCount());
+    std::map<size_t, size_t> claimed; // first-match index -> entries already taken
+    for (auto &elm : mem_elms) {
+        const int match = target.getIndex(elm);
+        if (match < 0) {
+            return false;
+        }
+        const size_t first = static_cast<size_t>(match);
+        const size_t idx = first + claimed[first]++;
+        // idx must still name the same region as first (mutual covers == equality)
+        if (idx >= static_cast<size_t>(target.descCount()) ||
+            !(target[idx].covers(target[first]) && target[first].covers(target[idx]))) {
+            return false;
+        }
+        indices.push_back(idx);
+    }
+    return true;
+}
+} // namespace
+
 nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
                                              nixlBackendEngine *backend) {
     if (!backend) {
@@ -222,15 +251,9 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
 
     nixlSecDescList &target = it->second;
 
-    // First check if the mem_elms are present in the list,
-    // don't deregister anything in case any is missing.
     std::vector<size_t> indices;
-    indices.reserve(mem_elms.descCount());
-    for (auto &elm : mem_elms) {
-        int index = target.getIndex(elm);
-        if (index < 0)
-            return NIXL_ERR_NOT_FOUND;
-        indices.push_back(static_cast<size_t>(index));
+    if (!resolveDuplicateIndices(mem_elms, target, indices)) {
+        return NIXL_ERR_NOT_FOUND;
     }
 
     for (size_t idx : indices) {
@@ -450,12 +473,8 @@ nixlRemoteSection::removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackend
     nixlSecDescList &target = it->second;
 
     std::vector<size_t> indices;
-    indices.reserve(mem_elms.descCount());
-    for (auto &elm : mem_elms) {
-        const int index = target.getIndex(elm);
-        if (index >= 0) {
-            indices.push_back(static_cast<size_t>(index));
-        }
+    if (!resolveDuplicateIndices(mem_elms, target, indices)) {
+        return;
     }
 
     for (size_t idx : indices) {
