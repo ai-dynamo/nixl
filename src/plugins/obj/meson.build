@@ -36,9 +36,9 @@ if not is_variable('obj_utils_interface')
     subdir_done()
 endif
 
-plugin_deps = [nixl_infra, nixl_common_dep, obj_utils_interface, dependency('asio', required: true)]
-compile_defs = []
-compile_flags = []
+obj_plugin_deps = [nixl_infra, nixl_common_dep, obj_utils_interface, dependency('asio', required: true)]
+obj_compile_defs = []
+obj_compile_flags = []
 
 if cuobj_dep.found()
     message('Found CUObjClient Library. Enabling S3 Accelerated engines')
@@ -52,7 +52,7 @@ if cuobj_dep.found()
         's3_accel/dell/engine_impl.cpp',
         's3_accel/dell/engine_impl.h',
     ]
-    plugin_deps += [ cuobj_dep ]
+    obj_plugin_deps += [ cuobj_dep ]
 else
     message('Could not find CUObjClient Library. Skipping S3 Accelerated engines')
 endif
@@ -61,8 +61,8 @@ if 'OBJ' in static_plugins
     obj_backend_lib = static_library(
         'OBJ',
         obj_sources,
-        dependencies: plugin_deps,
-        cpp_args: compile_defs + compile_flags,
+        dependencies: obj_plugin_deps,
+        cpp_args: obj_compile_defs + obj_compile_flags,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: false,
         name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
@@ -70,8 +70,8 @@ else
     obj_backend_lib = shared_library(
         'OBJ',
         obj_sources,
-        dependencies: plugin_deps,
-        cpp_args: compile_defs + compile_flags + ['-fPIC'],
+        dependencies: obj_plugin_deps,
+        cpp_args: obj_compile_defs + obj_compile_flags + ['-fPIC'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
         name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
@@ -85,8 +85,14 @@ else
     endif
 endif
 
+# obj_backend.h publicly includes <asio.hpp>, so propagate the asio dependency
+# (include dirs) to consumers of this interface, e.g. the plugins gtest.
 if 'OBJ' in static_plugins
-    obj_backend_interface = declare_dependency(link_whole: obj_backend_lib)
+    obj_backend_interface = declare_dependency(
+        link_whole: obj_backend_lib,
+        dependencies: dependency('asio', required: true))
 else
-    obj_backend_interface = declare_dependency(link_with: obj_backend_lib)
+    obj_backend_interface = declare_dependency(
+        link_with: obj_backend_lib,
+        dependencies: dependency('asio', required: true))
 endif
