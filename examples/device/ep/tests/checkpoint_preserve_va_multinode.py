@@ -22,11 +22,22 @@ non-checkpointable NIXL state while preserving those VAs, and resume rebuilds
 fresh NIXL metadata before replaying the captured graph without recapture.
 CUDA graph capture uses NIXL EP receive-hook mode so send and receive kernels
 are launched on the capture stream.
+
+When ``--snapshot-control-dir`` or ``DYN_SNAPSHOT_CONTROL_DIR`` is set, the
+script follows the Dynamo snapshot-control contract: after pause it writes
+``ready-for-checkpoint``, the original process exits cleanly on
+``snapshot-complete``, and the restored process recreates its external
+TCPStore connection, resumes NIXL EP, validates graph-visible addresses, and
+replays the pre-captured CUDA graph after ``restore-complete``. Use
+``--force-ucx-tcp`` or ``NIXL_EP_FORCE_UCX_TCP=1`` to force UCX away from RDMA
+on clusters without RDMA device access.
 """
 
 from __future__ import annotations
 
 import argparse
+import gc
+import importlib
 import json
 import os
 import sys
@@ -42,10 +53,21 @@ import torch.distributed as dist
 EP_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(EP_ROOT))
 
-import nixl_ep  # noqa: E402
-
 
 DEFAULT_STORE_PORT = 9999
+SNAPSHOT_CONTROL_ENV = "DYN_SNAPSHOT_CONTROL_DIR"
+READY_FOR_CHECKPOINT = "ready-for-checkpoint"
+SNAPSHOT_COMPLETE = "snapshot-complete"
+RESTORE_COMPLETE = "restore-complete"
+
+nixl_ep: Any
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in ("1", "true", "yes", "y", "on")
 
 
 @dataclass(frozen=True)
@@ -96,6 +118,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--external-store",
         action="store_true",
+        default=env_flag("NIXL_EP_EXTERNAL_STORE"),
         help=(
             "Connect all ranks to an already-running TCPStore instead of "
             "creating the TCPStore in rank 0."
@@ -130,6 +153,70 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Optional sleep after checkpoint pause for external orchestration.",
     )
+    parser.add_argument(
+        "--snapshot-control-dir",
+        type=Path,
+        default=(
+            Path(os.environ[SNAPSHOT_CONTROL_ENV])
+            if os.getenv(SNAPSHOT_CONTROL_ENV)
+            else None
+        ),
+        help=(
+            "Dynamo snapshot-control directory. Defaults to "
+            f"${SNAPSHOT_CONTROL_ENV}. When set, the script writes "
+            "ready-for-checkpoint, exits on snapshot-complete in the original "
+            "process, and resumes only after restore-complete in the restored "
+            "process."
+        ),
+    )
+    parser.add_argument(
+        "--snapshot-timeout-sec",
+        type=float,
+        default=900.0,
+        help="Timeout while waiting for Dynamo snapshot-control sentinels.",
+    )
+    parser.add_argument(
+        "--metadata-namespace",
+        default=os.getenv("NIXL_EP_METADATA_NAMESPACE", "checkpoint_preserve_va"),
+        help=(
+            "Shared namespace for NIXL metadata keys in TCPStore. Set this to "
+            "a per-run value when reusing an external TCPStore."
+        ),
+    )
+    parser.add_argument(
+        "--metadata-generation",
+        default=(
+            os.getenv("NIXL_EP_METADATA_GENERATION")
+            or os.getenv("TORCHELASTIC_RUN_ID")
+            or os.getenv("SLURM_JOB_ID")
+            or os.getenv("OMPI_COMM_WORLD_JOBID")
+        ),
+        help=(
+            "Shared generation for NIXL metadata keys in TCPStore. Change it "
+            "between attempts if an external TCPStore may contain stale keys. "
+            "Required with --external-store unless a supported job id env var "
+            "is set."
+        ),
+    )
+    parser.add_argument(
+        "--ucx-tls",
+        default=os.getenv("NIXL_EP_UCX_TLS"),
+        help=(
+            "Optional UCX_TLS value to set before importing nixl_ep. Leave "
+            "unset to preserve UCX/NIXL default RDMA-capable transport "
+            "selection."
+        ),
+    )
+    parser.add_argument(
+        "--force-ucx-tcp",
+        action="store_true",
+        default=env_flag("NIXL_EP_FORCE_UCX_TCP"),
+        help=(
+            "Force UCX over TCP by setting UCX_TLS=tcp,cuda_copy,self before "
+            "creating the NIXL EP runtime. RDMA remains the default unless "
+            "this flag or --ucx-tls is used."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -158,13 +245,44 @@ def create_store(args: argparse.Namespace, env: RankEnv) -> dist.TCPStore:
     )
 
 
+def configure_ucx_transport(args: argparse.Namespace) -> None:
+    if args.ucx_tls:
+        os.environ["UCX_TLS"] = args.ucx_tls
+        print(f"[transport] set UCX_TLS={args.ucx_tls}", flush=True)
+        return
+
+    if args.force_ucx_tcp:
+        os.environ["UCX_TLS"] = "tcp,cuda_copy,self"
+        print("[transport] forced UCX_TLS=tcp,cuda_copy,self", flush=True)
+
+
+def import_nixl_ep() -> None:
+    global nixl_ep
+    nixl_ep = importlib.import_module("nixl_ep")
+
+
+def store_key_prefix(args: argparse.Namespace) -> str:
+    namespace = args.metadata_namespace.strip("/")
+    generation = args.metadata_generation.strip("/")
+    if not namespace:
+        raise ValueError("--metadata-namespace must not be empty")
+    if not generation:
+        raise ValueError("--metadata-generation must not be empty")
+    return f"checkpoint_preserve_va/{namespace}/{generation}"
+
+
+def metadata_prefix(args: argparse.Namespace, phase: str) -> str:
+    return f"{store_key_prefix(args)}/NIXL_EP/{phase}"
+
+
 def store_barrier(
     store: dist.TCPStore,
     env: RankEnv,
+    key_prefix: str,
     name: str,
     timeout_sec: float,
 ) -> None:
-    prefix = f"checkpoint_preserve_va/{name}"
+    prefix = f"{key_prefix}/{name}"
     store.set(f"{prefix}/{env.rank}", str(time.time()).encode())
     store.wait(
         [f"{prefix}/{rank}" for rank in range(env.world_size)],
@@ -175,15 +293,65 @@ def store_barrier(
 def gather_store_values(
     store: dist.TCPStore,
     env: RankEnv,
+    key_prefix: str,
     name: str,
     value: str,
     timeout_sec: float,
 ) -> list[str]:
-    prefix = f"checkpoint_preserve_va/{name}"
+    prefix = f"{key_prefix}/{name}"
     store.set(f"{prefix}/{env.rank}", value.encode())
     keys = [f"{prefix}/{rank}" for rank in range(env.world_size)]
     store.wait(keys, timedelta(seconds=timeout_sec))
     return [raw.decode() for raw in store.multi_get(keys)]
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def touch_sentinel(path: Path) -> None:
+    write_text_atomic(path, f"{time.time()}\n")
+
+
+def cleanup_snapshot_control_dir(control_dir: Path) -> None:
+    control_dir.mkdir(parents=True, exist_ok=True)
+    for name in (READY_FOR_CHECKPOINT, SNAPSHOT_COMPLETE, RESTORE_COMPLETE):
+        try:
+            (control_dir / name).unlink()
+        except FileNotFoundError:
+            pass
+
+
+def wait_for_snapshot_control_event(
+    control_dir: Path,
+    timeout_sec: float,
+) -> str:
+    snapshot_complete = control_dir / SNAPSHOT_COMPLETE
+    restore_complete = control_dir / RESTORE_COMPLETE
+    deadline = time.monotonic() + timeout_sec
+
+    while time.monotonic() < deadline:
+        if snapshot_complete.exists():
+            print(
+                f"[snapshot] observed {SNAPSHOT_COMPLETE}: {snapshot_complete}",
+                flush=True,
+            )
+            return "checkpoint"
+        if restore_complete.exists():
+            print(
+                f"[snapshot] observed {RESTORE_COMPLETE}: {restore_complete}",
+                flush=True,
+            )
+            return "restore"
+        time.sleep(0.1)
+
+    raise TimeoutError(
+        "timed out waiting for Dynamo snapshot-control sentinel "
+        f"({SNAPSHOT_COMPLETE} or {RESTORE_COMPLETE}) in {control_dir}"
+    )
 
 
 def make_inputs(
@@ -282,6 +450,7 @@ def warmup_for_capture(
     args: argparse.Namespace,
     env: RankEnv,
     store: dist.TCPStore,
+    key_prefix: str,
     buffer: nixl_ep.Buffer,
     x: torch.Tensor,
     topk_idx: torch.Tensor,
@@ -290,7 +459,13 @@ def warmup_for_capture(
 ) -> None:
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())
-    store_barrier(store, env, "capture_warmup_start", args.barrier_timeout_sec)
+    store_barrier(
+        store,
+        env,
+        key_prefix,
+        "capture_warmup_start",
+        args.barrier_timeout_sec,
+    )
     with torch.cuda.stream(stream):
         for _ in range(args.capture_warmups):
             state = run_iteration(
@@ -305,22 +480,39 @@ def warmup_for_capture(
             state.combined_x.record_stream(stream)
     torch.cuda.current_stream().wait_stream(stream)
     torch.cuda.synchronize()
-    store_barrier(store, env, "capture_warmup_done", args.barrier_timeout_sec)
+    store_barrier(
+        store,
+        env,
+        key_prefix,
+        "capture_warmup_done",
+        args.barrier_timeout_sec,
+    )
 
 
 def capture_iteration(
     args: argparse.Namespace,
     env: RankEnv,
     store: dist.TCPStore,
+    key_prefix: str,
     buffer: nixl_ep.Buffer,
     x: torch.Tensor,
     topk_idx: torch.Tensor,
     topk_weights: torch.Tensor,
     num_experts: int,
 ) -> CapturedIteration:
-    warmup_for_capture(args, env, store, buffer, x, topk_idx, topk_weights, num_experts)
+    warmup_for_capture(
+        args,
+        env,
+        store,
+        key_prefix,
+        buffer,
+        x,
+        topk_idx,
+        topk_weights,
+        num_experts,
+    )
     graph = torch.cuda.CUDAGraph()
-    store_barrier(store, env, "capture_start", args.barrier_timeout_sec)
+    store_barrier(store, env, key_prefix, "capture_start", args.barrier_timeout_sec)
     with torch.cuda.graph(graph):
         state = run_iteration(
             buffer,
@@ -377,16 +569,43 @@ def wait_for_external_resume(args: argparse.Namespace, env: RankEnv) -> None:
 
 def main() -> None:
     args = parse_args()
+    configure_ucx_transport(args)
+    import_nixl_ep()
+
     env = read_rank_env()
     if env.world_size < 2:
         raise ValueError("Real multi-rank validation requires WORLD_SIZE >= 2")
+    if args.snapshot_control_dir is not None and not args.external_store:
+        raise ValueError(
+            "--snapshot-control-dir requires --external-store for multi-node "
+            "checkpoint/restore so restored ranks do not depend on a "
+            "checkpointed rank-local TCPStore server"
+        )
+    if args.metadata_generation is None:
+        if args.external_store:
+            raise ValueError(
+                "--external-store requires --metadata-generation or "
+                "NIXL_EP_METADATA_GENERATION to avoid stale TCPStore metadata"
+            )
+        args.metadata_generation = "inprocess"
+    else:
+        args.metadata_generation = args.metadata_generation.strip()
+        if not args.metadata_generation:
+            raise ValueError("--metadata-generation must not be empty")
+        print(
+            f"[store] metadata namespace={args.metadata_namespace} "
+            f"generation={args.metadata_generation}",
+            flush=True,
+        )
+
+    coord_prefix = f"{store_key_prefix(args)}/coord"
 
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
     torch.cuda.set_device(env.local_rank)
 
     store = create_store(args, env)
-    store_barrier(store, env, "store_ready", args.barrier_timeout_sec)
+    store_barrier(store, env, coord_prefix, "store_ready", args.barrier_timeout_sec)
 
     num_experts = env.world_size * args.num_experts_per_rank
     num_rdma_bytes = nixl_ep.Buffer.get_rdma_size_hint(
@@ -399,6 +618,7 @@ def main() -> None:
         rank=env.rank,
         explicitly_destroy=True,
         tcp_store_group=store,
+        tcp_store_metadata_prefix=metadata_prefix(args, "initial"),
         timeout_ms=args.timeout_ms,
     )
     try:
@@ -409,7 +629,7 @@ def main() -> None:
         )
         all_ranks = list(range(env.world_size))
         buffer.connect_ranks(all_ranks)
-        store_barrier(store, env, "connected", args.barrier_timeout_sec)
+        store_barrier(store, env, coord_prefix, "connected", args.barrier_timeout_sec)
 
         x, topk_idx, topk_weights, expected = make_inputs(
             env,
@@ -428,7 +648,13 @@ def main() -> None:
             num_experts,
         )
         assert_expected("eager pre-pause", eager_state.combined_x, expected)
-        store_barrier(store, env, "eager_pre_pause_done", args.barrier_timeout_sec)
+        store_barrier(
+            store,
+            env,
+            coord_prefix,
+            "eager_pre_pause_done",
+            args.barrier_timeout_sec,
+        )
 
         captured: CapturedIteration | None = None
         graph_capture_error: str | None = None
@@ -438,6 +664,7 @@ def main() -> None:
                     args,
                     env,
                     store,
+                    coord_prefix,
                     buffer,
                     x,
                     topk_idx,
@@ -450,6 +677,7 @@ def main() -> None:
             statuses = gather_store_values(
                 store,
                 env,
+                coord_prefix,
                 "graph_capture_status",
                 "ok" if graph_capture_error is None else graph_capture_error,
                 args.barrier_timeout_sec,
@@ -473,6 +701,7 @@ def main() -> None:
                 store_barrier(
                     store,
                     env,
+                    coord_prefix,
                     "graph_pre_pause_replay_start",
                     args.barrier_timeout_sec,
                 )
@@ -486,6 +715,7 @@ def main() -> None:
                 store_barrier(
                     store,
                     env,
+                    coord_prefix,
                     "graph_pre_pause_replay_done",
                     args.barrier_timeout_sec,
                 )
@@ -498,7 +728,7 @@ def main() -> None:
                 "snapshot than get_graph_visible_addresses()"
             )
         write_pause_hook(args, env, pause_snapshot)
-        store_barrier(store, env, "paused", args.barrier_timeout_sec)
+        store_barrier(store, env, coord_prefix, "paused", args.barrier_timeout_sec)
 
         if env.rank == 0:
             print(
@@ -506,10 +736,65 @@ def main() -> None:
                 "external CRIU/Dynamo checkpoint can be taken now",
                 flush=True,
             )
-        wait_for_external_resume(args, env)
-        store_barrier(store, env, "resume_start", args.barrier_timeout_sec)
 
-        buffer.set_tcp_store_group(store)
+        if args.snapshot_control_dir is not None:
+            cleanup_snapshot_control_dir(args.snapshot_control_dir)
+            store_barrier(
+                store,
+                env,
+                coord_prefix,
+                "snapshot_control_cleaned",
+                args.barrier_timeout_sec,
+            )
+            buffer.set_tcp_store_group(None)
+            del store
+            gc.collect()
+            touch_sentinel(args.snapshot_control_dir / READY_FOR_CHECKPOINT)
+            print(
+                "[snapshot] wrote "
+                f"{args.snapshot_control_dir / READY_FOR_CHECKPOINT}",
+                flush=True,
+            )
+            snapshot_event = wait_for_snapshot_control_event(
+                args.snapshot_control_dir,
+                args.snapshot_timeout_sec,
+            )
+            if snapshot_event == "checkpoint":
+                cleanup_snapshot_control_dir(args.snapshot_control_dir)
+                print(
+                    "[snapshot] checkpoint completed in original process; "
+                    "exiting without NIXL EP resume",
+                    flush=True,
+                )
+                return
+
+            cleanup_snapshot_control_dir(args.snapshot_control_dir)
+            store = create_store(args, env)
+            buffer.set_tcp_store_group(
+                store,
+                tcp_store_metadata_prefix=metadata_prefix(args, "resume"),
+            )
+            store_barrier(
+                store,
+                env,
+                coord_prefix,
+                "restored_store_ready",
+                args.barrier_timeout_sec,
+            )
+        else:
+            wait_for_external_resume(args, env)
+            store_barrier(
+                store,
+                env,
+                coord_prefix,
+                "resume_start",
+                args.barrier_timeout_sec,
+            )
+            buffer.set_tcp_store_group(
+                store,
+                tcp_store_metadata_prefix=metadata_prefix(args, "resume"),
+            )
+
         buffer.checkpoint_resume_preserve_va(
             all_ranks,
             activate=False,
@@ -519,12 +804,13 @@ def main() -> None:
             buffer.update_mask_buffer(rank, mask=False)
         if not buffer.validate_graph_visible_addresses(pause_snapshot):
             raise AssertionError("graph-visible CUDA VAs changed after resume")
-        store_barrier(store, env, "resumed", args.barrier_timeout_sec)
+        store_barrier(store, env, coord_prefix, "resumed", args.barrier_timeout_sec)
 
         if captured is not None:
             store_barrier(
                 store,
                 env,
+                coord_prefix,
                 "graph_post_resume_replay_start",
                 args.barrier_timeout_sec,
             )
@@ -539,6 +825,7 @@ def main() -> None:
             store_barrier(
                 store,
                 env,
+                coord_prefix,
                 "eager_post_resume_start",
                 args.barrier_timeout_sec,
             )
@@ -557,7 +844,13 @@ def main() -> None:
             )
             validation_mode = "eager"
 
-        store_barrier(store, env, "post_resume_done", args.barrier_timeout_sec)
+        store_barrier(
+            store,
+            env,
+            coord_prefix,
+            "post_resume_done",
+            args.barrier_timeout_sec,
+        )
         summary = {
             "rank": env.rank,
             "world_size": env.world_size,

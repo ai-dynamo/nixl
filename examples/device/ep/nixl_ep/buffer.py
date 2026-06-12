@@ -63,6 +63,7 @@ class Buffer:
         comm: Optional["mpi4py.MPI.Comm"] = None,
         tcp_store_group: Optional[dist.TCPStore] = None,
         timeout_ms: int = DEFAULT_TIMEOUT_MS,
+        tcp_store_metadata_prefix: str = "NIXL_EP",
     ) -> None:
         """
         Initialize the nixl communication buffer.
@@ -81,6 +82,7 @@ class Buffer:
                 In low-latency paths, a timeout marks the rank invalid and masks it out.
                 In high-throughput paths, a timeout is fatal and traps.
                 Default: 30000 ms.
+            tcp_store_metadata_prefix: TCPStore key prefix for NIXL metadata exchange.
         """
         self.rank = rank
         self.group_size = 0  # Will be updated by `update_memory_buffers`
@@ -91,6 +93,7 @@ class Buffer:
         self.group = group
         self.comm = comm
         self.tcp_store_group = tcp_store_group
+        self.tcp_store_metadata_prefix = tcp_store_metadata_prefix.rstrip("/")
         assert not (group and comm)
 
         if disable_ll_nvlink:
@@ -836,23 +839,33 @@ class Buffer:
             num_ranks, num_experts_per_rank, num_rdma_bytes, num_nvl_bytes
         )
 
-    def set_tcp_store_group(self, tcp_store_group: Optional[dist.TCPStore]) -> None:
+    def set_tcp_store_group(
+        self,
+        tcp_store_group: Optional[dist.TCPStore],
+        tcp_store_metadata_prefix: Optional[str] = None,
+    ) -> None:
         """
         Update the TCP Store group for metadata exchange.
 
         Arguments:
             tcp_store_group: Optional TCPStore for metadata exchange.
+            tcp_store_metadata_prefix: Optional TCPStore key prefix for NIXL
+                metadata exchange.
         """
         self.tcp_store_group = tcp_store_group
+        if tcp_store_metadata_prefix is not None:
+            self.tcp_store_metadata_prefix = tcp_store_metadata_prefix.rstrip("/")
 
     @contextmanager
     def _fetch_remote_metadata_from_tcp_store(self, remote_ranks: List[int]):
         assert self.tcp_store_group is not None, "TCPStore group is not set"
-        md_key = f"NIXL_EP/{self.rank}"
+        md_key = f"{self.tcp_store_metadata_prefix}/{self.rank}"
         nixl_metadata_bytes = self.runtime.get_local_metadata()
         self.tcp_store_group.set(md_key, nixl_metadata_bytes)
 
-        remote_md_keys = [f"NIXL_EP/{rank}" for rank in remote_ranks]
+        remote_md_keys = [
+            f"{self.tcp_store_metadata_prefix}/{rank}" for rank in remote_ranks
+        ]
         if remote_md_keys:
             self.tcp_store_group.wait(remote_md_keys, timedelta(seconds=300))
             remote_mds = self.tcp_store_group.multi_get(remote_md_keys)
