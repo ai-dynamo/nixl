@@ -80,3 +80,36 @@ def test_multinode_checkpoint_reproducer_exercises_preserve_va_flow():
         "captured.graph.replay()",
     ):
         assert expected in source
+
+
+def test_multinode_checkpoint_reproducer_supports_ibgda_auto_device():
+    script = (
+        _repo_root()
+        / "examples/device/ep/tests/checkpoint_preserve_va_multinode.py"
+    )
+    source = script.read_text()
+
+    for expected in (
+        "--ucx-gda-auto-device",
+        "NIXL_EP_UCX_GDA_AUTO_DEVICE",
+        "UCX_IB_GDA_RETAIN_INACTIVE_CTX",
+        "UCX_GGA_GDA_RETAIN_INACTIVE_CTX",
+        "ucx_info",
+        "Transport: rc_gda",
+        "UCX_NET_DEVICES",
+        "cuda0-mlx5_5:1",
+        "configure_ucx_gda_auto_device(args, env)",
+        "import_nixl_ep()",
+    ):
+        assert expected in source
+
+    assert "full_device_pattern.fullmatch(device)" in source
+    assert "cuda_prefix = f\"cuda{cuda_device}-\"" in source
+
+    main_source = source[source.index("def main() -> None:") :]
+    assert main_source.index("initialize_cuda_runtime(env)") < main_source.index(
+        "configure_ucx_gda_auto_device(args, env)"
+    )
+    assert main_source.index("configure_ucx_gda_auto_device(args, env)") < (
+        main_source.index("import_nixl_ep()")
+    )

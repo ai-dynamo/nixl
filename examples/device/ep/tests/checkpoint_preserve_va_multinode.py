@@ -30,7 +30,9 @@ script follows the Dynamo snapshot-control contract: after pause it writes
 TCPStore connection, resumes NIXL EP, validates graph-visible addresses, and
 replays the pre-captured CUDA graph after ``restore-complete``. Use
 ``--force-ucx-tcp`` or ``NIXL_EP_FORCE_UCX_TCP=1`` to force UCX away from RDMA
-on clusters without RDMA device access.
+on clusters without RDMA device access. Use ``--ucx-gda-auto-device`` or
+``NIXL_EP_UCX_GDA_AUTO_DEVICE=1`` to opt into IBGDA preflight and automatic
+``UCX_NET_DEVICES`` selection.
 """
 
 from __future__ import annotations
@@ -40,6 +42,9 @@ import gc
 import importlib
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -59,6 +64,12 @@ SNAPSHOT_CONTROL_ENV = "DYN_SNAPSHOT_CONTROL_DIR"
 READY_FOR_CHECKPOINT = "ready-for-checkpoint"
 SNAPSHOT_COMPLETE = "snapshot-complete"
 RESTORE_COMPLETE = "restore-complete"
+GDA_AUTO_DEVICE_ENV = "NIXL_EP_UCX_GDA_AUTO_DEVICE"
+GDA_RETAIN_ENV_VARS = (
+    "UCX_IB_GDA_RETAIN_INACTIVE_CTX",
+    "UCX_GGA_GDA_RETAIN_INACTIVE_CTX",
+)
+GDA_DEFAULT_UCX_TLS = "rc_gda,rc,cuda_copy,cuda_ipc,self"
 
 nixl_ep: Any
 
@@ -217,6 +228,19 @@ def parse_args() -> argparse.Namespace:
             "this flag or --ucx-tls is used."
         ),
     )
+    parser.add_argument(
+        "--ucx-gda-auto-device",
+        action="store_true",
+        default=env_flag(GDA_AUTO_DEVICE_ENV),
+        help=(
+            "Opt into IBGDA runtime validation. The script sets the UCX GDA "
+            "retain-inactive-context knobs before importing nixl_ep, runs "
+            "ucx_info -d after CUDA context initialization, and sets "
+            "UCX_NET_DEVICES to the selected full rc_gda device name such as "
+            "cuda0-mlx5_5:1. Defaults to "
+            f"${GDA_AUTO_DEVICE_ENV}."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -246,6 +270,12 @@ def create_store(args: argparse.Namespace, env: RankEnv) -> dist.TCPStore:
 
 
 def configure_ucx_transport(args: argparse.Namespace) -> None:
+    if args.ucx_gda_auto_device and args.force_ucx_tcp:
+        raise ValueError("--ucx-gda-auto-device conflicts with --force-ucx-tcp")
+
+    if args.ucx_gda_auto_device:
+        configure_ucx_gda_pre_import()
+
     if args.ucx_tls:
         os.environ["UCX_TLS"] = args.ucx_tls
         print(f"[transport] set UCX_TLS={args.ucx_tls}", flush=True)
@@ -254,6 +284,171 @@ def configure_ucx_transport(args: argparse.Namespace) -> None:
     if args.force_ucx_tcp:
         os.environ["UCX_TLS"] = "tcp,cuda_copy,self"
         print("[transport] forced UCX_TLS=tcp,cuda_copy,self", flush=True)
+        return
+
+    if args.ucx_gda_auto_device:
+        if "UCX_TLS" in os.environ:
+            print(
+                f"[transport] using existing UCX_TLS={os.environ['UCX_TLS']}",
+                flush=True,
+            )
+        else:
+            os.environ["UCX_TLS"] = GDA_DEFAULT_UCX_TLS
+            print(f"[transport] set UCX_TLS={GDA_DEFAULT_UCX_TLS}", flush=True)
+
+
+def configure_ucx_gda_pre_import() -> None:
+    for name in GDA_RETAIN_ENV_VARS:
+        value = os.getenv(name)
+        if value is not None and not env_flag(name):
+            raise ValueError(
+                f"{name} must be set to y when --ucx-gda-auto-device is used; "
+                f"got {value!r}"
+            )
+        os.environ[name] = "y"
+        print(f"[transport] set {name}=y", flush=True)
+
+
+def tail_text(text: str, max_chars: int = 6000) -> str:
+    if len(text) <= max_chars:
+        return text
+    return f"... <truncated> ...\n{text[-max_chars:]}"
+
+
+def run_ucx_info_d(env: dict[str, str]) -> str:
+    ucx_info = shutil.which("ucx_info")
+    if ucx_info is None:
+        raise RuntimeError(
+            "IBGDA preflight requires ucx_info in PATH. Install UCX tools or "
+            "disable --ucx-gda-auto-device."
+        )
+
+    result = subprocess.run(
+        [ucx_info, "-d"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"IBGDA preflight command failed: ucx_info -d exited with "
+            f"{result.returncode}\n{tail_text(result.stdout)}"
+        )
+    return result.stdout
+
+
+def extract_ucx_rc_gda_devices(ucx_info_output: str) -> list[str]:
+    devices: list[str] = []
+    active_transport = None
+
+    for line in ucx_info_output.splitlines():
+        transport_match = re.search(r"\bTransport:\s+(\S+)", line)
+        if transport_match:
+            active_transport = transport_match.group(1)
+            continue
+
+        if active_transport != "rc_gda":
+            continue
+
+        device_match = re.search(r"\bDevice:\s+(\S+)", line)
+        if device_match:
+            device = device_match.group(1)
+            if device not in devices:
+                devices.append(device)
+
+    return devices
+
+
+def select_ucx_rc_gda_device(devices: list[str], cuda_device: int) -> str:
+    full_device_pattern = re.compile(r"cuda\d+-mlx5_[^:\s]+:\d+")
+    full_devices = [
+        device for device in devices if full_device_pattern.fullmatch(device)
+    ]
+    if not full_devices:
+        raise RuntimeError(
+            "IBGDA preflight found Transport: rc_gda but no full CUDA/HCA "
+            "device names. Expected names like cuda0-mlx5_5:1; found "
+            f"{devices}."
+        )
+
+    cuda_prefix = f"cuda{cuda_device}-"
+    matching_devices = [
+        device for device in full_devices if device.startswith(cuda_prefix)
+    ]
+    if not matching_devices:
+        raise RuntimeError(
+            "IBGDA preflight found rc_gda devices, but none match the active "
+            f"CUDA device cuda{cuda_device}. Found {full_devices}. Set "
+            "CUDA_VISIBLE_DEVICES/LOCAL_RANK consistently or set "
+            "UCX_NET_DEVICES manually and disable --ucx-gda-auto-device."
+        )
+
+    return matching_devices[0]
+
+
+def configure_ucx_gda_auto_device(
+    args: argparse.Namespace,
+    env: RankEnv,
+) -> None:
+    if not args.ucx_gda_auto_device:
+        return
+
+    cuda_device = torch.cuda.current_device()
+    print(
+        f"[transport] running IBGDA preflight for rank {env.rank} on "
+        f"cuda{cuda_device}",
+        flush=True,
+    )
+
+    discovery_env = os.environ.copy()
+    discovery_env["UCX_NET_DEVICES"] = "all"
+    discovery_output = run_ucx_info_d(discovery_env)
+    devices = extract_ucx_rc_gda_devices(discovery_output)
+    if not devices:
+        retain_settings = ", ".join(
+            f"{name}={os.getenv(name)}" for name in GDA_RETAIN_ENV_VARS
+        )
+        raise RuntimeError(
+            "IBGDA preflight failed: ucx_info -d did not expose "
+            "Transport: rc_gda with UCX_NET_DEVICES=all. Ensure the image's "
+            "UCX build includes rc_gda, the mlx5 GDA module loads, and "
+            f"{retain_settings}. ucx_info output tail:\n"
+            f"{tail_text(discovery_output)}"
+        )
+
+    selected_device = select_ucx_rc_gda_device(devices, cuda_device)
+    previous_devices = os.environ.get("UCX_NET_DEVICES")
+    os.environ["UCX_NET_DEVICES"] = selected_device
+    print(
+        "[transport] selected UCX_NET_DEVICES="
+        f"{selected_device} for rc_gda"
+        + (f" (overrode {previous_devices})" if previous_devices else ""),
+        flush=True,
+    )
+
+    validation_env = os.environ.copy()
+    validation_output = run_ucx_info_d(validation_env)
+    validated_devices = extract_ucx_rc_gda_devices(validation_output)
+    if selected_device not in validated_devices:
+        raise RuntimeError(
+            "IBGDA preflight failed: selected UCX_NET_DEVICES="
+            f"{selected_device} did not keep Transport: rc_gda visible. "
+            f"ucx_info reported rc_gda devices {validated_devices}. Output "
+            f"tail:\n{tail_text(validation_output)}"
+        )
+
+
+def initialize_cuda_runtime(env: RankEnv) -> None:
+    torch.cuda.set_device(env.local_rank)
+    torch.empty((), device="cuda")
+    torch.cuda.synchronize()
+    print(
+        f"[cuda] initialized context on local_rank={env.local_rank} "
+        f"current_device={torch.cuda.current_device()}",
+        flush=True,
+    )
 
 
 def import_nixl_ep() -> None:
@@ -570,7 +765,6 @@ def wait_for_external_resume(args: argparse.Namespace, env: RankEnv) -> None:
 def main() -> None:
     args = parse_args()
     configure_ucx_transport(args)
-    import_nixl_ep()
 
     env = read_rank_env()
     if env.world_size < 2:
@@ -600,9 +794,17 @@ def main() -> None:
 
     coord_prefix = f"{store_key_prefix(args)}/coord"
 
-    torch.set_default_dtype(torch.bfloat16)
-    torch.set_default_device("cuda")
-    torch.cuda.set_device(env.local_rank)
+    if args.ucx_gda_auto_device:
+        torch.set_default_dtype(torch.bfloat16)
+        torch.set_default_device("cuda")
+        initialize_cuda_runtime(env)
+        configure_ucx_gda_auto_device(args, env)
+        import_nixl_ep()
+    else:
+        import_nixl_ep()
+        torch.set_default_dtype(torch.bfloat16)
+        torch.set_default_device("cuda")
+        torch.cuda.set_device(env.local_rank)
 
     store = create_store(args, env)
     store_barrier(store, env, coord_prefix, "store_ready", args.barrier_timeout_sec)
