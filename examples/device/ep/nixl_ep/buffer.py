@@ -81,6 +81,8 @@ class Buffer:
             timeout_ms: GPU kernel timeout in milliseconds.
                 In low-latency paths, a timeout marks the rank invalid and masks it out.
                 In high-throughput paths, a timeout is fatal and traps.
+                Native NIXL metadata and peer-info connection waits also use
+                this timeout to fail fast instead of hanging indefinitely.
                 Default: 30000 ms.
             tcp_store_metadata_prefix: TCPStore key prefix for NIXL metadata exchange.
         """

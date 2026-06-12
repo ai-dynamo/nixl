@@ -34,6 +34,10 @@ on clusters without RDMA device access. Use ``--ucx-intranode`` or
 ``NIXL_EP_UCX_INTRANODE=1`` for same-node CUDA IPC/NVLink runs. Use
 ``--ucx-gda-auto-device`` or ``NIXL_EP_UCX_GDA_AUTO_DEVICE=1`` to opt into
 IBGDA preflight and automatic ``UCX_NET_DEVICES`` selection.
+For same-node Kubernetes validation, ``--ucx-intranode`` requires ranks to
+share PID/IPC namespaces; separate pods commonly cannot use UCX shared-memory
+active messages. Use ``--spawn-local-ranks 2 --ucx-intranode`` in a pod that
+has two GPUs, or deploy ranks with compatible host/shared PID and IPC settings.
 """
 
 from __future__ import annotations
@@ -47,6 +51,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import timedelta
@@ -70,7 +75,11 @@ INTRANODE_DEFAULT_UCX_TLS = "sm,cuda_ipc,cuda_copy,self"
 INTRANODE_SHARED_MEMORY_TLS = frozenset(
     ("sm", "posix", "sysv", "cma", "knem", "xpmem")
 )
+LOCAL_SPAWN_CHILD_ENV = "NIXL_EP_LOCAL_SPAWN_CHILD"
+LOCAL_SPAWN_MASTER_ADDR = "127.0.0.1"
 GDA_AUTO_DEVICE_ENV = "NIXL_EP_UCX_GDA_AUTO_DEVICE"
+GDA_DEVICE_ENV = "NIXL_EP_UCX_GDA_DEVICE"
+GDA_DEVICE_CANDIDATES_ENV = "NIXL_EP_UCX_GDA_DEVICE_CANDIDATES"
 GDA_RETAIN_ENV_VARS = (
     "UCX_IB_GDA_RETAIN_INACTIVE_CTX",
     "UCX_GGA_GDA_RETAIN_INACTIVE_CTX",
@@ -129,7 +138,30 @@ def parse_args() -> argparse.Namespace:
             "By default graph capture errors fail the run."
         ),
     )
-    parser.add_argument("--timeout-ms", type=int, default=30_000)
+    parser.add_argument(
+        "--timeout-ms",
+        type=int,
+        default=30_000,
+        help=(
+            "Timeout for NIXL EP GPU waits and native metadata/peer-info "
+            "connection waits. Use a smaller value to fail fast when UCX "
+            "endpoint setup hangs."
+        ),
+    )
+    parser.add_argument(
+        "--spawn-local-ranks",
+        type=int,
+        default=0,
+        help=(
+            "Single-pod same-node launcher for intranode validation. The "
+            "parent process spawns this many child rank processes in the same "
+            "container/PID/IPC namespace, exposes the first N visible GPUs via "
+            "CUDA_VISIBLE_DEVICES, sets RANK/WORLD_SIZE/LOCAL_RANK, and runs "
+            "the normal checkpoint/restore flow in each child. Use this with "
+            "--ucx-intranode for Kubernetes tests; separate pods generally "
+            "cannot use UCX shared-memory active messages."
+        ),
+    )
     parser.add_argument("--store-master-addr", default=os.getenv("MASTER_ADDR"))
     parser.add_argument("--store-port", type=int, default=DEFAULT_STORE_PORT)
     parser.add_argument(
@@ -244,7 +276,10 @@ def parse_args() -> argparse.Namespace:
             "nixl_ep and clears stale network-device restrictions with "
             "UCX_NET_DEVICES=all. Use --ucx-tls to override the TLS list; "
             "the override must still include cuda_ipc plus a shared-memory "
-            "active-message transport. Defaults to "
+            "active-message transport. Ranks must share PID/IPC namespaces; "
+            "Kubernetes separate pods usually do not. Use "
+            "--spawn-local-ranks 2 in one pod/container or host/shared "
+            "PID/IPC-compatible pod settings for same-node tests. Defaults to "
             f"${INTRANODE_ENV}."
         ),
     )
@@ -262,7 +297,213 @@ def parse_args() -> argparse.Namespace:
             f"${GDA_AUTO_DEVICE_ENV}."
         ),
     )
+    parser.add_argument(
+        "--ucx-gda-device",
+        default=os.getenv(GDA_DEVICE_ENV),
+        help=(
+            "Optional full UCX rc_gda device to use with "
+            "--ucx-gda-auto-device, for example cuda0-mlx5_5:1. The script "
+            "still adds the ordinary HCA for active-message/control metadata. "
+            f"Defaults to ${GDA_DEVICE_ENV}."
+        ),
+    )
+    parser.add_argument(
+        "--ucx-gda-device-candidates",
+        default=os.getenv(GDA_DEVICE_CANDIDATES_ENV),
+        help=(
+            "Optional comma-separated preferred full UCX rc_gda devices for "
+            "--ucx-gda-auto-device. The first discovered candidate matching "
+            "the active CUDA device is selected. Defaults to "
+            f"${GDA_DEVICE_CANDIDATES_ENV}."
+        ),
+    )
     return parser.parse_args()
+
+
+def remove_cli_option(argv: list[str], option: str, takes_value: bool) -> list[str]:
+    result: list[str] = []
+    skip_next = False
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == option:
+            skip_next = takes_value
+            continue
+        if arg.startswith(f"{option}="):
+            continue
+        result.append(arg)
+    return result
+
+
+def has_cli_option(argv: list[str], option: str) -> bool:
+    return any(arg == option or arg.startswith(f"{option}=") for arg in argv)
+
+
+def local_spawn_cuda_visible_devices(num_ranks: int) -> str:
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible_devices:
+        devices = [device.strip() for device in visible_devices.split(",")]
+        devices = [device for device in devices if device]
+        if len(devices) < num_ranks:
+            raise ValueError(
+                "--spawn-local-ranks requested "
+                f"{num_ranks} ranks, but CUDA_VISIBLE_DEVICES exposes only "
+                f"{len(devices)} device(s): {visible_devices!r}"
+            )
+        return ",".join(devices[:num_ranks])
+
+    return ",".join(str(rank) for rank in range(num_ranks))
+
+
+def stream_child_output(rank: int, proc: subprocess.Popen[str]) -> None:
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(f"[local-rank {rank}] {line}", end="", flush=True)
+
+
+def terminate_child_processes(
+    procs: list[tuple[int, subprocess.Popen[str]]],
+    grace_sec: float = 10.0,
+) -> None:
+    for _rank, proc in procs:
+        if proc.poll() is None:
+            proc.terminate()
+
+    deadline = time.monotonic() + grace_sec
+    while time.monotonic() < deadline:
+        if all(proc.poll() is not None for _rank, proc in procs):
+            return
+        time.sleep(0.1)
+
+    for _rank, proc in procs:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def run_spawn_local_ranks(args: argparse.Namespace) -> None:
+    if env_flag(LOCAL_SPAWN_CHILD_ENV):
+        raise RuntimeError(
+            f"{LOCAL_SPAWN_CHILD_ENV}=1 child process must not spawn ranks"
+        )
+    if args.spawn_local_ranks < 2:
+        raise ValueError("--spawn-local-ranks requires at least 2 ranks")
+    if args.force_ucx_tcp:
+        raise ValueError("--spawn-local-ranks conflicts with --force-ucx-tcp")
+    if args.ucx_gda_auto_device:
+        raise ValueError(
+            "--spawn-local-ranks is for pure intranode CUDA IPC/NVL tests and "
+            "conflicts with --ucx-gda-auto-device"
+        )
+
+    device_count = torch.cuda.device_count()
+    if device_count < args.spawn_local_ranks:
+        raise RuntimeError(
+            "--spawn-local-ranks requested "
+            f"{args.spawn_local_ranks} ranks, but torch sees only "
+            f"{device_count} CUDA device(s)"
+        )
+
+    cuda_visible_devices = local_spawn_cuda_visible_devices(
+        args.spawn_local_ranks
+    )
+    base_child_args = remove_cli_option(
+        sys.argv[1:], "--spawn-local-ranks", takes_value=True
+    )
+    if not args.external_store:
+        base_child_args = remove_cli_option(
+            base_child_args, "--store-master-addr", takes_value=True
+        )
+        base_child_args.extend(
+            ["--store-master-addr", LOCAL_SPAWN_MASTER_ADDR]
+        )
+    if not args.ucx_intranode and not has_cli_option(
+        base_child_args, "--ucx-intranode"
+    ):
+        base_child_args.append("--ucx-intranode")
+
+    child_store_master_addr = (
+        LOCAL_SPAWN_MASTER_ADDR
+        if not args.external_store
+        else args.store_master_addr
+    )
+    print(
+        "[local-spawn] launching "
+        f"{args.spawn_local_ranks} ranks in one container with "
+        f"CUDA_VISIBLE_DEVICES={cuda_visible_devices}, "
+        f"store_master_addr={child_store_master_addr}, "
+        f"store_port={args.store_port}",
+        flush=True,
+    )
+
+    procs: list[tuple[int, subprocess.Popen[str]]] = []
+    threads: list[threading.Thread] = []
+    script_path = Path(__file__).resolve()
+    try:
+        for rank in range(args.spawn_local_ranks):
+            child_env = os.environ.copy()
+            child_env[LOCAL_SPAWN_CHILD_ENV] = "1"
+            child_env[INTRANODE_ENV] = "1"
+            child_env["RANK"] = str(rank)
+            child_env["WORLD_SIZE"] = str(args.spawn_local_ranks)
+            child_env["LOCAL_RANK"] = str(rank)
+            child_env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
+            if not args.external_store:
+                child_env["MASTER_ADDR"] = LOCAL_SPAWN_MASTER_ADDR
+            child_env["MASTER_PORT"] = str(args.store_port)
+            child_env["PYTHONUNBUFFERED"] = "1"
+
+            proc = subprocess.Popen(
+                [sys.executable, str(script_path), *base_child_args],
+                env=child_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            procs.append((rank, proc))
+            thread = threading.Thread(
+                target=stream_child_output,
+                args=(rank, proc),
+                daemon=True,
+            )
+            thread.start()
+            threads.append(thread)
+
+        exit_codes: dict[int, int] = {}
+        while len(exit_codes) < len(procs):
+            for rank, proc in procs:
+                if rank in exit_codes:
+                    continue
+                returncode = proc.poll()
+                if returncode is None:
+                    continue
+                exit_codes[rank] = returncode
+                if returncode != 0:
+                    terminate_child_processes(procs)
+            time.sleep(0.1)
+
+        for thread in threads:
+            thread.join(timeout=1.0)
+
+        failures = {
+            rank: returncode
+            for rank, returncode in exit_codes.items()
+            if returncode != 0
+        }
+        if failures:
+            raise RuntimeError(
+                "local rank subprocesses failed with exit codes "
+                f"{failures}"
+            )
+
+        print(
+            f"PASS local_spawn_ranks={args.spawn_local_ranks}",
+            flush=True,
+        )
+    except BaseException:
+        terminate_child_processes(procs)
+        raise
 
 
 def read_rank_env() -> RankEnv:
@@ -333,6 +574,12 @@ def configure_ucx_intranode_transport(args: argparse.Namespace) -> None:
     print(
         f"[transport] set UCX_TLS={ucx_tls} for intranode CUDA IPC/NVL"
         + (f" (overrode {previous_tls})" if previous_tls else ""),
+        flush=True,
+    )
+    print(
+        "[transport] intranode mode requires ranks to share PID/IPC "
+        "namespaces; use --spawn-local-ranks in one pod/container or "
+        "host/shared PID/IPC-compatible pod settings for Kubernetes tests",
         flush=True,
     )
 
@@ -449,7 +696,26 @@ def extract_ucx_rc_gda_devices(ucx_info_output: str) -> list[str]:
     return devices
 
 
-def select_ucx_rc_gda_device(devices: list[str], cuda_device: int) -> str:
+def parse_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def validate_ucx_rc_gda_device_name(device: str) -> None:
+    if not re.fullmatch(r"cuda\d+-mlx5_[^:\s]+:\d+", device):
+        raise ValueError(
+            "Expected full UCX rc_gda device name like cuda0-mlx5_5:1; "
+            f"got {device!r}"
+        )
+
+
+def select_ucx_rc_gda_device(
+    devices: list[str],
+    cuda_device: int,
+    explicit_device: str | None = None,
+    candidate_devices: list[str] | None = None,
+) -> str:
     full_device_pattern = re.compile(r"cuda\d+-mlx5_[^:\s]+:\d+")
     full_devices = [
         device for device in devices if full_device_pattern.fullmatch(device)
@@ -465,6 +731,39 @@ def select_ucx_rc_gda_device(devices: list[str], cuda_device: int) -> str:
     matching_devices = [
         device for device in full_devices if device.startswith(cuda_prefix)
     ]
+
+    if explicit_device:
+        validate_ucx_rc_gda_device_name(explicit_device)
+        if not explicit_device.startswith(cuda_prefix):
+            raise RuntimeError(
+                "IBGDA preflight explicit device does not match the active "
+                f"CUDA device cuda{cuda_device}: {explicit_device}. Set "
+                "CUDA_VISIBLE_DEVICES/LOCAL_RANK consistently or choose a "
+                f"{GDA_DEVICE_ENV} value with prefix {cuda_prefix}."
+            )
+        if explicit_device not in full_devices:
+            raise RuntimeError(
+                "IBGDA preflight explicit device was not discovered by "
+                f"ucx_info -d: {explicit_device}. Found {full_devices}."
+            )
+        return explicit_device
+
+    if candidate_devices:
+        for device in candidate_devices:
+            validate_ucx_rc_gda_device_name(device)
+        for device in candidate_devices:
+            if device in matching_devices:
+                return device
+        matching_candidates = [
+            device for device in candidate_devices if device.startswith(cuda_prefix)
+        ]
+        raise RuntimeError(
+            "IBGDA preflight found rc_gda devices, but none of the preferred "
+            "candidates for the active CUDA device were discovered. "
+            f"cuda_device=cuda{cuda_device}, candidates={matching_candidates}, "
+            f"discovered={matching_devices}."
+        )
+
     if not matching_devices:
         raise RuntimeError(
             "IBGDA preflight found rc_gda devices, but none match the active "
@@ -511,6 +810,12 @@ def configure_ucx_gda_auto_device(
     discovery_env["UCX_NET_DEVICES"] = "all"
     discovery_output = run_ucx_info_d(discovery_env)
     devices = extract_ucx_rc_gda_devices(discovery_output)
+    candidate_devices = parse_csv(args.ucx_gda_device_candidates)
+    print(
+        f"[transport] discovered rc_gda devices={devices}; "
+        f"explicit={args.ucx_gda_device}; candidates={candidate_devices}",
+        flush=True,
+    )
     if not devices:
         retain_settings = ", ".join(
             f"{name}={os.getenv(name)}" for name in GDA_RETAIN_ENV_VARS
@@ -523,13 +828,19 @@ def configure_ucx_gda_auto_device(
             f"{tail_text(discovery_output)}"
         )
 
-    selected_device = select_ucx_rc_gda_device(devices, cuda_device)
+    selected_device = select_ucx_rc_gda_device(
+        devices,
+        cuda_device,
+        explicit_device=args.ucx_gda_device,
+        candidate_devices=candidate_devices,
+    )
     selected_devices = format_ucx_gda_net_devices(selected_device)
     previous_devices = os.environ.get("UCX_NET_DEVICES")
     os.environ["UCX_NET_DEVICES"] = selected_devices
     print(
         "[transport] selected UCX_NET_DEVICES="
         f"{selected_devices} for rc_gda plus AM/control metadata"
+        + (f" from candidates {candidate_devices}" if candidate_devices else "")
         + (f" (overrode {previous_devices})" if previous_devices else ""),
         flush=True,
     )
@@ -871,6 +1182,15 @@ def wait_for_external_resume(args: argparse.Namespace, env: RankEnv) -> None:
 
 def main() -> None:
     args = parse_args()
+    if env_flag(LOCAL_SPAWN_CHILD_ENV) and args.spawn_local_ranks:
+        raise ValueError(
+            f"{LOCAL_SPAWN_CHILD_ENV}=1 child received recursive "
+            "--spawn-local-ranks"
+        )
+    if args.spawn_local_ranks:
+        run_spawn_local_ranks(args)
+        return
+
     configure_ucx_transport(args)
 
     env = read_rank_env()

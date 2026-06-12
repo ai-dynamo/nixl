@@ -20,6 +20,7 @@ def test_checkpoint_preserve_va_python_api_is_exposed():
         "checkpoint_resume_preserve_va",
     ):
         assert f"def {api_name}" in source
+    assert "connection waits also use" in source
 
 
 def test_checkpoint_preserve_va_cpp_bindings_are_exposed():
@@ -101,6 +102,10 @@ def test_multinode_checkpoint_reproducer_supports_ibgda_auto_device():
         "cuda0-mlx5_5:1,mlx5_5:1",
         "configure_ucx_gda_auto_device(args, env)",
         "import_nixl_ep()",
+        "--ucx-gda-device",
+        "--ucx-gda-device-candidates",
+        "NIXL_EP_UCX_GDA_DEVICE",
+        "NIXL_EP_UCX_GDA_DEVICE_CANDIDATES",
     ):
         assert expected in source
 
@@ -108,6 +113,8 @@ def test_multinode_checkpoint_reproducer_supports_ibgda_auto_device():
     assert "cuda_prefix = f\"cuda{cuda_device}-\"" in source
     assert "def ordinary_hca_from_ucx_rc_gda_device" in source
     assert "return f\"{full_gda_device},{hca_device}\"" in source
+    assert "explicit_device=args.ucx_gda_device" in source
+    assert "candidate_devices=candidate_devices" in source
     assert "selected_devices = format_ucx_gda_net_devices(selected_device)" in source
     assert "os.environ[\"UCX_NET_DEVICES\"] = selected_devices" in source
 
@@ -151,6 +158,64 @@ def test_multinode_checkpoint_reproducer_supports_intranode_ucx():
     assert transport_source.index("configure_ucx_intranode_transport(args)") < (
         transport_source.index("if args.ucx_tls:")
     )
+
+
+def test_multinode_checkpoint_reproducer_supports_local_intranode_launcher():
+    script = (
+        _repo_root()
+        / "examples/device/ep/tests/checkpoint_preserve_va_multinode.py"
+    )
+    source = script.read_text()
+
+    for expected in (
+        "--spawn-local-ranks",
+        "NIXL_EP_LOCAL_SPAWN_CHILD",
+        "run_spawn_local_ranks(args)",
+        "subprocess.Popen",
+        "sys.executable",
+        "RANK",
+        "WORLD_SIZE",
+        "LOCAL_RANK",
+        "CUDA_VISIBLE_DEVICES",
+        "LOCAL_SPAWN_MASTER_ADDR",
+        "--spawn-local-ranks conflicts with --force-ucx-tcp",
+        "Kubernetes separate pods usually do not",
+        "separate pods commonly cannot use UCX shared-memory",
+        "PASS local_spawn_ranks=",
+    ):
+        assert expected in source
+
+    assert 'child_env[INTRANODE_ENV] = "1"' in source
+    assert 'base_child_args.append("--ucx-intranode")' in source
+    assert 'sys.argv[1:], "--spawn-local-ranks"' in source
+
+    main_source = source[source.index("def main() -> None:") :]
+    assert main_source.index("run_spawn_local_ranks(args)") < main_source.index(
+        "configure_ucx_transport(args)"
+    )
+
+
+def test_ep_connect_failures_have_timeout_diagnostics():
+    binding_cpp = _repo_root() / "examples/device/ep/csrc/nixl_ep.cpp"
+    source = binding_cpp.read_text()
+
+    for expected in (
+        "ep_connect_deadline(timeout_ms)",
+        "ep_connect_timed_out(deadline)",
+        "Timed out after",
+        "waiting for NIXL metadata readiness",
+        "waiting for NIXL EP peer info",
+        "notification from remote rank",
+        "ep_connect_diagnostic_context",
+        "UCX_TLS=",
+        "UCX_NET_DEVICES=",
+        "NIXL_EP_UCX_INTRANODE",
+        "NIXL_EP_UCX_GDA_AUTO_DEVICE",
+        "genNotif",
+        "getNotifs",
+        "nixl_status_message(status)",
+    ):
+        assert expected in source
 
 
 def test_ep_memory_view_failures_have_actionable_intranode_diagnostics():

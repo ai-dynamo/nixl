@@ -61,6 +61,8 @@ namespace nixl_ep {
 
 namespace {
 
+using steady_clock = std::chrono::steady_clock;
+
 void sleep_ms(int milliseconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
 }
@@ -99,6 +101,36 @@ void check_ep_mem_view_status(nixl_status_t status, const std::string& view_name
           "the CUDA-local IBGDA device plus its ordinary HCA, or rebuild UCX "
           "with CUDA IPC device API support.";
     throw std::runtime_error(ss.str());
+}
+
+std::string env_or_unset(const char* name) {
+    const char* value = std::getenv(name);
+    return value ? std::string(value) : std::string("<unset>");
+}
+
+std::string ep_connect_diagnostic_context(int local_rank, int remote_rank) {
+    std::ostringstream ss;
+    ss << "local rank " << local_rank
+       << ", remote rank " << remote_rank
+       << ", UCX_TLS=" << env_or_unset("UCX_TLS")
+       << ", UCX_NET_DEVICES=" << env_or_unset("UCX_NET_DEVICES")
+       << ", NIXL_EP_UCX_INTRANODE=" << env_or_unset("NIXL_EP_UCX_INTRANODE")
+       << ", NIXL_EP_UCX_GDA_AUTO_DEVICE="
+       << env_or_unset("NIXL_EP_UCX_GDA_AUTO_DEVICE");
+    return ss.str();
+}
+
+uint64_t ep_connect_timeout_ms(uint64_t timeout_ms) {
+    return timeout_ms == 0 ? 30000 : timeout_ms;
+}
+
+steady_clock::time_point ep_connect_deadline(uint64_t timeout_ms) {
+    return steady_clock::now() +
+           std::chrono::milliseconds(ep_connect_timeout_ms(timeout_ms));
+}
+
+bool ep_connect_timed_out(steady_clock::time_point deadline) {
+    return steady_clock::now() >= deadline;
 }
 
 } // namespace
@@ -450,6 +482,7 @@ void Buffer::barrier() {
 void Buffer::_nixl_agents_connect(const std::vector<int>& ranks, const std::vector<nixl_blob_t>& remote_mds) {
     EP_HOST_ASSERT(!ranks.empty());
     EP_HOST_ASSERT(remote_mds.empty() || remote_mds.size() == ranks.size());
+    const auto deadline = ep_connect_deadline(timeout_ms);
 
     // Assuming ranks vector does not include current rank and has only new ranks
     remote_ranks.insert(remote_ranks.end(), ranks.begin(), ranks.end());
@@ -468,7 +501,9 @@ void Buffer::_nixl_agents_connect(const std::vector<int>& ranks, const std::vect
 
         if (status != NIXL_SUCCESS) {
             throw std::runtime_error("Failed to get metadata for remote agent " +
-                                    std::to_string(remote_rank) + ", status: " + std::to_string(status));
+                                    std::to_string(remote_rank) + ", status: " +
+                                    nixl_status_message(status) + " (" +
+                                    ep_connect_diagnostic_context(rank, remote_rank) + ")");
         }
     }
 
@@ -487,27 +522,68 @@ void Buffer::_nixl_agents_connect(const std::vector<int>& ranks, const std::vect
             }
         }
         if (peers_remaining > 0) {
+            if (ep_connect_timed_out(deadline)) {
+                std::ostringstream ss;
+                ss << "Timed out after " << ep_connect_timeout_ms(timeout_ms)
+                   << " ms waiting for NIXL metadata readiness for "
+                   << peers_remaining << " peer(s):";
+                for (int remote_rank : ranks) {
+                    if (!peer_ready[remote_rank])
+                        ss << " " << remote_rank;
+                }
+                ss << ". "
+                   << ep_connect_diagnostic_context(rank, ranks.front());
+                throw std::runtime_error(ss.str());
+            }
             sleep_ms(10);
         }
     }
 }
 
 void Buffer::_nixl_agents_peer_info_gather(std::vector<int>& ranks) {
+    const auto deadline = ep_connect_deadline(timeout_ms);
     for (int remote_rank : ranks) {
         std::string my_peer_info_str(reinterpret_cast<const char*>(&my_peer_info), sizeof(NixlPeerInfo));
-        nixl_agent_info->agent->genNotif(std::to_string(remote_rank), my_peer_info_str);
+        nixl_status_t status = nixl_agent_info->agent->genNotif(
+            std::to_string(remote_rank), my_peer_info_str);
+        if (status != NIXL_SUCCESS) {
+            throw std::runtime_error("Failed to send NIXL EP peer info to "
+                                    "remote rank " + std::to_string(remote_rank) +
+                                    ": " + nixl_status_message(status) + " (" +
+                                    ep_connect_diagnostic_context(rank, remote_rank) + ")");
+        }
     }
 
     for (int remote_rank : ranks) {
         do {
             nixl_notifs_t notif_map;
-            nixl_agent_info->agent->getNotifs(notif_map);
+            nixl_status_t status = nixl_agent_info->agent->getNotifs(notif_map);
+            if (status != NIXL_SUCCESS) {
+                throw std::runtime_error("Failed to poll NIXL EP peer info "
+                                        "notifications while waiting for remote rank " +
+                                        std::to_string(remote_rank) + ": " +
+                                        nixl_status_message(status) + " (" +
+                                        ep_connect_diagnostic_context(rank, remote_rank) + ")");
+            }
             for (auto &notif : notif_map) {
                 std::string my_peer_info_str = notif.second[0];
                 NixlPeerInfo remote_peer_info;
                 memcpy(&remote_peer_info, my_peer_info_str.c_str(), sizeof(NixlPeerInfo));
                 nixl_peer_info[remote_peer_info.rank] = remote_peer_info;
                 nixl_agent_info->wire_up_done[remote_peer_info.rank] = true;
+            }
+            if (!nixl_agent_info->wire_up_done[remote_rank] &&
+                ep_connect_timed_out(deadline)) {
+                throw std::runtime_error("Timed out after " +
+                                        std::to_string(ep_connect_timeout_ms(
+                                            timeout_ms)) +
+                                        " ms waiting for NIXL EP peer info "
+                                        "notification from remote rank " +
+                                        std::to_string(remote_rank) + " (" +
+                                        ep_connect_diagnostic_context(rank, remote_rank) + ")");
+            }
+            if (!nixl_agent_info->wire_up_done[remote_rank]) {
+                sleep_ms(10);
             }
         } while (!nixl_agent_info->wire_up_done[remote_rank]);
     }
