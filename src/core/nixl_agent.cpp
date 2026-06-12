@@ -58,10 +58,13 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
                            const size_t desc_count)
-    : initiatorDescs(local_type, desc_count),
-      targetDescs(remote_type, desc_count),
+    : initiatorDescs(local_type),
+      targetDescs(remote_type),
       remoteAgent(remote_agent),
-      backendOp(backend_op) {}
+      backendOp(backend_op) {
+    initiatorDescs.reserve(desc_count);
+    targetDescs.reserve(desc_count);
+}
 
 void
 nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
@@ -580,7 +583,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     backend_set_t *backend_set;
     const bool init_side = (agent_name == NIXL_INIT_AGENT);
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(data->lock);
     // When central KV is supported, still it should return error,
     // just we can add a call to fetchRemoteMD for next time
     const auto rem_sec_it = data->remoteSections_.find(agent_name);
@@ -610,12 +613,15 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_dlist_t>> dlists;
+    nixlDlistH::descs_t dlists;
 
     for (const auto &backend : *backend_set) {
-        nixl_meta_dlist_t dlist(descs.getType());
+        nixl_stride_dlist_t dlist(descs.getType());
         if (section.populate(descs, backend, dlist) == NIXL_SUCCESS) {
-            dlists.try_emplace(backend, std::make_unique<nixl_meta_dlist_t>(std::move(dlist)));
+            NIXL_DEBUG << "backend " << backend->getType() << ": prepared " << descs.descCount()
+                       << " descriptors into " << dlist.descCount() << " strides";
+
+            dlists.try_emplace(backend, std::make_unique<nixl_stride_dlist_t>(std::move(dlist)));
         }
     }
 
@@ -671,13 +677,11 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    NIXL_LOCK_GUARD(data->lock);
-    // The remote was invalidated in between prepXferDlist and this call
-    if (data->remoteSections_.count(remote_side->remoteAgent) == 0) {
-        NIXL_ERROR_FUNC << "remote agent '" << remote_side->remoteAgent
-                        << "' was invalidated in between prepXferDlist and this call";
-        data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
-        return NIXL_ERR_NOT_FOUND;
+    if ((desc_count == 0) || (remote_indices.size() == 0) ||
+        (desc_count != (int)remote_indices.size())) {
+        NIXL_ERROR_FUNC << "different number of indices for local (" << desc_count << "), remote ("
+                        << remote_indices.size() << ")";
+        return NIXL_ERR_INVALID_PARAM;
     }
 
     if (extra_params && extra_params->backends.size() > 0) {
@@ -707,36 +711,6 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const nixl_meta_dlist_t &local_descs = *local_side->descs.at(backend);
-    const nixl_meta_dlist_t &remote_descs = *remote_side->descs.at(backend);
-    size_t total_bytes = 0;
-
-    if ((desc_count == 0) || (remote_indices.size() == 0) ||
-        (desc_count != (int)remote_indices.size())) {
-        NIXL_ERROR_FUNC << "different number of indices for local (" << desc_count << "), remote ("
-                        << remote_indices.size() << ")";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    for (int i=0; i<desc_count; ++i) {
-        if ((local_indices[i] >= local_descs.descCount()) || (local_indices[i] < 0)) {
-            NIXL_ERROR_FUNC << "local index out of range at index " << i << " with value "
-                            << local_indices[i];
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        if ((remote_indices[i] >= remote_descs.descCount()) || (remote_indices[i] < 0)) {
-            NIXL_ERROR_FUNC << "remote index out of range at index " << i << " with value "
-                            << remote_indices[i];
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        if (local_descs[local_indices[i]].len != remote_descs[remote_indices[i]].len) {
-            NIXL_ERROR_FUNC << "length mismatch at index pair " << i << " with local index "
-                            << local_indices[i] << " and remote index " << remote_indices[i];
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        total_bytes += local_descs[local_indices[i]].len;
-    }
-
     if (extra_params) {
         if (extra_params->notif) {
             opt_args.notifMsg = *extra_params->notif;
@@ -753,54 +727,88 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    // The remote was invalidated in between prepXferDlist and this call
+    if (data->remoteSections_.count(remote_side->remoteAgent) == 0) {
+        NIXL_ERROR_FUNC << "remote agent '" << remote_side->remoteAgent
+                        << "' was invalidated in between prepXferDlist and this call";
+        data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    const nixl_stride_dlist_t &local_descs = *local_side->descs.at(backend);
+    const nixl_stride_dlist_t &remote_descs = *remote_side->descs.at(backend);
+
+    // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
+
     auto handle = std::make_unique<nixlXferReqH>(remote_side->remoteAgent,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
                                                  desc_count);
 
-    if (extra_params && extra_params->skipDescMerge) {
-        for (int i=0; i<desc_count; ++i) {
-            handle->initiatorDescs[i] = local_descs[local_indices[i]];
-            handle->targetDescs[i] = remote_descs[remote_indices[i]];
+    size_t total_bytes = 0;
+    const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
+    const size_t local_size = local_descs.flatSize();
+    const size_t remote_size = remote_descs.flatSize();
+    // Ceiling division so that find()'s first probe (flat_idx / run_size) can never exceed
+    // the last run index, letting find() skip a bounds clamp on its hot path.
+    const size_t local_run_size =
+        (local_size + local_descs.descCount() - 1) / local_descs.descCount();
+    const size_t remote_run_size =
+        (remote_size + remote_descs.descCount() - 1) / remote_descs.descCount();
+    size_t seq_count = 1;
+
+    for (size_t i = 0; i < static_cast<size_t>(desc_count); i += seq_count) {
+        const size_t local_idx = static_cast<size_t>(local_indices[i]);
+        const size_t remote_idx = static_cast<size_t>(remote_indices[i]);
+
+        if (local_idx >= local_size) [[unlikely]] {
+            NIXL_ERROR_FUNC << "local index out of range at index " << i << " with value "
+                            << local_indices[i];
+            return NIXL_ERR_INVALID_PARAM;
         }
-    } else {
-        int i = 0, j = 0; //final list size
-        while (i<(desc_count)) {
-            nixlMetaDesc local_desc1 = local_descs[local_indices[i]];
-            nixlMetaDesc remote_desc1 = remote_descs[remote_indices[i]];
+        if (remote_idx >= remote_size) [[unlikely]] {
+            NIXL_ERROR_FUNC << "remote index out of range at index " << i << " with value "
+                            << remote_indices[i];
+            return NIXL_ERR_INVALID_PARAM;
+        }
 
-            if(i != (desc_count-1) ) {
-                const nixlMetaDesc *local_desc2 = &(local_descs[local_indices[i + 1]]);
-                const nixlMetaDesc *remote_desc2 = &(remote_descs[remote_indices[i + 1]]);
+        // Keep by value to avoid reloads and keep in registers
+        const nixlStrideDesc local_stride = local_descs.find(local_idx, local_run_size);
+        const nixlStrideDesc remote_stride = remote_descs.find(remote_idx, remote_run_size);
 
-                while (((local_desc1.addr + local_desc1.len) == local_desc2->addr) &&
-                       ((remote_desc1.addr + remote_desc1.len) == remote_desc2->addr) &&
-                       (local_desc1.metadataP == local_desc2->metadataP) &&
-                       (remote_desc1.metadataP == remote_desc2->metadataP) &&
-                       (local_desc1.devId == local_desc2->devId) &&
-                       (remote_desc1.devId == remote_desc2->devId)) {
+        if (local_stride.len != remote_stride.len) [[unlikely]] {
+            NIXL_ERROR_FUNC << "length mismatch at index " << i << " with local index "
+                            << local_indices[i] << " and remote index " << remote_indices[i];
+            return NIXL_ERR_INVALID_PARAM;
+        }
 
-                    local_desc1.len += local_desc2->len;
-                    remote_desc1.len += remote_desc2->len;
+        seq_count = 1;
+        // Merge only dense strides
+        if (!skip_desc_merge && local_stride.stride == local_stride.len &&
+            local_stride.stride == remote_stride.stride) [[likely]] {
+            const size_t cap =
+                std::min(std::min(local_stride.start_idx + local_stride.count - local_idx,
+                                  remote_stride.start_idx + remote_stride.count - remote_idx),
+                         static_cast<size_t>(desc_count) - i);
 
-                    i++;
-                    if(i == (desc_count-1)) break;
-
-                    local_desc2 = &(local_descs[local_indices[i + 1]]);
-                    remote_desc2 = &(remote_descs[remote_indices[i + 1]]);
-                }
+            auto *local_indices_ptr = reinterpret_cast<const unsigned *>(&local_indices[i]);
+            auto *remote_indices_ptr = reinterpret_cast<const unsigned *>(&remote_indices[i]);
+            while (seq_count < cap && local_indices_ptr[seq_count] == local_idx + seq_count &&
+                   remote_indices_ptr[seq_count] == remote_idx + seq_count) {
+                ++seq_count;
             }
-
-            handle->initiatorDescs[j] = local_desc1;
-            handle->targetDescs[j] = remote_desc1;
-            j++;
-            i++;
         }
-        NIXL_DEBUG << "reqH descList size down to " << j;
-        handle->initiatorDescs.resize(j);
-        handle->targetDescs.resize(j);
+
+        const auto &local_desc =
+            handle->initiatorDescs.emplace(local_stride.getMetaDesc(local_idx, seq_count));
+        handle->targetDescs.emplace(remote_stride.getMetaDesc(remote_idx, seq_count));
+        total_bytes += local_desc.len;
     }
+
+    NIXL_DEBUG << "merged " << desc_count << " indices into " << handle->initiatorDescs.descCount()
+               << " descriptors";
 
     handle->engine = backend;
     handle->notifMsg = opt_args.notifMsg;

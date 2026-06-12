@@ -134,4 +134,70 @@ operator==(const nixlRemoteMetaDesc &lhs, const nixlRemoteMetaDesc &rhs) {
 typedef nixlDescList<nixlMetaDesc> nixl_meta_dlist_t;
 using nixl_remote_meta_dlist_t = nixlDescList<nixlRemoteMetaDesc>;
 
+class nixlStrideDesc : public nixlMetaDesc {
+public:
+    size_t stride = 0;
+    size_t count = 0;
+    size_t start_idx = 0;
+
+    nixlStrideDesc() = default;
+
+    using nixlMetaDesc::nixlMetaDesc;
+
+    nixlStrideDesc(uintptr_t addr,
+                   size_t len,
+                   uint64_t dev_id,
+                   nixlBackendMD *metadata,
+                   size_t stride_,
+                   size_t count_)
+        : nixlMetaDesc(addr, len, dev_id, metadata),
+          stride(stride_),
+          count(count_),
+          start_idx(0) {}
+
+    nixlMetaDesc
+    getMetaDesc(size_t idx, size_t size) const noexcept {
+        return nixlMetaDesc(
+            addr + static_cast<uintptr_t>(idx - start_idx) * stride, len * size, devId, metadataP);
+    }
+};
+
+class nixlStrideDescList : public nixlDescList<nixlStrideDesc> {
+public:
+    using nixlDescList<nixlStrideDesc>::nixlDescList;
+
+    size_t
+    flatSize() const {
+        if (descs.empty()) {
+            return 0;
+        }
+        const nixlStrideDesc &last = descs.back();
+        return last.start_idx + last.count;
+    }
+
+    const nixlStrideDesc &
+    find(size_t flat_idx, size_t run_size) const noexcept {
+        // Educated first probe: assume uniform runs
+        size_t mid = flat_idx / run_size;
+        if (flat_idx - descs[mid].start_idx < descs[mid].count) [[likely]] {
+            return descs[mid];
+        }
+
+        // Binary search otherwise
+        size_t lo = 0;
+        size_t hi = descs.size() - 1;
+        while (lo < hi) {
+            if (descs[mid].start_idx <= flat_idx) {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+            mid = (lo + hi + 1) >> 1;
+        }
+        return descs[lo];
+    }
+};
+
+using nixl_stride_dlist_t = nixlStrideDescList;
+
 #endif
