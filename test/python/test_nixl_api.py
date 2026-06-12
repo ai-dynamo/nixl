@@ -224,6 +224,37 @@ def test_improper_get_reg_descs(one_empty_agent, one_xfer_list):
     assert ret is None
 
 
+def test_prep_mem_view(two_connected_agents):
+    agent1, agent2 = two_connected_agents
+
+    size = 1024
+    addr1 = utils.malloc_passthru(size)
+    addr2 = utils.malloc_passthru(size)
+    try:
+        reg1 = agent1.get_reg_descs([(addr1, size, 0, "")], mem_type="DRAM")
+        reg2 = agent2.get_reg_descs([(addr2, size, 0, "")], mem_type="DRAM")
+        agent1.register_memory(reg1)
+        agent2.register_memory(reg2)
+
+        # Local overload: pass a nixlXferDList describing agent1's own buffer.
+        local_xfer = agent1.get_xfer_descs([(addr1, size, 0)], mem_type="DRAM")
+        local_mvh = agent1.prep_mem_view(local_xfer)
+        assert isinstance(local_mvh, int)
+        assert local_mvh != 0
+
+        # Remote overload: pass (mem_type, list-of-4-tuples) describing
+        # agent2's buffer with agent2's name.
+        remote_mvh = agent1.prep_mem_view("DRAM", [(addr2, size, 0, agent2.name)])
+        assert isinstance(remote_mvh, int)
+        assert remote_mvh != 0
+
+        agent1.release_mem_view(local_mvh)
+        agent1.release_mem_view(remote_mvh)
+    finally:
+        utils.free_passthru(addr1)
+        utils.free_passthru(addr2)
+
+
 def test_noncontiguous_tensor(one_empty_agent):
     cont_tensor = torch.arange(8).reshape(2, 4)
     non_cont_tensor = torch.transpose(cont_tensor, 0, 1)
