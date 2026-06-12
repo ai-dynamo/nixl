@@ -35,8 +35,8 @@
  * on NIXL descriptor/key mapping while iKVStore handles put/get/exists.
  */
 
-#ifndef NIXL_KV_ENGINE_IMPL_H
-#define NIXL_KV_ENGINE_IMPL_H
+#ifndef NIXL_SRC_PLUGINS_KV_KV_ENGINE_IMPL_H
+#define NIXL_SRC_PLUGINS_KV_KV_ENGINE_IMPL_H
 
 #include "backend/backend_engine.h"
 #include <string>
@@ -97,4 +97,4 @@ public:
     releaseReqH(nixlBackendReqH *handle) const = 0;
 };
 
-#endif // NIXL_KV_ENGINE_IMPL_H
+#endif // NIXL_SRC_PLUGINS_KV_KV_ENGINE_IMPL_H
