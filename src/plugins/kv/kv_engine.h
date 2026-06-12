@@ -26,8 +26,8 @@
  * register the resulting engine with nixlBackendPluginCreator.
  */
 
-#ifndef NIXL_KV_ENGINE_H
-#define NIXL_KV_ENGINE_H
+#ifndef NIXL_SRC_PLUGINS_KV_KV_ENGINE_H
+#define NIXL_SRC_PLUGINS_KV_KV_ENGINE_H
 
 #include "kv_engine_impl.h"
 #include <memory>
@@ -92,8 +92,18 @@ public:
         return NIXL_SUCCESS;
     }
 
+    /**
+     * @brief Passes local metadata through unchanged.
+     *
+     * Local-only KV backends do not transform metadata. input must be the
+     * nixlBackendMD* returned by registerMem().
+     */
     nixl_status_t
     loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) override {
+        if (input == nullptr) {
+            output = nullptr;
+            return NIXL_ERR_INVALID_PARAM;
+        }
         output = input;
         return NIXL_SUCCESS;
     }
@@ -124,4 +134,4 @@ private:
     std::unique_ptr<nixlKVEngineImpl> impl_;
 };
 
-#endif // NIXL_KV_ENGINE_H
+#endif // NIXL_SRC_PLUGINS_KV_KV_ENGINE_H
