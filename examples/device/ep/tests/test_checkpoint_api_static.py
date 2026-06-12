@@ -58,3 +58,25 @@ def test_cuda_vmm_is_required_for_graph_stable_buffers():
 
     assert "cuMemAlloc fallback" not in source
     assert "CUDA VMM fabric memory is required" in source
+
+
+def test_multinode_checkpoint_reproducer_exercises_preserve_va_flow():
+    script = (
+        _repo_root()
+        / "examples/device/ep/tests/checkpoint_preserve_va_multinode.py"
+    )
+    source = script.read_text()
+
+    for expected in (
+        "Buffer.get_rdma_size_hint",
+        "buffer.update_memory_buffers",
+        "buffer.connect_ranks",
+        "torch.cuda.graph",
+        "buffer.get_graph_visible_addresses",
+        "buffer.checkpoint_pause_preserve_va",
+        "buffer.checkpoint_resume_preserve_va",
+        "buffer.validate_graph_visible_addresses",
+        "return_recv_hook=use_recv_hooks",
+        "captured.graph.replay()",
+    ):
+        assert expected in source
