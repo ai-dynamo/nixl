@@ -23,6 +23,7 @@
 #include <thread>
 #include <mutex>
 #include <unordered_set>
+#include <unordered_map>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -120,14 +121,24 @@ public:
 private:
     struct AgentInfo {
         int segment_id;
+        uint64_t generation;
+    };
+
+    struct RegisteredMemoryInfo {
+        uint64_t addr;
+        size_t length;
+        nixl_mem_t mem_type;
     };
 
     mutable std::mutex mutex_;
     transfer_engine_t engine_;
     const std::string local_agent_name_;
     std::unordered_map<uint64_t, nixlMooncakeBackendMD *> mem_reg_info_;
-    std::unordered_map<std::string, AgentInfo> connected_agents_;
+    std::unordered_map<uint64_t, RegisteredMemoryInfo> registered_memories_;
+    mutable std::unordered_map<std::string, AgentInfo> connected_agents_;
     mutable std::unordered_set<uint64_t> active_batch_ids_;
+    mutable bool checkpoint_paused_ = false;
+    mutable uint64_t remote_info_generation_ = 0;
 };
 
 #endif

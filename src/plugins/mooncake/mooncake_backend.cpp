@@ -21,11 +21,16 @@
 
 #include <arpa/inet.h>
 #include <bits/stdint-uintn.h>
+#include <cstring>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#if defined(HAVE_CUDA) || defined(__CUDACC__)
+#include <cuda.h>
+#endif
 
 namespace {
 std::vector<std::string>
@@ -76,6 +81,29 @@ chooseIpAddress() {
     static const std::vector<std::string> ips = findLocalIpAddresses();
     static const std::string &fallback = ips.empty() ? local : ips[0];
     return nixl::config::getValueDefaulted("NIXL_MOONCAKE_IP_ADDR", fallback);
+}
+
+[[nodiscard]] bool
+isCudaVmmPointer(uint64_t addr) {
+#if (defined(HAVE_CUDA) || defined(__CUDACC__)) && defined(CUDA_VERSION) &&             \
+    CUDA_VERSION >= 10020
+    (void)cuInit(0);
+    CUmemGenericAllocationHandle handle;
+    CUresult rc =
+        cuMemRetainAllocationHandle(&handle, reinterpret_cast<void *>(addr));
+    if (rc == CUDA_SUCCESS) {
+        cuMemRelease(handle);
+        return true;
+    }
+#else
+    (void)addr;
+#endif
+    return false;
+}
+
+[[nodiscard]] const char *
+memTypeName(const nixl_mem_t &mem_type) {
+    return mem_type == VRAM_SEG ? "VRAM" : "non-VRAM";
 }
 
 } // namespace
@@ -134,9 +162,14 @@ nixl_status_t
 nixlMooncakeEngine::loadRemoteConnInfo(const std::string &remote_agent,
                                        const std::string &remote_conn_info) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (checkpoint_paused_) {
+        NIXL_ERROR << "Mooncake cannot load remote connection info while "
+                      "graph-stable checkpoint paused.";
+        return NIXL_ERR_NOT_ALLOWED;
+    }
     auto segment_id = openSegment(engine_, remote_conn_info.c_str());
     if (segment_id < 0) return NIXL_ERR_BACKEND;
-    connected_agents_[remote_agent].segment_id = segment_id;
+    connected_agents_[remote_agent] = {segment_id, ++remote_info_generation_};
     return NIXL_SUCCESS;
 }
 
@@ -169,6 +202,7 @@ nixlMooncakeEngine::registerMem(const nixlBlobDesc &mem,
     priv->ref_cnt = 1;
     out = priv;
     mem_reg_info_[mem.addr] = priv;
+    registered_memories_[mem.addr] = {mem.addr, mem.len, nixl_mem};
     return NIXL_SUCCESS;
 }
 
@@ -180,6 +214,7 @@ nixlMooncakeEngine::deregisterMem(nixlBackendMD *meta) {
     if (priv->ref_cnt) return NIXL_SUCCESS;
     int err = unregisterLocalMemory(engine_, priv->addr);
     mem_reg_info_.erase((uint64_t)priv->addr);
+    registered_memories_.erase((uint64_t)priv->addr);
     delete priv;
     return err == 0 ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
 }
@@ -237,6 +272,12 @@ nixlMooncakeEngine::prepXfer(const nixl_xfer_op_t &operation,
                              const std::string &remote_agent,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (checkpoint_paused_) {
+        NIXL_ERROR << "Mooncake prepXfer rejected while graph-stable "
+                      "checkpoint paused.";
+        return NIXL_ERR_NOT_ALLOWED;
+    }
     auto priv = new nixlMooncakeBackendReqH();
     priv->batch_id = INVALID_BATCH;
     handle = priv;
@@ -251,33 +292,41 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
+    if (local.descCount() != remote.descCount()) return NIXL_ERR_INVALID_PARAM;
+
+    size_t request_count = local.descCount();
+    for (size_t index = 0; index < request_count; ++index) {
+        if (local[index].len != remote[index].len) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+    }
+
+    const static size_t kMaxRequestCount = 1024;
     int segment_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (checkpoint_paused_) {
+            NIXL_ERROR << "Mooncake postXfer rejected while graph-stable "
+                          "checkpoint paused; reload fresh remote metadata "
+                          "after resume before posting transfers.";
+            return NIXL_ERR_NOT_ALLOWED;
+        }
         const auto agent = connected_agents_.find(remote_agent);
         if (agent == connected_agents_.end()) return NIXL_ERR_INVALID_PARAM;
         segment_id = agent->second.segment_id;
-    }
-    if (local.descCount() != remote.descCount()) return NIXL_ERR_INVALID_PARAM;
-
-    const static size_t kMaxRequestCount = 1024;
-    if (priv->batch_id == INVALID_BATCH) {
-        uint64_t batch_id = allocateBatchID(engine_, kMaxRequestCount);
-        if (batch_id == INVALID_BATCH) {
-            return NIXL_ERR_BACKEND;
-        }
-        priv->batch_id = batch_id;
-        priv->request_count = 0;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
+        if (priv->batch_id == INVALID_BATCH) {
+            uint64_t batch_id = allocateBatchID(engine_, kMaxRequestCount);
+            if (batch_id == INVALID_BATCH) {
+                return NIXL_ERR_BACKEND;
+            }
+            priv->batch_id = batch_id;
+            priv->request_count = 0;
             active_batch_ids_.insert(batch_id);
         }
     }
 
-    size_t request_count = local.descCount();
     transfer_request_t *request = new transfer_request_t[request_count];
     for (size_t index = 0; index < request_count; ++index) {
-        if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
         request[index].opcode = (operation == NIXL_READ) ? OPCODE_READ : OPCODE_WRITE;
         request[index].source = (void *)local[index].addr;
         request[index].target_offset = remote[index].addr;
@@ -285,7 +334,7 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         request[index].target_id = segment_id;
     }
     int rc = 0;
-    if (opt_args->hasNotif) {
+    if (opt_args != nullptr && opt_args->hasNotif) {
         notify_msg_t notify_msg;
         notify_msg.name = const_cast<char *>(local_agent_name_.c_str());
         notify_msg.msg = const_cast<char *>(opt_args->notifMsg.c_str());
@@ -294,7 +343,13 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         rc = submitTransfer(engine_, priv->batch_id, request, request_count);
     }
     delete[] request;
-    if (rc) return NIXL_ERR_BACKEND;
+    if (rc) {
+        freeBatchID(engine_, priv->batch_id);
+        std::lock_guard<std::mutex> lock(mutex_);
+        active_batch_ids_.erase(priv->batch_id);
+        priv->batch_id = INVALID_BATCH;
+        return NIXL_ERR_BACKEND;
+    }
     priv->request_count += request_count;
     return NIXL_IN_PROG;
 }
@@ -340,31 +395,64 @@ nixlMooncakeEngine::releaseReqH(nixlBackendReqH *handle) const {
 nixl_status_t
 nixlMooncakeEngine::checkpointPauseGraphStable() const {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (checkpoint_paused_) {
+        return NIXL_SUCCESS;
+    }
     if (!active_batch_ids_.empty()) {
-        NIXL_ERROR << "Mooncake graph-stable checkpoint pause is unsupported: "
-                   << active_batch_ids_.size()
-                   << " transfer batch(es) are still active.";
+        NIXL_ERROR << "Mooncake graph-stable checkpoint pause requires a "
+                      "quiesced engine; "
+                   << active_batch_ids_.size() << " transfer batch(es) are active.";
         return NIXL_ERR_NOT_ALLOWED;
     }
 
-    NIXL_ERROR
-        << "Mooncake graph-stable checkpoint pause is unsupported. "
-        << "Preserving CUDA virtual addresses is insufficient because "
-        << "Mooncake owns opaque transport, QP, MR, rkey, IPC, remote segment, "
-        << "registration, and batch state that cannot yet be quiesced and "
-        << "refreshed in place through the NIXL plugin.";
-    return NIXL_ERR_NOT_SUPPORTED;
+    for (const auto &[_, mem] : registered_memories_) {
+        if (mem.mem_type == VRAM_SEG && !isCudaVmmPointer(mem.addr)) {
+            NIXL_ERROR << "Mooncake graph-stable checkpoint pause requires "
+                          "registered graph-visible VRAM to be CUDA VMM "
+                          "reserved/mapped memory. Non-VMM "
+                       << memTypeName(mem.mem_type) << " registration addr=0x"
+                       << std::hex << mem.addr << std::dec << " len=" << mem.length;
+            return NIXL_ERR_NOT_ALLOWED;
+        }
+    }
+
+    for (const auto &[_, agent] : connected_agents_) {
+        (void)closeSegment(engine_, agent.segment_id);
+    }
+    connected_agents_.clear();
+    checkpoint_paused_ = true;
+    ++remote_info_generation_;
+    NIXL_INFO << "Mooncake graph-stable checkpoint paused after quiesce. "
+                 "Local registered VAs are retained; remote connection and "
+                 "segment cache state was invalidated and must be reloaded "
+                 "with fresh bootstrap metadata after resume.";
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlMooncakeEngine::checkpointResumeGraphStable() const {
-    NIXL_ERROR
-        << "Mooncake graph-stable checkpoint resume is unsupported. "
-        << "The NIXL Mooncake plugin cannot safely refresh opaque Mooncake "
-        << "transport, QP, MR, rkey, IPC, remote segment, registration, and "
-        << "batch state in place without invalidating CUDA graph-visible "
-        << "addresses.";
-    return NIXL_ERR_NOT_SUPPORTED;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!checkpoint_paused_) {
+        NIXL_ERROR << "Mooncake graph-stable checkpoint resume called before pause.";
+        return NIXL_ERR_NOT_ALLOWED;
+    }
+    for (const auto &[_, mem] : registered_memories_) {
+        if (mem.mem_type == VRAM_SEG && !isCudaVmmPointer(mem.addr)) {
+            NIXL_ERROR << "Mooncake graph-stable checkpoint resume requires "
+                          "registered graph-visible VRAM to keep its CUDA VMM "
+                          "virtual address. Invalid registration addr=0x"
+                       << std::hex << mem.addr << std::dec << " len=" << mem.length;
+            return NIXL_ERR_NOT_ALLOWED;
+        }
+    }
+
+    checkpoint_paused_ = false;
+    connected_agents_.clear();
+    ++remote_info_generation_;
+    NIXL_INFO << "Mooncake graph-stable checkpoint resumed. Caller must load "
+                 "fresh remote connection info for the restored node/IP before "
+                 "postXfer; stale remote segment IDs were intentionally dropped.";
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t

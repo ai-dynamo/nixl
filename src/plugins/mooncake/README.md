@@ -32,21 +32,19 @@ Mooncake transfer engine is a high-performance, zero-copy data transfer library.
 1. The `ProgTh[read]` features are not supported.
 2. The current version of Mooncake Transfer Engine manages metadata exchange by itself, which is different from NIXL.
 3. The sum of the number of release requests for each handle allocated by `prepXfer()` should be less than `kMaxRequestCount(1024)`.
-4. CUDA-graph-stable checkpoint pause/resume is not supported. The backend exposes fail-closed `checkpointPauseGraphStable()` and `checkpointResumeGraphStable()` hooks that return `NIXL_ERR_NOT_SUPPORTED` (or `NIXL_ERR_NOT_ALLOWED` if transfer batches are still active).
+4. CUDA-graph-stable checkpoint pause/resume is a prototype path gated by strict preconditions. It requires CUDA VMM allocations for graph-visible VRAM, stable graph-visible indirection buffers above the backend, no active transfer batches, and fresh remote connection metadata after resume.
 
 ## CUDA-Graph-Stable Checkpointing
 
-Preserving CUDA virtual addresses is necessary but not sufficient for safe Mooncake checkpoint/resume. Mooncake owns opaque transport state that can be embedded in CUDA-graph-visible execution paths, including QPs, memory registrations, rkeys, IPC handles, remote segments, segment cache entries, and active batch IDs.
+Preserving CUDA virtual addresses with reserved/mapped CUDA VMM memory is mandatory for graph-visible buffers, but it is not the whole checkpoint/resume contract. Mooncake also owns opaque transport state, including QPs, memory registrations, rkeys, IPC handles, remote segments, segment cache entries, and active batch IDs. A graph-stable integration must keep CUDA graph-visible addresses stable while destroying/recreating transport/application/communicator state and refreshing opaque handles behind stable graph-visible indirection buffers.
 
-A future implementation must provide all of the following semantics before a checkpoint flow can replay existing CUDA graphs after restore:
+The NIXL Mooncake backend exposes prototype `checkpointPauseGraphStable()` and `checkpointResumeGraphStable()` hooks for the local quiesce/pre-pause and local resume phases:
 
-- Quiesce all outstanding transfers and reject pause while request handles or batch IDs are active.
-- Retain graph-visible buffers at the same virtual addresses.
-- Release or invalidate network and IPC resources without freeing graph-visible buffers.
-- Recreate QPs, memory registrations, rkeys, IPC handles, remote segments, and Transfer Engine registrations.
-- Refresh all graph-visible metadata in place before resume.
+- `checkpointPauseGraphStable()` rejects the pause if any transfer batch is active or if a registered VRAM buffer is not recognized as CUDA VMM memory. On success it marks the backend paused, rejects new transfers, drops cached remote segment IDs, and retains local registered virtual addresses.
+- `checkpointResumeGraphStable()` requires a previous successful pause, revalidates registered VRAM addresses, clears the paused state, and intentionally leaves remote agents disconnected. The caller must reload fresh remote connection information for the restored node/IP before posting transfers.
+- `prepXfer()` and `postXfer()` fail while paused. `postXfer()` also fails until fresh remote connection information has been loaded after resume, preventing stale segment IDs from being reused.
 
-Until those semantics exist in Mooncake Transfer Engine and are plumbed through this backend, checkpoint integrations must fail closed instead of treating Mooncake as graph-stable.
+This makes graph-stable replay feasible under the VMM/stable-indirection model without recapturing CUDA graphs, but production integrations still need additional plumbing above this backend: coordinated quiesce across all workers, fresh bootstrap/address metadata distribution on the destination node, stable device-side indirection buffers for rkeys/QP/IPC data, and end-to-end validation that the lower Mooncake Transfer Engine refreshes all opaque handles before graph replay.
 
 > [!IMPORTANT]
 > We are working for refactoring Mooncake Transfer Engine to make it more adaptful and useful.
