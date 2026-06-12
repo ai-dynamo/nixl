@@ -1,0 +1,138 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#ifndef NIXL_SRC_PLUGINS_UCX_UCX_ENUMS_H
+#define NIXL_SRC_PLUGINS_UCX_UCX_ENUMS_H
+
+#include <ostream>
+#include <string_view>
+#include <type_traits>
+
+#include <ucs/type/status.h>
+
+#include "nixl_types.h"
+
+namespace nixl::ucx {
+
+inline constexpr std::string_view invalid_string = "INVALID";
+
+enum class mt_mode_t {
+    SINGLE,
+    CONTEXT,
+    WORKER,
+};
+
+[[nodiscard]] constexpr std::string_view
+toStringView(const mt_mode_t t) noexcept {
+    switch (t) {
+    case mt_mode_t::SINGLE:
+        return "SINGLE";
+    case mt_mode_t::CONTEXT:
+        return "CONTEXT";
+    case mt_mode_t::WORKER:
+        return "WORKER";
+    }
+    return nixl::ucx::invalid_string;
+}
+
+enum class ep_state_t {
+    UNINITIALIZED,
+    CONNECTED,
+    FAILED,
+    DISCONNECTED,
+};
+
+[[nodiscard]] constexpr std::string_view
+toStringView(const ep_state_t t) noexcept {
+    switch (t) {
+    case ep_state_t::UNINITIALIZED:
+        return "UNINITIALIZED";
+    case ep_state_t::CONNECTED:
+        return "CONNECTED";
+    case ep_state_t::FAILED:
+        return "FAILED";
+    case ep_state_t::DISCONNECTED:
+        return "DISCONNECTED";
+    }
+    return nixl::ucx::invalid_string;
+}
+
+enum class am_cb_op_t {
+    NOTIF_STR,
+};
+
+[[nodiscard]] constexpr std::string_view
+toStringView(const am_cb_op_t t) noexcept {
+    switch (t) {
+    case am_cb_op_t::NOTIF_STR:
+        return "NOTIF_STR";
+    }
+    return nixl::ucx::invalid_string;
+}
+
+template<typename Enum>
+[[nodiscard]] constexpr auto
+toInteger(const Enum e) noexcept {
+    static_assert(std::is_enum_v<Enum>);
+    return std::underlying_type_t<Enum>(e);
+}
+
+template<typename Enum>
+inline void
+toStream(std::ostream &os, const Enum t) {
+    static_assert(std::is_enum_v<Enum>);
+
+    const auto view = toStringView(t);
+
+    if (view != nixl::ucx::invalid_string) {
+        os << view;
+    } else {
+        os << toInteger(t);
+    }
+}
+
+std::ostream &
+operator<<(std::ostream &os, const mt_mode_t t);
+
+std::ostream &
+operator<<(std::ostream &os, const ep_state_t t);
+
+std::ostream &
+operator<<(std::ostream &os, const am_cb_op_t t);
+
+[[nodiscard]] constexpr nixl_status_t
+toNixlStatus(const ep_state_t t) noexcept {
+    switch (t) {
+    case ep_state_t::CONNECTED:
+        return NIXL_SUCCESS;
+    case ep_state_t::FAILED:
+        return NIXL_ERR_REMOTE_DISCONNECT;
+    case ep_state_t::UNINITIALIZED:
+    case ep_state_t::DISCONNECTED:
+        return NIXL_ERR_BACKEND;
+    }
+    return NIXL_ERR_BACKEND;
+}
+
+// Functions for weakly typed enums.
+
+// Prints warning for unexpected values.
+[[nodiscard]] nixl_status_t
+ucsToNixlStatus(const ucs_status_t t);
+
+} // namespace nixl::ucx
+
+#endif

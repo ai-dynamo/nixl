@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +33,11 @@ if 'POSIX' in static_plugins
     nixl_lib_deps += [ posix_backend_interface ]
 endif
 
+disable_infinia_backend = get_option('disable_infinia_backend')
+if infinia_lib_found.found() and not disable_infinia_backend and 'INFINIA' in static_plugins
+    nixl_lib_deps += [ infinia_backend_interface ]
+endif
+
 if 'OBJ' in static_plugins
     nixl_lib_deps += [ obj_backend_interface ]
 endif
@@ -55,11 +60,13 @@ endif
 
 nixl_lib = library('nixl',
                    'nixl_agent.cpp',
+                   'nixl_enum_strings.cpp',
                    'nixl_plugin_manager.cpp',
                    'nixl_listener.cpp',
                    'telemetry/telemetry.cpp',
                    'telemetry/buffer_exporter.cpp',
                    'telemetry/buffer_plugin.cpp',
+                   'telemetry/nop_plugin.cpp',
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
                    link_args: ['-lstdc++fs'],
                    dependencies: nixl_lib_deps,

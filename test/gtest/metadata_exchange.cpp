@@ -550,8 +550,8 @@ TEST_F(MetadataExchangeTestFixture, LocalNonLocalMDExchange) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
+    nixl_status_t status = NIXL_ERR_NOT_FOUND;
     nixlBackendH *backend;
-    nixl_status_t status;
     std::string backend_name;
     for (const auto& name : std::set<std::string>{"GDS", "POSIX"}) {
         const LogIgnoreGuard lig1("Error initializing GPU Direct Storage driver");

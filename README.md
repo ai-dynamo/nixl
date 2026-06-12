@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -37,23 +37,18 @@ NIXL is supported on a Linux environment only. It is tested on Ubuntu (22.04/24.
 The nixl python API and libraries, including UCX, are available directly through PyPI.
 For example, if you have a GPU running on a Linux host, container, or VM, you can do the following install:
 
-It can be installed for CUDA 12 with:
+Install with:
 
-```
-pip install nixl[cu12]
-```
-
-For CUDA 13 with:
-
-```
-pip install nixl[cu13]
+```bash
+pip install nixl
 ```
 
-For backwards compatibility, `pip install nixl` installs automatically `nixl[cu12]`, continuing to work seamlessly for CUDA 12 users without requiring changes to downstream project dependencies.
-
-If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environment, `nixl-cu13` takes precedence.
+This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
 ## Prerequisites for source build (Linux)
+
+NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
+
 ### Ubuntu:
 
 `$ sudo apt install build-essential cmake pkg-config`
@@ -68,14 +63,14 @@ If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environ
 
 ### UCX
 
-NIXL was tested with UCX version 1.20.x.
+NIXL was tested with UCX version 1.21.x.
 
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
 $ git clone https://github.com/openucx/ucx.git
 $ cd ucx
-$ git checkout v1.20.x
+$ git checkout v1.21.x
 $ ./autogen.sh
 $ ./contrib/configure-release-mt       \
     --enable-shared                    \
@@ -168,6 +163,21 @@ Common build options:
 - `static_plugins`: Comma-separated list of plugins to build statically
 - `enable_plugins`: Comma-separated list of plugins to build (e.g. `-Denable_plugins=UCX,POSIX`). Cannot be used with `disable_plugins`.
 - `disable_plugins`: Comma-separated list of plugins to exclude (e.g. `-Ddisable_plugins=GDS`). Cannot be used with `enable_plugins`.
+- `wheel_variant`: Override the Python wheel variant suffix (e.g. `-Dwheel_variant=rocm` yields `nixl_rocm`). Empty (default) = autodetect from the CUDA major version.
+
+#### Building for AMD ROCm
+
+NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or not a ROCm toolchain is present. GPU-side ROCm/HIP build support for the benchmark suite lives in nixlbench — see PR #1647 for the `use_rocm` / `rocm_path` options there. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
+
+**Plugins on ROCm hosts (CUDA toolchain absent):**
+- `UCX` — primary transport for AMD GPU memory (requires UCX built with `--with-rocm`).
+- `POSIX`, `OBJ`, `AZURE_BLOB`, `HF3FS`, `MOONCAKE`, `GUSLI`, `UCCL` — vendor-neutral; build unchanged.
+- `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — skip automatically because their CUDA / cuFile / DOCA dependencies are not found.
+
+**Known gaps (will be addressed in follow-up PRs):**
+- `nixlbench` (the NIXL benchmark tool) needs CUDA-driver-API → HIP translation work before it builds on ROCm. Use `examples/cpp/nixl_etcd_example` for transfer validation in the meantime.
+- `LIBFABRIC` plugin disabled on ROCm pending header refactor.
+- No NVSHMEM-equivalent backend yet (rocSHMEM analog is a candidate for a future plugin).
 
 #### Environment Variables
 
@@ -195,14 +205,10 @@ NIXL provides Python bindings through pybind11. For detailed Python API document
 The preferred way to install the Python bindings is through pip from PyPI:
 
 ```bash
-pip install nixl[cu12]
+pip install nixl
 ```
 
-Or for CUDA 13 with:
-
-```bash
-pip install nixl[cu13]
-```
+This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
 #### Installation from source
 

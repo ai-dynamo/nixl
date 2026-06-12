@@ -29,7 +29,7 @@ EXTRA_BUILD_ARGS=${3:-""}
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 NIXLBENCH_BUILD_DIR=${NIXLBENCH_BUILD_DIR:-nixlbench_build}
 # UCX_VERSION is the version of UCX to build override default with env variable.
-UCX_VERSION=${UCX_VERSION:-v1.20.x}
+UCX_VERSION=${UCX_VERSION:-v1.21.x}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
 LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
 # Abseil and gRPC versions for consistent toolchain build.
@@ -38,7 +38,7 @@ GRPC_TAG=${GRPC_TAG:-v1.73.0}
 # LIBFABRIC_INSTALL_DIR can be set via environment variable, defaults to INSTALL_DIR
 LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
-UCCL_COMMIT_SHA="2de728f1a27ea3f3b66059baf838f940e243ebc6"
+UCCL_COMMIT_SHA="0cdb740cf369a4f4dd63b9b773c8937f187b179a"
 AZURITE_VER="3.35.0"
 TMPDIR=$(mktemp -d)
 
@@ -101,7 +101,6 @@ else
                                  libprotobuf-dev \
                                  libcpprest-dev \
                                  libaio-dev \
-                                 liburing-dev \
                                  libelf-dev \
                                  libgflags-dev \
                                  patchelf \
@@ -124,6 +123,7 @@ else
                                  libhwloc-dev \
                                  libxml2-dev \
                                  libcurl4-openssl-dev zlib1g-dev # aws-sdk-cpp dependencies
+    $SUDO apt-mark hold liburing2 liburing-dev
 
     # Ubuntu 22.04 specific setup
     if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
@@ -137,16 +137,25 @@ else
         click tabulate auditwheel tomlkit \
         pytest pytest-timeout zmq \
         mpmath typing-extensions sympy numpy \
-        networkx MarkupSafe fsspec filelock jinja2 torch
+        networkx MarkupSafe fsspec filelock jinja2 nanobind
+
+    # Install torch from the CUDA-matched PyTorch index
+    cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
+    if [ -z "$cuda_version" ]; then
+        echo "ERROR: unable to determine CUDA version from nvcc" >&2
+        exit 1
+    fi
+    $SUDO pip3 --no-cache-dir install --break-system-packages \
+        --index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
 
     # Add DOCA repository and install packages
     ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${TMPDIR}/doca-host.deb
+    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${TMPDIR}/doca-host.deb
     $SUDO dpkg -i ${TMPDIR}/doca-host.deb
     $SUDO apt-get update
     $SUDO apt-get upgrade -y
-    $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+    $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
 
     # Force reinstall of RDMA packages from DOCA repository
     # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
@@ -204,6 +213,7 @@ else
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
+          -DCMAKE_CXX_STANDARD=20 \
           -DABSL_PROPAGATE_CXX_STD=ON \
           -DABSL_ENABLE_INSTALL=ON && \
       make -j"$NPROC" && \
@@ -223,7 +233,7 @@ else
           -DgRPC_INSTALL=ON \
           -DgRPC_BUILD_TESTS=OFF \
           -DBUILD_SHARED_LIBS=ON \
-          -DCMAKE_CXX_STANDARD=17 \
+          -DCMAKE_CXX_STANDARD=20 \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
           -DCMAKE_INSTALL_LIBDIR=lib \
@@ -249,7 +259,8 @@ else
       cmake .. \
           -DBUILD_ETCD_CORE_ONLY=ON \
           -DCMAKE_BUILD_TYPE=Release \
-          -DETCD_CMAKE_CXX_STANDARD=17 \
+          -DETCD_CMAKE_CXX_STANDARD=20 \
+          -DCMAKE_CXX_STANDARD=20 \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" && \
@@ -263,7 +274,7 @@ else
       git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
       mkdir aws_sdk_build && \
       cd aws_sdk_build && \
-      cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
+      cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_CXX_STANDARD=20 -DCMAKE_INSTALL_PREFIX=/usr/local && \
       make -j"$NPROC" && \
       $SUDO make install && \
       cd .. && \
@@ -274,7 +285,7 @@ else
       cd ${TMPDIR} && \
       git clone https://github.com/nvidia/gusli.git && \
       cd gusli && \
-      $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+      $SUDO make all CXX="g++ -std=c++20" BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
       $SUDO ldconfig && \
       cd .. && \
       $SUDO rm -rf gusli
@@ -282,15 +293,16 @@ else
 
     ( \
       cd ${TMPDIR} && \
-      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.9}" && \
+      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}" && \
       echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
       git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
+      sed -i '/liburing-dev/d' dependencies.sh
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
-      cmake .. -DBUILD_SHARED_LIBS=ON && \
-      make -j4 && \
-      $SUDO make install && \
+      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
+      ninja -j"$NPROC" && \
+      $SUDO ninja install && \
       $SUDO ldconfig && \
       cd .. && \
       rm -rf Mooncake
@@ -310,8 +322,8 @@ else
       git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
       cd azure-sdk-for-cpp/ && \
       mkdir build && cd build && \
-      AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
-      cmake --build . --target azure-storage-blobs azure-identity && \
+      AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON -DCMAKE_CXX_STANDARD=20 && \
+      cmake --build . --parallel "$NPROC" --target azure-storage-blobs azure-identity && \
       $SUDO cmake --install sdk/core && \
       $SUDO cmake --install sdk/storage/azure-storage-common && \
       $SUDO cmake --install sdk/storage/azure-storage-blobs && \

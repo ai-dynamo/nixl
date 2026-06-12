@@ -84,6 +84,8 @@ private:
     nixl_status_t
     buildAccelToEfaMapping();
     void
+    buildNicInfoMap();
+    void
     cleanupHwlocTopology();
 
     // Data structures for NIXL topology-aware grouping algorithm
@@ -122,6 +124,7 @@ private:
     NicInfoMap nic_info_map;
     size_t avg_nic_speed; // average NIC speed
     size_t avg_nic_upstream_speed; // average NIC upstream link speed
+    bool has_pcie_devices_;
 
     // NIXL topology-aware grouping algorithm methods
     nixl_status_t
@@ -161,6 +164,16 @@ private:
                                uint16_t &domain,
                                uint8_t &bus_id,
                                size_t &link_speed);
+
+    void
+    collectNicInfo(NicInfo &nic,
+                   const std::string &name,
+                   const std::string &pcie_addr,
+                   hwloc_obj_t hwloc_node,
+                   uint16_t domain_id,
+                   uint8_t bus_id,
+                   uint8_t device_id,
+                   uint8_t function_id);
 
     // finds out the PCIe bandwidth limit of all NUMA nodes (determined by sum of connected PCIe
     // switches/bridges)
@@ -224,6 +237,12 @@ public:
 
     /** @brief Invalid NUMA node id constant. */
     static const uint16_t INVALID_NUMA_NODE_ID = UINT16_MAX;
+
+    /** @brief Queries whether there is any NIC with PCIe bus info. */
+    inline bool
+    hasPcieDevices() const {
+        return has_pcie_devices_;
+    }
 
     /**
      * @brief Retrieves the NUMA node id with which the given EFA device is associated.

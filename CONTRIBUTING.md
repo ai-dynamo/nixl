@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,7 @@ limitations under the License.
 
 # Contribution Guidelines
 
-Welcome to NIXL! This document provides guidelines for contributing to our modern C++17 project. Please read through these guidelines carefully before submitting your contribution.
+Welcome to NIXL! This document provides guidelines for contributing to our modern C++20 project. Please read through these guidelines carefully before submitting your contribution.
 
 ## Table of Contents
 
@@ -46,7 +46,7 @@ Before contributing, please:
 
 ### Required Tools
 
-- C++17 compatible compiler
+- C++20 compatible compiler (GCC >= 11, Clang >= 14)
 - Meson build system
 - Ninja build tool
 - clang-format
@@ -100,9 +100,9 @@ pre-commit install
 
 ## Code Standards
 
-### C++17 Guidelines
+### C++20 Guidelines
 
-NIXL is a modern C++17 project. We adhere to the [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines) where appropriate. Key principles:
+NIXL is a modern C++20 project. We adhere to the [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines) where appropriate. Key principles:
 
 1. **Use modern C++ features**: Prefer `auto`, range-based loops, structured bindings, `std::optional`, etc.
 2. **RAII everywhere**: Resource management through constructors/destructors

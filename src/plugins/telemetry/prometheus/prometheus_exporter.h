@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _TELEMETRY_PROMETHEUS_EXPORTER_H
-#define _TELEMETRY_PROMETHEUS_EXPORTER_H
+#ifndef NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H
+#define NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H
 
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
@@ -38,42 +38,77 @@
  * This class implements the telemetry exporter interface to export
  * telemetry events to a Prometheus-compatible format using prometheus-cpp.
  * It exposes metrics via an HTTP endpoint that can be scraped by Prometheus.
+ *
+ * All agents in the same process share a single Exposer (HTTP server) and
+ * Registry. Each agent adds its own metric instances distinguished by the
+ * agent_name label. The shared resources are created by the first agent
+ * and destroyed when the last agent's exporter is released.
  */
 class nixlTelemetryPrometheusExporter : public nixlTelemetryExporter {
 public:
-    /**
-     * @brief Constructor using init params (plugin-compatible)
-     * @param init_params Initialization parameters
-     */
     explicit nixlTelemetryPrometheusExporter(const nixlTelemetryExporterInitParams &init_params);
+    ~nixlTelemetryPrometheusExporter() override;
 
     nixl_status_t
     exportEvent(const nixlTelemetryEvent &event) override;
 
 private:
-    // Prometheus components
-    const bool local_ = false;
-    const uint16_t port_;
+    struct CounterEntry {
+        CounterEntry(prometheus::Family<prometheus::Counter> *family, prometheus::Counter *metric)
+            : family(family),
+              metric(metric) {}
+
+        CounterEntry(const CounterEntry &) = delete;
+        CounterEntry &
+        operator=(const CounterEntry &) = delete;
+        CounterEntry(CounterEntry &&) = delete;
+        CounterEntry &
+        operator=(CounterEntry &&) = delete;
+
+        ~CounterEntry() {
+            if (family && metric) family->Remove(metric);
+        }
+
+        prometheus::Family<prometheus::Counter> *family = nullptr;
+        prometheus::Counter *metric = nullptr;
+    };
+
+    struct GaugeEntry {
+        GaugeEntry(prometheus::Family<prometheus::Gauge> *family, prometheus::Gauge *metric)
+            : family(family),
+              metric(metric) {}
+
+        GaugeEntry(const GaugeEntry &) = delete;
+        GaugeEntry &
+        operator=(const GaugeEntry &) = delete;
+        GaugeEntry(GaugeEntry &&) = delete;
+        GaugeEntry &
+        operator=(GaugeEntry &&) = delete;
+
+        ~GaugeEntry() {
+            if (family && metric) family->Remove(metric);
+        }
+
+        prometheus::Family<prometheus::Gauge> *family = nullptr;
+        prometheus::Gauge *metric = nullptr;
+    };
+
     const std::string agent_name_;
     const std::string hostname_;
+    std::shared_ptr<prometheus::Exposer> exposer_;
     std::shared_ptr<prometheus::Registry> registry_;
-    std::unique_ptr<prometheus::Exposer> exposer_;
-    std::string bind_address_;
 
+    std::unordered_map<std::string, CounterEntry> counters_;
+    std::unordered_map<std::string, GaugeEntry> gauges_;
 
-    // Maps to track created metrics by event name
-    std::unordered_map<std::string, prometheus::Counter *> counters_;
-    std::unordered_map<std::string, prometheus::Gauge *> gauges_;
-
-    // Helper methods
     void
     initializeMetrics();
 
     void
-    registerCounter(const std::string &name, const std::string &help, const std::string &category);
+    registerCounter(const std::string &name, const std::string &help);
 
     void
-    registerGauge(const std::string &name, const std::string &help, const std::string &category);
+    registerGauge(const std::string &name, const std::string &help);
 };
 
-#endif // _TELEMETRY_PROMETHEUS_EXPORTER_H
+#endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H

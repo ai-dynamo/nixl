@@ -59,7 +59,7 @@ public:
     }
 
     inline friend bool operator==(const nixlSectionDesc &lhs, const nixlSectionDesc &rhs) {
-        return (static_cast<nixlMetaDesc>(lhs) == static_cast<nixlMetaDesc>(rhs));
+        return static_cast<const nixlMetaDesc &>(lhs) == static_cast<const nixlMetaDesc &>(rhs);
     }
 
     inline void print(const std::string &suffix) const {
@@ -69,6 +69,8 @@ public:
 
 class nixlSecDescList : public nixlDescList<nixlSectionDesc> {
 public:
+    enum class order : bool { UNSORTED, SORTED };
+
     explicit nixlSecDescList(const nixl_mem_t &type) : nixlDescList<nixlSectionDesc>(type, 0) {}
 
     using nixlDescList<nixlSectionDesc>::operator[]; // bring in const overload
@@ -76,12 +78,22 @@ public:
     void
     addDesc(const nixlSectionDesc &desc) override;
 
-    bool
-    verifySorted() const;
+    void
+    addDesc(nixlSectionDesc &&desc);
 
-    nixlSectionDesc &
+    void
+    addDescs(std::vector<nixlSectionDesc> batch, order ord = order::UNSORTED);
+
+    void
+    addDescs(nixlSecDescList &&other);
+
+    void
+    remDescs(std::vector<size_t> indices, order ord = order::UNSORTED);
+
+    // Shadow the parent's non-const operator[] to return a const ref,
+    // this prevents mutation of descriptor fields after insertion
+    const nixlSectionDesc &
     operator[](size_t index) {
-        assert(verifySorted());
         return descs[index];
     }
 
@@ -98,10 +110,31 @@ public:
     nixlSecDescList(const nixlSecDescList &) = default;
     nixlSecDescList &
     operator=(const nixlSecDescList &) = default;
+    nixlSecDescList(nixlSecDescList &&) = default;
+    nixlSecDescList &
+    operator=(nixlSecDescList &&) = default;
+
+private:
+    void
+    addSortedDescs(std::vector<nixlSectionDesc> batch);
 };
 
 using nixl_sec_dlist_t = nixlSecDescList;
 using section_map_t = std::map<section_key_t, nixlSecDescList>;
+
+/**
+ * @brief Normalize a section descriptor for file-like segments.
+ *
+ * For BLK_SEG, OBJ_SEG, and FILE_SEG, a zero-length registration is stored
+ * internally with len = SIZE_MAX (unlimited range).
+ */
+inline nixlBasicDesc
+normalizeSecDesc(const nixlBasicDesc &desc, nixl_mem_t type) {
+    if ((type == BLK_SEG || type == OBJ_SEG || type == FILE_SEG) && desc.len == 0) {
+        return nixlBasicDesc(desc.addr, SIZE_MAX, desc.devId);
+    }
+    return desc;
+}
 
 class nixlMemSection {
     protected:
@@ -168,7 +201,9 @@ class nixlRemoteSection : public nixlMemSection {
 
         // When adding self as a remote agent for local operations
         nixl_status_t
-        loadLocalData(const nixlSecDescList &mem_elms, nixlBackendEngine *backend);
+        loadLocalData(nixlSecDescList mem_elms, nixlBackendEngine *backend);
+        void
+        removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine &backend);
         ~nixlRemoteSection();
 };
 

@@ -19,7 +19,7 @@ limitations under the License.
 
 This project uses the following third-party libraries. Each library is open-source and licensed under the terms indicated below.
 
-## libnl - 3.2.26
+## libnl3 - 3.7.0
 
 - **Repository URL**: https://github.com/thom311/libnl
 - **License URL**: https://github.com/thom311/libnl/blob/main/COPYING
@@ -479,7 +479,7 @@ AND/OR REDISTRIBUTE THE LIBRARY AS PERMITTED ABOVE, BE LIABLE TO YOU
 FOR DAMAGES, INCLUDING ANY GENERAL, SPECIAL, INCIDENTAL OR
 ```
 
-## prometheus-cpp
+## prometheus-cpp - v1.3.0
 
 - **Repository URL**: https://github.com/jupp0r/prometheus-cpp
 - **License URL**: https://github.com/jupp0r/prometheus-cpp/blob/master/LICENSE
@@ -514,7 +514,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## uccl
+## uccl - 1.4.0
 
 - **Repository URL**: https://github.com/uccl-project/uccl
 - **License URL**: https://github.com/uccl-project/uccl/blob/main/LICENSE
@@ -700,7 +700,44 @@ DEALINGS IN THE SOFTWARE.
    END OF TERMS AND CONDITIONS
 ```
 
-## libxml2
+## LibFabric - 2.3.0
+
+- **Repository URL**: https://github.com/ofiwg/libfabric
+- **License URL**: https://github.com/ofiwg/libfabric/blob/main/COPYING
+- **License name**: BSD-3-Clause
+### License Text:
+```
+Copyright (c) 2015-2021 Intel Corporation.  All rights reserved.
+Copyright (c) 2015-2021 Cisco Systems, Inc.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+  * Neither the name of the copyright holder nor the names of its
+    contributors may be used to endorse or promote products derived
+    from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+## libxml2 - 2.9.14
 
 - **Repository URL**: https://gitlab.gnome.org/GNOME/libxml2
 - **License URL**: https://gitlab.gnome.org/GNOME/libxml2/-/blob/master/Copyright
@@ -733,7 +770,135 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## liburing - 2.12
+## libcurl - 8.5.0
+
+- **Repository URL**: https://github.com/curl/curl
+- **License URL**: https://curl.se/docs/copyright.html
+- **License name**: curl (MIT/X-style)
+- **Usage**: HTTP/HTTPS client library (vendored into wheel, used by AWS SDK and Azure SDK)
+### License Text:
+
+```
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright (c) 1996 - 2024, Daniel Stenberg, <daniel@haxx.se>, and many
+contributors, see the THANKS file.
+
+All rights reserved.
+
+Permission to use, copy, modify, and distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright
+notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD PARTY RIGHTS. IN
+NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall not
+be used in advertising or otherwise to promote the sale, use or other dealings
+in this Software without prior written authorization of the copyright holder.
+```
+
+## libnl-route-3 - 3.7.0
+
+- **Repository URL**: https://github.com/thom311/libnl
+- **License URL**: https://github.com/thom311/libnl/blob/main/COPYING
+- **License name**: LGPL-2.1
+- **Usage**: Netlink routing library (libnl extension, vendored into wheel; same source as libnl3)
+### License Text:
+
+```
+		  GNU LESSER GENERAL PUBLIC LICENSE
+		       Version 2.1, February 1999
+
+ Copyright (C) 1991, 1999 Free Software Foundation, Inc.
+
+This library is free software; you can redistribute it and/or modify it
+under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation; either version 2.1 of the License, or (at
+your option) any later version.
+
+This library is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
+License for more details.
+
+Full license text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+```
+
+## libs2n - 1.0.0
+
+- **Repository URL**: https://github.com/aws/s2n-tls
+- **License URL**: https://github.com/aws/s2n-tls/blob/main/LICENSE
+- **License name**: Apache-2.0
+- **Usage**: Amazon TLS implementation (vendored into wheel via AWS SDK)
+### License Text:
+
+```
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+```
+
+## libzstd - 1.4.4
+
+- **Repository URL**: https://github.com/facebook/zstd
+- **License URL**: https://github.com/facebook/zstd/blob/dev/LICENSE
+- **License name**: BSD-3-Clause
+- **Usage**: Zstandard compression library (vendored into wheel via auditwheel from manylinux_2_28 RPM)
+### License Text:
+
+```
+BSD License
+
+For Zstandard software
+
+Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+ * Neither the name Facebook, nor Meta, nor the names of its contributors may
+   be used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+## liburing - 2.14
 
 - **Repository URL**: https://github.com/axboe/liburing
 - **License URL**: https://github.com/axboe/liburing/blob/master/LICENSE
@@ -1658,7 +1823,7 @@ This file contains the copying permission notices for various files in the
   72 requirements of the license of GCC.
   73
   ```
-## ucx - 1.20.x
+## ucx - 1.21.x
 
 - **Repository URL**: https://github.com/openucx/ucx/
 - **License URL**: https://github.com/openucx/ucx/blob/master/LICENSE
@@ -4752,7 +4917,7 @@ SOFTWARE.
    limitations under the License.
 ```
 
-## libaio - 0.4.0
+## libaio - 0.3.112
 
 - **Repository URL**: https://pagure.io/libaio
 - **License URL**: https://pagure.io/libaio/blob/master/f/COPYING
@@ -5274,7 +5439,43 @@ Random Hacker.
 That's all there is to it!
 ```
 
-## Mooncake - v0.3.9
+## numactl-libs - 2.0.16
+
+- **Repository URL**: https://github.com/numactl/numactl
+- **License URL**: https://github.com/numactl/numactl/blob/master/LICENSE.LGPL2.1
+- **License name**: LGPL-2.1
+- **Usage**: NUMA policy library (vendored into wheel via auditwheel from manylinux_2_28 RPM)
+### License Text:
+
+```
+		  GNU LESSER GENERAL PUBLIC LICENSE
+		       Version 2.1, February 1999
+
+ Copyright (C) 1991, 1999 Free Software Foundation, Inc.
+ 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed.
+
+[This is the first released version of the Lesser GPL.  It also counts
+ as the successor of the GNU Library Public License, version 2, hence
+ the version number 2.1.]
+
+The licenses for most software are designed to take away your
+freedom to share and change it.  By contrast, the GNU General Public
+Licenses are intended to guarantee your freedom to share and change
+free software--to make sure the software is free for all its users.
+
+This license, the Lesser General Public License, applies to some
+specially designated software packages--typically libraries--of the
+Free Software Foundation and other authors who decide to use it.  You
+can use it too, but we suggest you first think carefully about whether
+this license or the ordinary General Public License is the better
+strategy to use in any particular case, based on the explanations below.
+
+Full license text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+```
+
+## Mooncake - v0.3.10.post1
 
 - **Repository URL**: https://github.com/kvcache-ai/Mooncake
 - **License URL**: https://github.com/kvcache-ai/Mooncake/blob/main/LICENSE
@@ -6141,7 +6342,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## RE2
+## RE2 - 2023-03-01
 
 - **Repository URL**: https://github.com/google/re2
 - **License URL**: https://github.com/google/re2/blob/main/LICENSE

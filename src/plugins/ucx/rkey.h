@@ -27,6 +27,7 @@ extern "C" {
 class nixlUcxEp;
 
 namespace nixl::ucx {
+
 class rkey {
 public:
     rkey() = delete;
@@ -41,7 +42,8 @@ private:
     [[nodiscard]] static ucp_rkey_h
     unpackUcpRkey(const nixlUcxEp &, const void *rkey_buffer);
 
-    const std::unique_ptr<ucp_rkey, void (*)(ucp_rkey_h)> rkey_;
+    std::unique_ptr<ucp_rkey, void (*)(ucp_rkey_h)> rkey_;
 };
+
 } // namespace nixl::ucx
 #endif

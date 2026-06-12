@@ -1,5 +1,19 @@
-#!/bin/bash
-set -xe
+#!/bin/bash -xe
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
@@ -13,6 +27,7 @@ Options:
 --slurm_nodes                 Number of SLURM nodes
 --slurm_node_name             Specific node name to use (optional)
 --slurm_head_node             SLURM head node
+--slurm_head_user             SSH user for SLURM head node (optional, used with dlcluster)
 --slurm_job_timeout           SLURM job timeout
 --slurm_job_id_file           File path to save the SLURM job ID
 --slurm_gres                  SLURM GRES specification (optional)
@@ -42,6 +57,9 @@ while getopts ":h-:" optchar; do
                     ;;
                 slurm_head_node=*)
                     slurm_head_node=${OPTARG#*=}
+                    ;;
+                slurm_head_user=*)
+                    slurm_head_user=${OPTARG#*=}
                     ;;
                 slurm_job_timeout=*)
                     slurm_job_timeout=${OPTARG#*=}
@@ -81,6 +99,7 @@ slurm_partition=${slurm_partition:-${SLURM_PARTITION}}
 slurm_nodes=${slurm_nodes:-${SLURM_NODES}}
 slurm_node_name=${slurm_node_name:-${SLURM_NODE_NAME}}
 slurm_head_node=${slurm_head_node:-${SLURM_HEAD_NODE}}
+slurm_head_user=${slurm_head_user:-${SLURM_HEAD_USER}}
 slurm_job_timeout=${slurm_job_timeout:-${SLURM_JOB_TIMEOUT}}
 slurm_job_id_file=${slurm_job_id_file:-${SLURM_JOB_ID_FILE}}
 slurm_gres=${slurm_gres:-${SLURM_GRES}}
@@ -105,6 +124,13 @@ readonly SLURM_IMMEDIATE_TIMEOUT=${SLURM_IMMEDIATE_TIMEOUT:-600} # time to wait 
 # Build SLURM allocation command
 SLURM_ALLOC_ARGS=(
     "salloc"
+)
+
+# Add optional account specification
+[ -n "${SLURM_ACCOUNT}" ] && SLURM_ALLOC_ARGS+=("--account=${SLURM_ACCOUNT}")
+
+# Add required allocation parameters
+SLURM_ALLOC_ARGS+=(
     "-N" "${slurm_nodes}"
     "-p" "${slurm_partition}"
 )
@@ -144,8 +170,30 @@ case "${slurm_head_node}" in
         scctl --raw-errors client connect -- "${SLURM_ALLOCATION_CMD}"
         JOB_ID=$(scctl --raw-errors client connect -- "${SLURM_GET_JOB_ID_CMD}")
         ;;
+    dlcluster*)
+        echo "INFO: Using SSH to connect to ${slurm_head_node} and allocate Slurm resources"
+        echo "INFO: Allocating Slurm resources via SSH to ${slurm_head_node}"
+
+        # Construct SSH target with optional user
+        ssh_target="${slurm_head_node}"
+        [ -n "${slurm_head_user}" ] && ssh_target="${slurm_head_user}@${slurm_head_node}"
+
+        allocation_output=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${ssh_target}" "${SLURM_ALLOCATION_CMD}" 2>&1)
+        echo "${allocation_output}"
+
+        # Extract job ID from salloc output (format: "Granted job allocation 123456")
+        # Note: squeue doesn't reliably work on dlcluster immediately after allocation
+        JOB_ID=$(echo "${allocation_output}" | grep -oP "Granted job allocation \K[0-9]+")
+
+        if [ -z "${JOB_ID}" ]; then
+            echo "ERROR: Failed to extract job ID from allocation output"
+            echo "Allocation output: ${allocation_output}"
+            exit 1
+        fi
+        ;;
     *)
         echo "ERROR: Invalid SLURM_HEAD_NODE value: ${slurm_head_node}"
+        echo "Supported values: scctl, dlcluster, dlcluster.nvidia.com"
         exit 1
         ;;
 esac

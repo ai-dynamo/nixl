@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import pickle
+from enum import Enum
 from typing import Optional, Union
 
 import numpy as np
@@ -117,6 +118,17 @@ class nixl_xfer_handle:
 # Opaque handle for backend can be just int, as it's not passed to the user
 nixl_backend_handle = int
 
+"""
+@brief Enumeration of supported thread synchronization modes.
+"""
+
+
+class nixl_thread_sync_t(Enum):
+    NIXL_THREAD_SYNC_NONE = nixlBind.NIXL_THREAD_SYNC_NONE
+    NIXL_THREAD_SYNC_STRICT = nixlBind.NIXL_THREAD_SYNC_STRICT
+    NIXL_THREAD_SYNC_RW = nixlBind.NIXL_THREAD_SYNC_RW
+    NIXL_THREAD_SYNC_DEFAULT = nixlBind.NIXL_THREAD_SYNC_DEFAULT
+
 
 """
 @brief Configuration class for NIXL agent.
@@ -129,6 +141,8 @@ nixl_backend_handle = int
 @param backends List of backend names for agent to initialize.
         Default is UCX, other backends can be added to the list, or after
         agent creation, can be initialized with create_backend.
+@param sync_mode Thread synchronization mode to use for the agent.
+        If None, sync_mode is set based on the enable_listen flag.
 """
 
 
@@ -137,10 +151,11 @@ class nixl_agent_config:
         self,
         enable_prog_thread: bool = True,
         enable_listen_thread: bool = False,
-        listen_port: int = 0,
+        listen_port: int = DEFAULT_COMM_PORT,
         capture_telemetry: bool = False,
         num_threads: int = 0,
         backends: list[str] = ["UCX"],
+        sync_mode: Optional[nixl_thread_sync_t] = None,
     ):
         # TODO: add backend init parameters
         self.backends = backends
@@ -149,6 +164,12 @@ class nixl_agent_config:
         self.port = listen_port
         self.capture_telemetry = capture_telemetry
         self.num_threads = num_threads
+        if sync_mode is not None and not isinstance(sync_mode, nixl_thread_sync_t):
+            raise TypeError(
+                f"sync_mode must be a nixl_thread_sync_t (got {type(sync_mode).__name__!r})"
+            )
+
+        self.sync_mode = sync_mode
 
 
 """
@@ -177,10 +198,10 @@ class nixl_agent:
         if not nixl_conf:
             nixl_conf = nixl_agent_config()  # Using defaults set in nixl_agent_config
 
-        thread_config = (
-            nixlBind.NIXL_THREAD_SYNC_STRICT
+        default_sync_mode = (
+            nixl_thread_sync_t.NIXL_THREAD_SYNC_STRICT
             if nixl_conf.enable_listen
-            else nixlBind.NIXL_THREAD_SYNC_NONE
+            else nixl_thread_sync_t.NIXL_THREAD_SYNC_NONE
         )
 
         # Set agent config and instantiate an agent
@@ -188,7 +209,7 @@ class nixl_agent:
         agent_config.useProgThread = nixl_conf.enable_pthread
         agent_config.useListenThread = nixl_conf.enable_listen
         agent_config.listenPort = nixl_conf.port
-        agent_config.syncMode = thread_config
+        agent_config.syncMode = (nixl_conf.sync_mode or default_sync_mode).value
         agent_config.pthrDelay = 0
         agent_config.lthrDelay = 100000
         agent_config.captureTelemetry = nixl_conf.capture_telemetry
@@ -208,10 +229,6 @@ class nixl_agent:
 
         self.plugin_b_options: dict[str, dict[str, str]] = {}
         self.plugin_mem_types: dict[str, list[str]] = {}
-        for plugin in self.plugin_list:
-            (backend_options, mem_types) = self.agent.getPluginParams(plugin)
-            self.plugin_b_options[plugin] = backend_options
-            self.plugin_mem_types[plugin] = mem_types
 
         if instantiate_all:
             nixl_conf.backends = self.plugin_list
@@ -240,8 +257,8 @@ class nixl_agent:
             "FILE": nixlBind.FILE_SEG,
             "BLOCK": nixlBind.BLK_SEG,
             "OBJ": nixlBind.OBJ_SEG,
-            "cpu": nixlBind.DRAM_SEG,
-            "cuda": nixlBind.VRAM_SEG,
+            "cpu": nixlBind.DRAM_SEG,  # deprecated
+            "cuda": nixlBind.VRAM_SEG,  # deprecated
         }
         self.nixl_ops = {
             "WRITE": nixlBind.NIXL_WRITE,
@@ -271,6 +288,16 @@ class nixl_agent:
     @return List of plugin names.
     """
 
+    def _load_plugin_params(self, plugin: str):
+        if plugin not in self.plugin_list:
+            return
+        try:
+            (backend_options, mem_types) = self.agent.getPluginParams(plugin)
+            self.plugin_b_options[plugin] = backend_options
+            self.plugin_mem_types[plugin] = mem_types
+        except Exception:
+            logger.warning("Failed to load params for plugin %s", plugin, exc_info=True)
+
     def get_plugin_list(self) -> list[str]:
         return self.plugin_list
 
@@ -282,13 +309,14 @@ class nixl_agent:
     """
 
     def get_plugin_mem_types(self, backend: str) -> list[str]:
-        if backend in self.plugin_mem_types:
-            return self.plugin_mem_types[backend]
-        else:
+        if backend not in self.plugin_mem_types:
+            self._load_plugin_params(backend)
+        if backend not in self.plugin_mem_types:
             logger.warning(
                 "Plugin %s is not available to get its supported mem types.", backend
             )
             return []
+        return self.plugin_mem_types[backend]
 
     """
     @brief Get the initialization parameters of a plugin.
@@ -299,11 +327,12 @@ class nixl_agent:
     """
 
     def get_plugin_params(self, backend: str) -> dict[str, str]:
-        if backend in self.plugin_b_options:
-            return self.plugin_b_options[backend]
-        else:
+        if backend not in self.plugin_b_options:
+            self._load_plugin_params(backend)
+        if backend not in self.plugin_b_options:
             logger.warning("Plugin %s is not available to get its parameters.", backend)
             return {}
+        return self.plugin_b_options[backend]
 
     """
     @brief  Get the memory types supported by a backend.
@@ -904,6 +933,10 @@ class nixl_agent:
         else:
             return False
 
+    @staticmethod
+    def _tensor_mem_type(tensor: torch.Tensor) -> str:
+        return "DRAM" if tensor.get_device() == -1 else "VRAM"
+
     """
     @brief Get nixlXferDList from different input types:
             a) list of 3 element tuples (address, len, device ID) alongside a mandatory memory type
@@ -952,7 +985,7 @@ class nixl_agent:
                 new_descs = None
         elif isinstance(descs, torch.Tensor):
             if descs.is_contiguous():
-                mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
+                mem_type = self._tensor_mem_type(descs)
                 base_addr = descs.data_ptr()
                 region_len = descs.numel() * descs.element_size()
                 gpu_id = descs.get_device()
@@ -980,7 +1013,7 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
-            mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
+            mem_type = self._tensor_mem_type(descs[0])
             new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], dlist)
         else:
             new_descs = None
@@ -1035,7 +1068,7 @@ class nixl_agent:
                 new_descs = None
         elif isinstance(descs, torch.Tensor):
             if descs.is_contiguous():
-                mem_type = "cuda" if str(descs.device).startswith("cuda") else "cpu"
+                mem_type = self._tensor_mem_type(descs)
                 base_addr = descs.data_ptr()
                 region_len = descs.numel() * descs.element_size()
                 gpu_id = descs.get_device()
@@ -1063,7 +1096,7 @@ class nixl_agent:
                 if gpu_id == -1:  # DRAM
                     gpu_id = 0
                 dlist[i, :] = (base_addr, region_len, gpu_id)
-            mem_type = "cuda" if str(tensor_type).startswith("cuda") else "cpu"
+            mem_type = self._tensor_mem_type(descs[0])
             new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], dlist)
         else:
             new_descs = None
