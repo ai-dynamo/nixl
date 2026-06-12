@@ -23,8 +23,8 @@
  * backend-specific storage while sharing this synchronous put/get/exists API.
  */
 
-#ifndef NIXL_KV_STORE_H
-#define NIXL_KV_STORE_H
+#ifndef NIXL_SRC_PLUGINS_KV_KV_STORE_H
+#define NIXL_SRC_PLUGINS_KV_KV_STORE_H
 
 #include "nixl_types.h"
 #include <cstddef>
@@ -41,20 +41,37 @@ class iKVStore {
 public:
     virtual ~iKVStore() = default;
 
+    /**
+     * @brief Stores value bytes for key.
+     *
+     * @param key Storage key.
+     * @param data Pointer to value bytes to store.
+     * @param len Number of bytes to copy from data.
+     * @return NIXL_SUCCESS on success, or a backend error code on failure.
+     */
     virtual nixl_status_t
     put(std::string_view key, const uint8_t *data, size_t len) = 0;
 
     /**
      * @brief Reads value for key into buffer.
      *
-     * bytes_read is set to min(stored_len, len) on success.
-     * Returns NIXL_ERR_BACKEND when key does not exist.
+     * @param key Storage key.
+     * @param buffer Output buffer for stored value bytes.
+     * @param len Maximum number of bytes to read into buffer.
+     * @param bytes_read Set to min(stored_len, len) on success.
+     * @return NIXL_SUCCESS on success, or NIXL_ERR_BACKEND when key does not exist.
      */
     virtual nixl_status_t
     get(std::string_view key, uint8_t *buffer, size_t len, size_t &bytes_read) const = 0;
 
+    /**
+     * @brief Checks whether key is present in the store.
+     *
+     * @param key Storage key.
+     * @return true if key exists, false otherwise.
+     */
     virtual bool
     exists(std::string_view key) const = 0;
 };
 
-#endif // NIXL_KV_STORE_H
+#endif // NIXL_SRC_PLUGINS_KV_KV_STORE_H
