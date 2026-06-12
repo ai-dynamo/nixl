@@ -1432,6 +1432,7 @@ registerIterationMem(nixlAgent *agent,
     iovListToNixlRegDlist(remote_iov, remote_reg);
     rc = agent->registerMem(remote_reg, &reg_args);
     if (rc != NIXL_SUCCESS) {
+        agent->deregisterMem(local_reg, &reg_args);
         return rc;
     }
 
