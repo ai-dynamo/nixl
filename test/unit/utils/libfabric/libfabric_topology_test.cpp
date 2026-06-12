@@ -324,7 +324,12 @@ testBasicTopology() {
 #ifdef CUDA_FOUND
                 // Get PCI bus ID for this GPU
                 cudaDeviceProp prop;
-                cudaGetDeviceProperties(&prop, gpu_id);
+                cudaError_t err = cudaGetDeviceProperties(&prop, gpu_id);
+                if (err != cudaSuccess) {
+                    NIXL_WARN << "   Failed to get properties for GPU " << gpu_id
+                            << ": " << cudaGetErrorString(err);
+                    continue;
+                }
 
                 char pci_bus_id[32];
                 snprintf(pci_bus_id,
