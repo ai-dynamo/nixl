@@ -436,7 +436,7 @@ void notify_dispatch(const int* num_tokens_per_rank,
                       barrier_signal_ptrs,                                                                                             \
                       rank,                                                                                                            \
                       timeout_cycles,                                                                                                  \
-                      nixl_ctx);                                                                                                       \
+                      nixl_ctx_ptr);                                                                                                       \
     }                                                                                                                                  \
     break
 
