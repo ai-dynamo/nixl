@@ -69,7 +69,7 @@ GDA_RETAIN_ENV_VARS = (
     "UCX_IB_GDA_RETAIN_INACTIVE_CTX",
     "UCX_GGA_GDA_RETAIN_INACTIVE_CTX",
 )
-GDA_DEFAULT_UCX_TLS = "rc_gda,rc,cuda_copy,cuda_ipc,self"
+GDA_DEFAULT_UCX_TLS = "rc_gda,rc,ud,cuda_copy,cuda_ipc,self"
 
 nixl_ep: Any
 
@@ -236,8 +236,9 @@ def parse_args() -> argparse.Namespace:
             "Opt into IBGDA runtime validation. The script sets the UCX GDA "
             "retain-inactive-context knobs before importing nixl_ep, runs "
             "ucx_info -d after CUDA context initialization, and sets "
-            "UCX_NET_DEVICES to the selected full rc_gda device name such as "
-            "cuda0-mlx5_5:1. Defaults to "
+            "UCX_NET_DEVICES to the selected full rc_gda device plus "
+            "its ordinary HCA, such as cuda0-mlx5_5:1,mlx5_5:1. "
+            "Defaults to "
             f"${GDA_AUTO_DEVICE_ENV}."
         ),
     )
@@ -388,6 +389,23 @@ def select_ucx_rc_gda_device(devices: list[str], cuda_device: int) -> str:
     return matching_devices[0]
 
 
+def ordinary_hca_from_ucx_rc_gda_device(full_gda_device: str) -> str:
+    match = re.fullmatch(
+        r"cuda\d+-(?P<hca>mlx5_[^:\s]+:\d+)", full_gda_device
+    )
+    if match is None:
+        raise ValueError(
+            "Expected full UCX rc_gda device name like cuda0-mlx5_5:1; "
+            f"got {full_gda_device!r}"
+        )
+    return match.group("hca")
+
+
+def format_ucx_gda_net_devices(full_gda_device: str) -> str:
+    hca_device = ordinary_hca_from_ucx_rc_gda_device(full_gda_device)
+    return f"{full_gda_device},{hca_device}"
+
+
 def configure_ucx_gda_auto_device(
     args: argparse.Namespace,
     env: RankEnv,
@@ -419,11 +437,12 @@ def configure_ucx_gda_auto_device(
         )
 
     selected_device = select_ucx_rc_gda_device(devices, cuda_device)
+    selected_devices = format_ucx_gda_net_devices(selected_device)
     previous_devices = os.environ.get("UCX_NET_DEVICES")
-    os.environ["UCX_NET_DEVICES"] = selected_device
+    os.environ["UCX_NET_DEVICES"] = selected_devices
     print(
         "[transport] selected UCX_NET_DEVICES="
-        f"{selected_device} for rc_gda"
+        f"{selected_devices} for rc_gda plus AM/control metadata"
         + (f" (overrode {previous_devices})" if previous_devices else ""),
         flush=True,
     )
@@ -434,7 +453,8 @@ def configure_ucx_gda_auto_device(
     if selected_device not in validated_devices:
         raise RuntimeError(
             "IBGDA preflight failed: selected UCX_NET_DEVICES="
-            f"{selected_device} did not keep Transport: rc_gda visible. "
+            f"{selected_devices} did not keep Transport: rc_gda visible "
+            f"for {selected_device}. "
             f"ucx_info reported rc_gda devices {validated_devices}. Output "
             f"tail:\n{tail_text(validation_output)}"
         )

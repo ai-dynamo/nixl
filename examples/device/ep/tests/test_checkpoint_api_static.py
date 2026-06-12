@@ -97,7 +97,8 @@ def test_multinode_checkpoint_reproducer_supports_ibgda_auto_device():
         "ucx_info",
         "Transport: rc_gda",
         "UCX_NET_DEVICES",
-        "cuda0-mlx5_5:1",
+        'GDA_DEFAULT_UCX_TLS = "rc_gda,rc,ud,cuda_copy,cuda_ipc,self"',
+        "cuda0-mlx5_5:1,mlx5_5:1",
         "configure_ucx_gda_auto_device(args, env)",
         "import_nixl_ep()",
     ):
@@ -105,6 +106,10 @@ def test_multinode_checkpoint_reproducer_supports_ibgda_auto_device():
 
     assert "full_device_pattern.fullmatch(device)" in source
     assert "cuda_prefix = f\"cuda{cuda_device}-\"" in source
+    assert "def ordinary_hca_from_ucx_rc_gda_device" in source
+    assert "return f\"{full_gda_device},{hca_device}\"" in source
+    assert "selected_devices = format_ucx_gda_net_devices(selected_device)" in source
+    assert "os.environ[\"UCX_NET_DEVICES\"] = selected_devices" in source
 
     main_source = source[source.index("def main() -> None:") :]
     assert main_source.index("initialize_cuda_runtime(env)") < main_source.index(
