@@ -69,6 +69,15 @@ struct nixlAgentConfig {
     std::chrono::microseconds etcdWatchTimeout = kDefaultEtcdWatchTimeout;
 
     /**
+     * @var Tracing backends to activate for this agent (comma-separated, e.g.
+     *      "nvtx" or "nvtx,chakra"). Empty disables tracing. A backend is only
+     *      activated when it is also compiled in. The NIXL_TRACE_BACKENDS
+     *      environment variable, when set, overrides this value. Declared last so
+     *      adding it does not shift the offsets of the pre-existing members.
+     */
+    std::string traceBackends;
+
+    /**
      * @brief  Default constructor.
      */
     nixlAgentConfig() = default;

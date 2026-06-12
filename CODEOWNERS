@@ -17,6 +17,12 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 /src/bindings/python @ovidiusm @mkhazraee @roiedanino
 /src/bindings/rust @roiedanino @gleon99 @tomerg-nvidia @mkhazraee
 
+# Tracing
+/src/api/cpp/tracing/ @e-eygin @ai-dynamo/nixl-maintainers
+/src/core/tracing/ @e-eygin @ai-dynamo/nixl-maintainers
+/test/gtest/unit/tracing/ @e-eygin @ai-dynamo/nixl-maintainers
+/docs/tracing.md @e-eygin @ai-dynamo/nixl-maintainers
+
 # UCX Plugin
 /src/plugins/ucx @brminich @yosefe @gleon99 @ai-dynamo/nixl-maintainers
 

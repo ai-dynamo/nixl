@@ -36,6 +36,10 @@ option('release_wheel', type: 'boolean', value: false, description: 'Add nixl-cu
 option('log_level', type: 'combo', choices: ['trace', 'debug', 'info', 'warning', 'error', 'fatal', 'auto'], value: 'auto', description: 'Log Level (auto: auto-detect based on build type: trace for debug builds, info for release builds)')
 option('rust', type: 'boolean', value: false, description: 'Build Rust bindings')
 
+# Tracing (nixl::trace)
+option('with_trace', type: 'boolean', value: true, description: 'Build the nixl::trace tracing facade')
+option('trace_backends', type: 'string', value: 'nvtx', description: 'Comma-separated tracing backends to compile in (e.g. nvtx, chakra)')
+
 # Tests
 option('build_tests', type: 'boolean', value: true, description: 'Build all tests')
 option('build_examples', type: 'boolean', value: true, description: 'Build all examples')
