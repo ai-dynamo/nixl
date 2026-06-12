@@ -26,6 +26,9 @@
 #include "nixl_descriptors.h"
 #include <chrono>
 #include <memory>
+#include <string>
+
+class nixlMDManager;
 
 /**
  * @class nixlAgent
@@ -51,6 +54,14 @@ class nixlAgent {
          * @brief Destructor for nixlAgent object
          */
         ~nixlAgent ();
+
+        /**
+         * @brief Return this agent's name.
+         *
+         * @return const std::string& Agent name passed to the constructor.
+         */
+        [[nodiscard]] const std::string &
+        getName() const noexcept;
 
         /* It is unsafe to move nixlAgent object */
         nixlAgent(nixlAgent&&) noexcept = delete;
@@ -561,6 +572,21 @@ class nixlAgent {
         checkRemoteMD (const std::string remote_name,
                        const nixl_xfer_dlist_t &descs) const;
 
+        /**
+         * @brief  Opt-in accessor for the name-keyed metadata manager.
+         *
+         * Returns NIXL_ERR_NOT_SUPPORTED when the NIXL_MD_MANAGER environment
+         * variable was unset at agent construction. When enabled, the manager
+         * is built in the agent ctor and the returned pointer is owned by the
+         * agent; do not delete it. `out` is set to `nullptr` on the disabled
+         * path.
+         *
+         * @param  out [out]     Pointer to the agent-owned nixlMDManager,
+         *                       or `nullptr` if the manager is disabled.
+         * @return nixl_status_t NIXL_SUCCESS or NIXL_ERR_NOT_SUPPORTED.
+         */
+        nixl_status_t
+        getMDManager(nixlMDManager *&out);
 };
 
 #endif
