@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+#include <unordered_set>
+
 #include "tracing/trace.h"
 
 #include "common/nixl_log.h"
@@ -64,7 +66,15 @@ Span::addDataDep(SpanId parent) {
 
 SpanId
 Span::id() const noexcept {
-    return backends_.empty() ? SpanId{} : backends_.front()->id();
+    // Return the first non-zero backend id so the SpanId stays meaningful
+    // regardless of backend ordering (NVTX has no id and returns {0}).
+    for (const auto &backend : backends_) {
+        const SpanId backend_id = backend->id();
+        if (backend_id.value != 0) {
+            return backend_id;
+        }
+    }
+    return SpanId{};
 }
 
 /*** Tracer ***/
@@ -110,9 +120,11 @@ Tracer::popCorrelationId() {
 std::unique_ptr<Tracer>
 makeTracer(const TracerConfig &config) {
     std::vector<std::unique_ptr<iTraceBackend>> backends;
+    std::unordered_set<std::string> seen;
 
     for (const auto &requested : config.backends) {
-        if (requested.empty()) {
+        // Skip blanks and duplicates so e.g. "nvtx,nvtx" activates one backend.
+        if (requested.empty() || !seen.insert(requested).second) {
             continue;
         }
         if (requested == "nvtx") {

@@ -34,9 +34,12 @@
 
 #if defined(NIXL_TRACE_ENABLED)
 
-#define NIXL_TRACE_SCOPE_KIND(tracer_ptr, span_name, span_kind) \
-    ::nixl::trace::Span nixl_trace_span_ =                      \
-        ((tracer_ptr) ? (tracer_ptr)->beginSpan((span_name), (span_kind)) : ::nixl::trace::Span{})
+#define NIXL_TRACE_SCOPE_KIND(tracer_ptr, span_name, span_kind)                               \
+    ::nixl::trace::Span nixl_trace_span_ = [&]() -> ::nixl::trace::Span {                     \
+        auto *nixl_trace_tracer_ = (tracer_ptr);                                              \
+        return nixl_trace_tracer_ ? nixl_trace_tracer_->beginSpan((span_name), (span_kind)) : \
+                                    ::nixl::trace::Span{};                                    \
+    }()
 
 #define NIXL_TRACE_SCOPE(tracer_ptr, span_name) \
     NIXL_TRACE_SCOPE_KIND((tracer_ptr), (span_name), ::nixl::trace::Kind::Generic)

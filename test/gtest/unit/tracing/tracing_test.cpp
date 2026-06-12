@@ -184,12 +184,18 @@ TEST(Tracing, MarkFanOut) {
     EXPECT_EQ(b.marks, 2);
 }
 
-// Span::id() reports the first backend's span id.
-TEST(Tracing, SpanIdFromFirstBackend) {
+// Span::id() reports the first non-zero backend id, independent of ordering:
+// a backend with no id (e.g. NVTX, id {0}) must not mask a later backend's id.
+TEST(Tracing, SpanIdFromFirstNonZeroBackend) {
     CallLog a, b;
     auto tracer = makeMockTracer(a, b, /*id_a=*/42, /*id_b=*/99);
     auto span = tracer->beginSpan("op");
     EXPECT_EQ(span.id().value, 42u);
+
+    CallLog c, d;
+    auto tracer2 = makeMockTracer(c, d, /*id_a=*/0, /*id_b=*/99);
+    auto span2 = tracer2->beginSpan("op");
+    EXPECT_EQ(span2.id().value, 99u);
 }
 
 // A tracer with no backends is empty; spans are inactive and all calls are

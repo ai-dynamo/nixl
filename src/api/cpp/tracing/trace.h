@@ -143,7 +143,8 @@ public:
     void
     addDataDep(SpanId parent);
 
-    /** @brief Id of the first backend span, or {0} when inactive. */
+    /** @brief Id of the first backend that provides a non-zero id, or {0}
+     *         when none do (e.g. NVTX-only). Order-independent across backends. */
     [[nodiscard]] SpanId
     id() const noexcept;
 
