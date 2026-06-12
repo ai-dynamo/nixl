@@ -15,6 +15,7 @@
 #include <aws/core/utils/memory/stl/AWSStringStream.h>
 #include <absl/strings/str_format.h>
 #include <iostream>
+#include <string>
 #include "common/nixl_log.h"
 
 awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
@@ -38,6 +39,13 @@ awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
     if (crt_min_limit > 0) {
         config.partSize = crt_min_limit;
         config.multipartUploadThreshold = crt_min_limit;
+    }
+
+    // Optional throughput target (Gbps) for the CRT client. The CRT scheduler
+    // uses it to size how many parallel connections to open; default is 10.0.
+    if (const auto opt =
+            nixl::getBackendParamOptional<std::string>(custom_params, "throughput_target_gbps")) {
+        config.throughputTargetGbps = std::stod(*opt);
     }
 
     auto credentials_opt = nixl_s3_utils::createAWSCredentials(custom_params);
