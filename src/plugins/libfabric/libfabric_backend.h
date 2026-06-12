@@ -221,6 +221,10 @@ private:
     std::unordered_set<uint32_t> received_remote_writes_; // All received XFER_IDs (global)
 
     // Notification Queuing
+    // Stale entry timeout: entries older than this are evicted to prevent xfer_id wraparound
+    // collision (16-bit xfer_id wraps every 65534 postXfer calls).
+    static constexpr std::chrono::seconds kPendingNotificationTimeout{30};
+
     struct PendingNotification {
         std::string remote_agent;
         std::vector<std::string> message_fragments; // Store each fragment separately
@@ -232,6 +236,7 @@ private:
         uint16_t received_msg_fragments; // Fragments received so far
         uint32_t total_message_length; // Total length of complete message (all fragments)
         uint16_t agent_name_length; // Length of agent_name in combined payload
+        std::chrono::steady_clock::time_point created_at; // For stale entry eviction
 
         PendingNotification(uint16_t xfer_id)
             : notif_xfer_id(xfer_id),
@@ -240,11 +245,17 @@ private:
               expected_msg_fragments(0),
               received_msg_fragments(0),
               total_message_length(0),
-              agent_name_length(0) {}
+              agent_name_length(0),
+              created_at(std::chrono::steady_clock::now()) {}
     };
 
     // O(1) lookup with postXferID key
     std::unordered_map<uint16_t, PendingNotification> pending_notifications_;
+
+    // Evict stale entries from pending_notifications_ to prevent xfer_id wraparound collision.
+    // Must be called with receiver_tracking_mutex_ held.
+    void
+    evictStalePendingNotifications();
 
     // Connection management helpers
     nixl_status_t
