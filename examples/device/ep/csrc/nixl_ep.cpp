@@ -154,7 +154,8 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
         // Local IPC: alloc local memory and set local IPC handles
         m_nvl_alloc = std::make_unique<vmm_region>(
             num_nvl_bytes + barrier_signal_bytes + buffer_ptr_bytes +
-            barrier_signal_ptr_bytes);
+                barrier_signal_ptr_bytes,
+            true);
         buffer_ptrs[nvl_rank] = m_nvl_alloc->ptr();
         ipc_handles[nvl_rank] = m_nvl_alloc->export_fabric_handle();
         buffer_ptrs_gpu = reinterpret_cast<void**>(static_cast<uint8_t*>(buffer_ptrs[nvl_rank]) + num_nvl_bytes + barrier_signal_bytes);

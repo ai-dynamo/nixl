@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
 
 #include "config.hpp"
 #include "vmm.hpp"
@@ -39,18 +40,42 @@ warn_cu_api(CUresult status, const char *context, const char *operation) noexcep
     }
 }
 
+std::string
+cu_error_string(CUresult status) {
+    const char *name = nullptr;
+    const char *msg = nullptr;
+    if (cuGetErrorName(status, &name) != CUDA_SUCCESS || name == nullptr) {
+        name = "CUDA_ERROR_UNKNOWN";
+    }
+    if (cuGetErrorString(status, &msg) != CUDA_SUCCESS || msg == nullptr) {
+        msg = "unknown CUDA driver error";
+    }
+    return std::string(name) + ": " + msg;
+}
+
 } // namespace
 
 namespace nixl_ep {
 
 struct vmm_region::cuda_alloc_ctx {
+    bool vmm_supported;
+    bool rdma_vmm_supported;
     bool fabric_supported;
-    CUmemAllocationProp prop;
-    size_t granularity;
+    CUmemAllocationProp rdma_prop;
+    CUmemAllocationProp fabric_prop;
+    size_t rdma_granularity;
+    size_t fabric_granularity;
     CUdevice device;
     CUmemAccessDesc access_desc = {};
 
-    cuda_alloc_ctx() : fabric_supported(false), prop({}), granularity(0) {
+    cuda_alloc_ctx()
+        : vmm_supported(false),
+          rdma_vmm_supported(false),
+          fabric_supported(false),
+          rdma_prop({}),
+          fabric_prop({}),
+          rdma_granularity(0),
+          fabric_granularity(0) {
         int version;
 
         if (cuCtxGetDevice(&device) != CUDA_SUCCESS) {
@@ -65,12 +90,39 @@ struct vmm_region::cuda_alloc_ctx {
             return;
         }
 
-        int vmm_supported = 0;
-        if (cuDeviceGetAttribute(&vmm_supported,
+        int vmm_attr = 0;
+        if (cuDeviceGetAttribute(&vmm_attr,
                                  CU_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT_SUPPORTED,
                                  device) != CUDA_SUCCESS ||
-            !vmm_supported) {
+            !vmm_attr) {
             return;
+        }
+        vmm_supported = true;
+
+        rdma_prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+        rdma_prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        rdma_prop.location.id = device;
+        rdma_prop.allocFlags.gpuDirectRDMACapable = 1;
+
+        int rdma_vmm_attr = 0;
+        if (cuDeviceGetAttribute(&rdma_vmm_attr,
+                                 CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
+                                 device) != CUDA_SUCCESS) {
+            throw std::runtime_error(
+                "Failed to query GPUDirect RDMA with VMM support attribute");
+        }
+
+        if (!rdma_vmm_attr) {
+            return;
+        }
+        rdma_vmm_supported = true;
+
+        CUresult status = cuMemGetAllocationGranularity(
+            &rdma_granularity, &rdma_prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM);
+        if (status != CUDA_SUCCESS) {
+            throw std::runtime_error(
+                "Failed to get CUDA RDMA allocation granularity: " +
+                cu_error_string(status));
         }
 
         int fab = 0;
@@ -78,36 +130,26 @@ struct vmm_region::cuda_alloc_ctx {
                                   CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED,
                                   device) != CUDA_SUCCESS) ||
             (!fab)) {
+            access_desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+            access_desc.location.id = device;
+            access_desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
             return;
         }
 
-        int rdma_vmm_supported = 0;
-        if (cuDeviceGetAttribute(&rdma_vmm_supported,
-                                 CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED,
-                                 device) != CUDA_SUCCESS) {
+        fabric_prop = rdma_prop;
+        fabric_prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
+        status = cuMemGetAllocationGranularity(
+            &fabric_granularity, &fabric_prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM);
+        if (status != CUDA_SUCCESS) {
             throw std::runtime_error(
-                "Failed to query GPUDirect RDMA with VMM support attribute");
+                "Failed to get CUDA fabric allocation granularity: " +
+                cu_error_string(status));
         }
-
-        if (!rdma_vmm_supported) {
-            return;
-        }
-
-        prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-        prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-        prop.location.id = device;
-        prop.allocFlags.gpuDirectRDMACapable = 1;
-        prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
-
-        if (cuMemGetAllocationGranularity(
-                &granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM) != CUDA_SUCCESS) {
-            throw std::runtime_error("Failed to get CUDA allocation granularity");
-        }
+        fabric_supported = true;
 
         access_desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
         access_desc.location.id = device;
         access_desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-        fabric_supported = true;
     }
 };
 
@@ -148,7 +190,7 @@ vmm_region::~vmm_region() {
 void
 vmm_region::map_handle(std::optional<CUdeviceptr> fixed_addr) {
     const auto &ctx = get_cuda_alloc_ctx();
-    if (!ctx.fabric_supported) {
+    if (!ctx.vmm_supported) {
         throw std::runtime_error("CUDA VMM is not available");
     }
     if (!handle_) {
@@ -156,18 +198,22 @@ vmm_region::map_handle(std::optional<CUdeviceptr> fixed_addr) {
     }
 
     if (!fixed_addr.has_value()) {
-        if (cuMemAddressReserve(&ptr_, size_, 0, 0, 0) != CUDA_SUCCESS) {
+        CUresult status = cuMemAddressReserve(&ptr_, size_, 0, 0, 0);
+        if (status != CUDA_SUCCESS) {
             if (handle_) {
                 warn_cu_api(cuMemRelease(handle_), k_vmm_ctx, "cuMemRelease");
                 handle_ = 0;
             }
-            throw std::runtime_error("Failed to reserve CUDA virtual address");
+            throw std::runtime_error(
+                "Failed to reserve CUDA virtual address: " +
+                cu_error_string(status));
         }
     } else {
         ptr_ = fixed_addr.value();
     }
 
-    if (cuMemMap(ptr_, size_, 0, handle_, 0) != CUDA_SUCCESS) {
+    CUresult status = cuMemMap(ptr_, size_, 0, handle_, 0);
+    if (status != CUDA_SUCCESS) {
         const bool release_va = !fixed_addr.has_value();
         if (handle_) {
             warn_cu_api(cuMemRelease(handle_), k_vmm_ctx, "cuMemRelease");
@@ -177,11 +223,13 @@ vmm_region::map_handle(std::optional<CUdeviceptr> fixed_addr) {
             warn_cu_api(cuMemAddressFree(ptr_, size_), k_vmm_ctx, "cuMemAddressFree");
             ptr_ = 0;
         }
-        throw std::runtime_error("Failed to map CUDA VMM memory");
+        throw std::runtime_error(
+            "Failed to map CUDA VMM memory: " + cu_error_string(status));
     }
     vmm_mapped_ = true;
 
-    if (cuMemSetAccess(ptr_, size_, &ctx.access_desc, 1) != CUDA_SUCCESS) {
+    status = cuMemSetAccess(ptr_, size_, &ctx.access_desc, 1);
+    if (status != CUDA_SUCCESS) {
         if (vmm_mapped_) {
             warn_cu_api(cuMemUnmap(ptr_, size_), k_vmm_ctx, "cuMemUnmap");
             vmm_mapped_ = false;
@@ -194,39 +242,56 @@ vmm_region::map_handle(std::optional<CUdeviceptr> fixed_addr) {
             warn_cu_api(cuMemAddressFree(ptr_, size_), k_vmm_ctx, "cuMemAddressFree");
             ptr_ = 0;
         }
-        throw std::runtime_error("Failed to set CUDA memory access");
+        throw std::runtime_error(
+            "Failed to set CUDA memory access: " + cu_error_string(status));
     }
 }
 
 void
 vmm_region::reserve_and_map(std::optional<CUdeviceptr> fixed_addr) {
     const auto &ctx = get_cuda_alloc_ctx();
-    if (!ctx.fabric_supported) {
+    if (!ctx.rdma_vmm_supported) {
+        throw std::runtime_error("CUDA VMM GPUDirect RDMA memory is required");
+    }
+    if (fabric_shareable_ && !ctx.fabric_supported) {
         throw std::runtime_error("CUDA VMM fabric memory is required");
     }
 
-    const CUresult mem_create_status = cuMemCreate(&handle_, size_, &ctx.prop, 0);
+    const auto &prop = fabric_shareable_ ? ctx.fabric_prop : ctx.rdma_prop;
+    const CUresult mem_create_status = cuMemCreate(&handle_, size_, &prop, 0);
     if (mem_create_status != CUDA_SUCCESS) {
         handle_ = 0;
-        throw std::runtime_error("Failed to create CUDA VMM allocation");
+        throw std::runtime_error(
+            std::string("Failed to create CUDA VMM allocation") +
+            (fabric_shareable_ ? " with fabric handle: " : ": ") +
+            cu_error_string(mem_create_status));
     }
 
     map_handle(fixed_addr);
 }
 
-vmm_region::vmm_region(size_t size) {
+vmm_region::vmm_region(size_t size) : vmm_region(size, false) {}
+
+vmm_region::vmm_region(size_t size, bool fabric_shareable) {
     if (size == 0) {
         throw std::invalid_argument("vmm_region: size must be non-zero");
     }
 
     const auto &ctx = get_cuda_alloc_ctx();
 
-    if (!ctx.fabric_supported) {
+    if (!ctx.rdma_vmm_supported) {
         throw std::runtime_error(
-            "CUDA VMM fabric memory is required for NIXL-EP buffers");
+            "CUDA VMM GPUDirect RDMA memory is required for NIXL-EP buffers");
+    }
+    if (fabric_shareable && !ctx.fabric_supported) {
+        throw std::runtime_error(
+            "CUDA VMM fabric memory is required for NIXL-EP NVL buffers");
     }
 
-    size_ = nixl_ep::align_up<size_t>(size, ctx.granularity);
+    fabric_shareable_ = fabric_shareable;
+    const size_t granularity =
+        fabric_shareable_ ? ctx.fabric_granularity : ctx.rdma_granularity;
+    size_ = nixl_ep::align_up<size_t>(size, granularity);
     reserve_and_map(std::nullopt);
 }
 
@@ -235,11 +300,16 @@ vmm_region::export_fabric_handle() const {
     if (!handle_) {
         throw std::runtime_error("Cannot export an unmapped CUDA VMM allocation");
     }
+    if (!fabric_shareable_) {
+        throw std::runtime_error("Cannot export a non-fabric CUDA VMM allocation");
+    }
 
     CUmemFabricHandle fabric_handle{};
-    if (cuMemExportToShareableHandle(
-            &fabric_handle, handle_, CU_MEM_HANDLE_TYPE_FABRIC, 0) != CUDA_SUCCESS) {
-        throw std::runtime_error("Failed to export CUDA VMM fabric handle");
+    CUresult status = cuMemExportToShareableHandle(
+        &fabric_handle, handle_, CU_MEM_HANDLE_TYPE_FABRIC, 0);
+    if (status != CUDA_SUCCESS) {
+        throw std::runtime_error(
+            "Failed to export CUDA VMM fabric handle: " + cu_error_string(status));
     }
     return fabric_handle;
 }
@@ -257,14 +327,16 @@ vmm_region::import_fabric_handle(const CUmemFabricHandle &fabric_handle, size_t 
     }
 
     auto region = std::unique_ptr<vmm_region>(new vmm_region());
-    region->size_ = nixl_ep::align_up<size_t>(size, ctx.granularity);
+    region->fabric_shareable_ = true;
+    region->size_ = nixl_ep::align_up<size_t>(size, ctx.fabric_granularity);
 
     CUmemFabricHandle handle_copy = fabric_handle;
-    if (cuMemImportFromShareableHandle(
-            &region->handle_, &handle_copy, CU_MEM_HANDLE_TYPE_FABRIC) !=
-        CUDA_SUCCESS) {
+    CUresult status = cuMemImportFromShareableHandle(
+        &region->handle_, &handle_copy, CU_MEM_HANDLE_TYPE_FABRIC);
+    if (status != CUDA_SUCCESS) {
         region->handle_ = 0;
-        throw std::runtime_error("Failed to import CUDA VMM fabric handle");
+        throw std::runtime_error(
+            "Failed to import CUDA VMM fabric handle: " + cu_error_string(status));
     }
 
     try {

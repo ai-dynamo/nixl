@@ -28,6 +28,7 @@ namespace nixl_ep {
 class vmm_region {
 public:
     explicit vmm_region(size_t size);
+    vmm_region(size_t size, bool fabric_shareable);
 
     ~vmm_region();
 
@@ -87,6 +88,7 @@ private:
     CUmemGenericAllocationHandle handle_ = 0;
     bool is_cuda_malloc_ = false;
     bool vmm_mapped_ = false;
+    bool fabric_shareable_ = false;
 };
 
 } // namespace nixl_ep
