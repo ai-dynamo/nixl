@@ -16,6 +16,58 @@
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
 ARG OS
+# 3FS revision to build the client library from.
+ARG HF3FS_REF="22fca04564c7cc230fd8b9523b8b92864e1dad47"
+
+# Builder stage: build the 3FS client library (libhf3fs_api_shared.so + hf3fs_usrbio.h)
+# from source. The artifacts are copied into the final stage so the HF3FS plugin
+# gets compiled and link-checked by CI. The heavy build deps (boost, clang-14,
+# folly transitive prereqs) stay confined to this stage.
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS hf3fs-builder
+ARG HF3FS_REF
+
+RUN apt-get update -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      git ca-certificates build-essential cmake ninja-build pkg-config \
+      gcc-12 g++-12 libstdc++-12-dev \
+      clang-14 clang-format-14 clang-tidy-14 lld-14 libclang-rt-14-dev \
+      libuv1-dev liblz4-dev liblzma-dev libdouble-conversion-dev \
+      libdwarf-dev libunwind-dev libaio-dev \
+      libgflags-dev libgoogle-glog-dev libgtest-dev libgmock-dev \
+      libgoogle-perftools-dev google-perftools \
+      libssl-dev libboost-all-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# cuda-dl-base ships libibverbs-dev as dpkg-installed but strips the
+# unversioned `libibverbs.so` dev symlink. 3FS's hf3fs_api_shared link
+# step (`-libverbs`) needs it, and apt --reinstall can't recreate it
+# (the installed 56.0-1 isn't in any configured repo). Recreate it by
+# hand so the hf3fs_api_shared link step succeeds.
+RUN ln -sf libibverbs.so.1 /usr/lib/x86_64-linux-gnu/libibverbs.so
+
+# Ubuntu 24.04 ships gcc-13 as the default toolchain. clang-14 paired with
+# gcc-13's libstdc++ fails on folly's <chrono> users (consteval). Expose a
+# gcc-toolchain dir that only contains gcc-12 so clang-14 selects that one.
+RUN mkdir -p /opt/gcc12-only/lib/gcc/x86_64-linux-gnu && \
+    ln -sfn /usr/lib/gcc/x86_64-linux-gnu/12 /opt/gcc12-only/lib/gcc/x86_64-linux-gnu/12
+
+WORKDIR /build
+RUN git clone https://github.com/deepseek-ai/3FS.git && \
+    cd 3FS && \
+    git checkout ${HF3FS_REF} && \
+    git submodule update --init --recursive && \
+    ./patches/apply.sh
+
+RUN cd /build/3FS && \
+    cmake -S . -B build \
+      -DCMAKE_C_COMPILER=clang-14 -DCMAKE_CXX_COMPILER=clang++-14 \
+      -DCMAKE_C_FLAGS=--gcc-toolchain=/opt/gcc12-only \
+      -DCMAKE_CXX_FLAGS=--gcc-toolchain=/opt/gcc12-only \
+      -DCMAKE_EXE_LINKER_FLAGS=--gcc-toolchain=/opt/gcc12-only \
+      -DCMAKE_SHARED_LINKER_FLAGS=--gcc-toolchain=/opt/gcc12-only \
+      -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      -DSHUFFLE_METHOD=stdshuffle && \
+    cmake --build build --target hf3fs_api_shared -j"$(nproc)"
 
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
@@ -85,6 +137,22 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "am
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
     libnuma-dev librdmacm-dev ibverbs-providers
+
+# Runtime libraries needed by libhf3fs_api_shared.so (copied in below from the
+# hf3fs-builder stage). libnuma/libgflags/libssl/libz are already present via
+# the build-deps apt block above; the rest are HF3FS-specific.
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    libboost-context1.83.0 libboost-filesystem1.83.0 libboost-program-options1.83.0 \
+    libboost-regex1.83.0 libboost-system1.83.0 libboost-thread1.83.0 libboost-atomic1.83.0 \
+    libdouble-conversion3 libgoogle-glog0v6t64 libevent-2.1-7t64 libdwarf1 libgoogle-perftools4t64
+
+# Install the HF3FS client artifacts at the paths NIXL's meson build expects.
+# This must happen before the meson setup step below so the HF3FS plugin is
+# detected. Skipping the install (e.g. if the builder stage is omitted) makes
+# meson silently disable the plugin via cc.find_library(required: false).
+COPY --from=hf3fs-builder /build/3FS/build/src/lib/api/libhf3fs_api_shared.so /usr/lib/
+COPY --from=hf3fs-builder /build/3FS/src/lib/api/hf3fs_usrbio.h /usr/include/hf3fs/hf3fs_usrbio.h
+RUN ldconfig
 
 WORKDIR /workspace
 
