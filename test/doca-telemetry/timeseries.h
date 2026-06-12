@@ -44,9 +44,9 @@ struct seriesId {
     std::string name;
     labelSet labels;
 
-    friend bool
-    operator<(const seriesId &lhs, const seriesId &rhs) {
-        return std::tie(lhs.name, lhs.labels) < std::tie(rhs.name, rhs.labels);
+    bool
+    operator<(const seriesId &rhs) const {
+        return std::tie(name, labels) < std::tie(rhs.name, rhs.labels);
     }
 };
 
