@@ -17,8 +17,11 @@
 aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
 aws_s3_crt = dependency('aws-cpp-sdk-s3-crt', static: false, required: false)
 aws_core = dependency('aws-cpp-sdk-core', required: false, static: false)
+# aws-crt-cpp has no pkg-config file; the CRT S3 client (s3_crt/client.cpp) uses
+# its EventLoopGroup/Bootstrap/HostResolver symbols directly, so link it explicitly.
+aws_crt = meson.get_compiler('cpp').find_library('aws-crt-cpp', required: false)
 
-if aws_s3.found() and aws_s3_crt.found() and aws_core.found()
+if aws_s3.found() and aws_s3_crt.found() and aws_core.found() and aws_crt.found()
     # By default aws-cpp-sdk sets c++11 compile flag for the whole project
     partial_aws_s3 = aws_s3.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)
     partial_aws_s3_crt = aws_s3_crt.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)
@@ -28,13 +31,13 @@ if aws_s3.found() and aws_s3_crt.found() and aws_core.found()
     obj_utils_lib = library('obj_utils',
                's3/utils.cpp', 's3/utils.h',
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
-               dependencies: [nixl_common_dep, partial_aws_s3, partial_aws_s3_crt, partial_aws_core],
+               dependencies: [nixl_common_dep, partial_aws_s3, partial_aws_s3_crt, partial_aws_core, aws_crt],
                install: true)
 
     obj_utils_interface = declare_dependency(
         link_with: obj_utils_lib,
         include_directories: [include_directories('.'), include_directories('s3')],
-        dependencies: [partial_aws_s3, partial_aws_s3_crt, partial_aws_core]
+        dependencies: [partial_aws_s3, partial_aws_s3_crt, partial_aws_core, aws_crt]
     )
 else
     warning('AWS SDK dependencies not found, skipping obj_utils library build')
