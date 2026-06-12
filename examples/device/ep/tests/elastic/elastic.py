@@ -29,35 +29,26 @@ from functools import partial
 from typing import cast
 
 import nixl_ep
-import rank_server
-import store_group
 import torch
 from nixl_ep.buffer import DEFAULT_TIMEOUT_MS
 from plan import Plan
 
-# Add tests directory to path to import test utils
+# Add tests directory to path to import shared utils package
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils import (  # noqa: E402
+from utils import rank_server, store_group  # noqa: E402
+from utils.utils import (  # noqa: E402
     bench,
     bench_kineto,
     calc_diff,
     hash_tensor,
+    non_negative_int,
     per_token_cast_back,
+    positive_int,
 )
 
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
-
-
-def non_negative_int(value: str) -> int:
-    try:
-        int_value = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("must be a non-negative integer") from exc
-    if int_value < 0:
-        raise argparse.ArgumentTypeError("must be a non-negative integer")
-    return int_value
 
 
 def handle_sigterm(
@@ -97,6 +88,9 @@ def test_main(
     num_ranks: int,
     max_num_ranks: int,
     buffer: nixl_ep.Buffer,
+    num_warmups: int,
+    num_iters: int,
+    num_kineto_iters: int,
     use_logfmt: bool = False,
     seed: int = 0,
     kineto: bool = False,
@@ -422,7 +416,11 @@ def test_main(
         ) * num_selections
 
     # Dispatch + combine testing
-    avg_t, min_t, max_t = bench(partial(test_func, return_recv_hook=False))
+    avg_t, min_t, max_t = bench(
+        partial(test_func, return_recv_hook=False),
+        num_warmups=num_warmups,
+        num_tests=num_iters,
+    )
     print(
         f"[rank {rank}] Dispatch + combine bandwidth: {(num_dispatch_comm_bytes + num_combine_comm_bytes) / 1e9 / avg_t:.2f} GB/s, "
         f"avg_t={avg_t * 1e6:.2f} us, min_t={min_t * 1e6:.2f} us, max_t={max_t * 1e6:.2f} us",
@@ -438,6 +436,7 @@ def test_main(
         dispatch_t, combine_t = bench_kineto(
             partial(test_func, return_recv_hook=return_recv_hook),
             kernel_names=("dispatch", "combine"),
+            num_tests=num_kineto_iters,
             barrier_comm_profiling=True,
             suppress_kineto_output=False,
             num_kernels_per_period=2 if return_recv_hook else 1,
@@ -480,10 +479,9 @@ def worker(torch_rank: int, args: argparse.Namespace):
     )
 
     # Initialize torch
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(local_rank % 8)
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
-    torch.cuda.set_device(0)
+    torch.cuda.set_device(local_rank % torch.cuda.device_count())
 
     tcp_store = store_group.create_client_store(
         master_addr=server_addr,
@@ -576,6 +574,9 @@ def worker(torch_rank: int, args: argparse.Namespace):
             buffer,
             kineto=args.kineto,
             fault_tolerance_test=kill_rank,
+            num_warmups=args.warmup,
+            num_iters=args.iters,
+            num_kineto_iters=args.kineto_iters,
         )
         # Query mask buffer to detect any unexpected rank failures and clean them up
         buffer.query_mask_buffer(mask_status)
@@ -644,6 +645,24 @@ def main():
         type=non_negative_int,
         default=DEFAULT_TIMEOUT_MS,
         help="GPU timeout in milliseconds (non-negative integer)",
+    )
+    parser.add_argument(
+        "--warmup",
+        type=non_negative_int,
+        default=50,
+        help="Warmup iterations before measurement",
+    )
+    parser.add_argument(
+        "--iters",
+        type=positive_int,
+        default=50,
+        help="Measurement iterations",
+    )
+    parser.add_argument(
+        "--kineto-iters",
+        type=positive_int,
+        default=30,
+        help="Kineto profiling iterations",
     )
 
     args = parser.parse_args()
