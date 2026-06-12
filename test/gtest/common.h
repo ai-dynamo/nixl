@@ -34,22 +34,7 @@
 #include "absl/log/log_sink.h"
 #include "absl/log/log_entry.h"
 
-#ifdef HAVE_CUDA
-#include <cuda_runtime.h>
-#endif
-
 namespace gtest {
-
-inline bool
-hasCudaGpu() {
-#ifdef HAVE_CUDA
-    int count = 0;
-    auto err = cudaGetDeviceCount(&count);
-    return (err == cudaSuccess && count > 0);
-#else
-    return false;
-#endif
-}
 
 constexpr const char *
 GetMockBackendName() {
