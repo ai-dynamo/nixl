@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -115,7 +115,7 @@ namespace {
             std::string kv;
             kv.reserve(key.size() + value.size() + 1);
             kv.append(key).append("=").append(value);
-            nvtxEventAttributes_t ev = makeEvent(kv.c_str(), Kind::Metadata, Color{});
+            const nvtxEventAttributes_t ev = makeEvent(kv.c_str(), Kind::Metadata, Color{});
             nvtxDomainMarkEx(domain_, &ev);
         }
 
@@ -135,7 +135,7 @@ namespace {
         [[nodiscard]] std::unique_ptr<iSpanBackend>
         beginSpan(std::string_view name, Kind kind, Color color) override {
             const std::string msg(name);
-            nvtxEventAttributes_t ev = makeEvent(msg.c_str(), kind, color);
+            const nvtxEventAttributes_t ev = makeEvent(msg.c_str(), kind, color);
             nvtxDomainRangePushEx(domain_, &ev);
             return std::make_unique<NvtxSpan>(domain_);
         }
@@ -143,7 +143,7 @@ namespace {
         void
         mark(std::string_view name, Kind kind) override {
             const std::string msg(name);
-            nvtxEventAttributes_t ev = makeEvent(msg.c_str(), kind, Color{});
+            const nvtxEventAttributes_t ev = makeEvent(msg.c_str(), kind, Color{});
             nvtxDomainMarkEx(domain_, &ev);
         }
 
