@@ -19,7 +19,12 @@
 
 awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
                                std::shared_ptr<Aws::Utils::Threading::Executor> executor)
-    : awsS3Client(custom_params, executor) {
+    : awsS3Client(custom_params, executor),
+      crtEventLoopGroup_(static_cast<uint16_t>(getNumThreads(custom_params))),
+      crtHostResolver_(crtEventLoopGroup_, 8 /*maxHosts*/, 30 /*maxTTL_s*/),
+      crtBootstrap_(Aws::MakeShared<Aws::Crt::Io::ClientBootstrap>("NixlObjCrtBootstrap",
+                                                                   crtEventLoopGroup_,
+                                                                   crtHostResolver_)) {
     // Initialize AWS SDK (thread-safe, only happens once)
     nixl_s3_utils::initAWSSDK();
 
@@ -27,6 +32,8 @@ awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
     Aws::S3Crt::ClientConfiguration config;
     nixl_s3_utils::configureClientCommon(config, custom_params);
     if (executor) config.executor = executor;
+
+    config.clientBootstrap = crtBootstrap_;
 
     // Align the CRT multipart thresholds with crtMinLimit so that every object
     // routed to this client (size >= crtMinLimit) is uploaded via multipart.
