@@ -18,6 +18,7 @@
 #define __MOONCAKE_BACKEND_H
 
 #include <vector>
+#include <condition_variable>
 #include <cstring>
 #include <iostream>
 #include <thread>
@@ -137,6 +138,7 @@ private:
     std::unordered_map<uint64_t, RegisteredMemoryInfo> registered_memories_;
     mutable std::unordered_map<std::string, AgentInfo> connected_agents_;
     mutable std::unordered_set<uint64_t> active_batch_ids_;
+    mutable std::condition_variable active_batch_cv_;
     mutable bool checkpoint_paused_ = false;
     mutable uint64_t remote_info_generation_ = 0;
 };
