@@ -59,7 +59,7 @@ public:
      * @param buffer Output buffer for stored value bytes.
      * @param len Maximum number of bytes to read into buffer.
      * @param bytes_read Set to min(stored_len, len) on success.
-     * @return NIXL_SUCCESS on success, or NIXL_ERR_BACKEND when key does not exist.
+     * @return NIXL_SUCCESS on success, or NIXL_ERR_NOT_FOUND when key does not exist.
      */
     virtual nixl_status_t
     get(std::string_view key, uint8_t *buffer, size_t len, size_t &bytes_read) const = 0;
