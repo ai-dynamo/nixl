@@ -651,6 +651,29 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                         const std::vector<int> &remote_indices,
                         nixlXferReqH* &req_hndl,
                         const nixl_opt_args_t* extra_params) const {
+    if (!local_side || !remote_side) {
+        NIXL_ERROR_FUNC << "local or remote side handle is null";
+        data->addErrorTelemetry(NIXL_ERR_INVALID_PARAM);
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    return makeXferReq(operation,
+                       *local_side,
+                       std::span<const int>(local_indices.data(), local_indices.size()),
+                       *remote_side,
+                       std::span<const int>(remote_indices.data(), remote_indices.size()),
+                       req_hndl,
+                       extra_params);
+}
+
+nixl_status_t
+nixlAgent::makeXferReq(nixl_xfer_op_t operation,
+                       const nixlDlistH &local_side,
+                       std::span<const int> local_indices,
+                       const nixlDlistH &remote_side,
+                       std::span<const int> remote_indices,
+                       nixlXferReqH *&req_hndl,
+                       const nixl_opt_args_t *extra_params) const {
 
     nixl_opt_b_args_t  opt_args;
     nixl_status_t      ret;
@@ -659,13 +682,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     req_hndl = nullptr;
 
-    if (!local_side || !remote_side) {
-        NIXL_ERROR_FUNC << "local or remote side handle is null";
-        data->addErrorTelemetry(NIXL_ERR_INVALID_PARAM);
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    if ((!local_side->remoteAgent.empty()) || remote_side->remoteAgent.empty()) {
+    if ((!local_side.remoteAgent.empty()) || remote_side.remoteAgent.empty()) {
         NIXL_ERROR_FUNC << "invalid sides (local must be local, remote must be remote)";
         data->addErrorTelemetry(NIXL_ERR_INVALID_PARAM);
         return NIXL_ERR_INVALID_PARAM;
@@ -673,8 +690,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     NIXL_LOCK_GUARD(data->lock);
     // The remote was invalidated in between prepXferDlist and this call
-    if (data->remoteSections_.count(remote_side->remoteAgent) == 0) {
-        NIXL_ERROR_FUNC << "remote agent '" << remote_side->remoteAgent
+    if (data->remoteSections_.count(remote_side.remoteAgent) == 0) {
+        NIXL_ERROR_FUNC << "remote agent '" << remote_side.remoteAgent
                         << "' was invalidated in between prepXferDlist and this call";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
@@ -682,15 +699,15 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     if (extra_params && extra_params->backends.size() > 0) {
         for (auto & elm : extra_params->backends) {
-            if ((local_side->descs.count(elm->engine) > 0) &&
-                (remote_side->descs.count(elm->engine) > 0)) {
+            if ((local_side.descs.count(elm->engine) > 0) &&
+                (remote_side.descs.count(elm->engine) > 0)) {
                 backend = elm->engine;
                 break;
             }
         }
     } else {
-        for (auto & loc_bknd : local_side->descs) {
-            for (auto & rem_bknd : remote_side->descs) {
+        for (auto &loc_bknd : local_side.descs) {
+            for (auto &rem_bknd : remote_side.descs) {
                 if (loc_bknd.first == rem_bknd.first) {
                     backend = loc_bknd.first;
                     break;
@@ -707,8 +724,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const nixl_meta_dlist_t &local_descs = *local_side->descs.at(backend);
-    const nixl_meta_dlist_t &remote_descs = *remote_side->descs.at(backend);
+    const nixl_meta_dlist_t &local_descs = *local_side.descs.at(backend);
+    const nixl_meta_dlist_t &remote_descs = *remote_side.descs.at(backend);
     size_t total_bytes = 0;
 
     if ((desc_count == 0) || (remote_indices.size() == 0) ||
@@ -753,7 +770,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
-    auto handle = std::make_unique<nixlXferReqH>(remote_side->remoteAgent,
+    auto handle = std::make_unique<nixlXferReqH>(remote_side.remoteAgent,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),

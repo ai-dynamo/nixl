@@ -22,6 +22,7 @@
 
 #include <tuple>
 #include <iostream>
+#include <span>
 
 #include "nixl.h"
 #include "serdes/serdes.h"
@@ -596,6 +597,11 @@ PYBIND11_MODULE(_bindings, m) {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
+                if (!local_side || !remote_side) {
+                    throw std::invalid_argument(
+                        "local_side and remote_side must be valid pointers");
+                }
+
                 for (uintptr_t backend : backends)
                     extra_params.backends.push_back((nixlBackendH *)backend);
 
@@ -606,9 +612,10 @@ PYBIND11_MODULE(_bindings, m) {
                 std::vector<int> local_indices_vec;
                 std::vector<int> remote_indices_vec;
 
-                auto init_indices_lambda = [](py::object &indices) -> std::vector<int> {
+                auto indices_to_span = [](const py::object &indices,
+                                          std::vector<int> &backing) -> std::span<const int> {
                     if (py::isinstance<py::array>(indices)) {
-                        auto indices_array = indices.cast<py::array_t<uint32_t>>();
+                        auto indices_array = indices.cast<py::array>();
                         if (indices_array.ndim() != 1)
                             throw std::invalid_argument("indices numpy array must be 1D");
                         if (!py::dtype::of<uint32_t>().equal(indices_array.dtype()) &&
@@ -617,28 +624,27 @@ PYBIND11_MODULE(_bindings, m) {
                                 "indices numpy array must be 1D of uint32 or int32");
                         if (!(indices_array.flags() & py::array::c_style))
                             throw std::invalid_argument("indices numpy array must be C-contiguous");
-                        // We assume that the indices array matches the nixlBasicDesc layout so we
-                        // can simply memcpy
-                        std::vector<int> ret(indices_array.size());
-                        std::memcpy(ret.data(),
-                                    indices_array.data(),
-                                    indices_array.size() * sizeof(uint32_t));
-                        return ret;
-                    } else {
-                        return indices.cast<std::vector<int>>();
+
+                        return std::span<const int>(static_cast<const int *>(indices_array.data()),
+                                                    static_cast<size_t>(indices_array.size()));
                     }
+                    backing = indices.cast<std::vector<int>>();
+                    return std::span<const int>(backing);
                 };
 
-                local_indices_vec = init_indices_lambda(local_indices);
-                remote_indices_vec = init_indices_lambda(remote_indices);
+                const auto local_span = indices_to_span(local_indices, local_indices_vec);
+                const auto remote_span = indices_to_span(remote_indices, remote_indices_vec);
+
+                auto local_dlist = reinterpret_cast<nixlDlistH *>(local_side);
+                auto remote_dlist = reinterpret_cast<nixlDlistH *>(remote_side);
 
                 {
                     py::gil_scoped_release release;
                     throw_nixl_exception(agent.makeXferReq(operation,
-                                                           (nixlDlistH *)local_side,
-                                                           local_indices_vec,
-                                                           (nixlDlistH *)remote_side,
-                                                           remote_indices_vec,
+                                                           *local_dlist,
+                                                           local_span,
+                                                           *remote_dlist,
+                                                           remote_span,
                                                            handle,
                                                            &extra_params));
                 }
