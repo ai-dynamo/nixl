@@ -28,10 +28,14 @@ libfabric_plugin_deps = [
 
 compile_flags = ['-DHAVE_LIBFABRIC']
 
-# Add CUDA support if available
+# Add CUDA or ROCm support if available
 if cuda_dep.found()
     libfabric_plugin_deps += [cuda_dep]
-    compile_flags += ['-DHAVE_CUDA']
+    if get_option('use_rocm')
+        compile_flags += ['-DHAVE_ROCM', '-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations']
+    else
+        compile_flags += ['-DHAVE_CUDA']
+    endif
 endif
 
 # Build as static or shared library based on configuration
