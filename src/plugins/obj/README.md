@@ -43,6 +43,7 @@ git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1
 ### Optional Dependencies
 
 **S3 Accelerated Engines** (`cuobjclient-13.1`): Required for GPU-direct and accelerated object storage operations. When available, enables:
+
 - `S3AccelObjEngineImpl` - Base accelerated S3 engine
 - Vendor-specific accelerated implementations under `s3_accel/`
 
@@ -56,30 +57,30 @@ The Object Storage backend supports configuration through two mechanisms: backen
 
 Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creating the backend instance. The Object Storage backend supports AWS S3-compatible storage and accepts the following parameters:
 
-| Parameter | Description | Default | Required |
-|-----------|-------------|---------|----------|
-| `access_key` | AWS access key ID for authentication | - | No* |
-| `secret_key` | AWS secret access key for authentication | - | No* |
-| `session_token` | AWS session token for temporary credentials | - | No |
-| `bucket` | S3 bucket name for operations | - | Yes** |
-| `endpoint_override` | Custom S3 endpoint URL | - | No*** |
-| `scheme` | HTTP scheme (`http` or `https`) | `https` | No |
-| `region` | AWS region for the S3 service | `us-east-1` | No |
-| `use_virtual_addressing` | Use virtual-hosted-style addressing (`true`/`false`) | `false` | No |
-| `req_checksum` | Request checksum validation (`required`/`supported`) | - | No |
-| `resp_checksum` | Response checksum validation (`required`/`supported`) | - | No |
-| `ca_bundle` | path to a custom certificate bundle | - | No |
-| `crtMinLimit` | Minimum object size (bytes) to use S3 CRT client for high-performance transfers | Disabled**** | No |
-| `accelerated` | Enable S3 Accelerated engine (`true`/`false`) | `false` | No |
-| `type` | Accelerated engine type (`dell`, etc.) | - | No |
+| Parameter                | Description                                                                                                                                                                                                                                                                                         | Default          | Required |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | -------- |
+| `access_key`             | AWS access key ID for authentication                                                                                                                                                                                                                                                                | -                | No\*     |
+| `secret_key`             | AWS secret access key for authentication                                                                                                                                                                                                                                                            | -                | No\*     |
+| `session_token`          | AWS session token for temporary credentials                                                                                                                                                                                                                                                         | -                | No       |
+| `bucket`                 | S3 bucket name for operations                                                                                                                                                                                                                                                                       | -                | Yes\*\*  |
+| `endpoint_override`      | Custom S3 endpoint URL                                                                                                                                                                                                                                                                              | -                | No\*\*\* |
+| `scheme`                 | HTTP scheme (`http` or `https`)                                                                                                                                                                                                                                                                     | `https`          | No       |
+| `region`                 | AWS region for the S3 service                                                                                                                                                                                                                                                                       | `us-east-1`      | No       |
+| `use_virtual_addressing` | Use virtual-hosted-style addressing (`true`/`false`)                                                                                                                                                                                                                                                | `false`          | No       |
+| `req_checksum`           | Request checksum validation (`required`/`supported`)                                                                                                                                                                                                                                                | -                | No       |
+| `resp_checksum`          | Response checksum validation (`required`/`supported`)                                                                                                                                                                                                                                               | -                | No       |
+| `ca_bundle`              | path to a custom certificate bundle                                                                                                                                                                                                                                                                 | -                | No       |
+| `crtMinLimit`            | Minimum object size (bytes) to use S3 CRT client for high-performance transfers                                                                                                                                                                                                                     | Disabled\*\*\*\* | No       |
+| `accelerated`            | Enable GPU-direct S3-over-RDMA (`true`/`false`). With no `type` (or `type=s3`), selects the standard-S3, protocol-compliant engine using the standard `x-amz-rdma-*` headers. Opt-in; requires an endpoint that implements the protocol. See [GPU-Direct (S3 over RDMA)](#gpu-direct-s3-over-rdma). | `false`          | No       |
+| `type`                   | Accel engine type. Omit (or set `s3`) for the vendor-neutral standard-protocol engine; `dell` selects a vendor-specific Dell engine that uses the vendor-specific `x-rdma-info` header.                                                                                                             | -                | No       |
 
 \* If `access_key` and `secret_key` are not provided, the AWS SDK will attempt to use default credential providers (IAM roles, environment variables, credential files, etc.)
 
-\** If `bucket` parameter is not provided, the `AWS_DEFAULT_BUCKET` environment variable will be used as fallback.
+\*\* If `bucket` parameter is not provided, the `AWS_DEFAULT_BUCKET` environment variable will be used as fallback.
 
-\*** If `endpoint_override` parameter is not provided, the `AWS_ENDPOINT_OVERRIDE` environment variable will be used as fallback.
+\*\*\* If `endpoint_override` parameter is not provided, the `AWS_ENDPOINT_OVERRIDE` environment variable will be used as fallback.
 
-\**** If `crtMinLimit` is not provided, the S3 CRT client is disabled and all transfers use the standard S3 client. When set, objects with size >= `crtMinLimit` will use the high-performance CRT client, while smaller objects continue to use the standard client. Recommended value: 10485760 (10 MB) or higher for optimal performance on large objects.
+\*\*\*\* If `crtMinLimit` is not provided, the S3 CRT client is disabled and all transfers use the standard S3 client. When set, objects with size >= `crtMinLimit` will use the high-performance CRT client, while smaller objects continue to use the standard client. Recommended value: 10485760 (10 MB) or higher for optimal performance on large objects.
 
 Setting `crtMinLimit` also configures the CRT client's `partSize` and `multipartUploadThreshold` to the same value, ensuring multipart upload (MPU) is always used for transfers routed to the CRT client. Note that AWS S3 enforces a **5 MiB minimum part size** for all parts except the last: if `crtMinLimit` is set below 5 MiB (5,242,880 bytes), the CRT SDK will silently clamp the part size to 5 MiB and log a warning, but MPU still activates at `crtMinLimit`. Objects smaller than 5 MiB uploaded via MPU will be sent as a single-part multipart upload, which S3 allows. To avoid the silent clamp and warning, use `crtMinLimit >= 5242880`.
 
@@ -87,22 +88,22 @@ Setting `crtMinLimit` also configures the CRT client's `partSize` and `multipart
 
 The following environment variables are supported for Object Storage configuration:
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `AWS_DEFAULT_BUCKET` | Default S3 bucket name when not specified in parameters | `my-default-bucket` |
+| Variable                | Description                                             | Example                 |
+| ----------------------- | ------------------------------------------------------- | ----------------------- |
+| `AWS_DEFAULT_BUCKET`    | Default S3 bucket name when not specified in parameters | `my-default-bucket`     |
 | `AWS_ENDPOINT_OVERRIDE` | Custom S3 endpoint URL when not specified in parameters | `http://localhost:9000` |
 
 Standard AWS SDK environment variables are also supported when credentials are not provided via backend parameters. For a complete list and detailed documentation, see the [AWS CLI Environment Variables](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html) documentation.
 
 Common AWS SDK environment variables include:
 
-| Variable | Description |
-|----------|-------------|
-| `AWS_ACCESS_KEY_ID` | AWS access key ID |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret access key |
-| `AWS_SESSION_TOKEN` | AWS session token for temporary credentials |
-| `AWS_REGION` | Default AWS region |
-| `AWS_PROFILE` | AWS credential profile to use |
+| Variable                | Description                                 |
+| ----------------------- | ------------------------------------------- |
+| `AWS_ACCESS_KEY_ID`     | AWS access key ID                           |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret access key                       |
+| `AWS_SESSION_TOKEN`     | AWS session token for temporary credentials |
+| `AWS_REGION`            | Default AWS region                          |
+| `AWS_PROFILE`           | AWS credential profile to use               |
 
 ### Configuration Priority
 
@@ -215,6 +216,58 @@ This configuration automatically uses the high-performance S3 CRT client for obj
 
 > **Part size and the 5 MiB floor**: AWS S3 requires a minimum part size of 5 MiB for all parts except the last. If `crtMinLimit` is set below 5 MiB, the CRT SDK silently clamps the part size to 5 MiB (logging a warning) while still triggering multipart at `crtMinLimit`. Objects smaller than 5 MiB are uploaded as a single-part multipart request, which S3 permits. The 5 MiB minimum is an AWS service constraint and cannot be bypassed. To avoid the silent clamp, use `crtMinLimit >= 5242880` (5 MiB).
 
+## GPU-Direct (S3 over RDMA)
+
+When built against the `cuobjclient` library, run on a host with an RDMA fabric
+(InfiniBand or RoCEv2), and **explicitly enabled with `accelerated=true`** (with
+no `type`, or `type=s3`), the standard S3 client accelerates GET/PUT using
+**GPU-direct S3 over RDMA**. This standard-S3 engine speaks the standard
+`x-amz-rdma-*` protocol and works against any compliant endpoint; enable it only
+against an endpoint you know implements the protocol:
+
+> **Use the standard-S3 engine (preferred).** `accelerated=true` with no `type`
+> (or `type=s3`) is the recommended GPU-direct path: it complies with the proposed
+> S3-over-RDMA protocol (`x-amz-rdma-*`) and needs no per-vendor code, so it works
+> against any conformant server. The vendor `type=...` engines (e.g. `type=dell`)
+> are vendor-specific engines for servers that speak a vendor's own RDMA headers.
+
+```cpp
+nixl_b_params_t params = {
+    {"bucket", "models"}, {"endpoint_override", "http://aistor:9000"},
+    {"accelerated", "true"}
+};
+agent.createBackend("obj", params);
+```
+
+> **Why opt-in and not auto-detected?** See
+> [Explicit opt-in; no automatic fallback (yet)](#explicit-opt-in-no-automatic-fallback-yet).
+>
+> **GPUDirect topology note:** RDMA into/out of GPU VRAM requires the GPU and the
+> RDMA NIC to share a PCIe path that permits peer DMA. On some systems GPU 0 sits
+> behind a bridge/ACS configuration that blocks this (the NIC's `RDMA_READ` of
+> GPU 0 memory fails with `IBV_WC_REM_OP_ERR`), while the other GPUs work. Select
+> a topology-compatible GPU for the buffer (e.g. via `CUDA_VISIBLE_DEVICES`);
+> `nvidia-smi topo -m` shows NIC↔GPU affinity (`PIX`/`NODE` are RDMA-friendly,
+> `SYS` crosses NUMA). This is a host/fabric property, independent of nixl.
+
+### How it works
+
+The standard-S3 engine pins DRAM/VRAM buffers for RDMA on `registerMem`
+(cuObject `cuMemObjGetDescriptor`), then on each transfer mints a per-op token
+and issues a body-less, SigV4 `UNSIGNED-PAYLOAD` GET/PUT carrying
+`x-amz-rdma-token`. The server moves the bytes directly to/from the registered
+buffer (including GPU VRAM) via `RDMA_WRITE` (GET) / `RDMA_READ` (PUT),
+bypassing the host CPU and the HTTP body. It is an **explicit opt-in**: an RDMA
+decline/failure is a hard error, not a silent HTTP fallback, since
+`accelerated=true` asserts the endpoint speaks the protocol (VRAM is always
+RDMA-only — the SDK cannot stream a GPU pointer).
+
+The full wire contract — headers, token format, transport, server obligations,
+completion rules, and a vendor compliance checklist — is in
+[**RDMA_PROTOCOL.md**](RDMA_PROTOCOL.md); a server that implements it is
+supported out of the box with no NIXL-side changes. The `type=dell` engine
+serves servers that use the vendor-specific `x-rdma-info` header.
+
 ## Transfer Operations
 
 The Object Storage backend supports read and write operations between local memory and S3 objects. Here are the key aspects of transfer operations:
@@ -261,11 +314,22 @@ The client selection happens transparently during transfer operations, requiring
 
 ## Extending with Vendor-Specific Implementations
 
+> **Prefer the standard-S3 engine.** For GPU-direct/RDMA acceleration, the
+> recommended path is the
+> [GPU-Direct (S3 over RDMA)](#gpu-direct-s3-over-rdma) standard-S3 engine
+> (`accelerated=true` with no `type`, or `type=s3`), which complies with the
+> proposed S3-over-RDMA protocol and requires no per-vendor code. A new vendor only
+> needs to implement the standard `x-amz-rdma-*` protocol on its server to be
+> supported by the standard-S3 engine; no NIXL-side vendor engine is required.
+> Bespoke per-vendor engines remain available for servers that use
+> vendor-specific RDMA headers.
+
 The object plugin uses a modular, inheritance-based architecture that makes it easy to add vendor-specific backends without modifying core engine logic.
 
 ### Architecture Overview
 
 The plugin uses a **pImpl (Pointer to Implementation)** design pattern to provide:
+
 - **ABI Stability**: Interface changes don't require recompiling client code
 - **Modularity**: Easy to add vendor-specific engines without modifying core logic
 - **Encapsulation**: Implementation details hidden behind abstract interface
@@ -306,6 +370,7 @@ The architecture separates concerns into:
 ```
 
 **Key Points:**
+
 - `nixlObjEngine` is the public interface that clients use
 - `nixlObjEngineImpl` is the abstract base class for all engine implementations
 - Concrete implementations inherit from `nixlObjEngineImpl` (or its subclasses) and override specific methods
@@ -316,12 +381,12 @@ The architecture separates concerns into:
 
 Each engine implementation defines its own supported memory segment types via `getSupportedMems()`:
 
-| Engine | Supported Memory Types | Description |
-|--------|----------------------|-------------|
-| `DefaultObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | Standard S3 client - CPU memory only |
-| `S3CrtObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | S3 CRT client - CPU memory only |
-| `S3AccelObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | S3 Accelerated base - CPU memory by default |
-| Vendor engines | `OBJ_SEG`, `DRAM_SEG`, `VRAM_SEG` | Vendor-specific - override to add GPU support |
+| Engine                 | Supported Memory Types            | Description                                   |
+| ---------------------- | --------------------------------- | --------------------------------------------- |
+| `DefaultObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG`             | Standard S3 client - CPU memory only          |
+| `S3CrtObjEngineImpl`   | `OBJ_SEG`, `DRAM_SEG`             | S3 CRT client - CPU memory only               |
+| `S3AccelObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG`             | S3 Accelerated base - CPU memory by default   |
+| Vendor engines         | `OBJ_SEG`, `DRAM_SEG`, `VRAM_SEG` | Vendor-specific - override to add GPU support |
 
 **Important:** Vendor engines that support GPU-direct transfers should override `getSupportedMems()` to include `VRAM_SEG`. The base `S3AccelObjEngineImpl` does not include `VRAM_SEG` by default - each vendor must explicitly expose this capability.
 
@@ -330,7 +395,6 @@ Each engine implementation defines its own supported memory segment types via `g
 > **⚠️ Important: Conditional Compilation for S3 Accelerated Engines**
 >
 > The S3 Accelerated path (`s3_accel`) and any vendor implementations under it require the `cuobjclient-13.1` library. When adding new extensions to `s3_accel`:
->
 >
 > Vendor engines self-register via `objAccelEngineRegistrar`
 >
@@ -343,7 +407,6 @@ Each engine implementation defines its own supported memory segment types via `g
 >        ]
 >    endif
 >    ```
->
 > 2. **Guard cuobjclient-specific code** within your engine with `#if defined(HAVE_CUOBJ_CLIENT)`
 >
 > This ensures the plugin builds correctly both with and without the `cuobjclient` library available.
@@ -355,6 +418,7 @@ Follow these steps to add a vendor-specific client and engine:
 Create a new directory under `s3_accel/` for your vendor (e.g., `s3_accel/vendor_name/`).
 
 **client.h**
+
 ```cpp
 #pragma once
 #include "s3_accel/client.h"
@@ -370,6 +434,7 @@ public:
 ```
 
 **client.cpp**
+
 ```cpp
 #include "client.h"
 #include "common/nixl_log.h"
@@ -384,6 +449,7 @@ awsVendorClient::awsVendorClient(nixl_b_params_t *custom_params,
 #### 2. Create Vendor Engine Implementation
 
 **engine_impl.h**
+
 ```cpp
 #pragma once
 #include "s3_accel/engine_impl.h"
@@ -407,6 +473,7 @@ public:
 ```
 
 **engine_impl.cpp**
+
 ```cpp
 #include "engine_impl.h"
 #include "s3_accel/vendor_name/client.h"
