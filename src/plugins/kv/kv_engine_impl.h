@@ -54,24 +54,54 @@ class nixlKVEngineImpl {
 public:
     virtual ~nixlKVEngineImpl() = default;
 
-    /** @return Memory segment types supported by this KV backend (typically DRAM_SEG). */
+    /** @brief Memory segment types supported by this KV backend. @return Segment list (typically DRAM_SEG). */
     virtual nixl_mem_list_t
     getSupportedMems() const = 0;
 
+    /**
+     * @brief Registers a local memory descriptor as a KV key.
+     *
+     * @param mem Descriptor blob including key metadata (metaInfo or devId).
+     * @param nixl_mem Memory segment type; must be supported by getSupportedMems().
+     * @param out On success, receives a newly allocated nixlBackendMD* owned by the caller
+     *            until deregisterMem().
+     * @return NIXL_SUCCESS on success, or an error status on invalid input or backend failure.
+     */
     virtual nixl_status_t
     registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) = 0;
 
+    /**
+     * @brief Deregisters backend metadata created by registerMem().
+     *
+     * @param meta Metadata pointer returned by registerMem(); must be non-null.
+     * @return NIXL_SUCCESS on success, or an error status if meta is invalid.
+     */
     virtual nixl_status_t
     deregisterMem(nixlBackendMD *meta) = 0;
 
+    /**
+     * @brief Queries whether registered keys exist in the backing store.
+     *
+     * @param descs Registered descriptors to query.
+     * @param resp Output vector; each entry is set when the key exists, or std::nullopt otherwise.
+     * @return NIXL_SUCCESS on success, or an error status on backend failure.
+     */
     virtual nixl_status_t
     queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const = 0;
 
     /**
-     * @brief Prepare a transfer request.
+     * @brief Prepares a transfer request and allocates a backend request handle.
      *
-     * @param local_agent Agent name from nixlKVEngine::localAgent (passed explicitly
+     * @param operation Transfer operation (NIXL_WRITE or NIXL_READ).
+     * @param local Local descriptor metadata list.
+     * @param remote Remote descriptor metadata list.
+     * @param remote_agent Remote agent name (unused for local-only KV backends).
+     * @param local_agent Local agent name from nixlKVEngine::localAgent (passed explicitly
      *                    so impl does not depend on nixlBackendEngine protected members).
+     * @param handle On success, receives a newly allocated nixlBackendReqH* owned by the caller
+     *               until releaseReqH().
+     * @param opt_args Optional backend arguments; may be nullptr.
+     * @return NIXL_SUCCESS on success, or an error status on invalid parameters.
      */
     virtual nixl_status_t
     prepXfer(const nixl_xfer_op_t &operation,
@@ -83,10 +113,17 @@ public:
              const nixl_opt_b_args_t *opt_args) const = 0;
 
     /**
-     * @brief Execute a prepared transfer request.
+     * @brief Executes a prepared transfer request.
      *
-     * @param local_agent Agent name from nixlKVEngine::localAgent (passed explicitly
+     * @param operation Transfer operation (NIXL_WRITE or NIXL_READ).
+     * @param local Local descriptor metadata list.
+     * @param remote Remote descriptor metadata list.
+     * @param remote_agent Remote agent name (unused for local-only KV backends).
+     * @param local_agent Local agent name from nixlKVEngine::localAgent (passed explicitly
      *                    so impl does not depend on nixlBackendEngine protected members).
+     * @param handle Request handle allocated by prepXfer(); must be non-null.
+     * @param opt_args Optional backend arguments; may be nullptr.
+     * @return NIXL_SUCCESS on success, or an error status on transfer or backend failure.
      */
     virtual nixl_status_t
     postXfer(const nixl_xfer_op_t &operation,
@@ -97,9 +134,21 @@ public:
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args) const = 0;
 
+    /**
+     * @brief Checks transfer completion status for a request handle.
+     *
+     * @param handle Request handle from prepXfer(); must be non-null.
+     * @return NIXL_SUCCESS when the transfer is complete, or an in-progress/error status.
+     */
     virtual nixl_status_t
     checkXfer(nixlBackendReqH *handle) const = 0;
 
+    /**
+     * @brief Releases a request handle allocated by prepXfer().
+     *
+     * @param handle Request handle to release; must be non-null.
+     * @return NIXL_SUCCESS on success.
+     */
     virtual nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const = 0;
 };
