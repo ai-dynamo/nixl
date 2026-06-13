@@ -63,6 +63,20 @@ class xferBenchWorker {
         transfer(size_t block_size,
                  const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) = 0;
+
+        // Consistency check for a storage WRITE: read the written data back
+        // over the transport into the local buffers and compare to the
+        // initiator sentinel. Lets backends that materialize no local file
+        // (e.g. object-over-RDMA) verify --check_consistency in memory instead
+        // of downloading the object to local storage and re-reading it.
+        // Default: unsupported (storage backends are driven by the NIXL worker).
+        virtual bool
+        verifyWriteByReadback(std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                              std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) {
+            (void)local_iov_lists;
+            (void)remote_iov_lists;
+            return false;
+        }
 };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_WORKER_H

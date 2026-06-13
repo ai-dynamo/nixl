@@ -70,6 +70,10 @@ class xferBenchNixlWorker: public xferBenchWorker {
                  const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
 
+        bool
+        verifyWriteByReadback(std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                              std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+
     private:
         std::optional<xferBenchIOV>
         initBasicDescDram(size_t buffer_size, int mem_dev_id);
