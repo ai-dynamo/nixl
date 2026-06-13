@@ -82,11 +82,18 @@ public:
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args) const = 0;
 
+    /**
+     * @brief Execute a prepared transfer request.
+     *
+     * @param local_agent Agent name from nixlKVEngine::localAgent (passed explicitly
+     *                    so impl does not depend on nixlBackendEngine protected members).
+     */
     virtual nixl_status_t
     postXfer(const nixl_xfer_op_t &operation,
              const nixl_meta_dlist_t &local,
              const nixl_meta_dlist_t &remote,
              const std::string &remote_agent,
+             const std::string &local_agent,
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args) const = 0;
 
