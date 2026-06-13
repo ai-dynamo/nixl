@@ -54,7 +54,8 @@ class nixlKVEngineImpl {
 public:
     virtual ~nixlKVEngineImpl() = default;
 
-    /** @brief Memory segment types supported by this KV backend. @return Segment list (typically DRAM_SEG). */
+    /** @brief Memory segment types supported by this KV backend. @return Segment list (typically
+     * DRAM_SEG). */
     virtual nixl_mem_list_t
     getSupportedMems() const = 0;
 
