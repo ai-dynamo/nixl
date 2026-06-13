@@ -38,6 +38,11 @@ For same-node Kubernetes validation, ``--ucx-intranode`` requires ranks to
 share PID/IPC namespaces; separate pods commonly cannot use UCX shared-memory
 active messages. Use ``--spawn-local-ranks 2 --ucx-intranode`` in a pod that
 has two GPUs, or deploy ranks with compatible host/shared PID and IPC settings.
+For multi-node tests with one multi-GPU pod per node, run one parent per pod
+with ``--spawn-local-ranks``, a shared external TCPStore,
+``--global-world-size``, and either ``--rank-base`` or ``--node-rank``. Use
+``--ucx-mixed-gda-intranode`` with ``--ucx-gda-auto-device`` when the same run
+must exercise local CUDA IPC/NVL peers and remote IBGDA peers.
 """
 
 from __future__ import annotations
@@ -76,6 +81,10 @@ INTRANODE_SHARED_MEMORY_TLS = frozenset(
     ("sm", "posix", "sysv", "cma", "knem", "xpmem")
 )
 LOCAL_SPAWN_CHILD_ENV = "NIXL_EP_LOCAL_SPAWN_CHILD"
+GLOBAL_WORLD_SIZE_ENV = "NIXL_EP_GLOBAL_WORLD_SIZE"
+RANK_BASE_ENV = "NIXL_EP_RANK_BASE"
+NODE_RANK_ENV = "NIXL_EP_NODE_RANK"
+LOCAL_WORLD_SIZE_ENV = "NIXL_EP_LOCAL_WORLD_SIZE"
 LOCAL_SPAWN_MASTER_ADDR = "127.0.0.1"
 GDA_AUTO_DEVICE_ENV = "NIXL_EP_UCX_GDA_AUTO_DEVICE"
 GDA_DEVICE_ENV = "NIXL_EP_UCX_GDA_DEVICE"
@@ -85,6 +94,11 @@ GDA_RETAIN_ENV_VARS = (
     "UCX_GGA_GDA_RETAIN_INACTIVE_CTX",
 )
 GDA_DEFAULT_UCX_TLS = "rc_gda,rc,ud,cuda_copy,cuda_ipc,self"
+MIXED_GDA_INTRANODE_ENV = "NIXL_EP_UCX_MIXED_GDA_INTRANODE"
+MIXED_GDA_INTRANODE_DEFAULT_UCX_TLS = (
+    "rc_gda,rc,ud,sm,cuda_ipc,cuda_copy,self"
+)
+GDA_CONTROL_TLS = frozenset(("rc", "ud"))
 
 nixl_ep: Any
 
@@ -96,11 +110,28 @@ def env_flag(name: str, default: bool = False) -> bool:
     return value.lower() in ("1", "true", "yes", "y", "on")
 
 
+def env_int(*names: str) -> int | None:
+    for name in names:
+        value = os.getenv(name)
+        if value is not None:
+            return int(value)
+    return None
+
+
 @dataclass(frozen=True)
 class RankEnv:
     rank: int
     world_size: int
     local_rank: int
+    local_world_size: int
+
+
+@dataclass(frozen=True)
+class LocalSpawnConfig:
+    local_world_size: int
+    global_world_size: int
+    rank_base: int
+    cuda_visible_devices: str
 
 
 @dataclass
@@ -153,13 +184,49 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help=(
-            "Single-pod same-node launcher for intranode validation. The "
-            "parent process spawns this many child rank processes in the same "
-            "container/PID/IPC namespace, exposes the first N visible GPUs via "
-            "CUDA_VISIBLE_DEVICES, sets RANK/WORLD_SIZE/LOCAL_RANK, and runs "
-            "the normal checkpoint/restore flow in each child. Use this with "
-            "--ucx-intranode for Kubernetes tests; separate pods generally "
-            "cannot use UCX shared-memory active messages."
+            "Single-pod local launcher. The parent process spawns this many "
+            "child rank processes in the same container/PID/IPC namespace, "
+            "exposes the first N visible GPUs via CUDA_VISIBLE_DEVICES, sets "
+            "global RANK/WORLD_SIZE and per-pod LOCAL_RANK/LOCAL_WORLD_SIZE, "
+            "and runs the normal checkpoint/restore flow in each child. For "
+            "pure same-node validation, use this with --ucx-intranode. For "
+            "multi-node validation, run one parent per pod with "
+            "--external-store, --global-world-size, and --rank-base or "
+            "--node-rank. Separate same-node pods generally cannot use UCX "
+            "shared-memory active messages and are not a supported "
+            "intranode topology."
+        ),
+    )
+    parser.add_argument(
+        "--global-world-size",
+        type=int,
+        default=env_int(GLOBAL_WORLD_SIZE_ENV, "WORLD_SIZE"),
+        help=(
+            "Global WORLD_SIZE for --spawn-local-ranks children. Defaults to "
+            f"${GLOBAL_WORLD_SIZE_ENV}, then $WORLD_SIZE, then the local "
+            "spawn count for single-pod intranode runs."
+        ),
+    )
+    parser.add_argument(
+        "--rank-base",
+        "--global-rank-base",
+        dest="rank_base",
+        type=int,
+        default=env_int(RANK_BASE_ENV),
+        help=(
+            "Global rank assigned to local child 0 for --spawn-local-ranks. "
+            "Child ranks are rank_base + local_rank. Defaults to "
+            f"${RANK_BASE_ENV}, then --node-rank * --spawn-local-ranks, then "
+            "0."
+        ),
+    )
+    parser.add_argument(
+        "--node-rank",
+        type=int,
+        default=env_int(NODE_RANK_ENV, "NODE_RANK"),
+        help=(
+            "Per-pod node rank used to derive --rank-base when --rank-base is "
+            f"not set. Defaults to ${NODE_RANK_ENV}, then $NODE_RANK."
         ),
     )
     parser.add_argument("--store-master-addr", default=os.getenv("MASTER_ADDR"))
@@ -284,6 +351,24 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--ucx-mixed-gda-intranode",
+        "--mixed-local-remote",
+        action="store_true",
+        default=env_flag(MIXED_GDA_INTRANODE_ENV),
+        dest="ucx_mixed_gda_intranode",
+        help=(
+            "Configure UCX for one multi-GPU pod per node with local peers "
+            "using CUDA IPC/NVL shared-memory transports and remote peers "
+            "using IBGDA. Requires --spawn-local-ranks, "
+            "--global-world-size greater than the local rank count, "
+            "--ucx-gda-auto-device, and a shared external TCPStore. Sets "
+            "UCX_TLS=rc_gda,rc,ud,sm,cuda_ipc,cuda_copy,self by default and "
+            "uses the selected rc_gda device plus ordinary HCA in "
+            "UCX_NET_DEVICES. Defaults to "
+            f"${MIXED_GDA_INTRANODE_ENV}."
+        ),
+    )
+    parser.add_argument(
         "--ucx-gda-auto-device",
         action="store_true",
         default=env_flag(GDA_AUTO_DEVICE_ENV),
@@ -356,10 +441,116 @@ def local_spawn_cuda_visible_devices(num_ranks: int) -> str:
     return ",".join(str(rank) for rank in range(num_ranks))
 
 
-def stream_child_output(rank: int, proc: subprocess.Popen[str]) -> None:
+def resolve_local_spawn_config(args: argparse.Namespace) -> LocalSpawnConfig:
+    local_world_size = args.spawn_local_ranks
+    if local_world_size < 1:
+        raise ValueError("--spawn-local-ranks requires at least 1 rank")
+    if args.force_ucx_tcp:
+        raise ValueError("--spawn-local-ranks conflicts with --force-ucx-tcp")
+
+    global_world_size = (
+        local_world_size
+        if args.global_world_size is None
+        else args.global_world_size
+    )
+    if global_world_size < 2:
+        raise ValueError("Real multi-rank validation requires WORLD_SIZE >= 2")
+    if local_world_size > global_world_size:
+        raise ValueError(
+            "--spawn-local-ranks cannot exceed --global-world-size: "
+            f"local={local_world_size}, global={global_world_size}"
+        )
+
+    if args.rank_base is not None:
+        rank_base = args.rank_base
+    elif args.node_rank is not None:
+        rank_base = args.node_rank * local_world_size
+    else:
+        rank_base = 0
+
+    if rank_base < 0:
+        raise ValueError("--rank-base must be non-negative")
+    if rank_base + local_world_size > global_world_size:
+        raise ValueError(
+            "Local rank range exceeds global world size: "
+            f"rank_base={rank_base}, local_world_size={local_world_size}, "
+            f"global_world_size={global_world_size}"
+        )
+
+    has_remote_ranks = global_world_size > local_world_size
+    if args.ucx_intranode and has_remote_ranks:
+        raise ValueError(
+            "--ucx-intranode is only for pure intrapod intranode validation "
+            "where all ranks are spawned in one pod. For multi-pod runs, use "
+            "--ucx-gda-auto-device for pure IBGDA or "
+            "--ucx-mixed-gda-intranode for local CUDA IPC/NVL plus remote "
+            "IBGDA."
+        )
+    if args.ucx_intranode and rank_base != 0:
+        raise ValueError(
+            "--ucx-intranode is pure intrapod intranode mode and requires "
+            "--rank-base 0"
+        )
+
+    if has_remote_ranks:
+        if not args.external_store:
+            raise ValueError(
+                "--spawn-local-ranks with remote ranks requires "
+                "--external-store and a shared TCPStore reachable from every "
+                "pod"
+            )
+        if args.store_master_addr is None:
+            raise ValueError(
+                "--spawn-local-ranks with remote ranks requires "
+                "--store-master-addr or MASTER_ADDR for the shared external "
+                "TCPStore"
+            )
+
+    if args.ucx_mixed_gda_intranode:
+        if local_world_size < 2:
+            raise ValueError(
+                "--ucx-mixed-gda-intranode requires at least two local ranks "
+                "per pod so local CUDA IPC/NVL peers are exercised"
+            )
+        if not has_remote_ranks:
+            raise ValueError(
+                "--ucx-mixed-gda-intranode requires remote ranks; for pure "
+                "single-pod intranode use --ucx-intranode"
+            )
+        if not args.ucx_gda_auto_device:
+            raise ValueError(
+                "--ucx-mixed-gda-intranode requires --ucx-gda-auto-device "
+                "for remote IBGDA peers"
+            )
+
+    if args.ucx_gda_auto_device and local_world_size > 1 and args.ucx_gda_device:
+        raise ValueError(
+            "--ucx-gda-device names one rc_gda device for one active CUDA "
+            "ordinal. With multiple local child ranks, use "
+            "--ucx-gda-device-candidates so each child can select the "
+            "candidate matching its LOCAL_RANK/CUDA device."
+        )
+
+    return LocalSpawnConfig(
+        local_world_size=local_world_size,
+        global_world_size=global_world_size,
+        rank_base=rank_base,
+        cuda_visible_devices=local_spawn_cuda_visible_devices(local_world_size),
+    )
+
+
+def stream_child_output(
+    global_rank: int,
+    local_rank: int,
+    proc: subprocess.Popen[str],
+) -> None:
     assert proc.stdout is not None
     for line in proc.stdout:
-        print(f"[local-rank {rank}] {line}", end="", flush=True)
+        print(
+            f"[global-rank {global_rank} local-rank {local_rank}] {line}",
+            end="",
+            flush=True,
+        )
 
 
 def terminate_child_processes(
@@ -386,29 +577,30 @@ def run_spawn_local_ranks(args: argparse.Namespace) -> None:
         raise RuntimeError(
             f"{LOCAL_SPAWN_CHILD_ENV}=1 child process must not spawn ranks"
         )
-    if args.spawn_local_ranks < 2:
-        raise ValueError("--spawn-local-ranks requires at least 2 ranks")
-    if args.force_ucx_tcp:
-        raise ValueError("--spawn-local-ranks conflicts with --force-ucx-tcp")
-    if args.ucx_gda_auto_device:
-        raise ValueError(
-            "--spawn-local-ranks is for pure intranode CUDA IPC/NVL tests and "
-            "conflicts with --ucx-gda-auto-device"
-        )
+    spawn_config = resolve_local_spawn_config(args)
 
     device_count = torch.cuda.device_count()
-    if device_count < args.spawn_local_ranks:
+    if device_count < spawn_config.local_world_size:
         raise RuntimeError(
             "--spawn-local-ranks requested "
-            f"{args.spawn_local_ranks} ranks, but torch sees only "
+            f"{spawn_config.local_world_size} ranks, but torch sees only "
             f"{device_count} CUDA device(s)"
         )
 
-    cuda_visible_devices = local_spawn_cuda_visible_devices(
-        args.spawn_local_ranks
-    )
     base_child_args = remove_cli_option(
         sys.argv[1:], "--spawn-local-ranks", takes_value=True
+    )
+    base_child_args = remove_cli_option(
+        base_child_args, "--global-world-size", takes_value=True
+    )
+    base_child_args = remove_cli_option(
+        base_child_args, "--rank-base", takes_value=True
+    )
+    base_child_args = remove_cli_option(
+        base_child_args, "--global-rank-base", takes_value=True
+    )
+    base_child_args = remove_cli_option(
+        base_child_args, "--node-rank", takes_value=True
     )
     if not args.external_store:
         base_child_args = remove_cli_option(
@@ -417,8 +609,12 @@ def run_spawn_local_ranks(args: argparse.Namespace) -> None:
         base_child_args.extend(
             ["--store-master-addr", LOCAL_SPAWN_MASTER_ADDR]
         )
-    if not args.ucx_intranode and not has_cli_option(
-        base_child_args, "--ucx-intranode"
+    if (
+        spawn_config.global_world_size == spawn_config.local_world_size
+        and not args.ucx_gda_auto_device
+        and not args.ucx_mixed_gda_intranode
+        and not args.ucx_intranode
+        and not has_cli_option(base_child_args, "--ucx-intranode")
     ):
         base_child_args.append("--ucx-intranode")
 
@@ -429,8 +625,12 @@ def run_spawn_local_ranks(args: argparse.Namespace) -> None:
     )
     print(
         "[local-spawn] launching "
-        f"{args.spawn_local_ranks} ranks in one container with "
-        f"CUDA_VISIBLE_DEVICES={cuda_visible_devices}, "
+        f"{spawn_config.local_world_size} local ranks in one container with "
+        f"global ranks "
+        f"{spawn_config.rank_base}.."
+        f"{spawn_config.rank_base + spawn_config.local_world_size - 1}, "
+        f"WORLD_SIZE={spawn_config.global_world_size}, "
+        f"CUDA_VISIBLE_DEVICES={spawn_config.cuda_visible_devices}, "
         f"store_master_addr={child_store_master_addr}, "
         f"store_port={args.store_port}",
         flush=True,
@@ -440,14 +640,24 @@ def run_spawn_local_ranks(args: argparse.Namespace) -> None:
     threads: list[threading.Thread] = []
     script_path = Path(__file__).resolve()
     try:
-        for rank in range(args.spawn_local_ranks):
+        for local_rank in range(spawn_config.local_world_size):
+            global_rank = spawn_config.rank_base + local_rank
             child_env = os.environ.copy()
             child_env[LOCAL_SPAWN_CHILD_ENV] = "1"
-            child_env[INTRANODE_ENV] = "1"
-            child_env["RANK"] = str(rank)
-            child_env["WORLD_SIZE"] = str(args.spawn_local_ranks)
-            child_env["LOCAL_RANK"] = str(rank)
-            child_env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
+            child_env[GLOBAL_WORLD_SIZE_ENV] = str(
+                spawn_config.global_world_size
+            )
+            child_env[RANK_BASE_ENV] = str(spawn_config.rank_base)
+            child_env[LOCAL_WORLD_SIZE_ENV] = str(
+                spawn_config.local_world_size
+            )
+            child_env["RANK"] = str(global_rank)
+            child_env["WORLD_SIZE"] = str(spawn_config.global_world_size)
+            child_env["LOCAL_RANK"] = str(local_rank)
+            child_env["LOCAL_WORLD_SIZE"] = str(spawn_config.local_world_size)
+            child_env["CUDA_VISIBLE_DEVICES"] = (
+                spawn_config.cuda_visible_devices
+            )
             if not args.external_store:
                 child_env["MASTER_ADDR"] = LOCAL_SPAWN_MASTER_ADDR
             child_env["MASTER_PORT"] = str(args.store_port)
@@ -461,10 +671,10 @@ def run_spawn_local_ranks(args: argparse.Namespace) -> None:
                 text=True,
                 bufsize=1,
             )
-            procs.append((rank, proc))
+            procs.append((global_rank, proc))
             thread = threading.Thread(
                 target=stream_child_output,
-                args=(rank, proc),
+                args=(global_rank, local_rank, proc),
                 daemon=True,
             )
             thread.start()
@@ -498,7 +708,10 @@ def run_spawn_local_ranks(args: argparse.Namespace) -> None:
             )
 
         print(
-            f"PASS local_spawn_ranks={args.spawn_local_ranks}",
+            "PASS local_spawn_ranks="
+            f"{spawn_config.local_world_size} "
+            f"rank_base={spawn_config.rank_base} "
+            f"global_world_size={spawn_config.global_world_size}",
             flush=True,
         )
     except BaseException:
@@ -510,7 +723,76 @@ def read_rank_env() -> RankEnv:
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    return RankEnv(rank=rank, world_size=world_size, local_rank=local_rank)
+    local_world_size = int(
+        os.environ.get(
+            LOCAL_WORLD_SIZE_ENV,
+            os.environ.get("LOCAL_WORLD_SIZE", "1"),
+        )
+    )
+    return RankEnv(
+        rank=rank,
+        world_size=world_size,
+        local_rank=local_rank,
+        local_world_size=local_world_size,
+    )
+
+
+def validate_runtime_topology(
+    args: argparse.Namespace,
+    env: RankEnv,
+) -> None:
+    if env.rank < 0 or env.rank >= env.world_size:
+        raise ValueError(
+            f"RANK must be in [0, WORLD_SIZE); got rank={env.rank}, "
+            f"world_size={env.world_size}"
+        )
+    if env.local_world_size < 1:
+        raise ValueError(
+            f"LOCAL_WORLD_SIZE must be at least 1; got {env.local_world_size}"
+        )
+    if env.local_rank < 0 or env.local_rank >= env.local_world_size:
+        raise ValueError(
+            "LOCAL_RANK must be in [0, LOCAL_WORLD_SIZE); got "
+            f"local_rank={env.local_rank}, "
+            f"local_world_size={env.local_world_size}"
+        )
+
+    if args.ucx_intranode and env.local_world_size != env.world_size:
+        raise ValueError(
+            "--ucx-intranode supports only the clarified single-pod intranode "
+            "topology where every rank is in one pod/container. "
+            f"Got WORLD_SIZE={env.world_size} and "
+            f"LOCAL_WORLD_SIZE={env.local_world_size}. Same-node ranks split "
+            "across separate Kubernetes pods are not supported because UCX "
+            "shared-memory active messages require compatible shared "
+            "PID/IPC namespaces. Use --spawn-local-ranks in one multi-GPU pod."
+        )
+
+    if not args.ucx_mixed_gda_intranode:
+        return
+
+    if env.local_world_size < 2:
+        raise ValueError(
+            "--ucx-mixed-gda-intranode requires at least two ranks in this "
+            f"pod; got LOCAL_WORLD_SIZE={env.local_world_size}"
+        )
+    if env.world_size <= env.local_world_size:
+        raise ValueError(
+            "--ucx-mixed-gda-intranode requires both local and remote peers; "
+            f"got WORLD_SIZE={env.world_size}, "
+            f"LOCAL_WORLD_SIZE={env.local_world_size}. For pure single-pod "
+            "intranode use --ucx-intranode."
+        )
+    if not args.external_store:
+        raise ValueError(
+            "--ucx-mixed-gda-intranode requires --external-store so all pods "
+            "coordinate through one shared TCPStore"
+        )
+    if not args.ucx_gda_auto_device:
+        raise ValueError(
+            "--ucx-mixed-gda-intranode requires --ucx-gda-auto-device for "
+            "remote IBGDA peers"
+        )
 
 
 def create_store(args: argparse.Namespace, env: RankEnv) -> dist.TCPStore:
@@ -565,6 +847,33 @@ def validate_intranode_ucx_tls(ucx_tls: str) -> None:
         )
 
 
+def validate_mixed_gda_intranode_ucx_tls(ucx_tls: str) -> None:
+    tls = parse_ucx_tls(ucx_tls)
+    if "all" in tls:
+        raise ValueError(
+            "--ucx-mixed-gda-intranode requires an explicit UCX_TLS "
+            f"allow-list; got {ucx_tls!r}"
+        )
+    if any(item.startswith("^") for item in tls):
+        raise ValueError(
+            "--ucx-mixed-gda-intranode requires an explicit UCX_TLS "
+            f"allow-list; got exclusion list {ucx_tls!r}"
+        )
+    if "rc_gda" not in tls:
+        raise ValueError(
+            "--ucx-mixed-gda-intranode requires UCX_TLS to include rc_gda "
+            f"for remote IBGDA peers; got {ucx_tls!r}"
+        )
+    if tls.isdisjoint(GDA_CONTROL_TLS):
+        control = ",".join(sorted(GDA_CONTROL_TLS))
+        raise ValueError(
+            "--ucx-mixed-gda-intranode requires UCX_TLS to include rc or ud "
+            "for active-message/control metadata "
+            f"({control}); got {ucx_tls!r}"
+        )
+    validate_intranode_ucx_tls(ucx_tls)
+
+
 def configure_ucx_intranode_transport(args: argparse.Namespace) -> None:
     ucx_tls = args.ucx_tls or INTRANODE_DEFAULT_UCX_TLS
     validate_intranode_ucx_tls(ucx_tls)
@@ -592,20 +901,60 @@ def configure_ucx_intranode_transport(args: argparse.Namespace) -> None:
     )
 
 
+def configure_ucx_mixed_gda_intranode_transport(
+    args: argparse.Namespace,
+) -> None:
+    ucx_tls = args.ucx_tls or MIXED_GDA_INTRANODE_DEFAULT_UCX_TLS
+    validate_mixed_gda_intranode_ucx_tls(ucx_tls)
+
+    previous_tls = os.environ.get("UCX_TLS")
+    os.environ["UCX_TLS"] = ucx_tls
+    print(
+        "[transport] set "
+        f"UCX_TLS={ucx_tls} for mixed local CUDA IPC/NVL plus remote IBGDA"
+        + (f" (overrode {previous_tls})" if previous_tls else ""),
+        flush=True,
+    )
+    print(
+        "[transport] mixed mode requires one multi-GPU pod per node. Local "
+        "ranks must share PID/IPC namespaces through --spawn-local-ranks; "
+        "remote ranks must use a shared external TCPStore and reachable "
+        "IBGDA/HCA ports.",
+        flush=True,
+    )
+
+
 def configure_ucx_transport(args: argparse.Namespace) -> None:
     if args.ucx_gda_auto_device and args.force_ucx_tcp:
         raise ValueError("--ucx-gda-auto-device conflicts with --force-ucx-tcp")
     if args.ucx_intranode and args.force_ucx_tcp:
         raise ValueError("--ucx-intranode conflicts with --force-ucx-tcp")
+    if args.ucx_mixed_gda_intranode and args.force_ucx_tcp:
+        raise ValueError(
+            "--ucx-mixed-gda-intranode conflicts with --force-ucx-tcp"
+        )
     if args.ucx_intranode and args.ucx_gda_auto_device:
         raise ValueError(
             "--ucx-intranode configures pure same-node CUDA IPC/NVL and "
             "conflicts with --ucx-gda-auto-device. Use --ucx-gda-auto-device "
             "alone for a same-node IBGDA/RDMA fallback."
         )
+    if args.ucx_intranode and args.ucx_mixed_gda_intranode:
+        raise ValueError(
+            "--ucx-intranode configures pure intrapod CUDA IPC/NVL and "
+            "conflicts with --ucx-mixed-gda-intranode"
+        )
+    if args.ucx_mixed_gda_intranode and not args.ucx_gda_auto_device:
+        raise ValueError(
+            "--ucx-mixed-gda-intranode requires --ucx-gda-auto-device"
+        )
 
     if args.ucx_gda_auto_device:
         configure_ucx_gda_pre_import()
+
+    if args.ucx_mixed_gda_intranode:
+        configure_ucx_mixed_gda_intranode_transport(args)
+        return
 
     if args.ucx_intranode:
         configure_ucx_intranode_transport(args)
@@ -1191,9 +1540,10 @@ def main() -> None:
         run_spawn_local_ranks(args)
         return
 
+    env = read_rank_env()
+    validate_runtime_topology(args, env)
     configure_ucx_transport(args)
 
-    env = read_rank_env()
     if env.world_size < 2:
         raise ValueError("Real multi-rank validation requires WORLD_SIZE >= 2")
     if args.snapshot_control_dir is not None and not args.external_store:

@@ -2,11 +2,77 @@
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import importlib.util
+import os
+import sys
+import types
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
+
+
+def _load_multinode_module():
+    script = (
+        _repo_root()
+        / "examples/device/ep/tests/checkpoint_preserve_va_multinode.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "checkpoint_preserve_va_multinode_static",
+        script,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    torch_stub = types.ModuleType("torch")
+    torch_stub.Tensor = object
+    torch_stub.cuda = SimpleNamespace(CUDAGraph=object)
+    dist_stub = types.ModuleType("torch.distributed")
+    dist_stub.TCPStore = object
+    torch_stub.distributed = dist_stub
+    with mock.patch.dict(
+        sys.modules,
+        {
+            spec.name: module,
+            "torch": torch_stub,
+            "torch.distributed": dist_stub,
+        },
+    ):
+        spec.loader.exec_module(module)
+    return module
+
+
+def _spawn_args(**overrides):
+    defaults = {
+        "spawn_local_ranks": 0,
+        "global_world_size": None,
+        "rank_base": None,
+        "node_rank": None,
+        "force_ucx_tcp": False,
+        "ucx_gda_auto_device": False,
+        "ucx_gda_device": None,
+        "ucx_mixed_gda_intranode": False,
+        "ucx_intranode": False,
+        "external_store": False,
+        "store_master_addr": None,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def _transport_args(**overrides):
+    defaults = {
+        "ucx_gda_auto_device": False,
+        "force_ucx_tcp": False,
+        "ucx_intranode": False,
+        "ucx_mixed_gda_intranode": False,
+        "ucx_tls": None,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
 
 
 def test_checkpoint_preserve_va_python_api_is_exposed():
@@ -145,6 +211,7 @@ def test_multinode_checkpoint_reproducer_supports_intranode_ucx():
         'os.environ["UCX_NET_DEVICES"] = "all"',
         "--ucx-intranode conflicts with --force-ucx-tcp",
         "--ucx-intranode configures pure same-node CUDA IPC/NVL",
+        "single-pod intranode",
     ):
         assert expected in source
 
@@ -185,14 +252,204 @@ def test_multinode_checkpoint_reproducer_supports_local_intranode_launcher():
     ):
         assert expected in source
 
-    assert 'child_env[INTRANODE_ENV] = "1"' in source
     assert 'base_child_args.append("--ucx-intranode")' in source
+    assert "pure same-node validation" in source
     assert 'sys.argv[1:], "--spawn-local-ranks"' in source
 
     main_source = source[source.index("def main() -> None:") :]
     assert main_source.index("run_spawn_local_ranks(args)") < main_source.index(
         "configure_ucx_transport(args)"
     )
+
+
+def test_multinode_checkpoint_reproducer_supports_multipod_local_launcher():
+    script = (
+        _repo_root()
+        / "examples/device/ep/tests/checkpoint_preserve_va_multinode.py"
+    )
+    source = script.read_text()
+
+    for expected in (
+        "--global-world-size",
+        "--rank-base",
+        "--global-rank-base",
+        "--node-rank",
+        "NIXL_EP_GLOBAL_WORLD_SIZE",
+        "NIXL_EP_RANK_BASE",
+        "NIXL_EP_LOCAL_WORLD_SIZE",
+        "resolve_local_spawn_config(args)",
+        "global_rank = spawn_config.rank_base + local_rank",
+        'child_env["RANK"] = str(global_rank)',
+        'child_env["WORLD_SIZE"] = str(spawn_config.global_world_size)',
+        'child_env["LOCAL_RANK"] = str(local_rank)',
+        'child_env["LOCAL_WORLD_SIZE"]',
+        "global ranks ",
+        "rank_base=",
+        "global_world_size=",
+    ):
+        assert expected in source
+
+    assert (
+        "spawn_config.global_world_size == spawn_config.local_world_size"
+        in source
+    )
+    assert "--spawn-local-ranks with remote ranks requires" in source
+    assert "--ucx-gda-device names one rc_gda device" in source
+
+
+def test_multinode_checkpoint_reproducer_supports_mixed_gda_intranode_mode():
+    script = (
+        _repo_root()
+        / "examples/device/ep/tests/checkpoint_preserve_va_multinode.py"
+    )
+    source = script.read_text()
+
+    for expected in (
+        "--ucx-mixed-gda-intranode",
+        "--mixed-local-remote",
+        "NIXL_EP_UCX_MIXED_GDA_INTRANODE",
+        "MIXED_GDA_INTRANODE_DEFAULT_UCX_TLS",
+        'rc_gda,rc,ud,sm,cuda_ipc,cuda_copy,self',
+        "validate_mixed_gda_intranode_ucx_tls",
+        "configure_ucx_mixed_gda_intranode_transport(args)",
+        "--ucx-mixed-gda-intranode requires --ucx-gda-auto-device",
+        "one multi-GPU pod per node",
+        "LOCAL_WORLD_SIZE",
+        "requires both local and remote peers",
+    ):
+        assert expected in source
+
+    transport_source = source[
+        source.index("def configure_ucx_transport(args: argparse.Namespace)")
+    :]
+    assert transport_source.index(
+        "configure_ucx_mixed_gda_intranode_transport(args)"
+    ) < transport_source.index("configure_ucx_intranode_transport(args)")
+
+
+def test_local_spawn_config_assigns_global_ranks_and_requires_external_store():
+    module = _load_multinode_module()
+
+    with mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1"}, clear=False):
+        config = module.resolve_local_spawn_config(
+            _spawn_args(
+                spawn_local_ranks=2,
+                global_world_size=4,
+                rank_base=2,
+                external_store=True,
+                store_master_addr="store.example",
+            )
+        )
+
+    assert config.local_world_size == 2
+    assert config.global_world_size == 4
+    assert config.rank_base == 2
+    assert config.cuda_visible_devices == "0,1"
+
+    try:
+        module.resolve_local_spawn_config(
+            _spawn_args(spawn_local_ranks=2, global_world_size=4)
+        )
+    except ValueError as exc:
+        assert "--external-store" in str(exc)
+    else:
+        raise AssertionError("expected remote local-spawn without store to fail")
+
+
+def test_local_spawn_config_rejects_invalid_intranode_and_gda_combinations():
+    module = _load_multinode_module()
+
+    invalid_cases = (
+        (
+            _spawn_args(
+                spawn_local_ranks=2,
+                global_world_size=4,
+                external_store=True,
+                store_master_addr="store.example",
+                ucx_intranode=True,
+            ),
+            "pure intrapod intranode",
+        ),
+        (
+            _spawn_args(
+                spawn_local_ranks=8,
+                global_world_size=16,
+                external_store=True,
+                store_master_addr="store.example",
+                ucx_gda_auto_device=True,
+                ucx_gda_device="cuda0-mlx5_2:1",
+            ),
+            "--ucx-gda-device names one rc_gda device",
+        ),
+        (
+            _spawn_args(
+                spawn_local_ranks=8,
+                global_world_size=8,
+                ucx_mixed_gda_intranode=True,
+                ucx_gda_auto_device=True,
+            ),
+            "requires remote ranks",
+        ),
+    )
+
+    for args, expected in invalid_cases:
+        try:
+            module.resolve_local_spawn_config(args)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:
+            raise AssertionError(f"expected {expected!r} validation failure")
+
+
+def test_runtime_topology_validation_rejects_separate_pod_intranode():
+    module = _load_multinode_module()
+    env = module.RankEnv(
+        rank=0,
+        world_size=2,
+        local_rank=0,
+        local_world_size=1,
+    )
+
+    try:
+        module.validate_runtime_topology(
+            _transport_args(ucx_intranode=True),
+            env,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        assert "single-pod intranode topology" in message
+        assert "separate Kubernetes pods are not supported" in message
+    else:
+        raise AssertionError("expected invalid separate-pod intranode to fail")
+
+
+def test_mixed_transport_sets_combined_tls_and_preserves_gda_selection():
+    module = _load_multinode_module()
+
+    with mock.patch.dict(os.environ, {}, clear=True):
+        module.configure_ucx_transport(
+            _transport_args(
+                ucx_gda_auto_device=True,
+                ucx_mixed_gda_intranode=True,
+            )
+        )
+        assert os.environ["UCX_TLS"] == (
+            "rc_gda,rc,ud,sm,cuda_ipc,cuda_copy,self"
+        )
+        assert os.environ["UCX_IB_GDA_RETAIN_INACTIVE_CTX"] == "y"
+        assert os.environ["UCX_GGA_GDA_RETAIN_INACTIVE_CTX"] == "y"
+
+    for ucx_tls, expected in (
+        ("rc,sm,cuda_ipc,cuda_copy,self", "include rc_gda"),
+        ("rc_gda,rc,cuda_copy,self", "include cuda_ipc"),
+        ("rc_gda,cuda_ipc,cuda_copy,self", "include rc or ud"),
+    ):
+        try:
+            module.validate_mixed_gda_intranode_ucx_tls(ucx_tls)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:
+            raise AssertionError(f"expected {ucx_tls!r} to fail validation")
 
 
 def test_ep_connect_failures_have_timeout_diagnostics():
