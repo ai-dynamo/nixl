@@ -155,8 +155,7 @@ makeAgentTracer(const std::string &name) {
     if (requested_backends.empty()) {
         return nullptr;
     }
-    return nixl::trace::makeTracer(
-        nixl::trace::TracerConfig{name, std::move(requested_backends)});
+    return nixl::trace::makeTracer(nixl::trace::TracerConfig{name, std::move(requested_backends)});
 }
 
 } // namespace
@@ -1284,7 +1283,7 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
                      const nixl_opt_args_t* extra_params) {
     NIXL_TRACE_SCOPE_KIND(data->tracer_.get(), "nixl::getNotifs", nixl::trace::Kind::Metadata);
 
-    notif_list_t    bknd_notif_list;
+    notif_list_t bknd_notif_list;
     nixl_status_t   ret, bad_ret=NIXL_SUCCESS;
     backend_list_t* backend_list;
 
