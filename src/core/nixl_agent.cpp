@@ -180,12 +180,11 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
         telemetry_ = nixlTelemetry::create(name);
     }
 
-    // Tracing runtime gate: NIXL_TRACE_BACKENDS env overrides the config field.
-    // makeTracer() activates only backends that are both requested and compiled
-    // in, and returns null when the result is empty (zero call-site overhead).
+    // Tracing runtime gate: backends are selected via the NIXL_TRACE_BACKENDS env
+    // var. makeTracer() activates only backends that are both requested and
+    // compiled in, and returns null when the result is empty (zero overhead).
     const auto trace_env = nixl::config::getValueOptional<std::string>("NIXL_TRACE_BACKENDS");
-    const std::string trace_spec = trace_env.value_or(config.traceBackends);
-    auto requested_backends = splitTraceBackends(trace_spec);
+    auto requested_backends = splitTraceBackends(trace_env.value_or(std::string{}));
     if (!requested_backends.empty()) {
         tracer_ =
             nixl::trace::makeTracer(nixl::trace::TracerConfig{name, std::move(requested_backends)});

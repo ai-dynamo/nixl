@@ -430,7 +430,6 @@ PYBIND11_MODULE(_bindings, m) {
         .def_readwrite("listenPort", &nixlAgentConfig::listenPort)
         .def_readwrite("syncMode", &nixlAgentConfig::syncMode)
         .def_readwrite("captureTelemetry", &nixlAgentConfig::captureTelemetry)
-        .def_readwrite("traceBackends", &nixlAgentConfig::traceBackends)
         .def_readwrite("pthrDelay", &nixlAgentConfig::pthrDelay)
         .def_readwrite("lthrDelay", &nixlAgentConfig::lthrDelay)
         .def_readwrite("etcdWatchTimeout", &nixlAgentConfig::etcdWatchTimeout);
