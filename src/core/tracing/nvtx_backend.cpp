@@ -136,8 +136,11 @@ namespace {
         beginSpan(std::string_view name, Kind kind, Color color) override {
             const std::string msg(name);
             const nvtxEventAttributes_t ev = makeEvent(msg.c_str(), kind, color);
+            // Allocate before pushing so a throwing allocation cannot leave the
+            // NVTX range stack unbalanced (the span's dtor performs the pop).
+            auto span = std::make_unique<NvtxSpan>(domain_);
             nvtxDomainRangePushEx(domain_, &ev);
-            return std::make_unique<NvtxSpan>(domain_);
+            return span;
         }
 
         void
