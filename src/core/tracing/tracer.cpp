@@ -89,7 +89,11 @@ Tracer::beginSpan(std::string_view name, Kind kind, Color color) {
     std::vector<std::unique_ptr<SpanBackend>> spans;
     spans.reserve(backends_.size());
     for (auto &backend : backends_) {
-        spans.push_back(backend->beginSpan(name, kind, color));
+        // Drop null backend spans so an all-null Span is not reported active()
+        // (which would null-deref in addAttribute()/id()).
+        if (auto span = backend->beginSpan(name, kind, color)) {
+            spans.push_back(std::move(span));
+        }
     }
     return Span{std::move(spans)};
 }
