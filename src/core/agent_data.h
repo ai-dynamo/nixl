@@ -103,7 +103,7 @@ class nixlAgentData {
         std::unique_ptr<nixlTelemetry> telemetry_;
         // Composite tracer (fans out to every enabled backend); null when no
         // backend is active. Owned by the Agent; injected into call sites.
-        std::unique_ptr<nixl::trace::Tracer> tracer_;
+        const std::unique_ptr<nixl::trace::Tracer> tracer_;
         nixlLocalSection localSection_;
 
         void

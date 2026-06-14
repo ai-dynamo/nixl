@@ -123,29 +123,40 @@ effectiveSyncMode(nixl_thread_sync_t requested, bool needs_comm_thread) {
     return requested;
 }
 
-// Split a comma-separated backend list (e.g. "nvtx,chakra") into trimmed,
-// non-empty names. Used for the tracing runtime gate.
+// Split a comma-separated backend list (e.g. "nvtx,chakra") into non-empty
+// names. Used for the tracing runtime gate.
 [[nodiscard]] std::vector<std::string>
 splitTraceBackends(const std::string &spec) {
     std::vector<std::string> result;
     std::string token;
-    auto flush = [&result, &token]() {
-        const auto begin = token.find_first_not_of(" \t");
-        if (begin != std::string::npos) {
-            const auto end = token.find_last_not_of(" \t");
-            result.push_back(token.substr(begin, end - begin + 1));
-        }
-        token.clear();
-    };
     for (const char c : spec) {
         if (c == ',') {
-            flush();
+            if (!token.empty()) {
+                result.push_back(token);
+            }
+            token.clear();
         } else {
             token.push_back(c);
         }
     }
-    flush();
+    if (!token.empty()) {
+        result.push_back(token);
+    }
     return result;
+}
+
+// Build the agent's composite tracer from NIXL_TRACE_BACKENDS. Returns null when
+// nothing is requested or none of the requested backends is compiled in, so the
+// agent can hold the result in a const member.
+[[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
+makeAgentTracer(const std::string &name) {
+    const auto trace_env = nixl::config::getValueOptional<std::string>("NIXL_TRACE_BACKENDS");
+    auto requested_backends = splitTraceBackends(trace_env.value_or(std::string{}));
+    if (requested_backends.empty()) {
+        return nullptr;
+    }
+    return nixl::trace::makeTracer(
+        nixl::trace::TracerConfig{name, std::move(requested_backends)});
 }
 
 } // namespace
@@ -155,7 +166,8 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
       config_(config),
       useEtcd_(detectEtcd()),
       needsCommThread_(useEtcd_ || config.useListenThread),
-      lock(effectiveSyncMode(config.syncMode, needsCommThread_)) {
+      lock(effectiveSyncMode(config.syncMode, needsCommThread_)),
+      tracer_(makeAgentTracer(name)) {
 #if HAVE_ETCD
     NIXL_DEBUG << "NIXL ETCD is " << (useEtcd_ ? "enabled" : "disabled");
 #else
@@ -178,16 +190,6 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
         }
     } else if (config.captureTelemetry) {
         telemetry_ = nixlTelemetry::create(name);
-    }
-
-    // Tracing runtime gate: backends are selected via the NIXL_TRACE_BACKENDS env
-    // var. makeTracer() activates only backends that are both requested and
-    // compiled in, and returns null when the result is empty (zero overhead).
-    const auto trace_env = nixl::config::getValueOptional<std::string>("NIXL_TRACE_BACKENDS");
-    auto requested_backends = splitTraceBackends(trace_env.value_or(std::string{}));
-    if (!requested_backends.empty()) {
-        tracer_ =
-            nixl::trace::makeTracer(nixl::trace::TracerConfig{name, std::move(requested_backends)});
     }
 }
 
