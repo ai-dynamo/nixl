@@ -27,8 +27,8 @@ namespace {
 
     // Map an operation kind to a stable ARGB color so the Nsight timeline is
     // visually distinguishable. An explicit (non-zero) Color overrides the default.
-    std::uint32_t
-    colorFor(Kind kind, Color c) {
+    [[nodiscard]] constexpr std::uint32_t
+    colorFor(const Kind kind, const Color c) noexcept {
         if (c.r != 0 || c.g != 0 || c.b != 0) {
             return 0xFF000000u | (static_cast<std::uint32_t>(c.r) << 16) |
                 (static_cast<std::uint32_t>(c.g) << 8) | static_cast<std::uint32_t>(c.b);
@@ -159,7 +159,7 @@ namespace {
         }
 
     private:
-        std::string domainName_;
+        const std::string domainName_;
         nvtxDomainHandle_t domain_;
     };
 
