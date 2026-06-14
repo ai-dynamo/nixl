@@ -852,10 +852,10 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     handle->notifMsg = opt_args.notifMsg;
     handle->hasNotif = opt_args.hasNotif;
 
-    if (data->telemetry_) {
-        handle->telemetry.totalBytes = total_bytes;
-        handle->telemetry.descCount = handle->initiatorDescs.descCount();
-    }
+    // Set unconditionally so the trace bytes/desc_count attributes are correct
+    // even when telemetry is disabled; telemetry reads these fields when active.
+    handle->telemetry.totalBytes = total_bytes;
+    handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
     ret = handle->engine->prepXfer(handle->backendOp,
                                    handle->initiatorDescs,
@@ -994,10 +994,10 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     handle->notifMsg = opt_args.notifMsg;
     handle->hasNotif = opt_args.hasNotif;
 
-    if (data->telemetry_) {
-        handle->telemetry.totalBytes = total_bytes;
-        handle->telemetry.descCount = handle->initiatorDescs.descCount();
-    }
+    // Set unconditionally so the trace bytes/desc_count attributes are correct
+    // even when telemetry is disabled; telemetry reads these fields when active.
+    handle->telemetry.totalBytes = total_bytes;
+    handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
     ret1 = handle->engine->prepXfer(handle->backendOp,
                                     handle->initiatorDescs,
