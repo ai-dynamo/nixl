@@ -244,19 +244,48 @@ class FilesystemBackend(StorageBackend):
             os.fsync(f.fileno())
 
     def _open_and_register_file(self, file_path: Path, file_size: int) -> int:
-        """Open a file and register it with NIXL. Returns fd."""
+        """Open a file and register it with NIXL. Returns fd.
+
+        If register_memory() raises, closes the fd and drops the bookkeeping
+        entry so the failure doesn't leak descriptors or leave stale state.
+        """
         flags = os.O_RDWR
         if self._use_direct_io:
             flags |= os.O_DIRECT
         fd = os.open(str(file_path), flags)
         self._file_descriptors[str(file_path)] = fd
 
-        reg_list = [(0, file_size, fd, str(file_path))]
-        reg_descs = self._agent.register_memory(
-            reg_list, "FILE", backends=[self._nixl_backend]
-        )
+        try:
+            reg_list = [(0, file_size, fd, str(file_path))]
+            reg_descs = self._agent.register_memory(
+                reg_list, "FILE", backends=[self._nixl_backend]
+            )
+        except Exception:
+            self._file_descriptors.pop(str(file_path), None)
+            try:
+                os.close(fd)
+            except OSError as exc:
+                logger.debug(
+                    "os.close(fd=%d) failed during register rollback: %s", fd, exc
+                )
+            raise
         self._file_reg_descs[str(file_path)] = reg_descs
         return fd
+
+    def _release_file(self, file_path: str) -> None:
+        """Deregister and close one file. Safe to call on partial state."""
+        reg_descs = self._file_reg_descs.pop(file_path, None)
+        if reg_descs is not None:
+            try:
+                self._agent.deregister_memory(reg_descs, backends=[self._nixl_backend])
+            except Exception as exc:
+                logger.debug("deregister_memory(%s) failed: %s", file_path, exc)
+        fd = self._file_descriptors.pop(file_path, None)
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError as exc:
+                logger.debug("os.close(fd=%d) failed: %s", fd, exc)
 
     @property
     def _num_shards(self):
@@ -295,32 +324,44 @@ class FilesystemBackend(StorageBackend):
                 backend_data={"file_path": str(file_path), "fd": fd},
             )
         else:
-            # Multi-file: N shards, each with size/N
+            # Multi-file: N shards, each with ceil(size/N) bytes (then
+            # aligned up). Floor division here would yield 0 whenever
+            # read_size < n_shards and silently produce no shards.
             align = max(self._block_size, 4096) if self._block_size > 0 else 4096
-            shard_read = ((read_size // n_shards + align - 1) // align) * align
-            shard_write = (
-                ((write_size // n_shards + align - 1) // align) * align
-                if write_size > 0
-                else 0
-            )
+
+            def _ceil_align(total: int, n: int) -> int:
+                if total <= 0:
+                    return 0
+                per_shard = (total + n - 1) // n
+                return ((per_shard + align - 1) // align) * align
+
+            shard_read = _ceil_align(read_size, n_shards)
+            shard_write = _ceil_align(write_size, n_shards)
             shard_size = shard_read + shard_write
 
             shard_fds = []
             shard_paths = []
             shard_actual_reads = []
-            for shard in range(n_shards):
-                fpath = self._get_file_path(tp_idx, rank, shard=shard)
-                actual_read = min(shard_read, read_size - shard * shard_read)
-                actual_read = max(actual_read, 0)
-                actual_size = actual_read + shard_write
-                if actual_size <= 0:
-                    break
-                if not fpath.exists():
-                    self._create_file(fpath, actual_size, actual_read, rank)
-                fd = self._open_and_register_file(fpath, actual_size)
-                shard_fds.append(fd)
-                shard_paths.append(str(fpath))
-                shard_actual_reads.append(actual_read)
+            try:
+                for shard in range(n_shards):
+                    fpath = self._get_file_path(tp_idx, rank, shard=shard)
+                    actual_read = min(shard_read, read_size - shard * shard_read)
+                    actual_read = max(actual_read, 0)
+                    actual_size = actual_read + shard_write
+                    if actual_size <= 0:
+                        break
+                    if not fpath.exists():
+                        self._create_file(fpath, actual_size, actual_read, rank)
+                    fd = self._open_and_register_file(fpath, actual_size)
+                    shard_fds.append(fd)
+                    shard_paths.append(str(fpath))
+                    shard_actual_reads.append(actual_read)
+            except Exception:
+                # Roll back any shards opened so far; otherwise the caller's
+                # except handler would inherit half-registered files.
+                for path in shard_paths:
+                    self._release_file(path)
+                raise
 
             handle = StorageHandle(
                 tp_idx=tp_idx,
