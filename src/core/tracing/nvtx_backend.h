@@ -29,7 +29,7 @@ namespace nixl::trace {
  *        are cheap no-op stubs until a profiler (Nsight Systems) is attached via
  *        NVTX_INJECTION64_PATH. Each agent gets its own NVTX domain named @p domain.
  */
-[[nodiscard]] std::unique_ptr<iTraceBackend>
+[[nodiscard]] std::unique_ptr<TraceBackend>
 makeNvtxBackend(std::string_view domain);
 
 } // namespace nixl::trace

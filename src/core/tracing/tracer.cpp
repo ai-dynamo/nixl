@@ -79,14 +79,14 @@ Span::id() const noexcept {
 
 /*** Tracer ***/
 
-Tracer::Tracer(std::vector<std::unique_ptr<iTraceBackend>> backends) noexcept
+Tracer::Tracer(std::vector<std::unique_ptr<TraceBackend>> backends) noexcept
     : backends_(std::move(backends)) {}
 
 Tracer::~Tracer() = default;
 
 Span
 Tracer::beginSpan(std::string_view name, Kind kind, Color color) {
-    std::vector<std::unique_ptr<iSpanBackend>> spans;
+    std::vector<std::unique_ptr<SpanBackend>> spans;
     spans.reserve(backends_.size());
     for (auto &backend : backends_) {
         spans.push_back(backend->beginSpan(name, kind, color));
@@ -119,7 +119,7 @@ Tracer::popCorrelationId() {
 
 std::unique_ptr<Tracer>
 makeTracer(const TracerConfig &config) {
-    std::vector<std::unique_ptr<iTraceBackend>> backends;
+    std::vector<std::unique_ptr<TraceBackend>> backends;
     std::unordered_set<std::string> seen;
 
     for (const auto &requested : config.backends) {

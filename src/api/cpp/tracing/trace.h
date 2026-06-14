@@ -68,9 +68,9 @@ struct SpanId {
  * @brief A single active span within one backend. Its destructor ends the
  *        range / fixes the duration for that backend.
  */
-class iSpanBackend {
+class SpanBackend {
 public:
-    virtual ~iSpanBackend() = default;
+    virtual ~SpanBackend() = default;
 
     virtual void
     addAttribute(std::string_view key, std::string_view value) = 0;
@@ -89,11 +89,11 @@ public:
 };
 
 /** @brief One enabled backend type (NVTX, Chakra, ...). */
-class iTraceBackend {
+class TraceBackend {
 public:
-    virtual ~iTraceBackend() = default;
+    virtual ~TraceBackend() = default;
 
-    [[nodiscard]] virtual std::unique_ptr<iSpanBackend>
+    [[nodiscard]] virtual std::unique_ptr<SpanBackend>
     beginSpan(std::string_view name, Kind kind, Color color) = 0;
 
     virtual void
@@ -151,10 +151,10 @@ public:
 private:
     friend class Tracer;
 
-    explicit Span(std::vector<std::unique_ptr<iSpanBackend>> backends) noexcept
+    explicit Span(std::vector<std::unique_ptr<SpanBackend>> backends) noexcept
         : backends_(std::move(backends)) {}
 
-    std::vector<std::unique_ptr<iSpanBackend>> backends_;
+    std::vector<std::unique_ptr<SpanBackend>> backends_;
 };
 
 /**
@@ -163,7 +163,7 @@ private:
  */
 class Tracer {
 public:
-    explicit Tracer(std::vector<std::unique_ptr<iTraceBackend>> backends) noexcept;
+    explicit Tracer(std::vector<std::unique_ptr<TraceBackend>> backends) noexcept;
     ~Tracer();
     Tracer(const Tracer &) = delete;
     Tracer &
@@ -187,7 +187,7 @@ public:
     popCorrelationId();
 
 private:
-    std::vector<std::unique_ptr<iTraceBackend>> backends_;
+    std::vector<std::unique_ptr<TraceBackend>> backends_;
 };
 
 /** @brief Inputs used to build the composite tracer from enabled backends. */

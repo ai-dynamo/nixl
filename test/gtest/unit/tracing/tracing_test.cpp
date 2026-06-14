@@ -40,7 +40,7 @@ struct CallLog {
     std::vector<std::pair<std::string, double>> dblAttrs;
 };
 
-class MockSpan final : public nixl::trace::iSpanBackend {
+class MockSpan final : public nixl::trace::SpanBackend {
 public:
     MockSpan(CallLog *log, std::uint64_t id) : log_(log), id_(id) {}
 
@@ -79,14 +79,14 @@ private:
     std::uint64_t id_;
 };
 
-class MockBackend final : public nixl::trace::iTraceBackend {
+class MockBackend final : public nixl::trace::TraceBackend {
 public:
     MockBackend(std::string name, CallLog *log, std::uint64_t span_id)
         : name_(std::move(name)),
           log_(log),
           spanId_(span_id) {}
 
-    [[nodiscard]] std::unique_ptr<nixl::trace::iSpanBackend>
+    [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
     beginSpan(std::string_view, nixl::trace::Kind, nixl::trace::Color) override {
         ++log_->spansBegun;
         return std::make_unique<MockSpan>(log_, spanId_);
@@ -116,7 +116,7 @@ private:
 
 std::unique_ptr<nixl::trace::Tracer>
 makeMockTracer(CallLog &a, CallLog &b, std::uint64_t id_a = 0, std::uint64_t id_b = 0) {
-    std::vector<std::unique_ptr<nixl::trace::iTraceBackend>> backends;
+    std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
     backends.push_back(std::make_unique<MockBackend>("a", &a, id_a));
     backends.push_back(std::make_unique<MockBackend>("b", &b, id_b));
     return std::make_unique<nixl::trace::Tracer>(std::move(backends));
@@ -201,7 +201,7 @@ TEST(Tracing, SpanIdFromFirstNonZeroBackend) {
 // A tracer with no backends is empty; spans are inactive and all calls are
 // safe no-ops (this is the zero-overhead, nothing-requested path).
 TEST(Tracing, EmptyTracerIsInert) {
-    nixl::trace::Tracer tracer{std::vector<std::unique_ptr<nixl::trace::iTraceBackend>>{}};
+    nixl::trace::Tracer tracer{std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}};
     EXPECT_TRUE(tracer.empty());
 
     auto span = tracer.beginSpan("op", nixl::trace::Kind::CommRecv);

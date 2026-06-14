@@ -70,7 +70,7 @@ namespace {
 
     // A single NVTX range. The matching push happens in the backend's beginSpan();
     // the pop happens here on destruction (per-thread, per-domain LIFO).
-    class NvtxSpan final : public iSpanBackend {
+    class NvtxSpan final : public SpanBackend {
     public:
         explicit NvtxSpan(nvtxDomainHandle_t domain) noexcept : domain_(domain) {}
 
@@ -122,7 +122,7 @@ namespace {
         nvtxDomainHandle_t domain_;
     };
 
-    class NvtxTraceBackend final : public iTraceBackend {
+    class NvtxTraceBackend final : public TraceBackend {
     public:
         explicit NvtxTraceBackend(std::string_view domain)
             : domainName_(domain),
@@ -132,7 +132,7 @@ namespace {
             nvtxDomainDestroy(domain_);
         }
 
-        [[nodiscard]] std::unique_ptr<iSpanBackend>
+        [[nodiscard]] std::unique_ptr<SpanBackend>
         beginSpan(std::string_view name, Kind kind, Color color) override {
             const std::string msg(name);
             const nvtxEventAttributes_t ev = makeEvent(msg.c_str(), kind, color);
@@ -165,7 +165,7 @@ namespace {
 
 } // namespace
 
-std::unique_ptr<iTraceBackend>
+std::unique_ptr<TraceBackend>
 makeNvtxBackend(std::string_view domain) {
     return std::make_unique<NvtxTraceBackend>(domain);
 }
