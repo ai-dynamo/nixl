@@ -106,9 +106,24 @@ def load_tp_file(tp_file) -> dict:
 
     result: Dict[str, Any] = {"rdma": None, "read": None, "write": None}
 
+    expected_ranks: Optional[int] = None
     if "rdma" in sections:
-        matrix = [[parse_size(x) for x in row] for row in sections["rdma"]]
-        result["rdma"] = np.array(matrix)
+        matrix_raw = [[parse_size(x) for x in row] for row in sections["rdma"]]
+        # Validate rectangular matrix and infer rank count from #columns.
+        row_widths = {len(r) for r in matrix_raw}
+        if len(row_widths) > 1:
+            raise ValueError(
+                f"{tp_file}: [rdma] matrix is not rectangular "
+                f"(found row widths {sorted(row_widths)})"
+            )
+        result["rdma"] = np.array(matrix_raw)
+        if matrix_raw:
+            expected_ranks = len(matrix_raw[0])
+            if len(matrix_raw) != expected_ranks:
+                raise ValueError(
+                    f"{tp_file}: [rdma] matrix must be square ({expected_ranks} "
+                    f"columns) but has {len(matrix_raw)} rows"
+                )
 
     if "read" in sections and sections["read"]:
         # Flatten to single list (read section is one row of values)
@@ -116,6 +131,17 @@ def load_tp_file(tp_file) -> dict:
 
     if "write" in sections and sections["write"]:
         result["write"] = [val for row in sections["write"] for val in row]
+
+    # If we have both an rdma matrix and a read/write list, sizes must agree.
+    for section_name in ("read", "write"):
+        section = result[section_name]
+        if section is None or expected_ranks is None:
+            continue
+        if len(section) != expected_ranks:
+            raise ValueError(
+                f"{tp_file}: [{section_name}] has {len(section)} entries but "
+                f"[rdma] implies {expected_ranks} ranks"
+            )
 
     return result
 
@@ -130,6 +156,7 @@ def parse_storage_config(
     storage_config: Dict,
     tp_idx: int,
     storage_base_path: Path,
+    use_direct_io: bool = False,
 ) -> Optional[Dict[int, Any]]:
     """Parse per-rank storage requirements from YAML config.
 
@@ -142,12 +169,13 @@ def parse_storage_config(
         storage_config: Storage configuration with 'read' and/or 'write' arrays
         tp_idx: Traffic pattern index (for file path generation)
         storage_base_path: Base path for storage files
+        use_direct_io: When True, sizes are rounded up to 4K so they satisfy
+            O_DIRECT's alignment requirement. Buffered POSIX has no such
+            requirement, so we pass through the user's requested sizes
+            verbatim — silently upsizing would inflate the workload.
 
     Returns:
         Dict mapping rank -> StorageOp, or None if empty
-
-    Note:
-        Sizes are aligned to 4K boundaries for O_DIRECT compatibility.
     """
     from test.traffic_pattern import StorageOp
 
@@ -173,9 +201,10 @@ def parse_storage_config(
         read_size = parse_size(read_val) if read_val else 0
         write_size = parse_size(write_val) if write_val else 0
 
-        # Align sizes to 4K for O_DIRECT compatibility
-        read_size = align_to_4k(read_size) if read_size > 0 else 0
-        write_size = align_to_4k(write_size) if write_size > 0 else 0
+        if use_direct_io:
+            # Align sizes to 4K so O_DIRECT will accept them.
+            read_size = align_to_4k(read_size) if read_size > 0 else 0
+            write_size = align_to_4k(write_size) if write_size > 0 else 0
         file_size = read_size + write_size
 
         if file_size == 0:
@@ -559,6 +588,14 @@ def sequential_ct_perftest(
     else:
         storage_base_path = config_dir / "storage"
 
+    # Resolve direct_io up front so we know whether to 4K-align storage
+    # sizes during TP parse (only O_DIRECT requires it).
+    use_direct_io = storage_direct_io
+    if storage_direct_io is None and storage_backend in ("GDS", "GDS_MT"):
+        use_direct_io = True  # Auto-enable for GDS backends
+    elif storage_direct_io is None:
+        use_direct_io = False  # Default off for POSIX
+
     logger.info("Loading %d traffic patterns...", len(config["traffic_patterns"]))
 
     patterns = []
@@ -583,7 +620,7 @@ def sequential_ct_perftest(
                 if tp_data["write"]:
                     storage_config["write"] = tp_data["write"]
                 storage_ops = parse_storage_config(
-                    storage_config, idx, storage_base_path
+                    storage_config, idx, storage_base_path, use_direct_io=use_direct_io
                 )
                 if storage_ops:
                     has_storage = True
@@ -619,7 +656,10 @@ def sequential_ct_perftest(
 
             if "storage" in tp_config:
                 storage_ops = parse_storage_config(
-                    tp_config["storage"], idx, storage_base_path
+                    tp_config["storage"],
+                    idx,
+                    storage_base_path,
+                    use_direct_io=use_direct_io,
                 )
                 if storage_ops:
                     has_storage = True
@@ -663,13 +703,6 @@ def sequential_ct_perftest(
         #   - Mixed: any combination
 
         patterns.append(pattern)
-
-    # Determine direct_io setting (auto-enable for GDS if not specified)
-    use_direct_io = storage_direct_io
-    if storage_direct_io is None and storage_backend in ("GDS", "GDS_MT"):
-        use_direct_io = True  # Auto-enable for GDS backends
-    elif storage_direct_io is None:
-        use_direct_io = False  # Default off for POSIX
 
     if has_storage:
         logger.info(
