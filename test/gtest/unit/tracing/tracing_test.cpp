@@ -228,11 +228,11 @@ TEST(Tracing, MakeTracerUnknownBackendReturnsNull) {
     {
         // An unknown backend is expected to emit a warning and resolve to null.
         const gtest::LogIgnoreGuard ignore("unknown backend");
-        auto tracer = nixl::trace::makeTracer({"agent", {"definitely-not-a-backend"}});
+        const auto tracer = nixl::trace::makeTracer({"agent", {"definitely-not-a-backend"}});
         EXPECT_EQ(tracer, nullptr);
     }
 
-    auto none = nixl::trace::makeTracer({"agent", {}});
+    const auto none = nixl::trace::makeTracer({"agent", {}});
     EXPECT_EQ(none, nullptr);
 }
 
