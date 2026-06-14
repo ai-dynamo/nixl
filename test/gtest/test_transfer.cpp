@@ -773,7 +773,7 @@ TEST_P(TestTransferTracing, NvtxDemoWalkthrough) {
         }
         std::this_thread::sleep_for(drain_poll_interval);
     }
-    EXPECT_FALSE(notif_map[getAgentName(0)].empty());
+    ASSERT_FALSE(notif_map[getAgentName(0)].empty());
 
     invalidateMD(0, 1);
     deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
