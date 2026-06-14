@@ -179,6 +179,7 @@ class _EtcdDistUtils(_RTUtils):
                         f"[Rank {self.rank}] Barrier timed out after {timeout_sec:.0f}s: {current_val}/{len(ranks)} ranks arrived. "
                         f"Missing ranks: {missing_ranks[:10]}{'...' if len(missing_ranks) > 10 else ''}"
                     )
+                time.sleep(_POLL_INTERVAL_SEC)
         else:
             my_index = ranks.index(self.rank)
             # Fan in - count from 1 to len(ranks)
@@ -194,6 +195,7 @@ class _EtcdDistUtils(_RTUtils):
                         f"[Rank {self.rank}] Barrier timed out after {timeout_sec:.0f}s: {current_val}/{len(ranks)} ranks arrived. "
                         f"Waiting for rank {waiting_for_rank} to enter barrier."
                     )
+                time.sleep(_POLL_INTERVAL_SEC)
             # Fan out - wait for root to set 0 again
             while self._get_int_val(key) != 0:
                 if timeout_sec and time.time() - start_time > timeout_sec:
@@ -205,6 +207,7 @@ class _EtcdDistUtils(_RTUtils):
                         f"[Rank {self.rank}] Barrier timed out after {timeout_sec:.0f}s: {current_val}/{len(ranks)} ranks arrived. "
                         f"Missing ranks: {missing_ranks[:10]}{'...' if len(missing_ranks) > 10 else ''}"
                     )
+                time.sleep(_POLL_INTERVAL_SEC)
 
     def get_rank(self) -> int:
         return self.rank

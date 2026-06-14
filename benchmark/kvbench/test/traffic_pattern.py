@@ -99,12 +99,14 @@ class TrafficPattern:
 
     def senders_ranks(self):
         """Return the ranks (process indices) that send messages."""
-        return self._senders
+        # Return a copy: callers mutate downstream and the cached list
+        # must stay pristine.
+        return list(self._senders)
 
     def receivers_ranks(self, from_ranks: Optional[list[int]] = None):
         """Return the ranks (process indices) that receive messages."""
         if from_ranks is None:
-            return self._receivers
+            return list(self._receivers)
         # Filtered case: only receivers that receive from specified senders
         if self.matrix is None:
             return []
@@ -127,7 +129,7 @@ class TrafficPattern:
         - RDMA receivers (they wait for notifications and participate in barriers)
         - Storage ranks (they do read/write ops)
         """
-        return self._all_participating
+        return list(self._all_participating)
 
     def buf_size(self, src, dst):
         if self.matrix is None:
