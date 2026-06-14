@@ -465,6 +465,24 @@ def main(
     )
     world_size = num_prefill_gpus + num_decode_gpus
 
+    # Reject configurations that would leave a partial worker group; the
+    # downstream chunking floor-divides, so silently truncating ranks here
+    # gives the user a smaller benchmark than they asked for.
+    if num_prefill_gpus % prefill_worker_size != 0:
+        raise ValueError(
+            f"num_prefill_gpus={num_prefill_gpus} is not a multiple of "
+            f"prefill_worker_size={prefill_worker_size} "
+            f"(tp={prefill_worker_config.tp} * pp={prefill_worker_config.pp} * "
+            f"cp={prefill_worker_config.cp})"
+        )
+    if num_decode_gpus > 0 and num_decode_gpus % decode_worker_size != 0:
+        raise ValueError(
+            f"num_decode_gpus={num_decode_gpus} is not a multiple of "
+            f"decode_worker_size={decode_worker_size} "
+            f"(tp={decode_worker_config.tp} * pp={decode_worker_config.pp} * "
+            f"cp={decode_worker_config.cp})"
+        )
+
     # Create list of all GPU ranks
     prefill_ranks = list(range(num_prefill_gpus))
     decode_ranks = list(range(num_prefill_gpus, num_prefill_gpus + num_decode_gpus))

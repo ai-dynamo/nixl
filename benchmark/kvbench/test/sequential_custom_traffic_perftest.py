@@ -87,8 +87,9 @@ class SequentialCTPerftest(CTPerftest):
         self.warmup_iters = warmup_iters
         self._storage_num_handles = storage_num_handles
 
-        # Storage setup
-        self._has_storage = (
+        # Storage setup. Wrap in bool() so this stays a boolean even if
+        # storage_path is a Path/str rather than a plain truthy value.
+        self._has_storage = bool(
             any(tp.storage_ops for tp in traffic_patterns) and storage_path
         )
         self._storage_backend: Optional[StorageBackend] = None
@@ -212,14 +213,17 @@ class SequentialCTPerftest(CTPerftest):
             if self.my_rank != first_storage_rank:
                 continue
 
-            # Use single handle directly (more efficient than _run_tp for single handle)
-            handle = handles[0] if handles else None
-            if not handle:
+            # Time the full storage transfer path (one handle per shard when
+            # sharded) — not just the first handle, which would skip most of
+            # the work whenever storage_num_handles > 1.
+            if not handles:
                 continue
 
             iter_latencies = []
             for _ in range(self.n_isolation_iters):
-                iter_latencies.append(self._run_handle(handle))
+                t = time.time()
+                self._run_tp(handles, blocking=True)
+                iter_latencies.append(time.time() - t)
 
             # Calculate fio-style percentile statistics
             sorted_lats = sorted(iter_latencies)
@@ -298,18 +302,23 @@ class SequentialCTPerftest(CTPerftest):
         if not storage_handle:
             return []
         op_name = "read" if operation == StorageOpType.READ else "write"
+        mem_type = self.traffic_patterns[tp_idx].mem_type
         if operation == StorageOpType.READ:
             if storage_handle.read_size == 0:
                 return []
             size = storage_handle.read_size
             buf_offset = 0
+            # READ: load from disk into send_buf so an RDMA send can ship it.
+            buf = self.send_buf_by_mem_type.get(mem_type)
         else:
             if storage_handle.write_size == 0:
                 return []
             size = storage_handle.write_size
-            buf_offset = storage_handle.read_size
-
-        buf = self.send_buf_by_mem_type.get(self.traffic_patterns[tp_idx].mem_type)
+            buf_offset = 0
+            # WRITE: persist data that an RDMA receive just landed in
+            # recv_buf. Sourcing from send_buf (the pre-fix behavior) would
+            # write uninitialized bytes on the receiver side.
+            buf = self.recv_buf_by_mem_type.get(mem_type)
         if not buf:
             return []
 
@@ -421,14 +430,14 @@ class SequentialCTPerftest(CTPerftest):
         while pending_senders:
             elapsed = time.time() - start_time
             if elapsed > timeout_sec:
-                logger.warning(
-                    "[Rank %d] Timeout waiting for RDMA notifications. "
-                    "Still waiting for: %s (elapsed: %.2fs)",
-                    self.my_rank,
-                    list(pending_senders),
-                    elapsed,
+                # Raise instead of breaking: a silent break left
+                # downstream stats and barriers in an inconsistent state
+                # because the caller assumed all notifications arrived.
+                raise TimeoutError(
+                    f"[Rank {self.my_rank}] Timeout after {elapsed:.2f}s "
+                    f"waiting for RDMA notifications from senders "
+                    f"{sorted(pending_senders)}"
                 )
-                break
 
             # Check for notifications from each pending sender
             for sender_rank in list(pending_senders):
@@ -526,15 +535,20 @@ class SequentialCTPerftest(CTPerftest):
             else:
                 rdma_send = rdma_recv = 0
 
-            # Include storage sizes (already 4K aligned in main.py)
+            # Include storage sizes (already 4K aligned in main.py when
+            # O_DIRECT is enabled).
+            # READs land into send_buf (then an RDMA send ships them);
+            # WRITEs source from recv_buf (where an RDMA recv just placed
+            # the data we want to persist). Size each pool accordingly.
             my_ops = tp.storage_ops.get(self.my_rank) if tp.storage_ops else None
-            storage_size = (my_ops.read_size + my_ops.write_size) if my_ops else 0
+            storage_read_size = my_ops.read_size if my_ops else 0
+            storage_write_size = my_ops.write_size if my_ops else 0
 
             max_src_by_mem_type[tp.mem_type] = max(
-                max_src_by_mem_type[tp.mem_type], rdma_send, storage_size
+                max_src_by_mem_type[tp.mem_type], rdma_send, storage_read_size
             )
             max_dst_by_mem_type[tp.mem_type] = max(
-                max_dst_by_mem_type[tp.mem_type], rdma_recv
+                max_dst_by_mem_type[tp.mem_type], rdma_recv, storage_write_size
             )
 
         # If storage is enabled, also register buffers with storage backend
@@ -903,10 +917,13 @@ class SequentialCTPerftest(CTPerftest):
 
             iso_read_p50 = iso_read_stats["p50"]
             iso_write_p50 = iso_write_stats["p50"]
-            read_bw = (read_size / (iso_read_p50 / 1e3)) if iso_read_p50 > 0 else None
-            write_bw = (
-                (write_size / (iso_write_p50 / 1e3)) if iso_write_p50 > 0 else None
-            )
+            # Workload BW = workload-phase latency (read_ms / write_ms),
+            # not the isolated medians. The "Iso Rd BW" / "Iso Wr BW"
+            # columns below report the isolated numbers; reusing iso_*_p50
+            # here would duplicate those columns and hide the contention
+            # effect we care about.
+            read_bw = (read_size / (read_ms / 1e3)) if read_ms > 0 else None
+            write_bw = (write_size / (write_ms / 1e3)) if write_ms > 0 else None
 
             # Per-rank isolated BWs (bottleneck = min across ranks)
             rdma_bws = []
@@ -1493,7 +1510,13 @@ class SequentialCTPerftest(CTPerftest):
                 for h in hs
             ]
             if all_handles:
+                # _destroy() runs _destroy_buffers() as a side-effect.
                 self._destroy(all_handles)
+            else:
+                # Storage-only runs allocate buffers but never go through
+                # the handle teardown path, so the buffers would leak if
+                # we didn't explicitly destroy them.
+                self._destroy_buffers()
 
             if self._storage_backend:
                 self._storage_backend.close()

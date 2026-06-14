@@ -52,16 +52,30 @@ def allocate_aligned_buffer(
         Tuple of (raw_buffer, aligned_view) where aligned_view is a slice
         of raw_buffer starting at an aligned address.
     """
-    # Over-allocate by alignment-1 bytes to guarantee we can find an aligned start
-    alloc_size = size + alignment - 1
-    raw_buf = torch.full((alloc_size,), fill_value, dtype=dtype, device=device)
+    # `size` and `alignment` are in BYTES; tensor indexing is in ELEMENTS.
+    # Convert via dtype's element size so non-int8 dtypes don't silently
+    # over-/under-shoot the requested byte count.
+    itemsize = torch.empty(0, dtype=dtype).element_size()
+    assert (
+        size % itemsize == 0
+    ), f"size={size} must be a multiple of dtype itemsize={itemsize}"
+    assert (
+        alignment % itemsize == 0
+    ), f"alignment={alignment} must be a multiple of dtype itemsize={itemsize}"
 
-    # Find aligned offset within the buffer
+    # Over-allocate by alignment-1 bytes so we can always find an aligned start.
+    alloc_bytes = size + alignment - 1
+    alloc_elems = (alloc_bytes + itemsize - 1) // itemsize
+    raw_buf = torch.full((alloc_elems,), fill_value, dtype=dtype, device=device)
+
+    # Find aligned BYTE offset within the buffer, then convert to element index.
     raw_ptr = raw_buf.data_ptr()
-    align_offset = (alignment - (raw_ptr % alignment)) % alignment
+    align_offset_bytes = (alignment - (raw_ptr % alignment)) % alignment
+    align_offset_elems = align_offset_bytes // itemsize
+    size_elems = size // itemsize
 
-    # Create aligned view
-    aligned_buf = raw_buf[align_offset : align_offset + size]
+    # Create aligned view (element indices).
+    aligned_buf = raw_buf[align_offset_elems : align_offset_elems + size_elems]
 
     # Verify alignment
     aligned_ptr = aligned_buf.data_ptr()
@@ -70,10 +84,10 @@ def allocate_aligned_buffer(
     ), f"Buffer not aligned: ptr={aligned_ptr:#x}, alignment={alignment}"
 
     logger.debug(
-        "Buffer aligned: raw_ptr=%#x, aligned_ptr=%#x, offset=%d",
+        "Buffer aligned: raw_ptr=%#x, aligned_ptr=%#x, offset_bytes=%d",
         raw_ptr,
         aligned_ptr,
-        align_offset,
+        align_offset_bytes,
     )
 
     return raw_buf, aligned_buf
@@ -235,7 +249,13 @@ class NixlBuffer:
                 offset,
                 self.ALIGNMENT,
             )
-        return self.buf[offset : offset + size]
+        # size/offset are in BYTES; index in ELEMENTS via dtype itemsize.
+        itemsize = self.buf.element_size()
+        assert (
+            offset % itemsize == 0 and size % itemsize == 0
+        ), f"offset={offset}/size={size} must be multiples of itemsize={itemsize}"
+        start = offset // itemsize
+        return self.buf[start : start + size // itemsize]
 
     def destroy(self):
         # Deregister from additional backends first
@@ -310,7 +330,12 @@ class CTPerftest:
         )
 
         self._check_tp_config(traffic_pattern)
-        assert "UCX" in self.nixl_agent.get_plugin_list(), "UCX plugin is not loaded"
+        # Storage-only patterns don't go through UCX; only assert when
+        # there's RDMA traffic to set up.
+        if traffic_pattern.has_rdma():
+            assert (
+                "UCX" in self.nixl_agent.get_plugin_list()
+            ), "UCX plugin is not loaded"
 
     def _format_size(self, size_bytes: int) -> str:
         """Format byte size to human readable string."""
@@ -344,6 +369,14 @@ class CTPerftest:
 
     def _share_md(self) -> None:
         """Share agent metadata between all ranks. (Need to be run after registering buffers)"""
+        # Storage-only patterns have no remote peers to talk to. Skipping
+        # the metadata exchange both saves time and avoids requiring UCX.
+        if not self.traffic_pattern.has_rdma():
+            logger.debug(
+                "[Rank %d] Storage-only pattern, skipping metadata exchange",
+                self.my_rank,
+            )
+            return
         # Skip remote metadata when running single-rank or when no remote-capable backend is available
         if self.world_size == 1:
             logger.debug(
@@ -448,6 +481,12 @@ class CTPerftest:
         """Timing everything in this function because it takes a lot of time"""
 
         send_bufs, recv_bufs = self._get_bufs(tp)
+
+        # Storage-only TP: no RDMA handles to build, and the collective
+        # _share_recv_buf_descs() alltoall would require UCX. Bail early
+        # so storage-only runs don't drag in the RDMA-only path.
+        if not tp.has_rdma():
+            return [], send_bufs, recv_bufs
 
         logger.debug("[Rank %d] Sharing recv buf descs", self.my_rank)
         dst_bufs_descs = self._share_recv_buf_descs(recv_bufs)
