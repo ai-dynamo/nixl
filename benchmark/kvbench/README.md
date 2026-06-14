@@ -192,7 +192,7 @@ Specific to CTP (Custom Traffic Performance) commands:
 | `--json-output-path` | Path to save JSON output (sequential-ct-perftest only) |
 | `--storage-backend` | Storage backend: POSIX, GDS, GDS_MT (default: POSIX) |
 | `--storage-path` | Base path for storage files (default: `<config_dir>/storage`) |
-| `--storage-direct-io / --no-storage-direct-io` | Enable O_DIRECT for storage I/O (auto-enabled for GDS) |
+| `--storage-direct-io / --no-storage-direct-io` | Enable O_DIRECT for storage I/O (auto-enabled for GDS and GDS_MT) |
 | `--storage-block-size` | Split storage I/O into fixed-size blocks (e.g. `1M`) so io_uring/AIO can pipeline requests. `0` = no splitting. |
 | `--storage-posix-api` | POSIX async API: `auto`, `aio`, or `uring`. Use `uring` for highest NFS/VAST throughput. |
 | `--storage-num-handles` | Number of concurrent transfer handles per storage op. Recommended: `8` together with `--storage-block-size 1M --storage-posix-api uring`. |
