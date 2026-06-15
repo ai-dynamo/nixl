@@ -30,6 +30,7 @@ posix_sources = [
 ]
 
 compile_defs = []
+compile_flags = []
 plugin_link_args = []
 
 if has_linux_aio
