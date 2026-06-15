@@ -105,7 +105,8 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
         void fillRegList(nixl_xfer_dlist_t& dlist, nixlBasicDesc& desc) const;
         std::string getLocalMD() const;
         void loadRemoteMD(const std::string& remote_name);
-        nixl_status_t invalidateRemoteMD(const std::string& remote_name);
+        nixl_status_t
+        invalidateRemoteMD(const std::string &remote_name);
         nixl_status_t createXferReq(const nixl_xfer_op_t& op,
                                     nixl_xfer_dlist_t& sReq_descs,
                                     nixl_xfer_dlist_t& rReq_descs,
@@ -206,7 +207,8 @@ void TestErrorHandling::Agent::loadRemoteMD(const std::string& remote_name) {
         << "Agent " << m_name << " failed to load remote metadata";
 }
 
-nixl_status_t TestErrorHandling::Agent::invalidateRemoteMD(const std::string& remote_name) {
+nixl_status_t
+TestErrorHandling::Agent::invalidateRemoteMD(const std::string &remote_name) {
     return m_priv->invalidateRemoteMD(remote_name);
 }
 
@@ -298,8 +300,7 @@ void TestErrorHandling::testXfer() {
             }
 
             if (test_type == TestType::XFER_FAIL_RESTORE) {
-                const nixl_status_t invalidate_status =
-                    m_Initiator.invalidateRemoteMD(target_name);
+                const nixl_status_t invalidate_status = m_Initiator.invalidateRemoteMD(target_name);
                 EXPECT_TRUE((invalidate_status == NIXL_SUCCESS) ||
                             (invalidate_status == NIXL_ERR_NOT_FOUND))
                     << "Failed to invalidate remote metadata for " << target_name << ": "
