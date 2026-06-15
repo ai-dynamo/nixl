@@ -191,11 +191,22 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
         break;
     }
     case FILE_SEG: {
+        // path-mode requires a unique devId per file; reserve before open, roll back on failure
+        const bool path_mode = nixl::parsePathMeta(mem.metaInfo).has_value();
+        if (path_mode && !path_mode_devids.insert(mem.devId).second) {
+            HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
+                             absl::StrFormat("HF3FS path-mode requires a unique devId per file "
+                                             "(devId=%llu already registered)",
+                                             static_cast<unsigned long long>(mem.devId)));
+        }
         std::unique_ptr<nixlHf3fsFileMetadata> md;
         try {
-            md = std::make_unique<nixlHf3fsFileMetadata>(nixl::FileFd(mem.devId, mem.metaInfo));
+            md = std::make_unique<nixlHf3fsFileMetadata>(mem.devId, mem.metaInfo);
         }
         catch (const std::system_error &e) {
+            if (path_mode) {
+                path_mode_devids.erase(mem.devId);
+            }
             HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,
                              absl::StrFormat("HF3FS path-mode open failed: %s", e.what()));
         }
@@ -206,6 +217,9 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             int ret = 0;
             status = hf3fs_utils->registerFileHandle(fd, &ret);
             if (status != NIXL_SUCCESS) {
+                if (path_mode) {
+                    path_mode_devids.erase(mem.devId);
+                }
                 HF3FS_LOG_RETURN(status,
                                  absl::StrFormat("Error - failed to register file handle %d", fd));
             }
@@ -230,6 +244,9 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
     nixlHf3fsMetadata *md = (nixlHf3fsMetadata *)meta;
     if (md->type == NIXL_HF3FS_MEM_TYPE_FILE) {
         nixlHf3fsFileMetadata *file_md = (nixlHf3fsFileMetadata *)md;
+        if (!file_md->file_fd.path().empty()) {
+            path_mode_devids.erase(file_md->devId);
+        }
         hf3fs_file_set.erase(file_md->handle.fd);
         hf3fs_utils->deregisterFileHandle(file_md->handle.fd);
     } else if (md->type != NIXL_HF3FS_MEM_TYPE_DRAM && md->type != NIXL_HF3FS_MEM_TYPE_DRAM_ZC) {

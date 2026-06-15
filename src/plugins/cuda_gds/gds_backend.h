@@ -26,6 +26,7 @@
 #include <list>
 #include <vector>
 #include <mutex>
+#include <unordered_set>
 #include "gds_utils.h"
 #include "backend/backend_engine.h"
 #include "file/file_path_mode.h"
@@ -38,7 +39,9 @@ public:
 
     nixlGdsMetadata() = default;
 
-    explicit nixlGdsMetadata(nixl::FileFd &&fd) : nixlFilePathMD(std::move(fd)), type(FILE_SEG) {}
+    nixlGdsMetadata(uint64_t devid, const std::string &metaInfo)
+        : nixlFilePathMD(devid, metaInfo),
+          type(FILE_SEG) {}
 };
 
 class GdsTransferRequestH {
@@ -90,6 +93,8 @@ class nixlGdsEngine : public nixlBackendEngine {
     private:
         gdsUtil *gds_utils;
         std::unordered_map<int, gdsFileHandle> gds_file_map;
+        // in-use path-mode devIds; unique per file. Guarded by the agent lock (no backend lock)
+        std::unordered_set<uint64_t> path_mode_devids;
 
         mutable std::mutex batch_pool_lock;
         mutable std::list<nixlGdsIOBatch*> batch_pool;

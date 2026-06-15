@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <cufile.h>
 #include "gds_mt_utils.h"
 #include "taskflow/core/executor.hpp"
@@ -110,6 +111,8 @@ public:
 private:
     gdsMtUtil gds_mt_utils_;
     std::unordered_map<int, std::weak_ptr<gdsMtFileHandle>> gds_mt_file_map_;
+    // in-use path-mode devIds
+    std::unordered_set<uint64_t> path_mode_devids_;
     size_t thread_count_;
     std::unique_ptr<tf::Executor> executor_;
 };

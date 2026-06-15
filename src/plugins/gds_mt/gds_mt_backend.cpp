@@ -43,8 +43,11 @@ const size_t default_thread_count = std::max (1u, std::thread::hardware_concurre
 
 struct FileSegData {
     std::shared_ptr<gdsMtFileHandle> handle;
+    uint64_t devId;
 
-    FileSegData(std::shared_ptr<gdsMtFileHandle> h) : handle(std::move(h)) {}
+    FileSegData(std::shared_ptr<gdsMtFileHandle> h, uint64_t devid)
+        : handle(std::move(h)),
+          devId(devid) {}
 };
 
 struct MemSegData {
@@ -74,9 +77,9 @@ struct GdsMtTransferRequestH {
 
 class nixlGdsMtMetadata : public nixlBackendMD {
 public:
-    explicit nixlGdsMtMetadata (std::shared_ptr<gdsMtFileHandle> file_handle)
-        : nixlBackendMD (true),
-          data_ (FileSegData{std::move (file_handle)}) {}
+    nixlGdsMtMetadata(std::shared_ptr<gdsMtFileHandle> file_handle, uint64_t devid)
+        : nixlBackendMD(true),
+          data_(FileSegData{std::move(file_handle), devid}) {}
 
     explicit nixlGdsMtMetadata (void *addr, size_t size, int flags)
         : nixlBackendMD (true),
@@ -189,11 +192,21 @@ nixlGdsMtEngine::registerMem (const nixlBlobDesc &mem,
                               nixlBackendMD *&out) {
     switch (nixl_mem) {
     case FILE_SEG: {
+        // path-mode requires a unique devId per file; reserve before open, roll back on failure
+        const bool path_mode = nixl::parsePathMeta(mem.metaInfo).has_value();
+        if (path_mode && !path_mode_devids_.insert(mem.devId).second) {
+            NIXL_ERROR << "GDS_MT: path-mode requires a unique devId per file (devId=" << mem.devId
+                       << " already registered)";
+            return NIXL_ERR_INVALID_PARAM;
+        }
         nixl::FileFd file_fd;
         try {
             file_fd = nixl::FileFd(mem.devId, mem.metaInfo);
         }
         catch (const std::system_error &e) {
+            if (path_mode) {
+                path_mode_devids_.erase(mem.devId);
+            }
             NIXL_ERROR << "GDS_MT: path-mode open failed: " << e.what();
             return NIXL_ERR_BACKEND;
         }
@@ -212,12 +225,15 @@ nixlGdsMtEngine::registerMem (const nixlBlobDesc &mem,
                 handle = std::make_shared<gdsMtFileHandle>(std::move(file_fd));
             }
             catch (const std::exception &e) {
+                if (path_mode) {
+                    path_mode_devids_.erase(mem.devId);
+                }
                 NIXL_ERROR << "GDS_MT: failed to create file handle: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
             gds_mt_file_map_[fd] = handle;
         }
-        out = new nixlGdsMtMetadata(std::move(handle));
+        out = new nixlGdsMtMetadata(std::move(handle), mem.devId);
         return NIXL_SUCCESS;
     }
 
@@ -254,6 +270,9 @@ nixlGdsMtEngine::deregisterMem (nixlBackendMD *meta) {
     if (auto *file_data = std::get_if<FileSegData> (&md->data_)) {
         if (file_data->handle) {
             int key = file_data->handle->file_fd.fd();
+            if (!file_data->handle->file_fd.path().empty()) {
+                path_mode_devids_.erase(file_data->devId);
+            }
             md.reset(); // Release metadata first
 
             auto it = gds_mt_file_map_.find (key);

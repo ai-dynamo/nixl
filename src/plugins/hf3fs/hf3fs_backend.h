@@ -58,12 +58,14 @@ class nixlHf3fsFileMetadata : public nixlHf3fsMetadata {
 public:
     hf3fsFileHandle handle;
     nixl::FileFd file_fd;
+    uint64_t devId = 0;
 
     nixlHf3fsFileMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE) {}
 
-    explicit nixlHf3fsFileMetadata(nixl::FileFd &&fd)
+    nixlHf3fsFileMetadata(uint64_t devid, const std::string &metaInfo)
         : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE),
-          file_fd(std::move(fd)) {}
+          file_fd(devid, metaInfo),
+          devId(devid) {}
 };
 
 class nixlHf3fsDramMetadata : public nixlHf3fsMetadata {
@@ -122,6 +124,8 @@ class nixlHf3fsEngine : public nixlBackendEngine {
     private:
         hf3fsUtil *hf3fs_utils;
         std::unordered_set<int> hf3fs_file_set;
+        // in-use path-mode devIds
+        std::unordered_set<uint64_t> path_mode_devids;
         nixl_hf3fs_mem_config mem_config;
         static long page_size;
 

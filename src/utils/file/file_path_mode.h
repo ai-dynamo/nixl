@@ -37,6 +37,9 @@
 //             | "create"           # | O_CREAT (mode 0644)
 //
 // Unknown tokens: parsePathMeta returns std::nullopt (fail-loud).
+//
+// Path-mode contract: each path-mode file must use a unique devId - the section keys
+// on devId, so two files sharing one collide; backends reject a reused path-mode devId on register.
 
 namespace nixl {
 
@@ -94,10 +97,14 @@ private:
 class nixlFilePathMD : public nixlBackendMD {
 public:
     nixl::FileFd file_fd;
+    uint64_t devId = 0;
 
     nixlFilePathMD() : nixlBackendMD(true /*isPrivate*/) {}
 
-    explicit nixlFilePathMD(nixl::FileFd &&fd) : nixlBackendMD(true), file_fd(std::move(fd)) {}
+    nixlFilePathMD(uint64_t devid, const std::string &metaInfo)
+        : nixlBackendMD(true),
+          file_fd(devid, metaInfo),
+          devId(devid) {}
 };
 
 #endif // __FILE_PATH_MODE_H

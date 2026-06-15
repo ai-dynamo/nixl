@@ -334,6 +334,68 @@ namespace agent {
                              << timed1_ns << " ns2=" << timed2_ns << " ratio=" << ratio << ")";
     }
 
+    // Registering a descriptor that is already registered must be rejected without
+    // re-registering it, so the section never holds two entries with the same sort key.
+    TEST_F(singleAgentSessionFixture, RegisterDuplicateDescriptorRejectedTest) {
+        nixl_b_params_t params;
+        nixlBackendH *backend;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        nixl_opt_args_t extra_params;
+        extra_params.backends.push_back(backend);
+
+        char local_md[1] = {};
+        char self_md[1] = {};
+        auto &engine = const_cast<mocks::GMockBackendEngine &>(agent_helper_->getGMockEngine());
+        // Only the first registration may reach the backend; the duplicate is rejected earlier.
+        EXPECT_CALL(engine, registerMem(testing::_, testing::_, testing::_))
+            .Times(1)
+            .WillRepeatedly([&](const nixlBlobDesc &, const nixl_mem_t &, nixlBackendMD *&out) {
+                out = reinterpret_cast<nixlBackendMD *>(&local_md[0]);
+                return NIXL_SUCCESS;
+            });
+        EXPECT_CALL(engine, loadLocalMD(testing::_, testing::_))
+            .WillRepeatedly([&](nixlBackendMD *, nixlBackendMD *&output) {
+                output = reinterpret_cast<nixlBackendMD *>(&self_md[0]);
+                return NIXL_SUCCESS;
+            });
+
+        blob region;
+        nixl_reg_dlist_t reg(DRAM_SEG);
+        reg.addDesc(region.getDesc());
+        ASSERT_EQ(agent_->registerMem(reg, &extra_params), NIXL_SUCCESS);
+
+        nixl_reg_dlist_t dup(DRAM_SEG);
+        dup.addDesc(region.getDesc());
+        EXPECT_NE(agent_->registerMem(dup, &extra_params), NIXL_SUCCESS);
+
+        testing::Mock::VerifyAndClearExpectations(&engine);
+        EXPECT_EQ(agent_->deregisterMem(reg, &extra_params), NIXL_SUCCESS);
+    }
+
+    // A single registration list containing the same descriptor twice must be rejected
+    // all-or-nothing: nothing is registered on the backend.
+    TEST_F(singleAgentSessionFixture, RegisterDuplicateWithinListRejectedTest) {
+        nixl_b_params_t params;
+        nixlBackendH *backend;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        nixl_opt_args_t extra_params;
+        extra_params.backends.push_back(backend);
+
+        auto &engine = const_cast<mocks::GMockBackendEngine &>(agent_helper_->getGMockEngine());
+        EXPECT_CALL(engine, registerMem(testing::_, testing::_, testing::_)).Times(0);
+        EXPECT_CALL(engine, deregisterMem(testing::_)).Times(0);
+
+        blob region;
+        nixl_reg_dlist_t reg(DRAM_SEG);
+        reg.addDesc(region.getDesc());
+        reg.addDesc(region.getDesc());
+        EXPECT_NE(agent_->registerMem(reg, &extra_params), NIXL_SUCCESS);
+
+        testing::Mock::VerifyAndClearExpectations(&engine);
+    }
+
     INSTANTIATE_TEST_SUITE_P(DramRegisterMemoryInstantiation,
                              singleAgentWithMemParamFixture,
                              testing::Values(DRAM_SEG));

@@ -74,11 +74,21 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
                                          nixlBackendMD* &out)
 {
     if (nixl_mem == FILE_SEG) {
+        // path-mode requires unique devId per file
+        const bool path_mode = nixl::parsePathMeta(mem.metaInfo).has_value();
+        if (path_mode && !path_mode_devids.insert(mem.devId).second) {
+            NIXL_ERROR << "GDS path-mode requires a unique devId per file (devId=" << mem.devId
+                       << " already registered)";
+            return NIXL_ERR_INVALID_PARAM;
+        }
         std::unique_ptr<nixlGdsMetadata> md;
         try {
-            md = std::make_unique<nixlGdsMetadata>(nixl::FileFd(mem.devId, mem.metaInfo));
+            md = std::make_unique<nixlGdsMetadata>(mem.devId, mem.metaInfo);
         }
         catch (const std::system_error &e) {
+            if (path_mode) {
+                path_mode_devids.erase(mem.devId);
+            }
             NIXL_ERROR << "GDS path-mode open failed: " << e.what();
             return NIXL_ERR_BACKEND;
         }
@@ -91,6 +101,9 @@ nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
         } else {
             nixl_status_t s = gds_utils->registerFileHandle(fd, mem.len, mem.metaInfo, md->handle);
             if (s != NIXL_SUCCESS) {
+                if (path_mode) {
+                    path_mode_devids.erase(mem.devId);
+                }
                 return s; // ~FileFd via unique_ptr drop closes the owned fd
             }
             gds_file_map[fd] = md->handle;
@@ -126,6 +139,9 @@ nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
 {
     nixlGdsMetadata *md = (nixlGdsMetadata *)meta;
     if (md->type == FILE_SEG) {
+        if (!md->file_fd.path().empty()) {
+            path_mode_devids.erase(md->devId);
+        }
         gds_utils->deregisterFileHandle(md->handle);
         gds_file_map.erase(md->handle.fd);
     } else {
