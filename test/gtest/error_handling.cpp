@@ -112,7 +112,8 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
                                     nixl_xfer_dlist_t& rReq_descs,
                                     nixlXferReqH*& req_handle) const;
         nixl_status_t postXferReq(nixlXferReqH* req_handle) const;
-        nixl_status_t releaseXferReq(nixlXferReqH* req_handle) const;
+        nixl_status_t
+        releaseXferReq(nixlXferReqH *req_handle) const;
         nixl_status_t waitForCompletion(nixlXferReqH* req_handle);
         nixl_status_t waitForNotif(const std::string& expectedNotif);
         void fillData();
