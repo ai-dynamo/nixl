@@ -19,8 +19,9 @@
  * @file kv_store.h
  * @brief Shared minimal key-value storage interface for NIXL KV backends.
  *
- * Implementations (e.g. INMEMKV example plugin, REDIS src plugin) provide
- * backend-specific storage while sharing this synchronous put/get/exists API.
+ * Synchronous implementations (e.g. INMEMKV example plugin) provide
+ * backend-specific storage via this API. Async backends (REDIS) use iRedisClient
+ * in kv/redis/redis_engine.h instead — see kv_engine_impl.h.
  */
 
 #ifndef NIXL_SRC_PLUGINS_KV_KV_STORE_H
@@ -35,7 +36,8 @@
  * @brief Minimal key-value storage interface for KV-style NIXL backends.
  *
  * This interface intentionally keeps only the smallest synchronous API
- * needed by current KV backend flows (INMEMKV, REDIS, etc.).
+ * needed by current KV backend flows (e.g. INMEMKV). Async backends use
+ * iRedisClient instead — see kv/redis/redis_engine.h.
  */
 class iKVStore {
 public:

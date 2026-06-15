@@ -260,6 +260,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         } else {
             std::cout << "OBJ backend with standard S3 enabled" << std::endl;
         }
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_REDIS)) {
+        // REDIS backend: host/port/password via REDIS_HOST, REDIS_PORT, REDIS_PASSWORD
+        std::cout << "REDIS backend configured (using defaults or environment variables)"
+                  << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically
         if (!xferBenchConfig::storage_enable_direct) {
@@ -1018,6 +1022,33 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
         }
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
+
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                std::string unique_name = "nixlbench_redis" + std::to_string(list_idx) + "_" +
+                    std::to_string(i) + "_" + std::to_string(timestamp);
+
+                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+                    const size_t seed_size = xferBenchConfig::max_block_size;
+                    if (!xferBenchUtils::putRedis(seed_size, unique_name)) {
+                        std::cerr << "Failed to seed Redis key: " << unique_name << std::endl;
+                        continue;
+                    }
+                }
+
+                xferBenchIOV redis_desc(0, buffer_size, i, unique_name);
+                std::cout << "Creating Redis key: " << unique_name << std::endl;
+                iov_list.push_back(redis_desc);
+            }
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, DRAM_SEG);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+            remote_regs_.emplace_back(*agent, backend_engine, DRAM_SEG, std::move(iov_list));
+        }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
         int num_files = xferBenchConfig::num_files;
@@ -1224,6 +1255,11 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
                     }
+                } else if (XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend) {
+                    xferBenchIOV redis_remote(iov);
+                    redis_remote.addr = 0;
+                    redis_remote.metaInfo = iov.metaInfo;
+                    remote_iov_list.push_back(redis_remote);
                 } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = gusli_devices[devidx].dev_offset + file_offset;
@@ -1313,6 +1349,8 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
     // Set remote descriptor type based on backend
     if (xferBenchConfig::isObjStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
+    } else if (XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend) {
+        remote_desc = nixl_xfer_dlist_t(DRAM_SEG);
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
     } else if (xferBenchConfig::isStorageBackend()) {
@@ -1327,6 +1365,8 @@ static nixl_mem_t
 getRemoteSegType() {
     if (xferBenchConfig::isObjStorageBackend()) {
         return OBJ_SEG;
+    } else if (XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend) {
+        return DRAM_SEG;
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         return BLK_SEG;
     } else if (xferBenchConfig::isStorageBackend()) {

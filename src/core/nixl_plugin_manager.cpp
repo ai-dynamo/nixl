@@ -699,6 +699,10 @@ void nixlPluginManager::registerBuiltinPlugins() {
     NIXL_REGISTER_STATIC_PLUGIN(Backend, OBJ)
 #endif
 
+#ifdef STATIC_PLUGIN_REDIS
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, REDIS)
+#endif
+
 #ifdef STATIC_PLUGIN_MOONCAKE
     NIXL_REGISTER_STATIC_PLUGIN(Backend, MOONCAKE)
 #endif
