@@ -19,7 +19,7 @@
 
 #include <mutex>
 #include <string>
-#include <cassert>
+#include "common/nixl_log.h"
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
 #include "common/nixl_time.h"
@@ -183,8 +183,8 @@ public:
     // with a binary-search fallback.
     const nixlStrideDesc &
     find(size_t flat_idx, size_t run_size) const noexcept {
+        NIXL_ASSERT(run_size > 0);
         // Educated first probe: assume uniform runs
-        assert(run_size > 0);
         size_t mid = flat_idx / run_size;
         if (flat_idx - descs[mid].start_idx < descs[mid].count) [[likely]] {
             return descs[mid];
