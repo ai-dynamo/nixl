@@ -105,6 +105,7 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
         void fillRegList(nixl_xfer_dlist_t& dlist, nixlBasicDesc& desc) const;
         std::string getLocalMD() const;
         void loadRemoteMD(const std::string& remote_name);
+        nixl_status_t invalidateRemoteMD(const std::string& remote_name);
         nixl_status_t createXferReq(const nixl_xfer_op_t& op,
                                     nixl_xfer_dlist_t& sReq_descs,
                                     nixl_xfer_dlist_t& rReq_descs,
@@ -165,6 +166,7 @@ TestErrorHandling::Agent::init(const std::string &name,
                                const std::string &backend_name,
                                size_t num_workers,
                                size_t num_threads) {
+    m_name = name;
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
     m_priv = std::make_unique<nixlAgent>(name, cfg);
@@ -202,6 +204,10 @@ std::string TestErrorHandling::Agent::getLocalMD() const {
 void TestErrorHandling::Agent::loadRemoteMD(const std::string& remote_name) {
     EXPECT_EQ(NIXL_SUCCESS, m_priv->loadRemoteMD(remote_name, m_MetaRemote))
         << "Agent " << m_name << " failed to load remote metadata";
+}
+
+nixl_status_t TestErrorHandling::Agent::invalidateRemoteMD(const std::string& remote_name) {
+    return m_priv->invalidateRemoteMD(remote_name);
 }
 
 nixl_status_t
@@ -292,6 +298,12 @@ void TestErrorHandling::testXfer() {
             }
 
             if (test_type == TestType::XFER_FAIL_RESTORE) {
+                const nixl_status_t invalidate_status =
+                    m_Initiator.invalidateRemoteMD(target_name);
+                EXPECT_TRUE((invalidate_status == NIXL_SUCCESS) ||
+                            (invalidate_status == NIXL_ERR_NOT_FOUND))
+                    << "Failed to invalidate remote metadata for " << target_name << ": "
+                    << nixlEnumStrings::statusStr(invalidate_status);
                 m_Target.init(target_name, m_backend_name, numWorkers_, numThreads_);
                 exchangeMetaData();
             }
