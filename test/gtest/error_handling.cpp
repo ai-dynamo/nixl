@@ -112,6 +112,7 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
                                     nixl_xfer_dlist_t& rReq_descs,
                                     nixlXferReqH*& req_handle) const;
         nixl_status_t postXferReq(nixlXferReqH* req_handle) const;
+        nixl_status_t releaseXferReq(nixlXferReqH* req_handle) const;
         nixl_status_t waitForCompletion(nixlXferReqH* req_handle);
         nixl_status_t waitForNotif(const std::string& expectedNotif);
         void fillData();
@@ -226,6 +227,11 @@ TestErrorHandling::Agent::createXferReq(const nixl_xfer_op_t& op,
 nixl_status_t
 TestErrorHandling::Agent::postXferReq(nixlXferReqH *req_handle) const {
     return m_priv->postXferReq(req_handle);
+}
+
+nixl_status_t
+TestErrorHandling::Agent::releaseXferReq(nixlXferReqH *req_handle) const {
+    return m_priv->releaseXferReq(req_handle);
 }
 
 nixl_status_t
@@ -410,7 +416,7 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, size_t iter) {
     }
 
     if (isFailure<test_type>(iter) && (status == NIXL_ERR_REMOTE_DISCONNECT)) {
-        // failed handle destroyed on post
+        EXPECT_EQ(NIXL_SUCCESS, m_Initiator.releaseXferReq(req_handle));
         return status;
     }
 
