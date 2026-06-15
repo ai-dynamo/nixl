@@ -35,6 +35,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <gflags/gflags.h>
+#include <hiredis/hiredis.h>
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
@@ -63,7 +64,7 @@ NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
-              "GUSLI, AZURE_BLOB] (only used with nixl worker)");
+              "REDIS, GUSLI, AZURE_BLOB] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -679,7 +680,7 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB])",
+        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,REDIS,AZURE_BLOB])",
                     backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
@@ -823,6 +824,7 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
@@ -1301,6 +1303,83 @@ xferBenchUtils::buildAwsCredentials() {
     }
 
     return env_setup;
+}
+
+bool
+xferBenchUtils::putRedis(size_t buffer_size, const std::string &key) {
+    if (buffer_size == 0) {
+        std::cerr << "Invalid Redis seed size: 0" << std::endl;
+        return false;
+    }
+
+    const char *host = getenv("REDIS_HOST");
+    if (!host) {
+        host = "127.0.0.1";
+    }
+    int port = 6379;
+    const char *port_env = getenv("REDIS_PORT");
+    if (port_env) {
+        port = std::atoi(port_env);
+    }
+
+    void *buf = nullptr;
+    const size_t align = xferBenchConfig::page_size > 0 ? xferBenchConfig::page_size : 4096;
+    if (posix_memalign(&buf, align, buffer_size) != 0) {
+        std::cerr << "Failed to allocate buffer for Redis seed data" << std::endl;
+        return false;
+    }
+    memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
+
+    redisContext *ctx = redisConnect(host, port);
+    if (!ctx || ctx->err) {
+        std::cerr << "Redis connect failed for seed SET: "
+                  << (ctx ? ctx->errstr : "null context") << std::endl;
+        if (ctx) {
+            redisFree(ctx);
+        }
+        free(buf);
+        return false;
+    }
+
+    const char *password = getenv("REDIS_PASSWORD");
+    if (password && password[0] != '\0') {
+        redisReply *auth_reply =
+            (redisReply *)redisCommand(ctx, "AUTH %s", password);
+        if (!auth_reply || auth_reply->type == REDIS_REPLY_ERROR) {
+            std::cerr << "Redis AUTH failed during seed SET" << std::endl;
+            if (auth_reply) {
+                freeReplyObject(auth_reply);
+            }
+            redisFree(ctx);
+            free(buf);
+            return false;
+        }
+        freeReplyObject(auth_reply);
+    }
+
+    redisReply *reply = (redisReply *)redisCommand(ctx,
+                                                   "SET %b %b",
+                                                   key.data(),
+                                                   (size_t)key.size(),
+                                                   buf,
+                                                   (size_t)buffer_size);
+    free(buf);
+
+    bool ok = false;
+    if (reply && (reply->type == REDIS_REPLY_STATUS || reply->type == REDIS_REPLY_STRING)) {
+        ok = true;
+        std::cout << "Seeded Redis key for READ: " << key << std::endl;
+    } else if (reply && reply->type == REDIS_REPLY_ERROR) {
+        std::cerr << "Redis SET failed for key " << key << ": " << reply->str << std::endl;
+    } else {
+        std::cerr << "Redis SET failed for key " << key << std::endl;
+    }
+
+    if (reply) {
+        freeReplyObject(reply);
+    }
+    redisFree(ctx);
+    return ok;
 }
 
 bool

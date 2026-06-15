@@ -28,11 +28,11 @@
  *   nixlKVEngineImpl           Vendor/backend-specific logic (this header)
  *        ^
  *        |
- *   nixlInMemKVEngineImpl      Example: in-process map via iKVStore
- *   nixlRedisKVEngineImpl      Future: Redis via hiredis implementing iKVStore
+ *   nixlInMemKVEngineImpl      Example: in-process map via iKVStore (examples/plugins/inmemkv/)
+ *   nixlRedisKVEngineImpl      REDIS plugin: redis/engine_impl.* (under kv/redis/)
  *
- * Storage is further factored through iKVStore (kv_store.h) so impl classes focus
- * on NIXL descriptor/key mapping while iKVStore handles put/get/exists.
+ * Synchronous KV backends use iKVStore (kv_store.h). Redis is async and uses
+ * iRedisClient in kv/redis/redis_engine.h; hiredisAsyncClient in kv/redis/client.*.
  */
 
 #ifndef NIXL_SRC_PLUGINS_KV_KV_ENGINE_IMPL_H
@@ -46,9 +46,9 @@
  * @class nixlKVEngineImpl
  * @brief Abstract implementation interface for KV-style backend engines.
  *
- * Each KV plugin (INMEMKV example, REDIS src plugin, etc.) provides a concrete
- * subclass that implements register/deregister, query, and synchronous transfer
- * operations against its chosen iKVStore backend.
+ * Each KV plugin (INMEMKV example, REDIS, etc.) provides a concrete subclass
+ * that implements register/deregister, query, and transfer operations. Sync
+ * backends delegate storage to iKVStore; async backends (Redis) use iRedisClient.
  */
 class nixlKVEngineImpl {
 public:

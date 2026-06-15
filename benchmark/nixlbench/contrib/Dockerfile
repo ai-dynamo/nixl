@@ -47,7 +47,10 @@ RUN apt-get update -y && \
     libgtest-dev \
     hwloc \
     libhwloc-dev \
-    build-essential
+    build-essential \
+    libhiredis-dev \
+    libevent-dev \
+    redis-tools
 
 # Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
 # Skip only the DOCA SDK install when the base image already ships it.
@@ -123,6 +126,8 @@ ARG LIBFABRIC_VERSION="v1.21.0"
 ARG NPROC
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG NIXL_ENABLE_PLUGINS="REDIS"
+ARG NIXL_STATIC_PLUGINS="REDIS"
 
 WORKDIR /workspace
 
@@ -258,7 +263,9 @@ WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE \
+        -Denable_plugins=${NIXL_ENABLE_PLUGINS} \
+        -Dstatic_plugins=${NIXL_STATIC_PLUGINS} && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install
