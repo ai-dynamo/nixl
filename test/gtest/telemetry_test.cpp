@@ -146,8 +146,13 @@ TEST_F(telemetryTest, CreateFallsBackToNopWithoutSink) {
     // It falls back to the collect-only NOP exporter rather than disabling
     // telemetry (the in-process consumer that broke vLLM).
     envHelper_.popVar(); // drop NIXL_TELEMETRY_DIR set by SetUp -> no sink
+    // Neutralize any inherited NIXL_TELEMETRY_EXPORTER (empty is ignored by
+    // getExporterName) so the no-sink NOP path is exercised deterministically.
+    envHelper_.addVar(TELEMETRY_EXPORTER_VAR, "");
 
     auto telemetry = nixlTelemetry::create(testFile_);
+
+    envHelper_.popVar(); // drop empty NIXL_TELEMETRY_EXPORTER
     envHelper_.addVar(TELEMETRY_DIR_VAR, testDir_.string()); // restore for TearDown symmetry
 
     ASSERT_NE(telemetry, nullptr)
