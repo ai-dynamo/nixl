@@ -38,7 +38,9 @@ public:
 
     nixlGdsMetadata() = default;
 
-    explicit nixlGdsMetadata(nixl::FileFd &&fd) : nixlFilePathMD(std::move(fd)), type(FILE_SEG) {}
+    nixlGdsMetadata(uint64_t devid, const std::string &metaInfo)
+        : nixlFilePathMD(devid, metaInfo),
+          type(FILE_SEG) {}
 };
 
 class GdsTransferRequestH {
@@ -90,6 +92,7 @@ class nixlGdsEngine : public nixlBackendEngine {
     private:
         gdsUtil *gds_utils;
         std::unordered_map<int, gdsFileHandle> gds_file_map;
+        nixl::PathModeDevIdRegistry path_mode_devids_;
 
         mutable std::mutex batch_pool_lock;
         mutable std::list<nixlGdsIOBatch*> batch_pool;

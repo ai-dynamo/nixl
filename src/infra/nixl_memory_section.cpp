@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <map>
+#include <set>
 #include <algorithm>
 #include <iostream>
 #include "nixl.h"
@@ -23,6 +24,7 @@
 #include "backend/backend_engine.h"
 #include "nixl_types.h"
 #include "serdes/serdes.h"
+#include "common/nixl_log.h"
 
 /*** Class nixlMemSection implementation ***/
 
@@ -141,6 +143,17 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
     const nixl_mem_t nixl_mem = mem_elms.getType();
 
     nixlSecDescList &target = emplace(nixl_mem, backend);
+
+    // Reject duplicates - within args (seen) and against registered entries (target)
+    std::set<nixlBasicDesc> seen;
+    for (const auto &mem : mem_elms) {
+        const nixlBasicDesc key = normalizeSecDesc(mem, nixl_mem);
+        if (!seen.insert(key).second || target.getIndex(key) >= 0) {
+            NIXL_ERROR << "duplicate descriptor registration (addr=" << key.addr
+                       << " len=" << key.len << " devId=" << key.devId << ")";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+    }
 
     nixlSectionDesc local_sec, self_sec;
     nixlBasicDesc *lp = &local_sec;

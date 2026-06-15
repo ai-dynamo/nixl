@@ -29,7 +29,7 @@
 #include "io_queue.h"
 #include "sync.h"
 
-// POSIX reuses the shared owned-fd base (no extra per-descriptor state).
+// POSIX reuses the shared owned-fd base (path-mode devId stored for dereg).
 using nixlPosixFileMD = nixlFilePathMD;
 
 class nixlPosixBackendReqH : public nixlBackendReqH {
@@ -80,6 +80,7 @@ private:
     std::string_view io_queue_type_;
     mutable std::unique_ptr<nixlPosixIOQueue> io_queue_;
     mutable nixlLock io_queue_lock_;
+    nixl::PathModeDevIdRegistry path_mode_devids_;
 
 public:
     nixlPosixEngine(const nixlBackendInitParams *init_params);

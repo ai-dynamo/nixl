@@ -834,6 +834,154 @@ runPathModeCreateCheck() {
     return 0;
 }
 
+// Path-mode requires a unique devId per file: reused devId rejected, distinct OK (addr differs so
+// the dup-descriptor check is not what rejects).
+static int
+runPathModeUniqueDevIdCheck() {
+    constexpr const char *kFileA = "/tmp/nixl_posix_path_mode_devid_a.bin";
+    constexpr const char *kFileB = "/tmp/nixl_posix_path_mode_devid_b.bin";
+    for (const char *p : {kFileA, kFileB}) {
+        if (auto *f = std::fopen(p, "wb")) {
+            std::fputc(0, f);
+            std::fclose(f);
+        } else {
+            return 1;
+        }
+    }
+    auto cleanup = [&]() {
+        std::remove(kFileA);
+        std::remove(kFileB);
+    };
+
+    nixlAgentConfig cfg;
+    nixlAgent agent("POSIXPathModeDevId", cfg);
+    nixl_b_params_t params;
+    nixlBackendH *be = nullptr;
+    if (agent.createBackend("POSIX", params, be) != NIXL_SUCCESS) {
+        cleanup();
+        return 1;
+    }
+
+    auto pathDesc = [](const char *p, uint64_t devid, uintptr_t addr) {
+        nixlBlobDesc d;
+        d.addr = addr;
+        d.len = 4096;
+        d.devId = devid;
+        d.metaInfo = std::string("rw:") + p;
+        return d;
+    };
+
+    // Two different files sharing one devId within a single list: rejected.
+    {
+        nixl_reg_dlist_t d(FILE_SEG);
+        d.addDesc(pathDesc(kFileA, 0, 0));
+        d.addDesc(pathDesc(kFileB, 0, 4096));
+        if (agent.registerMem(d) == NIXL_SUCCESS) {
+            agent.deregisterMem(d);
+            std::cerr << "path-mode duplicate devId (within list) was not rejected" << std::endl;
+            cleanup();
+            return 1;
+        }
+    }
+
+    // devId reused across registrations: rejected, the first stays valid, and the devId
+    // is reusable for a different file once the first is deregistered.
+    {
+        nixl_reg_dlist_t a(FILE_SEG);
+        a.addDesc(pathDesc(kFileA, 0, 0));
+        if (agent.registerMem(a) != NIXL_SUCCESS) {
+            cleanup();
+            return 1;
+        }
+
+        nixl_reg_dlist_t b(FILE_SEG);
+        b.addDesc(pathDesc(kFileB, 0, 4096));
+        if (agent.registerMem(b) == NIXL_SUCCESS) {
+            agent.deregisterMem(b);
+            agent.deregisterMem(a);
+            std::cerr << "path-mode duplicate devId (across calls) was not rejected" << std::endl;
+            cleanup();
+            return 1;
+        }
+
+        agent.deregisterMem(a);
+        nixl_reg_dlist_t b2(FILE_SEG);
+        b2.addDesc(pathDesc(kFileB, 0, 0));
+        if (agent.registerMem(b2) != NIXL_SUCCESS) {
+            std::cerr << "devId not freed on deregister" << std::endl;
+            cleanup();
+            return 1;
+        }
+        agent.deregisterMem(b2);
+    }
+
+    // Distinct devIds: both files register together.
+    {
+        nixl_reg_dlist_t d(FILE_SEG);
+        d.addDesc(pathDesc(kFileA, 0, 0));
+        d.addDesc(pathDesc(kFileB, 1, 0));
+        if (agent.registerMem(d) != NIXL_SUCCESS) {
+            std::cerr << "distinct devIds rejected" << std::endl;
+            cleanup();
+            return 1;
+        }
+        agent.deregisterMem(d);
+    }
+
+    cleanup();
+    std::cout << "path-mode unique devId: OK" << std::endl;
+    return 0;
+}
+
+// fd-mode (devId is a real fd, metaInfo not path-mode) is NOT subject to the unique-devId
+// rule, so one fd may back several descriptors (e.g. different offsets in the same file).
+static int
+runFdModeReuseCheck() {
+    constexpr const char *kFile = "/tmp/nixl_posix_fd_mode_reuse.bin";
+    const int fd = open(kFile, O_RDWR | O_CREAT, 0644);
+    if (fd < 0) {
+        return 1;
+    }
+    auto cleanup = [&]() {
+        close(fd);
+        std::remove(kFile);
+    };
+
+    nixlAgentConfig cfg;
+    nixlAgent agent("POSIXFdModeReuse", cfg);
+    nixl_b_params_t params;
+    nixlBackendH *be = nullptr;
+    if (agent.createBackend("POSIX", params, be) != NIXL_SUCCESS) {
+        cleanup();
+        return 1;
+    }
+
+    auto fdDesc = [&](uintptr_t addr) {
+        nixlBlobDesc d;
+        d.addr = addr;
+        d.len = 4096;
+        d.devId = static_cast<uint64_t>(fd); // fd-mode: devId is the open fd
+        d.metaInfo = ""; // not path-mode
+        return d;
+    };
+
+    // Same fd (devId) under two descriptors at different offsets must register, not be
+    // rejected as a duplicate path-mode devId.
+    nixl_reg_dlist_t d(FILE_SEG);
+    d.addDesc(fdDesc(0));
+    d.addDesc(fdDesc(4096));
+    if (agent.registerMem(d) != NIXL_SUCCESS) {
+        std::cerr << "fd-mode devId reuse was wrongly rejected" << std::endl;
+        cleanup();
+        return 1;
+    }
+    agent.deregisterMem(d);
+
+    cleanup();
+    std::cout << "fd-mode devId reuse: OK" << std::endl;
+    return 0;
+}
+
 int
 main (int argc, char *argv[]) {
     if (page_size <= 0) {
@@ -907,6 +1055,12 @@ main (int argc, char *argv[]) {
     if (run_path_mode_smoke) {
         checkPathModeParser();
         if (int rc = runPathModeCreateCheck(); rc != 0) {
+            return rc;
+        }
+        if (int rc = runPathModeUniqueDevIdCheck(); rc != 0) {
+            return rc;
+        }
+        if (int rc = runFdModeReuseCheck(); rc != 0) {
             return rc;
         }
         if (int rc = nixl_test::runPathModeSmoke(
