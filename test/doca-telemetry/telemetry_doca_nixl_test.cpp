@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
+#include <stdexcept>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -159,8 +160,9 @@ TEST_F(docaNixlExporterTest, DistinguishesSeriesByAgentLabel) {
     EXPECT_EQ(metrics.latestValue(metric, {{"agent_name", agentAlpha}}),
               std::optional<double>(700.0));
     EXPECT_EQ(metrics.latestValue(metric, {{"agent_name", agentBeta}}), std::optional<double>(4.0));
-    // Same name, two label sets -> a name-only lookup cannot pick one.
-    EXPECT_EQ(metrics.latestValue(metric), std::nullopt)
+    // Same name, two label sets -> a name-only lookup is ambiguous and is
+    // rejected with a throw (a too-loose query is a test mistake, not a miss).
+    EXPECT_THROW((void)metrics.latestValue(metric), std::runtime_error)
         << metric << " is exported by two agents; a name-only lookup must be ambiguous";
 }
 

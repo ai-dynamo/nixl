@@ -43,7 +43,7 @@ scrapeUntilValue(uint16_t port,
     timeSeries metrics{seriesMap{}};
     do {
         metrics =
-            timeSeries(OpenMetricsTextParser::parse(loopbackConnection::httpGet(port, "/metrics")));
+            timeSeries(open_metrics_text::parse(loopbackConnection::httpGet(port, "/metrics")));
         if (metrics.latestValue(name, where) == expected) {
             return metrics;
         }
