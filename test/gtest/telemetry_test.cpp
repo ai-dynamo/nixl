@@ -138,12 +138,24 @@ TEST_F(telemetryTest, NonexistentExporterThrows) {
         { nixlTelemetry telemetry(testFile_, "nixl_nonexistent_exporter"); }, std::runtime_error);
 }
 
-TEST_F(telemetryTest, CreateReturnsNullWithoutSink) {
-    // With no exporter and no telemetry dir configured, create() resolves no
-    // sink and returns nullptr without constructing a telemetry instance.
-    envHelper_.popVar(); // drop NIXL_TELEMETRY_DIR set by SetUp
-    EXPECT_EQ(nixlTelemetry::create(testFile_), nullptr);
+TEST_F(telemetryTest, CreateFallsBackToNopWithoutSink) {
+    // Regression (#1716 / NIX-1361): when telemetry is explicitly requested
+    // (NIXL_TELEMETRY_ENABLE=y, set by SetUp) but no sink is configured (no
+    // NIXL_TELEMETRY_DIR / NIXL_TELEMETRY_EXPORTER), create() must still return
+    // an active instance that collects in-process so getXferTelemetry() works.
+    // It falls back to the collect-only NOP exporter rather than disabling
+    // telemetry (the in-process consumer that broke vLLM).
+    envHelper_.popVar(); // drop NIXL_TELEMETRY_DIR set by SetUp -> no sink
+
+    auto telemetry = nixlTelemetry::create(testFile_);
     envHelper_.addVar(TELEMETRY_DIR_VAR, testDir_.string()); // restore for TearDown symmetry
+
+    ASSERT_NE(telemetry, nullptr)
+        << "telemetry requested without a sink must collect in-process via NOP";
+    EXPECT_NO_THROW(telemetry->updateTxBytes(1024));
+
+    // Collect-only NOP fallback writes nothing to disk.
+    EXPECT_FALSE(fs::exists(testDir_.string() + "/" + testFile_));
 }
 
 TEST_F(telemetryTest, NopExporterIsActiveAndWritesNothing) {
