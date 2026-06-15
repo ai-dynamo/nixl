@@ -411,7 +411,7 @@ public:
      * @return     Reference to the newly emplaced descriptor
      */
     template<class... Args>
-    inline T &
+    T &
     emplace(Args &&...args) {
         return descs.emplace_back(std::forward<Args>(args)...);
     }

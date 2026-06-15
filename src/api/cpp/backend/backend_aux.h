@@ -19,6 +19,7 @@
 
 #include <mutex>
 #include <string>
+#include <cassert>
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
 #include "common/nixl_time.h"
@@ -134,6 +135,8 @@ operator==(const nixlRemoteMetaDesc &lhs, const nixlRemoteMetaDesc &rhs) {
 typedef nixlDescList<nixlMetaDesc> nixl_meta_dlist_t;
 using nixl_remote_meta_dlist_t = nixlDescList<nixlRemoteMetaDesc>;
 
+// Compressed descriptor: a run of `count` equal-length blocks starting at
+// flat index `start_idx`, with consecutive blocks spaced `stride` bytes apart.
 class nixlStrideDesc : public nixlMetaDesc {
 public:
     size_t stride = 0;
@@ -155,7 +158,7 @@ public:
           count(count_),
           start_idx(0) {}
 
-    nixlMetaDesc
+    [[nodiscard]] nixlMetaDesc
     getMetaDesc(size_t idx, size_t size) const noexcept {
         return nixlMetaDesc(
             addr + static_cast<uintptr_t>(idx - start_idx) * stride, len * size, devId, metadataP);
@@ -166,7 +169,8 @@ class nixlStrideDescList : public nixlDescList<nixlStrideDesc> {
 public:
     using nixlDescList<nixlStrideDesc>::nixlDescList;
 
-    size_t
+    // Returns the total number of logical blocks across all runs (the decompressed size).
+    [[nodiscard]] size_t
     flatSize() const {
         if (descs.empty()) {
             return 0;
@@ -175,9 +179,12 @@ public:
         return last.start_idx + last.count;
     }
 
+    // Returns the run covering the given flat block index, using an educated probe
+    // with a binary-search fallback.
     const nixlStrideDesc &
     find(size_t flat_idx, size_t run_size) const noexcept {
         // Educated first probe: assume uniform runs
+        assert(run_size > 0);
         size_t mid = flat_idx / run_size;
         if (flat_idx - descs[mid].start_idx < descs[mid].count) [[likely]] {
             return descs[mid];
