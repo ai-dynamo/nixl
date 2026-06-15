@@ -58,12 +58,13 @@ namespace open_metrics_text {
     namespace detail {
 
         // Build a sample from its value token (required) and the optional timestamp
-        // token (the exposition's trailing field). Returns nullopt if the value is
-        // non-numeric; a missing or non-numeric timestamp is left unset, since
-        // Prometheus timestamps are optional. std::stod/std::stoull stop at the first
-        // non-numeric character (so "1abc" would parse as 1), so the whole token must
-        // be consumed; std::stoull also wraps a leading '-' into a huge unsigned, so a
-        // negative timestamp is treated as malformed.
+        // token (the exposition's trailing field). Returns nullopt (rejecting the
+        // line) if the value is non-numeric or only partially numeric, or if a
+        // timestamp is present but malformed (empty, negative, non-numeric, or only
+        // partially consumed). A missing timestamp is fine -- Prometheus timestamps
+        // are optional. std::stod/std::stoull stop at the first non-numeric character
+        // (so "1abc" would parse as 1), hence the full-consumption checks; std::stoull
+        // also wraps a leading '-' into a huge unsigned, hence the explicit reject.
         [[nodiscard]] inline std::optional<sample>
         parseSample(const std::string &valueToken,
                     const std::optional<std::string> &timestampToken) {
@@ -78,16 +79,22 @@ namespace open_metrics_text {
             catch (const std::exception &) {
                 return std::nullopt;
             }
-            if (timestampToken && !timestampToken->empty() && timestampToken->front() != '-') {
+            // A missing timestamp is fine; a PRESENT one must be well-formed -- reject
+            // the line on an empty, negative, non-numeric, or partially-consumed token.
+            if (timestampToken) {
+                if (timestampToken->empty() || timestampToken->front() == '-') {
+                    return std::nullopt;
+                }
                 try {
                     size_t pos = 0;
                     const unsigned long long ts = std::stoull(*timestampToken, &pos);
-                    if (pos == timestampToken->size()) {
-                        s.timestamp = static_cast<uint64_t>(ts);
+                    if (pos != timestampToken->size()) {
+                        return std::nullopt;
                     }
+                    s.timestamp = static_cast<uint64_t>(ts);
                 }
                 catch (const std::exception &) {
-                    // Leave the timestamp unset on a non-numeric token.
+                    return std::nullopt;
                 }
             }
             return s;
