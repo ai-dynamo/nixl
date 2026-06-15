@@ -16,6 +16,8 @@
 nixl_worker_sources = [
   'nixl_worker.cpp',
   'nixl_worker.h',
+  'nixl_mem_region.cpp',
+  'nixl_mem_region.h',
 ]
 
 nixl_worker_deps = [openmp_dep, nixl_lib, nixl_build, nixl_serdes, tomlplusplus_dep]
