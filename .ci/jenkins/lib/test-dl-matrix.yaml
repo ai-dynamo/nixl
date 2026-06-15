@@ -24,21 +24,23 @@ failFast: false
 
 timeout_minutes: 240
 
-registry_host: harbor.mellanox.com
-registry_auth: nixl_harbor_credentials
-registry_path: /nixl/base
+registry_host: artifactory.nvidia.com
+registry_auth: svc-nixl-new-artifactory-token
+registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
+  imagePullSecrets: "['artifactory-pull-secret']"
   limits: "{memory: 16Gi, cpu: 16000m}"
   requests: "{memory: 8Gi, cpu: 8000m}"
   privileged: true
 
 credentials:
-  - {credentialsId: 'nixl_harbor_credentials', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
 
 env:
+  ARTIFACTORY_PATH: /sw-nbu-swx-nixl-docker-local/ci
   NIXL_INSTALL_DIR: /opt/nixl
   NIXL_BUILD_DIR: nixl_build
   SLURM_NODES: 1
@@ -91,13 +93,13 @@ taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 steps:
   - name: Compiling NIXL Docker Image for DL
     containerSelector: "{name: 'build_helper_dl'}"
-    credentialsId: "nixl_harbor_credentials"
+    credentialsId: "svc-nixl-new-artifactory-token"
     parallel: false
     run: |
       set -x
-      export PR_IMAGE=${registry_host}/nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}
+      export PR_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}
       rm -rf /etc/containers/storage.conf && rm -f /usr/share/containers/storage.conf
-      podman build --network host \
+      podman build --network host --creds ${REPO_USER}:${REPO_PASS} \
       --build-arg UCX_VERSION=${ucx_version} \
       --build-arg PRE_INSTALLED_ENV="true" \
       --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} \
@@ -140,7 +142,7 @@ steps:
       testScript: ".gitlab/test_python.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
 
@@ -156,7 +158,7 @@ steps:
       testScript: ".gitlab/test_rust.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
 
@@ -172,7 +174,7 @@ steps:
       testScript: ".gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
       slurmEnv: [
@@ -191,7 +193,7 @@ steps:
       testScript: ".gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#nixl/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
       slurmEnv: [
