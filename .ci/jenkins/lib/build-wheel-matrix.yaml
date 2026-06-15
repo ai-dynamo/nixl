@@ -51,10 +51,10 @@ timeout_minutes: 240
 # =============================================================================
 # Container Registry Configuration
 # =============================================================================
-# Harbor registry for storing build artifacts and base images
-registry_host: nbu-harbor.gtm.nvidia.com
-registry_path: /nixl
-registry_auth: nixl_harbor_credentials
+# Artifactory registry for storing build artifacts and base images
+registry_host: artifactory.nvidia.com
+registry_auth: svc-nixl-new-artifactory-token
+registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 credentials:
   - credentialsId: 'svc-nixl-new-artifactory-token'
@@ -68,6 +68,7 @@ credentials:
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
+  imagePullSecrets: "['artifactory-pull-secret']"
   # 24GB memory and 16 CPU cores for parallel compilation and large builds
   limits: '{memory: 24Gi, cpu: 16000m}'
   requests: '{memory: 24Gi, cpu: 16000m}'
@@ -107,8 +108,7 @@ matrix:
 env:
   NPROC: 16
   GRPC_NPROC: 10
-  DOCKER_REGISTRY_HOST: 'artifactory.nvidia.com'
-  BASE_IMAGE: "${DOCKER_REGISTRY_HOST}/sw-nbu-swx-nixl-docker-local/base/cuda"
+  BASE_IMAGE: "${registry_host}/sw-nbu-swx-nixl-docker-local/base/cuda"
   BASE_TAG: '13.0-devel-manylinux--25.09'
 
 steps:
@@ -126,7 +126,7 @@ steps:
       podman system reset -f || true
       ln -sfT $(type -p podman) /usr/bin/docker
       # Login to Artifactory
-      echo "$ARTIFACTORY_TOKEN" | docker login "https://${DOCKER_REGISTRY_HOST}" -u "$ARTIFACTORY_USER" --password-stdin
+      echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
 
   # =============================================================================
   # Step 2: Python Wheel Generation
