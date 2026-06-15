@@ -302,12 +302,23 @@ class Buffer:
             async_finish,
             allocate_on_comm_stream,
         )
+
+        tensors_to_record = (
+            topk_idx,
+            num_tokens_per_rank,
+            num_tokens_per_expert,
+            is_token_in_rank,
+        )
+
+        if num_tokens_per_rdma_rank is not None:
+            tensors_to_record = (*tensors_to_record, num_tokens_per_rdma_rank)
+
         return (
             num_tokens_per_rank,
             num_tokens_per_rdma_rank,
             num_tokens_per_expert,
             is_token_in_rank,
-            EventOverlap(event),
+            EventOverlap(event, tensors_to_record if async_finish else None),
         )
 
     # noinspection PyTypeChecker
@@ -505,6 +516,10 @@ class Buffer:
     def combine(self, *args, **kwargs):
         return self.low_latency_combine(*args, **kwargs)
 
+    @staticmethod
+    def _tensors_for_event_overlap(*tensors: Optional[torch.Tensor]) -> Tuple[torch.Tensor, ...]:
+        return tuple(t for t in tensors if t is not None)
+
     # noinspection PyTypeChecker
     def ht_dispatch(
         self,
@@ -534,12 +549,10 @@ class Buffer:
         Normally, you should not directly call this function.
         """
         config = self.get_dispatch_config(self.group_size) if config is None else config
-        assert config is not None
 
         # Launch the kernel with cached or non-cached mode
         x, x_scales = x if isinstance(x, tuple) else (x, None)
         if handle is not None:
-            assert topk_idx is None and topk_weights is None
             (
                 is_token_in_rank,
                 rdma_channel_prefix_matrix,
@@ -577,13 +590,30 @@ class Buffer:
                     allocate_on_comm_stream,
                 )
             )
-            return (recv_x, recv_x_scales) if x_scales is not None else recv_x, None, None, None, None, EventOverlap(event)  # type: ignore[return-value]
-        else:
-            assert (
-                num_tokens_per_rank is not None
-                and is_token_in_rank is not None
-                and num_tokens_per_expert is not None
+            tensors_to_record = _tensors_for_event_overlap(
+                x,
+                x_scales,
+                topk_idx,
+                topk_weights,
+                is_token_in_rank,
+                rdma_channel_prefix_matrix,
+                gbl_channel_prefix_matrix,
+                recv_rdma_channel_prefix_matrix,
+                recv_rdma_rank_prefix_sum,
+                recv_gbl_channel_prefix_matrix,
+                recv_gbl_rank_prefix_sum,
+                recv_x,
+                recv_x_scales,
             )
+            return (
+                (recv_x, recv_x_scales) if x_scales is not None else recv_x,
+                None,
+                None,
+                None,
+                None,
+                EventOverlap(event, tensors_to_record if async_finish else None),
+            )
+        else:
             (
                 recv_x,
                 recv_x_scales,
@@ -633,13 +663,40 @@ class Buffer:
                 send_rdma_head,
                 send_nvl_head,
             )
+            tensors_to_record = _tensors_for_event_overlap(
+                # inputs read on comm_stream
+                x,
+                x_scales,
+                topk_idx,
+                topk_weights,
+                num_tokens_per_rank,
+                num_tokens_per_rdma_rank,
+                is_token_in_rank,
+                num_tokens_per_expert,
+                # outputs written on comm_stream
+                recv_x,
+                recv_x_scales,
+                recv_topk_idx,
+                recv_topk_weights,
+                rdma_channel_prefix_matrix,
+                recv_rdma_rank_prefix_sum,
+                gbl_channel_prefix_matrix,
+                recv_gbl_rank_prefix_sum,
+                recv_rdma_channel_prefix_matrix,
+                recv_rdma_rank_prefix_sum,
+                recv_gbl_channel_prefix_matrix,
+                recv_gbl_rank_prefix_sum,
+                recv_src_meta,
+                send_rdma_head,
+                send_nvl_head,
+            )
             return (
                 (recv_x, recv_x_scales) if x_scales is not None else recv_x,
                 recv_topk_idx,
                 recv_topk_weights,
                 num_recv_tokens_per_expert_list,
                 handle,
-                EventOverlap(event),
+                EventOverlap(event, tensors_to_record if async_finish else None),
             )
 
     # noinspection PyTypeChecker
@@ -694,7 +751,26 @@ class Buffer:
             async_finish,
             allocate_on_comm_stream,
         )
-        return combined_x, combined_topk_weights, EventOverlap(event)
+        tensors_to_record = _tensors_for_event_overlap(
+            x,
+            topk_weights,
+            bias_0,
+            bias_1,
+            src_meta,
+            is_combined_token_in_rank,
+            rdma_channel_prefix_matrix,
+            rdma_rank_prefix_sum,
+            gbl_channel_prefix_matrix,
+            send_rdma_head,
+            send_nvl_head,
+            combined_x,
+            combined_topk_weights,
+        )
+        return (
+            combined_x,
+            combined_topk_weights,
+            EventOverlap(event, tensors_to_record if async_finish else None),
+        )
 
     def update_mask_buffer(self, rank_to_mask: int, mask: bool = False):
         """
