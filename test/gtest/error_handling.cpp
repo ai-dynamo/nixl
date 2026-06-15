@@ -48,6 +48,9 @@ namespace nixl {
         params["num_threads"] = std::to_string(num_threads);
         // If threadpool is configured always force split
         params["split_batch_size"] = "0";
+        // Keep these UCX settings in the per-backend config so this suite does not depend on
+        // whether another test suite initialized UCX before it.
+        params["engine_config"] = "RC_TIMEOUT=100us,RC_RETRY_COUNT=4,UD_TIMEOUT=3s";
         status = agent.createBackend(*it, params, backend_handle);
         EXPECT_EQ(NIXL_SUCCESS, status);
         EXPECT_NE(nullptr, backend_handle);
@@ -257,9 +260,6 @@ TestErrorHandling::TestErrorHandling()
     : m_backend_name(std::get<0>(GetParam())),
       numWorkers_(std::get<1>(GetParam())),
       numThreads_(std::get<2>(GetParam())) {
-    m_env.addVar("UCX_RC_TIMEOUT", "100us");
-    m_env.addVar("UCX_RC_RETRY_COUNT", "4");
-    m_env.addVar("UCX_UD_TIMEOUT", "3s");
     m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
 }
 
