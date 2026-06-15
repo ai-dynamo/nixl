@@ -357,11 +357,14 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
 ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
+ARG WHL_TORCH_VERSIONS="2.11,2.12"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
-    export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
-    export UV_INDEX_STRATEGY=unsafe-best-match && \
-    if [ "$BUILD_NIXL_EP" = "true" ]; then EP_BUILD_FLAG="--build-nixl-ep"; else EP_BUILD_FLAG=""; fi && \
+    if [ "$BUILD_NIXL_EP" = "true" ]; then \
+        EP_BUILD_FLAGS="--build-nixl-ep --torch-versions $WHL_TORCH_VERSIONS"; \
+    else \
+        EP_BUILD_FLAGS=""; \
+    fi && \
     rm -rf dist && mkdir -p dist && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         export PATH=$VIRTUAL_ENV/bin:$PATH && \
@@ -371,7 +374,7 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --ucx-plugins-dir /usr/lib64/ucx \
             --nixl-plugins-dir $NIXL_PLUGIN_DIR \
             --output-dir dist \
-            $EP_BUILD_FLAG ; \
+            $EP_BUILD_FLAGS ; \
     done
 
 # Copy the meta package wheel to the dist directory, which will be used to push to PyPI.
