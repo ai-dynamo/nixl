@@ -305,6 +305,7 @@ def test_get_xfer_telemetry_without_sink(backend_name):
     # Telemetry enabled with no sink still collects in-process via the NOP
     # fallback, so get_xfer_telemetry() works (#1716 / NIX-1361 regression).
     # Clear any inherited sink vars so the sinkless path is exercised.
+    prev_enable = os.environ.get("NIXL_TELEMETRY_ENABLE")
     os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
     prev_dir = os.environ.pop("NIXL_TELEMETRY_DIR", None)
     prev_exporter = os.environ.pop("NIXL_TELEMETRY_EXPORTER", None)
@@ -317,7 +318,9 @@ def test_get_xfer_telemetry_without_sink(backend_name):
         )
         _run_xfer_telemetry_check(agent1, agent2, expect_telemetry=True)
     finally:
-        os.environ.pop("NIXL_TELEMETRY_ENABLE")
+        os.environ.pop("NIXL_TELEMETRY_ENABLE", None)
+        if prev_enable is not None:
+            os.environ["NIXL_TELEMETRY_ENABLE"] = prev_enable
         if prev_dir is not None:
             os.environ["NIXL_TELEMETRY_DIR"] = prev_dir
         if prev_exporter is not None:
