@@ -262,6 +262,7 @@ make -j$(nproc) && sudo make install
 ```
 
 #### etcd-cpp-api Installation (Optional for ETCD Runtime)
+
 ```bash
 # Clone and build etcd-cpp-api when ETCD runtime support is needed
 git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git
@@ -405,12 +406,14 @@ NIXLBench supports ASIO runtime using TCP sockets for metadata exchange. For two
 5. When launching through Slurm/Pyxis, set rank environment variables explicitly in each task and start the target task before the initiator task.
 
 **Slurm/Pyxis rank environment variables:**
+
 ```bash
 export OMPI_COMM_WORLD_RANK=0   # 0 for initiator, 1 for target
 export OMPI_COMM_WORLD_SIZE=2   # Total number of processes
 ```
 
 **Two-node UCX VRAM example:**
+
 ```bash
 TARGET_IP=<target-node-ip>
 PORT=23456
@@ -429,6 +432,7 @@ export OMPI_COMM_WORLD_SIZE=2
 ```
 
 **Generic Slurm/Pyxis launch pattern:**
+
 ```bash
 NODES=($(scontrol show hostnames "${SLURM_JOB_NODELIST}"))
 TARGET_NODE=${NODES[0]}
@@ -480,7 +484,8 @@ wait
 ### Command Line Options
 
 #### Core Configuration
-```
+
+```text
 --config_file PATH         # Configuration file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD, ASIO] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
@@ -637,12 +642,13 @@ nixlbench --config_file /tmp/nixlbench.config
 
 where `/tmp/nixlbench.config` contains:
 
-```
+```toml
 backend="POSIX"
 filepath="/mnt/test"
 posix_api_type="AIO"
 max_block_size=2097152
 ```
+
 are identical.
 
 If a parameter exists in the config file and is also explicitly specified on the command line, the latter takes precedence.
@@ -657,6 +663,8 @@ NIXLBench can also use an ETCD key-value store for coordination between benchmar
 - **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI) running as single instances.
 - **Required**: Storage backends when ETCD coordination is explicitly requested with `--etcd_endpoints`.
 
+For non-storage backends using `--runtime_type ETCD`, NIXLBench defaults to `http://localhost:2379` when `--etcd_endpoints` is not provided. In that case, an ETCD server must be running on `localhost:2379`; otherwise, provide `--etcd_endpoints` explicitly to point to a custom ETCD server.
+
 **For ETCD-backed multi-node benchmarks:**
 
 1. Ensure ETCD server is running, for example `docker run -p 2379:2379 quay.io/coreos/etcd`.
@@ -664,6 +672,7 @@ NIXLBench can also use an ETCD key-value store for coordination between benchmar
 3. Multiple instances should be launched within the default timeout of 60s.
 
 **For single-instance storage benchmarks:**
+
 ```bash
 # No ETCD needed - just run directly
 ./nixlbench --backend GDS --filepath /mnt/storage/testfile
@@ -673,6 +682,7 @@ NIXLBench can also use an ETCD key-value store for coordination between benchmar
 ```
 
 **For ETCD-backed multi-instance benchmarks:**
+
 ```bash
 # On host 1
 ./nixlbench --runtime_type ETCD --etcd_endpoints http://etcd-server:2379 \
@@ -689,6 +699,7 @@ The workers automatically coordinate ranks through ETCD as they connect. Note, t
 #### Network Backends
 
 **UCX Backend (Default)**
+
 ```bash
 # Basic two-node UCX benchmark. Run on both nodes with the same ASIO address
 # and port; start the target before the initiator.
@@ -703,6 +714,7 @@ The workers automatically coordinate ranks through ETCD as they connect. Note, t
 For pairwise UCX runs, `--device_list` must match the configured initiator and target device counts. For UCX multi-rail experiments, keep `--device_list all` and use UCX environment variables such as `UCX_NET_DEVICES` to constrain NIC selection.
 
 **GPUNETIO Backend:**
+
 ```bash
 # DOCA GPUNetIO with specific GPU devices
 ./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
