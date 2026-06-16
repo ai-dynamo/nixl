@@ -33,7 +33,6 @@
 #include <memory>
 #include <numeric>
 #include <sstream>
-#include <unordered_set>
 #include "utils/neuron.h"
 #include "utils/utils.h"
 #include <unistd.h>
@@ -48,16 +47,6 @@
 #ifndef MAP_HUGE_2MB
 #define MAP_HUGE_2MB (21 << 26) // 2MB hugepage size encoding
 #endif
-
-#define CHECK_NIXL_ERROR(result, message)                                                     \
-    do {                                                                                      \
-        const nixl_status_t _r = (result);                                                    \
-        if (0 != _r) {                                                                        \
-            std::cerr << "NIXL: " << message << " (" << nixlEnumStrings::statusStr(_r) << ")" \
-                      << std::endl;                                                           \
-            exit(EXIT_FAILURE);                                                               \
-        }                                                                                     \
-    } while (0)
 
 static nixl_mem_t
 resolveVramSegment() {
@@ -341,25 +330,16 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
+    remote_regs_.clear();
+    remote_fds.clear();
+    local_regs_.clear();
+
     delete rt;
     rt = nullptr;
 
     if (agent) {
         delete agent;
         agent = nullptr;
-    }
-}
-
-// Convert vector of xferBenchIOV to nixl_reg_dlist_t
-static void
-iovListToNixlRegDlist(const std::vector<xferBenchIOV> &iov_list, nixl_reg_dlist_t &dlist) {
-    nixlBlobDesc desc;
-    for (const auto &iov : iov_list) {
-        desc.addr = iov.addr;
-        desc.len = iov.len;
-        desc.devId = iov.devId;
-        desc.metaInfo = iov.metaInfo;
-        dlist.addDesc(desc);
     }
 }
 
@@ -741,13 +721,9 @@ createFileFds(std::string name, int num_files, const std::vector<std::string> &f
             std::cout << "Opening file: " << file_name << std::endl;
             auto fstate = openFileWithFlags(file_name, flags);
             if (!fstate) {
-                // Cleanup already opened files
-                for (auto &fd : fds) {
-                    close(fd.fd);
-                }
                 return {};
             }
-            fds.push_back(fstate.value());
+            fds.push_back(std::move(*fstate));
         }
         return fds;
     }
@@ -766,13 +742,9 @@ createFileFds(std::string name, int num_files, const std::vector<std::string> &f
 
         auto fstate = openFileWithFlags(file_name, flags);
         if (!fstate) {
-            // Cleanup already opened files
-            for (int j = 0; j < i; j++) {
-                close(fds[j].fd);
-            }
             return {};
         }
-        fds.push_back(fstate.value());
+        fds.push_back(std::move(*fstate));
     }
     return fds;
 }
@@ -828,15 +800,15 @@ xferBenchNixlWorker::initBasicDescObj(size_t buffer_size, int mem_dev_id, std::s
     return std::optional<xferBenchIOV>(std::in_place, 0, buffer_size, mem_dev_id, name);
 }
 
-void
-xferBenchNixlWorker::cleanupBasicDescDram(xferBenchIOV &iov) {
+static void
+cleanupBasicDescDram(xferBenchIOV &iov) {
     // Reclaim ownership of the buffer handed out by initBasicDescDram(); the
     // returned wrapper goes out of scope here and frees the buffer.
     nixlAlloc::adopt(reinterpret_cast<void *>(iov.addr), iov.len);
 }
 
-void
-xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
+static void
+cleanupBasicDescVram(xferBenchIOV &iov) {
     if (neuronCoreCount() > 0) {
         cleanupVramNeuron(iov);
         return;
@@ -851,16 +823,30 @@ xferBenchNixlWorker::cleanupBasicDescVram(xferBenchIOV &iov) {
 #endif
 }
 
-void
-xferBenchNixlWorker::cleanupBasicDescFile(xferBenchIOV &iov) {
-    close(iov.devId);
-}
-
-void
-xferBenchNixlWorker::cleanupBasicDescObj(xferBenchIOV &iov) {
+static void
+cleanupBasicDescObj(xferBenchIOV &iov) {
     if (!xferBenchUtils::rmObj(iov.metaInfo)) {
         std::cerr << "Failed to remove object: " << iov.metaInfo << std::endl;
         exit(EXIT_FAILURE);
+    }
+}
+
+// FILE fds are owned by xferFileState and BLK descriptors own nothing, so both
+// fall through to the no-op default.
+void
+cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov) {
+    switch (seg_type) {
+    case DRAM_SEG:
+        cleanupBasicDescDram(iov);
+        break;
+    case VRAM_SEG:
+        cleanupBasicDescVram(iov);
+        break;
+    case OBJ_SEG:
+        cleanupBasicDescObj(iov);
+        break;
+    default:
+        break;
     }
 }
 
@@ -872,12 +858,6 @@ xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t
     // The device ID corresponds to the block device UUID (e.g., 11 for local file, 14 for
     // /dev/zero)
     return std::optional<xferBenchIOV>(std::in_place, dev_offset, buffer_size, mem_dev_id);
-}
-
-void
-xferBenchNixlWorker::cleanupBasicDescBlk(xferBenchIOV &iov) {
-    // No cleanup needed for block device descriptors
-    // The block device backend handles the device lifecycle
 }
 
 bool
@@ -1003,10 +983,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     iov_list.push_back(basic_desc.value());
                 }
             }
-            nixl_reg_dlist_t desc_list(OBJ_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_iovs.push_back(iov_list);
+            remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(iov_list));
         }
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         // GUSLI backend uses block device descriptors
@@ -1035,10 +1014,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     iov_list.push_back(basic_desc.value());
                 }
             }
-            nixl_reg_dlist_t desc_list(BLK_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, BLK_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_iovs.push_back(iov_list);
+            remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
         }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
@@ -1085,10 +1063,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                 file_idx += 1;
                 if (file_idx >= num_files) file_idx = 0;
             }
-            nixl_reg_dlist_t desc_list(FILE_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, FILE_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_iovs.push_back(iov_list);
+            remote_regs_.emplace_back(*agent, backend_engine, FILE_SEG, std::move(iov_list));
         }
     }
 
@@ -1116,17 +1093,17 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
 
             if (basic_desc) {
-                if (!remote_iovs.empty()) {
-                    basic_desc.value().metaInfo = remote_iovs[list_idx][i].metaInfo;
+                if (!remote_regs_.empty()) {
+                    basic_desc.value().metaInfo = remote_regs_[list_idx].iovs()[i].metaInfo;
                 }
                 iov_list.push_back(basic_desc.value());
             }
         }
 
-        nixl_reg_dlist_t desc_list(seg_type);
-        iovListToNixlRegDlist(iov_list, desc_list);
+        nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, seg_type);
         CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-        iov_lists.push_back(iov_list);
+
+        local_regs_.emplace_back(*agent, backend_engine, seg_type, iov_list);
 
         /*
          * Workaround for a GUSLI registration bug which resets memory to 0, this initialization
@@ -1134,7 +1111,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
          * here to avoid memsetting the memory again.
          */
         if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
-            for (auto &iov : iov_list) {
+            for (auto &iov : local_regs_.back().iovs()) {
                 if (isInitiator()) {
                     memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, iov.len);
                 } else if (isTarget()) {
@@ -1142,6 +1119,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                 }
             }
         }
+
+        iov_lists.push_back(std::move(iov_list));
     }
 
     return iov_lists;
@@ -1149,70 +1128,14 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
 void
 xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
-    nixl_opt_args_t opt_args;
-
-
-    opt_args.backends.push_back(backend_engine);
-
-    // Ordering invariants:
-    // 1. Deregister remote IOVs before local IOVs
-    //    (remote registrations may reference local buffers).
-    // 2. Call deregisterMem() before each IOV cleanup
-    //    (cleanup destroys resources that backends need).
-    if (xferBenchConfig::isObjStorageBackend()) {
-        for (auto &iov_list : remote_iovs) {
-            nixl_reg_dlist_t desc_list(OBJ_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
-            for (auto &iov : iov_list) {
-                cleanupBasicDescObj(iov);
-            }
-        }
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
-        for (auto &iov_list : remote_iovs) {
-            nixl_reg_dlist_t desc_list(BLK_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
-            for (auto &iov : iov_list) {
-                cleanupBasicDescBlk(iov);
-            }
-        }
-    } else if (xferBenchConfig::isStorageBackend()) {
-        for (auto &iov_list : remote_iovs) {
-            nixl_reg_dlist_t desc_list(FILE_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
-        }
-        // Close each backing fd exactly once, after all deregistrations complete.
-        std::unordered_set<int> closed_fds;
-        for (auto &iov_list : remote_iovs) {
-            for (auto &iov : iov_list) {
-                if (closed_fds.insert(iov.devId).second) {
-                    cleanupBasicDescFile(iov);
-                }
-            }
-        }
-    }
-
-    for (auto &iov_list : iov_lists) {
-        nixl_reg_dlist_t desc_list(seg_type);
-        iovListToNixlRegDlist(iov_list, desc_list);
-        CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
-
-        for (auto &iov : iov_list) {
-            switch (seg_type) {
-            case DRAM_SEG:
-                cleanupBasicDescDram(iov);
-                break;
-            case VRAM_SEG:
-                cleanupBasicDescVram(iov);
-                break;
-            default:
-                std::cerr << "Unsupported mem type: " << seg_type << std::endl;
-                exit(EXIT_FAILURE);
-            }
-        }
-    }
+    // Ordering: deregister remote regions before local ones
+    // (remote registrations may reference local buffers).
+    // NixlMemRegion::release() handles deregisterMem + per-IOV cleanup.
+    remote_regs_.clear();
+    // xferFileState RAII closes backing fds after deregistrations complete.
+    remote_fds.clear();
+    local_regs_.clear();
+    iov_lists.clear();
 }
 
 int
@@ -1421,18 +1344,18 @@ registerIterationMem(nixlAgent *agent,
     nixl_opt_args_t reg_args;
     reg_args.backends.push_back(backend_engine);
 
-    nixl_reg_dlist_t local_reg(GET_SEG_TYPE(true));
-    iovListToNixlRegDlist(local_iov, local_reg);
+    nixl_reg_dlist_t local_reg = iovListToNixlRegDlist(local_iov, GET_SEG_TYPE(true));
     nixl_status_t rc = agent->registerMem(local_reg, &reg_args);
     if (rc != NIXL_SUCCESS) {
         return rc;
     }
 
-    nixl_reg_dlist_t remote_reg(getRemoteSegType());
-    iovListToNixlRegDlist(remote_iov, remote_reg);
-    rc = agent->registerMem(remote_reg, &reg_args);
-    if (rc != NIXL_SUCCESS) {
-        return rc;
+    if (xferBenchConfig::isStorageBackend()) {
+        nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
+        rc = agent->registerMem(remote_reg, &reg_args);
+        if (rc != NIXL_SUCCESS) {
+            return rc;
+        }
     }
 
     return NIXL_SUCCESS;
@@ -1447,18 +1370,18 @@ deregisterIterationMem(nixlAgent *agent,
     nixl_opt_args_t reg_args;
     reg_args.backends.push_back(backend_engine);
 
-    nixl_reg_dlist_t local_reg(GET_SEG_TYPE(true));
-    iovListToNixlRegDlist(local_iov, local_reg);
+    nixl_reg_dlist_t local_reg = iovListToNixlRegDlist(local_iov, GET_SEG_TYPE(true));
     nixl_status_t rc = agent->deregisterMem(local_reg, &reg_args);
     if (rc != NIXL_SUCCESS) {
         return rc;
     }
 
-    nixl_reg_dlist_t remote_reg(getRemoteSegType());
-    iovListToNixlRegDlist(remote_iov, remote_reg);
-    rc = agent->deregisterMem(remote_reg, &reg_args);
-    if (rc != NIXL_SUCCESS) {
-        return rc;
+    if (xferBenchConfig::isStorageBackend()) {
+        nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
+        rc = agent->deregisterMem(remote_reg, &reg_args);
+        if (rc != NIXL_SUCCESS) {
+            return rc;
+        }
     }
 
     return NIXL_SUCCESS;
