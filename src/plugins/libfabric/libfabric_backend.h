@@ -201,6 +201,7 @@ private:
     // Progress thread for rail CQs
     std::thread progress_thread_;
     std::atomic<bool> progress_thread_stop_;
+    mutable std::atomic<unsigned int> data_thread_active_{0};
 
     // Mutex for connection state tracking
     mutable std::mutex connection_state_mutex_;

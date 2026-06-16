@@ -1028,6 +1028,14 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
     size_t total_submitted = 0;
 
+    // Signal PT to yield while data thread is submitting.
+    // RAII guard clears the flag on any return path.
+    struct DataThreadGuard {
+        std::atomic<unsigned int> &counter;
+        DataThreadGuard(std::atomic<unsigned int> &c) : counter(c) { counter.fetch_add(1, std::memory_order_relaxed); }
+        ~DataThreadGuard() { counter.fetch_sub(1, std::memory_order_relaxed); }
+    } data_thread_guard(data_thread_active_);
+
     // Core transfer submission to process each descriptor with direct submission
     // Reserve base_offset once per transfer so all descriptors see a stable rail assignment
     const size_t xfer_base_offset = rail_manager.reserveBaseOffset();
@@ -1156,6 +1164,12 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 nixl_status_t
 nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
     auto backend_handle = static_cast<nixlLibfabricBackendH *>(handle);
+
+    struct DataThreadGuard {
+        std::atomic<unsigned int> &counter;
+        DataThreadGuard(std::atomic<unsigned int> &c) : counter(c) { counter.fetch_add(1, std::memory_order_relaxed); }
+        ~DataThreadGuard() { counter.fetch_sub(1, std::memory_order_relaxed); }
+    } data_thread_guard(data_thread_active_);
 
     {
         nixl_status_t progress_status = rail_manager.progressActiveRails();
@@ -1425,6 +1439,11 @@ nixlLibfabricEngine::progressThread() {
     NIXL_DEBUG << "PT: Thread started successfully for rails only";
     // Main progress loop - continuously process completions only on rails
     while (!progress_thread_stop_.load()) {
+        // Yield when data thread is actively submitting — it handles progress itself
+        if (data_thread_active_.load(std::memory_order_relaxed) > 0) {
+            continue;
+        }
+
         // Process completions only on rails (non-blocking)
         bool any_completions = false;
         nixl_status_t status = rail_manager.progressActiveRails(true);
