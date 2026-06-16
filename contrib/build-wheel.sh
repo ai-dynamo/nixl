@@ -134,33 +134,6 @@ venv_path() {
     fi
 }
 
-# Echo "stable", "nightly", or "unavailable" depending on whether
-# torch==${VER}.* resolves from the stable cu index, the nightly cu
-# index (with --pre), or neither.
-torch_classify() {
-    local VER=$1
-    local CLASS="unavailable"
-    local PROBE="/workspace/venv-probe-py$(slug "$PYTHON_VERSION")"
-    rm -rf "$PROBE"
-    if uv venv "$PROBE" --python "$PYTHON_VERSION" >/dev/null 2>&1; then
-        if uv pip install --dry-run \
-            --python "$PROBE/bin/python" \
-            --index-url "$TORCH_STABLE_INDEX" \
-            "torch==${VER}.*" >/dev/null 2>&1; then
-            CLASS="stable"
-        elif uv pip install --dry-run --pre \
-            --python "$PROBE/bin/python" \
-            --extra-index-url "$TORCH_STABLE_INDEX" \
-            --extra-index-url "$TORCH_NIGHTLY_INDEX" \
-            --index-strategy unsafe-best-match \
-            "torch==${VER}.*" >/dev/null 2>&1; then
-            CLASS="nightly"
-        fi
-    fi
-    rm -rf "$PROBE"
-    echo "$CLASS"
-}
-
 # Install torch from the cu index, isolated from PyPI: with PyPI as a
 # fallback its plain `torch==X.Y.0` beats cu nightly's `X.Y.0.dev*+cuXX`
 # (PEP 440: final > pre-release).
@@ -185,6 +158,42 @@ install_torch() {
     fi
 }
 
+# Probe whether torch actually installs on this host arch. uv's --dry-run
+# does not always reject wheels with a mismatched platform tag.
+try_install_torch() {
+    local PROBE=$1
+    local VER=$2
+    local CHANNEL=$3
+    install_torch "$PROBE" "$VER" "$CHANNEL" >/dev/null 2>&1
+}
+
+# Echo "stable", "nightly", or "unavailable" depending on whether
+# torch==${VER}.* can be installed for this (Python, CUDA, arch) combo.
+torch_classify() {
+    local VER=$1
+    local PROBE="/workspace/venv-probe-py$(slug "$PYTHON_VERSION")-torch$(slug "$VER")"
+
+    rm -rf "$PROBE"
+    if ! uv venv "$PROBE" --python "$PYTHON_VERSION" >/dev/null 2>&1; then
+        echo "unavailable"
+        return
+    fi
+
+    if try_install_torch "$PROBE" "$VER" "stable"; then
+        rm -rf "$PROBE"
+        echo "stable"
+        return
+    fi
+    if try_install_torch "$PROBE" "$VER" "nightly"; then
+        rm -rf "$PROBE"
+        echo "nightly"
+        return
+    fi
+
+    rm -rf "$PROBE"
+    echo "unavailable"
+}
+
 # Build the wheel for the current PYTHON_VERSION (and optional torch VER).
 # Each iteration uses a fresh venv so torch's dependencies
 # (nvidia-* wheels, triton, sympy, …) do not leak across iterations.
@@ -195,7 +204,13 @@ build_wheel() {
     local VENV_PATH
     VENV_PATH=$(venv_path "$VER")
     local CHANNEL="stable"
-    [ -n "$VER" ] && CHANNEL=$(torch_classify "$VER")
+    if [ -n "$VER" ]; then
+        CHANNEL=$(torch_classify "$VER")
+        if [ "$CHANNEL" = "unavailable" ]; then
+            echo "ERROR: torch ${VER} is not installable for Python ${PYTHON_VERSION} + ${CU_TAG} on $(uname -m)" >&2
+            exit 1
+        fi
+    fi
 
     echo "=== Provisioning ${VENV_PATH} (python ${PYTHON_VERSION}${VER:+, torch ${VER} [${CHANNEL}]}) ==="
     rm -rf "$VENV_PATH"
