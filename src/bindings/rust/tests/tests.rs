@@ -117,7 +117,6 @@ fn create_storage_list(agent: &Agent, opt_args: &OptArgs, size: usize) -> Vec<Sy
         let mut storage = SystemStorage::new(1024).unwrap();
         storage.register(agent, Some(opt_args)).expect("Failed to register storage memory");
         storage.memset(0);
-        agent.register_memory(&storage, Some(opt_args)).expect("Failed to register storage memory");
         storage_list.push(storage);
     }
     storage_list
