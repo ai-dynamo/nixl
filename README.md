@@ -167,7 +167,13 @@ Common build options:
 
 #### Building for AMD ROCm
 
-NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or not a ROCm toolchain is present. GPU-side ROCm/HIP build support for the benchmark suite lives in nixlbench — see PR #1647 for the `use_rocm` / `rocm_path` options there. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
+NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or not a ROCm toolchain is present. GPU-side ROCm/HIP build support is available for nixlbench and UCX plugin unit tests. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
+
+**Building with ROCm support:**
+```bash
+# For nixlbench and UCX unit tests with ROCm
+$ meson setup build -Duse_rocm=true -Drocm_path=/opt/rocm
+```
 
 **Plugins on ROCm hosts (CUDA toolchain absent):**
 - `UCX` — primary transport for AMD GPU memory (requires UCX built with `--with-rocm`).
@@ -175,7 +181,6 @@ NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAm
 - `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — skip automatically because their CUDA / cuFile / DOCA dependencies are not found.
 
 **Known gaps (will be addressed in follow-up PRs):**
-- `nixlbench` (the NIXL benchmark tool) needs CUDA-driver-API → HIP translation work before it builds on ROCm. Use `examples/cpp/nixl_etcd_example` for transfer validation in the meantime.
 - `LIBFABRIC` plugin disabled on ROCm pending header refactor.
 - No NVSHMEM-equivalent backend yet (rocSHMEM analog is a candidate for a future plugin).
 
