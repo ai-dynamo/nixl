@@ -44,10 +44,10 @@ env:
   NIXL_INSTALL_DIR: /opt/nixl
   NIXL_BUILD_DIR: nixl_build
   SLURM_NODES: 1
-  SLURM_PARTITION: gb200nvl72_ci
+  SLURM_PARTITION: gb200nvl72_cx8
   SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
-  SLURM_ACCOUNT: 'oberon-gb-ci'
+  SLURM_ACCOUNT: 'blackwell'
   SLURM_JOB_TIMEOUT: '01:30:00'
   SLURM_IMMEDIATE_TIMEOUT: 3600
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
