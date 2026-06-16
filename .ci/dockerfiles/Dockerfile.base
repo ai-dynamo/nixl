@@ -27,6 +27,10 @@ ARG PRE_INSTALLED_ENV
 ARG PRE_INSTALLED_NIXL_ENV
 ARG PRE_INSTALLED_UCX_ENV
 ARG UCX_VERSION=v1.21.x
+# When set (e.g. "address"), build the Abseil/gRPC/etcd dependency stack with the
+# matching -fsanitize flags so AddressSanitizer NIXL builds have an ABI-compatible
+# (instrumented) Abseil. Empty for normal images.
+ARG DEPS_SANITIZE
 # Labels for documentation
 LABEL maintainer="NVIDIA NIXL Team"
 LABEL description="Test environment for NIXL development"
