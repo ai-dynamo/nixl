@@ -179,10 +179,11 @@ $ meson setup build -Drocm_path=/opt/rocm
 $ meson setup build -Drocm_path=/custom/path/to/rocm
 ```
 
-**Plugins on ROCm hosts (CUDA toolchain absent):**
+**Platforms using ROCm / HIP (ROCm-only or CUDA + ROCm co-installed):**
 - `UCX` — primary transport for AMD GPU memory (requires UCX built with `--with-rocm`).
 - `POSIX`, `OBJ`, `AZURE_BLOB`, `HF3FS`, `MOONCAKE`, `GUSLI`, `UCCL` — vendor-neutral; build unchanged.
-- `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — skip automatically because their CUDA / cuFile / DOCA dependencies are not found.
+- `AIS_MT` — AMD Infinity Storage (hipFile) multi-threaded plugin under `src/plugins/rocm_ais/` (shared engine base in `src/utils/file/file_engine_base.h`). HIP is detected independently of CUDA, so **AIS_MT** can be built alongside CUDA plugins when ROCm and hipFile are present. See `disable_rocm_ais_backend` and `rocm_ais_path` in `meson_options.txt`.
+- `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — on a ROCm-only host they skip automatically when CUDA / cuFile / DOCA are not found.
 
 **Known gaps (will be addressed in follow-up PRs):**
 - `LIBFABRIC` plugin disabled on ROCm pending header refactor.

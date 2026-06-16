@@ -361,6 +361,43 @@ else
     cuda_wheel_dir = 'nixl_cu12'
 endif
 
+# --- ROCm / HIP detection (independent of CUDA; both stacks may coexist) ---
+hip_inc_path = get_option('hippath_inc')
+hip_lib_path = get_option('hippath_lib')
+hip_dep = disabler()
+
+if hip_lib_path != ''
+    message('HIP lib path: ' + hip_lib_path)
+    hip_dep = declare_dependency(
+        link_args : ['-L' + hip_lib_path, '-lamdhip64'],
+        include_directories : include_directories(hip_inc_path))
+else
+    rocm_home = run_command('bash', '-c', 'echo ${ROCM_PATH:-${ROCM_HOME:-/opt/rocm}}').stdout().strip()
+    if rocm_home == ''
+        rocm_home = '/opt/rocm'
+    endif
+    hip_lib = rocm_home + '/lib'
+    hip_inc = rocm_home + '/include'
+    if fs.exists(hip_lib) and fs.exists(hip_inc)
+        hip_dep = declare_dependency(
+            link_args : ['-L' + hip_lib, '-lamdhip64'],
+            include_directories : include_directories(hip_inc))
+        message('Found ROCm/HIP installation: ' + rocm_home)
+    endif
+endif
+
+if hip_dep.found()
+    add_project_arguments('-DHAVE_HIP', language: 'cpp')
+    add_project_arguments('-D__HIP_PLATFORM_AMD__', language: 'cpp')
+    message('ROCm/HIP support enabled')
+endif
+
+if cuda_dep.found() and hip_dep.found()
+    message('CUDA and ROCm/HIP are both available; NVIDIA and AMD plugin stacks may be built together when enabled.')
+endif
+
+has_gpu = cuda_dep.found() or hip_dep.found()
+
 # Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix
 # without otherwise affecting the build. Non-empty value wins over the
 # autodetected CUDA-major value above: e.g. -Dwheel_variant=rocm -> nixl_rocm.
