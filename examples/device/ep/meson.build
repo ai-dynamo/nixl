@@ -63,6 +63,7 @@ endif
 
 nixl_ep_sources = [
     'csrc/nixl_ep.cpp',
+    'csrc/stable_torch.cpp',
     'csrc/vmm.cpp',
     'csrc/kernels/nixl_ep_ll.cu',
     'csrc/kernels/nixl_ep_ht.cu',
@@ -86,6 +87,7 @@ nixl_ep_cpp_args = [
     '-Wno-sign-compare',
     '-Wno-reorder',
     '-Wno-attributes',
+    '-DUSE_CUDA',
 ]
 
 nixl_ep_cuda_args = [

@@ -174,8 +174,7 @@ void cached_notify(int hidden_int4,
                    bool low_latency_mode,
                    gpu_nixl_ctx nixl_ctx);
 
-void combine(cudaDataType_t type,
-             void* combined_x,
+void combine(void* combined_x,
              float* combined_topk_weights,
              const bool* is_combined_token_in_rank,
              const void* x,
@@ -243,7 +242,7 @@ void combine(void* combined_x,
 
 void barrier(gpu_nixl_ctx* nixl_ctx, int* mask_buffer_ptr, uint64_t timeout_cycles, cudaStream_t stream);
 
-void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* output_mask_tensor, cudaStream_t stream);
+void query_mask_buffer(const int* mask_buffer_ptr, int num_ranks, int* output_mask_tensor, cudaStream_t stream);
 
 void update_mask_buffer(int* mask_buffer_ptr, int rank_to_mask, bool mask, cudaStream_t stream);
 
