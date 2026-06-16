@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_API_CPP_TRACING_TRACE_MACROS_H
-#define NIXL_SRC_API_CPP_TRACING_TRACE_MACROS_H
+#ifndef NIXL_SRC_CORE_TRACING_TRACE_MACROS_H
+#define NIXL_SRC_CORE_TRACING_TRACE_MACROS_H
 
 /*
  * One-line call-site macros for nixl::trace.
@@ -81,4 +81,4 @@
 
 #endif // NIXL_TRACE_ENABLED
 
-#endif // NIXL_SRC_API_CPP_TRACING_TRACE_MACROS_H
+#endif // NIXL_SRC_CORE_TRACING_TRACE_MACROS_H

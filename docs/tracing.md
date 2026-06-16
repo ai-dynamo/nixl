@@ -31,7 +31,11 @@ execution-trace tools.
   `Generic`, `Compute`, `MemoryR`, `MemoryW`, `CommSend`, `CommRecv`, `CommColl`,
   `Metadata`.
 
-The public API lives in `tracing/trace.h` and `tracing/trace_macros.h`.
+`nixl::trace` is an **internal NIXL core API**: it is compiled into `libnixl` but
+its headers (`tracing/trace.h`, `tracing/trace_macros.h`, under `src/core/tracing/`)
+are not installed as public headers. Only NIXL core instruments it today; because
+internal→public is a non-breaking change, it can be promoted to a public header later
+if an external consumer appears.
 
 ## Two gates: compile-time and runtime
 

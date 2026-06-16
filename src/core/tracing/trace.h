@@ -14,16 +14,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_API_CPP_TRACING_TRACE_H
-#define NIXL_SRC_API_CPP_TRACING_TRACE_H
+#ifndef NIXL_SRC_CORE_TRACING_TRACE_H
+#define NIXL_SRC_CORE_TRACING_TRACE_H
 
 /*
- * nixl::trace -- shared tracing API.
+ * nixl::trace -- internal NIXL core tracing API.
  *
  * A single set of call sites fans out to every enabled tracing backend at
- * runtime (NVTX today; Chakra and others later). This header is deliberately
- * self-contained: it depends only on standard headers and on no NIXL type, so
- * external consumers can include it in isolation.
+ * runtime (NVTX today; Chakra and others later). This is an internal core API
+ * (compiled into libnixl, not installed as a public header). It is kept
+ * deliberately self-contained -- depending only on standard headers and on no
+ * other NIXL type -- so it stays easy to reason about and could be promoted to
+ * a public header later without churn if an external consumer appears.
  */
 
 #include <cstdint>
@@ -208,4 +210,4 @@ makeTracer(const TracerConfig &config);
 
 } // namespace nixl::trace
 
-#endif // NIXL_SRC_API_CPP_TRACING_TRACE_H
+#endif // NIXL_SRC_CORE_TRACING_TRACE_H

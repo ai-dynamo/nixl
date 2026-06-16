@@ -489,8 +489,6 @@ if get_option('install_headers')
   install_headers('src/core/agent_data.h', install_dir: prefix_inc)
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
   install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
-  install_headers('src/api/cpp/tracing/trace.h', install_dir: prefix_inc + '/tracing')
-  install_headers('src/api/cpp/tracing/trace_macros.h', install_dir: prefix_inc + '/tracing')
 
   if ucx_gpu_device_api_available
     install_headers('src/api/gpu/ucx/nixl_device.cuh', install_dir: prefix_inc + '/gpu/ucx')
