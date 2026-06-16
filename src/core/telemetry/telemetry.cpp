@@ -72,9 +72,9 @@ nixlTelemetryEventTypeForStatus(nixl_status_t s) {
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 constexpr const char *defaultTelemetryPlugin = "BUFFER";
-// Collect-only sink (registered as "NOP"): keeps telemetry active so the
-// datapath records events and getXferTelemetry() works, but writes nowhere.
-// Used when telemetry is explicitly requested but no output sink is configured.
+// Collect-only sink (registered as "NOP"): events are still recorded in process
+// (so getXferTelemetry() returns data) but nothing is written out. Used when
+// telemetry is explicitly requested but no output sink is configured.
 constexpr const char *collectOnlyTelemetryPlugin = "NOP";
 
 namespace {
