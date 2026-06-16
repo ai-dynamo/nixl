@@ -1034,12 +1034,18 @@ docker build --progress=plain --no-cache ...
 ### Runtime Issues
 
 #### Library Not Found Errors
-```bash
-# Update library cache
-sudo ldconfig
 
-# Check library paths
+Meson bakes an RPATH into the installed `nixlbench` binary pointing at the
+library directory under `-Dnixl_path` (for example
+`/usr/local/nixl/lib/x86_64-linux-gnu` on Debian multiarch). Rebuild and
+`meson install` nixlbench after changing `nixl_path`. If the linker still cannot
+resolve `libnixl.so`, point `LD_LIBRARY_PATH` at the directory that holds
+`libnixl.so` (and keep your CUDA or ROCm library paths as needed):
+
+```bash
+sudo ldconfig
 ldd /usr/local/nixlbench/bin/nixlbench
+export LD_LIBRARY_PATH=/usr/local/nixl/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 ```
 
 #### GPU Access Issues

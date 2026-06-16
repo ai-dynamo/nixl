@@ -487,6 +487,8 @@ else
                 link_with: [nixlbench_runtimes, utils_lib, worker_libs],
                 dependencies: deps,
                 link_args: args,
+                build_rpath: nixl_lib_path,
+                install_rpath: nixl_lib_path,
                 install: true,
                 install_dir: get_option('bindir'))
 endif
