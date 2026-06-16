@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "cuda_stream.hpp"
 #include "cuda_event.hpp"
+#include "cuda_stream.hpp"
 #include "kernels/exception.cuh"
 
 #include <memory>
