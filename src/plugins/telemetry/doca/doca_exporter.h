@@ -35,15 +35,26 @@ public:
     [[nodiscard]] nixl_status_t
     exportEvent(const nixlTelemetryEvent &event) override;
 
+    // Force-pushes accumulated metrics to the DOCA/CollectX Prometheus endpoint.
+    // Production relies on CollectX auto-flush (buffer fill / flush interval);
+    // this is exposed so tests can flush a few events before scraping, since a
+    // handful of samples will not fill the buffer to trigger an auto-flush.
+    [[nodiscard]] nixl_status_t
+    flush();
+
 private:
     const std::string agent_name_;
     std::shared_ptr<DocaSharedContext> ctx_;
 
+    // Appends a counter sample to the time-series. DOCA accumulates the value
+    // (add_counter_increment), so repeated per-operation deltas produce a
+    // monotonic cumulative total, matching the Prometheus exporter.
     [[nodiscard]] doca_error_t
-    registerCounter(const nixlTelemetryEvent &event, const char *label_values[]);
+    appendCounterSample(const nixlTelemetryEvent &event, const char *label_values[]);
 
+    // Appends a gauge sample to the time-series (absolute last-operation value).
     [[nodiscard]] doca_error_t
-    registerGauge(const nixlTelemetryEvent &event, const char *label_values[]);
+    appendGaugeSample(const nixlTelemetryEvent &event, const char *label_values[]);
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_DOCA_EXPORTER_H

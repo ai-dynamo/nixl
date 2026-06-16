@@ -72,15 +72,42 @@ nixlTelemetryEventTypeForStatus(nixl_status_t s) {
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 constexpr const char *defaultTelemetryPlugin = "BUFFER";
+// Collect-only sink (registered as "NOP"): events are still recorded in process
+// (so getXferTelemetry() returns data) but nothing is written out. Used when
+// telemetry is explicitly requested but no output sink is configured.
+constexpr const char *collectOnlyTelemetryPlugin = "NOP";
 
-nixlTelemetry::nixlTelemetry(const std::string &agent_name)
-    : pool_(1),
-      writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false),
-      agentName_(agent_name) {
-    if (agent_name.empty()) {
-        throw std::invalid_argument("Expected non-empty agent name in nixl telemetry create");
-    }
-    initializeTelemetry();
+namespace {
+// Defined below; declared here for use by create() and the constructor's
+// member-initializer list.
+[[nodiscard]] std::string
+getExporterName();
+[[nodiscard]] std::string
+validateAgentName(const std::string &agent_name);
+[[nodiscard]] size_t
+resolveMaxBufferedEvents();
+} // namespace
+
+[[nodiscard]] std::unique_ptr<nixlTelemetry>
+nixlTelemetry::create(const std::string &agent_name) {
+    // create() is only called when telemetry is explicitly requested (see
+    // nixlAgent's constructor), so it always produces an active instance:
+    // getExporterName() falls back to the collect-only NOP sink when no output
+    // sink is configured.
+    return std::make_unique<nixlTelemetry>(agent_name, getExporterName());
+}
+
+nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &exporter_name)
+    : agentName_(validateAgentName(agent_name)),
+      maxBufferedEvents_(resolveMaxBufferedEvents()),
+      exporter_(makeExporter(exporter_name)),
+      pool_(1),
+      writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false) {
+    // A constructed nixlTelemetry always has an exporter (makeExporter throws
+    // otherwise), so reserve the event buffer up front and start the periodic
+    // export task.
+    events_.reserve(maxBufferedEvents_);
+    startExportTask();
 }
 
 nixlTelemetry::~nixlTelemetry() {
@@ -102,66 +129,72 @@ nixlTelemetry::~nixlTelemetry() {
 }
 
 namespace {
-[[nodiscard]] std::optional<std::string>
+[[nodiscard]] std::string
 getExporterName() {
     if (const auto name = nixl::config::getValueOptional<std::string>(telemetryExporterVar)) {
         if (!name->empty()) {
-            return name;
+            return *name;
         }
         NIXL_DEBUG << "Ignoring empty " << telemetryExporterVar << " environment variable";
     }
 
-    if (!nixl::config::checkExistence(telemetryDirVar)) {
-        NIXL_DEBUG << telemetryDirVar
-                   << " is not set, NIXL telemetry is enabled without any exporter";
-        return std::nullopt;
+    if (nixl::config::checkExistence(telemetryDirVar)) {
+        NIXL_INFO << "No telemetry exporter was specified, using default: "
+                  << defaultTelemetryPlugin;
+        return defaultTelemetryPlugin;
     }
 
-    NIXL_INFO << "No telemetry exporter was specified, using default: " << defaultTelemetryPlugin;
+    // No output sink configured; collect in-process via the NOP sink.
+    NIXL_INFO << "No telemetry sink configured; using in-process telemetry collection via "
+              << collectOnlyTelemetryPlugin;
+    return collectOnlyTelemetryPlugin;
+}
 
-    return defaultTelemetryPlugin;
+[[nodiscard]] std::string
+validateAgentName(const std::string &agent_name) {
+    if (agent_name.empty()) {
+        throw std::invalid_argument("Expected non-empty agent name in nixl telemetry create");
+    }
+    return agent_name;
+}
+
+[[nodiscard]] size_t
+resolveMaxBufferedEvents() {
+    const size_t max_events = nixl::config::getValueDefaulted<size_t>(
+        TELEMETRY_BUFFER_SIZE_VAR, DEFAULT_TELEMETRY_BUFFER_SIZE);
+    if (max_events == 0) {
+        throw std::invalid_argument("Telemetry buffer size cannot be 0");
+    }
+    return max_events;
 }
 
 } // namespace
 
-void
-nixlTelemetry::initializeTelemetry() {
-    maxBufferedEvents_ = nixl::config::getValueDefaulted<size_t>(TELEMETRY_BUFFER_SIZE_VAR,
-                                                                 DEFAULT_TELEMETRY_BUFFER_SIZE);
-
-    if (maxBufferedEvents_ == 0) {
-        throw std::invalid_argument("Telemetry buffer size cannot be 0");
-    }
-
-    const std::optional<std::string> exporter_name = getExporterName();
-
-    if (!exporter_name) {
-        return;
-    }
-
+[[nodiscard]] std::unique_ptr<nixlTelemetryExporter>
+nixlTelemetry::makeExporter(const std::string &exporter_name) const {
     auto &plugin_manager = nixlPluginManager::getInstance();
     std::shared_ptr<const nixlTelemetryPluginHandle> plugin_handle =
-        plugin_manager.loadTelemetryPlugin(*exporter_name);
+        plugin_manager.loadTelemetryPlugin(exporter_name);
 
     if (plugin_handle == nullptr) {
-        throw std::runtime_error("Failed to load telemetry plugin: " + *exporter_name);
+        throw std::runtime_error("Failed to load telemetry plugin: " + exporter_name);
     }
 
     const nixlTelemetryExporterInitParams init_params{agentName_, maxBufferedEvents_};
-    exporter_ = plugin_handle->createExporter(init_params);
-    if (!exporter_) {
-        NIXL_ERROR << "Failed to create telemetry exporter: " << *exporter_name;
-        return;
+    auto exporter = plugin_handle->createExporter(init_params);
+    if (!exporter) {
+        throw std::runtime_error("Failed to create telemetry exporter: " + exporter_name);
     }
 
-    events_.reserve(maxBufferedEvents_);
+    NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << exporter_name;
+    return exporter;
+}
 
-    NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << *exporter_name;
-
+void
+nixlTelemetry::startExportTask() {
     const auto run_interval =
         nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
 
-    // Update write task interval and start it
     writeTask_.callback_ = [this]() { return writeEventHelper(); };
     writeTask_.interval_ = run_interval;
     writeTask_.enabled_ = true;
