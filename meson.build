@@ -390,8 +390,14 @@ if cuda_dep.found() and rocm_dep.found()
     message('CUDA and ROCm/HIP are both available; NVIDIA and AMD plugin stacks may be built together when enabled.')
 endif
 
-# Check for etcd-cpp-api - use multiple methods for discovery
-etcd_dep = dependency('etcd-cpp-api', required : false)
+# Debian/Ubuntu libetcd-cpp-apiv3-dev usually installs CMake package etcd-cpp-api
+# but no etcd-cpp-api.pc, so probing pkg-config first always fails there. Try
+# CMake first; fall back to pkg-config for installs that only ship a .pc file.
+# (Meson may still warn about -Wl,--push-state tokens when using CMake; harmless.)
+etcd_dep = dependency('etcd-cpp-api', required : false, method : 'cmake')
+if not etcd_dep.found()
+  etcd_dep = dependency('etcd-cpp-api', required : false, method : 'pkg-config')
+endif
 etcd_inc_path = get_option('etcd_inc_path')
 etcd_lib_path = get_option('etcd_lib_path')
 if not etcd_dep.found() and etcd_lib_path != ''
