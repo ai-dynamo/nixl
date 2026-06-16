@@ -2327,8 +2327,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
     }
 }
 
-void combine(cudaDataType_t type,
-             void* combined_x,
+void combine(void* combined_x,
              float* combined_topk_weights,
              const bool* is_combined_token_in_rank,
              const void* x,
@@ -2421,7 +2420,6 @@ void combine(cudaDataType_t type,
                    std::max(num_max_rdma_chunked_send_tokens, num_max_nvl_chunked_send_tokens));
     EP_HOST_ASSERT(num_max_nvl_chunked_recv_tokens / num_rdma_ranks - num_warps_per_forwarder >= num_max_nvl_chunked_send_tokens);
     EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens >= num_warps_per_forwarder);
-    EP_HOST_ASSERT(type == CUDA_R_16BF);
 
     SETUP_LAUNCH_CONFIG(num_channels * 2, (num_forwarder_warps + 1) * 32, stream);
     SWITCH_RDMA_RANKS(COMBINE_LAUNCH_CASE);

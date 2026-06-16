@@ -23,11 +23,7 @@
 
 #include "cuda_stream.hpp"
 
-#ifndef USE_CUDA
-#define USE_CUDA
 #include <torch/csrc/inductor/aoti_torch/c/shim.h>
-#undef USE_CUDA
-#endif
 #include <torch/headeronly/util/shim_utils.h>
 
 namespace nixl_ep::cuda_stream {
