@@ -33,7 +33,8 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 ## Features
 
 - **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
-- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA for storage operations
+- **Storage Backend Support**: GDS, GDS_MT, AIS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB,
+  GUSLI, INFINIA for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
   - **Many-to-one**: Multiple initiators to single target
@@ -507,7 +508,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --config_file PATH         # Configuraion file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, AIS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 --etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
@@ -547,7 +548,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --etcd_endpoints URL       # ETCD server URL for coordination (optional for storage backends)
 ```
 
-#### Storage Backend Options (GDS, GDS_MT, POSIX, HF3FS, OBJ, AZURE_BLOB)
+#### Storage Backend Options (GDS, GDS_MT, AIS_MT, POSIX, HF3FS, OBJ, AZURE_BLOB)
 ```
 --filepath PATH            # File path for storage operations
 --num_files NUM            # Number of files used by benchmark (default: 1)
@@ -568,10 +569,15 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --gds_batch_limit NUM      # Batch limit for GDS operations (default: 128)
 ```
 
-**GDS_MT Backend:**
+**GDS_MT / AIS_MT (multi-threaded file backends):**
 ```
---gds_mt_num_threads NUM   # Number of threads used by GDS MT plugin (default: 1)
+--gds_mt_num_threads NUM   # Taskflow worker threads for GDS_MT and AIS_MT (default: 1)
 ```
+
+Both plugins use a `thread_count` init parameter; nixlbench forwards your CLI
+`--gds_mt_num_threads` flag unchanged. Paths start at `src/plugins/cuda_gds/`,
+`src/plugins/rocm_ais/`, `src/utils/file/` (shared engine base, backend glue).
+
 
 **POSIX Backend:**
 ```
@@ -683,7 +689,8 @@ NIXL Benchmark uses an ETCD key-value store for coordination between benchmark w
 
 **ETCD Requirements:**
 - **Required**: Network backends (UCX, GPUNETIO, Mooncake, Libfabric) and multi-node setups
-- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI) running as single instances
+- **Optional**: Storage backends (GDS, GDS_MT, AIS_MT, POSIX, HF3FS, OBJ, GUSLI)
+  running as single instances; ETCD optional unless endpoints are set explicitly
 - **Required**: Storage backends when `--etcd_endpoints` is explicitly specified
 
 **For multi-node benchmarks:**
@@ -750,6 +757,12 @@ $ host2 > sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --back
 ```bash
 # Multi-threaded GDS (no ETCD needed for single instance)
 ./nixlbench --backend GDS_MT --filepath /mnt/storage/testfile --gds_mt_num_threads 8
+```
+
+**AIS_MT (Multi-threaded ROCm Infinity Storage):**
+```bash
+# Requires NIXL built with AIS_MT; use a hipFile-capable filepath (see plugin docs)
+./nixlbench --backend AIS_MT --filepath /mnt/storage/testfile --gds_mt_num_threads 8
 ```
 
 **POSIX Backend:**
