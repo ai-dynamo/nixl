@@ -20,6 +20,13 @@
 #include "common/nixl_log.h"
 
 #include <arpa/inet.h>
+
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 #include <utility>
 
 namespace {
@@ -38,8 +45,56 @@ makePeerArgs(std::string ip, std::uint16_t port, const nixl_opt_args_t *base = n
 
 } // namespace
 
+// pImpl: the registry/mutex state and all logic live here, so the installed
+// nixl_md_manager.h carries only the public API plus a `data` pointer (mirrors
+// nixlAgent/nixlAgentData). nixlMDManager methods forward to the matching
+// method below.
+class nixlMDManagerData {
+public:
+    explicit nixlMDManagerData(nixlAgent &agent) noexcept : agent_(agent) {}
+
+    [[nodiscard]] nixl_status_t
+    registerMDPeer(const std::string &agent_name, const std::string &ip, std::uint16_t port);
+    [[nodiscard]] nixl_status_t
+    unregisterMDPeer(const std::string &agent_name);
+    [[nodiscard]] nixl_status_t
+    sendLocalMD(const std::string &agent_name) const;
+    [[nodiscard]] nixl_status_t
+    sendLocalPartialMD(const std::string &agent_name,
+                       const nixl_reg_dlist_t &descs,
+                       const nixl_opt_args_t *md_extra_params) const;
+    [[nodiscard]] nixl_status_t
+    fetchRemoteMD(const std::string &agent_name) const;
+    [[nodiscard]] nixl_status_t
+    invalidateLocalMD(const std::string &agent_name) const;
+    [[nodiscard]] nixl_status_t
+    checkRemoteMD(const std::string &agent_name, const nixl_xfer_dlist_t &descs) const;
+
+private:
+    // Registry entry for a tracked agent. The registry itself (name -> entry)
+    // is backend-agnostic; the ip/port are P2P-only addressing and are unused
+    // by centralized backends. They belong with the P2P transport long term
+    // (a future P2P backend), not in shared manager state.
+    struct Peer {
+        std::string ip;
+        std::uint16_t port;
+
+        [[nodiscard]] bool
+        operator==(const Peer &other) const noexcept {
+            return ip == other.ip && port == other.port;
+        }
+    };
+
+    [[nodiscard]] bool
+    lookupPeer(const std::string &agent_name, Peer &out) const;
+
+    nixlAgent &agent_;
+    mutable std::mutex mutex_;
+    std::unordered_map<std::string, Peer> peers_;
+};
+
 bool
-nixlMDManager::lookupPeer(const std::string &agent_name, Peer &out) const {
+nixlMDManagerData::lookupPeer(const std::string &agent_name, Peer &out) const {
     const std::lock_guard lock(mutex_);
     auto it = peers_.find(agent_name);
     if (it == peers_.end()) {
@@ -50,9 +105,9 @@ nixlMDManager::lookupPeer(const std::string &agent_name, Peer &out) const {
 }
 
 nixl_status_t
-nixlMDManager::registerMDPeer(const std::string &agent_name,
-                              const std::string &ip,
-                              std::uint16_t port) {
+nixlMDManagerData::registerMDPeer(const std::string &agent_name,
+                                  const std::string &ip,
+                                  std::uint16_t port) {
     if (agent_name.empty() || ip.empty()) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -88,7 +143,7 @@ nixlMDManager::registerMDPeer(const std::string &agent_name,
 }
 
 nixl_status_t
-nixlMDManager::unregisterMDPeer(const std::string &agent_name) {
+nixlMDManagerData::unregisterMDPeer(const std::string &agent_name) {
     Peer peer;
     if (!lookupPeer(agent_name, peer)) {
         NIXL_DEBUG << "[" << agent_.getName() << "] unregisterMDPeer: " << agent_name
@@ -118,7 +173,7 @@ nixlMDManager::unregisterMDPeer(const std::string &agent_name) {
 }
 
 nixl_status_t
-nixlMDManager::sendLocalMD(const std::string &agent_name) const {
+nixlMDManagerData::sendLocalMD(const std::string &agent_name) const {
     Peer peer;
     if (!lookupPeer(agent_name, peer)) {
         return NIXL_ERR_NOT_FOUND;
@@ -134,9 +189,9 @@ nixlMDManager::sendLocalMD(const std::string &agent_name) const {
 }
 
 nixl_status_t
-nixlMDManager::sendLocalPartialMD(const std::string &agent_name,
-                                  const nixl_reg_dlist_t &descs,
-                                  const nixl_opt_args_t *md_extra_params) const {
+nixlMDManagerData::sendLocalPartialMD(const std::string &agent_name,
+                                      const nixl_reg_dlist_t &descs,
+                                      const nixl_opt_args_t *md_extra_params) const {
     Peer peer;
     if (!lookupPeer(agent_name, peer)) {
         return NIXL_ERR_NOT_FOUND;
@@ -147,7 +202,7 @@ nixlMDManager::sendLocalPartialMD(const std::string &agent_name,
 }
 
 nixl_status_t
-nixlMDManager::fetchRemoteMD(const std::string &agent_name) const {
+nixlMDManagerData::fetchRemoteMD(const std::string &agent_name) const {
     Peer peer;
     if (!lookupPeer(agent_name, peer)) {
         return NIXL_ERR_NOT_FOUND;
@@ -158,7 +213,7 @@ nixlMDManager::fetchRemoteMD(const std::string &agent_name) const {
 }
 
 nixl_status_t
-nixlMDManager::invalidateLocalMD(const std::string &agent_name) const {
+nixlMDManagerData::invalidateLocalMD(const std::string &agent_name) const {
     Peer peer;
     if (!lookupPeer(agent_name, peer)) {
         return NIXL_ERR_NOT_FOUND;
@@ -169,8 +224,58 @@ nixlMDManager::invalidateLocalMD(const std::string &agent_name) const {
 }
 
 nixl_status_t
-nixlMDManager::checkRemoteMD(const std::string &agent_name, const nixl_xfer_dlist_t &descs) const {
+nixlMDManagerData::checkRemoteMD(const std::string &agent_name,
+                                 const nixl_xfer_dlist_t &descs) const {
     // TRACE (not DEBUG): callers typically poll this in a loop.
     NIXL_TRACE << "[" << agent_.getName() << "] checkRemoteMD: " << agent_name;
     return agent_.checkRemoteMD(agent_name, descs);
+}
+
+nixlMDManager::nixlMDManager(nixlAgent &agent)
+    : data_(std::make_unique<nixlMDManagerData>(agent)) {}
+
+nixlMDManager::~nixlMDManager() = default;
+
+nixl_status_t
+nixlMDManager::registerMDPeer(const std::string &agent_name,
+                              const std::string &ip,
+                              std::uint16_t port) {
+    return data_->registerMDPeer(agent_name, ip, port);
+}
+
+nixl_status_t
+nixlMDManager::unregisterMDPeer(const std::string &agent_name) {
+    return data_->unregisterMDPeer(agent_name);
+}
+
+nixl_status_t
+nixlMDManager::sendLocalMD(const std::string &agent_name) const {
+    return data_->sendLocalMD(agent_name);
+}
+
+nixl_status_t
+nixlMDManager::sendLocalPartialMD(const std::string &agent_name,
+                                  const nixl_reg_dlist_t &descs,
+                                  const nixl_opt_args_t *md_extra_params) const {
+    return data_->sendLocalPartialMD(agent_name, descs, md_extra_params);
+}
+
+nixl_status_t
+nixlMDManager::fetchRemoteMD(const std::string &agent_name) const {
+    return data_->fetchRemoteMD(agent_name);
+}
+
+nixl_status_t
+nixlMDManager::invalidateLocalMD(const std::string &agent_name) const {
+    return data_->invalidateLocalMD(agent_name);
+}
+
+nixl_status_t
+nixlMDManager::checkRemoteMD(const std::string &agent_name, const nixl_xfer_dlist_t &descs) const {
+    return data_->checkRemoteMD(agent_name, descs);
+}
+
+std::string_view
+nixlMDManager::getBackend() const noexcept {
+    return "P2P";
 }

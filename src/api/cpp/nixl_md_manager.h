@@ -25,12 +25,14 @@
 #include "nixl_types.h"
 
 #include <cstdint>
-#include <mutex>
+#include <memory>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 
 class nixlAgent;
+// All registry/mutex state lives here; defined in nixl_md_manager.cpp so this
+// installed public header stays free of those details (pImpl).
+class nixlMDManagerData;
 
 /**
  * @class nixlMDManager
@@ -45,7 +47,9 @@ class nixlAgent;
  */
 class nixlMDManager {
 public:
-    explicit nixlMDManager(nixlAgent &agent) noexcept : agent_(agent) {}
+    explicit nixlMDManager(nixlAgent &agent);
+
+    ~nixlMDManager();
 
     /**
      * @brief Register a P2P peer's reachable address.
@@ -161,9 +165,7 @@ public:
      * @return std::string_view The active transport name.
      */
     [[nodiscard]] std::string_view
-    getBackend() const noexcept {
-        return "P2P";
-    }
+    getBackend() const noexcept;
 
     nixlMDManager(nixlMDManager &&) = delete;
     nixlMDManager(const nixlMDManager &) = delete;
@@ -173,26 +175,9 @@ public:
     operator=(const nixlMDManager &) = delete;
 
 private:
-    // Registry entry for a tracked agent. The registry itself (name -> entry)
-    // is backend-agnostic; the ip/port are P2P-only addressing and are unused
-    // by centralized backends. They belong with the P2P transport long term
-    // (a future P2P backend), not in shared manager state.
-    struct Peer {
-        std::string ip;
-        std::uint16_t port;
-
-        [[nodiscard]] bool
-        operator==(const Peer &other) const noexcept {
-            return ip == other.ip && port == other.port;
-        }
-    };
-
-    [[nodiscard]] bool
-    lookupPeer(const std::string &agent_name, Peer &out) const;
-
-    nixlAgent &agent_;
-    mutable std::mutex mutex_;
-    std::unordered_map<std::string, Peer> peers_;
+    // Registry/mutex state and all logic live in nixlMDManagerData, defined in
+    // nixl_md_manager.cpp; each method here forwards to it.
+    const std::unique_ptr<nixlMDManagerData> data_;
 };
 
 #endif // NIXL_SRC_API_CPP_NIXL_MD_MANAGER_H
