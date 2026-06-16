@@ -24,7 +24,7 @@ execution-trace tools.
 - **`nixl::trace::Span`** — a move-only handle returned by `beginSpan()`. It forwards
   attributes/dependencies to each backend span and **ends them all on destruction**
   (RAII), so a span covers the scope in which it is declared.
-- **`iTraceBackend` / `iSpanBackend`** — the backend interfaces. NVTX is the first
+- **`TraceBackend` / `SpanBackend`** — the backend interfaces. NVTX is the first
   implementation; future backends implement the same interfaces.
 - **`Kind`** — the operation kind attached to a span. It selects an NVTX color and
   maps 1:1 onto the Chakra `NodeType` vocabulary:
@@ -56,29 +56,20 @@ A backend is active only when it is **both compiled in and requested at runtime*
 
 ### Runtime (which compiled-in backends the caller activates)
 
+Runtime selection is **environment-only**, via the `NIXL_TRACE_BACKENDS` variable.
+There is intentionally **no** `nixlAgentConfig` field for it, so adding tracing does
+not change the public config struct's size/layout (ABI safety).
+
 | Source | Description |
 | ------ | ----------- |
-| `nixlAgentConfig.traceBackends` | Comma-separated list set by the caller, e.g. `"nvtx"` |
-| `NIXL_TRACE_BACKENDS` env var | Overrides the config field when set, e.g. `NIXL_TRACE_BACKENDS=nvtx` |
+| `NIXL_TRACE_BACKENDS` env var | Comma-separated backends to activate, e.g. `NIXL_TRACE_BACKENDS=nvtx` (empty/unset = tracing off) |
 
-If the requested set is empty (or no requested backend is compiled in), the agent
-holds no tracer and call sites take a cheap null-check branch.
-
-```cpp
-// C++
-nixlAgentConfig cfg;
-cfg.traceBackends = "nvtx";
-nixlAgent agent("agent_0", cfg);
-```
-
-```python
-# Python
-cfg = nixl_bindings.nixlAgentConfig()
-cfg.traceBackends = "nvtx"
-```
+The variable is read when the agent is constructed, so set it before creating the
+`nixlAgent`. If the requested set is empty (or no requested backend is compiled in),
+the agent holds no tracer and call sites take a cheap null-check branch.
 
 ```bash
-# Or, without changing code:
+# Activate the NVTX backend (affects every nixlAgent created afterwards):
 export NIXL_TRACE_BACKENDS=nvtx
 ```
 
