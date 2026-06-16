@@ -40,6 +40,37 @@ static void checkCudaError(cudaError_t result, const char *message) {
 }
 #endif
 
+#ifdef HAVE_ROCM
+
+#include <hip/hip_runtime.h>
+
+// Map CUDA calls to HIP equivalents
+#define cudaSetDevice hipSetDevice
+#define cudaMalloc hipMalloc
+#define cudaFree hipFree
+#define cudaMemset hipMemset
+#define cudaMemcpy hipMemcpy
+#define cudaMemcpyDeviceToHost hipMemcpyDeviceToHost
+#define cudaSuccess hipSuccess
+#define cudaGetErrorString hipGetErrorString
+#define cudaGetDeviceCount hipGetDeviceCount
+
+// Map CUDA types to HIP equivalents
+#define cudaError_t hipError_t
+#define CUdevice hipDevice_t
+#define CUcontext hipCtx_t
+
+int gpu_id = 0;
+
+static void checkCudaError(hipError_t result, const char *message) {
+    if (result != hipSuccess) {
+        std::cerr << message << " (Error code: " << result << " - " << hipGetErrorString(result)
+                  << ")" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+}
+#endif
+
 
 class testHndlIterator {
 private:
@@ -147,11 +178,12 @@ std::string memType2Str(nixl_mem_t mem_type)
 }
 
 
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
 
 static int cudaQueryAddr(void *address, bool &is_dev,
                          CUdevice &dev, CUcontext &ctx)
 {
+#ifdef HAVE_CUDA
     CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
     uint32_t is_managed = 0;
 #define NUM_ATTRS 4
@@ -174,6 +206,18 @@ static int cudaQueryAddr(void *address, bool &is_dev,
     is_dev = (mem_type == CU_MEMORYTYPE_DEVICE);
 
     return (CUDA_SUCCESS != result);
+#elif defined(HAVE_ROCM)
+    hipPointerAttribute_t attrs;
+    hipError_t result = hipPointerGetAttributes(&attrs, address);
+
+    if (result == hipSuccess) {
+        is_dev = (attrs.type == hipMemoryTypeDevice);
+        dev = attrs.device;
+        ctx = nullptr; // HIP doesn't expose context in the same way
+        return 0;
+    }
+    return 1;
+#endif
 }
 
 #endif
@@ -185,7 +229,7 @@ void allocateBuffer(nixl_mem_t mem_type, int dev_id, size_t len, void* &addr)
     case DRAM_SEG:
         addr = calloc(1, len);
         break;
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     case VRAM_SEG:{
         bool is_dev;
         CUdevice dev;
@@ -211,7 +255,7 @@ void releaseBuffer(nixl_mem_t mem_type, int dev_id, void* &addr)
     case DRAM_SEG:
         free(addr);
         break;
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     case VRAM_SEG:
         checkCudaError(cudaSetDevice(dev_id), "Failed to set device");
         checkCudaError(cudaFree(addr), "Failed to allocate CUDA buffer 0");
@@ -228,10 +272,13 @@ void doMemset(nixl_mem_t mem_type, int dev_id, void *addr, char byte, size_t len
     case DRAM_SEG:
         memset(addr, byte, len);
         break;
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     case VRAM_SEG:
         checkCudaError(cudaSetDevice(dev_id), "Failed to set device");
         checkCudaError(cudaMemset(addr, byte, len), "Failed to memset");
+#ifdef HAVE_ROCM
+        checkCudaError(hipStreamSynchronize(0), "Failed to synchronize stream");
+#endif
         break;
 #endif
     default:
@@ -245,7 +292,7 @@ void *getValidationPtr(nixl_mem_t mem_type, void *addr, size_t len)
     case DRAM_SEG:
         return addr;
         break;
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     case VRAM_SEG: {
         void *ptr = calloc(len, 1);
         checkCudaError(cudaMemcpy(ptr, addr, len, cudaMemcpyDeviceToHost), "Failed to memcpy");
@@ -263,7 +310,7 @@ void *releaseValidationPtr(nixl_mem_t mem_type, void *addr)
     switch(mem_type) {
     case DRAM_SEG:
         break;
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     case VRAM_SEG:
         free(addr);
         break;
@@ -684,7 +731,7 @@ int main()
         }
     }
 
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     int dev_ids[2] = { 0 , 0 };
     int n_vram_dev;
     if (cudaGetDeviceCount(&n_vram_dev) != cudaSuccess) {
@@ -702,7 +749,7 @@ int main()
     for(int i = 0; i < 2; i++) {
         //Test local memory to local memory transfer
         test_intra_agent_transfer(thread_on[i], ucx[i][0], DRAM_SEG);
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
         if (n_vram_dev > 0) {
             test_intra_agent_transfer(thread_on[i], ucx[i][0], VRAM_SEG);
         }
@@ -717,7 +764,7 @@ int main()
                                   ucx[i][0], DRAM_SEG, 0,
                                   ucx[i][1], DRAM_SEG, 0);
 
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
         if (n_vram_dev > 1) {
             test_inter_agent_transfer(thread_on[i], false,
                                       ucx[i][0], VRAM_SEG, dev_ids[0],

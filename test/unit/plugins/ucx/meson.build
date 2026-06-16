@@ -13,9 +13,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# ROCm detection (mutually exclusive with CUDA; default off)
+rocm_available = false
+use_rocm = get_option('use_rocm')
+if use_rocm
+    rocm_path = get_option('rocm_path')
+    if rocm_path == ''
+        rocm_path = '/opt/rocm'
+    endif
+    if not fs.exists(rocm_path)
+        error('use_rocm=true but ROCm install root not found at ' + rocm_path +
+              '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
+    endif
+    rocm_lib_path = rocm_path + '/lib'
+    rocm_inc_path = rocm_path + '/include'
+    rocm_dep = declare_dependency(
+        link_args : ['-L' + rocm_lib_path, '-lamdhip64', '-lhiprtc'],
+        include_directories : include_directories(rocm_inc_path))
+    if rocm_dep.found()
+        rocm_available = true
+    endif
+endif
+
 ucx_test_dep = [ ucx_dep, nixl_common_deps, ucx_backend_interface]
 
-if cuda_dep.found()
+if rocm_available
+    ucx_test_dep += [ rocm_dep ]
+    cpp_args = ['-DHAVE_ROCM', '-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations']
+elif cuda_dep.found()
     ucx_test_dep += [ cuda_dep ]
     cpp_args = '-DHAVE_CUDA'
 else
@@ -47,12 +72,12 @@ if get_option('buildtype') != 'release'
                include_directories: ucx_test_include_directories,
                install: true)
 
-    if cuda_dep.found()
+    if cuda_dep.found() or rocm_available
         ucx_worker_cuda_bin = executable('ucx_worker_test_cuda',
                        'ucx_worker_test.cpp',
                        dependencies: ucx_test_dep,
                        include_directories: ucx_test_include_directories,
-                       cpp_args : '-DUSE_VRAM',
+                       cpp_args : ['-DUSE_VRAM'] + cpp_args,
                        install: true)
     endif
 

@@ -27,6 +27,7 @@
 
 #ifdef USE_VRAM
 
+#ifdef HAVE_CUDA
 #include <cuda.h>
 #include <cuda_runtime.h>
 
@@ -40,6 +41,34 @@ checkCudaError(cudaError_t result, const char *message) {
         exit(EXIT_FAILURE);
     }
 }
+#endif
+
+#ifdef HAVE_ROCM
+#include <hip/hip_runtime.h>
+
+// Map CUDA calls to HIP equivalents
+#define cudaSetDevice hipSetDevice
+#define cudaMalloc hipMalloc
+#define cudaFree hipFree
+#define cudaMemset hipMemset
+#define cudaMemcpy hipMemcpy
+#define cudaMemcpyDeviceToHost hipMemcpyDeviceToHost
+#define cudaSuccess hipSuccess
+#define cudaGetErrorString hipGetErrorString
+#define cudaError_t hipError_t
+
+int gpu_id = 0;
+
+static void
+checkCudaError(hipError_t result, const char *message) {
+    if (result != hipSuccess) {
+        std::cerr << message << " (Error code: " << result << " - " << hipGetErrorString(result)
+                  << ")" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+}
+#endif
+
 #endif
 
 
@@ -95,8 +124,8 @@ main() {
 
 #ifdef USE_VRAM
     checkCudaError(cudaSetDevice(gpu_id), "Failed to set device");
-    checkCudaError(cudaMalloc(&buffer[0], buf_size), "Failed to allocate CUDA buffer 0");
-    checkCudaError(cudaMalloc(&buffer[1], buf_size), "Failed to allocate CUDA buffer 1");
+    checkCudaError(cudaMalloc(&buffer[0], buf_size), "Failed to allocate GPU buffer 0");
+    checkCudaError(cudaMalloc(&buffer[1], buf_size), "Failed to allocate GPU buffer 1");
     nixl_mem_type = VRAM_SEG;
 #else
     buffer[0] = (uint8_t *)calloc(1, buf_size);
@@ -127,6 +156,9 @@ main() {
 #ifdef USE_VRAM
     checkCudaError(cudaMemset(buffer[1], 0xbb, buf_size), "Failed to memset");
     checkCudaError(cudaMemset(buffer[0], 0xda, buf_size), "Failed to memset");
+#ifdef HAVE_ROCM
+    checkCudaError(hipStreamSynchronize(0), "Failed to synchronize stream");
+#endif
 #else
     memset(buffer[1], 0xbb, buf_size);
     memset(buffer[0], 0xda, buf_size);
@@ -163,6 +195,9 @@ main() {
     checkCudaError(cudaMemset(buffer[1], 0xbb, buf_size / 3), "Failed to memset");
     checkCudaError(cudaMemset(buffer[1] + buf_size / 3, 0xda, buf_size - buf_size / 3),
                    "Failed to memset");
+#ifdef HAVE_ROCM
+    checkCudaError(hipStreamSynchronize(0), "Failed to synchronize stream");
+#endif
 #else
     memset(buffer[0], 0xbb, buf_size);
     memset(buffer[1], 0xbb, buf_size / 3);
@@ -199,8 +234,8 @@ main() {
 
 
 #ifdef USE_VRAM
-    checkCudaError(cudaFree(buffer[0]), "Failed to allocate CUDA buffer 0");
-    checkCudaError(cudaFree(buffer[1]), "Failed to allocate CUDA buffer 0");
+    checkCudaError(cudaFree(buffer[0]), "Failed to free GPU buffer 0");
+    checkCudaError(cudaFree(buffer[1]), "Failed to free GPU buffer 1");
 #else
     free(buffer[0]);
     free(buffer[1]);
