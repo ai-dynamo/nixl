@@ -144,12 +144,9 @@ getExporterName() {
         return defaultTelemetryPlugin;
     }
 
-    // Telemetry was explicitly requested but no output sink is configured. Fall
-    // back to the collect-only NOP sink so in-process consumers such as
-    // getXferTelemetry() keep working; nothing is written out.
-    NIXL_INFO << telemetryDirVar << " is not set and no exporter was specified; collecting "
-              << "in-process via " << collectOnlyTelemetryPlugin
-              << " so get_xfer_telemetry() works";
+    // No output sink configured; collect in-process via the NOP sink.
+    NIXL_INFO << "No telemetry sink configured; using in-process telemetry collection via "
+              << collectOnlyTelemetryPlugin;
     return collectOnlyTelemetryPlugin;
 }
 

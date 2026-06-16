@@ -636,11 +636,9 @@ TEST_P(TestTransferTelemetry, GetXferTelemetryAPI) {
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryCaptureNoSink) {
-    // Regression (#1716 / NIX-1361): the vLLM scenario -- telemetry requested
-    // purely through the agent config (capture_telemetry=true), with no
-    // NIXL_TELEMETRY_ENABLE and no sink (NIXL_TELEMETRY_DIR/EXPORTER). Telemetry
-    // must collect in-process via the NOP fallback so the in-process consumer
-    // getXferTelemetry() succeeds.
+    // Telemetry requested only via capture_telemetry=true (no
+    // NIXL_TELEMETRY_ENABLE, no sink): the in-process NOP fallback keeps
+    // getXferTelemetry() working.
     runTelemetryTransferTest(1024, NIXL_SUCCESS, true);
 }
 

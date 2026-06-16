@@ -139,15 +139,9 @@ TEST_F(telemetryTest, NonexistentExporterThrows) {
 }
 
 TEST_F(telemetryTest, CreateFallsBackToNopWithoutSink) {
-    // Regression (#1716 / NIX-1361): when telemetry is explicitly requested
-    // (NIXL_TELEMETRY_ENABLE=y, set by SetUp) but no sink is configured (no
-    // NIXL_TELEMETRY_DIR / NIXL_TELEMETRY_EXPORTER), create() must still return
-    // an active instance that collects in-process so getXferTelemetry() works.
-    // It falls back to the collect-only NOP exporter rather than disabling
-    // telemetry (the in-process consumer that broke vLLM).
     envHelper_.popVar(); // drop NIXL_TELEMETRY_DIR set by SetUp -> no sink
-    // Neutralize any inherited NIXL_TELEMETRY_EXPORTER (empty is ignored by
-    // getExporterName) so the no-sink NOP path is exercised deterministically.
+    // Neutralize any inherited NIXL_TELEMETRY_EXPORTER (empty is ignored) so the
+    // sinkless NOP path is exercised deterministically.
     envHelper_.addVar(TELEMETRY_EXPORTER_VAR, "");
 
     auto telemetry = nixlTelemetry::create(testFile_);
