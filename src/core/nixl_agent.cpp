@@ -1163,7 +1163,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     if (data->telemetry_) {
-        NIXL_DEBUG << req_hndl->initiatorDescs.to_string(true);
+        // NIXL_DEBUG << req_hndl->initiatorDescs.to_string(true); TODO: Re-enable!
 
         if (req_hndl->status < 0) {
             data->addErrorTelemetry(req_hndl->status);
@@ -1261,7 +1261,7 @@ nixlAgent::createTagXferReq(const nixl_xfer_op_t operation,
         opt_args.customParam = extra_params->customParam;
     }
 
-    if (data->telemetryEnabled) {
+    if (data->telemetry_) {
         handle->telemetry.totalBytes = total_bytes;
         handle->telemetry.descCount = handle->initiatorDescs.descCount();
     }
