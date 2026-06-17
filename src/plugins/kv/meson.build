@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Shared KV headers (kv_engine, kv_engine_impl, kv_store) live in kv/.
+# Shared KV backend interfaces live in kv/.
 # REDIS plugin sources are entirely under kv/redis/.
 
 if enabled_plugins.get('REDIS')

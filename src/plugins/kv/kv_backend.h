@@ -15,40 +15,70 @@
  * limitations under the License.
  */
 
-/**
- * @file kv_engine.h
- * @brief Shared thin wrapper base class for KV-style NIXL backend engines.
- *
- * nixlKVEngine implements nixlBackendEngine and forwards all data-plane calls
- * to a nixlKVEngineImpl instance supplied by each plugin.
- *
- * Plugin authors subclass nixlKVEngine (or use it directly with a factory) and
- * register the resulting engine with nixlBackendPluginCreator.
- */
+#ifndef KV_BACKEND_H
+#define KV_BACKEND_H
 
-#ifndef NIXL_SRC_PLUGINS_KV_KV_ENGINE_H
-#define NIXL_SRC_PLUGINS_KV_KV_ENGINE_H
-
-#include "kv_engine_impl.h"
+#include "backend/backend_engine.h"
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
 
-/**
- * @class nixlKVEngine
- * @brief Thin nixlBackendEngine wrapper that delegates to nixlKVEngineImpl.
- *
- * Common KV backend capabilities (local-only, no notifications) are declared here
- * so individual plugins only need to supply a concrete nixlKVEngineImpl.
- */
+class iKVStore {
+public:
+    virtual ~iKVStore() = default;
+
+    virtual nixl_status_t
+    put(std::string_view key, const uint8_t *data, size_t len) = 0;
+
+    virtual nixl_status_t
+    get(std::string_view key, uint8_t *buffer, size_t len, size_t &bytes_read) const = 0;
+
+    virtual bool
+    exists(std::string_view key) const = 0;
+};
+
+class nixlKVEngineImpl {
+public:
+    virtual ~nixlKVEngineImpl() = default;
+
+    virtual nixl_mem_list_t
+    getSupportedMems() const = 0;
+
+    virtual nixl_status_t
+    registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) = 0;
+    virtual nixl_status_t
+    deregisterMem(nixlBackendMD *meta) = 0;
+    virtual nixl_status_t
+    queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const = 0;
+    virtual nixl_status_t
+    prepXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             const std::string &local_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args) const = 0;
+    virtual nixl_status_t
+    postXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             const std::string &local_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args) const = 0;
+    virtual nixl_status_t
+    checkXfer(nixlBackendReqH *handle) const = 0;
+    virtual nixl_status_t
+    releaseReqH(nixlBackendReqH *handle) const = 0;
+};
+
 class nixlKVEngine : public nixlBackendEngine {
 public:
-    /**
-     * @brief Construct a KV engine with a plugin-specific implementation.
-     * @param init_params NIXL initialization parameters.
-     * @param impl Concrete nixlKVEngineImpl (ownership transferred).
-     */
     nixlKVEngine(const nixlBackendInitParams *init_params, std::unique_ptr<nixlKVEngineImpl> impl);
-
-    ~nixlKVEngine() override;
+    virtual ~nixlKVEngine();
 
     bool
     supportsRemote() const override {
@@ -92,12 +122,6 @@ public:
         return NIXL_SUCCESS;
     }
 
-    /**
-     * @brief Passes local metadata through unchanged.
-     *
-     * Local-only KV backends do not transform metadata. input must be the
-     * nixlBackendMD* returned by registerMem().
-     */
     nixl_status_t
     loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) override {
         if (input == nullptr) {
@@ -126,7 +150,6 @@ public:
 
     nixl_status_t
     checkXfer(nixlBackendReqH *handle) const override;
-
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
@@ -134,4 +157,4 @@ private:
     std::unique_ptr<nixlKVEngineImpl> impl_;
 };
 
-#endif // NIXL_SRC_PLUGINS_KV_KV_ENGINE_H
+#endif // KV_BACKEND_H
