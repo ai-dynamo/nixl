@@ -15,29 +15,26 @@
  * limitations under the License.
  */
 
-/**
- * @file redis_plugin.cpp
- * @brief Registers the REDIS backend with NIXL (static or shared plugin).
- */
-
 #include "nixl_types.h"
-#include "redis_engine.h"
+#include "redis/redis_engine.h"
 #include "backend/backend_plugin.h"
 #include "common/nixl_log.h"
 
 using redis_plugin_t = nixlBackendPluginCreator<nixlRedisKVEngine>;
 
+static const nixl_mem_list_t supported_segments = {DRAM_SEG, OBJ_SEG};
+
 #ifdef STATIC_PLUGIN_REDIS
 nixlBackendPlugin *
 createStaticREDISPlugin() {
     return redis_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "REDIS", "0.1.0", {}, {DRAM_SEG, OBJ_SEG});
+        NIXL_PLUGIN_API_VERSION, "REDIS", "0.1.0", {}, supported_segments);
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return redis_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "REDIS", "0.1.0", {}, {DRAM_SEG, OBJ_SEG});
+        NIXL_PLUGIN_API_VERSION, "REDIS", "0.1.0", {}, supported_segments);
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
