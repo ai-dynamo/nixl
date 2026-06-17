@@ -77,7 +77,6 @@ public:
 
 class nixlKVEngine : public nixlBackendEngine {
 public:
-    nixlKVEngine(const nixlBackendInitParams *init_params, std::unique_ptr<nixlKVEngineImpl> impl);
     virtual ~nixlKVEngine();
 
     bool
@@ -152,6 +151,9 @@ public:
     checkXfer(nixlBackendReqH *handle) const override;
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
+
+protected:
+    nixlKVEngine(const nixlBackendInitParams *init_params, std::unique_ptr<nixlKVEngineImpl> impl);
 
 private:
     std::unique_ptr<nixlKVEngineImpl> impl_;
