@@ -17,6 +17,8 @@
 #include "gusli_backend.h"
 #include "common/backend.h"
 #include "common/nixl_log.h"
+#include "common/util.h"
+
 #include <absl/strings/str_format.h>
 
 #define __LOG_ERR(format, ...)                                                                    \
@@ -77,9 +79,12 @@ public:
 };
 
 nixl_status_t
-verifyRequestParams(const nixl_xfer_op_t &op,
+verifyRequestParams(const nixl_xfer_op_t op,
                     const nixl_meta_dlist_t &local,
                     const nixl_meta_dlist_t &remote) {
+
+    NIXL_ASSERT(nixl::isReadWrite(op));
+
     if (local.getType() != DRAM_SEG)
         __LOG_RETERR(
             NIXL_ERR_INVALID_PARAM, "Local memory type must be DRAM_SEG, got %d", local.getType());

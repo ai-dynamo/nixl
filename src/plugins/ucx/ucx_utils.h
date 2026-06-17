@@ -30,6 +30,7 @@ extern "C" {
 #include "ucx_enums.h"
 
 #include "absl/strings/numbers.h"
+#include "backend/backend_aux.h"
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
 
@@ -73,7 +74,7 @@ public:
     nixlUcxEp &
     operator=(const nixlUcxEp &) = delete;
 
-    using am_deleter_t = std::function<void(void *request, void *buffer)>;
+    using am_cleanup_t = std::function<void(void *request, void *buffer)>;
 
     /* Active message handling */
     nixl_status_t
@@ -84,7 +85,7 @@ public:
            size_t len,
            uint32_t flags,
            nixlUcxReq *req = nullptr,
-           const am_deleter_t &deleter = nullptr);
+           const am_cleanup_t &cleanup = nullptr);
 
     /* Data access */
     [[nodiscard]] nixl_status_t
@@ -204,7 +205,10 @@ public:
 
     /* Active message handling */
     int
-    regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_t cb, void *arg);
+    regAmCallback(nixl::ucx::am_cb_op_t msg_id,
+                  ucp_am_recv_callback_t cb,
+                  void *arg,
+                  unsigned flags = 0);
 
     /* Data access */
     unsigned
@@ -252,5 +256,18 @@ ucx_err_mode_to_string(ucp_err_handling_mode_t t);
 
 [[nodiscard]] ucp_err_handling_mode_t
 ucx_err_mode_from_string(std::string_view s);
+
+class nixlUcxConnection : public nixlBackendConnMD {
+private:
+    std::vector<std::unique_ptr<nixlUcxEp>> eps;
+
+public:
+    [[nodiscard]] const std::unique_ptr<nixlUcxEp> &
+    getEp(size_t ep_id) const noexcept {
+        return eps[ep_id];
+    }
+
+    friend class nixlUcxEngine;
+};
 
 #endif

@@ -263,6 +263,8 @@ class nixl_agent:
         self.nixl_ops = {
             "WRITE": nixlBind.NIXL_WRITE,
             "READ": nixlBind.NIXL_READ,
+            "SEND": nixlBind.NIXL_SEND,
+            "RECV": nixlBind.NIXL_RECV,
         }
 
         logger.info("Initialized NIXL agent: %s", agent_name)
@@ -617,12 +619,48 @@ class nixl_agent:
         return nixl_xfer_handle(self.agent, handle)
 
     """
+    @brief  Initialize a tagged send or receive operation. This creates a transfer request
+            from a local descriptor list, a tag, and the remote agent name. The peer should
+            create the matching request with the same tag and the opposite operation.
+
+    @param operation Type of operation ("SEND" or "RECV").
+    @param local_descs Local transfer descriptors. For SEND these are the source buffers;
+           for RECV these are the destination buffers.
+    @param tag Matching tag for the send/recv pair.
+           tag should be bytes, but will work with str too.
+    @param remote_agent Name of the remote agent.
+    @param backends Optional list of backend names to limit which backends NIXL can use.
+    @return Opaque handle for posting/checking transfer.
+            The handle can be released by calling release_xfer_handle from agent, or release() method on itself.
+    """
+
+    def initialize_tag_xfer(
+        self,
+        operation: str,
+        local_descs: nixlBind.nixlXferDList,
+        tag: bytes,
+        remote_agent: str,
+        backends: list[str] = [],
+    ) -> nixl_xfer_handle:
+        op = self.nixl_ops[operation]
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+
+        handle = self.agent.createTagXferReq(
+            op, local_descs, tag, remote_agent, handle_list
+        )
+
+        return nixl_xfer_handle(self.agent, handle)
+
+    """
     @brief  Initiate a data transfer operation.
             After calling this, the transfer state can be checked asynchronously till completion.
             In case of small transfers that are completed as part of the call itself, return value
             will be "DONE", otherwise "PROC" or "ERR".
 
-    @param handle Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.
+    @param handle Handle to the transfer operation, from make_prepped_xfer, initialize_xfer,
+           or initialize_tag_xfer.
     @param notif_msg Optional notification message can be specified or updated per transfer call.
            notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
     @return Status of the transfer operation ("DONE", "PROC", or "ERR").
@@ -640,7 +678,8 @@ class nixl_agent:
     """
     @brief Check the state of a transfer operation.
 
-    @param handle Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.
+    @param handle Handle to the transfer operation, from make_prepped_xfer, initialize_xfer,
+           or initialize_tag_xfer.
     @return Status of the transfer operation ("DONE", "PROC", or "ERR").
     """
 
@@ -660,7 +699,8 @@ class nixl_agent:
            for the request, and integer descCount representing number of descriptors involved
            (for example if there was some merging of descriptors).
 
-    @param handle Handle to the transfer operation, from make_prepped_xfer or initialize_xfer.
+    @param handle Handle to the transfer operation, from make_prepped_xfer, initialize_xfer,
+           or initialize_tag_xfer.
     @return nixlXferTelemetry object
     """
 

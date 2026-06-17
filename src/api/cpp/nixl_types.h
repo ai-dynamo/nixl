@@ -14,8 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _NIXL_TYPES_H
-#define _NIXL_TYPES_H
+#ifndef NIXL_SRC_API_CPP_NIXL_TYPES_H
+#define NIXL_SRC_API_CPP_NIXL_TYPES_H
+
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -44,7 +45,7 @@ enum nixl_mem_t {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG};
  * @enum   nixl_xfer_op_t
  * @brief  An enumeration of different transfer types for NIXL
  */
-enum nixl_xfer_op_t {NIXL_READ, NIXL_WRITE};
+enum nixl_xfer_op_t { NIXL_READ, NIXL_WRITE, NIXL_SEND, NIXL_RECV };
 
 /**
  * @enum   nixl_status_t

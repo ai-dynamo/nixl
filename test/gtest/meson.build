@@ -89,7 +89,8 @@ gtest_sources = [
     'query_mem.cpp',
     'telemetry_test.cpp',
     'telemetry_prometheus_test.cpp',
-    'configuration.cpp'
+    'configuration.cpp',
+    'ucx_send_recv.cpp'
     ]
 
 if ucx_gpu_device_api_available
