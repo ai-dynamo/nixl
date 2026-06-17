@@ -539,7 +539,9 @@ class Buffer:
         return self.low_latency_combine(*args, **kwargs)
 
     @staticmethod
-    def _tensors_for_event_overlap(*tensors: Optional[torch.Tensor]) -> Tuple[torch.Tensor, ...]:
+    def _tensors_for_event_overlap(
+        *tensors: Optional[torch.Tensor]
+    ) -> Tuple[torch.Tensor, ...]:
         return tuple(t for t in tensors if t is not None)
 
     # noinspection PyTypeChecker

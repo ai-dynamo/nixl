@@ -19,11 +19,10 @@
  * limitations under the License.
  */
 
-#pragma once
-
 #include "cuda_stream.hpp"
 
 #include <torch/csrc/inductor/aoti_torch/c/shim.h>
+#include <torch/csrc/stable/c/shim.h>
 #include <torch/headeronly/util/shim_utils.h>
 
 namespace nixl_ep::cuda_stream {
@@ -37,7 +36,7 @@ getFromPool() {
 [[nodiscard]] cudaStream_t
 getCurrent() {
     void *stream;
-    TORCH_ERROR_CODE_CHECK(torch_get_current_cuda_stream(-1, &stream));
+    TORCH_ERROR_CODE_CHECK(aoti_torch_get_current_cuda_stream(-1, &stream));
     return static_cast<cudaStream_t>(stream);
 }
 
