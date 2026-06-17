@@ -47,9 +47,10 @@ env:
   WHL_PYTHON_VERSIONS: "3.10,3.11,3.12,3.13,3.14"
   IMAGE_BASE: ${{ vars.NIXL_ECR_IMAGE }}
   # Release flag, normalized to a plain "true"/"false" string usable in shells.
-  # TEMPORARY (remove before merge): the 'ci-release-test' label forces the release
-  # path — wheel + crate PUBLISH to Artifactory — to run on a labeled PR.
-  RELEASE_BUILD: ${{ github.event.inputs.release_build == true || github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+  # True on: workflow_dispatch release_build input, an RC/release tag push
+  # (refs/tags/v*), or — TEMPORARY (remove before merge) — a PR carrying the
+  # 'ci-release-test' label (forces the wheel/crate PUBLISH path on a labeled PR).
+  RELEASE_BUILD: ${{ github.event.inputs.release_build == true || github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
 
 jobs:
   # ----------------------------------------------------------------------------
@@ -184,7 +185,7 @@ jobs:
   # ----------------------------------------------------------------------------
   scan-wheels:
     needs: build
-    if: ${{ github.event.inputs.security_scan == 'true' || github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    if: ${{ github.event.inputs.security_scan == 'true' || github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     env:
       PACKAGE_LICENSE: "Apache-2.0"
@@ -365,7 +366,7 @@ jobs:
   # ----------------------------------------------------------------------------
   upload-x86-wheels:
     needs: build
-    if: ${{ github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    if: ${{ github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     timeout-minutes: 30
     env:
@@ -403,7 +404,7 @@ jobs:
 
   upload-arm-wheels:
     needs: build
-    if: ${{ github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    if: ${{ github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
     # amd runner: the jfrog-cli-v2-jf image is amd64-only. This job only uploads the
     # already-built arm wheel files (downloaded as artifacts), so the host arch is irrelevant.
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
@@ -446,7 +447,7 @@ jobs:
     # GitLab marked this job `when: manual` on release builds. The `release`
     # environment provides the equivalent manual approval gate (configure
     # required reviewers under Settings -> Environments -> release).
-    if: ${{ github.event.inputs.release_build == 'true' || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    if: ${{ github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     environment: release
     env:
@@ -469,3 +470,69 @@ jobs:
               --token 'Bearer $ARTIFACTORY_CARGO_TOKEN' \
               --index 'sparse+${ARTIFACTORY_URL}/api/cargo/sw-dynamo-nixl-cargo-local/index/' \
               --no-verify --allow-dirty"
+
+  # ----------------------------------------------------------------------------
+  # trigger-gitlab-nspect: on an RC/release tag (refs/tags/v<ver>-rcN), kick the
+  # nixl-ci GitLab pipeline to run nSpect registration + security scans against
+  # the wheels just uploaded to Artifactory. The nSpect tooling/credentials live
+  # GitLab-side, so this is a thin trigger (modeled on dynamo's
+  # trigger-gitlab-release-pipeline). The triggered pipeline reads PIPELINE_TYPE=rc
+  # and runs ONLY its nspect + scan jobs (the build stays here on GitHub).
+  # Required secrets (Settings -> Secrets -> Actions / 'release' environment):
+  #   GITLAB_NIXL_PIPELINE_URL   - nixl-ci pipeline trigger API URL
+  #                                (…/api/v4/projects/<id>/trigger/pipeline)
+  #   GITLAB_NIXL_TRIGGER_TOKEN  - the pipeline trigger token for that project
+  # ----------------------------------------------------------------------------
+  trigger-gitlab-nspect:
+    needs: [upload-x86-wheels, upload-arm-wheels]
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    environment: release
+    env:
+      GITLAB_TRIGGER_URL: ${{ secrets.GITLAB_NIXL_PIPELINE_URL }}
+      GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_NIXL_TRIGGER_TOKEN }}
+      NSPECT_ID: NSPECT-WO64-8O3P
+    steps:
+      - name: Trigger nixl-ci nSpect + scan pipeline
+        run: |
+          set -euo pipefail
+          # Tag is v<base>-rc<N>, e.g. v1.3.0-rc1. Derive base version + rc number.
+          RC_TAG="${GITHUB_REF_NAME}"
+          VER="${RC_TAG#v}"                 # 1.3.0-rc1
+          BASE_VERSION="${VER%%-rc*}"       # 1.3.0
+          RC_NUMBER="${VER##*-rc}"          # 1  (== VER if no -rc suffix)
+          [ "${RC_NUMBER}" = "${VER}" ] && RC_NUMBER=""
+          # Trigger token via @file so it never lands in process listings / set -x.
+          TOKEN_FILE=$(mktemp); trap 'rm -f "${TOKEN_FILE}"' EXIT; chmod 600 "${TOKEN_FILE}"
+          printf '%s' "${GITLAB_TRIGGER_TOKEN}" > "${TOKEN_FILE}"
+          RESPONSE=$(curl -fsSL --request POST \
+            --form "token=<${TOKEN_FILE}" \
+            --form "ref=main" \
+            --form "variables[PIPELINE_TYPE]=rc" \
+            --form "variables[DRY_RUN]=false" \
+            --form "variables[NSPECT_ID]=${NSPECT_ID}" \
+            --form "variables[NSPECT_RELEASE_VERSION]=${BASE_VERSION}" \
+            --form "variables[NSPECT_REGISTERED]=false" \
+            --form "variables[WHEEL_VERSION]=${BASE_VERSION}" \
+            --form "variables[RC_TAG]=${RC_TAG}" \
+            --form "variables[RC_NUMBER]=${RC_NUMBER}" \
+            --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
+            --form "variables[COMMIT_SHA]=${GITHUB_SHA}" \
+            --form "variables[ENABLE_WHEEL_SCAN]=true" \
+            "${GITLAB_TRIGGER_URL}")
+          PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
+          PIPELINE_URL=$(echo "${RESPONSE}" | jq -r '.web_url // empty')
+          if [ -z "${PIPELINE_ID}" ]; then
+            echo "::error::Failed to trigger nixl-ci GitLab pipeline"
+            echo "Response: ${RESPONSE}"
+            exit 1
+          fi
+          echo "Triggered nixl-ci nSpect pipeline ${PIPELINE_ID}: ${PIPELINE_URL}"
+          {
+            echo "## nixl-ci nSpect + scan pipeline"
+            echo "| Pipeline | ${PIPELINE_URL:-$PIPELINE_ID} |"
+            echo "|--|--|"
+            echo "| nSpect ID | ${NSPECT_ID} |"
+            echo "| Version | ${BASE_VERSION} (rc${RC_NUMBER}) |"
+            echo "| Commit | ${GITHUB_SHA} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
