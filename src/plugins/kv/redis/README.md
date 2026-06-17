@@ -9,9 +9,7 @@ All REDIS plugin code lives in `src/plugins/kv/redis/`. Shared KV abstractions s
 
 ```
 kv/                           # shared KV layer (PR1 interface)
-  kv_engine.h/.cpp            nixlKVEngine
-  kv_engine_impl.h            nixlKVEngineImpl
-  kv_store.h                  iKVStore (sync; INMEMKV only)
+  kv_backend.h/.cpp           nixlKVEngine, nixlKVEngineImpl, iKVStore
   meson.build                 delegates to redis/ when REDIS enabled
 
 kv/redis/                     # REDIS plugin (this directory)
@@ -28,8 +26,8 @@ kv/redis/                     # REDIS plugin (this directory)
 
 | Layer | REDIS plugin |
 |-------|--------------|
-| Shared KV wrapper | `nixlKVEngine` (`../kv_engine.h`) |
-| Shared KV impl base | `nixlKVEngineImpl` (`../kv_engine_impl.h`) |
+| Shared KV wrapper | `nixlKVEngine` (`../kv_backend.h`) |
+| Shared KV impl base | `nixlKVEngineImpl` (`../kv_backend.h`) |
 | Plugin entry | `nixlRedisKVEngine` (`redis_engine.h`) |
 | Async storage interface | `iRedisClient` (`redis_engine.h`) |
 | Client implementation | `hiredisAsyncClient` (`client.h`) |
@@ -37,7 +35,7 @@ kv/redis/                     # REDIS plugin (this directory)
 
 ## iKVStore vs iRedisClient
 
-| | `iKVStore` (`kv_store.h`) | `iRedisClient` (`redis_engine.h`) |
+| | `iKVStore` (`../kv_backend.h`) | `iRedisClient` (`redis_engine.h`) |
 |--|---------------------------|-----------------------------------|
 | Used by | INMEMKV example plugin | REDIS plugin |
 | API style | Sync `put` / `get` / `exists` | Async SET/GET + sync EXISTS (separate connections) |
