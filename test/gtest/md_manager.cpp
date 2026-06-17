@@ -17,9 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
-#include <cstdlib>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -55,34 +53,6 @@ private:
 
 namespace {
 
-    // RAII: snapshot a process env var, unset it, restore on scope exit.
-    // Needed because ScopedEnv only supports the set-with-value flow.
-    class ScopedUnsetEnv {
-    public:
-        explicit ScopedUnsetEnv(const char *name) : name_(name) {
-            if (const char *p = ::getenv(name_)) {
-                prev_ = std::string(p);
-            }
-            ::unsetenv(name_);
-        }
-
-        ~ScopedUnsetEnv() {
-            if (prev_) {
-                ::setenv(name_, prev_->c_str(), 1);
-            } else {
-                ::unsetenv(name_);
-            }
-        }
-
-        ScopedUnsetEnv(const ScopedUnsetEnv &) = delete;
-        ScopedUnsetEnv &
-        operator=(const ScopedUnsetEnv &) = delete;
-
-    private:
-        const char *name_;
-        std::optional<std::string> prev_;
-    };
-
     // Bounded polling around checkRemoteMD: avoids fixed sleeps that make
     // async assertions slow and timing-sensitive. Returns the last observed
     // status (== `expected` on success, or the most recent value on timeout).
@@ -104,19 +74,6 @@ namespace {
 
 } // namespace
 
-// Env-var gate must default to off. Snapshot/restore the var so the test
-// is independent of execution order (e.g. when gtest_shuffle is enabled).
-TEST(MDManagerGate, DisabledWithoutEnvVar) {
-    const ScopedUnsetEnv guard("NIXL_MD_MANAGER");
-
-    nixlAgentConfig cfg;
-    nixlAgent agent("gate_agent", cfg);
-
-    nixlMDManager *mdm = reinterpret_cast<nixlMDManager *>(0xdeadbeef);
-    ASSERT_EQ(agent.getMDManager(mdm), NIXL_ERR_NOT_SUPPORTED);
-    ASSERT_EQ(mdm, nullptr);
-}
-
 class MDManagerFixture : public testing::Test {
 protected:
     struct AgentContext {
@@ -127,6 +84,9 @@ protected:
         nixlBackendH *backend_handle = nullptr;
         std::vector<MemBuffer> buffers;
         std::unique_ptr<nixlAgent> agent;
+        // Declared after `agent` so it is destroyed first: the manager holds a
+        // reference to the agent and must not outlive it.
+        std::unique_ptr<nixlMDManager> mdmOwner;
 
         void
         createBackend() {
@@ -151,8 +111,6 @@ protected:
 
     void
     SetUp() override {
-        env_.addVar("NIXL_MD_MANAGER", "1");
-
         for (int i = 0; i < AGENT_COUNT_; i++) {
             AgentContext ctx;
             ctx.port = PortAllocator::next_tcp_port();
@@ -164,8 +122,8 @@ protected:
             cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
             ctx.agent = std::make_unique<nixlAgent>(ctx.name, cfg);
 
-            ASSERT_EQ(ctx.agent->getMDManager(ctx.mdm), NIXL_SUCCESS);
-            ASSERT_NE(ctx.mdm, nullptr);
+            ctx.mdmOwner = std::make_unique<nixlMDManager>(*ctx.agent);
+            ctx.mdm = ctx.mdmOwner.get();
 
             ctx.createBackend();
             ctx.initAndRegisterBuffers(BUFF_COUNT_, BUFF_SIZE_);
@@ -178,27 +136,14 @@ protected:
     TearDown() override {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         agents_.clear();
-        // env_ destructor restores prior NIXL_MD_MANAGER value.
     }
 
     static constexpr int AGENT_COUNT_ = 2;
     static constexpr size_t BUFF_COUNT_ = 4;
     static constexpr size_t BUFF_SIZE_ = 1024;
 
-    ScopedEnv env_;
     std::vector<AgentContext> agents_;
 };
-
-TEST_F(MDManagerFixture, GetMDManagerIsIdempotent) {
-    auto &a = agents_[0];
-    nixlMDManager *first = nullptr;
-    nixlMDManager *second = nullptr;
-    ASSERT_EQ(a.agent->getMDManager(first), NIXL_SUCCESS);
-    ASSERT_EQ(a.agent->getMDManager(second), NIXL_SUCCESS);
-    ASSERT_NE(first, nullptr);
-    EXPECT_EQ(first, second);
-    EXPECT_EQ(first, a.mdm);
-}
 
 TEST_F(MDManagerFixture, RegisterRejectsEmptyInputs) {
     auto &a = agents_[0];

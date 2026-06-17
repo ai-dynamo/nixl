@@ -38,15 +38,15 @@ class nixlMDManagerData;
  * @class nixlMDManager
  * @brief Name-based, P2P-only wrapper over nixlAgent's metadata APIs.
  *
- * The owning nixlAgent constructs the manager when NIXL_MD_MANAGER is set
- * and hands it out via nixlAgent::getMDManager(). The manager stores a
- * per-name {ip, port} registry; each name-keyed call resolves the peer and
- * delegates to the matching nixlAgent method with extra_params.ipAddr /
- * extra_params.port populated. No new threads, no new sockets, no new state
- * in nixlAgent.
+ * User-constructed over an existing agent. Keeps a per-name {ip, port}
+ * registry; each call resolves the peer and delegates to the matching
+ * nixlAgent method (ipAddr/port populated). Calls only public nixlAgent
+ * methods, so the agent owns no manager state.
  */
 class nixlMDManager {
 public:
+    // Holds a reference to `agent`, so the manager must be destroyed before
+    // the agent it wraps.
     explicit nixlMDManager(nixlAgent &agent);
 
     ~nixlMDManager();

@@ -23,7 +23,6 @@
 #include <absl/strings/str_split.h>
 
 #include "nixl.h"
-#include "nixl_md_manager.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
 #include "transfer_request.h"
@@ -149,24 +148,13 @@ makeAgentTracer(const std::string &name) {
     return nixl::trace::makeTracer(nixl::trace::TracerConfig{name, std::move(requested_backends)});
 }
 
-std::unique_ptr<nixlMDManager>
-makeMDManager(nixlAgent &agent) {
-    if (!nixl::config::checkExistence("NIXL_MD_MANAGER")) {
-        return nullptr;
-    }
-    return std::make_unique<nixlMDManager>(agent);
-}
-
 } // namespace
 
-nixlAgentData::nixlAgentData(nixlAgent &agent,
-                             const std::string &name,
-                             const nixlAgentConfig &config)
+nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
     : name_(name),
       config_(config),
       useEtcd_(detectEtcd()),
       needsCommThread_(useEtcd_ || config.useListenThread),
-      mdManager_(makeMDManager(agent)),
       lock(effectiveSyncMode(config.syncMode, needsCommThread_)),
       tracer_(makeAgentTracer(name)) {
 #if HAVE_ETCD
@@ -196,7 +184,7 @@ nixlAgentData::nixlAgentData(nixlAgent &agent,
 
 /*** nixlAgent implementation ***/
 nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
-    : data(std::make_unique<nixlAgentData>(*this, name, cfg)) {
+    : data(std::make_unique<nixlAgentData>(name, cfg)) {
     if(cfg.useListenThread) {
         data->listener = std::make_unique<nixlMDStreamListener>(cfg.listenPort);
         data->listener->setupListener(); // throws on bind/listen failure
@@ -1801,18 +1789,6 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
 
     // This is a checker method, returning not found is not an error to be logged
     return NIXL_ERR_NOT_FOUND;
-}
-
-nixl_status_t
-nixlAgent::getMDManager(nixlMDManager *&out) {
-    // mdManager_ is constructed once in the ctor when NIXL_MD_MANAGER is set,
-    // so this is a const lookup with no locking or lazy init.
-    if (!data->mdManager_) {
-        out = nullptr;
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-    out = data->mdManager_.get();
-    return NIXL_SUCCESS;
 }
 
 backend_set_t
