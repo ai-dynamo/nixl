@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# UndefinedBehaviorSanitizer suppressions for NIXL sanitizer CI.
+#
+# ONLY suppress undefined behavior reported inside third-party headers/sources
+# that NIXL does not own. Never suppress UB in NIXL's own code -- fix it.
+#
+# Format: one `<check>:<substring>` per line, where <check> is the UBSan check
+# group (e.g. alignment, vptr, function, enum, shift) and <substring> matches
+# the source file path or symbol in the report.
+# See https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html#runtime-suppressions
+#
+# Start empty: add entries only after confirming the report is in third-party
+# code via its stack trace. Example (commented):
+# alignment:abseil-cpp/absl/
