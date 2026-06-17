@@ -486,7 +486,11 @@ jobs:
   trigger-gitlab-nspect:
     needs: [upload-x86-wheels, upload-arm-wheels]
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    # MUST run on a runner with NVIDIA-internal reach: the AWS velonix builders
+    # cannot resolve gitlab-master.nvidia.com. This is the same org runner group
+    # dynamo's trigger-gitlab-release-pipeline uses.
+    runs-on:
+      group: gitlab_ci_runners
     environment: release
     env:
       GITLAB_TRIGGER_URL: ${{ secrets.GITLAB_NIXL_PIPELINE_URL }}
