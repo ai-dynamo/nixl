@@ -220,6 +220,12 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
                   const am_cleanup_t &cleanup) {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
+        // The endpoint is already in a failed state (e.g. the peer disconnected),
+        // so no request will be issued. Invoke the deleter -- as the inline
+        // completion path below does -- so the caller's buffer is not leaked.
+        if (deleter) {
+            deleter(nullptr, buffer);
+        }
         return status;
     }
 

@@ -73,11 +73,15 @@ nixlTelemetryEventTypeForStatus(nixl_status_t s) {
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 constexpr const char *defaultTelemetryPlugin = "BUFFER";
+// Collect-only sink (registered as "NOP"): events are still recorded in process
+// (so getXferTelemetry() returns data) but nothing is written out. Used when
+// telemetry is explicitly requested but no output sink is configured.
+constexpr const char *collectOnlyTelemetryPlugin = "NOP";
 
 namespace {
 // Defined below; declared here for use by create() and the constructor's
 // member-initializer list.
-[[nodiscard]] std::optional<std::string>
+[[nodiscard]] std::string
 getExporterName();
 [[nodiscard]] std::string
 validateAgentName(const std::string &agent_name);
@@ -87,16 +91,11 @@ resolveMaxBufferedEvents();
 
 [[nodiscard]] std::unique_ptr<nixlTelemetry>
 nixlTelemetry::create(const std::string &agent_name) {
-    const std::optional<std::string> exporter_name = getExporterName();
-
-    // No exporter/sink configured: telemetry is intentionally disabled, so do
-    // not construct a nixlTelemetry at all (avoids spinning up its thread pool
-    // only to tear it down).
-    if (!exporter_name) {
-        return nullptr;
-    }
-
-    return std::make_unique<nixlTelemetry>(agent_name, *exporter_name);
+    // create() is only called when telemetry is explicitly requested (see
+    // nixlAgent's constructor), so it always produces an active instance:
+    // getExporterName() falls back to the collect-only NOP sink when no output
+    // sink is configured.
+    return std::make_unique<nixlTelemetry>(agent_name, getExporterName());
 }
 
 nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &exporter_name)
@@ -115,9 +114,13 @@ nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &e
 nixlTelemetry::~nixlTelemetry() {
     writeTask_.enabled_ = false;
     try {
-        writeTask_.timer_.cancel();
+        // The pool thread re-arms writeTask_.timer_ from its own callback
+        // (registerPeriodicTask -> async_wait), so cancelling the timer here on
+        // the main thread races that re-arm. Stop and join the pool first; once
+        // join() returns no other thread touches the timer, so cancel() is safe.
         pool_.stop();
         pool_.join();
+        writeTask_.timer_.cancel();
     }
     catch (const asio::system_error &e) {
         NIXL_DEBUG << "Failed to cancel telemetry write timer: " << e.what();
@@ -131,24 +134,25 @@ nixlTelemetry::~nixlTelemetry() {
 }
 
 namespace {
-[[nodiscard]] std::optional<std::string>
+[[nodiscard]] std::string
 getExporterName() {
     if (const auto name = nixl::config::getValueOptional<std::string>(telemetryExporterVar)) {
         if (!name->empty()) {
-            return name;
+            return *name;
         }
         NIXL_DEBUG << "Ignoring empty " << telemetryExporterVar << " environment variable";
     }
 
-    if (!nixl::config::checkExistence(telemetryDirVar)) {
-        NIXL_DEBUG << telemetryDirVar
-                   << " is not set and no exporter was specified; NIXL telemetry is disabled";
-        return std::nullopt;
+    if (nixl::config::checkExistence(telemetryDirVar)) {
+        NIXL_INFO << "No telemetry exporter was specified, using default: "
+                  << defaultTelemetryPlugin;
+        return defaultTelemetryPlugin;
     }
 
-    NIXL_INFO << "No telemetry exporter was specified, using default: " << defaultTelemetryPlugin;
-
-    return defaultTelemetryPlugin;
+    // No output sink configured; collect in-process via the NOP sink.
+    NIXL_INFO << "No telemetry sink configured; using in-process telemetry collection via "
+              << collectOnlyTelemetryPlugin;
+    return collectOnlyTelemetryPlugin;
 }
 
 [[nodiscard]] std::string

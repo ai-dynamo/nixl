@@ -183,7 +183,15 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
 nixlAgent::~nixlAgent() {
     if (data->needsCommThread_) {
         data->agentShutdown = true;
-        while (!data->commQueue.empty()) {
+        // commQueue is guarded by commLock (see enqueueCommWork/getCommWork);
+        // take the lock for the drain check to avoid racing the comm thread.
+        while (true) {
+            {
+                const std::lock_guard<std::mutex> lock(data->commLock);
+                if (data->commQueue.empty()) {
+                    break;
+                }
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
 
@@ -270,10 +278,11 @@ nixlAgent::getBackendParams (const nixlBackendH* backend,
 
 void
 nixlAgentData::warnAboutEfaHardwareMismatch() {
-    if (efaWarningChecked) {
+    // Atomic test-and-set so concurrent registerMem() calls warn at most once
+    // without racing on the flag.
+    if (efaWarningChecked.exchange(true)) {
         return;
     }
-    efaWarningChecked = true;
 
     if ((backendEngines_.count("UCX") != 0) && (backendEngines_.count("LIBFABRIC") == 0)) {
         const auto &hw_info = nixl::hwInfo::instance();
