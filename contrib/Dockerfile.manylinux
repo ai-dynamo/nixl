@@ -343,15 +343,6 @@ RUN cd /usr/local/src && \
          $UCX_MODULE_DEEPBIND_PARAM && \
      make -j &&                      \
      make -j install-strip &&        \
-     if [ -n "$UCX_SONAME_SUFFIX" ]; then \
-         for lib in ucp uct ucs ucm; do \
-             libdir="$(find /usr/local/lib /usr/local/lib64 /usr/lib64 -maxdepth 1 -name "lib${lib}-${UCX_SONAME_SUFFIX}.so.0*" -printf '%h\n' 2>/dev/null | head -n 1)"; \
-             if [ -z "$libdir" ]; then \
-                 echo "Missing lib${lib}-${UCX_SONAME_SUFFIX}.so.0 after UCX install" >&2; exit 1; \
-             fi; \
-             ln -sf "$(basename "$(find "$libdir" -maxdepth 1 -name "lib${lib}-${UCX_SONAME_SUFFIX}.so.0*" | sort | tail -n 1)")" "$libdir/lib${lib}-${UCX_SONAME_SUFFIX}.so"; \
-         done; \
-     fi && \
      ldconfig
 
 COPY . /workspace/nixl
