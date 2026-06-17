@@ -114,7 +114,7 @@ private:
     std::uint64_t spanId_;
 };
 
-std::unique_ptr<nixl::trace::Tracer>
+[[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
 makeMockTracer(CallLog &a, CallLog &b, std::uint64_t id_a = 0, std::uint64_t id_b = 0) {
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
     backends.push_back(std::make_unique<MockBackend>("a", &a, id_a));
