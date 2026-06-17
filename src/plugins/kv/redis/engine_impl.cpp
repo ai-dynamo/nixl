@@ -26,6 +26,7 @@
 #include <absl/strings/str_format.h>
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <future>
 #include <memory>
 #include <optional>
@@ -36,10 +37,31 @@
 namespace {
 
 std::size_t
+defaultNumThreads() {
+    return std::max(1u, std::thread::hardware_concurrency() / 2);
+}
+
+std::size_t
 getNumThreads(nixl_b_params_t *custom_params) {
-    return custom_params && custom_params->count("num_threads") > 0 ?
-        std::stoul(custom_params->at("num_threads")) :
-        std::max(1u, std::thread::hardware_concurrency() / 2);
+    if (custom_params && custom_params->count("num_threads") > 0) {
+        try {
+            const auto num_threads = std::stoul(custom_params->at("num_threads"));
+            if (num_threads > 0) {
+                return num_threads;
+            }
+            NIXL_WARN << "Invalid num_threads value 0, using default";
+        }
+        catch (const std::exception &) {
+            NIXL_WARN << "Invalid num_threads value, using default";
+        }
+    }
+
+    return defaultNumThreads();
+}
+
+nixl_b_params_t *
+getCustomParams(const nixlBackendInitParams *init_params) {
+    return init_params ? init_params->customParams : nullptr;
 }
 
 bool
@@ -50,6 +72,19 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
                       const std::string &local_agent) {
     if (operation != NIXL_WRITE && operation != NIXL_READ) {
         NIXL_ERROR << absl::StrFormat("Error: Invalid operation type: %d", operation);
+        return false;
+    }
+
+    if (local.descCount() == 0) {
+        NIXL_ERROR << "Error: Transfer descriptor lists must not be empty";
+        return false;
+    }
+
+    if (local.descCount() != remote.descCount()) {
+        NIXL_ERROR << absl::StrFormat(
+            "Error: Local and remote descriptor counts must match (%d != %d)",
+            local.descCount(),
+            remote.descCount());
         return false;
     }
 
@@ -116,14 +151,16 @@ public:
 } // namespace
 
 nixlRedisKVEngineImpl::nixlRedisKVEngineImpl(const nixlBackendInitParams *init_params)
-    : executor_(std::make_shared<redisThreadPoolExecutor>(getNumThreads(init_params->customParams))) {
-    redisClient_ = std::make_shared<hiredisAsyncClient>(init_params->customParams, executor_);
+    : executor_(std::make_shared<redisThreadPoolExecutor>(
+          getNumThreads(getCustomParams(init_params)))) {
+    redisClient_ = std::make_shared<hiredisAsyncClient>(getCustomParams(init_params), executor_);
     NIXL_INFO << "Redis KV backend initialized";
 }
 
 nixlRedisKVEngineImpl::nixlRedisKVEngineImpl(const nixlBackendInitParams *init_params,
                                              std::shared_ptr<iRedisClient> redis_client)
-    : executor_(std::make_shared<redisThreadPoolExecutor>(std::thread::hardware_concurrency())),
+    : executor_(std::make_shared<redisThreadPoolExecutor>(
+          getNumThreads(getCustomParams(init_params)))),
       redisClient_(std::move(redis_client)) {
     if (redisClient_) {
         redisClient_->setExecutor(executor_);
@@ -234,6 +271,18 @@ nixlRedisKVEngineImpl::postXfer(const nixl_xfer_op_t &operation,
                                 nixlBackendReqH *&handle,
                                 const nixl_opt_b_args_t *opt_args) const {
     if (!handle) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (operation != NIXL_WRITE && operation != NIXL_READ) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (local.descCount() == 0 || local.descCount() != remote.descCount()) {
+        NIXL_ERROR << absl::StrFormat(
+            "Invalid transfer descriptor counts for Redis postXfer (%d local, %d remote)",
+            local.descCount(),
+            remote.descCount());
         return NIXL_ERR_INVALID_PARAM;
     }
 

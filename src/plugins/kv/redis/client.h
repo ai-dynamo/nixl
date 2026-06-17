@@ -28,6 +28,7 @@
 #define KV_PLUGIN_REDIS_CLIENT_H
 
 #include "redis_engine.h"
+#include <atomic>
 #include <cstdint>
 #include <future>
 #include <memory>
@@ -44,6 +45,10 @@
 #include <hiredis/adapters/libevent.h>
 #include <event2/event.h>
 #include <event2/thread.h>
+#else
+struct event_base;
+struct redisAsyncContext;
+struct redisContext;
 #endif
 
 /**
@@ -115,7 +120,7 @@ private:
     struct event_base *eventBase_;
     std::shared_ptr<redisThreadPoolExecutor> executor_;
     std::thread eventLoopThread_;
-    bool connected_;
+    std::atomic<bool> connected_;
     mutable std::mutex syncMutex_;
 };
 

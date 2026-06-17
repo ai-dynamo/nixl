@@ -169,11 +169,11 @@ hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params,
     eventLoopThread_ = std::thread(&hiredisAsyncClient::processEventLoop, this);
 
     int retries = 100;
-    while (!connected_ && retries-- > 0) {
+    while (!connected_.load() && retries-- > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    if (!connected_) {
+    if (!connected_.load()) {
         redisAsyncDisconnect(asyncContext_);
         event_base_loopbreak(eventBase_);
         if (eventLoopThread_.joinable()) {
@@ -271,9 +271,9 @@ hiredisAsyncClient::connectCallback(const redisAsyncContext *c, int status) {
     auto *client = static_cast<hiredisAsyncClient *>(c->data);
     if (status != REDIS_OK) {
         NIXL_ERROR << absl::StrFormat("Redis connection error: %s", c->errstr);
-        client->connected_ = false;
+        client->connected_.store(false);
     } else {
-        client->connected_ = true;
+        client->connected_.store(true);
     }
 }
 
@@ -283,7 +283,7 @@ hiredisAsyncClient::disconnectCallback(const redisAsyncContext *c, int status) {
     if (status != REDIS_OK) {
         NIXL_WARN << absl::StrFormat("Redis disconnection error: %s", c->errstr);
     }
-    client->connected_ = false;
+    client->connected_.store(false);
 }
 
 void
@@ -312,7 +312,9 @@ hiredisAsyncClient::getCallback(redisAsyncContext *c, void *reply, void *privdat
     bool success = false;
     if (r && r->type == REDIS_REPLY_STRING) {
         size_t copy_len = std::min(static_cast<size_t>(r->len), ctx->data_len);
-        if (ctx->data_ptr && copy_len > 0) {
+        if (copy_len == 0) {
+            success = true;
+        } else if (ctx->data_ptr) {
             std::memcpy(reinterpret_cast<void *>(ctx->data_ptr), r->str, copy_len);
             success = true;
         }
@@ -333,7 +335,7 @@ hiredisAsyncClient::putKeyAsync(std::string_view key,
                                 uintptr_t data_ptr,
                                 size_t data_len,
                                 std::shared_ptr<std::promise<nixl_status_t>> promise) {
-    if (!connected_) {
+    if (!connected_.load()) {
         setPromiseStatus(executor_, promise, false);
         return;
     }
@@ -363,7 +365,7 @@ hiredisAsyncClient::getKeyAsync(std::string_view key,
                                 uintptr_t data_ptr,
                                 size_t data_len,
                                 std::shared_ptr<std::promise<nixl_status_t>> promise) {
-    if (!connected_) {
+    if (!connected_.load()) {
         setPromiseStatus(executor_, promise, false);
         return;
     }
