@@ -20,37 +20,27 @@
  * limitations under the License.
  */
 
+#include "nixl_ep.hpp"
+ 
+#include "cuda_warn.hpp"
+#include "kernels/api.cuh"
+
+#include <cuda_runtime.h>
+
+#include <pybind11/functional.h>
+#include <pybind11/stl.h>
+
+#include <torch/csrc/stable/ops.h>
+#include <torch/headeronly/core/ScalarType.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
-#include <cuda_runtime.h>
-#include <memory>
-#include <optional>
-#include <pybind11/functional.h>
-
-#include "nixl_ep.hpp"
-#include "kernels/api.cuh"
-#include "kernels/configs.cuh"
 #include <cstdio>
-#include <fstream>
-#include <unistd.h>
-#include <stdio.h>
-#include "cuda_warn.hpp"
-#include "kernels/exception.cuh"
-#include "nixl.h"
-#include <ifaddrs.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <net/if.h>
-#include <sstream>
+#include <limits>
+#include <optional>
 #include <unordered_set>
-
-#include <torch/csrc/stable/ops.h>
-#include <torch/headeronly/core/ScalarType.h>
-#include <torch/headeronly/util/Exception.h>
 
 #define NIXL_ETCD_WATCH_TIMEOUT std::chrono::microseconds(1000000000) // 1000 seconds
 
@@ -82,8 +72,13 @@ scalar_type_element_size(torch::headeronly::ScalarType dtype) {
 
 constexpr torch::headeronly::ScalarType
 topk_idx_scalar_type() {
-    EP_STATIC_ASSERT(TOPK_IDX_BITS == 64, "stable ABI combine supports 64-bit topk indices only");
+#if TOPK_IDX_BITS == 64
     return torch::headeronly::ScalarType::Long;
+#elif TOPK_IDX_BITS == 32
+    return torch::headeronly::ScalarType::Int;
+#else
+#error "TOPK_IDX_BITS must be 64 or 32"
+#endif
 }
 } // namespace
 
@@ -1975,10 +1970,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     pybind11::class_<nixl_ep::Config>(m, "Config")
         .def(pybind11::init<int, int, int, int, int>(),
              pybind11::arg("num_sms") = 20,
-             pybind11::arg("num_max_nvl_chunked_send_tokens") = 6,
-             pybind11::arg("num_max_nvl_chunked_recv_tokens") = 256,
-             pybind11::arg("num_max_rdma_chunked_send_tokens") = 6,
-             pybind11::arg("num_max_rdma_chunked_recv_tokens") = 256)
+             pybind11::arg("num_max_nvl_chunked_send_tokens") = 6, pybind11::arg("num_max_nvl_chunked_recv_tokens") = 256,
+             pybind11::arg("num_max_rdma_chunked_send_tokens") = 6, pybind11::arg("num_max_rdma_chunked_recv_tokens") = 256)
         .def("_ptr", [](const nixl_ep::Config &self) { return reinterpret_cast<int64_t>(&self); });
 
     pybind11::class_<nixl_ep::EventHandle>(m, "EventHandle")
@@ -1997,20 +1990,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def(pybind11::init<int, bool, bool, int>())
         .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers)
         .def("barrier", &nixl_ep::Buffer::barrier)
-        .def(
-            "connect_ranks",
-            [](nixl_ep::Buffer &buffer,
-               const std::vector<int> &remote_ranks,
-               const std::optional<std::vector<pybind11::bytes>> &remote_mds,
-               const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles,
-               bool activate) {
-                buffer.connect_ranks(
-                    remote_ranks, nixl_ep::convert_mds(remote_mds), all_gathered_handles, activate);
-            },
-            pybind11::arg("remote_ranks"),
-            pybind11::arg("remote_mds") = std::nullopt,
-            pybind11::arg("ipc_handles") = std::vector<std::optional<pybind11::bytearray>>{},
-            pybind11::arg("activate") = true)
+        .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles, bool activate) {
+            buffer.connect_ranks(remote_ranks, nixl_ep::convert_mds(remote_mds), all_gathered_handles, activate);
+        }, pybind11::arg("remote_ranks"), pybind11::arg("remote_mds") = std::nullopt, pybind11::arg("ipc_handles") = std::vector<std::optional<pybind11::bytearray>>{}, pybind11::arg("activate") = true)
         .def("disconnect_ranks", &nixl_ep::Buffer::disconnect_ranks)
         .def("is_available", &nixl_ep::Buffer::is_available)
         .def("get_num_rdma_ranks", &nixl_ep::Buffer::get_num_rdma_ranks)
@@ -2027,6 +2009,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                  return pybind11::bytes(buffer.get_local_metadata());
              })
         .def("_ptr", [](nixl_ep::Buffer &self) { return reinterpret_cast<int64_t>(&self); });
-    m.attr("topk_idx_t") = pybind11::cast(c10::CppTypeToScalarType<nixl_ep::topk_idx_t>::value);
+    m.attr("topk_idx_bits") = TOPK_IDX_BITS;
     m.def("is_sm90_compiled", nixl_ep::is_sm90_compiled);
 }

@@ -24,7 +24,7 @@ from . import nixl_ep_cpp as _nixl_ep_cpp
 from .buffer import Buffer
 from .utils import EventOverlap
 
-topk_idx_t = getattr(_nixl_ep_cpp, "topk_idx_t", torch.int64)
+topk_idx_t = torch.int32 if _nixl_ep_cpp.topk_idx_bits == 32 else torch.int64
 Config = _nixl_ep_cpp.Config
 
 __all__ = ["Buffer", "EventOverlap", "Config"]
