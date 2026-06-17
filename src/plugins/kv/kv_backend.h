@@ -66,7 +66,6 @@ public:
              const nixl_meta_dlist_t &local,
              const nixl_meta_dlist_t &remote,
              const std::string &remote_agent,
-             const std::string &local_agent,
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args) const = 0;
     virtual nixl_status_t
