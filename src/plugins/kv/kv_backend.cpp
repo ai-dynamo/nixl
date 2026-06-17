@@ -66,7 +66,7 @@ nixlKVEngine::postXfer(const nixl_xfer_op_t &operation,
                        const std::string &remote_agent,
                        nixlBackendReqH *&handle,
                        const nixl_opt_b_args_t *opt_args) const {
-    return impl_->postXfer(operation, local, remote, remote_agent, localAgent, handle, opt_args);
+    return impl_->postXfer(operation, local, remote, remote_agent, handle, opt_args);
 }
 
 nixl_status_t
