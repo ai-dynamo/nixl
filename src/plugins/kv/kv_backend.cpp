@@ -15,12 +15,7 @@
  * limitations under the License.
  */
 
-/**
- * @file kv_engine.cpp
- * @brief nixlKVEngine delegation layer; forwards nixlBackendEngine calls to impl_.
- */
-
-#include "kv_engine.h"
+#include "kv_backend.h"
 #include <cassert>
 
 nixlKVEngine::nixlKVEngine(const nixlBackendInitParams *init_params,

@@ -538,9 +538,7 @@ if get_option('install_headers')
   install_headers('src/core/transfer_request.h', install_dir: prefix_inc)
   install_headers('src/core/agent_data.h', install_dir: prefix_inc)
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
-  install_headers('src/plugins/kv/kv_store.h', install_dir: prefix_inc + '/plugins/kv')
-  install_headers('src/plugins/kv/kv_engine_impl.h', install_dir: prefix_inc + '/plugins/kv')
-  install_headers('src/plugins/kv/kv_engine.h', install_dir: prefix_inc + '/plugins/kv')
+  install_headers('src/plugins/kv/kv_backend.h', install_dir: prefix_inc + '/plugins/kv')
   install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
 
   if ucx_gpu_device_api_available

@@ -19,23 +19,12 @@
  * @file redis_engine.h
  * @brief REDIS KV plugin — iRedisClient interface and nixlRedisKVEngine entry.
  *
- * KV plugin layout (under src/plugins/kv/):
- *   - nixlKVEngine / nixlKVEngineImpl (../kv_engine.h, ../kv_engine_impl.h)
- *       shared NIXL protocol wrapper and implementation base for KV backends
- *   - iRedisClient (this file)
- *       async Redis storage interface used by the REDIS backend
- *   - nixlRedisKVEngine (this file)
- *       thin nixlKVEngine subclass registered with the NIXL plugin loader
- *   - hiredisAsyncClient (client.h)
- *       async SET/GET (hiredis-async) + sync EXISTS (blocking hiredis)
- *   - nixlRedisKVEngineImpl (engine_impl.h)
- *       concrete nixlKVEngineImpl; maps registerMem/postXfer to iRedisClient calls
  */
 
 #ifndef NIXL_SRC_PLUGINS_KV_REDIS_ENGINE_H
 #define NIXL_SRC_PLUGINS_KV_REDIS_ENGINE_H
 
-#include "../kv_engine.h"
+#include "../kv_backend.h"
 #include "redis_executor.h"
 #include <cstdint>
 #include <future>

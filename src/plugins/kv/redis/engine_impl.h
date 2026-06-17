@@ -23,7 +23,7 @@
 #ifndef KV_PLUGIN_REDIS_ENGINE_IMPL_H
 #define KV_PLUGIN_REDIS_ENGINE_IMPL_H
 
-#include "../kv_engine_impl.h"
+#include "../kv_backend.h"
 #include "redis_engine.h"
 #include <memory>
 #include <string>

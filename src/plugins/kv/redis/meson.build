@@ -20,7 +20,7 @@ if not enabled_plugins.get('REDIS')
 endif
 
 redis_sources = [
-    '../kv_engine.cpp',
+    '../kv_backend.cpp',
     'redis_engine.cpp',
     'redis_engine.h',
     'redis_plugin.cpp',
