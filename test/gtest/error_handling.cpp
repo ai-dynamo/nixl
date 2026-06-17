@@ -417,6 +417,10 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, size_t iter) {
     }
 
     if (isFailure<test_type>(iter) && (status == NIXL_ERR_REMOTE_DISCONNECT)) {
+        // postXferReq does not take ownership of the request on failure (it only
+        // invalidates the remote data), so release the handle here to avoid
+        // leaking it and its backend request handle. The caller only gets the
+        // status, so it cannot release it itself.
         EXPECT_EQ(NIXL_SUCCESS, m_Initiator.releaseXferReq(req_handle));
         return status;
     }

@@ -649,10 +649,18 @@ TEST_P(TestTransferTelemetry, GetXferTelemetryFile) {
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryAPI) {
-    // Enabling telemetry without a configured exporter or buffer sink should
-    // not create a half-active telemetry instance.
+    // Telemetry explicitly enabled via NIXL_TELEMETRY_ENABLE=y but with no sink
+    // (no NIXL_TELEMETRY_DIR/EXPORTER) collects in-process via the collect-only
+    // NOP fallback, so getXferTelemetry() still works.
     env.addVar("NIXL_TELEMETRY_ENABLE", "y");
-    runTelemetryTransferTest(1024, NIXL_ERR_NO_TELEMETRY, false);
+    runTelemetryTransferTest(1024, NIXL_SUCCESS, false);
+}
+
+TEST_P(TestTransferTelemetry, GetXferTelemetryCaptureNoSink) {
+    // Telemetry requested only via capture_telemetry=true (no
+    // NIXL_TELEMETRY_ENABLE, no sink): the in-process NOP fallback keeps
+    // getXferTelemetry() working.
+    runTelemetryTransferTest(1024, NIXL_SUCCESS, true);
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryAPICfg) {
