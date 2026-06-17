@@ -116,14 +116,14 @@ public:
 } // namespace
 
 nixlRedisKVEngineImpl::nixlRedisKVEngineImpl(const nixlBackendInitParams *init_params)
-    : executor_(std::make_shared<asioThreadPoolExecutor>(getNumThreads(init_params->customParams))) {
+    : executor_(std::make_shared<redisThreadPoolExecutor>(getNumThreads(init_params->customParams))) {
     redisClient_ = std::make_shared<hiredisAsyncClient>(init_params->customParams, executor_);
     NIXL_INFO << "Redis KV backend initialized";
 }
 
 nixlRedisKVEngineImpl::nixlRedisKVEngineImpl(const nixlBackendInitParams *init_params,
                                              std::shared_ptr<iRedisClient> redis_client)
-    : executor_(std::make_shared<asioThreadPoolExecutor>(std::thread::hardware_concurrency())),
+    : executor_(std::make_shared<redisThreadPoolExecutor>(std::thread::hardware_concurrency())),
       redisClient_(std::move(redis_client)) {
     if (redisClient_) {
         redisClient_->setExecutor(executor_);

@@ -81,7 +81,7 @@ protected:
         return redisClient_.get();
     }
 
-    std::shared_ptr<asioThreadPoolExecutor> executor_;
+    std::shared_ptr<redisThreadPoolExecutor> executor_;
     std::shared_ptr<iRedisClient> redisClient_;
     std::unordered_map<uint64_t, std::string> devIdToRedisKey_;
 };
