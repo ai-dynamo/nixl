@@ -20,6 +20,12 @@ limitations under the License.
 This backend provides POSIX-compliant I/O operations using either Linux AIO (libaio) by default
 Optionally POSIX plugin can also use liburing.
 
+## File registration
+
+`FILE_SEG` descriptors accept either fd-in-`devId` (fd-mode) or a
+`"<modes>:<path>"` string in `metaInfo` (path-mode, backend owns the
+open/close); see [`src/utils/file/README.md`](../../utils/file/README.md#path-mode-file-registration).
+
 ## Dependencies
 To enable Linux AIO support, you need to install the libaio package:
 

@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.1.0',
+project('nixl', 'CPP', version: '1.2.0',
     default_options: ['buildtype=release',
                 'werror=true',
-                'cpp_std=c++17',
+                'cpp_std=c++20',
                 'prefix=/opt/nvidia/nvda_nixl'],
     meson_version: '>= 0.64.0'
 )
@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
 
 enabled_plugins = {}
 
@@ -88,6 +88,30 @@ thread_dep = dependency('threads')
 if get_option('buildtype') == 'release'
   abseil_flags = cpp.get_supported_arguments('-Wno-error=maybe-uninitialized', '-Wno-maybe-uninitialized')
   add_global_arguments(abseil_flags, language: 'cpp')
+endif
+
+# Sanitizer build, selected with -Dsanitizer=. Maps to -fsanitize and folds in
+# the third-party build workarounds so a plain `-Dsanitizer=...` build compiles:
+#  - undefined: GCC's UBSan null checks break Abseil's constexpr function-pointer
+#    comparison (GCC #71962, abseil-cpp#1634); drop those sub-checks. ASan still
+#    catches real null dereferences at runtime.
+#  - thread: GCC cannot instrument std::atomic_thread_fence in the Taskflow
+#    headers and -Werror turns the -Wtsan warning fatal; downgrade it.
+sanitizer = get_option('sanitizer')
+if sanitizer != 'none'
+  sanitizer_flag = '-fsanitize=' + sanitizer
+  add_project_arguments(sanitizer_flag, language: 'cpp')
+  add_project_link_arguments(sanitizer_flag, language: 'cpp')
+  sanitizer_parts = sanitizer.split(',')
+  if sanitizer_parts.contains('address')
+    add_project_arguments('-fno-omit-frame-pointer', language: 'cpp')
+  endif
+  if sanitizer_parts.contains('undefined')
+    add_project_arguments(cpp.get_supported_arguments('-fno-sanitize=null,nonnull-attribute,returns-nonnull-attribute'), language: 'cpp')
+  endif
+  if sanitizer_parts.contains('thread')
+    add_project_arguments(cpp.get_supported_arguments('-Wno-error=tsan'), language: 'cpp')
+  endif
 endif
 
 # Check for libaio (for LINUX AIO plugin and test)
@@ -210,27 +234,59 @@ if cuda_dep.found()
     cuda = import('unstable-cuda')
     nvcc = meson.get_compiler('cuda')
 
-    # Please extend with your arch if not present in the list
-    nvcc_flags = []
-    # nixl ep cannot be built with sm_80
-    if not get_option('build_nixl_ep')
-        nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
+    cuda_arch_list = get_option('nixl_cuda_arch_list').strip()
+    if cuda_arch_list == 'auto'
+        if get_option('build_nixl_ep')
+            cuda_arch_list = '90,100,103,120'
+        else
+            cuda_arch_list = '80,86,89,90,100,103,120'
+        endif
     endif
-    nvcc_flags += ['-gencode', 'arch=compute_90,code=sm_90']
+
+    nvcc_flags = []
+    nvcc_flags_link = []
+    nvcc_ptx_arch_num = 0
+    selected_cuda_archs = []
+    foreach cuda_arch : cuda_arch_list.split(',')
+        cuda_arch = cuda_arch.strip()
+        if cuda_arch == ''
+            continue
+        endif
+        if cuda_arch.startswith('sm_')
+            cuda_arch = cuda_arch.replace('sm_', '')
+        endif
+
+        cuda_arch_num = cuda_arch.to_int()
+        if cuda_arch_num > nvcc_ptx_arch_num
+            nvcc_ptx_arch_num = cuda_arch_num
+        endif
+
+        cuda_compute_arch = 'compute_' + cuda_arch
+        cuda_sm_arch = 'sm_' + cuda_arch
+        nvcc_flags += ['-gencode', 'arch=' + cuda_compute_arch + ',code=' + cuda_sm_arch]
+        nvcc_flags_link += ['-gencode=arch=' + cuda_compute_arch + ',code=' + cuda_sm_arch]
+        selected_cuda_archs += [cuda_sm_arch]
+    endforeach
+
+    if selected_cuda_archs.length() == 0
+        error('No CUDA targets selected')
+    endif
+
+    nvcc_ptx_arch = 'compute_' + nvcc_ptx_arch_num.to_string()
+    nvcc_flags += ['-gencode', 'arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch]
+    nvcc_flags_link += ['-gencode=arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch]
+
     add_project_arguments(nvcc_flags, language: 'cuda')
 
     # Refer to https://mesonbuild.com/Cuda-module.html
     add_project_arguments('-forward-unknown-to-host-compiler', language: 'cuda')
     add_project_arguments('-rdc=true', language: 'cuda')
+    # Build all CUDA targets with C++20 to match the core's standard and ABI.
+    add_project_arguments('-std=c++20', language: 'cuda')
 
-    nvcc_flags_link = []
-    # nixl ep cannot be built with sm_80
-    if not get_option('build_nixl_ep')
-        nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
-    endif
-    nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
     message('nvcc version: ' + nvcc.version())
+    message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
     if nvcc.version().version_compare('>=12.8')
         doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
@@ -250,8 +306,15 @@ if cuda_dep.found()
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
-    warning('CUDA not found, cannot autodetect wheel dir; defaulting to nixl_cu12')
     cuda_wheel_dir = 'nixl_cu12'
+endif
+
+# Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix
+# without otherwise affecting the build. Non-empty value wins over the
+# autodetected CUDA-major value above: e.g. -Dwheel_variant=rocm -> nixl_rocm.
+wheel_variant = get_option('wheel_variant').strip()
+if wheel_variant != ''
+    cuda_wheel_dir = 'nixl_' + wheel_variant
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery

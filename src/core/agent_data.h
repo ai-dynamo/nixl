@@ -22,6 +22,7 @@
 #include "stream/metadata_stream.h"
 #include "sync.h"
 
+#include <atomic>
 #include <memory>
 
 #if HAVE_ETCD
@@ -68,8 +69,7 @@ class nixlAgentData {
         const bool useEtcd_;
         const bool needsCommThread_;
         nixlLock        lock;
-        bool telemetryEnabled = false;
-        bool efaWarningChecked = false;
+        std::atomic<bool> efaWarningChecked = false;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;

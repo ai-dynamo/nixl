@@ -108,6 +108,7 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
     cmake .. \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_STANDARD=20 \
         -DBUILD_SHARED_LIBS=ON \
         -DABSL_PROPAGATE_CXX_STD=ON \
         -DABSL_ENABLE_INSTALL=ON && \
@@ -125,7 +126,7 @@ RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules
     cmake -DgRPC_INSTALL=ON \
     -DgRPC_BUILD_TESTS=OFF \
     -DBUILD_SHARED_LIBS=ON \
-    -DCMAKE_CXX_STANDARD=17 \
+    -DCMAKE_CXX_STANDARD=20 \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr/local \
     -DCMAKE_PREFIX_PATH=/usr/local \
@@ -145,7 +146,7 @@ RUN cd /workspace && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
-    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=17 && \
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=20 -DCMAKE_CXX_STANDARD=20 && \
     make -j${NPROC:-$(nproc)} && make install
 
 # The base image libcurl is linked against openssl 1.x, so we need to build from source
@@ -161,6 +162,7 @@ RUN mkdir aws_sdk_build && cd aws_sdk_build && \
     export CFLAGS="-I/usr/local/openssl3/include" && \
     export CXXFLAGS="-I/usr/local/openssl3/include" && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_CXX_STANDARD=20 \
         -DCMAKE_PREFIX_PATH="/usr/local/openssl3;/usr/local" \
         -DCURL_LIBRARY=/usr/local/lib/libcurl.so \
         -DCURL_INCLUDE_DIR=/usr/local/include \
@@ -172,7 +174,7 @@ ENV PKG_CONFIG_PATH=/usr/lib/pkgconfig:$PKG_CONFIG_PATH
 RUN git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
      sed -i '/^LFLAGS_ALL =/{/-lrt/ b; s/$/ -lrt/}' Makefile && \
-     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 CXX="g++ -std=c++20" && \
      cd ..
 
 # Required for Azure SDK
@@ -188,6 +190,7 @@ RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch 
     export CFLAGS="-isystem /usr/local/openssl3/include" && \
     export CXXFLAGS="-isystem /usr/local/openssl3/include" && \
     AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON \
+        -DCMAKE_CXX_STANDARD=20 \
         -DCMAKE_PREFIX_PATH="/usr/local/openssl3;/usr/local" \
         -DCURL_LIBRARY=/usr/local/lib/libcurl.so \
         -DCURL_INCLUDE_DIR=/usr/local/include \
@@ -218,16 +221,22 @@ RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.
     rm rustup-init && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
-RUN wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.1/host/doca-host-3.2.1-044000_25.10_rhel8.${ARCH}.rpm -O doca-host.rpm && \
+RUN wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host-3.3.0-088000_26.01_rhel8.${ARCH}.rpm -O doca-host.rpm && \
     rpm -i doca-host.rpm && \
     dnf install -y libnl3-devel && \
-    cd /usr/share/doca-host-3.2.1/repo/Packages/ && \
+    cd /usr/share/doca-host-3.3.0/repo/Packages/ && \
     rpm -ivh --nodeps doca-sdk-common-*rpm && \
     rpm -ivh --nodeps doca-sdk-rdma-*rpm && \
     rpm -ivh --nodeps doca-sdk-verbs-*rpm && \
     rpm -ivh --nodeps doca-sdk-gpunetio-*rpm && \
-    # Check that gpunetio development package is installed correctly
-    pkg-config --cflags --libs doca-gpunetio
+    rpm -ivh --nodeps doca-sdk-telemetry-exporter-*rpm && \
+    # CollectX provides libclx-api.pc, required (Requires.private) by
+    # doca-telemetry-exporter.pc and needed to link the telemetry exporter plugin.
+    # These RPMs use a different naming scheme: collectx_<ver>-...-clxapi[dev].rpm
+    rpm -ivh --nodeps collectx_*rpm && \
+    # Check that gpunetio and telemetry-exporter development packages are installed correctly
+    pkg-config --cflags --libs doca-gpunetio && \
+    pkg-config --cflags --libs doca-telemetry-exporter
 
 ENV LD_LIBRARY_PATH=/usr/lib:/usr/local/lib:$LD_LIBRARY_PATH
 
@@ -310,7 +319,10 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --without-gdrcopy           \
-         --with-efa &&               \
+         --with-efa                  \
+         --without-dc                \
+         --without-rdmacm            \
+         --without-gga &&            \
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig

@@ -29,6 +29,8 @@
 #include "nixl_params.h"
 #include "nixl_descriptors.h"
 #include "common/nixl_time.h"
+#include "file/file_path_mode.h"
+#include "path_mode_common.h"
 #include <stdexcept>
 #include <cstdio>
 #include <getopt.h>
@@ -58,6 +60,40 @@ namespace {
 
     std::string center_str(const std::string& str) {
         return std::string((line_width - str.length()) / 2, ' ') + str;
+    }
+
+    bool
+    has_supported_test_queue(bool use_uring) {
+        if (use_uring) {
+#ifdef HAVE_LIBURING
+            return true;
+#else
+            return false;
+#endif
+        }
+
+#if defined(HAVE_LINUXAIO) || defined(HAVE_LIBURING)
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    void
+    print_unsupported_test_queue_error(bool use_uring) {
+        std::cerr << "Unsupported POSIX test queue configuration: ";
+        if (use_uring) {
+            std::cerr << "io_uring was requested, but this build does not include liburing support."
+                      << std::endl;
+        } else {
+            std::cerr << "this build does not include Linux AIO or io_uring support." << std::endl;
+#ifdef HAVE_POSIXAIO
+            std::cerr
+                << "POSIX AIO may be available in the plugin, but this test requires Linux AIO "
+                   "or io_uring."
+                << std::endl;
+#endif
+        }
     }
 
     constexpr char default_test_files_dir_path[] = "tmp/testfiles";
@@ -217,8 +253,8 @@ read_write_test (int num_transfers,
         params["use_uring"] = "true";
         params["use_aio"] = "false";
     } else {
-        // Explicitly request AIO
-        params["use_aio"] = "true";
+        // Use the backend's compiled default queue. Startup validation rejects POSIX AIO-only
+        // builds.
         params["use_uring"] = "false";
     }
 
@@ -234,7 +270,7 @@ read_write_test (int num_transfers,
     std::cout << absl::StrFormat ("- Total data: %.2f GB\n",
                                   (float (transfer_size) * num_transfers) / gb_size);
     std::cout << absl::StrFormat ("- Directory: %s\n", test_files_dir_path_abs_path);
-    std::cout << absl::StrFormat ("- Backend: %s\n", use_uring ? "io_uring" : "AIO");
+    std::cout << absl::StrFormat("- Backend: %s\n", use_uring ? "io_uring" : "default");
     std::cout << absl::StrFormat ("- Direct I/O: %s\n", use_direct_io ? "enabled" : "disabled");
     std::cout << std::endl;
     std::cout << line_str << std::endl;
@@ -246,9 +282,12 @@ read_write_test (int num_transfers,
         std::cerr << std::endl << line_str << std::endl;
         std::cerr << center_str("ERROR: Backend Creation Failed") << std::endl;
         std::cerr << line_str << std::endl;
-        std::cerr << "Error creating POSIX backend: " << nixlEnumStrings::statusStr(status) << std::endl;
+        std::cerr << "Error creating POSIX backend: " << nixlEnumStrings::statusStr(status)
+                  << std::endl;
         if (use_uring) {
-            std::cerr << "io_uring was requested but may not be available. Try running without -U flag to use AIO instead." << std::endl;
+            std::cerr << "io_uring was requested but may not be available. Try running without -U "
+                         "flag to use the default queue."
+                      << std::endl;
         }
         std::cerr << std::endl << line_str << std::endl;
         return 1;
@@ -408,6 +447,10 @@ read_write_test (int num_transfers,
             printProgress(float(i + 1) / num_transfers);
         }
 
+        // Release the write request before reusing treq for the read request;
+        // otherwise the write request handle leaks.
+        agent.releaseXferReq(treq);
+
         print_segment_title(phase_title("File to Memory Transfer (Read Test)"));
 
         status = agent.createXferReq (
@@ -498,8 +541,8 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
         params["use_uring"] = "true";
         params["use_aio"] = "false";
     } else {
-        // Explicitly request AIO
-        params["use_aio"] = "true";
+        // Use the backend's compiled default queue. Startup validation rejects POSIX AIO-only
+        // builds.
         params["use_uring"] = "false";
     }
 
@@ -526,6 +569,10 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
     nixl_xfer_dlist_t file_for_posix_xfer (FILE_SEG);
     std::unique_ptr<nixlBlobDesc[]> ftrans (new nixlBlobDesc[num_transfers]);
 
+    // Own the posix_memalign buffers so they are freed on every exit path.
+    std::vector<std::unique_ptr<void, PosixMemalignDeleter>> dram_addr;
+    dram_addr.reserve(num_transfers);
+
     int file_open_flags = O_RDWR | O_CREAT;
     mode_t file_mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH; // rw-r--r--
     for (int i = 0; i < num_transfers; ++i) {
@@ -534,6 +581,7 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
             std::cerr << "DRAM allocation failed" << std::endl;
             return 1;
         }
+        dram_addr.emplace_back(ptr);
         fill_test_pattern (ptr, repost_test_phrase_1, transfer_size);
 
         // Create test file
@@ -731,6 +779,70 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
     return 0;
 }
 
+// Path-mode parser unit checks (POSIX-only since it owns parsePathMeta tests).
+static void
+checkPathModeParser() {
+    using nixl::parsePathMeta;
+    {
+        const auto s = parsePathMeta("ro:/tmp/x");
+        assert(s && s->path == "/tmp/x" && s->flags == O_RDONLY);
+    }
+    {
+        const auto s = parsePathMeta("rw:/tmp/x");
+        assert(s && s->flags == O_RDWR);
+    }
+    {
+        const auto s = parsePathMeta("rw,direct:/tmp/x");
+        assert(s && s->flags == (O_RDWR | O_DIRECT));
+    }
+    {
+        const auto s = parsePathMeta("ro,direct,sync,noatime:/tmp/x");
+        assert(s && s->flags == (O_RDONLY | O_DIRECT | O_SYNC | O_NOATIME));
+    }
+    {
+        const auto s = parsePathMeta("rw,create:/tmp/x");
+        assert(s && s->flags == (O_RDWR | O_CREAT) && s->mode == 0644);
+    }
+    assert(!parsePathMeta("").has_value());
+    assert(!parsePathMeta("no-colon").has_value());
+    assert(!parsePathMeta("ro:").has_value());
+    assert(!parsePathMeta("xx:/tmp/x").has_value());
+    assert(!parsePathMeta("rw,foo:/tmp/x").has_value());
+    assert(!parsePathMeta("kv-0042.bin").has_value());
+    std::cout << "parsePathMeta: OK" << std::endl;
+}
+
+// `rw,create:` should produce a new file at registerMem.
+static int
+runPathModeCreateCheck() {
+    constexpr const char *kCreateFile = "/tmp/nixl_posix_path_mode_create.bin";
+    std::remove(kCreateFile);
+    nixlAgentConfig cfg;
+    nixlAgent agent("POSIXPathModeCreate", cfg);
+    nixl_b_params_t params;
+    nixlBackendH *be = nullptr;
+    if (agent.createBackend("POSIX", params, be) != NIXL_SUCCESS) {
+        return 1;
+    }
+    nixl_reg_dlist_t d(FILE_SEG);
+    nixlBlobDesc desc;
+    desc.addr = 0;
+    desc.len = 4096;
+    desc.devId = 0;
+    desc.metaInfo = std::string("rw,create:") + kCreateFile;
+    d.addDesc(desc);
+    if (agent.registerMem(d) != NIXL_SUCCESS) {
+        return 1;
+    }
+    if (!std::filesystem::exists(kCreateFile)) {
+        return 1;
+    }
+    agent.deregisterMem(d);
+    std::remove(kCreateFile);
+    std::cout << "O_CREAT path-mode: OK" << std::endl;
+    return 0;
+}
+
 int
 main (int argc, char *argv[]) {
     if (page_size <= 0) {
@@ -746,8 +858,9 @@ main (int argc, char *argv[]) {
     std::string test_files_dir_path = default_test_files_dir_path;
     bool use_direct_io = false;
     bool use_uring = false;
+    bool run_path_mode_smoke = true;
 
-    while ((opt = getopt (argc, argv, "n:s:d:DUh")) != -1) {
+    while ((opt = getopt(argc, argv, "n:s:d:DUPh")) != -1) {
         switch (opt) {
         case 'n':
             num_transfers = std::stoi (optarg);
@@ -764,11 +877,14 @@ main (int argc, char *argv[]) {
         case 'U':
             use_uring = true;
             break;
+        case 'P':
+            run_path_mode_smoke = false;
+            break;
         case 'h':
         default:
-            std::cout << absl::StrFormat ("Usage: %s [-n num_transfers] [-s transfer_size] [-d "
-                                          "test_files_dir_path] [-D] [-U]",
-                                          argv[0])
+            std::cout << absl::StrFormat("Usage: %s [-n num_transfers] [-s transfer_size] [-d "
+                                         "test_files_dir_path] [-D] [-U] [-P]",
+                                         argv[0])
                       << std::endl;
             std::cout << absl::StrFormat (
                              "  -n num_transfers      Number of transfers (default: %d)",
@@ -779,14 +895,33 @@ main (int argc, char *argv[]) {
                        "  -s transfer_size      Size of each transfer in bytes (default: %zu)",
                        default_transfer_size)
                 << std::endl;
-            std::cout << absl::StrFormat ("  -d test_files_dir_path Directory for test files, "
-                                          "strongly recommended to use nvme device (default: %s)",
-                                          default_test_files_dir_path)
+            std::cout << absl::StrFormat("  -d test_files_dir_path Directory for test files, "
+                                         "strongly recommended to use nvme device (default: %s)",
+                                         default_test_files_dir_path)
                       << std::endl;
             std::cout << absl::StrFormat ("  -D Use O_DIRECT for file I/O") << std::endl;
-            std::cout << absl::StrFormat ("  -U Use io_uring backend instead of AIO") << std::endl;
+            std::cout << absl::StrFormat("  -U Explicitly use the io_uring backend") << std::endl;
+            std::cout << absl::StrFormat("  -P Skip path-mode smoke (enabled by default)")
+                      << std::endl;
             std::cout << absl::StrFormat ("  -h Show this help message") << std::endl;
             return (opt == 'h') ? 0 : 1;
+        }
+    }
+
+    if (!has_supported_test_queue(use_uring)) {
+        print_unsupported_test_queue_error(use_uring);
+        return 1;
+    }
+
+    if (run_path_mode_smoke) {
+        checkPathModeParser();
+        if (int rc = runPathModeCreateCheck(); rc != 0) {
+            return rc;
+        }
+        if (int rc = nixl_test::runPathModeSmoke(
+                "POSIXPathModeSmoke", "POSIX", "/tmp/nixl_posix_path_mode_smoke.bin", 4096);
+            rc != 0) {
+            return rc;
         }
     }
 
