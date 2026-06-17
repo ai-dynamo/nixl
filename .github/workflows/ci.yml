@@ -492,6 +492,10 @@ jobs:
       GITLAB_TRIGGER_URL: ${{ secrets.GITLAB_NIXL_PIPELINE_URL }}
       GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_NIXL_TRIGGER_TOKEN }}
       NSPECT_ID: NSPECT-WO64-8O3P
+      # Branch of nixl-ci to trigger. Defaults to main; set repo variable
+      # NIXL_CI_REF to a feature branch (e.g. nmailhot/rc-nspect-scan) to test the
+      # nspect/scan jobs before they're merged to nixl-ci main.
+      NIXL_CI_REF: ${{ vars.NIXL_CI_REF || 'main' }}
     steps:
       - name: Trigger nixl-ci nSpect + scan pipeline
         run: |
@@ -507,7 +511,7 @@ jobs:
           printf '%s' "${GITLAB_TRIGGER_TOKEN}" > "${TOKEN_FILE}"
           RESPONSE=$(curl -fsSL --request POST \
             --form "token=<${TOKEN_FILE}" \
-            --form "ref=main" \
+            --form "ref=${NIXL_CI_REF}" \
             --form "variables[PIPELINE_TYPE]=rc" \
             --form "variables[DRY_RUN]=false" \
             --form "variables[NSPECT_ID]=${NSPECT_ID}" \
