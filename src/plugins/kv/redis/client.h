@@ -58,12 +58,12 @@ public:
      * @param executor Executor used to complete async promises.
      */
     hiredisAsyncClient(nixl_b_params_t *custom_params,
-                       std::shared_ptr<asioThreadPoolExecutor> executor = nullptr);
+                       std::shared_ptr<redisThreadPoolExecutor> executor = nullptr);
 
     ~hiredisAsyncClient() override;
 
     void
-    setExecutor(std::shared_ptr<asioThreadPoolExecutor> executor) override;
+    setExecutor(std::shared_ptr<redisThreadPoolExecutor> executor) override;
 
     void
     putKeyAsync(std::string_view key,
@@ -82,7 +82,7 @@ public:
 
 private:
     struct CallbackContext {
-        std::shared_ptr<asioThreadPoolExecutor> executor;
+        std::shared_ptr<redisThreadPoolExecutor> executor;
         uintptr_t data_ptr;
         size_t data_len;
         std::shared_ptr<std::promise<nixl_status_t>> promise_ptr;
@@ -113,7 +113,7 @@ private:
     redisAsyncContext *asyncContext_;
     redisContext *syncContext_;
     struct event_base *eventBase_;
-    std::shared_ptr<asioThreadPoolExecutor> executor_;
+    std::shared_ptr<redisThreadPoolExecutor> executor_;
     std::thread eventLoopThread_;
     bool connected_;
     mutable std::mutex syncMutex_;

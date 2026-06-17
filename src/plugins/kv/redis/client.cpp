@@ -98,7 +98,7 @@ checkRedisReplyOk(redisReply *reply, const char *command) {
 }
 
 void
-setPromiseStatus(const std::shared_ptr<asioThreadPoolExecutor> &executor,
+setPromiseStatus(const std::shared_ptr<redisThreadPoolExecutor> &executor,
                  const std::shared_ptr<std::promise<nixl_status_t>> &promise,
                  bool success) {
     if (!promise) {
@@ -116,7 +116,7 @@ setPromiseStatus(const std::shared_ptr<asioThreadPoolExecutor> &executor,
 } // namespace
 
 hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params,
-                                       std::shared_ptr<asioThreadPoolExecutor> executor)
+                                       std::shared_ptr<redisThreadPoolExecutor> executor)
     : host_(getRedisHost(custom_params)),
       port_(getRedisPort(custom_params)),
       password_(getRedisPassword(custom_params)),
@@ -257,7 +257,7 @@ hiredisAsyncClient::~hiredisAsyncClient() {
 }
 
 void
-hiredisAsyncClient::setExecutor(std::shared_ptr<asioThreadPoolExecutor> executor) {
+hiredisAsyncClient::setExecutor(std::shared_ptr<redisThreadPoolExecutor> executor) {
     executor_ = executor;
 }
 
@@ -421,14 +421,14 @@ hiredisAsyncClient::checkKeyExistsSync(std::string_view key) {
 #else // HAVE_HIREDIS_ASYNC
 
 hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params,
-                                       std::shared_ptr<asioThreadPoolExecutor> executor) {
+                                       std::shared_ptr<redisThreadPoolExecutor> executor) {
     throw std::runtime_error("hiredis-async not available");
 }
 
 hiredisAsyncClient::~hiredisAsyncClient() {}
 
 void
-hiredisAsyncClient::setExecutor(std::shared_ptr<asioThreadPoolExecutor> executor) {}
+hiredisAsyncClient::setExecutor(std::shared_ptr<redisThreadPoolExecutor> executor) {}
 
 void
 hiredisAsyncClient::putKeyAsync(std::string_view key,

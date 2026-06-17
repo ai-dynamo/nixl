@@ -48,7 +48,7 @@ public:
      * @param executor ASIO thread pool shared with the engine implementation.
      */
     virtual void
-    setExecutor(std::shared_ptr<asioThreadPoolExecutor> executor) = 0;
+    setExecutor(std::shared_ptr<redisThreadPoolExecutor> executor) = 0;
 
     /**
      * @brief Asynchronously store a value under key (Redis SET).
