@@ -28,7 +28,6 @@ if 'HF3FS' in static_plugins
                     dependencies: [nixl_infra, threefs_dep, nixl_common_dep, file_utils_interface],
                     include_directories: [nixl_inc_dirs, utils_inc_dirs],
                     install: false,
-                    cpp_args : [],
                     name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
   hf3fs_backend_lib = shared_library('HF3FS',
