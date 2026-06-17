@@ -56,7 +56,7 @@ namespace {
 
     // NVTX copies the message at submit time, so a null-terminated C string that
     // outlives the call is sufficient.
-    nvtxEventAttributes_t
+    [[nodiscard]] nvtxEventAttributes_t
     makeEvent(const char *msg, Kind kind, Color color) {
         nvtxEventAttributes_t ev{};
         ev.version = NVTX_VERSION;
