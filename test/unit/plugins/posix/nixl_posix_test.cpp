@@ -447,6 +447,10 @@ read_write_test (int num_transfers,
             printProgress(float(i + 1) / num_transfers);
         }
 
+        // Release the write request before reusing treq for the read request;
+        // otherwise the write request handle leaks.
+        agent.releaseXferReq(treq);
+
         print_segment_title(phase_title("File to Memory Transfer (Read Test)"));
 
         status = agent.createXferReq (
@@ -565,6 +569,10 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
     nixl_xfer_dlist_t file_for_posix_xfer (FILE_SEG);
     std::unique_ptr<nixlBlobDesc[]> ftrans (new nixlBlobDesc[num_transfers]);
 
+    // Own the posix_memalign buffers so they are freed on every exit path.
+    std::vector<std::unique_ptr<void, PosixMemalignDeleter>> dram_addr;
+    dram_addr.reserve(num_transfers);
+
     int file_open_flags = O_RDWR | O_CREAT;
     mode_t file_mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH; // rw-r--r--
     for (int i = 0; i < num_transfers; ++i) {
@@ -573,6 +581,7 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
             std::cerr << "DRAM allocation failed" << std::endl;
             return 1;
         }
+        dram_addr.emplace_back(ptr);
         fill_test_pattern (ptr, repost_test_phrase_1, transfer_size);
 
         // Create test file
