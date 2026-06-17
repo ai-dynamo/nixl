@@ -23,6 +23,7 @@ UCX_PLUGINS_DIR="/usr/lib64/ucx"
 NIXL_PLUGINS_DIR="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins"
 OUTPUT_DIR="dist"
 BUILD_NIXL_EP="false"
+PLUGIN_SONAME_SUFFIX=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -52,6 +53,11 @@ while [[ $# -gt 0 ]]; do
             shift
             shift
             ;;
+        --plugin-soname-suffix)
+            PLUGIN_SONAME_SUFFIX=$2
+            shift
+            shift
+            ;;
         --help)
             echo "Usage: $0 [--python-version <python-version>] [--platform <platform>] [--output-dir <output-dir>] [--ucx-plugins-dir <ucx-plugins-dir>] [--nixl-plugins-dir <nixl-plugins-dir>]"
             echo "  --python-version: Python version to build the wheel for (default: $PYTHON_VERSION)"
@@ -60,6 +66,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --ucx-plugins-dir: Directory to find UCX plugins in (default: $UCX_PLUGINS_DIR)"
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
             echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires CUDA sm90-compatible environment)"
+            echo "  --plugin-soname-suffix: Private UCX SONAME suffix to keep for bundled UCX modules"
             echo "  --help: Show this help message"
             echo ""
             echo "Must be executed from the root of the NIXL repository."
@@ -101,7 +108,11 @@ fi
 # Bundle libraries
 mkdir $TMP_DIR/dist
 auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' --exclude 'libefa*' --exclude 'libhwloc*' --exclude 'libfabric*' --exclude 'libtorch*' --exclude 'libc10*' --exclude 'libdoca*' $TMP_DIR/nixl*.whl --plat $WHL_PLATFORM --wheel-dir $TMP_DIR/dist
-./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR $TMP_DIR/dist/*.whl
+PLUGIN_SONAME_ARGS=()
+if [ -n "$PLUGIN_SONAME_SUFFIX" ]; then
+    PLUGIN_SONAME_ARGS=(--skip-plugin-symlinks --plugin-soname-suffix "$PLUGIN_SONAME_SUFFIX")
+fi
+./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR "${PLUGIN_SONAME_ARGS[@]}" $TMP_DIR/dist/*.whl
 cp $TMP_DIR/dist/*.whl $OUTPUT_DIR
 
 # Clean up
