@@ -37,8 +37,6 @@ if not is_variable('obj_utils_interface')
 endif
 
 obj_plugin_deps = [nixl_infra, nixl_common_dep, obj_utils_interface, dependency('asio', required: true)]
-obj_compile_defs = []
-obj_compile_flags = []
 
 if cuobj_dep.found()
     message('Found CUObjClient Library. Enabling S3 Accelerated engines')
@@ -62,7 +60,7 @@ if 'OBJ' in static_plugins
         'OBJ',
         obj_sources,
         dependencies: obj_plugin_deps,
-        cpp_args: obj_compile_defs + obj_compile_flags,
+        cpp_args: [],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: false,
         name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
@@ -71,7 +69,7 @@ else
         'OBJ',
         obj_sources,
         dependencies: obj_plugin_deps,
-        cpp_args: obj_compile_defs + obj_compile_flags + ['-fPIC'],
+        cpp_args: ['-fPIC'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
         name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
