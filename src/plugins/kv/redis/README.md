@@ -5,17 +5,18 @@ SPDX-License-Identifier: Apache-2.0
 
 # NIXL Redis Plugin (KV)
 
-All REDIS plugin code lives in `src/plugins/kv/redis/`. Shared KV abstractions stay in `src/plugins/kv/`.
+The REDIS implementation lives in `src/plugins/kv/redis/`. Shared KV abstractions and the plugin
+entrypoint stay in `src/plugins/kv/`.
 
 ```
 kv/                           # shared KV layer (PR1 interface)
   kv_backend.h/.cpp           nixlKVEngine, nixlKVEngineImpl, iKVStore
+  kv_plugin.cpp               registers "REDIS"
   meson.build                 delegates to redis/ when REDIS enabled
 
 kv/redis/                     # REDIS plugin (this directory)
   redis_engine.h/.cpp         iRedisClient + nixlRedisKVEngine
-  redis_plugin.cpp            registers "REDIS"
-  redis_executor.h            ASIO thread pool
+  redis_executor.h            Redis-specific ASIO thread pool
   client.h/.cpp               hiredisAsyncClient
   engine_impl.h/.cpp          nixlRedisKVEngineImpl
   meson.build
@@ -46,7 +47,7 @@ kv/redis/                     # REDIS plugin (this directory)
 
 ```cpp
 class iRedisClient {
-    void setExecutor(std::shared_ptr<asioThreadPoolExecutor> executor);
+    void setExecutor(std::shared_ptr<redisThreadPoolExecutor> executor);
 
     // postXfer path (async connection)
     void putKeyAsync(..., std::shared_ptr<std::promise<nixl_status_t>> promise);
@@ -82,7 +83,7 @@ queryMem (sync path):
 ### Native (plugin only)
 
 ```bash
-meson setup build -Dplugins=REDIS
+meson setup build -Denable_plugins=REDIS
 ninja -C build
 # -> build/src/plugins/kv/redis/libplugin_REDIS.so
 ```
