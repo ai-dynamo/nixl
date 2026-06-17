@@ -13,7 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# All REDIS plugin sources live in this directory (kv/redis/).
+# REDIS implementation sources live in this directory; the plugin entrypoint
+# stays in the shared KV layer to match the OBJ plugin layout.
 
 if not enabled_plugins.get('REDIS')
     subdir_done()
@@ -21,9 +22,9 @@ endif
 
 redis_sources = [
     '../kv_backend.cpp',
+    '../kv_plugin.cpp',
     'redis_engine.cpp',
     'redis_engine.h',
-    'redis_plugin.cpp',
     'redis_executor.h',
     'client.cpp',
     'client.h',
