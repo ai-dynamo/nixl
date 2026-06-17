@@ -121,6 +121,10 @@ BUILD_DEPS=(
 # be used unambiguously as a path component.
 slug() { echo "${1//./}"; }
 
+# Cache torch channel per version for this script run. Populated by
+# ensure_torch_venv(); cleared when the venv is torn down after a build.
+declare -A TORCH_CHANNEL_CACHE
+
 # Path for a per-iteration build venv. One venv per (python, torch) tuple
 # so torch's transitive footprint (nvidia-*, triton, sympy, …) never bleeds
 # across torch versions. Lives in /workspace, not /tmp, so it inherits the
@@ -132,6 +136,12 @@ venv_path() {
     else
         echo "/workspace/venv-py$(slug "$PYTHON_VERSION")"
     fi
+}
+
+torch_venv_ready() {
+    local VENV_PATH=$1
+    [ -x "$VENV_PATH/bin/python" ] && \
+        "$VENV_PATH/bin/python" -c 'import torch' >/dev/null 2>&1
 }
 
 # Install torch from the cu index, isolated from PyPI: with PyPI as a
@@ -158,40 +168,55 @@ install_torch() {
     fi
 }
 
-# Probe whether torch actually installs on this host arch. uv's --dry-run
-# does not always reject wheels with a mismatched platform tag.
-try_install_torch() {
-    local PROBE=$1
-    local VER=$2
-    local CHANNEL=$3
-    install_torch "$PROBE" "$VER" "$CHANNEL" >/dev/null 2>&1
+# Create or reuse a venv with torch installed. uv's --dry-run does not
+# always reject wheels with a mismatched platform tag, so we probe with a
+# real install once and reuse the venv for the wheel build.
+# Sets TORCH_CHANNEL_CACHE and returns 0 on success, 1 if unavailable.
+ensure_torch_venv() {
+    local VER=$1
+    local VENV_PATH
+    VENV_PATH=$(venv_path "$VER")
+    local CHANNEL="${TORCH_CHANNEL_CACHE[$VER]:-}"
+
+    if [ "$CHANNEL" = "unavailable" ]; then
+        return 1
+    fi
+    if [ -n "$CHANNEL" ] && torch_venv_ready "$VENV_PATH"; then
+        return 0
+    fi
+
+    rm -rf "$VENV_PATH"
+    if ! uv venv "$VENV_PATH" --python "$PYTHON_VERSION"; then
+        TORCH_CHANNEL_CACHE[$VER]="unavailable"
+        return 1
+    fi
+
+    if install_torch "$VENV_PATH" "$VER" "stable" 2>/dev/null; then
+        CHANNEL="stable"
+    elif install_torch "$VENV_PATH" "$VER" "nightly" 2>/dev/null; then
+        CHANNEL="nightly"
+    else
+        rm -rf "$VENV_PATH"
+        TORCH_CHANNEL_CACHE[$VER]="unavailable"
+        return 1
+    fi
+
+    TORCH_CHANNEL_CACHE[$VER]="$CHANNEL"
+    return 0
 }
 
-# Echo "stable", "nightly", or "unavailable" depending on whether
-# torch==${VER}.* can be installed for this (Python, CUDA, arch) combo.
-torch_classify() {
-    local VER=$1
-    local PROBE="/workspace/venv-probe-py$(slug "$PYTHON_VERSION")-torch$(slug "$VER")"
+torch_channel() {
+    echo "${TORCH_CHANNEL_CACHE[$1]:-unavailable}"
+}
 
-    rm -rf "$PROBE"
-    if ! uv venv "$PROBE" --python "$PYTHON_VERSION" >/dev/null 2>&1; then
-        echo "unavailable"
-        return
+destroy_torch_venv() {
+    local VER=${1:-}
+    local VENV_PATH
+    VENV_PATH=$(venv_path "$VER")
+    rm -rf "$VENV_PATH"
+    if [ -n "$VER" ]; then
+        unset "TORCH_CHANNEL_CACHE[$VER]"
     fi
-
-    if try_install_torch "$PROBE" "$VER" "stable"; then
-        rm -rf "$PROBE"
-        echo "stable"
-        return
-    fi
-    if try_install_torch "$PROBE" "$VER" "nightly"; then
-        rm -rf "$PROBE"
-        echo "nightly"
-        return
-    fi
-
-    rm -rf "$PROBE"
-    echo "unavailable"
 }
 
 # Build the wheel for the current PYTHON_VERSION (and optional torch VER).
@@ -205,18 +230,18 @@ build_wheel() {
     VENV_PATH=$(venv_path "$VER")
     local CHANNEL="stable"
     if [ -n "$VER" ]; then
-        CHANNEL=$(torch_classify "$VER")
-        if [ "$CHANNEL" = "unavailable" ]; then
+        ensure_torch_venv "$VER" || {
             echo "ERROR: torch ${VER} is not installable for Python ${PYTHON_VERSION} + ${CU_TAG} on $(uname -m)" >&2
             exit 1
-        fi
+        }
+        CHANNEL=$(torch_channel "$VER")
+    else
+        rm -rf "$VENV_PATH"
+        uv venv "$VENV_PATH" --python "$PYTHON_VERSION"
     fi
 
     echo "=== Provisioning ${VENV_PATH} (python ${PYTHON_VERSION}${VER:+, torch ${VER} [${CHANNEL}]}) ==="
-    rm -rf "$VENV_PATH"
-    uv venv "$VENV_PATH" --python "$PYTHON_VERSION"
     uv pip install --python "$VENV_PATH/bin/python" "${BUILD_DEPS[@]}"
-    [ -n "$VER" ] && install_torch "$VENV_PATH" "$VER" "$CHANNEL"
 
     # Activate so meson's `find_installation('python3')` resolves to this
     # venv's interpreter (which has the right torch).
@@ -240,7 +265,7 @@ build_wheel() {
     deactivate
     # torch + nvidia-* in each venv is several GB; tear down so the docker
     # layer does not get too large across the (python, torch) matrix.
-    rm -rf "$VENV_PATH"
+    destroy_torch_venv "$VER"
 }
 
 repair_wheel() {
@@ -273,10 +298,10 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
     TORCH_ARRAY=()
     SKIPPED=()
     for TORCH in "${TORCH_REQUESTED[@]}"; do
-        if [ "$(torch_classify "$TORCH")" = "unavailable" ]; then
-            SKIPPED+=("$TORCH")
-        else
+        if ensure_torch_venv "$TORCH"; then
             TORCH_ARRAY+=("$TORCH")
+        else
+            SKIPPED+=("$TORCH")
         fi
     done
 
