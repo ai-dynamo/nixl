@@ -246,7 +246,8 @@ shouldDeepBindPlugin(const std::string &plugin_name) {
     }
 
     try {
-        return nixl::config::getValueDefaulted<bool>(kUcxDeepBindVar, true);
+        /* TODO: check if RTLD_DEEPBIND is needed at all for UCX/NIXL */
+        return nixl::config::getValueDefaulted<bool>(kUcxDeepBindVar, false);
     }
     catch (const std::exception &e) {
         NIXL_WARN << "Invalid " << kUcxDeepBindVar
