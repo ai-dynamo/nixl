@@ -251,7 +251,7 @@ void *getValidationPtr(nixl_mem_t mem_type, void *addr, size_t len)
         break;
 #if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     case VRAM_SEG: {
-        void *ptr = calloc(len, 1);
+        const void *ptr = calloc(len, 1);
         gpuMemcpyD2H(ptr, addr, len, "Failed to memcpy");
         return ptr;
     }

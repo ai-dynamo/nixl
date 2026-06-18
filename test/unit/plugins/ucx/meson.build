@@ -42,9 +42,9 @@ if rocm_available
     cpp_args = ['-DHAVE_ROCM', '-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations']
 elif cuda_dep.found()
     ucx_test_dep += [ cuda_dep ]
-    cpp_args = '-DHAVE_CUDA'
+    cpp_args = ['-DHAVE_CUDA']
 else
-    cpp_args = '-UHAVE_CUDA'
+    cpp_args = ['-UHAVE_CUDA']
 endif
 
 ucx_backend_test_dep = [nixl_dep, nixl_infra, thread_dep] + ucx_test_dep + nixl_test_utils_dep
