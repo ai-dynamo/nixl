@@ -31,6 +31,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The ROCm "-complete" base image is ~30GB extracted and does not fit on a
+      # stock ubuntu-latest runner (~14GB free); reclaim space before building.
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc \
+            /usr/local/lib/android /opt/hostedtoolcache \
+            /usr/local/share/boost /usr/local/.ghcup
+          sudo docker image prune -af || true
+          df -h /
+
       - name: Build ROCm container
         run: ./contrib/build-container.sh --rocm --tag nixl-rocm:ci --no-cache
 
