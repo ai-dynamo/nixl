@@ -23,17 +23,6 @@
 #include "ucx_utils.h"
 #include "rkey.h"
 #include "gpu_utils.h"
-// TODO: meson conditional build for CUDA
-// #define USE_VRAM
-
-#ifdef USE_VRAM
-
-#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
-int gpu_id = 0;
-#endif
-
-#endif
-
 
 using namespace std;
 
@@ -66,6 +55,9 @@ completeRequest(nixlUcxWorker w[2],
 
 int
 main() {
+#ifdef USE_VRAM
+    int gpu_id = 0;
+#endif
     vector<string> devs;
     // TODO: pass dev name for testing
     // in CI it would be goot to test both SHM and IB
