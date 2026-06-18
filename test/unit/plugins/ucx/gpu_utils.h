@@ -13,10 +13,11 @@
 #include <cuda_runtime.h>
 #include <cuda.h>
 
-static void checkCudaError(cudaError_t result, const char *message) {
+static void
+checkCudaError(cudaError_t result, const char *message) {
     if (result != cudaSuccess) {
-        std::cerr << message << " (Error code: " << result << " - "
-                   << cudaGetErrorString(result) << ")" << std::endl;
+        std::cerr << message << " (Error code: " << result << " - " << cudaGetErrorString(result)
+                  << ")" << std::endl;
         exit(EXIT_FAILURE);
     }
 }
@@ -25,17 +26,18 @@ static void checkCudaError(cudaError_t result, const char *message) {
 #ifdef HAVE_ROCM
 #include <hip/hip_runtime.h>
 
-static void checkHipError(hipError_t result, const char *message) {
+static void
+checkHipError(hipError_t result, const char *message) {
     if (result != hipSuccess) {
-        std::cerr << message << " (Error code: " << result << " - "
-                   << hipGetErrorString(result) << ")" << std::endl;
+        std::cerr << message << " (Error code: " << result << " - " << hipGetErrorString(result)
+                  << ")" << std::endl;
         exit(EXIT_FAILURE);
     }
 }
 #endif
 
-// GPU API wrappers with internal error checking
-static inline void gpuSetDevice(int device, const char *message) {
+static inline void
+gpuSetDevice(int device, const char *message) {
 #ifdef HAVE_CUDA
     checkCudaError(cudaSetDevice(device), message);
 #elif defined(HAVE_ROCM)
@@ -43,7 +45,8 @@ static inline void gpuSetDevice(int device, const char *message) {
 #endif
 }
 
-static inline void gpuMalloc(void **ptr, size_t size, const char *message) {
+static inline void
+gpuMalloc(void **ptr, size_t size, const char *message) {
 #ifdef HAVE_CUDA
     checkCudaError(cudaMalloc(ptr, size), message);
 #elif defined(HAVE_ROCM)
@@ -51,7 +54,8 @@ static inline void gpuMalloc(void **ptr, size_t size, const char *message) {
 #endif
 }
 
-static inline void gpuFree(void *ptr, const char *message) {
+static inline void
+gpuFree(void *ptr, const char *message) {
 #ifdef HAVE_CUDA
     checkCudaError(cudaFree(ptr), message);
 #elif defined(HAVE_ROCM)
@@ -59,7 +63,8 @@ static inline void gpuFree(void *ptr, const char *message) {
 #endif
 }
 
-static inline void gpuMemset(void *ptr, int value, size_t size, const char *message) {
+static inline void
+gpuMemset(void *ptr, int value, size_t size, const char *message) {
 #ifdef HAVE_CUDA
     checkCudaError(cudaMemset(ptr, value, size), message);
 #elif defined(HAVE_ROCM)
@@ -68,7 +73,8 @@ static inline void gpuMemset(void *ptr, int value, size_t size, const char *mess
 #endif
 }
 
-static inline void gpuGetDeviceCount(int *count, const char *message) {
+static inline void
+gpuGetDeviceCount(int *count, const char *message) {
 #ifdef HAVE_CUDA
     checkCudaError(cudaGetDeviceCount(count), message);
 #elif defined(HAVE_ROCM)
@@ -76,7 +82,8 @@ static inline void gpuGetDeviceCount(int *count, const char *message) {
 #endif
 }
 
-static inline void gpuMemcpyD2H(void *dst, const void *src, size_t size, const char *message) {
+static inline void
+gpuMemcpyD2H(void *dst, const void *src, size_t size, const char *message) {
 #ifdef HAVE_CUDA
     checkCudaError(cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost), message);
 #elif defined(HAVE_ROCM)
