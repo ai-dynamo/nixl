@@ -761,9 +761,14 @@ $ host2 > sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --back
 
 **AIS_MT (Multi-threaded ROCm Infinity Storage):**
 ```bash
-# Requires NIXL built with AIS_MT; use a hipFile-capable filepath (see plugin docs)
-./nixlbench --backend AIS_MT --filepath /mnt/storage/testfile --gds_mt_num_threads 8
+# Requires NIXL built with AIS_MT; --filepath is a directory prefix (test files
+# are created under it). Use a hipFile-capable path (see plugin docs).
+./nixlbench --backend AIS_MT --filepath /mnt/storage/ais-mt-dir --gds_mt_num_threads 8
 ```
+
+For a containerized AMD GPU + NVMe directory + `ais-stats` workflow, see
+[`contrib/run-ais-mt-amd-gpu-test.sh`](contrib/run-ais-mt-amd-gpu-test.sh) and
+[`docs/rocm-ci.md`](../../docs/rocm-ci.md) (AIS_MT on AMD GPU section).
 
 **POSIX Backend:**
 ```bash
