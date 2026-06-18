@@ -167,8 +167,19 @@ Common build options:
 - `wheel_variant`: Override the Python wheel variant suffix (e.g. `-Dwheel_variant=rocm` yields `nixl_rocm`). Empty (default) = autodetect from the CUDA major version.
 
 #### Building for AMD ROCm
+NIXL itself builds vendor-neutrally; CPU-side hardware detection
+(`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or
+not a ROCm toolchain is present. ROCm is requested by setting `-Drocm_path`;
+Meson then links HIP when `amdhip64` is found under that prefix. An empty
+`rocm_path` means ROCm is not used. HIP is detected independently of CUDA,
+so the NVIDIA and AMD plugin stacks can be built together when both toolchains
+are present.
 
-NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or not a ROCm toolchain is present. GPU-side ROCm/HIP build support is available for nixlbench and UCX plugin unit tests. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
+`benchmark/nixlbench` is a separate Meson project and is the exception: a
+single translation unit cannot include CUDA and HIP headers together, so one
+build targets one stack. Use `-Dnixlbench_gpu=cuda|rocm` to force a stack
+(`auto`, the default, prefers CUDA); `-Duse_rocm=true` is a deprecated alias for
+`-Dnixlbench_gpu=rocm`. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
 
 **Building with ROCm support:**
 ```bash
@@ -186,6 +197,8 @@ $ meson setup build -Drocm_path=/custom/path/to/rocm
 - `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — on a ROCm-only host they skip automatically when CUDA / cuFile / DOCA are not found.
 
 **Known gaps (will be addressed in follow-up PRs):**
+- `nixlbench`: NVSHMEM and the CUDA-driver VMM/fabric helpers remain
+  NVIDIA-only; VRAM allocation prefers CUDA when both stacks are present.
 - `LIBFABRIC` plugin disabled on ROCm pending header refactor.
 - No NVSHMEM-equivalent backend yet (rocSHMEM analog is a candidate for a future plugin).
 
