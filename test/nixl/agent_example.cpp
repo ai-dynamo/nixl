@@ -277,6 +277,11 @@ nixl_status_t partialMdTest(nixlAgent* A1, nixlAgent* A2, nixlBackendH* backend1
         nixl_exit_on_failure(status, "Failed to prep xfer dlist", agent1);
         nixl_exit_on_failure((dst_side != nullptr), "Dst side is null", agent1);
 
+        // Release the prepared handle: the negative-check loop below reuses
+        // dst_side and nothing else frees it, so it would otherwise leak.
+        status = A1->releasedDlistH(dst_side);
+        nixl_exit_on_failure(status, "Failed to release xfer dlist", agent1);
+
         // Make sure not-loaded descriptors are not updated
         for (int invalid_idx = update + 1; invalid_idx < NUM_UPDATES; invalid_idx++) {
             status = A1->prepXferDlist(agent2, dst_mem_lists[invalid_idx].trim(), dst_side, &extra_params1);

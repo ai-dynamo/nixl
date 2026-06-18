@@ -79,7 +79,7 @@ private:
 };
 
 struct nixlDlistH {
-    using descs_t = std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_dlist_t>>;
+    using descs_t = std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_stride_dlist_t>>;
 
     nixlDlistH(const std::string &remote_agent, descs_t &&descs);
 
