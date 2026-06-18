@@ -164,7 +164,7 @@ static int cudaQueryAddr(void *address, bool &is_dev,
 static int hipQueryAddr(void *address, bool &is_dev, hipDevice_t &dev)
 {
     hipPointerAttribute_t attrs;
-    hipError_t result = hipPointerGetAttributes(&attrs, address);
+    const hipError_t result = hipPointerGetAttributes(&attrs, address);
 
     if (result == hipSuccess) {
         is_dev = (attrs.type == hipMemoryTypeDevice);

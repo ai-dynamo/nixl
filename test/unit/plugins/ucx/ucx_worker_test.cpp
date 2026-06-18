@@ -87,8 +87,8 @@ main() {
 
 #ifdef USE_VRAM
     gpuSetDevice(gpu_id, "Failed to set device");
-    gpuMalloc((void**)&buffer[0], buf_size, "Failed to allocate GPU buffer 0");
-    gpuMalloc((void**)&buffer[1], buf_size, "Failed to allocate GPU buffer 1");
+    gpuMalloc((void **)&buffer[0], buf_size, "Failed to allocate GPU buffer 0");
+    gpuMalloc((void **)&buffer[1], buf_size, "Failed to allocate GPU buffer 1");
     nixl_mem_type = VRAM_SEG;
 #else
     buffer[0] = (uint8_t *)calloc(1, buf_size);
