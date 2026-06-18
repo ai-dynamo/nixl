@@ -66,6 +66,12 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 - **Docker**: Version 20.10+ (for container builds)
 - **Git**: For source code management
 - **CUDA Toolkit**: 12.8+ (for GPU features)
+- **ROCm / HIP** (optional): when CUDA is absent, Meson can build VRAM paths
+  with HIP. A single build targets one GPU stack: `-Dnixlbench_gpu=auto` (the
+  default) picks CUDA when present and otherwise ROCm, while `cuda` / `rocm`
+  force a stack. To cover both on one machine, run two Meson configures in
+  separate build directories. See `benchmark/nixlbench/meson_options.txt`
+  (`nixlbench_gpu`).
 - **Python**: 3.12+ (for benchmark utilities)
 
 ## Quick Start
