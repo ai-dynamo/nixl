@@ -28,6 +28,9 @@
 #include <omp.h>
 #include <set>
 
+/* CUDA/HIP are pulled in via utils.h *after* toml++. Including hip/hip_runtime.h
+ * here first would load ROCm host_defines.h, which defines an empty __noinline__
+ * macro on GCC and breaks toml++ (TOML_HAS_ATTR(__noinline__)). */
 #include <fcntl.h>
 #include <filesystem>
 #include <gflags/gflags.h>
