@@ -23,6 +23,11 @@ jobs:
   build:
     name: ROCm container build + smoke
     runs-on: ubuntu-latest
+    # Non-blocking for now: a from-scratch ROCm build exceeds the hosted-runner
+    # budget (the "-complete" image plus building UCX/gRPC/etc. from source runs
+    # well past the timeout). Flip to blocking once the build consumes the
+    # pre-built ghcr.io/ai-dynamo/nixl-rocm base image so only nixl is compiled.
+    continue-on-error: true
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     timeout-minutes: 90
     steps:
