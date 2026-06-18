@@ -161,8 +161,8 @@ static int cudaQueryAddr(void *address, bool &is_dev,
 #endif
 
 #ifdef HAVE_ROCM
-static int hipQueryAddr(void *address, bool &is_dev, hipDevice_t &dev)
-{
+static int
+hipQueryAddr(void *address, bool &is_dev, hipDevice_t &dev) {
     hipPointerAttribute_t attrs;
     const hipError_t result = hipPointerGetAttributes(&attrs, address);
 
