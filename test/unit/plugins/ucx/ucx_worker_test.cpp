@@ -33,8 +33,7 @@
 
 int gpu_id = 0;
 
-static void
-checkCudaError(cudaError_t result, const char *message) {
+static void checkCudaError(cudaError_t result, const char *message) {
     if (result != cudaSuccess) {
         std::cerr << message << " (Error code: " << result << " - " << cudaGetErrorString(result)
                   << ")" << std::endl;
@@ -46,21 +45,9 @@ checkCudaError(cudaError_t result, const char *message) {
 #ifdef HAVE_ROCM
 #include <hip/hip_runtime.h>
 
-// Map CUDA calls to HIP equivalents
-#define cudaSetDevice hipSetDevice
-#define cudaMalloc hipMalloc
-#define cudaFree hipFree
-#define cudaMemset hipMemset
-#define cudaMemcpy hipMemcpy
-#define cudaMemcpyDeviceToHost hipMemcpyDeviceToHost
-#define cudaSuccess hipSuccess
-#define cudaGetErrorString hipGetErrorString
-#define cudaError_t hipError_t
-
 int gpu_id = 0;
 
-static void
-checkCudaError(hipError_t result, const char *message) {
+static void checkHipError(hipError_t result, const char *message) {
     if (result != hipSuccess) {
         std::cerr << message << " (Error code: " << result << " - " << hipGetErrorString(result)
                   << ")" << std::endl;
@@ -68,6 +55,56 @@ checkCudaError(hipError_t result, const char *message) {
     }
 }
 #endif
+
+// GPU API wrappers with internal error checking
+static inline void gpuSetDevice(int device, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaSetDevice(device), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipSetDevice(device), message);
+#endif
+}
+
+static inline void gpuMalloc(void **ptr, size_t size, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaMalloc(ptr, size), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipMalloc(ptr, size), message);
+#endif
+}
+
+static inline void gpuFree(void *ptr, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaFree(ptr), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipFree(ptr), message);
+#endif
+}
+
+static inline void gpuMemset(void *ptr, int value, size_t size, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaMemset(ptr, value, size), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipMemset(ptr, value, size), message);
+    checkHipError(hipStreamSynchronize(0), "Failed to synchronize stream");
+#endif
+}
+
+static inline void gpuMemcpyD2H(void *dst, const void *src, size_t size, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipMemcpy(dst, src, size, hipMemcpyDeviceToHost), message);
+#endif
+}
+
+static inline void gpuMemcpyH2D(void *dst, const void *src, size_t size, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipMemcpy(dst, src, size, hipMemcpyHostToDevice), message);
+#endif
+}
 
 #endif
 
@@ -123,9 +160,9 @@ main() {
     nixl_mem_t nixl_mem_type;
 
 #ifdef USE_VRAM
-    checkCudaError(cudaSetDevice(gpu_id), "Failed to set device");
-    checkCudaError(cudaMalloc(&buffer[0], buf_size), "Failed to allocate GPU buffer 0");
-    checkCudaError(cudaMalloc(&buffer[1], buf_size), "Failed to allocate GPU buffer 1");
+    gpuSetDevice(gpu_id, "Failed to set device");
+    gpuMalloc((void**)&buffer[0], buf_size, "Failed to allocate GPU buffer 0");
+    gpuMalloc((void**)&buffer[1], buf_size, "Failed to allocate GPU buffer 1");
     nixl_mem_type = VRAM_SEG;
 #else
     buffer[0] = (uint8_t *)calloc(1, buf_size);
@@ -154,11 +191,8 @@ main() {
      * ========================================= */
 
 #ifdef USE_VRAM
-    checkCudaError(cudaMemset(buffer[1], 0xbb, buf_size), "Failed to memset");
-    checkCudaError(cudaMemset(buffer[0], 0xda, buf_size), "Failed to memset");
-#ifdef HAVE_ROCM
-    checkCudaError(hipStreamSynchronize(0), "Failed to synchronize stream");
-#endif
+    gpuMemset(buffer[1], 0xbb, buf_size, "Failed to memset");
+    gpuMemset(buffer[0], 0xda, buf_size, "Failed to memset");
 #else
     memset(buffer[1], 0xbb, buf_size);
     memset(buffer[0], 0xda, buf_size);
@@ -173,8 +207,7 @@ main() {
     completeRequest(w, std::string("WRITE"), true, ret, req);
 
 #ifdef USE_VRAM
-    checkCudaError(cudaMemcpy(chk_buffer, buffer[1], buf_size, cudaMemcpyDeviceToHost),
-                   "Failed to memcpy");
+    gpuMemcpyD2H(chk_buffer, buffer[1], buf_size, "Failed to memcpy");
 #else
     memcpy(chk_buffer, buffer[1], buf_size);
 #endif
@@ -191,13 +224,9 @@ main() {
      * ========================================= */
 
 #ifdef USE_VRAM
-    checkCudaError(cudaMemset(buffer[0], 0xbb, buf_size), "Failed to memset");
-    checkCudaError(cudaMemset(buffer[1], 0xbb, buf_size / 3), "Failed to memset");
-    checkCudaError(cudaMemset(buffer[1] + buf_size / 3, 0xda, buf_size - buf_size / 3),
-                   "Failed to memset");
-#ifdef HAVE_ROCM
-    checkCudaError(hipStreamSynchronize(0), "Failed to synchronize stream");
-#endif
+    gpuMemset(buffer[0], 0xbb, buf_size, "Failed to memset");
+    gpuMemset(buffer[1], 0xbb, buf_size / 3, "Failed to memset");
+    gpuMemset(buffer[1] + buf_size / 3, 0xda, buf_size - buf_size / 3, "Failed to memset");
 #else
     memset(buffer[0], 0xbb, buf_size);
     memset(buffer[1], 0xbb, buf_size / 3);
@@ -213,8 +242,7 @@ main() {
     completeRequest(w, std::string("READ"), true, ret, req);
 
 #ifdef USE_VRAM
-    checkCudaError(cudaMemcpy(chk_buffer, buffer[0], buf_size, cudaMemcpyDeviceToHost),
-                   "Failed to memcpy");
+    gpuMemcpyD2H(chk_buffer, buffer[0], buf_size, "Failed to memcpy");
 #else
     memcpy(chk_buffer, buffer[0], buf_size);
 #endif
@@ -234,8 +262,8 @@ main() {
 
 
 #ifdef USE_VRAM
-    checkCudaError(cudaFree(buffer[0]), "Failed to free GPU buffer 0");
-    checkCudaError(cudaFree(buffer[1]), "Failed to free GPU buffer 1");
+    gpuFree(buffer[0], "Failed to free GPU buffer 0");
+    gpuFree(buffer[1], "Failed to free GPU buffer 1");
 #else
     free(buffer[0]);
     free(buffer[1]);
