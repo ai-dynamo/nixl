@@ -29,8 +29,6 @@ using namespace std;
 #ifdef HAVE_CUDA
 #include <cuda_runtime.h>
 #include <cuda.h>
-using GpuDevice_t = CUdevice;
-using GpuContext_t = CUcontext;
 
 static void checkCudaError(cudaError_t result, const char *message) {
     if (result != cudaSuccess) {
@@ -43,8 +41,6 @@ static void checkCudaError(cudaError_t result, const char *message) {
 
 #ifdef HAVE_ROCM
 #include <hip/hip_runtime.h>
-using GpuDevice_t = hipDevice_t;
-using GpuContext_t = hipCtx_t;
 
 static void checkHipError(hipError_t result, const char *message) {
     if (result != hipSuccess) {
@@ -222,12 +218,10 @@ std::string memType2Str(nixl_mem_t mem_type)
 }
 
 
-#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
-
+#ifdef HAVE_CUDA
 static int cudaQueryAddr(void *address, bool &is_dev,
                          CUdevice &dev, CUcontext &ctx)
 {
-#ifdef HAVE_CUDA
     CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
     uint32_t is_managed = 0;
 #define NUM_ATTRS 4
@@ -250,20 +244,22 @@ static int cudaQueryAddr(void *address, bool &is_dev,
     is_dev = (mem_type == CU_MEMORYTYPE_DEVICE);
 
     return (CUDA_SUCCESS != result);
-#elif defined(HAVE_ROCM)
+}
+#endif
+
+#ifdef HAVE_ROCM
+static int hipQueryAddr(void *address, bool &is_dev, hipDevice_t &dev)
+{
     hipPointerAttribute_t attrs;
     hipError_t result = hipPointerGetAttributes(&attrs, address);
 
     if (result == hipSuccess) {
         is_dev = (attrs.type == hipMemoryTypeDevice);
         dev = attrs.device;
-        ctx = nullptr; // HIP doesn't expose context in the same way
         return 0;
     }
     return 1;
-#endif
 }
-
 #endif
 
 
@@ -276,14 +272,21 @@ void allocateBuffer(nixl_mem_t mem_type, int dev_id, size_t len, void* &addr)
 #if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     case VRAM_SEG:{
         bool is_dev;
-        GpuDevice_t dev;
-        GpuContext_t ctx;
 
         gpuSetDevice(dev_id, "Failed to set device");
         gpuMalloc(&addr, len, "Failed to allocate GPU buffer 0");
+
+#ifdef HAVE_CUDA
+        CUdevice dev;
+        CUcontext ctx;
         cudaQueryAddr(addr, is_dev, dev, ctx);
-        std::cout << "GPU addr: " << std::hex << addr << " dev=" << std::dec << dev
+        std::cout << "CUDA addr: " << std::hex << addr << " dev=" << std::dec << dev
             << " ctx=" << std::hex << ctx << std::dec << std::endl;
+#elif defined(HAVE_ROCM)
+        hipDevice_t dev;
+        hipQueryAddr(addr, is_dev, dev);
+        std::cout << "HIP addr: " << std::hex << addr << " dev=" << std::dec << dev << std::endl;
+#endif
         break;
     }
 #endif
