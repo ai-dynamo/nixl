@@ -24,12 +24,13 @@
 using namespace std;
 
 
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
 
+#ifdef HAVE_CUDA
 #include <cuda_runtime.h>
 #include <cuda.h>
-
-int gpu_id = 0;
+using GpuDevice_t = CUdevice;
+using GpuContext_t = CUcontext;
 
 static void checkCudaError(cudaError_t result, const char *message) {
     if (result != cudaSuccess) {
@@ -41,35 +42,78 @@ static void checkCudaError(cudaError_t result, const char *message) {
 #endif
 
 #ifdef HAVE_ROCM
-
 #include <hip/hip_runtime.h>
+using GpuDevice_t = hipDevice_t;
+using GpuContext_t = hipCtx_t;
 
-// Map CUDA calls to HIP equivalents
-#define cudaSetDevice hipSetDevice
-#define cudaMalloc hipMalloc
-#define cudaFree hipFree
-#define cudaMemset hipMemset
-#define cudaMemcpy hipMemcpy
-#define cudaMemcpyDeviceToHost hipMemcpyDeviceToHost
-#define cudaSuccess hipSuccess
-#define cudaGetErrorString hipGetErrorString
-#define cudaGetDeviceCount hipGetDeviceCount
-
-// Map CUDA types to HIP equivalents
-#define cudaError_t hipError_t
-#define CUdevice hipDevice_t
-#define CUcontext hipCtx_t
-
-int gpu_id = 0;
-
-static void checkCudaError(hipError_t result, const char *message) {
+static void checkHipError(hipError_t result, const char *message) {
     if (result != hipSuccess) {
-        std::cerr << message << " (Error code: " << result << " - " << hipGetErrorString(result)
-                  << ")" << std::endl;
+        std::cerr << message << " (Error code: " << result << " - "
+                   << hipGetErrorString(result) << ")" << std::endl;
         exit(EXIT_FAILURE);
     }
 }
 #endif
+
+// GPU API wrappers with internal error checking
+static inline void gpuSetDevice(int device, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaSetDevice(device), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipSetDevice(device), message);
+#endif
+}
+
+static inline void gpuMalloc(void **ptr, size_t size, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaMalloc(ptr, size), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipMalloc(ptr, size), message);
+#endif
+}
+
+static inline void gpuFree(void *ptr, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaFree(ptr), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipFree(ptr), message);
+#endif
+}
+
+static inline void gpuMemset(void *ptr, int value, size_t size, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaMemset(ptr, value, size), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipMemset(ptr, value, size), message);
+    checkHipError(hipStreamSynchronize(0), "Failed to synchronize stream");
+#endif
+}
+
+static inline void gpuGetDeviceCount(int *count, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaGetDeviceCount(count), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipGetDeviceCount(count), message);
+#endif
+}
+
+static inline void gpuMemcpyD2H(void *dst, const void *src, size_t size, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipMemcpy(dst, src, size, hipMemcpyDeviceToHost), message);
+#endif
+}
+
+static inline void gpuMemcpyH2D(void *dst, const void *src, size_t size, const char *message) {
+#ifdef HAVE_CUDA
+    checkCudaError(cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice), message);
+#elif defined(HAVE_ROCM)
+    checkHipError(hipMemcpy(dst, src, size, hipMemcpyHostToDevice), message);
+#endif
+}
+
+#endif // HAVE_CUDA || HAVE_ROCM
 
 
 class testHndlIterator {
@@ -232,13 +276,13 @@ void allocateBuffer(nixl_mem_t mem_type, int dev_id, size_t len, void* &addr)
 #if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     case VRAM_SEG:{
         bool is_dev;
-        CUdevice dev;
-        CUcontext ctx;
+        GpuDevice_t dev;
+        GpuContext_t ctx;
 
-        checkCudaError(cudaSetDevice(dev_id), "Failed to set device");
-        checkCudaError(cudaMalloc(&addr, len), "Failed to allocate CUDA buffer 0");
+        gpuSetDevice(dev_id, "Failed to set device");
+        gpuMalloc(&addr, len, "Failed to allocate GPU buffer 0");
         cudaQueryAddr(addr, is_dev, dev, ctx);
-        std::cout << "CUDA addr: " << std::hex << addr << " dev=" << std::dec << dev
+        std::cout << "GPU addr: " << std::hex << addr << " dev=" << std::dec << dev
             << " ctx=" << std::hex << ctx << std::dec << std::endl;
         break;
     }
@@ -257,8 +301,8 @@ void releaseBuffer(nixl_mem_t mem_type, int dev_id, void* &addr)
         break;
 #if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     case VRAM_SEG:
-        checkCudaError(cudaSetDevice(dev_id), "Failed to set device");
-        checkCudaError(cudaFree(addr), "Failed to allocate CUDA buffer 0");
+        gpuSetDevice(dev_id, "Failed to set device");
+        gpuFree(addr, "Failed to free GPU buffer 0");
         break;
 #endif
     default:
@@ -274,11 +318,8 @@ void doMemset(nixl_mem_t mem_type, int dev_id, void *addr, char byte, size_t len
         break;
 #if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     case VRAM_SEG:
-        checkCudaError(cudaSetDevice(dev_id), "Failed to set device");
-        checkCudaError(cudaMemset(addr, byte, len), "Failed to memset");
-#ifdef HAVE_ROCM
-        checkCudaError(hipStreamSynchronize(0), "Failed to synchronize stream");
-#endif
+        gpuSetDevice(dev_id, "Failed to set device");
+        gpuMemset(addr, byte, len, "Failed to memset");
         break;
 #endif
     default:
@@ -295,7 +336,7 @@ void *getValidationPtr(nixl_mem_t mem_type, void *addr, size_t len)
 #if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     case VRAM_SEG: {
         void *ptr = calloc(len, 1);
-        checkCudaError(cudaMemcpy(ptr, addr, len, cudaMemcpyDeviceToHost), "Failed to memcpy");
+        gpuMemcpyD2H(ptr, addr, len, "Failed to memcpy");
         return ptr;
     }
 #endif
@@ -733,11 +774,8 @@ int main()
 
 #if defined(HAVE_CUDA) || defined(HAVE_ROCM)
     int dev_ids[2] = { 0 , 0 };
-    int n_vram_dev;
-    if (cudaGetDeviceCount(&n_vram_dev) != cudaSuccess) {
-        std::cout << "Call to cudaGetDeviceCount failed, assuming 0 devices";
-        n_vram_dev = 0;
-    }
+    int n_vram_dev = 0;
+    gpuGetDeviceCount(&n_vram_dev, "Failed to get device count");
 
     std::cout << "Detected " << n_vram_dev << " CUDA devices" << std::endl;
     if (n_vram_dev > 1) {
