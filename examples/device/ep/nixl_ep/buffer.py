@@ -63,6 +63,7 @@ class Buffer:
         comm: Optional["mpi4py.MPI.Comm"] = None,
         tcp_store_group: Optional[dist.TCPStore] = None,
         timeout_ms: int = DEFAULT_TIMEOUT_MS,
+        nvl_group_size: int = 8,
     ) -> None:
         """
         Initialize the nixl communication buffer.
@@ -81,11 +82,18 @@ class Buffer:
                 In low-latency paths, a timeout marks the rank invalid and masks it out.
                 In high-throughput paths, a timeout is fatal and traps.
                 Default: 30000 ms.
+            nvl_group_size: number of ranks in one CUDA-IPC/NVLink-local group for high-throughput EP.
+                Defaults to 8 for backward compatibility. GB200 deployments that expose 4 GPUs per
+                worker should pass 4 so CUDA IPC is only opened within the local worker group.
         """
+        assert 0 < nvl_group_size <= 8 and 8 % nvl_group_size == 0, (
+            "nvl_group_size must divide the fixed 8-lane NVL scratch layout"
+        )
         self.rank = rank
         self.group_size = 0  # Will be updated by `update_memory_buffers`
         self.low_latency_mode = low_latency_mode
         self.timeout_ms = timeout_ms
+        self.nvl_group_size = nvl_group_size
 
         self.explicitly_destroy = explicitly_destroy
         self.group = group
@@ -97,7 +105,7 @@ class Buffer:
             os.environ["UCX_TLS"] = "^cuda_ipc"
 
         self.runtime = nixl_ep_cpp.Buffer(
-            self.rank, explicitly_destroy, low_latency_mode, timeout_ms
+            self.rank, explicitly_destroy, low_latency_mode, timeout_ms, nvl_group_size
         )
 
     def destroy(self):
@@ -184,6 +192,18 @@ class Buffer:
             device_type=ts.device_type,
         )
 
+    def get_nvl_rank(self) -> int:
+        """
+        Return this rank's index inside its NVLink-local high-throughput EP group.
+        """
+        return self.runtime.get_nvl_rank()
+
+    def get_nvl_group_size(self) -> int:
+        """
+        Return the configured NVLink-local high-throughput EP group size.
+        """
+        return self.runtime.get_nvl_group_size()
+
     def get_local_buffer_tensor(
         self,
         dtype: torch.dtype,
@@ -206,6 +226,44 @@ class Buffer:
 
         assert tensor.numel() >= size.numel()
         return tensor[: size.numel()].view(size)
+
+    def debug_ht_barrier(self, num_channels: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Run the high-throughput EP inter-RDMA barrier diagnostic.
+
+        Returns:
+            observed: int64 CUDA tensor [observed_value, expected_value, epoch].
+            status: int32 CUDA tensor [1 on success, -1 on timeout].
+        """
+        return self.runtime.debug_ht_barrier(num_channels)
+
+    def debug_ht_atomic_pair(
+        self, src_rank: int, dst_rank: int, num_channels: int, expected_count: int = 0
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Run a directed high-throughput EP remote-atomic diagnostic.
+
+        Returns:
+            observed: int64 CUDA tensor [observed_value, expected_value, counter_offset].
+            status: int32 CUDA tensor [1 at dst on success, -1 at dst on timeout,
+                -2 at src if posting failed, 0 on non-participating ranks].
+        """
+        return self.runtime.debug_ht_atomic_pair(src_rank, dst_rank, num_channels, expected_count)
+
+    def debug_ht_put_pair(
+        self, src_rank: int, dst_rank: int, tag: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Run a directed high-throughput EP remote-put diagnostic.
+
+        Returns:
+            observed: int64 CUDA tensor [local_value, expected_tag, scratch_offset,
+                posted_count, post_error_count, post_status].
+            status: int32 CUDA tensor [1 at dst on success, -1 at dst on timeout,
+                -2 at src if posting failed, 2 on unexpected non-dst visibility,
+                0 on non-participating ranks].
+        """
+        return self.runtime.debug_ht_put_pair(src_rank, dst_rank, tag)
 
     @staticmethod
     def _unpack_bias(bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]):

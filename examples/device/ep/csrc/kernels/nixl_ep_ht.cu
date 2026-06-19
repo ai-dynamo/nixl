@@ -36,6 +36,10 @@
 
 namespace nixl_ep {
 
+static __device__ __forceinline__ nixlMemViewElem remote_mdesc(const gpu_nixl_ctx& ctx, int global_rank, uint64_t offset) {
+    return nixlMemViewElem{remote_mvh_for_rank(ctx, global_rank), remote_mvh_index(ctx, global_rank), offset};
+}
+
 namespace ht {
 
 struct SourceMeta {
@@ -103,31 +107,307 @@ __host__ __device__ __forceinline__ std::pair<int, int> get_nvl_clean_meta(int h
     };
 }
 
-__forceinline__ __device__ int translate_dst_rdma_rank(const int dst_rdma_rank, const int nvl_rank) {
-    return dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
+__forceinline__ __device__ int translate_dst_rdma_rank(const nixl_ep::gpu_nixl_ctx nixl_ctx,
+                                                       const int dst_rdma_rank,
+                                                       const int nvl_rank) {
+    return dst_rdma_rank * nixl_ctx.nvl_group_size + nvl_rank;
+}
+
+__forceinline__ __device__ int global_rank_from_rdma_nvl(const nixl_ep::gpu_nixl_ctx nixl_ctx,
+                                                         const int rdma_rank,
+                                                         const int nvl_rank) {
+    return rdma_rank * nixl_ctx.nvl_group_size + nvl_rank;
+}
+
+__forceinline__ __device__ uint64_t load_token_in_rdma_rank_bits(const bool* is_token_in_rank,
+                                                                 const int token_idx,
+                                                                 const int num_ranks,
+                                                                 const int rdma_rank,
+                                                                 const nixl_ep::gpu_nixl_ctx nixl_ctx) {
+    uint64_t bits = 0;
+    const int rank_base = rdma_rank * nixl_ctx.nvl_group_size;
+    #pragma unroll
+    for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i) {
+        const int global_rank = rank_base + i;
+        if (i < nixl_ctx.num_nvl_ranks and global_rank < num_ranks and
+            is_token_in_rank[token_idx * num_ranks + global_rank]) {
+            // Preserve the original ABI: callers reinterpret this word as bool[8].
+            // A plain bit mask would make only byte zero look active.
+            bits |= (uint64_t{1} << (i * 8));
+        }
+    }
+    return bits;
 }
 
 __forceinline__ __device__ void nixl_barrier_send_warp(nixl_ep::gpu_nixl_ctx nixl_ctx, int num_channels) {
-    int rdma_rank = nixl_ctx.rank / NUM_MAX_NVL_PEERS;
-    int nvl_rank = nixl_ctx.rank % NUM_MAX_NVL_PEERS;
+    int rdma_rank = nixl_ctx.rank / nixl_ctx.nvl_group_size;
+    int nvl_rank = nixl_ctx.rank % nixl_ctx.nvl_group_size;
     int lane_id = get_lane_id();
 
     for (int j = lane_id; j < num_channels; j += 32) {
         for (int i = 0; i < nixl_ctx.num_rdma_ranks; i++) {
             if (i == rdma_rank) continue;
-            int global_dst_rank = i * NUM_MAX_NVL_PEERS + nvl_rank;
-            nixlMemViewElem barrier_mdesc{nixl_ctx.ht_barrier_mvh, (size_t)global_dst_rank, 0};
+            int global_dst_rank = i * nixl_ctx.nvl_group_size + nvl_rank;
+            nixlMemViewElem barrier_mdesc = remote_mdesc(nixl_ctx, global_dst_rank, nixl_ctx.ht_barrier_counter_offset);
             EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
                 1, barrier_mdesc, j, 0) == NIXL_IN_PROG);
         }
     }
 }
 
-__forceinline__ __device__ void nixl_barrier_wait(nixl_ep::gpu_nixl_ctx nixl_ctx, int num_channels) {
-    uint64_t epoch = ld_acquire_sys_global(nixl_ctx.last_ht_barrier_counter);
-    uint64_t expected_counter = (epoch + num_channels) * (nixl_ctx.num_rdma_ranks - 1);
-    while (ld_acquire_sys_global(nixl_ctx.local_ht_barrier_counter_ptr) < expected_counter);
-    st_release_sys_global(nixl_ctx.last_ht_barrier_counter, epoch + num_channels);
+    __forceinline__ __device__ void nixl_barrier_wait(nixl_ep::gpu_nixl_ctx nixl_ctx,
+                                                      int num_channels,
+                                                      uint64_t timeout_cycles,
+                                                      int tag) {
+        uint64_t epoch = ld_acquire_sys_global(nixl_ctx.last_ht_barrier_counter);
+        uint64_t expected_counter = (epoch + num_channels) * (nixl_ctx.num_rdma_ranks - 1);
+        auto start_time = clock64();
+        while (ld_acquire_sys_global(nixl_ctx.local_ht_barrier_counter_ptr) < expected_counter) {
+            if (clock64() - start_time > timeout_cycles) {
+                uint64_t value = ld_acquire_sys_global(nixl_ctx.local_ht_barrier_counter_ptr);
+                printf("NixlEP HT barrier timeout: tag = %d, rank = %d, value = %llu, expected = %llu)\n",
+                       tag, nixl_ctx.rank,
+                       static_cast<unsigned long long>(value),
+                       static_cast<unsigned long long>(expected_counter));
+                trap();
+            }
+        }
+        st_release_sys_global(nixl_ctx.last_ht_barrier_counter, epoch + num_channels);
+    }
+
+__global__ void debug_barrier_kernel(nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr,
+                                     uint64_t* observed,
+                                     int* status,
+                                     int num_channels,
+                                     uint64_t timeout_cycles) {
+    auto nixl_ctx = *nixl_ctx_ptr;
+    auto thread_id = static_cast<int>(threadIdx.x);
+    auto warp_id = thread_id / 32;
+    auto lane_id = get_lane_id();
+
+    if (thread_id == 0) {
+        #pragma unroll
+        for (int i = 0; i < 6; ++i)
+            observed[i] = 0;
+        status[0] = 0;
+    }
+    __syncthreads();
+
+    if (warp_id == 0) {
+        nixl_barrier_send_warp(nixl_ctx, num_channels);
+        __syncwarp();
+
+        if (lane_id == 0) {
+            uint64_t epoch = ld_acquire_sys_global(nixl_ctx.last_ht_barrier_counter);
+            uint64_t expected_counter = (epoch + num_channels) * (nixl_ctx.num_rdma_ranks - 1);
+            auto start_time = clock64();
+
+            while (ld_acquire_sys_global(nixl_ctx.local_ht_barrier_counter_ptr) < expected_counter) {
+                if (clock64() - start_time > timeout_cycles) {
+                    auto value = ld_acquire_sys_global(nixl_ctx.local_ht_barrier_counter_ptr);
+                    observed[0] = value;
+                    observed[1] = expected_counter;
+                    observed[2] = epoch;
+                    status[0] = -1;
+                    return;
+                }
+            }
+
+            auto value = ld_acquire_sys_global(nixl_ctx.local_ht_barrier_counter_ptr);
+            observed[0] = value;
+            observed[1] = expected_counter;
+            observed[2] = epoch;
+            status[0] = 1;
+            st_release_sys_global(nixl_ctx.last_ht_barrier_counter, epoch + num_channels);
+        }
+    }
+}
+
+void debug_barrier(nixl_ep::gpu_nixl_ctx* nixl_ctx,
+                   uint64_t* observed,
+                   int* status,
+                   int num_channels,
+                   uint64_t timeout_cycles,
+                   cudaStream_t stream) {
+    EP_HOST_ASSERT(num_channels > 0);
+    debug_barrier_kernel<<<1, 64, 0, stream>>>(nixl_ctx, observed, status, num_channels, timeout_cycles);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+__global__ void debug_atomic_pair_kernel(nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr,
+                                         uint64_t* observed,
+                                         int* status,
+                                         int src_rank,
+                                         int dst_rank,
+                                         int num_channels,
+                                         uint64_t expected_count,
+                                         uint64_t timeout_cycles) {
+    auto nixl_ctx = *nixl_ctx_ptr;
+    auto thread_id = static_cast<int>(threadIdx.x);
+    auto warp_id = thread_id / 32;
+    auto lane_id = get_lane_id();
+    const uint64_t counter_offset =
+        nixl_ctx.ht_debug_atomic_offset +
+        (static_cast<uint64_t>(src_rank) * static_cast<uint64_t>(nixl_ctx.max_num_ranks) +
+         static_cast<uint64_t>(dst_rank)) * sizeof(uint64_t);
+    auto local_counter =
+        reinterpret_cast<uint64_t*>(static_cast<uint8_t*>(nixl_ctx.rdma_buffer_ptr) + counter_offset);
+
+    if (thread_id == 0) {
+        #pragma unroll
+        for (int i = 0; i < 6; ++i)
+            observed[i] = 0;
+        status[0] = 0;
+    }
+    __syncthreads();
+
+    if (warp_id == 0 and nixl_ctx.rank == src_rank) {
+        for (int j = lane_id; j < num_channels; j += 32) {
+            nixlMemViewElem dst_mdesc = remote_mdesc(nixl_ctx, dst_rank, counter_offset);
+            auto atomic_status = nixlAtomicAdd<nixl_gpu_level_t::THREAD>(1, dst_mdesc, j, 0);
+            atomicAdd(reinterpret_cast<unsigned long long*>(observed + 3), 1ull);
+            if (atomic_status != NIXL_IN_PROG) {
+                atomicAdd(reinterpret_cast<unsigned long long*>(observed + 4), 1ull);
+                atomicExch(reinterpret_cast<unsigned long long*>(observed + 5),
+                           static_cast<unsigned long long>(atomic_status));
+                status[0] = -2;
+            }
+        }
+    }
+
+    __syncthreads();
+
+    if (warp_id == 0 and lane_id == 0) {
+        auto start_time = clock64();
+        const auto local_timeout_cycles =
+            nixl_ctx.rank == dst_rank ? timeout_cycles : max(static_cast<uint64_t>(1), timeout_cycles / 1000);
+
+        while (ld_acquire_sys_global(local_counter) < expected_count) {
+            if (clock64() - start_time > local_timeout_cycles) {
+                auto value = ld_acquire_sys_global(local_counter);
+                observed[0] = value;
+                observed[1] = expected_count;
+                observed[2] = counter_offset;
+                if (nixl_ctx.rank == dst_rank and status[0] == 0)
+                    status[0] = -1;
+                if (nixl_ctx.rank != dst_rank and value > 0 and status[0] == 0)
+                    status[0] = 2;
+                return;
+            }
+        }
+
+        auto value = ld_acquire_sys_global(local_counter);
+        observed[0] = value;
+        observed[1] = expected_count;
+        observed[2] = counter_offset;
+        if (status[0] == 0) {
+            if (nixl_ctx.rank == dst_rank) {
+                status[0] = 1;
+            } else if (value > 0) {
+                status[0] = 2;
+            }
+        }
+    }
+}
+
+void debug_atomic_pair(nixl_ep::gpu_nixl_ctx* nixl_ctx,
+                       uint64_t* observed,
+                       int* status,
+                       int src_rank,
+                       int dst_rank,
+                       int num_channels,
+                       uint64_t expected_count,
+                       uint64_t timeout_cycles,
+                       cudaStream_t stream) {
+    EP_HOST_ASSERT(src_rank >= 0);
+    EP_HOST_ASSERT(dst_rank >= 0);
+    EP_HOST_ASSERT(src_rank != dst_rank);
+    EP_HOST_ASSERT(num_channels > 0);
+    EP_HOST_ASSERT(expected_count > 0);
+    debug_atomic_pair_kernel<<<1, 64, 0, stream>>>(nixl_ctx, observed, status, src_rank, dst_rank, num_channels, expected_count, timeout_cycles);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+__global__ void debug_put_pair_kernel(nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr,
+                                      uint64_t* observed,
+                                      int* status,
+                                      int src_rank,
+                                      int dst_rank,
+                                      uint64_t tag,
+                                      uint64_t timeout_cycles) {
+    auto nixl_ctx = *nixl_ctx_ptr;
+    auto thread_id = static_cast<int>(threadIdx.x);
+    auto warp_id = thread_id / 32;
+    auto lane_id = get_lane_id();
+    const uint64_t scratch_offset =
+        nixl_ctx.ht_debug_put_offset + static_cast<uint64_t>(src_rank) * sizeof(uint64_t);
+    auto local_scratch =
+        reinterpret_cast<uint64_t*>(static_cast<uint8_t*>(nixl_ctx.rdma_buffer_ptr) + scratch_offset);
+
+    if (thread_id == 0) {
+        #pragma unroll
+        for (int i = 0; i < 6; ++i)
+            observed[i] = 0;
+        status[0] = 0;
+    }
+    __syncthreads();
+
+    if (warp_id == 0 and nixl_ctx.rank == src_rank and lane_id == 0) {
+        st_release_sys_global(local_scratch, tag);
+        memory_fence();
+        nixlMemViewElem src_mdesc = nixlMemViewElem{nixl_ctx.local_mvh, 0, scratch_offset};
+        nixlMemViewElem dst_mdesc = remote_mdesc(nixl_ctx, dst_rank, scratch_offset);
+        auto put_status = nixlPut<nixl_gpu_level_t::THREAD>(
+            src_mdesc, dst_mdesc, sizeof(uint64_t), 0, 0);
+        observed[3] = 1;
+        if (put_status != NIXL_IN_PROG) {
+            observed[4] = 1;
+            observed[5] = static_cast<uint64_t>(put_status);
+            status[0] = -2;
+        }
+    }
+    __syncthreads();
+
+    if (warp_id == 0 and lane_id == 0 and nixl_ctx.rank != src_rank) {
+        auto start_time = clock64();
+        const auto local_timeout_cycles =
+            nixl_ctx.rank == dst_rank ? timeout_cycles : max(static_cast<uint64_t>(1), timeout_cycles / 1000);
+
+        while (ld_acquire_sys_global(local_scratch) != tag) {
+            if (clock64() - start_time > local_timeout_cycles) {
+                auto value = ld_acquire_sys_global(local_scratch);
+                observed[0] = value;
+                observed[1] = tag;
+                observed[2] = scratch_offset;
+                if (nixl_ctx.rank == dst_rank and status[0] == 0)
+                    status[0] = -1;
+                return;
+            }
+        }
+
+        auto value = ld_acquire_sys_global(local_scratch);
+        observed[0] = value;
+        observed[1] = tag;
+        observed[2] = scratch_offset;
+        if (status[0] == 0)
+            status[0] = nixl_ctx.rank == dst_rank ? 1 : 2;
+    }
+}
+
+void debug_put_pair(nixl_ep::gpu_nixl_ctx* nixl_ctx,
+                    uint64_t* observed,
+                    int* status,
+                    int src_rank,
+                    int dst_rank,
+                    uint64_t tag,
+                    uint64_t timeout_cycles,
+                    cudaStream_t stream) {
+    EP_HOST_ASSERT(src_rank >= 0);
+    EP_HOST_ASSERT(dst_rank >= 0);
+    EP_HOST_ASSERT(src_rank != dst_rank);
+    EP_HOST_ASSERT(tag != 0);
+    debug_put_pair_kernel<<<1, 64, 0, stream>>>(nixl_ctx, observed, status, src_rank, dst_rank, tag, timeout_cycles);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 template <bool kLowLatencyMode, int kNumRDMARanks>
@@ -161,8 +441,8 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
     auto thread_id = static_cast<int>(threadIdx.x), warp_id = thread_id / 32, lane_id = get_lane_id();
     auto num_threads = static_cast<int>(blockDim.x), num_warps = num_threads / 32;
 
-    auto rdma_rank = rank / NUM_MAX_NVL_PEERS, nvl_rank = rank % NUM_MAX_NVL_PEERS;
-    auto num_rdma_experts = num_experts / kNumRDMARanks, num_nvl_experts = num_rdma_experts / NUM_MAX_NVL_PEERS;
+    auto rdma_rank = rank / nixl_ctx.nvl_group_size, nvl_rank = rank % nixl_ctx.nvl_group_size;
+    auto num_rdma_experts = num_experts / kNumRDMARanks, num_nvl_experts = num_rdma_experts / nixl_ctx.nvl_group_size;
 
     if (sm_id == 0) {
         // Communication with others
@@ -175,9 +455,10 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
         if (warp_id == 1) {
             nixl_barrier_send_warp(nixl_ctx, num_channels);
             if (lane_id == 0)
-                nixl_barrier_wait(nixl_ctx, num_channels);
+                nixl_barrier_wait(nixl_ctx, num_channels, timeout_cycles, 201);
         }
-        barrier_block<NUM_MAX_NVL_PEERS, true>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
+        __syncthreads();
+        barrier_block_runtime<true>(barrier_signal_ptrs, nvl_rank, nixl_ctx.num_nvl_ranks, timeout_cycles, 206);
 
         // Send numbers of tokens per rank/expert to RDMA ranks
         auto rdma_buffer_ptr_int = static_cast<int*>(rdma_buffer_ptr);
@@ -192,7 +473,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
         // Copy to send buffer
         #pragma unroll
         for (int i = thread_id; i < num_ranks; i += num_threads)
-            rdma_recv_num_tokens_mixed.send_buffer(i / NUM_MAX_NVL_PEERS)[i % NUM_MAX_NVL_PEERS] = num_tokens_per_rank[i];
+            rdma_recv_num_tokens_mixed.send_buffer(i / nixl_ctx.nvl_group_size)[i % nixl_ctx.nvl_group_size] = num_tokens_per_rank[i];
         #pragma unroll
         for (int i = thread_id; i < num_experts; i += num_threads)
             rdma_recv_num_tokens_mixed.send_buffer(i / num_rdma_experts)[NUM_MAX_NVL_PEERS + i % num_rdma_experts] =
@@ -209,9 +490,9 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
                 size_t src_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_recv_num_tokens_mixed.send_buffer(i)));
                 size_t dst_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_recv_num_tokens_mixed.recv_buffer(rdma_rank)));
                 size_t msg_size = (NUM_MAX_NVL_PEERS + num_rdma_experts + 1) * sizeof(int);
-                int translated_dst = translate_dst_rdma_rank(i, nvl_rank);
+                int translated_dst = translate_dst_rdma_rank(nixl_ctx, i, nvl_rank);
                 nixlMemViewElem src_mdesc{nixl_ctx.local_mvh, 0, src_offset};
-                nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t)translated_dst, dst_offset};
+                nixlMemViewElem dst_mdesc = remote_mdesc(nixl_ctx, translated_dst, dst_offset);
                 nixl_status_t status = nixlPut<nixl_gpu_level_t::WARP>(
                     src_mdesc, dst_mdesc, msg_size, 0);
                 EP_DEVICE_ASSERT(status == NIXL_IN_PROG);
@@ -232,7 +513,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
         if (warp_id == 0) {
             nixl_barrier_send_warp(nixl_ctx, num_channels);
             if (lane_id == 0)
-                nixl_barrier_wait(nixl_ctx, num_channels);
+                nixl_barrier_wait(nixl_ctx, num_channels, timeout_cycles, 258);
         }
         __syncthreads();
 
@@ -280,7 +561,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
 
         // Send numbers of tokens per rank/expert to NVL ranks
         EP_DEVICE_ASSERT(NUM_MAX_NVL_PEERS <= num_threads);
-        if (thread_id < NUM_MAX_NVL_PEERS) {
+        if (thread_id < nixl_ctx.num_nvl_ranks) {
             #pragma unroll
             for (int i = 0; i < kNumRDMARanks; ++i)
                 nvl_send_num_tokens_per_rank.buffer(nvl_rank)[i] = rdma_recv_num_tokens_mixed.recv_buffer(i)[thread_id];
@@ -288,7 +569,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
             for (int i = 0; i < num_nvl_experts; ++i)
                 nvl_send_num_tokens_per_expert.buffer(nvl_rank)[i] = nvl_reduced_num_tokens_per_expert[thread_id * num_nvl_experts + i];
         }
-        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
+        barrier_block_runtime(barrier_signal_ptrs, nvl_rank, nixl_ctx.num_nvl_ranks, timeout_cycles, 317);
 
         // Reduce the number of tokens per rank/expert
         EP_DEVICE_ASSERT(num_nvl_experts <= num_threads);
@@ -296,7 +577,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
             int sum = 0;
             #pragma unroll
             for (int i = 0; i < num_ranks; ++i) {
-                int src_rdma_rank = i / NUM_MAX_NVL_PEERS, src_nvl_rank = i % NUM_MAX_NVL_PEERS;
+                int src_rdma_rank = i / nixl_ctx.nvl_group_size, src_nvl_rank = i % nixl_ctx.nvl_group_size;
                 sum += nvl_recv_num_tokens_per_rank.buffer(src_nvl_rank)[src_rdma_rank];
                 recv_gbl_rank_prefix_sum[i] = sum;
             }
@@ -306,8 +587,11 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
         if (thread_id < num_nvl_experts) {
             int sum = 0;
             #pragma unroll
-            for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i)
+            for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i) {
+                if (i >= nixl_ctx.num_nvl_ranks)
+                    continue;
                 sum += nvl_recv_num_tokens_per_expert.buffer(i)[thread_id];
+            }
             sum = (sum + expert_alignment - 1) / expert_alignment * expert_alignment;
             while (ld_volatile_global(moe_recv_expert_counter_mapped + thread_id) != -1);
             moe_recv_expert_counter_mapped[thread_id] = sum;
@@ -317,9 +601,10 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
         if (warp_id == 1) {
             nixl_barrier_send_warp(nixl_ctx, num_channels);
             if (lane_id == 0)
-                nixl_barrier_wait(nixl_ctx, num_channels);
+                nixl_barrier_wait(nixl_ctx, num_channels, timeout_cycles, 346);
         }
-        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
+        __syncthreads();
+        barrier_block_runtime(barrier_signal_ptrs, nvl_rank, nixl_ctx.num_nvl_ranks, timeout_cycles, 351);
     } else {
         // Calculate meta data
         int dst_rdma_rank = sm_id - 1;
@@ -332,11 +617,14 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
             for (int64_t i = token_start_idx + lane_id; i < token_end_idx; i += 32) {
                 EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS * sizeof(bool) == sizeof(uint64_t), "Invalid number of NVL peers");
                 auto is_token_in_rank_uint64 =
-                    *reinterpret_cast<const uint64_t*>(is_token_in_rank + i * num_ranks + dst_rdma_rank * NUM_MAX_NVL_PEERS);
+                    load_token_in_rdma_rank_bits(is_token_in_rank, i, num_ranks, dst_rdma_rank, nixl_ctx);
                 auto is_token_in_rank_values = reinterpret_cast<const bool*>(&is_token_in_rank_uint64);
                 #pragma unroll
-                for (int j = 0; j < NUM_MAX_NVL_PEERS; ++j)
+                for (int j = 0; j < NUM_MAX_NVL_PEERS; ++j) {
+                    if (j >= nixl_ctx.num_nvl_ranks)
+                        continue;
                     per_nvl_rank_count[j] += is_token_in_rank_values[j];
+                }
                 total_count += (is_token_in_rank_uint64 != 0);
             }
 
@@ -349,8 +637,12 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
             // Write into channel matrix
             if (elect_one_sync()) {
                 #pragma unroll
-                for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i)
-                    gbl_channel_prefix_matrix[(dst_rdma_rank * NUM_MAX_NVL_PEERS + i) * num_channels + channel_id] = per_nvl_rank_count[i];
+                for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i) {
+                    if (i >= nixl_ctx.num_nvl_ranks)
+                        continue;
+                    gbl_channel_prefix_matrix[(global_rank_from_rdma_nvl(nixl_ctx, dst_rdma_rank, i)) * num_channels + channel_id] =
+                        per_nvl_rank_count[i];
+                }
                 rdma_channel_prefix_matrix[dst_rdma_rank * num_channels + channel_id] = total_count;
             }
         }
@@ -365,8 +657,8 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
         }
 
         EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS <= 32, "Invalid number of NVL peers");
-        if (thread_id < NUM_MAX_NVL_PEERS) {
-            auto prefix_row = gbl_channel_prefix_matrix + (dst_rdma_rank * NUM_MAX_NVL_PEERS + thread_id) * num_channels;
+        if (thread_id < nixl_ctx.num_nvl_ranks) {
+            auto prefix_row = gbl_channel_prefix_matrix + (global_rank_from_rdma_nvl(nixl_ctx, dst_rdma_rank, thread_id)) * num_channels;
             #pragma unroll
             for (int i = 1; i < num_channels; ++i)
                 prefix_row[i] += prefix_row[i - 1];
@@ -440,7 +732,7 @@ void notify_dispatch(const int* num_tokens_per_rank,
     break
 
     constexpr int kNumThreads = 512;
-    const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
+    const auto num_rdma_ranks = num_ranks / nixl_ctx.nvl_group_size;
 
     // Get clean meta
     auto rdma_clean_meta =
@@ -512,7 +804,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
              int num_ranks,
              uint64_t timeout_cycles,
              nixl_ep::gpu_nixl_ctx nixl_ctx) {
-    enum class WarpRole { kRDMASender, kRDMASenderCoordinator, kRDMAAndNVLForwarder, kForwarderCoordinator, kNVLReceivers };
+    enum class WarpRole { kInactive, kRDMASender, kRDMASenderCoordinator, kRDMAAndNVLForwarder, kForwarderCoordinator, kNVLReceivers };
 
     const auto num_sms = static_cast<int>(gridDim.x);
     const auto sm_id = static_cast<int>(blockIdx.x);
@@ -520,13 +812,15 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     const auto thread_id = static_cast<int>(threadIdx.x), warp_id = thread_id / 32, lane_id = get_lane_id();
     const auto num_channels = num_sms / 2, channel_id = sm_id / 2;
     const bool is_forwarder = sm_id % 2 == 0;
-    const auto rdma_rank = rank / NUM_MAX_NVL_PEERS, nvl_rank = rank % NUM_MAX_NVL_PEERS;
+    const auto rdma_rank = rank / nixl_ctx.nvl_group_size, nvl_rank = rank % nixl_ctx.nvl_group_size;
 
 
     const auto role_meta = [=]() -> std::pair<WarpRole, int> {
         if (is_forwarder) {
-            if (warp_id < NUM_MAX_NVL_PEERS) {
-                return {WarpRole::kRDMAAndNVLForwarder, (warp_id + channel_id) % NUM_MAX_NVL_PEERS};
+            if (warp_id < nixl_ctx.num_nvl_ranks) {
+                return {WarpRole::kRDMAAndNVLForwarder, (warp_id + channel_id) % nixl_ctx.num_nvl_ranks};
+            } else if (warp_id < NUM_MAX_NVL_PEERS) {
+                return {WarpRole::kInactive, -1};
             } else {
                 return {WarpRole::kForwarderCoordinator, warp_id - NUM_MAX_NVL_PEERS};
             }
@@ -535,12 +829,17 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         } else if (warp_id == kNumDispatchRDMASenderWarps) {
             return {WarpRole::kRDMASenderCoordinator, -1};
         } else {
-            return {WarpRole::kNVLReceivers, (warp_id + channel_id - kNumDispatchRDMASenderWarps) % NUM_MAX_NVL_PEERS};
+            const int nvl_warp_id = warp_id - kNumDispatchRDMASenderWarps - 1;
+            if (nvl_warp_id < nixl_ctx.num_nvl_ranks)
+                return {WarpRole::kNVLReceivers, (nvl_warp_id + channel_id) % nixl_ctx.num_nvl_ranks};
+            return {WarpRole::kInactive, -1};
         }
     }();
     auto warp_role = role_meta.first;
     auto target_rank = role_meta.second;  // Not applicable for RDMA senders
     EP_DEVICE_ASSERT(num_warps == kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NVL_PEERS);
+    if (warp_role == WarpRole::kInactive)
+        return;
 
     // Data checks
     EP_DEVICE_ASSERT(num_topk <= 32);
@@ -609,7 +908,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     // Forward warp synchronization
     __shared__ volatile int forward_channel_head[NUM_MAX_NVL_PEERS][kNumRDMARanks];
     __shared__ volatile bool forward_channel_retired[NUM_MAX_NVL_PEERS];
-    auto sync_forwarder_smem = []() { asm volatile("barrier.sync 1, %0;" ::"r"((NUM_MAX_NVL_PEERS + 1) * 32)); };
+    auto sync_forwarder_smem = [=]() { asm volatile("barrier.sync 1, %0;" ::"r"((nixl_ctx.num_nvl_ranks + 1) * 32)); };
 
     if (warp_role == WarpRole::kRDMASender) {
         // Get tasks
@@ -622,15 +921,23 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             auto dst_ptr =
                 dst_rdma_rank == rdma_rank ? rdma_channel_meta.recv_buffer(dst_rdma_rank) : rdma_channel_meta.send_buffer(dst_rdma_rank);
             if (lane_id < NUM_MAX_NVL_PEERS) {
+                const int global_rank = global_rank_from_rdma_nvl(nixl_ctx, dst_rdma_rank, lane_id);
+                const int prev_prefix =
+                    (lane_id < nixl_ctx.num_nvl_ranks and channel_id > 0)
+                        ? gbl_channel_prefix_matrix[global_rank * num_channels + channel_id - 1]
+                        : 0;
                 dst_ptr[lane_id] =
-                    -(channel_id == 0
-                          ? 0
-                          : gbl_channel_prefix_matrix[(dst_rdma_rank * NUM_MAX_NVL_PEERS + lane_id) * num_channels + channel_id - 1]) -
+                    -prev_prefix -
                     1;
             } else if (lane_id < NUM_MAX_NVL_PEERS * 2) {
+                const int nvl_lane = lane_id - NUM_MAX_NVL_PEERS;
+                const int global_rank = global_rank_from_rdma_nvl(nixl_ctx, dst_rdma_rank, nvl_lane);
+                const int end_prefix =
+                    nvl_lane < nixl_ctx.num_nvl_ranks
+                        ? gbl_channel_prefix_matrix[global_rank * num_channels + channel_id]
+                        : 0;
                 dst_ptr[lane_id] =
-                    -gbl_channel_prefix_matrix[(dst_rdma_rank * NUM_MAX_NVL_PEERS + lane_id - NUM_MAX_NVL_PEERS) * num_channels +
-                                               channel_id] -
+                    -end_prefix -
                     1;
             } else if (lane_id == NUM_MAX_NVL_PEERS * 2) {
                 dst_ptr[lane_id] = -(channel_id == 0 ? 0 : rdma_channel_prefix_matrix[dst_rdma_rank * num_channels + channel_id - 1]) - 1;
@@ -644,9 +951,9 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 size_t src_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_meta.send_buffer(dst_rdma_rank)));
                 size_t dst_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_meta.recv_buffer(rdma_rank)));
                 size_t msg_size = sizeof(int) * (NUM_MAX_NVL_PEERS * 2 + 2);
-                int translated_rank = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
+                int translated_rank = translate_dst_rdma_rank(nixl_ctx, dst_rdma_rank, nvl_rank);
                 nixlMemViewElem src_mdesc{nixl_ctx.local_mvh, 0, src_offset};
-                nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t)translated_rank, dst_offset};
+                nixlMemViewElem dst_mdesc = remote_mdesc(nixl_ctx, translated_rank, dst_offset);
                 EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(
                                      src_mdesc, dst_mdesc, msg_size, channel_id) ==
                                  NIXL_IN_PROG);
@@ -657,13 +964,15 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         // Iterate over tokens and copy into buffer
         int64_t token_idx;
         int cached_rdma_channel_head = 0, global_rdma_tail_idx = 0;
-        auto send_buffer = lane_id == rdma_rank ? rdma_channel_data.recv_buffer(lane_id) : rdma_channel_data.send_buffer(lane_id);
+        auto send_buffer = lane_id < kNumRDMARanks
+            ? (lane_id == rdma_rank ? rdma_channel_data.recv_buffer(lane_id) : rdma_channel_data.send_buffer(lane_id))
+            : nullptr;
         for (token_idx = token_start_idx; token_idx < token_end_idx; ++token_idx) {
             // Read RDMA rank existence
             uint64_t is_token_in_rank_uint64 = 0;
             if (lane_id < kNumRDMARanks) {
                 is_token_in_rank_uint64 =
-                    __ldg(reinterpret_cast<const uint64_t*>(is_token_in_rank + token_idx * num_ranks + lane_id * NUM_MAX_NVL_PEERS));
+                    load_token_in_rdma_rank_bits(is_token_in_rank, static_cast<int>(token_idx), num_ranks, lane_id, nixl_ctx);
                 global_rdma_tail_idx += (is_token_in_rank_uint64 != 0);
             }
             __syncwarp();
@@ -852,9 +1161,9 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                     size_t src_offset = nixl_ctx.offset_get(src_ptr);
                     size_t dst_offset = nixl_ctx.offset_get(dst_ptr);
 
-                    int translated_dst = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
+                    int translated_dst = translate_dst_rdma_rank(nixl_ctx, dst_rdma_rank, nvl_rank);
                     nixlMemViewElem src_mdesc{nixl_ctx.local_mvh, 0, src_offset};
-                    nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t)translated_dst, dst_offset};
+                    nixlMemViewElem dst_mdesc = remote_mdesc(nixl_ctx, translated_dst, dst_offset);
                     EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(
                                          src_mdesc, dst_mdesc, num_bytes_per_msg, channel_id) ==
                                      NIXL_IN_PROG);
@@ -872,9 +1181,9 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                         atomicAdd(reinterpret_cast<unsigned long long*>(rdma_channel_tail.buffer(dst_rdma_rank)), static_cast<unsigned long long>(num_tokens_to_issue));
                     } else {
                         size_t tail_counter_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_tail.buffer(rdma_rank)));
-                        int translated_dst_tail = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
+                        int translated_dst_tail = translate_dst_rdma_rank(nixl_ctx, dst_rdma_rank, nvl_rank);
 
-                        nixlMemViewElem tail_mdesc{nixl_ctx.remote_mvh, (size_t)translated_dst_tail, tail_counter_offset};
+                        nixlMemViewElem tail_mdesc = remote_mdesc(nixl_ctx, translated_dst_tail, tail_counter_offset);
                         EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
                             num_tokens_to_issue, tail_mdesc, channel_id, 0) ==
                         NIXL_IN_PROG);
@@ -934,8 +1243,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         }
         __syncwarp();
 
-        // Shift cached head
-        send_nvl_head += src_rdma_channel_prefix * NUM_MAX_NVL_PEERS + dst_nvl_rank;
+        // Shift cached head. Cached dispatch passes a null send_nvl_head,
+        // so keep the derived pointer null unless this path will write it.
+        int* shifted_send_nvl_head = not kCachedMode
+            ? send_nvl_head + src_rdma_channel_prefix * NUM_MAX_NVL_PEERS + dst_nvl_rank
+            : nullptr;
 
         // Wait shared memory to be cleaned
         sync_forwarder_smem();
@@ -1014,7 +1326,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                     auto cached_head = is_in_dst_nvl_rank ? rdma_nvl_token_idx : -1;
                     rdma_nvl_token_idx += is_in_dst_nvl_rank;
                     if (not kCachedMode)
-                        send_nvl_head[i * NUM_MAX_NVL_PEERS] = cached_head;
+                        shifted_send_nvl_head[i * NUM_MAX_NVL_PEERS] = cached_head;
                 }
                 if (not is_in_dst_nvl_rank)
                     continue;
@@ -1074,7 +1386,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         #pragma unroll
         for (int i = lane_id; i < kNumRDMARanks * NUM_MAX_NVL_PEERS; i += 32)
             forward_channel_head[i % NUM_MAX_NVL_PEERS][i / NUM_MAX_NVL_PEERS] = 0;
-        if (lane_id < NUM_MAX_NVL_PEERS)
+        if (lane_id < nixl_ctx.num_nvl_ranks)
             forward_channel_retired[lane_id] = false;
         sync_forwarder_smem();
 
@@ -1083,9 +1395,12 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             // Find minimum head
             int min_head = std::numeric_limits<int>::max();
             #pragma unroll
-            for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i)
+            for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i) {
+                if (i >= nixl_ctx.num_nvl_ranks)
+                    continue;
                 if (not forward_channel_retired[i])
                     min_head = min(min_head, forward_channel_head[i][target_rdma]);
+            }
             if (__all_sync(0xffffffff, min_head == std::numeric_limits<int>::max()))
                 break;
 
@@ -1096,8 +1411,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                     atomicAdd(reinterpret_cast<unsigned long long*>(rdma_channel_head.buffer(rdma_rank)), static_cast<unsigned long long>(min_head - last_head));
                 } else {
                     size_t head_counter_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_head.buffer(rdma_rank)));
-                    int translated_dst_head = translate_dst_rdma_rank(lane_id, nvl_rank);
-                    nixlMemViewElem head_mdesc{nixl_ctx.remote_mvh, (size_t)translated_dst_head, head_counter_offset};
+                    int translated_dst_head = translate_dst_rdma_rank(nixl_ctx, lane_id, nvl_rank);
+                    nixlMemViewElem head_mdesc = remote_mdesc(nixl_ctx, translated_dst_head, head_counter_offset);
                     EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
                         min_head - last_head, head_mdesc, channel_id, 0) == NIXL_IN_PROG);
                 }
@@ -1115,8 +1430,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         const int local_expert_end = local_expert_begin + (num_experts / num_ranks);
 
         EP_STATIC_ASSERT(kNumRDMARanks <= 32, "Invalid number of RDMA peers");
-        if (lane_id < kNumRDMARanks and lane_id * NUM_MAX_NVL_PEERS + src_nvl_rank > 0)
-            total_offset = recv_gbl_rank_prefix_sum[lane_id * NUM_MAX_NVL_PEERS + src_nvl_rank - 1];
+        if (lane_id < kNumRDMARanks) {
+            const int global_rank = global_rank_from_rdma_nvl(nixl_ctx, lane_id, src_nvl_rank);
+            if (global_rank > 0)
+                total_offset = recv_gbl_rank_prefix_sum[global_rank - 1];
+        }
 
         // Receive channel offsets
         int start_offset = 0, end_offset = 0, num_tokens_to_recv;
@@ -1148,7 +1466,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 
         // Save for combine usage
         if (lane_id < kNumRDMARanks and not kCachedMode)
-            recv_gbl_channel_prefix_matrix[(lane_id * NUM_MAX_NVL_PEERS + src_nvl_rank) * num_channels + channel_id] = total_offset;
+            recv_gbl_channel_prefix_matrix[(global_rank_from_rdma_nvl(nixl_ctx, lane_id, src_nvl_rank)) * num_channels + channel_id] =
+                total_offset;
         __syncwarp();
 
         int cached_channel_head_idx = 0, cached_channel_tail_idx = 0;
@@ -1290,6 +1609,8 @@ void dispatch(void* recv_x,
 
     // Make sure never OOB
     EP_HOST_ASSERT(static_cast<int64_t>(num_scales) * scale_hidden_stride < std::numeric_limits<int>::max());
+    const auto num_rdma_ranks = num_ranks / nixl_ctx.nvl_group_size;
+    EP_HOST_ASSERT(num_rdma_ranks > 0);
 
 #define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                                   \
     {                                                                                                                          \
@@ -1373,8 +1694,8 @@ __global__ void cached_notify(const int rdma_clean_offset,
     auto warp_id = thread_id / 32;
     auto lane_id = get_lane_id();
 
-    auto nvl_rank = rank % NUM_MAX_NVL_PEERS;
-    auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
+    auto nvl_rank = rank % nixl_ctx.nvl_group_size;
+    auto num_rdma_ranks = num_ranks / nixl_ctx.nvl_group_size;
 
     // Using two SMs, which clean the RDMA/NVL buffer respectively
     if (sm_id == 0) {
@@ -1384,11 +1705,12 @@ __global__ void cached_notify(const int rdma_clean_offset,
         if (warp_id == 1) {
             nixl_barrier_send_warp(nixl_ctx, num_channels);
             if (lane_id == 0)
-                nixl_barrier_wait(nixl_ctx, num_channels);
+                nixl_barrier_wait(nixl_ctx, num_channels, timeout_cycles, 1459);
         }
+        __syncthreads();
 
         // Barrier for NVL
-        barrier_block<NUM_MAX_NVL_PEERS, true>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
+        barrier_block_runtime<true>(barrier_signal_ptrs, nvl_rank, nixl_ctx.num_nvl_ranks, timeout_cycles, 1466);
 
         // Clean RDMA buffer
         auto rdma_buffer_ptr_int = static_cast<int*>(rdma_buffer_ptr);
@@ -1407,9 +1729,10 @@ __global__ void cached_notify(const int rdma_clean_offset,
         if (warp_id == 1) {
             nixl_barrier_send_warp(nixl_ctx, num_channels);
             if (lane_id == 0)
-                nixl_barrier_wait(nixl_ctx, num_channels);
+                nixl_barrier_wait(nixl_ctx, num_channels, timeout_cycles, 1482);
         }
-        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
+        __syncthreads();
+        barrier_block_runtime(barrier_signal_ptrs, nvl_rank, nixl_ctx.num_nvl_ranks, timeout_cycles, 1487);
     } else if (sm_id == 1) {
         if (is_cached_dispatch)
             return;
@@ -1481,7 +1804,7 @@ __global__ void cached_notify(const int rdma_clean_offset,
                     __syncwarp();
 
                     for (int token_idx = batch_end_idx - 1; token_idx >= batch_start_idx; --token_idx) {
-                        if (lane_id < NUM_MAX_NVL_PEERS) {
+                        if (lane_id < nixl_ctx.num_nvl_ranks) {
                             auto current_head =
                                 reinterpret_cast<int*>(tma_buffer)[(token_idx - batch_start_idx) * NUM_MAX_NVL_PEERS + lane_id];
                             if (current_head < 0) {
@@ -1533,7 +1856,7 @@ void cached_notify(int hidden_int4,
                    gpu_nixl_ctx nixl_ctx) {
     const int num_threads = std::max(128, 32 * num_channels);
     const int num_warps = num_threads / 32;
-    const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
+    const auto num_rdma_ranks = num_ranks / nixl_ctx.nvl_group_size;
     const int kNumTMABytesPerWarp = 8192;
     const int smem_size = kNumTMABytesPerWarp * num_warps;
 
@@ -1743,7 +2066,7 @@ __device__ int combine_token(bool is_token_in_rank,
     }
 
     // Return the minimum top-k rank
-    return topk_ranks[0];
+    return num_topk_ranks > 0 ? topk_ranks[0] : -1;
 }
 
 template <bool kLowLatencyMode,
@@ -1783,7 +2106,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                                                                         int num_ranks,
                                                                         uint64_t timeout_cycles,
                                                                         gpu_nixl_ctx nixl_ctx) {
-    enum class WarpRole { kNVLSender, kNVLAndRDMAForwarder, kRDMAReceiver, kCoordinator };
+    enum class WarpRole { kInactive, kNVLSender, kNVLAndRDMAForwarder, kRDMAReceiver, kCoordinator };
 
     const auto sm_id = static_cast<int>(blockIdx.x);
     const auto num_threads = static_cast<int>(blockDim.x), num_warps = num_threads / 32;
@@ -1798,14 +2121,16 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
     const auto num_bytes_per_token = get_num_bytes_per_token(hidden_int4, 0, 0, num_topk);
 
     // NOTES: we decouple a channel into 2 SMs
-    const auto rdma_rank = rank / NUM_MAX_NVL_PEERS, nvl_rank = rank % NUM_MAX_NVL_PEERS;
+    const auto rdma_rank = rank / nixl_ctx.nvl_group_size, nvl_rank = rank % nixl_ctx.nvl_group_size;
     auto role_meta = [=]() -> std::pair<WarpRole, int> {
         auto warp_id = thread_id / 32;
         if (not is_forwarder_sm) {
-            if (warp_id < NUM_MAX_NVL_PEERS) {
+            if (warp_id < nixl_ctx.num_nvl_ranks) {
                 auto shuffled_warp_id = warp_id;
-                shuffled_warp_id = (shuffled_warp_id + channel_id) % NUM_MAX_NVL_PEERS;
+                shuffled_warp_id = (shuffled_warp_id + channel_id) % nixl_ctx.num_nvl_ranks;
                 return {WarpRole::kNVLSender, shuffled_warp_id};
+            } else if (warp_id < NUM_MAX_NVL_PEERS) {
+                return {WarpRole::kInactive, -1};
             } else if (warp_id < kNumForwarders) {
                 return {WarpRole::kRDMAReceiver, warp_id - NUM_MAX_NVL_PEERS};
             } else {
@@ -1824,6 +2149,8 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
     auto warp_id = role_meta.second;
 
     EP_DEVICE_ASSERT(num_warps == kNumForwarders + 1);
+    if (warp_role == WarpRole::kInactive)
+        return;
     auto num_max_nvl_chunked_recv_tokens_per_rdma = num_max_nvl_chunked_recv_tokens / kNumRDMARanks;
 
     if (warp_role == WarpRole::kNVLSender) {
@@ -1860,7 +2187,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
         // Get tasks for each RDMA lane
         int token_start_idx = 0, token_end_idx = 0;
         if (lane_id < kNumRDMARanks) {
-            int prefix_idx = (lane_id * NUM_MAX_NVL_PEERS + dst_nvl_rank) * num_channels + channel_id;
+            int prefix_idx = global_rank_from_rdma_nvl(nixl_ctx, lane_id, dst_nvl_rank) * num_channels + channel_id;
             token_start_idx = gbl_channel_prefix_matrix[prefix_idx];
             token_end_idx = (prefix_idx == num_channels * num_ranks - 1) ? num_tokens : gbl_channel_prefix_matrix[prefix_idx + 1];
         }
@@ -2038,7 +2365,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
 
             // Clean shared memory and sync
             EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS <= 32, "Invalid number of NVL peers");
-            lane_id < NUM_MAX_NVL_PEERS ? (forwarder_nvl_head[warp_id][lane_id] = 0) : 0;
+            lane_id < nixl_ctx.num_nvl_ranks ? (forwarder_nvl_head[warp_id][lane_id] = 0) : 0;
             lane_id == 0 ? (forwarder_retired[warp_id] = false) : false;
             sync_forwarder_smem();
 
@@ -2085,7 +2412,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                     // Read expected head
                     EP_STATIC_ASSERT(kNumRDMARanks <= 32, "Invalid number of RDMA peers");
                     int expected_head = -1;
-                    if (lane_id < NUM_MAX_NVL_PEERS) {
+                    if (lane_id < nixl_ctx.num_nvl_ranks) {
                         expected_head = ld_nc_global(combined_nvl_head + token_idx * NUM_MAX_NVL_PEERS + lane_id);
                         expected_head < 0 ? (forwarder_nvl_head[warp_id][lane_id] = -expected_head - 1)
                                           : (forwarder_nvl_head[warp_id][lane_id] = expected_head);
@@ -2097,7 +2424,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                         cached_nvl_channel_tail_idx = ld_acquire_sys_global(nvl_channel_tail.buffer(lane_id));
 
                         // Timeout check
-                        if (clock64() - start_time > timeout_cycles and lane_id < NUM_MAX_NVL_PEERS) {
+                        if (clock64() - start_time > timeout_cycles and lane_id < nixl_ctx.num_nvl_ranks) {
                             printf(
                                 "NixlEP combine forwarder (NVL check) timeout, channel: %d, RDMA: %d, nvl: %d, src NVL: %d, dst RDMA: %d, "
                                 "tail: %d, waiting: %d, total: %d, sub: %d, large: %d, expected: %d\n",
@@ -2145,7 +2472,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                         tma_phase);
 
                     // Update head
-                    if (lane_id < NUM_MAX_NVL_PEERS)
+                    if (lane_id < nixl_ctx.num_nvl_ranks)
                         expected_head < 0 ? (forwarder_nvl_head[warp_id][lane_id] = -expected_head - 1)
                                           : (forwarder_nvl_head[warp_id][lane_id] = expected_head + 1);
                 }
@@ -2160,9 +2487,9 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                             reinterpret_cast<uint64_t>(rdma_channel_data.recv_buffer(rdma_rank) + rdma_slot_idx * num_bytes_per_token);
                         const auto src_ptr =
                             reinterpret_cast<uint64_t>(rdma_channel_data.send_buffer(dst_rdma_rank) + rdma_slot_idx * num_bytes_per_token);
-                        int translated_dst_comb = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
+                        int translated_dst_comb = translate_dst_rdma_rank(nixl_ctx, dst_rdma_rank, nvl_rank);
                         nixlMemViewElem src_mdesc_comb{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(src_ptr)};
-                        nixlMemViewElem dst_mdesc_comb{nixl_ctx.remote_mvh, (size_t)translated_dst_comb, nixl_ctx.offset_get(dst_ptr)};
+                        nixlMemViewElem dst_mdesc_comb = remote_mdesc(nixl_ctx, translated_dst_comb, nixl_ctx.offset_get(dst_ptr));
                         EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(
                                              src_mdesc_comb, dst_mdesc_comb, num_bytes_per_msg, channel_id) ==
                                          NIXL_IN_PROG);
@@ -2177,8 +2504,8 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                         if(dst_rdma_rank == rdma_rank){
                             atomicAdd(reinterpret_cast<unsigned long long*>(tail_ptr), static_cast<unsigned long long>(num_chunked_tokens));
                         } else {
-                            int translated_dst_ct = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
-                            nixlMemViewElem tail_mdesc_ct{nixl_ctx.remote_mvh, (size_t)translated_dst_ct, nixl_ctx.offset_get(tail_ptr)};
+                            int translated_dst_ct = translate_dst_rdma_rank(nixl_ctx, dst_rdma_rank, nvl_rank);
+                            nixlMemViewElem tail_mdesc_ct = remote_mdesc(nixl_ctx, translated_dst_ct, nixl_ctx.offset_get(tail_ptr));
                             EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
                                                  num_chunked_tokens, tail_mdesc_ct, channel_id, 0) ==
                                              NIXL_IN_PROG);
@@ -2278,7 +2605,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
             int last_rdma_head = 0;
             int last_nvl_head[kNumRDMARanks] = {0};
             int dst_rdma_rank = lane_id < kNumRDMARanks ? lane_id : 0;
-            int dst_nvl_rank = lane_id < NUM_MAX_NVL_PEERS ? lane_id : 0;
+            int dst_nvl_rank = lane_id < nixl_ctx.num_nvl_ranks ? lane_id : 0;
             EP_STATIC_ASSERT(kNumCombineForwarderWarps <= 32, "Invalid number of forwarder warps");
             while (true) {
                 // Retired
@@ -2300,8 +2627,8 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                             atomicAdd(reinterpret_cast<unsigned long long*>(rdma_channel_head.buffer(rdma_rank)), static_cast<unsigned long long>(min_head - last_rdma_head));
                         } else {
                             size_t head_counter_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_head.buffer(rdma_rank)));
-                            int translated_dst_ch = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
-                            nixlMemViewElem head_mdesc_ch{nixl_ctx.remote_mvh, (size_t)translated_dst_ch, head_counter_offset};
+                            int translated_dst_ch = translate_dst_rdma_rank(nixl_ctx, dst_rdma_rank, nvl_rank);
+                            nixlMemViewElem head_mdesc_ch = remote_mdesc(nixl_ctx, translated_dst_ch, head_counter_offset);
                             EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(min_head - last_rdma_head, head_mdesc_ch, channel_id, 0) == NIXL_IN_PROG);
                         }
                         last_rdma_head = min_head;
@@ -2315,7 +2642,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                         for (int j = 0; j < num_warps_per_rdma_rank; ++j)
                             if (not forwarder_retired[i * num_warps_per_rdma_rank + j])
                                 min_head = min(min_head, forwarder_nvl_head[i * num_warps_per_rdma_rank + j][dst_nvl_rank]);
-                        if (min_head != std::numeric_limits<int>::max() and min_head > last_nvl_head[i] and lane_id < NUM_MAX_NVL_PEERS)
+                        if (min_head != std::numeric_limits<int>::max() and min_head > last_nvl_head[i] and lane_id < nixl_ctx.num_nvl_ranks)
                             st_relaxed_sys_global(nvl_channel_head.buffer_by(dst_nvl_rank) + i, last_nvl_head[i] = min_head);
                     }
                 }
@@ -2411,7 +2738,7 @@ void combine(cudaDataType_t type,
     }                                                                                 \
     break
 
-    int num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
+    int num_rdma_ranks = num_ranks / nixl_ctx.nvl_group_size;
     auto num_warps_per_forwarder = std::max(kNumCombineForwarderWarps / num_rdma_ranks, 1);
     int num_forwarder_warps = num_rdma_ranks * num_warps_per_forwarder;
     EP_HOST_ASSERT(num_rdma_ranks <= kNumCombineForwarderWarps);

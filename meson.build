@@ -279,10 +279,15 @@ if cuda_dep.found()
     else
         error('Unsupported CUDA version: ' + cuda_version_major)
     endif
+
+    cuda_fabric_available = cpp.has_header_symbol('cuda.h', 'CU_MEM_HANDLE_TYPE_FABRIC', dependencies: cuda_dep)
+    cuda_fabric_available = cuda_fabric_available and cpp.has_header_symbol('cuda.h', 'CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED', dependencies: cuda_dep)
+    cuda_fabric_available = cuda_fabric_available and cpp.has_header_symbol('cuda.h', 'CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED', dependencies: cuda_dep)
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
     cuda_wheel_dir = 'nixl_cu12'
+    cuda_fabric_available = false
 endif
 
 # Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix

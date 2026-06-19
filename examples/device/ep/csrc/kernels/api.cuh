@@ -41,13 +41,21 @@ struct gpu_nixl_ctx {
     nixlMemViewH barrier_mvh;
     nixlMemViewH remote_mvh;
     nixlMemViewH ht_barrier_mvh;
+    nixlMemViewH *remote_mvh_by_rank; // [global_rank] -> one-element remote memview for RDMA buffer
+    nixlMemViewH *barrier_mvh_by_rank; // [global_rank] -> one-element remote memview for sync/barrier buffer
+    int *remote_mvh_indices; // [global_rank] -> compact remote/barrier memview index, -1 when disconnected
     int *sync_buffer_ptr; // [src_rank]
     int *sync_count_ptr; // [dst_rank]
     uint64_t *last_ht_barrier_counter;
     uint64_t *local_ht_barrier_counter_ptr;
     void *rdma_buffer_ptr;
+    uint64_t ht_barrier_counter_offset;
+    uint64_t ht_debug_put_offset;
+    uint64_t ht_debug_atomic_offset;
     int max_num_ranks;
     int num_rdma_ranks;
+    int num_nvl_ranks;
+    int nvl_group_size;
     int rank;
 
     __device__ inline uint64_t offset_get(uint64_t ptr) {
@@ -55,6 +63,38 @@ struct gpu_nixl_ctx {
     }
 };
 
+__device__ __forceinline__ nixlMemViewH remote_mvh_for_rank(const gpu_nixl_ctx& ctx, int global_rank) {
+    EP_DEVICE_ASSERT(global_rank >= 0 and global_rank < ctx.max_num_ranks);
+    if (ctx.remote_mvh_by_rank != nullptr) {
+        auto mvh = ctx.remote_mvh_by_rank[global_rank];
+        EP_DEVICE_ASSERT(mvh != nullptr);
+        return mvh;
+    }
+    EP_DEVICE_ASSERT(ctx.remote_mvh != nullptr);
+    return ctx.remote_mvh;
+}
+
+__device__ __forceinline__ nixlMemViewH barrier_mvh_for_rank(const gpu_nixl_ctx& ctx, int global_rank) {
+    EP_DEVICE_ASSERT(global_rank >= 0 and global_rank < ctx.max_num_ranks);
+    if (ctx.barrier_mvh_by_rank != nullptr) {
+        auto mvh = ctx.barrier_mvh_by_rank[global_rank];
+        EP_DEVICE_ASSERT(mvh != nullptr);
+        return mvh;
+    }
+    EP_DEVICE_ASSERT(ctx.barrier_mvh != nullptr);
+    return ctx.barrier_mvh;
+}
+
+__device__ __forceinline__ size_t remote_mvh_index(const gpu_nixl_ctx& ctx, int global_rank) {
+    if (ctx.remote_mvh_by_rank != nullptr) {
+        return 0;
+    }
+    EP_DEVICE_ASSERT(ctx.remote_mvh_indices != nullptr);
+    EP_DEVICE_ASSERT(global_rank >= 0 and global_rank < ctx.max_num_ranks);
+    const auto compact_index = ctx.remote_mvh_indices[global_rank];
+    EP_DEVICE_ASSERT(compact_index >= 0);
+    return static_cast<size_t>(compact_index);
+}
 
 // Layout kernels
 namespace layout {
@@ -68,6 +108,7 @@ void get_dispatch_layout(const topk_idx_t* topk_idx,
                          int num_topk,
                          int num_ranks,
                          int num_experts,
+                         int nvl_group_size,
                          cudaStream_t stream);
 
 } // namespace layout
@@ -205,6 +246,32 @@ void combine(cudaDataType_t type,
              uint64_t timeout_cycles,
              bool low_latency_mode,
              gpu_nixl_ctx nixl_ctx);
+
+void debug_barrier(gpu_nixl_ctx* nixl_ctx,
+                   uint64_t* observed,
+                   int* status,
+                   int num_channels,
+                   uint64_t timeout_cycles,
+                   cudaStream_t stream);
+
+void debug_atomic_pair(gpu_nixl_ctx* nixl_ctx,
+                       uint64_t* observed,
+                       int* status,
+                       int src_rank,
+                       int dst_rank,
+                       int num_channels,
+                       uint64_t expected_count,
+                       uint64_t timeout_cycles,
+                       cudaStream_t stream);
+
+void debug_put_pair(gpu_nixl_ctx* nixl_ctx,
+                    uint64_t* observed,
+                    int* status,
+                    int src_rank,
+                    int dst_rank,
+                    uint64_t tag,
+                    uint64_t timeout_cycles,
+                    cudaStream_t stream);
 
 } // namespace ht
 

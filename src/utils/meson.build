@@ -14,6 +14,10 @@
 # limitations under the License.
 
 subdir('common')
+nixl_cuda_vmm_dep = declare_dependency()
+if cuda_dep.found()
+    subdir('cuda')
+endif
 subdir('serdes')
 subdir('stream')
 subdir('file')

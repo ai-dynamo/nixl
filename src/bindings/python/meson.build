@@ -26,10 +26,19 @@ py.extension_module('_bindings',
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            install: true)
 
+nixl_utils_deps = [pybind_dep]
+nixl_utils_args = []
+if cuda_dep.found()
+    nixl_utils_deps += [nixl_cuda_vmm_dep]
+    nixl_utils_args += ['-DHAVE_CUDA']
+endif
+
 py.extension_module('_utils',
            'nixl_utils.cpp',
            subdir: (cuda_wheel_dir),
-           dependencies: [pybind_dep],
+           dependencies: nixl_utils_deps,
+           include_directories: [utils_inc_dirs],
+           cpp_args: nixl_utils_args,
            install: true)
 
 subdir('nixl-meta')

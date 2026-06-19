@@ -25,8 +25,11 @@ import time
 
 # Add elastic subdirectory to path for store_group import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "elastic"))
-# noinspection PyUnresolvedReferences
-import nixl_ep  # noqa: E402
+try:
+    import nixl_ep_cu13 as nixl_ep  # noqa: E402
+except ModuleNotFoundError:
+    # noinspection PyUnresolvedReferences
+    import nixl_ep  # noqa: E402
 import store_group  # noqa: E402
 import torch  # noqa: E402
 import torch.distributed as dist  # noqa: E402
@@ -65,7 +68,9 @@ def test_main(
         args.num_experts,
     )
 
-    assert num_experts % num_ranks == 0 and num_local_ranks == 8
+    assert num_experts % num_ranks == 0
+    assert 0 < args.nvl_group_size <= 8 and 8 % args.nvl_group_size == 0
+    assert num_ranks <= args.nvl_group_size or num_ranks % args.nvl_group_size == 0
     if local_rank == 0:
         print(
             f"[config] num_tokens={num_tokens}, hidden={hidden}, num_topk_groups={num_topk_groups}, num_topk={num_topk}",
@@ -100,14 +105,14 @@ def test_main(
     rank_idx = rank_idx.to(torch.int64)
     rank_idx.masked_fill_(topk_idx == -1, -1)
     inplace_unique(rank_idx, num_ranks)
-    rdma_rank_idx = rank_idx // num_local_ranks
+    rdma_rank_idx = rank_idx // args.nvl_group_size
     rdma_rank_idx.masked_fill_(rank_idx == -1, -1)
-    inplace_unique(rdma_rank_idx, num_nodes)
+    inplace_unique(rdma_rank_idx, num_ranks // args.nvl_group_size)
 
     # RDMA dispatch counts
-    rdma_idx = topk_idx // (num_experts // num_nodes)
+    rdma_idx = topk_idx // (num_experts // (num_ranks // args.nvl_group_size))
     rdma_idx.masked_fill_(topk_idx == -1, -1)
-    inplace_unique(rdma_idx, num_nodes)
+    inplace_unique(rdma_idx, num_ranks // args.nvl_group_size)
     num_rdma_token_sent = rdma_idx.ne(-1).sum().item()
 
     # Expert meta
@@ -119,7 +124,7 @@ def test_main(
 
     # Rank layout meta
     num_tokens_per_rank = torch.empty((num_ranks,), dtype=torch.int, device="cuda")
-    num_tokens_per_rdma_rank = torch.empty((num_nodes,), dtype=torch.int, device="cuda")
+    num_tokens_per_rdma_rank = torch.empty((num_ranks // args.nvl_group_size,), dtype=torch.int, device="cuda")
     token_idx_in_rank = torch.full(
         (num_ranks, num_tokens), -1, dtype=torch.long, device="cuda"
     )
@@ -132,7 +137,7 @@ def test_main(
         token_idx_in_rank[i][tokens[:count]] = torch.arange(
             count, dtype=torch.long, device="cuda"
         )
-    for i in range(num_nodes):
+    for i in range(num_ranks // args.nvl_group_size):
         num_tokens_per_rdma_rank[i] = (rdma_rank_idx == i).sum()
     token_idx_in_rank = token_idx_in_rank.T.contiguous().to(torch.int)
     is_token_in_rank = token_idx_in_rank >= 0
@@ -156,25 +161,80 @@ def test_main(
         print("", flush=True)
     group.barrier()
     time.sleep(1)
+    smoke_only = getattr(args, "smoke_only", False)
+    debug_smoke_summary = getattr(args, "debug_smoke_summary", False)
 
     # Config
-    rdma_buffer_size, nvl_buffer_size = 128, (720 if num_ranks in (144, 160) else 512)
+    num_rdma_ranks = max(num_ranks // args.nvl_group_size, 1)
+    rdma_buffer_size = 128
+    base_nvl_buffer_size = 720 if num_ranks in (144, 160) else 512
+    nvl_buffer_size = (
+        (base_nvl_buffer_size + num_rdma_ranks - 1)
+        // num_rdma_ranks
+        * num_rdma_ranks
+    )
+    if local_rank == 0 and nvl_buffer_size != base_nvl_buffer_size:
+        print(
+            f"[config] rounded nvl_buffer_size from {base_nvl_buffer_size} to {nvl_buffer_size} "
+            f"for num_rdma_ranks={num_rdma_ranks}",
+            flush=True,
+        )
     config = nixl_ep.Config(num_sms, 8, nvl_buffer_size, 16, rdma_buffer_size)
 
     # Test dispatch
     # noinspection PyShadowingNames
-    def check_data(check_x, recv_gbl_rank_prefix_sum):
-        assert torch.allclose(check_x.amin(dim=1), check_x.amax(dim=1))
+    def check_data(check_x, recv_gbl_rank_prefix_sum, label="recv_x"):
+        def debug_failure(reason, failed_rank=None, start=None, end=None):
+            if not debug_smoke_summary:
+                return
+            with torch.no_grad():
+                first_col = check_x[:, 0].detach().to(torch.int32).cpu()
+                row_min = check_x.amin(dim=1).detach().to(torch.float32).cpu()
+                row_max = check_x.amax(dim=1).detach().to(torch.float32).cpu()
+                prefixes = recv_gbl_rank_prefix_sum.detach().to(torch.int32).cpu().tolist()
+                expected_counts = gbl_num_tokens_per_rank.detach().to(torch.int32).cpu().tolist()
+                unique_vals, unique_counts = torch.unique(first_col, return_counts=True)
+                hist = list(zip(unique_vals.tolist(), unique_counts.tolist()))
+                bad_uniform = (row_min != row_max).nonzero().flatten()[:16].tolist()
+                print(
+                    "[dispatch-debug] "
+                    f"rank={rank} label={label} reason={reason} failed_rank={failed_rank} "
+                    f"range=({start},{end}) recv_shape={tuple(check_x.shape)} "
+                    f"prefix={prefixes} expected_counts={expected_counts} "
+                    f"first_col_hist={hist[:32]} bad_uniform_rows={bad_uniform}",
+                    flush=True,
+                )
+                if failed_rank is not None and start is not None and end is not None:
+                    seg = first_col[start:end]
+                    print(
+                        "[dispatch-debug-segment] "
+                        f"rank={rank} label={label} failed_rank={failed_rank} "
+                        f"segment_len={end - start} first_values={seg[:64].tolist()}",
+                        flush=True,
+                    )
+
+        uniform = torch.allclose(check_x.amin(dim=1), check_x.amax(dim=1))
+        if not uniform:
+            debug_failure("row_not_uniform")
+        assert uniform
         check_start = 0
         for i in range(num_ranks):
             check_end = recv_gbl_rank_prefix_sum[i].item()
-            assert (check_x[check_start:check_end, :].int() - i).sum().item() == 0
+            segment_sum = (check_x[check_start:check_end, :].int() - i).sum().item()
+            if segment_sum != 0:
+                debug_failure("segment_value_mismatch", i, check_start, check_end)
+            assert segment_sum == 0
             check_start = check_end
 
-    for previous_mode in (False, True):
-        for async_mode in (False, True):
-            for current_x in (x_pure_rand, x, x_e4m3):
-                for with_topk in (False, True):
+    previous_modes = (False,) if smoke_only else (False, True)
+    async_modes = (False,) if smoke_only else (False, True)
+    x_modes = (x,) if smoke_only else (x_pure_rand, x, x_e4m3)
+    topk_modes = (False,) if smoke_only else (False, True)
+
+    for previous_mode in previous_modes:
+        for async_mode in async_modes:
+            for current_x in x_modes:
+                for with_topk in topk_modes:
                     if local_rank == 0:
                         print(
                             f'[testing] Running with {"FP8" if isinstance(current_x, tuple) else "BF16"}, {"with" if with_topk else "without"} top-k (async={async_mode}, previous={previous_mode}) ...',
@@ -228,7 +288,7 @@ def test_main(
                         == recv_num_tokens_per_expert_list
                     )
                     if current_x is not x_pure_rand:
-                        check_data(recv_x, recv_gbl_rank_prefix_sum)
+                        check_data(recv_x, recv_gbl_rank_prefix_sum, "recv_x")
                     if with_topk:
                         # Check `topk_idx`
                         assert recv_topk_idx is not None
@@ -250,7 +310,7 @@ def test_main(
                                     recv_topk_weights
                                 )[recv_topk_idx.eq(-1)]
                             )
-                            check_data(recv_topk_weights, recv_gbl_rank_prefix_sum)
+                            check_data(recv_topk_weights, recv_gbl_rank_prefix_sum, "recv_topk_weights")
 
                     # Test cached dispatch (must without top-k staffs)
                     if not with_topk:
@@ -273,7 +333,7 @@ def test_main(
                         )
 
                         if current_x is not x_pure_rand:
-                            check_data(recv_x_cached, recv_gbl_rank_prefix_sum)
+                            check_data(recv_x_cached, recv_gbl_rank_prefix_sum, "recv_x_cached")
 
                         # Use cached result for combine
                         recv_x = recv_x_cached
@@ -332,7 +392,11 @@ def test_main(
                     group.barrier()
                     if local_rank == 0:
                         print(" passed", flush=True)
+                        if smoke_only:
+                            print("[smoke] HT dispatch/combine passed", flush=True)
                     group.barrier()
+                    if smoke_only:
+                        return
     if local_rank == 0:
         print("", flush=True)
 
@@ -446,7 +510,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     # so that UCX/DOCA can see all GPUs for GPU-initiated RDMA when needed.
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
-    torch.cuda.set_device(local_rank % 8)
+    torch.cuda.set_device(local_rank % max(1, torch.cuda.device_count()))
 
     num_nodes = int(os.getenv("WORLD_SIZE", 1))
 
@@ -481,6 +545,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         explicitly_destroy=True,
         group=group,
         tcp_store_group=tcp_store,
+        nvl_group_size=args.nvl_group_size,
     )
     buffer.update_memory_buffers(
         num_ranks=num_ranks,
@@ -490,7 +555,13 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     )
     buffer.connect_ranks([i for i in range(num_ranks) if i != rank])
 
-    assert num_local_ranks == 8 and num_ranks > 8
+    assert num_ranks > args.nvl_group_size
+    if num_local_ranks != args.nvl_group_size and local_rank == 0:
+        print(
+            f"[warning] num_local_ranks={num_local_ranks} differs from nvl_group_size={args.nvl_group_size}; "
+            "ensure rank ordering keeps each NVL group CUDA-IPC local",
+            flush=True,
+        )
     torch.manual_seed(rank)
 
     for i in (num_sms,):
@@ -556,6 +627,12 @@ if __name__ == "__main__":
         "--tcp-server",
         type=str,
         help="TCP server address (for both TCPStore and rank server). If not set, both will be started locally.",
+    )
+    parser.add_argument(
+        "--nvl-group-size",
+        type=int,
+        default=8,
+        help="Number of ranks in one CUDA-IPC/NVLink-local EP group (default: 8). Use 4 for 4-GPU GB200 workers.",
     )
     args = parser.parse_args()
 

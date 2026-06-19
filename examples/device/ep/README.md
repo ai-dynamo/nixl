@@ -38,7 +38,7 @@ buffer.disconnect_ranks(ranks)
 
 ## Key APIs
 
-- `Buffer(rank_id, ...)`: Initialize the NIXL communication buffer
+- `Buffer(rank_id, ..., nvl_group_size=8)`: Initialize the NIXL communication buffer. `nvl_group_size` is the number of ranks in one CUDA-IPC/NVLink-local group for high-throughput EP; it defaults to 8 for existing 8-GPU-local deployments. Use `nvl_group_size=4` for GB200 deployments that expose 4 GPUs per worker or pod.
 - `update_memory_buffers(num_ranks, num_experts_per_rank, num_rdma_bytes, num_nvl_bytes=0)`: Prepare buffers for up to `num_ranks` ranks and `num_experts_per_rank` experts
 - `connect_ranks(remote_ranks, activate=True)`: Establish NIXL connections to new peers (can be called multiple times); in low-latency mode, use `activate=False` to keep new peers masked until explicitly unmasked.
 - `disconnect_ranks(remote_ranks)`: Clean up connections to departing peers
@@ -92,6 +92,22 @@ meson setup build \
 cd build
 ninja install
 ```
+
+#### GB200 multi-node high-throughput EP
+
+High-throughput EP assumes CUDA IPC is only opened inside one NVLink-local group. On systems where each worker exposes fewer than 8 local GPUs, pass the local group size explicitly so ranks are mapped correctly:
+
+```bash
+torchrun \
+    --nnodes=2 \
+    --nproc_per_node=4 \
+    tests/test_ht_gb200.py \
+    --nvl-group-size 4
+```
+
+With this setting, ranks `0..3` form NVLink-local group 0, ranks `4..7` form group 1, and inter-group traffic uses NIXL RDMA/fabric buffers instead of attempting CUDA IPC across workers.
+
+For high-throughput EP with multiple RDMA groups, the RDMA/fabric VMM buffer is mapped at a deterministic rank-skewed virtual address by default. This avoids ambiguous symmetric virtual addresses across workers while preserving the existing single-node behavior. The default base and stride can be overridden for debugging with `NIXL_EP_RDMA_VMM_BASE` and `NIXL_EP_RDMA_VMM_STRIDE`; `NIXL_EP_DISABLE_UNIQUE_VMM_ADDRESS=1` restores the legacy unhinted mapping.
 
 
 Finally, configure PYTHONPATH to use NIXL EP:
