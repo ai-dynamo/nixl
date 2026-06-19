@@ -44,6 +44,7 @@ jobs:
             /usr/local/lib/android /opt/hostedtoolcache \
             /usr/local/share/boost /usr/local/.ghcup
           sudo docker image prune -af || true
+          sudo docker builder prune -af || true
           df -h /
 
       - name: Build ROCm container
