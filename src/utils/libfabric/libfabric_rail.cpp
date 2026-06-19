@@ -91,8 +91,6 @@ RequestPool::release(nixlLibfabricReq *req) const {
 
 nixlLibfabricReq *
 RequestPool::findByContext(void *context) const {
-    std::lock_guard<std::mutex> lock(pool_mutex_);
-
     if (!context) {
         return nullptr;
     }
