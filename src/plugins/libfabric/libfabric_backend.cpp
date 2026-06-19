@@ -1031,10 +1031,19 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     // Signal PT to yield while data thread is submitting.
     // RAII guard clears the flag on any return path.
     struct DataThreadGuard {
-        std::atomic<unsigned int> &counter;
-        DataThreadGuard(std::atomic<unsigned int> &c) : counter(c) { counter.fetch_add(1, std::memory_order_relaxed); }
-        ~DataThreadGuard() { counter.fetch_sub(1, std::memory_order_relaxed); }
-    } data_thread_guard(data_thread_active_);
+        std::atomic<bool> &yield_flag;
+        std::atomic<unsigned int> &count;
+        DataThreadGuard(std::atomic<bool> &f, std::atomic<unsigned int> &c) : yield_flag(f), count(c) {
+            if (count.fetch_add(1, std::memory_order_relaxed) == 0) {
+                yield_flag.store(true, std::memory_order_relaxed);
+            }
+        }
+        ~DataThreadGuard() {
+            if (count.fetch_sub(1, std::memory_order_relaxed) == 1) {
+                yield_flag.store(false, std::memory_order_relaxed);
+            }
+        }
+    } data_thread_guard(pt_should_yield_, data_thread_count_);
 
     // Core transfer submission to process each descriptor with direct submission
     // Reserve base_offset once per transfer so all descriptors see a stable rail assignment
@@ -1166,10 +1175,19 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
     auto backend_handle = static_cast<nixlLibfabricBackendH *>(handle);
 
     struct DataThreadGuard {
-        std::atomic<unsigned int> &counter;
-        DataThreadGuard(std::atomic<unsigned int> &c) : counter(c) { counter.fetch_add(1, std::memory_order_relaxed); }
-        ~DataThreadGuard() { counter.fetch_sub(1, std::memory_order_relaxed); }
-    } data_thread_guard(data_thread_active_);
+        std::atomic<bool> &yield_flag;
+        std::atomic<unsigned int> &count;
+        DataThreadGuard(std::atomic<bool> &f, std::atomic<unsigned int> &c) : yield_flag(f), count(c) {
+            if (count.fetch_add(1, std::memory_order_relaxed) == 0) {
+                yield_flag.store(true, std::memory_order_relaxed);
+            }
+        }
+        ~DataThreadGuard() {
+            if (count.fetch_sub(1, std::memory_order_relaxed) == 1) {
+                yield_flag.store(false, std::memory_order_relaxed);
+            }
+        }
+    } data_thread_guard(pt_should_yield_, data_thread_count_);
 
     {
         nixl_status_t progress_status = rail_manager.progressActiveRails();
@@ -1440,7 +1458,7 @@ nixlLibfabricEngine::progressThread() {
     // Main progress loop - continuously process completions only on rails
     while (!progress_thread_stop_.load()) {
         // Yield when data thread is actively submitting — it handles progress itself
-        if (data_thread_active_.load(std::memory_order_relaxed) > 0) {
+        if (pt_should_yield_.load(std::memory_order_relaxed)) {
             continue;
         }
 
