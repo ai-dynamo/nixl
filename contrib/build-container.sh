@@ -88,6 +88,9 @@ get_options() {
         --no-cache)
             NO_CACHE=" --no-cache"
             ;;
+        --check-only)
+            CHECK_ONLY=1
+            ;;
         --build-type)
             if [ "$2" ]; then
                 BUILD_TYPE=$2
@@ -218,6 +221,7 @@ show_help() {
     echo "  [--base-image-tag base image tag]"
     echo "  [--wheel-base base platform for wheel builds]"
     echo "  [--no-cache disable docker build cache]"
+    echo "  [--check-only build via buildx without exporting an image (CI validation)]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--build-type [debug|release] to select build type (default: release)]"
     echo "  [--tag tag for image]"
@@ -268,4 +272,10 @@ fi
 
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $DOCKER_TARGET $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
+if [ -n "$CHECK_ONLY" ]; then
+    # Build the full graph (incl. in-Dockerfile smoke RUNs) but do not export an
+    # image. Skipping the multi-GB image export avoids OOM-ing hosted CI runners.
+    docker buildx build --platform linux/$ARCH -f $DOCKER_FILE $DOCKER_TARGET $BUILD_ARGS --output type=cacheonly $NO_CACHE $BUILD_CONTEXT
+else
+    docker build --platform linux/$ARCH -f $DOCKER_FILE $DOCKER_TARGET $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
+fi

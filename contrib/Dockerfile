@@ -308,6 +308,14 @@ RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
 RUN PYTHON_ABI_TAG="$(echo "$DEFAULT_PYTHON_VERSION" | tr -d .)" && \
     uv pip install dist/*cp${PYTHON_ABI_TAG}*.whl dist/nixl-*-none-any.whl
 
+# In-build smoke checks: confirm both wheels exist and that `import nixl`
+# dispatches to the ROCm backend. Running these here lets CI validate the build
+# with --output=cacheonly, avoiding the multi-GB image export that OOMs the
+# hosted runner during layer compression.
+RUN ls /workspace/nixl/dist/nixl_rocm-*.whl /workspace/nixl/dist/nixl-*-none-any.whl && \
+    export PATH=$VIRTUAL_ENV/bin:$PATH && \
+    python -c 'import nixl; assert nixl._pkg.__name__ == "nixl_rocm", nixl._pkg.__name__'
+
 FROM common-base AS cuda-build
 
 # ARGs from common-base must be re-declared in each child stage to be accessible.

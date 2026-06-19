@@ -47,15 +47,13 @@ jobs:
           sudo docker builder prune -af || true
           df -h /
 
-      - name: Build ROCm container
-        run: ./contrib/build-container.sh --rocm --tag nixl-rocm:ci --no-cache
+      # docker-container driver is required for --output=type=cacheonly below.
+      - name: Set up buildx (docker-container driver)
+        run: docker buildx create --use --driver docker-container --name nixl-ci
 
-      - name: Smoke - import nixl, dispatch to nixl_rocm backend
-        run: |
-          docker run --rm nixl-rocm:ci \
-            bash -lc "python -c 'import nixl; print(nixl._pkg.__name__)' | grep -x nixl_rocm"
-
-      - name: Smoke - wheels present
-        run: |
-          docker run --rm nixl-rocm:ci \
-            bash -lc "ls /workspace/nixl/dist/nixl_rocm-*.whl /workspace/nixl/dist/nixl-*-none-any.whl"
+      # Build the full ROCm graph without exporting an image. The wheel-presence
+      # and `import nixl` -> nixl_rocm smoke checks run as RUN steps inside the
+      # rocm-build stage, so --output=cacheonly validates them without the
+      # multi-GB image export that OOMs the hosted runner during compression.
+      - name: Build ROCm container (validate, no image export)
+        run: ./contrib/build-container.sh --rocm --check-only --no-cache
