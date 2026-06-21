@@ -320,6 +320,11 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
                       << std::endl;
             std::cout << "  Tip: Use --infinia_config_file to specify a config file" << std::endl;
         }
+#if NIXLBENCH_ENABLE_INMEMKV
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INMEMKV)) {
+        std::cout << "INMEMKV backend configured (simple in-memory key-value store)"
+                  << std::endl;
+#endif
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -987,6 +992,30 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(iov_list));
         }
+#if NIXLBENCH_ENABLE_INMEMKV
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INMEMKV)) {
+        // INMEMKV backend: create DRAM_SEG descriptors with keys in metaInfo
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
+
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                std::string unique_name = "nixlbench_inmemkv" + std::to_string(list_idx) + "_" +
+                    std::to_string(i) + "_" + std::to_string(timestamp);
+
+                // Create a DRAM_SEG descriptor with key in metaInfo
+                xferBenchIOV inmemkv_desc(0, buffer_size, i, unique_name);
+                std::cout << "Creating INMEMKV key: " << unique_name << std::endl;
+                iov_list.push_back(inmemkv_desc);
+            }
+            // Register DRAM_SEG descriptors with keys in metaInfo
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, DRAM_SEG);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+            remote_regs_.emplace_back(*agent, backend_engine, DRAM_SEG, std::move(iov_list));
+        }
+#endif
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         // GUSLI backend uses block device descriptors
         if (gusli_devices.empty()) {
@@ -1208,6 +1237,21 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     std::vector<std::vector<xferBenchIOV>> res;
     int desc_str_sz;
 
+#if NIXLBENCH_ENABLE_INMEMKV
+    // INMEMKV uses DRAM_SEG keys in metaInfo and does not populate remote_fds.
+    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INMEMKV)) {
+        for (auto &iov_list : local_iovs) {
+            std::vector<xferBenchIOV> remote_iov_list;
+            for (auto &iov : iov_list) {
+                xferBenchIOV inmemkv_remote(iov);
+                inmemkv_remote.addr = 0;
+                inmemkv_remote.metaInfo = iov.metaInfo;
+                remote_iov_list.push_back(inmemkv_remote);
+            }
+            res.push_back(remote_iov_list);
+        }
+    } else
+#endif
     if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
@@ -1315,6 +1359,10 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
+#if NIXLBENCH_ENABLE_INMEMKV
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INMEMKV)) {
+        remote_desc = nixl_xfer_dlist_t(DRAM_SEG);
+#endif
     } else if (xferBenchConfig::isStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(FILE_SEG);
     }
@@ -1329,6 +1377,10 @@ getRemoteSegType() {
         return OBJ_SEG;
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         return BLK_SEG;
+#if NIXLBENCH_ENABLE_INMEMKV
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INMEMKV)) {
+        return DRAM_SEG;
+#endif
     } else if (xferBenchConfig::isStorageBackend()) {
         return FILE_SEG;
     }
