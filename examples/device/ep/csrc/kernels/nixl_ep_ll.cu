@@ -48,6 +48,7 @@ __device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst
     if (dst_rank == ctx.rank) return (void*) dst_ptr;
 
     void *remote_ptr = remote_mvh_ptr(ctx, dst_rank);
+    void *remote_ptr = ctx.p2p_ptrs[dst_rank];
     if (remote_ptr == nullptr) return nullptr;
 
     return (void*) ((uint64_t) remote_ptr + ctx.offset_get(dst_ptr));
@@ -55,15 +56,24 @@ __device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst
 
 namespace ep_kernels {
 
-template<bool use_warp_sync = false>
+template<bool use_warp_sync = false, bool use_acquire = true>
 __forceinline__ __device__ bool is_rank_masked(int* mask_buffer_ptr, int rank) {
     if (mask_buffer_ptr == nullptr) {
         return false;
     }
     if constexpr (use_warp_sync) {
-        return __shfl_sync(0xffffffff, ld_acquire_global(mask_buffer_ptr + rank), 0) != 0;
+        if constexpr (use_acquire) {
+            return __shfl_sync(
+                       0xffffffff, ld_acquire_global(mask_buffer_ptr + rank), 0) != 0;
+        } else {
+            return __shfl_sync(0xffffffff, mask_buffer_ptr[rank], 0) != 0;
+        }
     } else {
-        return ld_acquire_global(mask_buffer_ptr + rank) != 0;
+        if constexpr (use_acquire) {
+            return ld_acquire_global(mask_buffer_ptr + rank) != 0;
+        } else {
+            return mask_buffer_ptr[rank] != 0;
+        }
     }
 }
 
@@ -930,7 +940,8 @@ COMBINE_RECV:
                     if (topk_idx_reg < 0)
                         continue;
                     EP_DEVICE_ASSERT(topk_idx_reg < active_expert_bound);
-                    if (is_rank_masked(mask_buffer_ptr, topk_idx_reg / num_local_experts))
+                    if (is_rank_masked<false, false>(
+                            mask_buffer_ptr, topk_idx_reg / num_local_experts))
                         continue;
 
                     mbarrier_wait<true>(empty_barriers[stage_idx], tma_phase, stage_idx);
@@ -971,7 +982,8 @@ COMBINE_RECV:
                     if (topk_idx_reg < 0)
                         continue;
                     EP_DEVICE_ASSERT(topk_idx_reg < active_expert_bound);
-                    if (is_rank_masked(mask_buffer_ptr, topk_idx_reg / num_local_experts))
+                    if (is_rank_masked<false, false>(
+                            mask_buffer_ptr, topk_idx_reg / num_local_experts))
                         continue;
                     const auto& topk_weight = __shfl_sync(0xffffffff, topk_weights_by_lane, i);
 
@@ -1121,6 +1133,21 @@ void update_mask_buffer(int* mask_buffer_ptr, int rank, bool mask, cudaStream_t 
     constexpr int kNumThreads = 32;
     SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
     LAUNCH_KERNEL(&cfg, update_mask_buffer<kNumThreads>, mask_buffer_ptr, rank, mask);
+}
+
+
+__global__ void cache_p2p_ptr_kernel(nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr,
+                                     int rank_id) {
+    auto nixl_ctx = *nixl_ctx_ptr;
+    nixl_ctx.p2p_ptrs[rank_id] =
+        nixl_ctx.remote_mvh == nullptr ? nullptr : nixlGetPtr(nixl_ctx.remote_mvh, rank_id);
+}
+
+void cache_p2p_ptr(gpu_nixl_ctx* nixl_ctx, int rank_id, cudaStream_t stream) {
+    constexpr int num_sms = 1;
+    constexpr int kNumThreads = 1;
+    SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
+    LAUNCH_KERNEL(&cfg, cache_p2p_ptr_kernel, nixl_ctx, rank_id);
 }
 
 

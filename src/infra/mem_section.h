@@ -90,6 +90,10 @@ public:
     void
     remDescs(std::vector<size_t> indices, order ord = order::UNSORTED);
 
+    template<class... Args>
+    nixlSectionDesc &
+    emplace(Args &&...args) = delete;
+
     // Shadow the parent's non-const operator[] to return a const ref,
     // this prevents mutation of descriptor fields after insertion
     const nixlSectionDesc &
@@ -157,6 +161,11 @@ class nixlMemSection {
         nixl_status_t populate (const nixl_xfer_dlist_t &query,
                                 nixlBackendEngine* backend,
                                 nixl_meta_dlist_t &resp) const;
+
+        nixl_status_t
+        populate(const nixl_xfer_dlist_t &query,
+                 nixlBackendEngine *backend,
+                 nixl_stride_dlist_t &resp) const;
 
         [[nodiscard]] nixl_status_t
         addElement(const nixlRemoteDesc &query,

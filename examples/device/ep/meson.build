@@ -90,6 +90,7 @@ nixl_ep_cpp_args = [
 nixl_ep_cuda_args = [
     '-DHAVE_CUDA',
     '-DTORCH_EXTENSION_NAME=nixl_ep_cpp',
+    '-DDISABLE_AGGRESSIVE_PTX_INSTRS',
     '--expt-relaxed-constexpr',  # Allow calling constexpr __host__ functions from __device__ functions
     '--ptxas-options=--register-usage-level=10',  # Allow more register usage (matches setup.py)
     '-Xcompiler', '-Wno-deprecated-declarations',
@@ -99,7 +100,7 @@ nixl_ep_cuda_args = [
     '-Xcompiler', '-Wno-attributes',
 ]
 
-topk_idx_bits = meson.get_external_property('topk_idx_bits', '64')
+topk_idx_bits = meson.get_external_property('topk_idx_bits', '32')
 nixl_ep_cpp_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]
 nixl_ep_cuda_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]
 
