@@ -191,9 +191,16 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
         break;
     }
     case FILE_SEG: {
+        auto resv = path_mode_devids_.reserve(mem.devId, mem.metaInfo);
+        if (!resv.ok()) {
+            HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
+                             absl::StrFormat("HF3FS path-mode requires a unique devId per file "
+                                             "(devId=%llu already registered)",
+                                             static_cast<unsigned long long>(mem.devId)));
+        }
         std::unique_ptr<nixlHf3fsFileMetadata> md;
         try {
-            md = std::make_unique<nixlHf3fsFileMetadata>(nixl::FileFd(mem.devId, mem.metaInfo));
+            md = std::make_unique<nixlHf3fsFileMetadata>(mem.devId, mem.metaInfo);
         }
         catch (const std::system_error &e) {
             HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,
@@ -212,6 +219,7 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             hf3fs_file_set.insert(fd);
         }
 
+        resv.commit();
         md->handle.fd = fd;
         md->handle.size = mem.len;
         md->handle.metadata = mem.metaInfo;
@@ -230,6 +238,9 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
     nixlHf3fsMetadata *md = (nixlHf3fsMetadata *)meta;
     if (md->type == NIXL_HF3FS_MEM_TYPE_FILE) {
         nixlHf3fsFileMetadata *file_md = (nixlHf3fsFileMetadata *)md;
+        if (!file_md->file_fd.path().empty()) {
+            path_mode_devids_.release(file_md->devId);
+        }
         hf3fs_file_set.erase(file_md->handle.fd);
         hf3fs_utils->deregisterFileHandle(file_md->handle.fd);
     } else if (md->type != NIXL_HF3FS_MEM_TYPE_DRAM && md->type != NIXL_HF3FS_MEM_TYPE_DRAM_ZC) {
