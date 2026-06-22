@@ -19,11 +19,15 @@ option('etcd_inc_path', type: 'string', value: '', description: 'Path to ETCD He
 option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD Libraries')
 option('disable_gds_backend', type : 'boolean', value : false, description : 'disable gds backend')
 option('disable_mooncake_backend', type : 'boolean', value : false, description : 'disable mooncake backend')
+option('disable_infinia_backend', type : 'boolean', value : false, description : 'disable infinia backend')
+option('infinia_path', type: 'string', value: '/opt/ddn/red/', description: 'Path to Infinia client install')
 option('install_headers', type : 'boolean', value : true, description : 'install headers')
 option('gds_path', type: 'string', value: '/usr/local/cuda/', description: 'Path to GDS CuFile install')
 option('cudapath_inc', type: 'string', value: '', description: 'Include path for CUDA')
 option('cudapath_lib', type: 'string', value: '', description: 'Library path for CUDA')
 option('cudapath_stub', type: 'string', value: '', description: 'Extra Stub path for CUDA')
+option('nixl_cuda_arch_list', type: 'string', value: 'auto', description: 'Comma-separated CUDA SM targets (e.g. 90,100), or auto to select defaults (sm_80+ normally, sm_90+ when build_nixl_ep is enabled). Use a single target like 100 for faster single-GPU builds.')
+option('wheel_variant', type: 'string', value: '', description: 'Override wheel variant suffix (e.g. -Dwheel_variant=rocm yields nixl_rocm). Empty = autodetect from CUDA major version.')
 option('static_plugins', type: 'string', value: '', description: 'Plugins to be built-in, comma-separated')
 option('enable_plugins', type: 'string', value: '', description: 'Comma-separated list of plugins to build. Default (empty) builds all available plugins.')
 option('disable_plugins', type: 'string', value: '', description: 'Comma-separated list of plugins to exclude from build. Cannot be used with enable_plugins.')
@@ -31,9 +35,13 @@ option('build_docs', type: 'boolean', value: false, description: 'Build Doxygen 
 option('release_wheel', type: 'boolean', value: false, description: 'Add nixl-cu12 and nixl-cu13 dependencies to the meta wheel')
 option('log_level', type: 'combo', choices: ['trace', 'debug', 'info', 'warning', 'error', 'fatal', 'auto'], value: 'auto', description: 'Log Level (auto: auto-detect based on build type: trace for debug builds, info for release builds)')
 option('rust', type: 'boolean', value: false, description: 'Build Rust bindings')
+option('sanitizer', type: 'combo',
+       choices: ['none', 'address', 'undefined', 'thread', 'address,undefined'],
+       value: 'none',
+       description: 'Enable a sanitizer build (-fsanitize). Combine ASan+UBSan with address,undefined; thread is mutually exclusive with address.')
 
 # Tests
 option('build_tests', type: 'boolean', value: true, description: 'Build all tests')
 option('build_examples', type: 'boolean', value: true, description: 'Build all examples')
-option('build_nixl_ep', type: 'boolean', value: false, description: 'Build nixl_ep example (requires sm_90)')
+option('build_nixl_ep', type: 'boolean', value: false, description: 'Build nixl_ep example (requires sm_90 or newer)')
 option('test_all_plugins', type: 'boolean', value: false, description: 'Testing all plugins in addition to the mocks..')

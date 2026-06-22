@@ -72,6 +72,10 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
 
             void init(nixlBackendH* backend) {
                 m_params = { .backends = {backend} };
+                // Each testXfer call reuses the fixture's Agent and may call
+                // init() multiple times. Reset m_dlist so a second init() does
+                // not register the same memory range twice.
+                m_dlist.clear();
                 nixl::fillRegList(m_dlist, m_desc, m_data);
             }
 
@@ -103,6 +107,8 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
                                     nixl_xfer_dlist_t& rReq_descs,
                                     nixlXferReqH*& req_handle) const;
         nixl_status_t postXferReq(nixlXferReqH* req_handle) const;
+        nixl_status_t
+        releaseXferReq(nixlXferReqH *req_handle) const;
         nixl_status_t waitForCompletion(nixlXferReqH* req_handle);
         nixl_status_t waitForNotif(const std::string& expectedNotif);
         void fillData();
@@ -211,6 +217,11 @@ TestErrorHandling::Agent::createXferReq(const nixl_xfer_op_t& op,
 nixl_status_t
 TestErrorHandling::Agent::postXferReq(nixlXferReqH *req_handle) const {
     return m_priv->postXferReq(req_handle);
+}
+
+nixl_status_t
+TestErrorHandling::Agent::releaseXferReq(nixlXferReqH *req_handle) const {
+    return m_priv->releaseXferReq(req_handle);
 }
 
 nixl_status_t
@@ -393,7 +404,11 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, size_t iter) {
     }
 
     if (isFailure<test_type>(iter) && (status == NIXL_ERR_REMOTE_DISCONNECT)) {
-        // failed handle destroyed on post
+        // postXferReq does not take ownership of the request on failure (it only
+        // invalidates the remote data), so release the handle here to avoid
+        // leaking it and its backend request handle. The caller only gets the
+        // status, so it cannot release it itself.
+        m_Initiator.releaseXferReq(req_handle);
         return status;
     }
 

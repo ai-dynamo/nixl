@@ -35,30 +35,47 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-#define CHECK_CUDA_ERROR(result, message)                                           \
-    do {                                                                            \
-        if (result != cudaSuccess) {                                                \
-            std::cerr << "CUDA: " << message << " (Error code: " << result << " - " \
-                      << cudaGetErrorString(result) << ")" << std::endl;            \
-            exit(EXIT_FAILURE);                                                     \
-        }                                                                           \
+#define CHECK_CUDA_ERROR(result, message)                                       \
+    do {                                                                        \
+        const auto _r = (result);                                               \
+        if (_r != cudaSuccess) {                                                \
+            std::cerr << "CUDA: " << message << " (Error code: " << _r << " - " \
+                      << cudaGetErrorString(_r) << ")" << std::endl;            \
+            exit(EXIT_FAILURE);                                                 \
+        }                                                                       \
     } while (0)
 
-#define CHECK_CUDA_DRIVER_ERROR(result, message)                                           \
-    do {                                                                                   \
-        if (result != CUDA_SUCCESS) {                                                      \
-            const char *error_str;                                                         \
-            cuGetErrorString(result, &error_str);                                          \
-            std::cerr << "CUDA Driver: " << message << " (Error code: " << result << " - " \
-                      << error_str << ")" << std::endl;                                    \
-            exit(EXIT_FAILURE);                                                            \
-        }                                                                                  \
+#define CHECK_CUDA_DRIVER_ERROR(result, message)                                       \
+    do {                                                                               \
+        const auto _r = (result);                                                      \
+        if (_r != CUDA_SUCCESS) {                                                      \
+            const char *error_str;                                                     \
+            cuGetErrorString(_r, &error_str);                                          \
+            std::cerr << "CUDA Driver: " << message << " (Error code: " << _r << " - " \
+                      << error_str << ")" << std::endl;                                \
+            exit(EXIT_FAILURE);                                                        \
+        }                                                                              \
+    } while (0)
+#elif HAVE_ROCM
+#include <hip/hip_runtime.h>
+
+#define CHECK_CUDA_ERROR(result, message)                                      \
+    do {                                                                       \
+        const auto _r = (result);                                              \
+        if (_r != hipSuccess) {                                                \
+            std::cerr << "HIP: " << message << " (Error code: " << _r << " - " \
+                      << hipGetErrorString(_r) << ")" << std::endl;            \
+            exit(EXIT_FAILURE);                                                \
+        }                                                                      \
     } while (0)
 #endif
 
 // TODO: This is true for CX-7, need support for other CX cards and NVLink
 #define MAXBW 50.0 // 400 Gbps or 50 GB/sec
 #define LARGE_BLOCK_SIZE (1LL * (1 << 20))
+#define HUGEPAGE_SIZE (2 * 1024 * 1024)
+#define ROUND_UP(value, granularity) \
+    ((((value) + (granularity) - 1) / (granularity)) * (granularity))
 
 #define XFERBENCH_INITIATOR_BUFFER_ELEMENT 0xbb
 #define XFERBENCH_TARGET_BUFFER_ELEMENT 0xaa
@@ -80,6 +97,7 @@
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
+#define XFERBENCH_BACKEND_INFINIA "INFINIA"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -163,11 +181,15 @@ public:
     static std::string filepath;
     static std::string filenames;
     static bool enable_vmm;
+    static bool use_hugepages;
     static int num_files;
     static std::string posix_api_type;
     static int posix_ios_pool_size;
     static int posix_kernel_queue_size;
     static bool storage_enable_direct;
+    static bool reregister_mem;
+    static bool prepared_xfer;
+    static int pipeline_depth;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
     static int gds_mt_num_threads;
@@ -190,6 +212,7 @@ public:
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
     static std::string azure_blob_connection_string;
+    static std::string infinia_config_file;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;

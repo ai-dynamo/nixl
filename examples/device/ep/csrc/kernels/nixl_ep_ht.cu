@@ -103,7 +103,6 @@ __host__ __device__ __forceinline__ std::pair<int, int> get_nvl_clean_meta(int h
     };
 }
 
-template <bool kLowLatencyMode>
 __forceinline__ __device__ int translate_dst_rdma_rank(const int dst_rdma_rank, const int nvl_rank) {
     return dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
 }
@@ -210,7 +209,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
                 size_t src_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_recv_num_tokens_mixed.send_buffer(i)));
                 size_t dst_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_recv_num_tokens_mixed.recv_buffer(rdma_rank)));
                 size_t msg_size = (NUM_MAX_NVL_PEERS + num_rdma_experts + 1) * sizeof(int);
-                int translated_dst = translate_dst_rdma_rank<kLowLatencyMode>(i, nvl_rank);
+                int translated_dst = translate_dst_rdma_rank(i, nvl_rank);
                 nixlMemViewElem src_mdesc{nixl_ctx.local_mvh, 0, src_offset};
                 nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t)translated_dst, dst_offset};
                 nixl_status_t status = nixlPut<nixl_gpu_level_t::WARP>(
@@ -645,7 +644,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 size_t src_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_meta.send_buffer(dst_rdma_rank)));
                 size_t dst_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_meta.recv_buffer(rdma_rank)));
                 size_t msg_size = sizeof(int) * (NUM_MAX_NVL_PEERS * 2 + 2);
-                int translated_rank = translate_dst_rdma_rank<kLowLatencyMode>(dst_rdma_rank, nvl_rank);
+                int translated_rank = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
                 nixlMemViewElem src_mdesc{nixl_ctx.local_mvh, 0, src_offset};
                 nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t)translated_rank, dst_offset};
                 EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(
@@ -853,7 +852,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                     size_t src_offset = nixl_ctx.offset_get(src_ptr);
                     size_t dst_offset = nixl_ctx.offset_get(dst_ptr);
 
-                    int translated_dst = translate_dst_rdma_rank<kLowLatencyMode>(dst_rdma_rank, nvl_rank);
+                    int translated_dst = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
                     nixlMemViewElem src_mdesc{nixl_ctx.local_mvh, 0, src_offset};
                     nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t)translated_dst, dst_offset};
                     EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(
@@ -873,7 +872,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                         atomicAdd(reinterpret_cast<unsigned long long*>(rdma_channel_tail.buffer(dst_rdma_rank)), static_cast<unsigned long long>(num_tokens_to_issue));
                     } else {
                         size_t tail_counter_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_tail.buffer(rdma_rank)));
-                        int translated_dst_tail = translate_dst_rdma_rank<kLowLatencyMode>(dst_rdma_rank, nvl_rank);
+                        int translated_dst_tail = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
 
                         nixlMemViewElem tail_mdesc{nixl_ctx.remote_mvh, (size_t)translated_dst_tail, tail_counter_offset};
                         EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
@@ -1097,7 +1096,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                     atomicAdd(reinterpret_cast<unsigned long long*>(rdma_channel_head.buffer(rdma_rank)), static_cast<unsigned long long>(min_head - last_head));
                 } else {
                     size_t head_counter_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_head.buffer(rdma_rank)));
-                    int translated_dst_head = translate_dst_rdma_rank<kLowLatencyMode>(lane_id, nvl_rank);
+                    int translated_dst_head = translate_dst_rdma_rank(lane_id, nvl_rank);
                     nixlMemViewElem head_mdesc{nixl_ctx.remote_mvh, (size_t)translated_dst_head, head_counter_offset};
                     EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
                         min_head - last_head, head_mdesc, channel_id, 0) == NIXL_IN_PROG);
@@ -2161,7 +2160,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                             reinterpret_cast<uint64_t>(rdma_channel_data.recv_buffer(rdma_rank) + rdma_slot_idx * num_bytes_per_token);
                         const auto src_ptr =
                             reinterpret_cast<uint64_t>(rdma_channel_data.send_buffer(dst_rdma_rank) + rdma_slot_idx * num_bytes_per_token);
-                        int translated_dst_comb = translate_dst_rdma_rank<kLowLatencyMode>(dst_rdma_rank, nvl_rank);
+                        int translated_dst_comb = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
                         nixlMemViewElem src_mdesc_comb{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(src_ptr)};
                         nixlMemViewElem dst_mdesc_comb{nixl_ctx.remote_mvh, (size_t)translated_dst_comb, nixl_ctx.offset_get(dst_ptr)};
                         EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(
@@ -2178,7 +2177,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                         if(dst_rdma_rank == rdma_rank){
                             atomicAdd(reinterpret_cast<unsigned long long*>(tail_ptr), static_cast<unsigned long long>(num_chunked_tokens));
                         } else {
-                            int translated_dst_ct = translate_dst_rdma_rank<kLowLatencyMode>(dst_rdma_rank, nvl_rank);
+                            int translated_dst_ct = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
                             nixlMemViewElem tail_mdesc_ct{nixl_ctx.remote_mvh, (size_t)translated_dst_ct, nixl_ctx.offset_get(tail_ptr)};
                             EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
                                                  num_chunked_tokens, tail_mdesc_ct, channel_id, 0) ==
@@ -2301,7 +2300,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                             atomicAdd(reinterpret_cast<unsigned long long*>(rdma_channel_head.buffer(rdma_rank)), static_cast<unsigned long long>(min_head - last_rdma_head));
                         } else {
                             size_t head_counter_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_head.buffer(rdma_rank)));
-                            int translated_dst_ch = translate_dst_rdma_rank<kLowLatencyMode>(dst_rdma_rank, nvl_rank);
+                            int translated_dst_ch = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
                             nixlMemViewElem head_mdesc_ch{nixl_ctx.remote_mvh, (size_t)translated_dst_ch, head_counter_offset};
                             EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(min_head - last_rdma_head, head_mdesc_ch, channel_id, 0) == NIXL_IN_PROG);
                         }

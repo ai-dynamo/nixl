@@ -65,7 +65,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --output-dir: Directory to output the wheel to (default: $OUTPUT_DIR)"
             echo "  --ucx-plugins-dir: Directory to find UCX plugins in (default: $UCX_PLUGINS_DIR)"
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
-            echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires CUDA sm90-compatible environment)"
+            echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires a CUDA sm_90 or newer target environment)"
             echo "  --plugin-soname-suffix: Private UCX SONAME suffix to keep for bundled UCX modules"
             echo "  --help: Show this help message"
             echo ""
@@ -98,22 +98,22 @@ fi
 PKG_NAME="nixl-cu${CUDA_MAJOR}"
 ./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
 if [ "$BUILD_NIXL_EP" = "true" ]; then
-    uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION \
+    uv build --wheel --out-dir "$TMP_DIR" --python "$PYTHON_VERSION" \
         -Csetup-args=-Dbuild_nixl_ep=true \
         -Csetup-args=-Dbuild_examples=true
 else
-    uv build --wheel --out-dir $TMP_DIR --python $PYTHON_VERSION
+    uv build --wheel --out-dir "$TMP_DIR" --python "$PYTHON_VERSION"
 fi
 
 # Bundle libraries
-mkdir $TMP_DIR/dist
-auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' --exclude 'libefa*' --exclude 'libhwloc*' --exclude 'libfabric*' --exclude 'libtorch*' --exclude 'libc10*' --exclude 'libdoca*' $TMP_DIR/nixl*.whl --plat $WHL_PLATFORM --wheel-dir $TMP_DIR/dist
+mkdir "$TMP_DIR/dist"
+auditwheel repair --exclude 'libcuda*' --exclude 'libcufile*' --exclude 'libssl*' --exclude 'libcrypto*' --exclude 'libefa*' --exclude 'libhwloc*' --exclude 'libfabric*' --exclude 'libtorch*' --exclude 'libc10*' --exclude 'libdoca*' --exclude 'libred_client*' --exclude 'libred_async*' --exclude 'liblz4*' "$TMP_DIR"/nixl*.whl --plat "$WHL_PLATFORM" --wheel-dir "$TMP_DIR/dist"
 PLUGIN_SONAME_ARGS=()
 if [ -n "$PLUGIN_SONAME_SUFFIX" ]; then
     PLUGIN_SONAME_ARGS=(--skip-plugin-symlinks --plugin-soname-suffix "$PLUGIN_SONAME_SUFFIX")
 fi
-./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir $UCX_PLUGINS_DIR --nixl-plugins-dir $NIXL_PLUGINS_DIR "${PLUGIN_SONAME_ARGS[@]}" $TMP_DIR/dist/*.whl
-cp $TMP_DIR/dist/*.whl $OUTPUT_DIR
+./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir "$UCX_PLUGINS_DIR" --nixl-plugins-dir "$NIXL_PLUGINS_DIR" "${PLUGIN_SONAME_ARGS[@]}" "$TMP_DIR"/dist/*.whl
+cp "$TMP_DIR"/dist/*.whl "$OUTPUT_DIR"
 
 # Clean up
 rm -rf "$TMP_DIR"
