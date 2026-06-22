@@ -21,7 +21,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 
 **Coordination Options:**
 - **ASIO**: Lightweight TCP socket-based coordination (no external dependencies required)
-- **ETCD**: Cloud-native coordination using etcd key-value store (optional, for containerized environments)
+- **ETCD**: Coordination using etcd key-value store (optional)
 
 ## Table of Contents
 
@@ -49,7 +49,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
   - **NVSHMEM worker**: GPU-focused with VRAM-only transfers
 - **Flexible Coordination**:
   - **ASIO**: TCP socket-based coordination - no external dependencies required
-  - **ETCD**: Optional cloud-native worker coordination for containerized environments
+  - **ETCD**: Optional worker coordination using etcd
 - **Performance Features**:
   - Multi-threading support with configurable progress threads
   - VMM memory allocation support for CUDA Fabric
@@ -91,14 +91,12 @@ cd nixl/benchmark/nixlbench/contrib
 # Run a basic two-node benchmark using ASIO (no ETCD required)
 # On target node (start first):
 docker run -it --gpus all --network host nixlbench:latest \
-  bash -c "export OMPI_COMM_WORLD_RANK=1; export OMPI_COMM_WORLD_SIZE=2; \
-           nixlbench --runtime_type ASIO --asio_address \$(hostname -i) --asio_port 23456 \
+  bash -c "nixlbench --runtime_type ASIO --asio_address \$(hostname -i) --asio_port 23456 \
            --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM"
 
 # On initiator node (start after ~10 seconds):
 docker run -it --gpus all --network host nixlbench:latest \
-  bash -c "export OMPI_COMM_WORLD_RANK=0; export OMPI_COMM_WORLD_SIZE=2; \
-           nixlbench --runtime_type ASIO --asio_address <TARGET_IP> --asio_port 23456 \
+  bash -c "nixlbench --runtime_type ASIO --asio_address <TARGET_IP> --asio_port 23456 \
            --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM"
 ```
 
@@ -111,7 +109,7 @@ For development or when Docker is not available:
 sudo apt-get update && sudo apt-get install -y \
   build-essential cmake ninja-build pkg-config \
   libgflags-dev libgrpc-dev libprotobuf-dev \
-  libasio-dev python3-dev python3-pip
+  python3-dev python3-pip
 
 # Build and install NIXL first
 cd /path/to/nixl
@@ -194,7 +192,7 @@ For development environments or when Docker is not available.
 - **CMake**: Build system (≥3.20)
 - **Meson**: Build system for NIXL/NIXLBench
 - **Ninja**: Build backend
-- **ASIO**: TCP socket runtime for two-instance metadata exchange
+- **ASIO**: Bundled TCP socket runtime subproject
 - **GFlags**: Command line flag processing
 - **OpenMP**: Multi-threading support
 
@@ -226,7 +224,7 @@ sudo apt-get update && sudo apt-get install -y \
   libgtest-dev hwloc libhwloc-dev libgflags-dev \
   libgrpc-dev libgrpc++-dev libprotobuf-dev \
   libaio-dev protobuf-compiler-grpc \
-  libcpprest-dev libasio-dev \
+  libcpprest-dev \
   pybind11-dev libclang-dev libcurl4-openssl-dev \
   libssl-dev uuid-dev libxml2-dev zlib1g-dev python3-dev python3-pip
 
@@ -405,13 +403,6 @@ NIXLBench supports ASIO runtime using TCP sockets for metadata exchange. For two
 4. ASIO supports two NIXLBench instances. Use ETCD for larger multi-process coordination.
 5. When launching through Slurm/Pyxis, set rank environment variables explicitly in each task and start the target task before the initiator task.
 
-**Slurm/Pyxis rank environment variables:**
-
-```bash
-export OMPI_COMM_WORLD_RANK=0   # 0 for initiator, 1 for target
-export OMPI_COMM_WORLD_SIZE=2   # Total number of processes
-```
-
 **Two-node UCX VRAM example:**
 
 ```bash
@@ -419,14 +410,10 @@ TARGET_IP=<target-node-ip>
 PORT=23456
 
 # Target node: start first, then wait about 10 seconds before launching the initiator.
-export OMPI_COMM_WORLD_RANK=1
-export OMPI_COMM_WORLD_SIZE=2
 ./nixlbench --runtime_type ASIO --asio_address "${TARGET_IP}" --asio_port "${PORT}" \
   --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 
 # Initiator node.
-export OMPI_COMM_WORLD_RANK=0
-export OMPI_COMM_WORLD_SIZE=2
 ./nixlbench --runtime_type ASIO --asio_address "${TARGET_IP}" --asio_port "${PORT}" \
   --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 ```
@@ -665,9 +652,29 @@ NIXLBench can also use an ETCD key-value store for coordination between benchmar
 
 For non-storage backends using `--runtime_type ETCD`, NIXLBench defaults to `http://localhost:2379` when `--etcd_endpoints` is not provided. In that case, an ETCD server must be running on `localhost:2379`; otherwise, provide `--etcd_endpoints` explicitly to point to a custom ETCD server.
 
+**Start ETCD server:**
+
+```bash
+# Option 1: Using Docker
+docker run -d --name etcd-server \
+  -p 2379:2379 -p 2380:2380 \
+  quay.io/coreos/etcd:v3.5.18 \
+  /usr/local/bin/etcd \
+  --data-dir=/etcd-data \
+  --listen-client-urls=http://0.0.0.0:2379 \
+  --advertise-client-urls=http://0.0.0.0:2379 \
+  --listen-peer-urls=http://0.0.0.0:2380 \
+  --initial-advertise-peer-urls=http://0.0.0.0:2380 \
+  --initial-cluster=default=http://0.0.0.0:2380
+
+# Option 2: Native installation
+sudo apt-get install -y etcd-server etcd-client
+sudo systemctl start etcd && sudo systemctl enable etcd
+```
+
 **For ETCD-backed multi-node benchmarks:**
 
-1. Ensure ETCD server is running, for example `docker run -p 2379:2379 quay.io/coreos/etcd`.
+1. Ensure an ETCD server is running.
 2. Launch multiple nixlbench instances pointing to the same ETCD server
 3. Multiple instances should be launched within the default timeout of 60s.
 
