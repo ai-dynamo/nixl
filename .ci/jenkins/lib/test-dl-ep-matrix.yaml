@@ -8,10 +8,8 @@
 #
 # Key Components:
 # - Job Configuration: Defines timeout, failure behavior, and server resources
-# - Docker Images: Reuses the same base + build_helper_dl images as nixl-ci-dl-gpu
-#                  (identical bits; BUILD_NIXL_EP is only set at PR-image build
-#                   time, not at base-image build time, so the base image is
-#                   shared between the two jobs)
+# - Docker Images: Dedicated EP base + build_helper (nixl-ci-dl-gpu-ep-base-... and
+#                  build_helper_dl_ep)
 # - Matrix Axes: aarch64, UCX master + v1.21.x
 # - Run Steps: build PR image with BUILD_NIXL_EP=true, allocate Slurm, run
 #              .gitlab/test_ep.sh (elastic.py NVLink + RDMA on 4 GPUs)
@@ -62,7 +60,7 @@ env:
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   TEST_TIMEOUT: 50
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260617-4"
+  CI_IMAGE_TAG: "20260622-2"
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
@@ -71,13 +69,12 @@ pvc_volumes:
   - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
 # Docker images for DL EP testing.
-# These are identical to the ones in test-dl-matrix.yaml (same name, same
-# build_args), so when both jobs run on the same CI_IMAGE_TAG they pull the
-# same base image from artifactory instead of each rebuilding it.
+# Dedicated EP base + build_helper images (separate artifactory paths from the
+# nixl-ci-dl-gpu job).
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
-     name: 'nixl-ci-dl-gpu-base-25.10-cuda13.0-ubuntu24.04',
+     name: 'nixl-ci-dl-gpu-ep-base-25.10-cuda13.0-ubuntu24.04',
      tag: "${CI_IMAGE_TAG}",
      arch: "aarch64",
      build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
@@ -85,7 +82,7 @@ runs_on_dockers:
 
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
-     name: 'build_helper_dl',
+     name: 'build_helper_dl_ep',
      arch: "aarch64",
      tag: "${CI_IMAGE_TAG}",
      build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04 --build-arg ARCH=${arch}'
@@ -103,7 +100,7 @@ taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
 steps:
   - name: Compiling NIXL EP Docker Image for DL
-    containerSelector: "{name: 'build_helper_dl'}"
+    containerSelector: "{name: 'build_helper_dl_ep'}"
     credentialsId: "svc-nixl-new-artifactory-token"
     parallel: false
     run: |
@@ -117,13 +114,13 @@ steps:
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
       --build-arg BUILD_NIXL_EP=true \
-      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-base-25.10-cuda13.0-ubuntu24.04:${CI_IMAGE_TAG} \
+      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-ep-base-25.10-cuda13.0-ubuntu24.04:${CI_IMAGE_TAG} \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       podman push --creds ${REPO_USER}:${REPO_PASS} ${PR_IMAGE}
 
   - name: Allocate DL EP Environment
-    containerSelector: "{name: 'build_helper_dl'}"
+    containerSelector: "{name: 'build_helper_dl_ep'}"
     parallel: false
     shell: action
     module: slurmCI
@@ -143,7 +140,7 @@ steps:
       ]
 
   - name: Run DL EP elastic tests
-    containerSelector: "{name: 'build_helper_dl'}"
+    containerSelector: "{name: 'build_helper_dl_ep'}"
     timeout: "${TEST_TIMEOUT}"
     parallel: false
     shell: action
@@ -159,7 +156,7 @@ steps:
       containerName: "nixl-ci-ep-${ucx_version}-${BUILD_NUMBER}"
 
 pipeline_stop:
-  containerSelector: "{name: 'build_helper_dl'}"
+  containerSelector: "{name: 'build_helper_dl_ep'}"
   parallel: false
   shell: action
   module: slurmCI
