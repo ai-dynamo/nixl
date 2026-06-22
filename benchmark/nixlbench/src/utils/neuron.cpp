@@ -22,9 +22,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
-#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -121,20 +121,35 @@ struct NrtTensorDeleter {
     }
 };
 
-using NrtTensorPtr = std::unique_ptr<nrt_tensor, NrtTensorDeleter>;
+struct NrtAllocation {
+    std::unique_ptr<nrt_tensor, NrtTensorDeleter> tensor;
+    size_t size;
 
-std::unordered_map<const void *, NrtTensorPtr> allocation_tracker;
+    NrtAllocation(nrt_tensor *t, size_t s) : tensor(t), size(s) {}
+
+    NrtAllocation(NrtAllocation &&) = default;
+};
+
+// Sorted by base address for O(log n) range lookup via upper_bound.
+std::map<uintptr_t, NrtAllocation> allocation_tracker;
 std::mutex allocation_tracker_mutex;
 
-nrt_tensor *
-getTensorFromVA(const void *va) {
+// Find the allocation containing the given VA. Returns {tensor, offset} or {nullptr, 0}.
+std::pair<nrt_tensor *, size_t>
+findTensorForVA(const void *va) {
     std::lock_guard lock{allocation_tracker_mutex};
+    uintptr_t addr = reinterpret_cast<uintptr_t>(va);
 
-    auto it = allocation_tracker.find(va);
-    if (it == allocation_tracker.end()) {
-        return nullptr;
+    // Find the first entry with base > addr, then step back one.
+    auto it = allocation_tracker.upper_bound(addr);
+    if (it == allocation_tracker.begin()) {
+        return {nullptr, 0};
     }
-    return it->second.get();
+    --it;
+    if (addr < it->first + it->second.size) {
+        return {it->second.tensor.get(), addr - it->first};
+    }
+    return {nullptr, 0};
 }
 
 } // namespace
@@ -161,14 +176,15 @@ neuronMalloc(void **addr, size_t buffer_size, int devid) {
     status = nrt_tensor_allocate(0 /* placement=device */, devid, buffer_size, nullptr, &tensor);
     if (status != 0) return status;
 
-    NrtTensorPtr ptr{tensor};
     *addr = nrt_tensor_get_va(tensor);
     if (*addr == nullptr) {
+        nrt_tensor_free(&tensor);
         return -1;
     }
 
     std::lock_guard lock{allocation_tracker_mutex};
-    allocation_tracker.emplace(*addr, std::move(ptr));
+    uintptr_t base = reinterpret_cast<uintptr_t>(*addr);
+    allocation_tracker.emplace(base, NrtAllocation{tensor, buffer_size});
 
     return 0;
 }
@@ -178,26 +194,38 @@ neuronFree(void *addr) {
     if (!addr) return 0;
 
     std::lock_guard lock{allocation_tracker_mutex};
-    return allocation_tracker.erase(addr) - 1;
+    return allocation_tracker.erase(reinterpret_cast<uintptr_t>(addr)) - 1;
 }
 
 int
 neuronMemcpy(void *dest, const void *src, size_t count, neuronMemcpyKind kind) {
-    nrt_tensor *tensor = getTensorFromVA(kind == neuronMemcpyHostToDevice ? dest : src);
+    const void *device_addr = (kind == neuronMemcpyHostToDevice) ? dest : src;
+    auto [tensor, offset] = findTensorForVA(device_addr);
     if (tensor == nullptr) {
+        std::cerr << "neuronMemcpy: no allocation found for VA " << device_addr
+                  << " (kind=" << (kind == neuronMemcpyHostToDevice ? "H2D" : "D2H")
+                  << ", count=" << count << ")" << std::endl;
         return -1;
     }
 
+    int status;
     if (kind == neuronMemcpyHostToDevice) {
-        return nrt_tensor_write(tensor, src, 0, count);
+        status = nrt_tensor_write(tensor, src, offset, count);
     } else {
-        return nrt_tensor_read(tensor, dest, 0, count);
+        status = nrt_tensor_read(tensor, dest, offset, count);
     }
+    if (status != 0) {
+        std::cerr << "neuronMemcpy: "
+                  << (kind == neuronMemcpyHostToDevice ? "nrt_tensor_write" : "nrt_tensor_read")
+                  << " failed with status " << status << " (offset=" << offset
+                  << ", count=" << count << ")" << std::endl;
+    }
+    return status;
 }
 
 int
 neuronMemset(void *addr, int val, size_t count) {
-    nrt_tensor *tensor = getTensorFromVA(addr);
+    auto [tensor, offset] = findTensorForVA(addr);
     if (tensor == nullptr) {
         return -1;
     }
@@ -205,11 +233,11 @@ neuronMemset(void *addr, int val, size_t count) {
     constexpr size_t kMaxChunkSize = 1UL << 21; // 2MB
     std::vector<unsigned char> buf(kMaxChunkSize, static_cast<unsigned char>(val));
     int status = 0;
-    size_t offset = 0;
-    while (offset < count && status == 0) {
-        const size_t write_len = std::min(kMaxChunkSize, count - offset);
-        status = nrt_tensor_write(tensor, buf.data(), offset, write_len);
-        offset += write_len;
+    size_t pos = 0;
+    while (pos < count && status == 0) {
+        const size_t write_len = std::min(kMaxChunkSize, count - pos);
+        status = nrt_tensor_write(tensor, buf.data(), offset + pos, write_len);
+        pos += write_len;
     }
     return status;
 }
