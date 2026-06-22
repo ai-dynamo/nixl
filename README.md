@@ -5,6 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # NVIDIA Inference Xfer Library (NIXL)
 
+PRCI Gamma
+
 NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point communications in AI inference frameworks such as NVIDIA Dynamo, while providing an abstraction over various types of memory (e.g., CPU and GPU) and storage (e.g., file, block and object store) through a modular plug-in architecture.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
