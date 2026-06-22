@@ -1,0 +1,38 @@
+---
+job: nixl-ci-cleanup-artifacts
+
+failFast: true
+timeout_minutes: 60
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: "{memory: 512Mi, cpu: 500m}"
+  requests: "{memory: 256Mi, cpu: 250m}"
+  imagePullSecrets: "['artifactory-pull-secret']"
+
+runs_on_dockers:
+  - { name: "cleanup", url: "artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ci/x86_64/nixl-cleanup:20260701", arch: "x86_64" }
+
+env:
+  ARTIFACTORY_URL: "https://artifactory.nvidia.com/artifactory"
+
+credentials:
+  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_TOKEN'}
+
+pipeline_start:
+  shell: action
+  module: groovy
+  run: |
+    env.DRY_RUN_FLAG=""
+    if ("${DRY_RUN}" == "true") {
+      env.DRY_RUN_FLAG="--dry-run"
+    }
+
+steps:
+  - name: Cleanup Artifactory artifacts
+    parallel: false
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    run: |
+      .ci/scripts/artifactory-cleanup-by-time.sh ${DRY_RUN_FLAG} \
+        --policy .ci/cleanup-policy.json
