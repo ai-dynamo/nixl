@@ -30,8 +30,6 @@
 #include <string_view>
 
 class nixlAgent;
-// All registry/mutex state lives here; defined in nixl_md_manager.cpp so this
-// installed public header stays free of those details (pImpl).
 class nixlMDManagerData;
 
 /**
@@ -175,8 +173,8 @@ public:
     operator=(const nixlMDManager &) = delete;
 
 private:
-    // Registry/mutex state and all logic live in nixlMDManagerData, defined in
-    // nixl_md_manager.cpp; each method here forwards to it.
+    // Registry/mutex state lives in nixlMDManagerData, defined in
+    // nixl_md_manager.cpp; the methods above operate on it.
     const std::unique_ptr<nixlMDManagerData> data_;
 };
 
