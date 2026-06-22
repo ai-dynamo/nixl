@@ -357,7 +357,7 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
 ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
-ARG WHL_TORCH_VERSIONS="2.11,2.12"
+ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \
