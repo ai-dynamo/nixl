@@ -269,13 +269,20 @@ nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
     if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) != supported_mems.end()) {
         out = nullptr;
         if (nixl_mem == FILE_SEG) {
+            auto resv = path_mode_devids_.reserve(mem.devId, mem.metaInfo);
+            if (!resv.ok()) {
+                NIXL_ERROR << "POSIX path-mode requires a unique devId per file (devId="
+                           << mem.devId << " already registered)";
+                return NIXL_ERR_INVALID_PARAM;
+            }
             try {
-                out = new nixlPosixFileMD(nixl::FileFd(mem.devId, mem.metaInfo));
+                out = new nixlPosixFileMD(mem.devId, mem.metaInfo);
             }
             catch (const std::system_error &e) {
                 NIXL_ERROR << "POSIX path-mode open failed: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
+            resv.commit();
         }
         return NIXL_SUCCESS;
     }
@@ -285,6 +292,14 @@ nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
 
 nixl_status_t
 nixlPosixEngine::deregisterMem(nixlBackendMD *meta) {
+    // non-null meta is always a file MD. Release the path-mode reservation (path() empty in
+    // fd-mode)
+    if (meta) {
+        auto *file_md = static_cast<nixlPosixFileMD *>(meta);
+        if (!file_md->file_fd.path().empty()) {
+            path_mode_devids_.release(file_md->devId);
+        }
+    }
     delete meta;
     return NIXL_SUCCESS;
 }
