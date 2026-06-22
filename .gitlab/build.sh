@@ -181,6 +181,18 @@ else
     $SUDO apt-get upgrade -y
     $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
 
+    # DOCA GPUNetIO headers install under /opt/mellanox/doca/include (with a few
+    # co-installed headers under /usr/include), which nvcc does not search. Stage
+    # doca_gpunetio* into the CUDA include dir so device compilation finds the full
+    # chain pulled in via UCX device headers (doca_gpunetio_dev_verbs_qp.cuh ...).
+    if [ -d "${CUDA_HOME}/include" ]; then
+        DOCA_HEADERS=$(find /usr/include /opt -name "doca_gpunetio*" 2>/dev/null)
+        if [ -n "$DOCA_HEADERS" ]; then
+            echo "$DOCA_HEADERS" | xargs -I{} $SUDO cp {} "${CUDA_HOME}/include/" 2>/dev/null || true
+            echo "Copied DOCA GPUNetIO headers to ${CUDA_HOME}/include/"
+        fi
+    fi
+
     # Force reinstall of RDMA packages from DOCA repository
     # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
     # Upgrade is not sufficient if the version is the same since apt skips the installation.
@@ -357,31 +369,6 @@ else
       $SUDO cmake --install sdk/identity
     )
 fi # PRE_INSTALLED_ENV end
-
-# PRE_INSTALLED_ENV skips apt bootstrap, so DOCA GPUNetIO dev headers are absent;
-# nixl_ep CUDA builds need them (UCX device code pulls doca_gpunetio_*.cuh).
-if [ -n "${PRE_INSTALLED_ENV}" ] && [ "${BUILD_NIXL_EP}" = "true" ] && $HAS_GPU && [ -d "${CUDA_HOME}" ]; then
-    if ! dpkg-query -W -f='${Status}' libdoca-sdk-gpunetio-dev 2>/dev/null | grep -q "ok installed"; then
-        echo "PRE_INSTALLED_ENV: installing DOCA GPUNetIO dev packages for nixl_ep build"
-        ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
-        MELLANOX_OS="$(. /etc/lsb-release; echo "${DISTRIB_ID}${DISTRIB_RELEASE}" | tr '[:upper:]' '[:lower:]' | tr -d .)"
-        wget --tries=3 --waitretry=5 --no-verbose \
-            "https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb" \
-            -O "${TMPDIR}/doca-host.deb"
-        $SUDO dpkg -i "${TMPDIR}/doca-host.deb" || true
-        $SUDO apt-get -qq update
-        $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
-    fi
-    # DOCA may install under /usr or /opt where nvcc does not look; copy doca_gpunetio*
-    # (any suffix) into CUDA include so device compilation finds the full chain.
-    if [ -d "${CUDA_HOME}/include" ]; then
-        DOCA_HEADERS=$(find /usr/include /opt -name "doca_gpunetio*" 2>/dev/null)
-        if [ -n "$DOCA_HEADERS" ]; then
-            echo "$DOCA_HEADERS" | xargs -I{} $SUDO cp {} "${CUDA_HOME}/include/" 2>/dev/null || true
-            echo "Copied DOCA GPUNetIO headers to ${CUDA_HOME}/include/"
-        fi
-    fi
-fi
 
 if [ -n "$PRE_INSTALLED_UCX_ENV" ]; then
     echo "PRE_INSTALLED_UCX_ENV is set, skipping UCX compilation"
