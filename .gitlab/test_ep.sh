@@ -39,8 +39,6 @@ export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
 export NIXL_DEBUG_LOGGING=yes
-# Force eager protocol; UCX skips GPU-direct RNDV path.
-export UCX_RNDV_THRESH=inf
 
 # The PR image installs the CUDA-versioned bindings (nixl_ep_cu*) under
 # ${INSTALL_DIR}/lib/python3/dist-packages via meson's --prefix, which is not
@@ -106,7 +104,11 @@ run_elastic_test() {
         PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
         timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
             --plan "$plan_file" \
-            --num-processes 4 --num-topk 4 --validate-phase-failures $extra_flags
+            --num-processes 4 \
+            --num-experts-per-rank 32 \
+            --num-topk 8 \
+            --num-tokens 256 \
+            --validate-phase-failures $extra_flags
     )
 }
 
