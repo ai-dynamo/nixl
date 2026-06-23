@@ -15,6 +15,15 @@
 # User Usage: Full image build via build-container.sh (same script, different invocation)
 #
 # =============================================================================
+# vLLM/SGLang NIXL disaggregation sanity (x86_64 only)
+# =============================================================================
+# After the wheels are built, they are layered onto the pinned vLLM/SGLang weights-base
+# images (built by the ci-demo runs_on_dockers mechanic from
+# .ci/dockerfiles/Dockerfile.{vllm,sglang}-base) and a 1-prefill/1-decode NIXL KV-transfer
+# sanity is run on the mizu SLURM cluster. The whole job runs in the build_helper
+# container, which provides both podman (wheel/image builds) and the scctl SLURM client.
+#
+# =============================================================================
 # Key Components:
 # =============================================================================
 # - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
@@ -57,9 +66,7 @@ registry_auth: svc-nixl-new-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 credentials:
-  - credentialsId: 'svc-nixl-new-artifactory-token'
-    usernameVariable: 'ARTIFACTORY_USER'
-    passwordVariable: 'ARTIFACTORY_TOKEN'
+  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
 
 # =============================================================================
 # Kubernetes Resource Configuration
@@ -72,14 +79,46 @@ kubernetes:
   # 24GB memory and 16 CPU cores for parallel compilation and large builds
   limits: '{memory: 24Gi, cpu: 16000m}'
   requests: '{memory: 24Gi, cpu: 16000m}'
+  privileged: true
+
+empty_volumes:
+  - {mountPath: /root, memory: false}
+  - {mountPath: /var/lib/containers/storage, memory: false}
+
+# Job-id files for the SLURM sanity allocations live on the shared PVC.
+pvc_volumes:
+  - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
 # =============================================================================
 # Docker Build Configuration
 # =============================================================================
-# Uses podman-in-container (quay.io/podman/stable) as the build runner
-# build-container.sh runs podman/docker inside this container to build the wheel image
+# Everything runs in build_helper, which ships podman (wheel + per-PR image builds) and
+# the scctl SLURM client (sanity). The vLLM/SGLang weights-base images are built by the
+# ci-demo runs_on_dockers mechanic (category 'tool': built + pushed, no steps run in them)
+# and only rebuilt when their Dockerfile changes or CI_IMAGE_TAG is bumped.
 runs_on_dockers:
-  - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+  - {
+     file: '.ci/dockerfiles/Dockerfile.build_helper',
+     name: 'build_helper',
+     tag: "${CI_IMAGE_TAG}",
+     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+    }
+  - {
+     file: '.ci/dockerfiles/Dockerfile.vllm-base',
+     name: 'vllm-nixl-base',
+     tag: "${CI_IMAGE_TAG}",
+     arch: 'x86_64',
+     category: 'tool',
+     build_args: '--build-arg BASE_IMAGE=${VLLM_BASE_UPSTREAM} --build-arg MODEL_ID=${SANITY_MODEL_ID}'
+    }
+  - {
+     file: '.ci/dockerfiles/Dockerfile.sglang-base',
+     name: 'sglang-nixl-base',
+     tag: "${CI_IMAGE_TAG}",
+     arch: 'x86_64',
+     category: 'tool',
+     build_args: '--build-arg BASE_IMAGE=${SGLANG_BASE_UPSTREAM} --build-arg MODEL_ID=${SANITY_MODEL_ID}'
+    }
 
 # =============================================================================
 # Build Matrix Configuration
@@ -110,6 +149,27 @@ env:
   GRPC_NPROC: 10
   BASE_IMAGE: "${registry_host}/sw-nbu-swx-nixl-docker-local/base/cuda"
   BASE_TAG: '13.0-devel-manylinux--25.09'
+  # CI image tag for build_helper + the weights-base images (bump to rebuild them)
+  CI_IMAGE_TAG: "20260625-2"
+  # Per-PR sanity images: <registry_host><registry_path>/pr/<arch>/<fw>-nixl:<BUILD_NUMBER>
+  PR_REGISTRY: "${registry_host}${registry_path}"
+  # Test model baked into the weights-base images and the gsm8k accuracy floor model.
+  SANITY_MODEL_ID: "Qwen/Qwen3-1.7B"
+  # Pinned upstream bases (concrete versions) so the per-PR sanity gate is reproducible.
+  VLLM_BASE_UPSTREAM: "docker.io/vllm/vllm-openai:v0.23.0"
+  SGLANG_BASE_UPSTREAM: "docker.io/lmsysorg/sglang:v0.5.13.post1"
+  # SLURM (mizu) — sanity test only, x86_64
+  SLURM_NODES: 1
+  SLURM_PARTITION: mizu
+  SLURM_HEAD_NODE: scctl
+  SLURM_GRES: gpu:2
+  SLURM_MEM: 128G
+  SLURM_MINCPUS: 24
+  SLURM_JOB_TIMEOUT: '01:30:00'
+  SLURM_IMMEDIATE_TIMEOUT: "3600"
+  SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
+  JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
+  STORAGE_DRIVER: overlay
 
 steps:
   # =============================================================================
@@ -118,15 +178,23 @@ steps:
   # Set up podman environment
   # This step runs sequentially (not in parallel) to avoid conflicts
   - name: Prepare
+    containerSelector: "{name: 'build_helper'}"
     credentialsId: 'svc-nixl-new-artifactory-token'
     parallel: false
     run: |
       # Setup podman and dependencies
-      rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
+      sudo rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
       podman system reset -f || true
-      ln -sfT $(type -p podman) /usr/bin/docker
+      # The wheel build's `docker build` (build-container.sh) clones/downloads deps from
+      # github/openssl.org; build_helper's default podman netns can't reach them here, and
+      # build-container.sh has no --network flag. Default podman containers (incl. the build
+      # RUN steps) to the pod's host network so egress works.
+      sudo mkdir -p /etc/containers
+      printf '[containers]\nnetns="host"\n' | sudo tee /etc/containers/containers.conf >/dev/null
+      # build-container.sh invokes `docker`; point it at podman
+      sudo ln -sfT "$(command -v podman)" /usr/bin/docker
       # Login to Artifactory
-      echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
+      echo "$REPO_PASS" | podman login "https://${registry_host}" -u "$REPO_USER" --password-stdin
 
   # =============================================================================
   # Step 2: Python Wheel Generation
@@ -134,6 +202,7 @@ steps:
   # Create distributable Python wheels that bundle native libraries
   # This step uses the build-wheel.sh script to package everything into wheels
   - name: Build Wheel
+    containerSelector: "{name: 'build_helper'}"
     parallel: false
     run: |
       set -x
@@ -146,6 +215,121 @@ steps:
         --python-versions "${python_version}" \
         --arch ${arch} \
         --dockerfile contrib/Dockerfile.manylinux
+
+  # =============================================================================
+  # Step 3: Build per-PR vLLM/SGLang sanity images (x86_64 only)
+  # =============================================================================
+  # Reuse the wheels just built (no second wheel build): extract them from the manylinux
+  # image, layer them onto the ci-demo-built weights-base (Dockerfile.vllm / Dockerfile.sglang
+  # force-reinstall them), then copy the whole workspace in (so the sanity script and its
+  # helpers are present, like the other test pipelines). Tagged by BUILD_NUMBER.
+  - name: Build framework sanity images
+    containerSelector: "{name: 'build_helper', arch: 'x86_64'}"
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    parallel: false
+    run: |
+      set -eux
+      echo "$REPO_PASS" | podman login "https://${registry_host}" -u "$REPO_USER" --password-stdin
+
+      # build-container.sh (no --tag) tags the wheel image nixl:<VERSION>; match only that
+      # local reference (the manylinux base repo path also contains "nixl").
+      WHEEL_IMAGE="$(docker images --filter 'reference=nixl:*' --format '{{.Repository}}:{{.Tag}}' | head -n1)"
+      test -n "$WHEEL_IMAGE"
+      echo "Extracting wheels from ${WHEEL_IMAGE}"
+
+      WHEELS_DIR="$(pwd)/pr-wheels-${arch}"
+      rm -rf "$WHEELS_DIR" && mkdir -p "$WHEELS_DIR"
+      docker create --name "wheel-extract-${arch}" "$WHEEL_IMAGE"
+      docker cp "wheel-extract-${arch}:/workspace/nixl/dist/." "$WHEELS_DIR/"
+      docker rm -f "wheel-extract-${arch}"
+      ls "$WHEELS_DIR"/*.whl
+
+      for fw in vllm sglang; do
+        BASE="${PR_REGISTRY}/${arch}/${fw}-nixl-base:${CI_IMAGE_TAG}"
+        IMG="${PR_REGISTRY}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
+        # 1. Layer the freshly built wheels onto the weights-base (wheels-only context).
+        docker build --platform linux/${arch} \
+          --build-arg BASE_IMAGE="${BASE}" \
+          -f contrib/Dockerfile.${fw} \
+          -t "${IMG}" \
+          "$WHEELS_DIR/"
+        # 2. Copy the whole workspace in (test script + helpers), like the other pipelines.
+        printf 'FROM %s\nCOPY . /workspace/nixl\nWORKDIR /workspace/nixl\n' "${IMG}" \
+          | docker build --platform linux/${arch} -t "${IMG}" -f - .
+        docker push "${IMG}"
+      done
+
+  # =============================================================================
+  # Step 4: Allocate a mizu GPU node (x86_64 only)
+  # =============================================================================
+  - name: Allocate Environment
+    containerSelector: "{name: 'build_helper', arch: 'x86_64'}"
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: allocation
+    args:
+      partition: "${SLURM_PARTITION}"
+      headNode: "${SLURM_HEAD_NODE}"
+      nodes: "${SLURM_NODES}"
+      jobTimeout: "${SLURM_JOB_TIMEOUT}"
+      immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
+      jobName: "nixl-vs-${BUILD_NUMBER}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      extraArgs: [
+        "--gres=${SLURM_GRES}",
+        "--mincpus=${SLURM_MINCPUS}",
+        "--mem=${SLURM_MEM}"
+      ]
+
+  # =============================================================================
+  # Step 5: vLLM disaggregation sanity (x86_64 only)
+  # =============================================================================
+  - name: Run vLLM sanity
+    containerSelector: "{name: 'build_helper', arch: 'x86_64'}"
+    timeout: 40
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: ".gitlab/test_vllm_sglang_sanity.sh vllm"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/vllm-nixl:${BUILD_NUMBER}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-vs-vllm-${BUILD_NUMBER}"
+
+  # =============================================================================
+  # Step 6: SGLang disaggregation sanity (x86_64 only)
+  # =============================================================================
+  - name: Run SGLang sanity
+    containerSelector: "{name: 'build_helper', arch: 'x86_64'}"
+    timeout: 40
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: ".gitlab/test_vllm_sglang_sanity.sh sglang"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/sglang-nixl:${BUILD_NUMBER}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-vs-sglang-${BUILD_NUMBER}"
+
+# Release the SLURM allocation (no-op on the aarch64 cell, which makes no allocation).
+pipeline_stop:
+  containerSelector: "{name: 'build_helper'}"
+  parallel: false
+  shell: action
+  module: slurmCI
+  run: stopAllForBuild
+  args:
+    credentialsId: "${SCCTL_CREDENTIALS_ID}"
+    headNode: "${SLURM_HEAD_NODE}"
+    jobIdDir: "${JOB_ID_FILE_ROOT}"
 
 # =============================================================================
 # Task Naming Convention
