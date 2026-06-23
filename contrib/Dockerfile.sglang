@@ -23,3 +23,11 @@ RUN set -eux; \
     ls -lah /tmp/nixl-wheels/*.whl ; \
     pip install --no-cache-dir --no-deps --force-reinstall /tmp/nixl-wheels/*.whl; \
     rm -rf /tmp/nixl-wheels
+
+# Pre-download model weights so CI tests don't hit HuggingFace at runtime.
+# TinyLlama is used for smoke/perf; Qwen3-8B is required for the accuracy
+# phase (gsm8k target >= 0.9, which TinyLlama cannot clear).
+RUN huggingface-cli download TinyLlama/TinyLlama-1.1B-Chat-v1.0 && \
+    huggingface-cli download Qwen/Qwen3-8B
+
+ENV HF_HUB_OFFLINE=1
