@@ -18,11 +18,6 @@ if not cuda_dep.found()
     subdir_done()
 endif
 
-if not ucx_gpu_device_api_available
-    warning('UCX GPU Device API not available, skipping nixl_ep build')
-    subdir_done()
-endif
-
 py = import('python').find_installation('python3', pure: false)
 
 # Check if PyTorch is available
@@ -123,10 +118,12 @@ nixl_ep_rpath += ':' + nixl_lib_dir
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'core')
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'plugins')
 
-# For now, nixl ep cannot be built with -G due to register usage limits
+# For now, nixl ep cannot be built with -G due to register usage limits;
+# build the EP target as release even in a global debug build (same flags
+# we ship in release wheels), and add -g back so we keep debug symbols.
 nixl_ep_override_options = []
 if get_option('buildtype') == 'debug'
-    nixl_ep_override_options = ['buildtype=custom', 'optimization=3']
+    nixl_ep_override_options = ['buildtype=release']
     nixl_ep_cpp_args += ['-g']
 endif
 
