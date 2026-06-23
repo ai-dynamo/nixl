@@ -55,9 +55,6 @@ completeRequest(nixlUcxWorker w[2],
 
 int
 main() {
-#ifdef USE_VRAM
-    int gpu_id = 0;
-#endif
     vector<string> devs;
     // TODO: pass dev name for testing
     // in CI it would be goot to test both SHM and IB
@@ -78,6 +75,7 @@ main() {
     nixl_mem_t nixl_mem_type;
 
 #ifdef USE_VRAM
+    int gpu_id = 0;
     gpuSetDevice(gpu_id, "Failed to set device");
     gpuMalloc((void **)&buffer[0], buf_size, "Failed to allocate GPU buffer 0");
     gpuMalloc((void **)&buffer[1], buf_size, "Failed to allocate GPU buffer 1");

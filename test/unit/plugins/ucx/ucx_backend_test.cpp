@@ -132,9 +132,8 @@ std::string memType2Str(nixl_mem_t mem_type)
 
 
 #ifdef HAVE_CUDA
-static int cudaQueryAddr(void *address, bool &is_dev,
-                         CUdevice &dev, CUcontext &ctx)
-{
+static int
+gpuQueryAddr(void *address, bool &is_dev, CUdevice &dev, CUcontext &ctx) {
     CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
     uint32_t is_managed = 0;
 #define NUM_ATTRS 4
@@ -162,7 +161,7 @@ static int cudaQueryAddr(void *address, bool &is_dev,
 
 #ifdef HAVE_ROCM
 static int
-hipQueryAddr(void *address, bool &is_dev, hipDevice_t &dev) {
+gpuQueryAddr(void *address, bool &is_dev, hipDevice_t &dev) {
     hipPointerAttribute_t attrs;
     const hipError_t result = hipPointerGetAttributes(&attrs, address);
 
@@ -182,7 +181,7 @@ void allocateBuffer(nixl_mem_t mem_type, int dev_id, size_t len, void* &addr)
     case DRAM_SEG:
         addr = calloc(1, len);
         break;
-#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
+#ifdef HAVE_GPU
     case VRAM_SEG:{
         bool is_dev;
 
@@ -192,12 +191,12 @@ void allocateBuffer(nixl_mem_t mem_type, int dev_id, size_t len, void* &addr)
 #ifdef HAVE_CUDA
         CUdevice dev;
         CUcontext ctx;
-        cudaQueryAddr(addr, is_dev, dev, ctx);
+        gpuQueryAddr(addr, is_dev, dev, ctx);
         std::cout << "CUDA addr: " << std::hex << addr << " dev=" << std::dec << dev
             << " ctx=" << std::hex << ctx << std::dec << std::endl;
 #elif defined(HAVE_ROCM)
         hipDevice_t dev;
-        hipQueryAddr(addr, is_dev, dev);
+        gpuQueryAddr(addr, is_dev, dev);
         std::cout << "HIP addr: " << std::hex << addr << " dev=" << std::dec << dev << std::endl;
 #endif
         break;
@@ -215,7 +214,7 @@ void releaseBuffer(nixl_mem_t mem_type, int dev_id, void* &addr)
     case DRAM_SEG:
         free(addr);
         break;
-#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
+#ifdef HAVE_GPU
     case VRAM_SEG:
         gpuSetDevice(dev_id, "Failed to set device");
         gpuFree(addr, "Failed to free GPU buffer 0");
@@ -232,7 +231,7 @@ void doMemset(nixl_mem_t mem_type, int dev_id, void *addr, char byte, size_t len
     case DRAM_SEG:
         memset(addr, byte, len);
         break;
-#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
+#ifdef HAVE_GPU
     case VRAM_SEG:
         gpuSetDevice(dev_id, "Failed to set device");
         gpuMemset(addr, byte, len, "Failed to memset");
@@ -249,9 +248,9 @@ void *getValidationPtr(nixl_mem_t mem_type, void *addr, size_t len)
     case DRAM_SEG:
         return addr;
         break;
-#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
+#ifdef HAVE_GPU
     case VRAM_SEG: {
-        const void *ptr = calloc(len, 1);
+        void *ptr = calloc(len, 1);
         gpuMemcpyD2H(ptr, addr, len, "Failed to memcpy");
         return ptr;
     }
@@ -267,7 +266,7 @@ void *releaseValidationPtr(nixl_mem_t mem_type, void *addr)
     switch(mem_type) {
     case DRAM_SEG:
         break;
-#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
+#ifdef HAVE_GPU
     case VRAM_SEG:
         free(addr);
         break;
@@ -688,12 +687,12 @@ int main()
         }
     }
 
-#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
+#ifdef HAVE_GPU
     int dev_ids[2] = { 0 , 0 };
     int n_vram_dev = 0;
     gpuGetDeviceCount(&n_vram_dev, "Failed to get device count");
 
-    std::cout << "Detected " << n_vram_dev << " CUDA devices" << std::endl;
+    std::cout << "Detected " << n_vram_dev << " GPU devices" << std::endl;
     if (n_vram_dev > 1) {
         dev_ids[1] = 1;
         dev_ids[0] = 0;
@@ -703,7 +702,7 @@ int main()
     for(int i = 0; i < 2; i++) {
         //Test local memory to local memory transfer
         test_intra_agent_transfer(thread_on[i], ucx[i][0], DRAM_SEG);
-#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
+#ifdef HAVE_GPU
         if (n_vram_dev > 0) {
             test_intra_agent_transfer(thread_on[i], ucx[i][0], VRAM_SEG);
         }
@@ -718,7 +717,7 @@ int main()
                                   ucx[i][0], DRAM_SEG, 0,
                                   ucx[i][1], DRAM_SEG, 0);
 
-#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
+#ifdef HAVE_GPU
         if (n_vram_dev > 1) {
             test_inter_agent_transfer(thread_on[i], false,
                                       ucx[i][0], VRAM_SEG, dev_ids[0],
