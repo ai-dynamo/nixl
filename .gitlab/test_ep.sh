@@ -42,6 +42,22 @@ export NIXL_DEBUG_LOGGING=yes
 # Force eager protocol; UCX skips GPU-direct RNDV path.
 export UCX_RNDV_THRESH=inf
 
+# The PR image installs the CUDA-versioned bindings (nixl_ep_cu*) under
+# ${INSTALL_DIR}/lib/python3/dist-packages via meson's --prefix, which is not
+# on Python's default sys.path. Expose it so the nixl_ep dispatcher can load
+# nixl_ep_cu13 at runtime.
+export PYTHONPATH="${INSTALL_DIR}/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
+
+# Install the nixl meta wheel (provides the nixl_ep dispatcher package that
+# re-exports from nixl_ep_cu13). The wheel is staged in dist/ by the PR image
+# build; without this install `import nixl_ep` fails with ModuleNotFoundError.
+if [ -n "$VIRTUAL_ENV" ] && grep -q '^uv =' "$VIRTUAL_ENV/pyvenv.cfg" 2>/dev/null; then
+    pip3="uv pip"
+else
+    pip3="python3 -m pip"
+fi
+$pip3 install --break-system-packages dist/nixl-*none-any.whl
+
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
