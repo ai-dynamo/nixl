@@ -52,6 +52,7 @@ namespace nixl_ep {
 
 struct NixlPeerInfo {
     void* rdma_buffer_ptr;
+    int64_t rdma_buffer_bytes;
     int* sync_buffer_ptr;
     uint64_t* ht_barrier_ptr;
     int device_id;
@@ -73,7 +74,6 @@ struct NixlAgentInfo
     nixl_reg_dlist_t rdma_reg_descs{VRAM_SEG};
     nixl_reg_dlist_t sync_reg_descs{VRAM_SEG};
     nixl_reg_dlist_t sync_count_reg_descs{VRAM_SEG};
-    nixl_reg_dlist_t ht_barrier_reg_descs{VRAM_SEG};
     std::vector<bool> wire_up_done; // [num_peers]
 };
 
@@ -86,12 +86,14 @@ private:
     uint64_t timeout_ms = 30000;
 
     // NVLink Buffer
-    int64_t num_nvl_bytes;
+    int64_t num_nvl_bytes = 0;
     void* buffer_ptrs[NUM_MAX_NVL_PEERS] = {nullptr};
     void** buffer_ptrs_gpu = nullptr;
+    bool ipc_handles_synced = false;
 
     // RDMA Buffer
-    int64_t num_rdma_bytes;
+    int64_t num_rdma_bytes = 0;
+    int64_t num_rdma_registered_bytes = 0;
     void* rdma_buffer_ptr = nullptr;
 
     int *mask_buffer_ptr = nullptr;
@@ -104,13 +106,15 @@ private:
     std::unique_ptr<vmm_region> m_sync_alloc;
     std::unique_ptr<vmm_region> m_sync_count_alloc;
     std::unique_ptr<vmm_region> m_workspace_alloc;
+    std::unique_ptr<vmm_region> m_last_ht_barrier_alloc;
 
     // Device info and communication
-    int device_id;
-    int num_device_sms;
+    int device_id = 0;
+    int num_device_sms = 0;
     uint64_t timeout_cycles = 0;
-    int rank, rdma_rank, nvl_rank;
-    int max_num_ranks;
+    int rank, rdma_rank = 0, nvl_rank = 0;
+    int nvl_group_size = NUM_MAX_NVL_PEERS;
+    int max_num_ranks = 0;
     std::vector<int> remote_ranks; /* global ranks */
     // Host-side active rank state over max_num_ranks. This can differ from
     // the runtime device mask, which kernels may update on faults/timeouts.
@@ -158,8 +162,14 @@ private:
     NixlPeerInfo my_peer_info;
     nixl_ep::gpu_nixl_ctx gpu_ctx;
     nixl_ep::gpu_nixl_ctx* gpu_ctx_ptr = nullptr;
+    std::vector<nixlMemViewH> remote_mvh_by_rank;
+    std::vector<nixlMemViewH> barrier_mvh_by_rank;
+    nixlMemViewH* remote_mvh_by_rank_ptr = nullptr;
+    nixlMemViewH* barrier_mvh_by_rank_ptr = nullptr;
+    int* remote_mvh_indices_ptr = nullptr;
     uint64_t* last_ht_barrier_counter = nullptr;
     uint64_t* local_ht_barrier_counter = nullptr;
+    uint64_t ht_barrier_counter_offset = 0;
 
     /* Common private funcs */
     void _nixl_agent_init();
@@ -180,7 +190,7 @@ private:
     void _ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles);
 
 public:
-    Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms);
+    Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms, int nvl_group_size = NUM_MAX_NVL_PEERS);
 
     void update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes = 0);
 
@@ -209,7 +219,6 @@ public:
     torch::Tensor get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset, bool use_rdma_buffer = false) const;
 
     torch::Stream get_comm_stream() const;
-
 
     void destroy();
 

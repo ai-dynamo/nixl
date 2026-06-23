@@ -32,7 +32,8 @@ template <int kNumThreads, int kNumExpertsPerSM, int kNumRanksPerSM>
 __global__ void get_dispatch_layout(const topk_idx_t* topk_idx,
                                     int* num_tokens_per_rank, int* num_tokens_per_rdma_rank,
                                     int* num_tokens_per_expert, bool* is_token_in_rank,
-                                    int num_tokens, int num_topk, int num_ranks, int num_experts) {
+                                    int num_tokens, int num_topk, int num_ranks, int num_experts,
+                                    int nvl_group_size) {
     auto sm_id = static_cast<int>(blockIdx.x);
     auto thread_id = static_cast<int>(threadIdx.x);
 
@@ -69,15 +70,18 @@ __global__ void get_dispatch_layout(const topk_idx_t* topk_idx,
     }
 
     if (num_tokens_per_rdma_rank != nullptr)
-        EP_DEVICE_ASSERT(num_ranks % NUM_MAX_NVL_PEERS == 0 and num_ranks > NUM_MAX_NVL_PEERS);
+        EP_DEVICE_ASSERT(nvl_group_size > 0 and nvl_group_size <= NUM_MAX_NVL_PEERS and
+                         kNumRanksPerSM % nvl_group_size == 0 and
+                         num_ranks % nvl_group_size == 0 and num_ranks > nvl_group_size);
 
     // Count rank statistics
-    constexpr int kNumRDMARanksPerSM = kNumRanksPerSM / NUM_MAX_NVL_PEERS;
+    constexpr int kNumRDMARanksPerSM = kNumRanksPerSM;
     __shared__ int num_tokens_per_rank_per_thread[kNumThreads][kNumRanksPerSM];
     __shared__ int num_tokens_per_rdma_rank_per_thread[kNumThreads][kNumRDMARanksPerSM];
     auto sm_begin = (num_experts + kNumExpertsPerSM - 1) / kNumExpertsPerSM;
     int rank_begin_idx = (sm_id - sm_begin) * kNumRanksPerSM, rank_end_idx = min(rank_begin_idx + kNumRanksPerSM, num_ranks);
-    int rdma_rank_begin_idx = rank_begin_idx / NUM_MAX_NVL_PEERS, rdma_rank_end_idx = rank_end_idx / NUM_MAX_NVL_PEERS;
+    int rdma_rank_begin_idx = rank_begin_idx / nvl_group_size;
+    int rdma_rank_end_idx = (rank_end_idx + nvl_group_size - 1) / nvl_group_size;
     if (rank_begin_idx < rank_end_idx) {
         const auto num_expert_per_rank = num_experts / num_ranks;
         auto expert_begin = rank_begin_idx * num_expert_per_rank;
@@ -100,7 +104,7 @@ __global__ void get_dispatch_layout(const topk_idx_t* topk_idx,
                 if (expert_begin <= expert_idx and expert_idx < expert_end) {
                     // Count single rank
                     rank_idx = expert_idx / num_expert_per_rank - rank_begin_idx;
-                    is_in_rank[rank_idx] ++, is_in_rdma_rank[rank_idx / NUM_MAX_NVL_PEERS] ++;
+                    is_in_rank[rank_idx] ++, is_in_rdma_rank[rank_idx / nvl_group_size] ++;
                 }
             }
 
@@ -141,15 +145,16 @@ void get_dispatch_layout(const topk_idx_t* topk_idx,
                          int* num_tokens_per_rank, int* num_tokens_per_rdma_rank,
                          int* num_tokens_per_expert, bool* is_token_in_rank,
                          int num_tokens, int num_topk, int num_ranks, int num_experts,
-                         cudaStream_t stream) {
+                         int nvl_group_size, cudaStream_t stream) {
     constexpr int kNumThreads = 256, kNumExpertsPerSM = 4, kNumRanksPerSM = 8;
     int num_sms = ((num_experts + kNumExpertsPerSM - 1) / kNumExpertsPerSM) + (num_ranks + kNumRanksPerSM - 1) / kNumRanksPerSM;
-    EP_STATIC_ASSERT(kNumRanksPerSM % NUM_MAX_NVL_PEERS == 0, "Invalid number of ranks per SM");
+    EP_HOST_ASSERT(nvl_group_size > 0 and nvl_group_size <= NUM_MAX_NVL_PEERS and
+                   kNumRanksPerSM % nvl_group_size == 0);
 
     SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
     LAUNCH_KERNEL(&cfg, (get_dispatch_layout<kNumThreads, kNumExpertsPerSM, kNumRanksPerSM>),
                   topk_idx, num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert, is_token_in_rank,
-                  num_tokens, num_topk, num_ranks, num_experts);
+                  num_tokens, num_topk, num_ranks, num_experts, nvl_group_size);
 }
 
 } // namespace layout
