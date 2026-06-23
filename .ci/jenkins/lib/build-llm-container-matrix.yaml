@@ -1,0 +1,401 @@
+# NIXL LLM Container Build Configuration
+#
+# Builds and pushes vLLM-NIXL and SGLang-NIXL inference containers from a
+# pre-built NIXL wheel set.
+#
+#   - vllm-nixl-<ver>         : Dockerfile.vllm   + vllm/vllm-openai:latest
+#   - sglang-nixl-<ver>       : Dockerfile.sglang + lmsysorg/sglang:latest
+#   - sglang-cu13-nixl-<ver>  : Dockerfile.sglang + lmsysorg/sglang:latest-cu130-runtime
+#
+# For RC0 builds the upstream defaults are used. For subsequent RCs (or
+# re-spins) BASE_IMAGE_* parameters pin each variant to the RC0 image so the
+# verification stays isolated to the NIXL change.
+#
+# Wheels are pulled from Artifactory at:
+#   sw-dynamo-nixl-pypi-local/release/${NIXL_VERSION}/${WHEEL_BUILD_ID}/<arch>/
+#
+# Runtime: podman (no docker). Cross-arch aarch64 builds on x86_64 hosts use
+# `podman build --platform linux/arm64` with QEMU registered via
+# multiarch/qemu-user-static. Multi-arch manifests are assembled with
+# `podman manifest` (the README's `docker buildx imagetools create` is a
+# docker-only command and is not available here).
+
+---
+job: nixl-ci-build-llm-container
+
+# Build settings
+failFast: false
+timeout_minutes: 240
+
+# Infrastructure
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: "{memory: 32Gi, cpu: 16000m}"
+  requests: "{memory: 16Gi, cpu: 8000m}"
+
+pvc_volumes:
+  - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
+
+empty_volumes:
+  - {mountPath: /var/lib/containers/storage, memory: false}
+
+runs_on_dockers:
+  - { name: "podman", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+
+# Build matrix - one run per architecture; each run sequentially builds the
+# enabled target(s) so wheel download is shared.
+matrix:
+  axes:
+    arch:
+      - x86_64
+      - aarch64
+
+# Configuration
+env:
+  REGISTRY_HOST_NAME: "artifactory.nvidia.com"
+  REGISTRY_REPO_NAME: "sw-nbu-swx-nixl-docker-local"
+  REGISTRY_REPO_PATH: "verification/llm"
+  ARTIFACTORY_REGISTRY_URL: "${REGISTRY_HOST_NAME}/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}"
+  ARTIFACTORY_CLEANUP_AGE: '3m' # 3 months
+  WHEELS_REPO_NAME: "sw-dynamo-nixl-pypi-local"
+  WHEELS_ARTIFACTORY_URL: "https://${REGISTRY_HOST_NAME}/artifactory/${WHEELS_REPO_NAME}"
+  WHEELS_DIR: "${WORKSPACE}/llm-wheels"
+  MAIL_FROM: "jenkins@nvidia.com"
+  # Build pods save image tarballs here; pipeline_stop loads them and runs the
+  # registry pushes in one shot, so an arch failure leaves the registry clean.
+  PVC_STAGING_ROOT: "/mnt/pvc/nixl-llm-build"
+
+taskName: "${arch}"
+
+credentials:
+  - credentialsId: 'svc-nixl-new-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USERNAME'
+    passwordVariable: 'ARTIFACTORY_PASSWORD'
+
+pipeline_start:
+  shell: action
+  module: groovy
+  run: |
+    def suffix = params.TAG_SUFFIX ? "-${params.TAG_SUFFIX}" : ""
+    def tag = "${params.NIXL_VERSION}-${params.RC}${suffix}"
+    env.IMAGE_TAG = tag
+    currentBuild.displayName += "-${params.BUILD_TARGET}-${tag}"
+
+    def target = params.BUILD_TARGET
+    env.ENABLE_VLLM = (target == 'vllm'        || target == 'all') ? 'true' : 'false'
+    env.ENABLE_SGLANG = (target == 'sglang'      || target == 'all') ? 'true' : 'false'
+    env.ENABLE_SGLANG_CU13 = (target == 'sglang-cu13' || target == 'all') ? 'true' : 'false'
+
+    echo "BUILD_TARGET:       ${target}"
+    echo "IMAGE_TAG:          ${tag}"
+    echo "NIXL_VERSION:       ${params.NIXL_VERSION}"
+    echo "RC:                 ${params.RC}"
+    echo "WHEEL_BUILD_ID:     ${params.WHEEL_BUILD_ID}"
+    echo "BASE_IMAGE_VLLM:        ${params.BASE_IMAGE_VLLM}"
+    echo "BASE_IMAGE_SGLANG:      ${params.BASE_IMAGE_SGLANG}"
+    echo "BASE_IMAGE_SGLANG_CU13: ${params.BASE_IMAGE_SGLANG_CU13}"
+    echo "ENABLE_VLLM:        ${env.ENABLE_VLLM}"
+    echo "ENABLE_SGLANG:      ${env.ENABLE_SGLANG}"
+    echo "ENABLE_SGLANG_CU13: ${env.ENABLE_SGLANG_CU13}"
+
+steps:
+  - name: Prepare
+    containerSelector: "{name: 'podman'}"
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    run: |
+      set -e
+      rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
+      podman system reset -f || true
+      podman info
+
+      echo "$ARTIFACTORY_PASSWORD" | podman login "${REGISTRY_HOST_NAME}" \
+        -u "$ARTIFACTORY_USERNAME" --password-stdin
+
+      # Pre-flight: refuse to build if any destination tag already exists in
+      # the registry, to avoid silently overwriting a published image.
+      # Override with ALLOW_OVERWRITE=true.
+      if [[ "${ALLOW_OVERWRITE}" == "true" ]]; then
+        echo "ALLOW_OVERWRITE=true — skipping tag existence check."
+      else
+        check_tag_free() {
+          local img="$1"
+          if podman manifest inspect "${img}" >/dev/null 2>&1; then
+            echo "ERROR: image ${img} already exists in the registry."
+            echo "       Bump TAG_SUFFIX / RC, or rerun with ALLOW_OVERWRITE=true."
+            exit 1
+          fi
+          echo "OK: ${img} is free."
+        }
+        # Check the multi-arch manifest tag (the canonical published artifact),
+        # not the per-arch tag. Both matrix arches run the same check, but the
+        # multi-arch tag is what consumers pull and what we ultimately publish.
+        [[ "${ENABLE_VLLM}"        == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/vllm-nixl:${IMAGE_TAG}"
+        [[ "${ENABLE_SGLANG}"      == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}"
+        [[ "${ENABLE_SGLANG_CU13}" == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/sglang-cu13-nixl:${IMAGE_TAG}"
+        true
+      fi
+
+  - name: Download Wheels
+    containerSelector: "{name: 'podman'}"
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    run: |
+      set -eu
+      DEST="${WHEELS_DIR}/${arch}"
+      rm -rf "${DEST}"
+      mkdir -p "${DEST}"
+
+      BASE="${WHEELS_ARTIFACTORY_URL}/release/${NIXL_VERSION}/${WHEEL_BUILD_ID}/${arch}"
+      WHEELS=(
+        "nixl-${NIXL_VERSION}-py3-none-any.whl"
+        "nixl_cu12-${NIXL_VERSION}-${PYTHON_TAG}-${PYTHON_TAG}-manylinux_${MANYLINUX_TAG}_${arch}.whl"
+        "nixl_cu13-${NIXL_VERSION}-${PYTHON_TAG}-${PYTHON_TAG}-manylinux_${MANYLINUX_TAG}_${arch}.whl"
+      )
+      for whl in "${WHEELS[@]}"; do
+        curl -fL --retry 3 --retry-delay 2 \
+          -u "${ARTIFACTORY_USERNAME}:${ARTIFACTORY_PASSWORD}" \
+          -o "${DEST}/${whl}" \
+          "${BASE}/${whl}"
+      done
+      ls -lah "${DEST}"
+
+  - name: Build vLLM
+    enable: ${ENABLE_VLLM}
+    containerSelector: "{name: 'podman'}"
+    parallel: true
+    run: |
+      set -eu
+      export TMPDIR=/var/tmp/vllm
+      mkdir -p "${TMPDIR}"
+      case "${arch}" in
+        x86_64)  PLATFORM="linux/amd64" ;;
+        aarch64) PLATFORM="linux/arm64" ;;
+        *)       echo "Unsupported arch: ${arch}"; exit 1 ;;
+      esac
+      IMAGE="${ARTIFACTORY_REGISTRY_URL}/vllm-nixl:${IMAGE_TAG}-${arch}"
+      # Podman enforces short-name resolution, so always pass a fully-qualified
+      # BASE_IMAGE. Falls back to the upstream docker.io image when no override.
+      BASE="${BASE_IMAGE_VLLM:-docker.io/vllm/vllm-openai:latest}"
+      podman build \
+        --platform "${PLATFORM}" \
+        --build-arg "BASE_IMAGE=${BASE}" \
+        -f contrib/Dockerfile.vllm \
+        -t "${IMAGE}" \
+        "${WHEELS_DIR}/${arch}/"
+      # Stash to PVC instead of pushing — pipeline_stop publishes after all
+      # arches succeed, so a failed arch leaves the registry clean.
+      STAGE_DIR="${PVC_STAGING_ROOT}/${BUILD_NUMBER}/${arch}"
+      mkdir -p "${STAGE_DIR}"
+      podman save --format oci-archive -o "${STAGE_DIR}/vllm-nixl.tar" "${IMAGE}"
+      ls -lh "${STAGE_DIR}/vllm-nixl.tar"
+
+  - name: Build SGLang
+    enable: ${ENABLE_SGLANG}
+    containerSelector: "{name: 'podman'}"
+    parallel: true
+    run: |
+      set -eu
+      export TMPDIR=/var/tmp/sglang
+      mkdir -p "${TMPDIR}"
+      case "${arch}" in
+        x86_64)  PLATFORM="linux/amd64" ;;
+        aarch64) PLATFORM="linux/arm64" ;;
+        *)       echo "Unsupported arch: ${arch}"; exit 1 ;;
+      esac
+      IMAGE="${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}-${arch}"
+      BASE="${BASE_IMAGE_SGLANG:-docker.io/lmsysorg/sglang:latest}"
+      podman build \
+        --platform "${PLATFORM}" \
+        --build-arg "BASE_IMAGE=${BASE}" \
+        -f contrib/Dockerfile.sglang \
+        -t "${IMAGE}" \
+        "${WHEELS_DIR}/${arch}/"
+      STAGE_DIR="${PVC_STAGING_ROOT}/${BUILD_NUMBER}/${arch}"
+      mkdir -p "${STAGE_DIR}"
+      podman save --format oci-archive -o "${STAGE_DIR}/sglang-nixl.tar" "${IMAGE}"
+      ls -lh "${STAGE_DIR}/sglang-nixl.tar"
+
+  - name: Build SGLang CU13
+    enable: ${ENABLE_SGLANG_CU13}
+    containerSelector: "{name: 'podman'}"
+    parallel: true
+    run: |
+      set -eu
+      export TMPDIR=/var/tmp/sglang-cu13
+      mkdir -p "${TMPDIR}"
+      case "${arch}" in
+        x86_64)  PLATFORM="linux/amd64" ;;
+        aarch64) PLATFORM="linux/arm64" ;;
+        *)       echo "Unsupported arch: ${arch}"; exit 1 ;;
+      esac
+      IMAGE="${ARTIFACTORY_REGISTRY_URL}/sglang-cu13-nixl:${IMAGE_TAG}-${arch}"
+      # Default to the upstream cu130 runtime tag for RC0 builds; subsequent
+      # RCs override via BASE_IMAGE_SGLANG_CU13 to pin the rc0 image.
+      # Fully-qualified docker.io name required by podman's short-name policy.
+      BASE="${BASE_IMAGE_SGLANG_CU13:-docker.io/lmsysorg/sglang:latest-cu130-runtime}"
+      podman build \
+        --platform "${PLATFORM}" \
+        --build-arg "BASE_IMAGE=${BASE}" \
+        -f contrib/Dockerfile.sglang \
+        -t "${IMAGE}" \
+        "${WHEELS_DIR}/${arch}/"
+      STAGE_DIR="${PVC_STAGING_ROOT}/${BUILD_NUMBER}/${arch}"
+      mkdir -p "${STAGE_DIR}"
+      podman save --format oci-archive -o "${STAGE_DIR}/sglang-cu13-nixl.tar" "${IMAGE}"
+      ls -lh "${STAGE_DIR}/sglang-cu13-nixl.tar"
+
+  - name: Smoke Test
+    enable: ${RUN_SMOKE_TEST}
+    containerSelector: "{name: 'podman'}"
+    run: |
+      set -eu
+      # Smoke test runs natively only - skip for cross-arch builds because QEMU
+      # emulation of full LLM image startup is too slow to be useful here.
+      if [[ "${arch}" != "$(uname -m)" ]]; then
+        echo "Skipping smoke test for cross-arch build (${arch} on $(uname -m))"
+        exit 0
+      fi
+
+      check_image() {
+        local image="$1" framework="$2"
+        echo "=== Smoke test: ${image} ==="
+        podman run --rm --entrypoint python3 "${image}" -c \
+          "from importlib.metadata import version; \
+           print('${framework}', version('${framework}'), 'nixl', version('nixl'))"
+      }
+
+      [[ "${ENABLE_VLLM}"        == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/vllm-nixl:${IMAGE_TAG}-${arch}"       vllm
+      [[ "${ENABLE_SGLANG}"      == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}-${arch}"     sglang
+      [[ "${ENABLE_SGLANG_CU13}" == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/sglang-cu13-nixl:${IMAGE_TAG}-${arch}" sglang
+      true
+
+pipeline_stop:
+  shell: action
+  module: groovy
+  containerSelector: "{name: 'podman'}"
+  run: |
+    // Multi-arch manifests can only be created after both architectures have
+    // been pushed, so this runs once at the end of the matrix.
+    def suffix = params.TAG_SUFFIX ? "-${params.TAG_SUFFIX}" : ""
+    def tag = "${params.NIXL_VERSION}-${params.RC}${suffix}"
+    def reg = "${env.ARTIFACTORY_REGISTRY_URL}"
+    def target = params.BUILD_TARGET
+
+    def variants = []
+    if (target == 'vllm'        || target == 'all') variants << 'vllm-nixl'
+    if (target == 'sglang'      || target == 'all') variants << 'sglang-nixl'
+    if (target == 'sglang-cu13' || target == 'all') variants << 'sglang-cu13-nixl'
+
+    // Flipped to true only after every variant publishes AND the properties
+    // artifact is archived; the email below uses it to decide whether to
+    // advertise the image URLs.
+    def publishSucceeded = false
+
+    withCredentials([usernamePassword(
+        credentialsId: 'svc-nixl-new-artifactory-token',
+        usernameVariable: 'ARTIFACTORY_USER',
+        passwordVariable: 'ARTIFACTORY_TOKEN')]) {
+
+      sh """
+        echo "\$ARTIFACTORY_TOKEN" | podman login "${env.REGISTRY_HOST_NAME}" \
+          -u "\$ARTIFACTORY_USER" --password-stdin
+      """
+
+      def stageDir = "${env.PVC_STAGING_ROOT}/${env.BUILD_NUMBER}"
+
+      try {
+        if (currentBuild.currentResult == null || currentBuild.currentResult == 'SUCCESS') {
+          for (variant in variants) {
+            def manifest = "${reg}/${variant}:${tag}"
+            def amd64Img = "${manifest}-x86_64"
+            def arm64Img = "${manifest}-aarch64"
+            echo "Publishing ${manifest} from ${stageDir}"
+            sh """
+              # Load the per-arch images that the matrix runs stashed on the
+              # shared PVC, then push the per-arch tags and assemble the
+              # multi-arch manifest list.
+              podman load -i "${stageDir}/x86_64/${variant}.tar"
+              podman load -i "${stageDir}/aarch64/${variant}.tar"
+
+              podman manifest rm "${manifest}" 2>/dev/null || true
+              podman manifest create "${manifest}" \
+                "${amd64Img}" \
+                "${arm64Img}"
+              podman manifest push --all "${manifest}" "docker://${manifest}"
+            """
+            if (params.UPDATE_LATEST) {
+              def latest = "${reg}/${variant}:latest"
+              sh """
+                podman manifest rm "${latest}" 2>/dev/null || true
+                podman manifest create "${latest}" \
+                  "${amd64Img}" \
+                  "${arm64Img}"
+                podman manifest push --all "${latest}" "docker://${latest}"
+              """
+            }
+          }
+
+          // Record the published multi-arch manifest URLs in a Jenkins-archived
+          // properties file so downstream jobs / humans can consume them.
+          def keyByVariant = [
+            'vllm-nixl'       : 'vLLM',
+            'sglang-nixl'     : 'SGLang',
+            'sglang-cu13-nixl': 'SGLangCU13',
+          ]
+          def propsLines = variants.collect { "${keyByVariant[it]}=${reg}/${it}:${tag}" }
+          def propsBody = propsLines.join('\n') + '\n'
+          writeFile file: 'artifact.property', text: propsBody
+          archiveArtifacts artifacts: 'artifact.property', fingerprint: true
+          echo "Archived artifact.property:\n${propsBody}"
+          publishSucceeded = true
+        } else {
+          echo "Skipping manifest creation - build status is ${currentBuild.currentResult}"
+        }
+      } finally {
+        // Always clean up the staging directory, even if publish threw —
+        // successful runs already published everything to the registry; failed
+        // runs leave nothing to resume from (rebuilds re-stash) so retaining
+        // the multi-GB tarballs on PVC just accumulates dead bytes.
+        sh """rm -rf "${stageDir}" || true"""
+      }
+
+    }
+
+    if (params.MAIL_TO) {
+      def jobStatus = currentBuild.currentResult ?: 'SUCCESS'
+      def statusColor = jobStatus == 'SUCCESS' ? 'green' : 'red'
+      def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
+
+      // Only advertise the image URLs in the email when publish actually
+      // succeeded — otherwise the recipient sees URLs that don't resolve.
+      def imagesSection = ''
+      if (publishSucceeded) {
+        def imageList = variants.collect { "<li>${env.ARTIFACTORY_REGISTRY_URL}/${it}:${tag}</li>" }.join('')
+        imagesSection = "<p>Images:</p><ul>${imageList}</ul>"
+      }
+
+      mail(
+        from: env.MAIL_FROM,
+        to: params.MAIL_TO,
+        subject: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' - ${jobStatus}",
+        mimeType: 'text/html',
+        body: """
+          <p>Started by: <b>${userName}</b></p>
+          <p>Status: <span style="color: ${statusColor};"><b>${jobStatus}</b></span></p>
+          <p>Job: <a href='${env.JOB_URL}'>${env.JOB_NAME}</a></p>
+          <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+          <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
+          <p>Build Target: <b>${params.BUILD_TARGET}</b></p>
+          <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
+          <p>RC: <b>${params.RC}</b></p>
+          <p>Wheel Build ID: <b>${params.WHEEL_BUILD_ID}</b></p>
+          <p>Image Tag: <b>${tag}</b></p>
+          <p>Architectures: <b>x86_64, aarch64</b></p>
+          ${imagesSection}
+          ${publishSucceeded && params.UPDATE_LATEST ? '<p>Latest tag updated: <b>Yes</b></p>' : ''}
+        """
+      )
+    }
+    withCredentials([usernamePassword(credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_TOKEN')]) {
+      sh "yum install -y jq > /dev/null && .ci/scripts/artifactory-cleanup-by-time.sh --path ${REGISTRY_REPO_PATH} ${REGISTRY_REPO_NAME} ${ARTIFACTORY_CLEANUP_AGE}"
+    }
