@@ -7,7 +7,7 @@
 #include <iostream>
 #include <cstdlib>
 
-#if defined(HAVE_CUDA) || defined(HAVE_ROCM)
+#ifdef HAVE_GPU
 
 #ifdef HAVE_CUDA
 #include <cuda_runtime.h>
@@ -36,7 +36,7 @@ checkHipError(hipError_t result, const char *message) {
 }
 #endif
 
-static inline void
+inline void
 gpuSetDevice(int device, const char *message) {
 #ifdef HAVE_CUDA
     checkCudaError(cudaSetDevice(device), message);
@@ -45,7 +45,7 @@ gpuSetDevice(int device, const char *message) {
 #endif
 }
 
-static inline void
+inline void
 gpuMalloc(void **ptr, size_t size, const char *message) {
 #ifdef HAVE_CUDA
     checkCudaError(cudaMalloc(ptr, size), message);
@@ -54,7 +54,7 @@ gpuMalloc(void **ptr, size_t size, const char *message) {
 #endif
 }
 
-static inline void
+inline void
 gpuFree(void *ptr, const char *message) {
 #ifdef HAVE_CUDA
     checkCudaError(cudaFree(ptr), message);
@@ -63,7 +63,7 @@ gpuFree(void *ptr, const char *message) {
 #endif
 }
 
-static inline void
+inline void
 gpuMemset(void *ptr, int value, size_t size, const char *message) {
 #ifdef HAVE_CUDA
     checkCudaError(cudaMemset(ptr, value, size), message);
@@ -73,7 +73,7 @@ gpuMemset(void *ptr, int value, size_t size, const char *message) {
 #endif
 }
 
-static inline void
+inline void
 gpuGetDeviceCount(int *count, const char *message) {
 #ifdef HAVE_CUDA
     checkCudaError(cudaGetDeviceCount(count), message);
@@ -82,7 +82,7 @@ gpuGetDeviceCount(int *count, const char *message) {
 #endif
 }
 
-static inline void
+inline void
 gpuMemcpyD2H(void *dst, const void *src, size_t size, const char *message) {
 #ifdef HAVE_CUDA
     checkCudaError(cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost), message);
@@ -91,4 +91,4 @@ gpuMemcpyD2H(void *dst, const void *src, size_t size, const char *message) {
 #endif
 }
 
-#endif // HAVE_CUDA || HAVE_ROCM
+#endif // HAVE_GPU
