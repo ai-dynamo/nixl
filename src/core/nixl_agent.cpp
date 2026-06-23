@@ -20,6 +20,8 @@
 #include <iostream>
 #include <numeric>
 
+#include <absl/strings/str_split.h>
+
 #include "nixl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
@@ -127,22 +129,7 @@ effectiveSyncMode(nixl_thread_sync_t requested, bool needs_comm_thread) {
 // names. Used for the tracing runtime gate.
 [[nodiscard]] std::vector<std::string>
 splitTraceBackends(const std::string &spec) {
-    std::vector<std::string> result;
-    std::string token;
-    for (const char c : spec) {
-        if (c == ',') {
-            if (!token.empty()) {
-                result.push_back(token);
-            }
-            token.clear();
-        } else {
-            token.push_back(c);
-        }
-    }
-    if (!token.empty()) {
-        result.push_back(token);
-    }
-    return result;
+    return absl::StrSplit(spec, ',', absl::SkipEmpty());
 }
 
 // Build the agent's composite tracer from NIXL_TRACE_BACKENDS. Returns null when
@@ -853,7 +840,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     handle->hasNotif = opt_args.hasNotif;
 
     // Set unconditionally so the trace bytes/desc_count attributes are correct
-    // even when telemetry is disabled; telemetry reads these fields when active.
+    // even when telemetry is disabled; both telemetry and tracing read these
+    // fields when active.
     handle->telemetry.totalBytes = total_bytes;
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
@@ -995,7 +983,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     handle->hasNotif = opt_args.hasNotif;
 
     // Set unconditionally so the trace bytes/desc_count attributes are correct
-    // even when telemetry is disabled; telemetry reads these fields when active.
+    // even when telemetry is disabled; both telemetry and tracing read these
+    // fields when active.
     handle->telemetry.totalBytes = total_bytes;
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
