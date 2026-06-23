@@ -793,6 +793,8 @@ nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd
 
 nixl_status_t
 nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
+    lock.assertHeld();
+
     if (remote_name == name_) {
         NIXL_ERROR << "Agent " << name_ << " cannot invalidate itself";
         return NIXL_ERR_INVALID_PARAM;
