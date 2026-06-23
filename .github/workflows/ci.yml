@@ -404,3 +404,41 @@ jobs:
             echo "| Version | ${WHEEL_VERSION} |"
             echo "| Commit | ${GITHUB_SHA} |"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+  # ----------------------------------------------------------------------------
+  # notify-slack: announce a freshly-built release candidate. Fires on a push to
+  # a release/** branch once the RC wheels are uploaded to Artifactory. Posts to
+  # the channel behind the NIXL_RELEASE_SLACK_WEBHOOK_URL incoming webhook. Runs
+  # on a GitHub-hosted runner (just an HTTPS POST — no builder pod needed). The
+  # RC version is read from pyproject.toml (the actual wheel version), not the
+  # version job (which is tag-derived and can lag the pyproject bump).
+  # ----------------------------------------------------------------------------
+  notify-slack:
+    name: Announce release candidate to Slack
+    needs: [upload-x86-wheels, upload-arm-wheels]
+    if: ${{ startsWith(github.ref, 'refs/heads/release/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve RC version
+        id: rc
+        run: |
+          VERSION=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/^version = "(.*)"/\1/')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+      - name: Announce to Slack
+        uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a # v2.1.1
+        with:
+          webhook: ${{ secrets.NIXL_RELEASE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: mrkdwn
+                  text: ":package: *NIXL release candidate* `${{ steps.rc.outputs.version }}` built from `${{ github.ref_name }}`"
+              - type: "section"
+                text:
+                  type: mrkdwn
+                  text: "*Commit:* `${{ github.sha }}`\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|workflow summary>\n*Wheels:* `sw-dynamo-nixl-pypi-local/release/${{ steps.rc.outputs.version }}/${{ github.run_id }}/`"
