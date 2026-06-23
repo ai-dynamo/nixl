@@ -64,14 +64,15 @@ struct Config {
         EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens <= num_max_rdma_chunked_recv_tokens / 2);
     }
 
-    size_t get_nvl_buffer_size_hint(size_t hidden_bytes, int num_ranks) const {
+    size_t get_nvl_buffer_size_hint(size_t hidden_bytes, int num_ranks, int nvl_group_size = NUM_MAX_NVL_PEERS) const {
         // Below are some assumptions
         // TODO: add assertions
         constexpr int kNumMaxTopK = 128;
         constexpr int kNumMaxScales = 128;
-        EP_HOST_ASSERT(num_ranks < NUM_MAX_NVL_PEERS or num_ranks % NUM_MAX_NVL_PEERS == 0);
-        EP_HOST_ASSERT(num_ranks <= NUM_MAX_NVL_PEERS or num_sms % 2 == 0);
-        const auto num_rdma_ranks = std::max(num_ranks / NUM_MAX_NVL_PEERS, 1);
+        EP_HOST_ASSERT(nvl_group_size > 0 and nvl_group_size <= NUM_MAX_NVL_PEERS and NUM_MAX_NVL_PEERS % nvl_group_size == 0);
+        EP_HOST_ASSERT(num_ranks < nvl_group_size or num_ranks % nvl_group_size == 0);
+        EP_HOST_ASSERT(num_ranks <= nvl_group_size or num_sms % 2 == 0);
+        const auto num_rdma_ranks = std::max(num_ranks / nvl_group_size, 1);
         const auto num_nvl_ranks = std::min(num_ranks, NUM_MAX_NVL_PEERS);
         const int num_channels = num_sms / 2;
 
@@ -86,18 +87,19 @@ struct Config {
         return num_bytes;
     }
 
-    size_t get_rdma_buffer_size_hint(int64_t hidden_bytes, int num_ranks) const {
+    size_t get_rdma_buffer_size_hint(int64_t hidden_bytes, int num_ranks, int nvl_group_size = NUM_MAX_NVL_PEERS) const {
         // Legacy mode
-        if (num_ranks <= NUM_MAX_NVL_PEERS)
+        EP_HOST_ASSERT(nvl_group_size > 0 and nvl_group_size <= NUM_MAX_NVL_PEERS and NUM_MAX_NVL_PEERS % nvl_group_size == 0);
+        if (num_ranks <= nvl_group_size)
             return 0;
 
         // Below are some assumptions
         // TODO: add assertions
         constexpr int kNumMaxTopK = 128;
         constexpr int kNumMaxScales = 128;
-        EP_HOST_ASSERT(num_ranks % NUM_MAX_NVL_PEERS == 0);
+        EP_HOST_ASSERT(num_ranks % nvl_group_size == 0);
         EP_HOST_ASSERT(num_sms % 2 == 0);
-        const int num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
+        const int num_rdma_ranks = num_ranks / nvl_group_size;
         const int num_channels = num_sms / 2;
 
         size_t num_bytes = 0;

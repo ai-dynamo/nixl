@@ -110,6 +110,7 @@ private:
     int num_device_sms;
     uint64_t timeout_cycles = 0;
     int rank, rdma_rank, nvl_rank;
+    int nvl_group_size = NUM_MAX_NVL_PEERS;
     int max_num_ranks;
     std::vector<int> remote_ranks; /* global ranks */
     // Host-side active rank state over max_num_ranks. This can differ from
@@ -180,7 +181,7 @@ private:
     void _ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles);
 
 public:
-    Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms);
+    Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms, int nvl_group_size = NUM_MAX_NVL_PEERS);
 
     void update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes = 0);
 
@@ -199,6 +200,10 @@ public:
     int get_num_rdma_ranks() const;
 
     int get_rdma_rank() const;
+
+    int get_nvl_rank() const;
+
+    int get_nvl_group_size() const;
 
     int get_root_rdma_rank(bool global) const;
 

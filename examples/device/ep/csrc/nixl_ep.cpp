@@ -77,13 +77,17 @@ void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int6
     }
 }
 
-Buffer::Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms):
+Buffer::Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms, int nvl_group_size):
         low_latency_mode(low_latency_mode),
         timeout_ms([timeout_ms] {
             EP_HOST_ASSERT(timeout_ms >= 0);
             return static_cast<uint64_t>(timeout_ms);
         }()),
         rank(rank),
+        nvl_group_size([nvl_group_size] {
+            EP_HOST_ASSERT(nvl_group_size > 0 and nvl_group_size <= NUM_MAX_NVL_PEERS and NUM_MAX_NVL_PEERS % nvl_group_size == 0);
+            return nvl_group_size;
+        }()),
         explicitly_destroy(explicitly_destroy),
         comm_stream(at::cuda::getStreamFromPool(true)) {}
 
@@ -251,6 +255,14 @@ int Buffer::get_num_rdma_ranks() const {
 
 int Buffer::get_rdma_rank() const {
     return rdma_rank;
+}
+
+int Buffer::get_nvl_rank() const {
+    return nvl_rank;
+}
+
+int Buffer::get_nvl_group_size() const {
+    return nvl_group_size;
 }
 
 int Buffer::get_root_rdma_rank(bool global) const {
@@ -1500,15 +1512,22 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              py::arg("num_sms") = 20,
              py::arg("num_max_nvl_chunked_send_tokens") = 6, py::arg("num_max_nvl_chunked_recv_tokens") = 256,
              py::arg("num_max_rdma_chunked_send_tokens") = 6, py::arg("num_max_rdma_chunked_recv_tokens") = 256)
-        .def("get_nvl_buffer_size_hint", &nixl_ep::Config::get_nvl_buffer_size_hint)
-        .def("get_rdma_buffer_size_hint", &nixl_ep::Config::get_rdma_buffer_size_hint);
+        .def("get_nvl_buffer_size_hint", &nixl_ep::Config::get_nvl_buffer_size_hint,
+             pybind11::arg("hidden_bytes"), pybind11::arg("num_ranks"), pybind11::arg("nvl_group_size") = NUM_MAX_NVL_PEERS)
+        .def("get_rdma_buffer_size_hint", &nixl_ep::Config::get_rdma_buffer_size_hint,
+             pybind11::arg("hidden_bytes"), pybind11::arg("num_ranks"), pybind11::arg("nvl_group_size") = NUM_MAX_NVL_PEERS);
 
     pybind11::class_<nixl_ep::EventHandle>(m, "EventHandle")
         .def(pybind11::init<>())
         .def("current_stream_wait", &nixl_ep::EventHandle::current_stream_wait);
 
     pybind11::class_<nixl_ep::Buffer>(m, "Buffer")
-        .def(pybind11::init<int, bool, bool, int>())
+        .def(pybind11::init<int, bool, bool, int, int>(),
+             pybind11::arg("rank"),
+             pybind11::arg("explicitly_destroy"),
+             pybind11::arg("low_latency_mode"),
+             pybind11::arg("timeout_ms"),
+             pybind11::arg("nvl_group_size") = NUM_MAX_NVL_PEERS)
         .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers)
         .def("barrier", &nixl_ep::Buffer::barrier)
         .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles, bool activate) {
@@ -1518,6 +1537,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("is_available", &nixl_ep::Buffer::is_available)
         .def("get_num_rdma_ranks", &nixl_ep::Buffer::get_num_rdma_ranks)
         .def("get_rdma_rank", &nixl_ep::Buffer::get_rdma_rank)
+        .def("get_nvl_rank", &nixl_ep::Buffer::get_nvl_rank)
+        .def("get_nvl_group_size", &nixl_ep::Buffer::get_nvl_group_size)
         .def("get_root_rdma_rank", &nixl_ep::Buffer::get_root_rdma_rank)
         .def("get_local_device_id", &nixl_ep::Buffer::get_local_device_id)
         .def("get_local_ipc_handle", &nixl_ep::Buffer::get_local_ipc_handle)

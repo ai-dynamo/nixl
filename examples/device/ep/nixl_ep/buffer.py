@@ -63,6 +63,7 @@ class Buffer:
         comm: Optional["mpi4py.MPI.Comm"] = None,
         tcp_store_group: Optional[dist.TCPStore] = None,
         timeout_ms: int = DEFAULT_TIMEOUT_MS,
+        nvl_group_size: int = 8,
     ) -> None:
         """
         Initialize the nixl communication buffer.
@@ -81,11 +82,15 @@ class Buffer:
                 In low-latency paths, a timeout marks the rank invalid and masks it out.
                 In high-throughput paths, a timeout is fatal and traps.
                 Default: 30000 ms.
+            nvl_group_size: number of ranks in one CUDA-IPC/NVLink-local group.
+                Defaults to 8 for existing deployments.
         """
+        assert 0 < nvl_group_size <= 8 and 8 % nvl_group_size == 0
         self.rank = rank
         self.group_size = 0  # Will be updated by `update_memory_buffers`
         self.low_latency_mode = low_latency_mode
         self.timeout_ms = timeout_ms
+        self.nvl_group_size = nvl_group_size
 
         self.explicitly_destroy = explicitly_destroy
         self.group = group
@@ -97,7 +102,7 @@ class Buffer:
             os.environ["UCX_TLS"] = "^cuda_ipc"
 
         self.runtime = nixl_ep_cpp.Buffer(
-            self.rank, explicitly_destroy, low_latency_mode, timeout_ms
+            self.rank, explicitly_destroy, low_latency_mode, timeout_ms, nvl_group_size
         )
 
     def destroy(self):
@@ -112,6 +117,12 @@ class Buffer:
     @staticmethod
     def is_sm90_compiled():
         return nixl_ep_cpp.is_sm90_compiled()
+
+    def get_nvl_rank(self) -> int:
+        return self.runtime.get_nvl_rank()
+
+    def get_nvl_group_size(self) -> int:
+        return self.runtime.get_nvl_group_size()
 
     @staticmethod
     def set_num_sms(new_num_sms: int) -> None:
