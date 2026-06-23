@@ -26,13 +26,9 @@ namespace nixl::trace {
 namespace {
 
     // Map an operation kind to a stable ARGB color so the Nsight timeline is
-    // visually distinguishable. An explicit (non-zero) Color overrides the default.
+    // visually distinguishable.
     [[nodiscard]] constexpr std::uint32_t
-    colorFor(const Kind kind, const Color c) noexcept {
-        if (c.r != 0 || c.g != 0 || c.b != 0) {
-            return 0xFF000000u | (static_cast<std::uint32_t>(c.r) << 16) |
-                (static_cast<std::uint32_t>(c.g) << 8) | static_cast<std::uint32_t>(c.b);
-        }
+    colorFor(const Kind kind) noexcept {
         switch (kind) {
         case Kind::CommSend:
             return 0xFF2E7D32u; // green
@@ -57,12 +53,12 @@ namespace {
     // NVTX copies the message at submit time, so a null-terminated C string that
     // outlives the call is sufficient.
     [[nodiscard]] nvtxEventAttributes_t
-    makeEvent(const char *msg, Kind kind, Color color) {
+    makeEvent(const char *msg, Kind kind) {
         nvtxEventAttributes_t ev{};
         ev.version = NVTX_VERSION;
         ev.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
         ev.colorType = NVTX_COLOR_ARGB;
-        ev.color = colorFor(kind, color);
+        ev.color = colorFor(kind);
         ev.messageType = NVTX_MESSAGE_TYPE_ASCII;
         ev.message.ascii = msg;
         return ev;
@@ -115,7 +111,7 @@ namespace {
             std::string kv;
             kv.reserve(key.size() + value.size() + 1);
             kv.append(key).append("=").append(value);
-            const nvtxEventAttributes_t ev = makeEvent(kv.c_str(), Kind::Metadata, Color{});
+            const nvtxEventAttributes_t ev = makeEvent(kv.c_str(), Kind::Metadata);
             nvtxDomainMarkEx(domain_, &ev);
         }
 
@@ -133,9 +129,9 @@ namespace {
         }
 
         [[nodiscard]] std::unique_ptr<SpanBackend>
-        beginSpan(std::string_view name, Kind kind, Color color) override {
+        beginSpan(std::string_view name, Kind kind) override {
             const std::string msg(name);
-            const nvtxEventAttributes_t ev = makeEvent(msg.c_str(), kind, color);
+            const nvtxEventAttributes_t ev = makeEvent(msg.c_str(), kind);
             // Allocate before pushing so a throwing allocation cannot leave the
             // NVTX range stack unbalanced (the span's dtor performs the pop).
             auto span = std::make_unique<NvtxSpan>(domain_);
@@ -146,7 +142,7 @@ namespace {
         void
         mark(std::string_view name, Kind kind) override {
             const std::string msg(name);
-            const nvtxEventAttributes_t ev = makeEvent(msg.c_str(), kind, Color{});
+            const nvtxEventAttributes_t ev = makeEvent(msg.c_str(), kind);
             nvtxDomainMarkEx(domain_, &ev);
         }
 

@@ -87,7 +87,7 @@ public:
           spanId_(span_id) {}
 
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
-    beginSpan(std::string_view, nixl::trace::Kind, nixl::trace::Color) override {
+    beginSpan(std::string_view, nixl::trace::Kind) override {
         ++log_->spansBegun;
         return std::make_unique<MockSpan>(log_, spanId_);
     }

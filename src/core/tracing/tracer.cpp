@@ -85,13 +85,13 @@ Tracer::Tracer(std::vector<std::unique_ptr<TraceBackend>> backends) noexcept
 Tracer::~Tracer() = default;
 
 Span
-Tracer::beginSpan(std::string_view name, Kind kind, Color color) {
+Tracer::beginSpan(std::string_view name, Kind kind) {
     std::vector<std::unique_ptr<SpanBackend>> spans;
     spans.reserve(backends_.size());
     for (auto &backend : backends_) {
         // Drop null backend spans so an all-null Span is not reported active()
         // (which would null-deref in addAttribute()/id()).
-        if (auto span = backend->beginSpan(name, kind, color)) {
+        if (auto span = backend->beginSpan(name, kind)) {
             spans.push_back(std::move(span));
         }
     }

@@ -51,13 +51,6 @@ enum class Kind : std::uint8_t {
     Metadata,
 };
 
-/** @brief Visual hint for live profilers (NVTX). Ignored by offline backends. */
-struct Color {
-    std::uint8_t r{0};
-    std::uint8_t g{0};
-    std::uint8_t b{0};
-};
-
 /**
  * @brief Opaque span identifier. Meaningful on backends that build a DAG
  *        (Chakra Node.id); returned as {0} by backends that do not (NVTX).
@@ -96,7 +89,7 @@ public:
     virtual ~TraceBackend() = default;
 
     [[nodiscard]] virtual std::unique_ptr<SpanBackend>
-    beginSpan(std::string_view name, Kind kind, Color color) = 0;
+    beginSpan(std::string_view name, Kind kind) = 0;
 
     virtual void
     mark(std::string_view name, Kind kind) = 0;
@@ -178,7 +171,7 @@ public:
     }
 
     [[nodiscard]] Span
-    beginSpan(std::string_view name, Kind kind = Kind::Generic, Color color = {});
+    beginSpan(std::string_view name, Kind kind = Kind::Generic);
 
     void
     mark(std::string_view name, Kind kind = Kind::Metadata);
