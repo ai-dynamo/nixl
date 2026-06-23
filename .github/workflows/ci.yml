@@ -343,3 +343,64 @@ jobs:
               --token \"Bearer \$ARTIFACTORY_CARGO_TOKEN\" \
               --index \"sparse+\$ARTIFACTORY_URL/api/cargo/sw-dynamo-nixl-cargo-local/index/\" \
               --no-verify --allow-dirty"
+
+  # ----------------------------------------------------------------------------
+  # trigger-gitlab-nspect: on a push to a release/** branch (i.e. a PR merged into
+  # release/<x.y.z>), kick the nixl-ci GitLab pipeline to run the wheel security
+  # scan + nSpect registration against the wheels just uploaded to Artifactory.
+  # nSpect tooling/creds live GitLab-side, so this is a thin trigger. It runs on
+  # the gitlab_ci_runners group (the only runners that can reach gitlab-master).
+  # Required secrets (release environment): GITLAB_NIXL_PIPELINE_URL,
+  # GITLAB_NIXL_TRIGGER_TOKEN. Repo var NIXL_CI_REF picks the nixl-ci branch to
+  # trigger (defaults to main).
+  # ----------------------------------------------------------------------------
+  trigger-gitlab-nspect:
+    needs: [version, upload-x86-wheels, upload-arm-wheels]
+    if: ${{ startsWith(github.ref, 'refs/heads/release/') }}
+    runs-on:
+      group: gitlab_ci_runners
+    environment: release
+    env:
+      GITLAB_TRIGGER_URL: ${{ secrets.GITLAB_NIXL_PIPELINE_URL }}
+      GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_NIXL_TRIGGER_TOKEN }}
+      NSPECT_ID: NSPECT-WO64-8O3P
+      NIXL_CI_REF: ${{ vars.NIXL_CI_REF || 'main' }}
+      WHEEL_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Trigger nixl-ci nSpect + scan pipeline
+        run: |
+          set -euo pipefail
+          # Trigger token via @file so it never lands in process listings / set -x.
+          TOKEN_FILE=$(mktemp); trap 'rm -f "${TOKEN_FILE}"' EXIT; chmod 600 "${TOKEN_FILE}"
+          printf '%s' "${GITLAB_TRIGGER_TOKEN}" > "${TOKEN_FILE}"
+          RESPONSE=$(curl -fsSL --request POST \
+            --form "token=<${TOKEN_FILE}" \
+            --form "ref=${NIXL_CI_REF}" \
+            --form "variables[PIPELINE_TYPE]=rc" \
+            --form "variables[DRY_RUN]=false" \
+            --form "variables[NSPECT_ID]=${NSPECT_ID}" \
+            --form "variables[NSPECT_RELEASE_VERSION]=${WHEEL_VERSION}" \
+            --form "variables[NSPECT_REGISTERED]=false" \
+            --form "variables[WHEEL_VERSION]=${WHEEL_VERSION}" \
+            --form "variables[RC_TAG]=${GITHUB_REF_NAME}" \
+            --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
+            --form "variables[COMMIT_SHA]=${GITHUB_SHA}" \
+            --form "variables[ENABLE_WHEEL_SCAN]=true" \
+            "${GITLAB_TRIGGER_URL}")
+          PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
+          PIPELINE_URL=$(echo "${RESPONSE}" | jq -r '.web_url // empty')
+          if [ -z "${PIPELINE_ID}" ]; then
+            echo "::error::Failed to trigger nixl-ci GitLab pipeline"
+            echo "Response: ${RESPONSE}"
+            exit 1
+          fi
+          echo "Triggered nixl-ci nSpect pipeline ${PIPELINE_ID}: ${PIPELINE_URL}"
+          {
+            echo "## nixl-ci nSpect + scan pipeline"
+            echo "| Field | Value |"
+            echo "|--|--|"
+            echo "| Pipeline | ${PIPELINE_URL:-$PIPELINE_ID} |"
+            echo "| nSpect ID | ${NSPECT_ID} |"
+            echo "| Version | ${WHEEL_VERSION} |"
+            echo "| Commit | ${GITHUB_SHA} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
