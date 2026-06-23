@@ -138,12 +138,23 @@ TEST_F(telemetryTest, NonexistentExporterThrows) {
         { nixlTelemetry telemetry(testFile_, "nixl_nonexistent_exporter"); }, std::runtime_error);
 }
 
-TEST_F(telemetryTest, CreateReturnsNullWithoutSink) {
-    // With no exporter and no telemetry dir configured, create() resolves no
-    // sink and returns nullptr without constructing a telemetry instance.
-    envHelper_.popVar(); // drop NIXL_TELEMETRY_DIR set by SetUp
-    EXPECT_EQ(nixlTelemetry::create(testFile_), nullptr);
+TEST_F(telemetryTest, CreateFallsBackToNopWithoutSink) {
+    envHelper_.popVar(); // drop NIXL_TELEMETRY_DIR set by SetUp -> no sink
+    // Neutralize any inherited NIXL_TELEMETRY_EXPORTER (empty is ignored) so the
+    // sinkless NOP path is exercised deterministically.
+    envHelper_.addVar(TELEMETRY_EXPORTER_VAR, "");
+
+    auto telemetry = nixlTelemetry::create(testFile_);
+
+    envHelper_.popVar(); // drop empty NIXL_TELEMETRY_EXPORTER
     envHelper_.addVar(TELEMETRY_DIR_VAR, testDir_.string()); // restore for TearDown symmetry
+
+    ASSERT_NE(telemetry, nullptr)
+        << "telemetry requested without a sink must collect in-process via NOP";
+    EXPECT_NO_THROW(telemetry->updateTxBytes(1024));
+
+    // Collect-only NOP fallback writes nothing to disk.
+    EXPECT_FALSE(fs::exists(testDir_.string() + "/" + testFile_));
 }
 
 TEST_F(telemetryTest, NopExporterIsActiveAndWritesNothing) {
