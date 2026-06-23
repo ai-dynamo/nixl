@@ -15,7 +15,7 @@
 
 import pickle
 from enum import Enum
-from typing import Optional, Union, overload
+from typing import Optional, Union
 
 import numpy as np
 import torch
@@ -707,56 +707,28 @@ class nixl_agent:
 
     """
     @brief Prepare a memory view handle for either a local or remote
-           descriptor list. Two call shapes (dispatched by the underlying
-           pybind11 overloads of nixlAgent::prepMemView):
+           descriptor list. The underlying pybind11 overloads of
+           nixlAgent::prepMemView are dispatched by the descriptor list type:
              - Local : prep_mem_view(dlist: nixlXferDList, backends=[])
-             - Remote: prep_mem_view(mem_type: str, descs, backends=[])
-                        where descs is a list of 4-tuples
-                        (addr, len, dev_id, remote_agent_name).
+             - Remote: prep_mem_view(dlist: nixlRemoteDList, backends=[])
+           Build the remote list with get_remote_descs.
            Returns the raw uintptr handle; pair with release_mem_view to free.
 
+    @param dlist A local (nixlXferDList) or remote (nixlRemoteDList) dlist.
     @param backends Optional list of backend names to limit the preparation to.
     @return Opaque uintptr handle for the memory view.
     """
 
-    @overload
-    def prep_mem_view(  # noqa: E704
+    def prep_mem_view(
         self,
-        dlist: nixlBind.nixlXferDList,
-        *,
-        backends: list[str] = [],
-    ) -> int: ...
-
-    @overload
-    def prep_mem_view(  # noqa: E704
-        self,
-        mem_type: str,
-        descs: list[tuple],
-        *,
-        backends: list[str] = [],
-    ) -> int: ...
-
-    def prep_mem_view(  # type: ignore[misc]
-        self,
-        dlist_or_mem_type: Union[nixlBind.nixlXferDList, str],
-        descs: Optional[list[tuple]] = None,
+        dlist: Union[nixlBind.nixlXferDList, nixlBind.nixlRemoteDList],
         *,
         backends: list[str] = [],
     ) -> int:
         handle_list = []
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
-        if descs is None:
-            # Local form: first arg is the prepared local dlist.
-            return self.agent.prepMemView(dlist_or_mem_type, handle_list)
-        # Remote form: first arg is a mem_type string; map it to the
-        # underlying enum so the C++ remote overload matches.
-        assert isinstance(
-            dlist_or_mem_type, str
-        ), "When descs is provided, the first arg must be a mem_type str"
-        return self.agent.prepMemView(
-            self.nixl_mems[dlist_or_mem_type], descs, handle_list
-        )
+        return self.agent.prepMemView(dlist, handle_list)
 
     """
     @brief Release a memory view handle previously returned by prep_mem_view.
@@ -1077,6 +1049,40 @@ class nixl_agent:
                 dlist[i, :] = (base_addr, region_len, gpu_id)
             mem_type = self._tensor_mem_type(descs[0])
             new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], dlist)
+        else:
+            new_descs = None
+
+        return new_descs
+
+    """
+    @brief Get nixlRemoteDList from different input types:
+            a) list of 4 element tuples (address, len, device ID, remote agent name)
+               alongside a mandatory memory type.
+            b) passes along if a nixlRemoteDList is given.
+
+    @param descs List of any of the above types.
+    @param mem_type Optional memory type necessary for (a).
+    @return Remote descriptor list, nixlRemoteDList.
+    """
+
+    def get_remote_descs(
+        self,
+        descs,
+        mem_type: Optional[str] = None,
+    ) -> nixlBind.nixlRemoteDList:
+        if isinstance(descs, nixlBind.nixlRemoteDList):
+            return descs
+        elif isinstance(descs[0], tuple):
+            if mem_type is not None and len(descs[0]) == 4:
+                new_descs = nixlBind.nixlRemoteDList(self.nixl_mems[mem_type], descs)
+            elif mem_type is None:
+                logger.error("Please specify a mem type")
+                new_descs = None
+            else:
+                logger.error(
+                    "4-tuple list (addr, len, dev_id, agent_name) needed for remote descriptors"
+                )
+                new_descs = None
         else:
             new_descs = None
 

@@ -138,6 +138,17 @@ throw_nixl_exception(const nixl_status_t &status) {
     }
 }
 
+// Build a nixl_opt_args_t whose backend list is populated from the raw
+// nixlBackendH pointers (passed from Python as uintptr_t handles).
+static nixl_opt_args_t
+make_opt_args(const std::vector<uintptr_t> &backends) {
+    nixl_opt_args_t extra_params;
+    for (uintptr_t b : backends) {
+        extra_params.backends.push_back(reinterpret_cast<nixlBackendH *>(b));
+    }
+    return extra_params;
+}
+
 PYBIND11_MODULE(_bindings, m) {
 
     // TODO: each nixl class and/or function can be documented in place
@@ -308,6 +319,64 @@ PYBIND11_MODULE(_bindings, m) {
                 nixl_xfer_dlist_t newObj = nixl_xfer_dlist_t(&serdes);
                 return newObj;
             }));
+
+    py::class_<nixl_remote_dlist_t>(m, "nixlRemoteDList")
+        .def(py::init<nixl_mem_t, int>(), py::arg("type"), py::arg("init_size") = 0)
+        .def(py::init([](nixl_mem_t mem, py::list descs) {
+                 nixl_remote_dlist_t new_list(mem, descs.size());
+                 for (size_t i = 0; i < descs.size(); i++) {
+                     if (!py::isinstance<py::tuple>(descs[i])) {
+                         throw py::type_error(
+                             "Each descriptor must be a tuple when provided as a list");
+                     }
+                     auto desc = py::reinterpret_borrow<py::tuple>(descs[i]);
+                     if (desc.size() != 4) {
+                         throw py::value_error(
+                             "Each descriptor must be (addr, len, dev_id, agent_name)");
+                     }
+                     new_list[i] = nixlRemoteDesc(desc[0].cast<uintptr_t>(),
+                                                  desc[1].cast<size_t>(),
+                                                  desc[2].cast<uint64_t>(),
+                                                  desc[3].cast<std::string>());
+                 }
+
+                 return new_list;
+             }),
+             py::arg("type"),
+             py::arg("descs").noconvert())
+        .def("getType", &nixl_remote_dlist_t::getType)
+        .def("descCount", &nixl_remote_dlist_t::descCount)
+        .def("isEmpty", &nixl_remote_dlist_t::isEmpty)
+        .def(py::self == py::self)
+        .def("__getitem__",
+             [](nixl_remote_dlist_t &list, unsigned int i) -> py::tuple {
+                 nixlRemoteDesc &desc = list[i];
+                 return py::make_tuple(desc.addr, desc.len, desc.devId, desc.remoteAgent);
+             })
+        .def("__setitem__",
+             [](nixl_remote_dlist_t &list, unsigned int i, const py::tuple &desc) {
+                 list[i] = nixlRemoteDesc(desc[0].cast<uintptr_t>(),
+                                          desc[1].cast<size_t>(),
+                                          desc[2].cast<uint64_t>(),
+                                          desc[3].cast<std::string>());
+             })
+        .def("addDesc",
+             [](nixl_remote_dlist_t &list, const py::tuple &desc) {
+                 list.addDesc(nixlRemoteDesc(desc[0].cast<uintptr_t>(),
+                                             desc[1].cast<size_t>(),
+                                             desc[2].cast<uint64_t>(),
+                                             desc[3].cast<std::string>()));
+             })
+        .def("append",
+             [](nixl_remote_dlist_t &list, const py::tuple &desc) {
+                 list.addDesc(nixlRemoteDesc(desc[0].cast<uintptr_t>(),
+                                             desc[1].cast<size_t>(),
+                                             desc[2].cast<uint64_t>(),
+                                             desc[3].cast<std::string>()));
+             })
+        .def("remDesc", &nixl_remote_dlist_t::remDesc)
+        .def("clear", &nixl_remote_dlist_t::clear)
+        .def("print", &nixl_remote_dlist_t::print);
 
     py::class_<nixl_reg_dlist_t>(m, "nixlRegDList")
         .def(py::init<nixl_mem_t, int>(), py::arg("type"), py::arg("init_size") = 0)
@@ -915,11 +984,8 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                const nixl_xfer_dlist_t &dlist,
                const std::vector<uintptr_t> &backends) -> uintptr_t {
-                nixl_opt_args_t extra_params;
-                for (uintptr_t b : backends) {
-                    extra_params.backends.push_back((nixlBackendH *)b);
-                }
-                nixlMemViewH mvh = nullptr;
+                nixl_opt_args_t extra_params = make_opt_args(backends);
+                nixlMemViewH mvh;
                 throw_nixl_exception(agent.prepMemView(dlist, mvh, &extra_params));
                 return reinterpret_cast<uintptr_t>(mvh);
             },
@@ -929,41 +995,16 @@ PYBIND11_MODULE(_bindings, m) {
         .def(
             "prepMemView",
             [](nixlAgent &agent,
-               nixl_mem_t mem_type,
-               const std::vector<py::tuple> &descs,
+               const nixl_remote_dlist_t &dlist,
                const std::vector<uintptr_t> &backends) -> uintptr_t {
-                // Build the dlist while holding the GIL — touches py::tuple
-                // (descs[i].size() / descs[i][k].cast<...>()) and therefore
-                // cannot run with the GIL released. We release the GIL only
-                // around the agent call, where the actual blocking happens.
-                nixl_remote_dlist_t dlist(mem_type, descs.size());
-                for (size_t i = 0; i < descs.size(); i++) {
-                    if (descs[i].size() != 4) {
-                        throw py::value_error(
-                            "Each descriptor must be (addr, len, dev_id, agent_name)");
-                    }
-                    dlist[i] = nixlRemoteDesc(descs[i][0].cast<uintptr_t>(),
-                                              descs[i][1].cast<size_t>(),
-                                              descs[i][2].cast<uint64_t>(),
-                                              descs[i][3].cast<std::string>());
-                }
-                nixl_opt_args_t extra_params;
-                for (uintptr_t b : backends) {
-                    extra_params.backends.push_back((nixlBackendH *)b);
-                }
-
-                nixlMemViewH mvh = nullptr;
-                nixl_status_t ret;
-                {
-                    py::gil_scoped_release release;
-                    ret = agent.prepMemView(dlist, mvh, &extra_params);
-                }
-                throw_nixl_exception(ret);
+                nixl_opt_args_t extra_params = make_opt_args(backends);
+                nixlMemViewH mvh;
+                throw_nixl_exception(agent.prepMemView(dlist, mvh, &extra_params));
                 return reinterpret_cast<uintptr_t>(mvh);
             },
-            py::arg("mem_type"),
-            py::arg("descs"),
-            py::arg("backends") = std::vector<uintptr_t>({}))
+            py::arg("dlist"),
+            py::arg("backends") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "releaseMemView",
             [](nixlAgent &agent, uintptr_t mvh) {

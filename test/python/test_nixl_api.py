@@ -241,9 +241,12 @@ def test_prep_mem_view(two_connected_agents):
         assert isinstance(local_mvh, int)
         assert local_mvh != 0
 
-        # Remote overload: pass (mem_type, list-of-4-tuples) describing
-        # agent2's buffer with agent2's name.
-        remote_mvh = agent1.prep_mem_view("DRAM", [(addr2, size, 0, agent2.name)])
+        # Remote overload: pass a nixlRemoteDList describing agent2's buffer
+        # with agent2's name.
+        remote_descs = agent1.get_remote_descs(
+            [(addr2, size, 0, agent2.name)], mem_type="DRAM"
+        )
+        remote_mvh = agent1.prep_mem_view(remote_descs)
         assert isinstance(remote_mvh, int)
         assert remote_mvh != 0
 
