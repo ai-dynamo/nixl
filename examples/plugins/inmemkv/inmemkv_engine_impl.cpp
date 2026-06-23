@@ -122,8 +122,7 @@ nixlInMemKVEngineImpl::registerMem(const nixlBlobDesc &mem,
                << ", metaInfo=" << (mem.metaInfo.empty() ? "<empty>" : mem.metaInfo);
 
     const auto supported_mems = getSupportedMems();
-    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) ==
-        supported_mems.end()) {
+    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end()) {
         NIXL_ERROR << "registerMem: unsupported memory type " << nixl_mem;
         return NIXL_ERR_NOT_SUPPORTED;
     }
@@ -175,8 +174,7 @@ nixlInMemKVEngineImpl::prepXfer(const nixl_xfer_op_t &operation,
                                 const nixl_opt_b_args_t *opt_args) const {
     (void)opt_args;
     NIXL_DEBUG << "prepXfer: operation=" << (operation == NIXL_WRITE ? "WRITE" : "READ")
-               << ", local_count=" << local.descCount()
-               << ", remote_count=" << remote.descCount();
+               << ", local_count=" << local.descCount() << ", remote_count=" << remote.descCount();
 
     if (!isValidPrepXferParams(operation, local, remote, remote_agent, local_agent)) {
         NIXL_ERROR << "prepXfer: parameter validation failed";
@@ -239,8 +237,8 @@ nixlInMemKVEngineImpl::postXfer(const nixl_xfer_op_t &operation,
             }
 
             if (bytes_read < data_len) {
-                NIXL_WARN << "postXfer: READ truncated key=" << *key << " (" << bytes_read
-                          << " of " << data_len << " bytes)";
+                NIXL_WARN << "postXfer: READ truncated key=" << *key << " (" << bytes_read << " of "
+                          << data_len << " bytes)";
                 data_len = bytes_read;
             }
             NIXL_DEBUG << "postXfer: READ retrieved " << data_len << " bytes from key=" << *key;

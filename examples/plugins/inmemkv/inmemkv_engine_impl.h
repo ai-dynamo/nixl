@@ -54,14 +54,16 @@ public:
 
     ~nixlInMemKVEngineImpl() override = default;
 
-    nixl_mem_list_t getSupportedMems() const override {
+    nixl_mem_list_t
+    getSupportedMems() const override {
         return {DRAM_SEG};
     }
 
     nixl_status_t
     registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
 
-    nixl_status_t deregisterMem(nixlBackendMD *meta) override;
+    nixl_status_t
+    deregisterMem(nixlBackendMD *meta) override;
 
     nixl_status_t
     queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
@@ -84,9 +86,11 @@ public:
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args) const override;
 
-    nixl_status_t checkXfer(nixlBackendReqH *handle) const override;
+    nixl_status_t
+    checkXfer(nixlBackendReqH *handle) const override;
 
-    nixl_status_t releaseReqH(nixlBackendReqH *handle) const override;
+    nixl_status_t
+    releaseReqH(nixlBackendReqH *handle) const override;
 
 private:
     std::unique_ptr<iKVStore> store_;

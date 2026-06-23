@@ -35,14 +35,14 @@
  */
 class InMemKVStore : public iKVStore {
 public:
-    nixl_status_t put(std::string_view key, const uint8_t *data, size_t len) override;
+    nixl_status_t
+    put(std::string_view key, const uint8_t *data, size_t len) override;
 
-    nixl_status_t get(std::string_view key,
-                      uint8_t *buffer,
-                      size_t len,
-                      size_t &bytes_read) const override;
+    nixl_status_t
+    get(std::string_view key, uint8_t *buffer, size_t len, size_t &bytes_read) const override;
 
-    bool exists(std::string_view key) const override;
+    bool
+    exists(std::string_view key) const override;
 
 private:
     mutable std::unordered_map<std::string, std::vector<uint8_t>> store_;

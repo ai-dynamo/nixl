@@ -69,9 +69,7 @@ NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
-              "GUSLI, AZURE_BLOB"
-              XFERBENCH_INMEMKV_BACKEND_HELP
-              "] (only used with nixl worker)");
+              "GUSLI, AZURE_BLOB" XFERBENCH_INMEMKV_BACKEND_HELP "] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -837,7 +835,7 @@ xferBenchConfig::isStorageBackend() {
 #if NIXLBENCH_ENABLE_INMEMKV
             || XFERBENCH_BACKEND_INMEMKV == xferBenchConfig::backend
 #endif
-        );
+    );
 }
 
 bool

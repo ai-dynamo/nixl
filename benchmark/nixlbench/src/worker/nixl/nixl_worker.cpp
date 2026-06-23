@@ -322,8 +322,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         }
 #if NIXLBENCH_ENABLE_INMEMKV
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INMEMKV)) {
-        std::cout << "INMEMKV backend configured (simple in-memory key-value store)"
-                  << std::endl;
+        std::cout << "INMEMKV backend configured (simple in-memory key-value store)" << std::endl;
 #endif
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
@@ -1252,7 +1251,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
         }
     } else
 #endif
-    if (xferBenchConfig::isStorageBackend()) {
+        if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
         for (size_t list_idx = 0; list_idx < local_iovs.size(); list_idx++) {
