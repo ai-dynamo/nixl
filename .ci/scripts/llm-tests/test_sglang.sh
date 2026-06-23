@@ -13,6 +13,14 @@ source "${SCRIPT_DIR}/common.sh"
 
 PHASE="${1:-smoke}"
 
+# The accuracy phase serves a stronger model (see ACCURACY_MODEL in common.sh)
+# so gsm8k can clear the >0.9 threshold; the prefill/decode servers below are
+# launched with whatever MODEL ends up being for this phase.
+if [[ "${PHASE}" == "accuracy" ]]; then
+    MODEL="${ACCURACY_MODEL}"
+fi
+echo "Using model: ${MODEL}"
+
 PREFILL_PORT=30000
 DECODE_PORT=30001
 ROUTER_PORT=8000
@@ -110,31 +118,33 @@ case "${PHASE}" in
         ;;
 
     accuracy)
-        echo "=== sglang gsm8k (200 examples) ==="
+        echo "=== sglang gsm8k (200 examples) on ${MODEL} ==="
         # Run gsm8k and capture stdout; parse the "Accuracy:" line and fail
-        # if it's below the threshold. Threshold of 0.85 leaves headroom on
-        # the manual EOS baseline of 0.945 to absorb run-to-run variance.
+        # if it's below the threshold. Qwen3-8B comfortably exceeds 0.9 on
+        # gsm8k, so 0.9 is the gate with headroom for run-to-run variance.
         OUT=/tmp/sglang-logs/gsm8k.out
-        # --max-tokens 512: run_eval's ChatCompletionSampler defaults to 2048,
-        # which busts TinyLlama's 2048-token context once the 5-shot prompt
-        # (~1k tokens) is added. 512 is more than any gsm8k CoT answer needs.
+        # --max-tokens 2048: Qwen3-8B has a 32k+ context, so the 5-shot prompt
+        # plus a full chain-of-thought answer fits easily; 2048 leaves ample
+        # room for the CoT to finish without truncating the final answer.
         python3 -m sglang.test.run_eval \
             --eval-name gsm8k \
             --num-examples 200 \
-            --max-tokens 512 \
+            --max-tokens 2048 \
             --host 127.0.0.1 \
             --port "${ROUTER_PORT}" \
             | tee "${OUT}"
-        ACC=$(grep -E '^Accuracy:' "${OUT}" | awk '{print $2}')
+        # run_eval prints "Score: 0.935" (older builds printed "Accuracy:");
+        # accept either so the gate survives the harness's output rename.
+        ACC=$(grep -E '^(Score|Accuracy):' "${OUT}" | head -1 | awk '{print $2}')
         if [[ -z "${ACC}" ]]; then
-            echo "ERROR: could not parse Accuracy from gsm8k output"
+            echo "ERROR: could not parse Score/Accuracy from gsm8k output"
             exit 1
         fi
         # Numeric compare in awk; bash doesn't do floats.
-        if awk -v a="${ACC}" 'BEGIN { exit !(a+0 >= 0.85) }'; then
-            echo "ACCURACY OK: ${ACC} (>= 0.85)"
+        if awk -v a="${ACC}" 'BEGIN { exit !(a+0 >= 0.9) }'; then
+            echo "ACCURACY OK: ${ACC} (>= 0.9)"
         else
-            echo "ACCURACY FAILED: ${ACC} (< 0.85)"
+            echo "ACCURACY FAILED: ${ACC} (< 0.9)"
             exit 1
         fi
         ;;

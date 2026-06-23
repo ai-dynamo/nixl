@@ -563,7 +563,7 @@
           default: ""
           description: >
             Optional override for the vllm-cu12 base image build-arg.<br/>
-            Leave empty to use upstream <code>docker.io/vllm/vllm-openai:v0.22.1-cu129</code> (rc0 default).<br/>
+            Leave empty to use upstream <code>docker.io/vllm/vllm-openai:latest-cu129</code> (rc0 default).<br/>
             For <b>rcN, N&gt;0</b> pin to the rc0 vllm-cu12 image.
       - string:
           name: "BASE_IMAGE_SGLANG"
@@ -599,11 +599,37 @@
           default: false
           description: >
             By default the job aborts in <b>Prepare</b> if the canonical
-            multi-arch destination tag
-            (<code>&lt;variant&gt;:&lt;NIXL_VERSION&gt;-&lt;RC&gt;[-&lt;TAG_SUFFIX&gt;]</code>)
+            multi-arch destination tag<br/>
+            (<code>&lt;variant&gt;:&lt;NIXL_VERSION&gt;-&lt;RC&gt;[-&lt;TAG_SUFFIX&gt;]</code>)<br/>
             already exists in the registry, to avoid silently overwriting a
             published RC. Per-architecture tags are not checked.<br/>
-            Tick to skip the check and overwrite the existing tag(s).
+            Tick to skip the check and overwrite the existing tag(s).<br/>
+      - bool:
+          name: "RUN_TEST"
+          default: false
+          description: >
+            After a successful publish, trigger the downstream
+            <code>nixl-ci-test-llm-container</code> job once per built variant on
+            the <b>mizu</b> SLURM partition.<br/>
+            Each downstream run is passed the canonical multi-arch manifest tag
+            (<code>&lt;variant&gt;:&lt;NIXL_VERSION&gt;-&lt;RC&gt;[-&lt;TAG_SUFFIX&gt;]</code>),
+            which resolves to the x86_64 image on mizu.<br/>
+            The test is fired asynchronously (this build does not wait for it) and
+            a test failure does not retroactively fail this build.
+      - bool:
+          name: "TEST_RUN_SMOKE"
+          default: true
+          description: "Downstream test: run the smoke phase (only used when RUN_TEST is set)."
+      - bool:
+          name: "TEST_RUN_PERF"
+          default: false
+          description: "Downstream test: run the perf phase (only used when RUN_TEST is set)."
+      - bool:
+          name: "TEST_RUN_ACCURACY"
+          default: false
+          description: >
+            Downstream test: run the accuracy phase &mdash; sglang only, no-ops for
+            vllm (only used when RUN_TEST is set).
       - string:
           name: "MAIL_TO"
           default: ""
@@ -684,7 +710,7 @@
           name: "RUN_ACCURACY"
           default: false
           description: >
-            Run the accuracy test (<code>sglang.test.run_eval --eval-name gsm8k</code>, 200 examples, threshold 0.85).<br/>
+            Run the accuracy test (<code>sglang.test.run_eval --eval-name gsm8k</code>, 200 examples, threshold 0.9, served on <code>Qwen/Qwen3-8B</code>).<br/>
             SGLang only — no-ops for vllm (no equivalent built-in harness).
       - bool:
           name: "build_dockers"
