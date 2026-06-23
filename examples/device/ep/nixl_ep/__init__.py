@@ -27,7 +27,7 @@ import torch
 
 
 def _deepbind_enabled() -> bool:
-    value = os.getenv("NIXL_UCX_DEEPBIND", "1").strip().lower()
+    value = os.getenv("NIXL_UCX_DEEPBIND", "0").strip().lower()
     return value not in {"0", "false", "no", "off", "disable", "disabled"}
 
 
