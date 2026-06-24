@@ -25,8 +25,8 @@
  * the scope macros bind the returned Span to a named variable (satisfying its
  * [[nodiscard]]) and take a predictable null-check branch on the tracer.
  *
- * Usage contract: at most one NIXL_TRACE_SCOPE* per lexical scope (the span is
- * bound to a fixed variable name). Use NIXL_TRACE_ATTR* afterwards to annotate
+ * Usage contract: at most one NIXL_TRACE_SCOPE per lexical scope (the span is
+ * bound to a fixed variable name). Use NIXL_TRACE_ATTR afterwards to annotate
  * it; attribute arguments are only evaluated when a backend is actually active.
  */
 
@@ -34,25 +34,19 @@
 
 #if defined(NIXL_TRACE_ENABLED)
 
-#define NIXL_TRACE_SCOPE_KIND(tracer_ptr, span_name, span_kind)                               \
+#define NIXL_TRACE_SCOPE(tracer_ptr, span_name, span_kind)                                    \
     ::nixl::trace::Span nixl_trace_span_ = [&]() -> ::nixl::trace::Span {                     \
         auto *nixl_trace_tracer_ = (tracer_ptr);                                              \
         return nixl_trace_tracer_ ? nixl_trace_tracer_->beginSpan((span_name), (span_kind)) : \
                                     ::nixl::trace::Span{};                                    \
     }()
 
-#define NIXL_TRACE_SCOPE(tracer_ptr, span_name) \
-    NIXL_TRACE_SCOPE_KIND((tracer_ptr), (span_name), ::nixl::trace::Kind::Generic)
-
-#define NIXL_TRACE_MARK_KIND(tracer_ptr, mark_name, mark_kind)  \
+#define NIXL_TRACE_MARK(tracer_ptr, mark_name, mark_kind)       \
     do {                                                        \
         if (auto *nixl_trace_tracer_ = (tracer_ptr)) {          \
             nixl_trace_tracer_->mark((mark_name), (mark_kind)); \
         }                                                       \
     } while (0)
-
-#define NIXL_TRACE_MARK(tracer_ptr, mark_name) \
-    NIXL_TRACE_MARK_KIND((tracer_ptr), (mark_name), ::nixl::trace::Kind::Metadata)
 
 #define NIXL_TRACE_ATTR(attr_key, attr_value)                        \
     do {                                                             \
@@ -63,17 +57,11 @@
 
 #else // !NIXL_TRACE_ENABLED
 
-#define NIXL_TRACE_SCOPE_KIND(tracer_ptr, span_name, span_kind) \
-    do {                                                        \
+#define NIXL_TRACE_SCOPE(tracer_ptr, span_name, span_kind) \
+    do {                                                   \
     } while (0)
-#define NIXL_TRACE_SCOPE(tracer_ptr, span_name) \
-    do {                                        \
-    } while (0)
-#define NIXL_TRACE_MARK_KIND(tracer_ptr, mark_name, mark_kind) \
-    do {                                                       \
-    } while (0)
-#define NIXL_TRACE_MARK(tracer_ptr, mark_name) \
-    do {                                       \
+#define NIXL_TRACE_MARK(tracer_ptr, mark_name, mark_kind) \
+    do {                                                  \
     } while (0)
 #define NIXL_TRACE_ATTR(attr_key, attr_value) \
     do {                                      \
