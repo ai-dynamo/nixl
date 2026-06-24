@@ -36,6 +36,6 @@ RUN curl -fL --retry 3 --retry-delay 2 \
 
 # Pre-download model weights so CI tests don't hit HuggingFace at runtime.
 # vllm accuracy phase is a no-op, so only TinyLlama is needed here.
-RUN hf download TinyLlama/TinyLlama-1.1B-Chat-v1.0
+RUN python3 -c "from huggingface_hub import snapshot_download; snapshot_download('TinyLlama/TinyLlama-1.1B-Chat-v1.0')"
 
 ENV HF_HUB_OFFLINE=1
