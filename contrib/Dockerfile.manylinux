@@ -14,15 +14,20 @@
 # limitations under the License.
 
 
-# === Option B (DRAFT, UNVALIDATED) ===========================================
+# === Manylinux wheel build (public PyPA base + NGC CUDA) =====================
 # Build wheels on the PUBLIC PyPA manylinux_2_28 image and bring CUDA in from a
 # public NGC CUDA image, instead of the internal
 # gitlab-master.nvidia.com:5005/dl/dgx/cuda manylinux image (NOT reachable from
 # the velonix AWS runners — no DNS/PrivateLink). Mirrors dynamo's
-# container/templates/wheel_builder.Dockerfile pattern. Validate on the PR before
-# relying on it (gcc-toolset for CUDA, the CUDA COPY, DOCA el8 rpms).
+# container/templates/wheel_builder.Dockerfile pattern. Key moving parts:
+# gcc-toolset for CUDA, the CUDA COPY, and the DOCA el8 rpms.
 # ARCH must be declared before the FROM lines that interpolate it.
 ARG ARCH="x86_64"
+
+# Pin the manylinux base to a specific PyPA release so the toolchain (gcc, CMake,
+# bundled CPython) is reproducible; the implicit :latest would drift between builds.
+# Declared in the global pre-FROM scope because it's interpolated in a FROM line below.
+ARG MANYLINUX_VERSION="2026.06.06-1"
 
 # CUDA toolkit provider: a public NGC CUDA *devel* image, el8/ubi8 to match the
 # AlmaLinux-8 manylinux base (e.g. nvcr.io/nvidia/cuda:12.9.1-devel-ubi8).
@@ -35,10 +40,10 @@ ARG BASE_IMAGE_TAG
 ARG INFINIA_LIBS_IMAGE="210086341041.dkr.ecr.us-west-2.amazonaws.com/nixl/infinia-libs:v2.4.0-beta.1"
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS cuda
 
-# --- INFINIA plugin libs (DDN "red") — PRE-STAGED, enable once mirrored to ECR ----
+# --- INFINIA plugin libs (DDN "red") — ENABLED (requires the libs image mirrored to ECR) ---
 # The INFINIA plugin only builds when libred_client.so is found at /opt/ddn/red/lib
 # (src/plugins/meson.build does cc.find_library('red_client', dirs:['/opt/ddn/red/lib'])
-# and silently skips the plugin otherwise — which is why it's missing from the wheel).
+# and silently skips the plugin otherwise — which is what the stage below provides).
 # The libs live in harbor.mellanox.com/nixl/infinia-libs (NOT reachable from the AWS CI
 # runners), so mirror that image into ECR — one time per INFINIA version, from a host
 # that sees both harbor and AWS:
@@ -57,7 +62,7 @@ FROM ${INFINIA_LIBS_IMAGE} AS infinia
 
 # Manylinux build base — official PyPA image (public on quay.io; velonix also has
 # a quay ECR pull-through). AlmaLinux 8 / glibc 2.28 => manylinux_2_28 wheels.
-FROM quay.io/pypa/manylinux_2_28_${ARCH}
+FROM quay.io/pypa/manylinux_2_28_${ARCH}:${MANYLINUX_VERSION}
 
 # Re-declare args needed inside this build stage (args before the first FROM are
 # only visible to FROM lines).

@@ -228,6 +228,18 @@ if [ -d "$NIXL_DIR/build" ]; then
     exit 1
 fi
 
+# The manylinux build path requires CUDA_VERSION: Dockerfile.manylinux feeds it into the
+# torch cuXXX index URL and the cu12/cu13 meta-wheel split. Empty yields a broken index
+# (https://download.pytorch.org/whl/cu) and a skipped meta-wheel, so fail fast here.
+case "$DOCKER_FILE" in
+    *manylinux*)
+        if [ -z "$CUDA_VERSION" ]; then
+            echo "ERROR: --cuda-version is required for manylinux builds (e.g. --cuda-version 12.9)" >&2
+            exit 1
+        fi
+        ;;
+esac
+
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
