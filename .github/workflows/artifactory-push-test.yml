@@ -1,0 +1,61 @@
+# Throwaway reachability test: can the velonix AWS runners reach, authenticate to, and
+# push to the SWX Artifactory docker registry? Triggers on push to this test branch
+# (workflow_dispatch would require the file to live on the default branch first).
+# Delete this branch/file once the answer is known.
+#
+# Requires three repo secrets (same ones the ci.yml runtime-container push uses):
+#   ARTIFACTORY_DOCKER_REGISTRY - "<host>/<repo>/<path>" (kept secret so the URL is masked)
+#   ARTIFACTORY_DOCKER_USERNAME - docker-registry user (svc-nixl)
+#   ARTIFACTORY_DOCKER_TOKEN    - svc-nixl identity token
+name: Artifactory Push Test
+
+on:
+  push:
+    branches:
+      - nmailhot/artifactory-reachability-test
+
+permissions:
+  contents: read
+
+jobs:
+  artifactory-push-test:
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    timeout-minutes: 15
+    env:
+      AF_REGISTRY: ${{ secrets.ARTIFACTORY_DOCKER_REGISTRY }}
+      AF_USERNAME: ${{ secrets.ARTIFACTORY_DOCKER_USERNAME }}
+      AF_TOKEN: ${{ secrets.ARTIFACTORY_DOCKER_TOKEN }}
+    steps:
+      - name: Probe reachability, login, and push a tiny image
+        run: |
+          set -e
+          if [ -z "$AF_REGISTRY" ] || [ -z "$AF_USERNAME" ] || [ -z "$AF_TOKEN" ]; then
+            echo "ERROR: set the ARTIFACTORY_DOCKER_REGISTRY / _USERNAME / _TOKEN repo secrets first"
+            exit 1
+          fi
+          # AF_REGISTRY (secret) = <host>/<repo>/<path>; derive the bare host. Don't echo the
+          # host/registry so the internal link stays masked in these public logs.
+          AF_HOST="${AF_REGISTRY%%/*}"
+
+          echo "== Step 1: TCP/TLS reachability to the registry host (port 443) =="
+          if timeout 10 bash -c ": </dev/tcp/${AF_HOST}/443" 2>/dev/null; then
+            echo "  OK: TCP 443 reachable from this runner"
+          else
+            echo "  FAIL: cannot open TCP 443 to the registry host (no route from the AWS runner?)"
+            exit 1
+          fi
+
+          echo "== Step 2: docker login =="
+          echo "$AF_TOKEN" | docker login "$AF_HOST" -u "$AF_USERNAME" --password-stdin
+          echo "  OK: docker login succeeded"
+
+          echo "== Step 3: build a tiny image and push it =="
+          work="$(mktemp -d)"
+          echo "velonix->artifactory reachability test, run ${{ github.run_id }}" > "$work/test.txt"
+          printf 'FROM scratch\nCOPY test.txt /test.txt\n' > "$work/Dockerfile"
+          docker build -t local-reach-test:latest "$work"
+          AF_IMAGE="${AF_REGISTRY}/ci-reachability-test:${{ github.run_id }}"
+          docker tag local-reach-test:latest "$AF_IMAGE"
+          docker push "$AF_IMAGE"
+
+          echo "== SUCCESS: the velonix runner reached, authenticated, and pushed to Artifactory =="
