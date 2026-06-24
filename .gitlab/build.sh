@@ -188,8 +188,11 @@ else
     if [ -d "${CUDA_HOME}/include" ]; then
         DOCA_HEADERS=$(find /usr/include /opt -name "doca_gpunetio*" 2>/dev/null)
         if [ -n "$DOCA_HEADERS" ]; then
-            echo "$DOCA_HEADERS" | xargs -I{} $SUDO cp {} "${CUDA_HOME}/include/" 2>/dev/null || true
-            echo "Copied DOCA GPUNetIO headers to ${CUDA_HOME}/include/"
+            if echo "$DOCA_HEADERS" | xargs -I{} $SUDO cp {} "${CUDA_HOME}/include/"; then
+                echo "Copied DOCA GPUNetIO headers to ${CUDA_HOME}/include/"
+            else
+                echo "Failed to copy some DOCA GPUNetIO headers to ${CUDA_HOME}/include/ - EP device compilation may fail" >&2
+            fi
         fi
     fi
 
