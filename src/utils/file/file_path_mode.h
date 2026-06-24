@@ -14,13 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __FILE_PATH_MODE_H
-#define __FILE_PATH_MODE_H
+#ifndef NIXL_SRC_UTILS_FILE_FILE_PATH_MODE_HPP
+#define NIXL_SRC_UTILS_FILE_FILE_PATH_MODE_HPP
 
 #include <sys/types.h>
 
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_set>
 
 #include "backend/backend_engine.h"
 
@@ -37,6 +39,9 @@
 //             | "create"           # | O_CREAT (mode 0644)
 //
 // Unknown tokens: parsePathMeta returns std::nullopt (fail-loud).
+//
+// Path-mode contract: each path-mode file must use a unique devId - the section keys
+// on devId, so two files sharing one collide; backends reject a reused path-mode devId on register.
 
 namespace nixl {
 
@@ -89,15 +94,95 @@ private:
     std::string path_;
 };
 
+// Path-mode contract: each path-mode file registration must use a unique devId
+class PathModeDevIdRegistry {
+public:
+    enum class Ok : bool { No = false, Yes = true };
+    enum class Held : bool { No = false, Yes = true };
+
+    class Reservation {
+    public:
+        Reservation(Reservation &&other) noexcept
+            : reg_(other.reg_),
+              devId_(other.devId_),
+              ok_(other.ok_),
+              held_(other.held_) {
+            other.reg_ = nullptr;
+            other.held_ = Held::No;
+        }
+
+        Reservation(const Reservation &) = delete;
+        Reservation &
+        operator=(const Reservation &) = delete;
+
+        ~Reservation() {
+            if (reg_ && held_ == Held::Yes) {
+                reg_->release(devId_);
+            }
+        }
+
+        // Ok::No: this devId is already registered in path-mode -> caller must reject.
+        bool
+        ok() const noexcept {
+            return static_cast<bool>(ok_);
+        }
+
+        // Keep the hold past this scope; released later via release() on deregister.
+        void
+        commit() noexcept {
+            held_ = Held::No;
+        }
+
+    private:
+        friend class PathModeDevIdRegistry;
+
+        Reservation(PathModeDevIdRegistry *reg, uint64_t devId, Ok ok, Held held)
+            : reg_(reg),
+              devId_(devId),
+              ok_(ok),
+              held_(held) {}
+
+        PathModeDevIdRegistry *reg_;
+        uint64_t devId_;
+        Ok ok_;
+        Held held_;
+    };
+
+    // fd-mode (metaInfo not path-mode) is always ok and untracked.
+    [[nodiscard]] Reservation
+    reserve(uint64_t devId, const std::string &metaInfo) {
+        if (!parsePathMeta(metaInfo)) {
+            return Reservation(this, devId, Ok::Yes, Held::No);
+        }
+        const bool inserted = devids_.insert(devId).second;
+        if (inserted) {
+            return Reservation(this, devId, Ok::Yes, Held::Yes);
+        }
+        return Reservation(this, devId, Ok::No, Held::No);
+    }
+
+    void
+    release(uint64_t devId) {
+        devids_.erase(devId);
+    }
+
+private:
+    std::unordered_set<uint64_t> devids_;
+};
+
 } // namespace nixl
 
 class nixlFilePathMD : public nixlBackendMD {
 public:
     nixl::FileFd file_fd;
+    uint64_t devId = 0;
 
     nixlFilePathMD() : nixlBackendMD(true /*isPrivate*/) {}
 
-    explicit nixlFilePathMD(nixl::FileFd &&fd) : nixlBackendMD(true), file_fd(std::move(fd)) {}
+    nixlFilePathMD(uint64_t devid, const std::string &metaInfo)
+        : nixlBackendMD(true),
+          file_fd(devid, metaInfo),
+          devId(devid) {}
 };
 
-#endif // __FILE_PATH_MODE_H
+#endif // NIXL_SRC_UTILS_FILE_FILE_PATH_MODE_HPP

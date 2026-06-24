@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.2.0',
+project('nixl', 'CPP', version: '1.3.1',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -445,7 +445,11 @@ plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
 subdir('src')
-if get_option('build_tests') and get_option('buildtype') != 'release'
+# Build tests whenever build_tests is set. (Previously also required a non-release
+# buildtype, but CI builds the image as --buildtype=release and test_cpp.sh runs the
+# installed test binaries, e.g. /usr/local/nixl/bin/desc_example — so release builds
+# must include them.)
+if get_option('build_tests')
   subdir('test')
 endif
 
