@@ -7,6 +7,11 @@
 #
 
 ARG BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04
+ARG INFINIA_LIBS_IMAGE=harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1
+
+# Stage that just holds the pre-fetched DDN Infinia libraries.
+# See .ci/dockerfiles/Dockerfile.infinia-libs for how this image is produced.
+FROM ${INFINIA_LIBS_IMAGE} AS infinia
 
 FROM ${BASE_IMAGE}
 
@@ -21,7 +26,11 @@ ARG NIXL_INSTALL_DIR
 ARG PRE_INSTALLED_ENV
 ARG PRE_INSTALLED_NIXL_ENV
 ARG PRE_INSTALLED_UCX_ENV
-ARG UCX_VERSION=v1.20.x
+ARG UCX_VERSION=v1.21.x
+# When set (e.g. "address"), build the Abseil/gRPC/etcd dependency stack with the
+# matching -fsanitize flags so AddressSanitizer NIXL builds have an ABI-compatible
+# (instrumented) Abseil. Empty for normal images.
+ARG DEPS_SANITIZE
 # Labels for documentation
 LABEL maintainer="NVIDIA NIXL Team"
 LABEL description="Test environment for NIXL development"
@@ -31,6 +40,10 @@ LABEL version="1.0"
 RUN apt-get update && \
     apt-get install -y sudo python3 python3-pip kmod && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Drop the pre-fetched DDN Infinia libs (for the current ARCH) into ${INFINIA_DEST}.
+ARG INFINIA_DEST=/opt/ddn/red
+COPY --from=infinia /infinia/${ARCH}/ ${INFINIA_DEST}/
 
 # Create group and user in one RUN command to reduce layers
 RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \

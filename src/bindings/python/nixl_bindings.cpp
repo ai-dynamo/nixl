@@ -152,6 +152,7 @@ PYBIND11_MODULE(_bindings, m) {
     py::enum_<nixl_thread_sync_t>(m, "nixl_thread_sync_t")
         .value("NIXL_THREAD_SYNC_NONE", nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)
         .value("NIXL_THREAD_SYNC_STRICT", nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT)
+        .value("NIXL_THREAD_SYNC_RW", nixl_thread_sync_t::NIXL_THREAD_SYNC_RW)
         .value("NIXL_THREAD_SYNC_DEFAULT", nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT)
         .export_values();
 
@@ -631,13 +632,16 @@ PYBIND11_MODULE(_bindings, m) {
                 local_indices_vec = init_indices_lambda(local_indices);
                 remote_indices_vec = init_indices_lambda(remote_indices);
 
-                throw_nixl_exception(agent.makeXferReq(operation,
-                                                       (nixlDlistH *)local_side,
-                                                       local_indices_vec,
-                                                       (nixlDlistH *)remote_side,
-                                                       remote_indices_vec,
-                                                       handle,
-                                                       &extra_params));
+                {
+                    py::gil_scoped_release release;
+                    throw_nixl_exception(agent.makeXferReq(operation,
+                                                           (nixlDlistH *)local_side,
+                                                           local_indices_vec,
+                                                           (nixlDlistH *)remote_side,
+                                                           remote_indices_vec,
+                                                           handle,
+                                                           &extra_params));
+                }
 
                 return (uintptr_t)handle;
             },

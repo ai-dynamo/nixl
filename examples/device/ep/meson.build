@@ -63,7 +63,11 @@ endif
 
 nixl_ep_sources = [
     'csrc/nixl_ep.cpp',
-    'csrc/kernels/nixl_ep.cu',
+    'csrc/vmm.cpp',
+    'csrc/kernels/nixl_ep_ll.cu',
+    'csrc/kernels/nixl_ep_ht.cu',
+    'csrc/kernels/layout.cu',
+    'csrc/kernels/runtime.cu',
 ]
 
 nixl_ep_inc_dirs = [
@@ -87,8 +91,8 @@ nixl_ep_cpp_args = [
 nixl_ep_cuda_args = [
     '-DHAVE_CUDA',
     '-DTORCH_EXTENSION_NAME=nixl_ep_cpp',
+    '-DDISABLE_AGGRESSIVE_PTX_INSTRS',
     '--expt-relaxed-constexpr',  # Allow calling constexpr __host__ functions from __device__ functions
-    '-arch=sm_90',  # Only compile for sm90 (overrides global -gencode flags)
     '--ptxas-options=--register-usage-level=10',  # Allow more register usage (matches setup.py)
     '-Xcompiler', '-Wno-deprecated-declarations',
     '-Xcompiler', '-Wno-unused-variable',
@@ -97,7 +101,7 @@ nixl_ep_cuda_args = [
     '-Xcompiler', '-Wno-attributes',
 ]
 
-topk_idx_bits = meson.get_external_property('topk_idx_bits', '64')
+topk_idx_bits = meson.get_external_property('topk_idx_bits', '32')
 nixl_ep_cpp_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]
 nixl_ep_cuda_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]
 
@@ -131,9 +135,12 @@ nixl_ep_install_rpath = join_paths(get_option('prefix'), get_option('libdir'))
 nixl_ep_install_rpath += ':' + join_paths(get_option('prefix'), get_option('libdir'), 'plugins')
 nixl_ep_install_rpath += ':' + torch_lib_dir
 
+# CUDA-versioned install dir so cu12 and cu13 wheels don't collide.
+nixl_ep_install_dir = 'nixl_ep_' + cuda_wheel_dir.split('_')[-1]  # nixl_ep_cu12 or nixl_ep_cu13
+
 nixl_ep_ext = py.extension_module('nixl_ep_cpp',
     nixl_ep_sources,
-    subdir: 'nixl_ep',
+    subdir: nixl_ep_install_dir,
     dependencies: [
         nixl_dep,
         pybind_dep,
@@ -161,11 +168,12 @@ custom_target('nixl_ep_py_copy',
     input: nixl_ep_py_files,
     command: [
         'bash', '-c',
-        'cp -r @0@/nixl_ep @1@/ && cp @2@ @1@/nixl_ep/ && touch @3@'.format(
+        'mkdir -p @1@/@4@ && cp @0@/nixl_ep/*.py @1@/@4@/ && cp @2@ @1@/@4@/ && touch @3@'.format(
             meson.current_source_dir(),
             meson.current_build_dir(),
             nixl_ep_ext.full_path(),
-            join_paths(meson.current_build_dir(), 'nixl_ep_py.stamp')
+            join_paths(meson.current_build_dir(), 'nixl_ep_py.stamp'),
+            nixl_ep_install_dir,
         )
     ],
     depends: nixl_ep_ext,
@@ -176,6 +184,6 @@ py.install_sources(
     'nixl_ep/__init__.py',
     'nixl_ep/buffer.py',
     'nixl_ep/utils.py',
-    subdir: 'nixl_ep',
+    subdir: nixl_ep_install_dir,
     pure: false,
 )

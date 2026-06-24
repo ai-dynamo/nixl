@@ -197,6 +197,9 @@ public:
      * @param xfer_id Transfer ID for tracking
      * @param completion_callback Callback for completion notification
      * @param submitted_count_out Number of requests successfully submitted
+     * @param desc_idx Index of current descriptor within the transfer
+     * @param desc_count Total number of descriptors in the transfer
+     * @param base_offset Pre-reserved round-robin offset from reserveBaseOffset()
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
@@ -213,7 +216,15 @@ public:
                              uint16_t agent_idx,
                              uint16_t xfer_id,
                              std::function<void()> completion_callback,
-                             size_t &submitted_count_out);
+                             size_t &submitted_count_out,
+                             int desc_idx,
+                             int desc_count,
+                             size_t base_offset);
+
+    /** Reserve a base offset for a transfer to ensure stable rail assignment
+     *  across all descriptors in the transfer. Call once per postXfer. */
+    size_t
+    reserveBaseOffset();
     /** Determine if striping should be used for given transfer size
      * @param transfer_size Size of the transfer in bytes
      * @return true if striping should be used, false for round-robin
@@ -253,13 +264,13 @@ public:
     validateAllRailsInitialized();
 
     // Active Rail Management APIs
-    /** Mark rail as active for progress tracking optimization */
+    /** Increment active reference count on a rail */
     void
-    markRailActive(size_t rail_id);
+    incRailActive(size_t rail_id);
 
-    /** Mark rail as inactive for progress tracking optimization */
+    /** Decrement active reference count on a rail; rail becomes inactive when count reaches zero */
     void
-    markRailInactive(size_t rail_id);
+    decRailActive(size_t rail_id);
 
     /** Clear all active rail markings */
     void
@@ -351,8 +362,8 @@ private:
     // EFA device to rail mapping
     std::unordered_map<std::string, size_t> efa_device_to_rail_map;
 
-    // Active Rail Tracking System
-    std::unordered_set<size_t> active_rails_;
+    // active rails with reference counting (always positive)
+    std::unordered_map<size_t, size_t> active_rails_;
     mutable std::mutex active_rails_mutex_;
 
     // rail selection policy for DRAM memory type
@@ -360,7 +371,10 @@ private:
 
     // get rail count limit for DRAM memory type, either computed or from user
     bool
-    getDramRailLimit(const nixl_b_params_t &custom_params, size_t &max_bw, size_t &max_rails);
+    getDramRailLimit(const nixl_b_params_t &custom_params,
+                     size_t &max_bw,
+                     size_t &max_rails,
+                     size_t &recommended_rails);
 
     // Internal rail selection method
     std::vector<size_t>

@@ -18,181 +18,121 @@
 #ifndef NIXL_SRC_UTILS_COMMON_CONFIGURATION_H
 #define NIXL_SRC_UTILS_COMMON_CONFIGURATION_H
 
-#include <algorithm>
-#include <charconv>
-#include <chrono>
-#include <cstdlib>
-#include <filesystem>
-#include <optional>
-#include <stdexcept>
-#include <string>
-#include <strings.h>
-#include <type_traits>
-#include <typeinfo>
-#include <vector>
-
-#include <absl/strings/str_join.h>
-
+#include "config_traits.h"
+#include "exception.h"
 #include "nixl_log.h"
 #include "nixl_types.h"
+#include "toml_traits.h"
+
+#include <toml++/toml.hpp>
+
+#include <algorithm>
+#include <cstdlib>
+#include <optional>
+#include <string>
+#include <type_traits>
+#include <typeinfo>
+
+// General design guideline for configuration handling:
+// - When something does not exist and there is a fallback, use the fallback.
+// - When something does exist and there is an error using it, propagate the error.
+// Using the fallback in case of errors only hides the error and can lead to
+// unintended effects when mistakes are hidden or ignored instead of being fixed.
 
 namespace nixl::config {
 
-[[nodiscard]] inline std::optional<std::string>
-getenvOptional(const std::string &name) {
-    if (const char *value = std::getenv(name.c_str())) {
-        NIXL_DEBUG << "Obtained environment variable " << name << "=" << value;
-        return std::string(value);
-    }
-    NIXL_DEBUG << "Missing environment variable " << name;
-    return std::nullopt;
-}
+namespace internal {
 
-[[nodiscard]] inline std::string
-getenvDefaulted(const std::string &name, const std::string &fallback) {
-    if (const char *value = std::getenv(name.c_str())) {
-        NIXL_DEBUG << "Obtained environment variable " << name << "=" << value;
-        return std::string(value);
-    }
-    NIXL_DEBUG << "Using default '" << fallback << "' for missing environment variable " << name;
-    return fallback;
-}
+    [[nodiscard]] std::optional<std::string>
+    getenvOptional(const std::string &name);
 
-template<typename, typename = void> struct convertTraits;
+    [[nodiscard]] std::string
+    getenvDefaulted(const std::string &name, const std::string &fallback);
 
-template<> struct convertTraits<bool> {
-    [[nodiscard]] static bool
-    convert(const std::string &value) {
-        static const std::vector<std::string> positive = {"y", "yes", "on", "1", "true", "enable"};
+    [[nodiscard]] toml::node_view<const toml::node>
+    findTomlNode(const toml::path &path);
 
-        static const std::vector<std::string> negative = {
-            "n", "no", "off", "0", "false", "disable"};
+    [[nodiscard]] toml::node_view<const toml::node>
+    findTomlNode(const std::string &path);
 
-        if (match(value, positive)) {
-            return true;
+    void
+    warnIgnoreToml(const std::string &path);
+
+    template<typename T> struct convertTraits {
+        [[nodiscard]] static decltype(auto)
+        convert(const std::string &value) {
+            return configTraits<T>::convert(value);
         }
 
-        if (match(value, negative)) {
-            return false;
+        [[nodiscard]] static decltype(auto)
+        convert(const toml::node_view<const toml::node> &view) {
+            return tomlTraits<T>::convert(view);
         }
+    };
 
-        const std::string msg = "Conversion to bool failed for string '" + value + "' known are " +
-            absl::StrJoin(positive, ", ") + " as positive and " + absl::StrJoin(negative, ", ") +
-            " as negative (case insensitive)";
-        throw std::runtime_error(msg);
-    }
+} // namespace internal
 
-private:
-    [[nodiscard]] static bool
-    match(const std::string &value, const std::vector<std::string> &haystack) noexcept {
-        const auto pred = [&](const std::string &ref) {
-            return strcasecmp(ref.c_str(), value.c_str()) == 0;
-        };
-        return std::find_if(haystack.begin(), haystack.end(), pred) != haystack.end();
-    }
-};
-
-template<> struct convertTraits<std::string> {
-    [[nodiscard]] static std::string
-    convert(const std::string &value) {
-        return value;
-    }
-};
-
-template<> struct convertTraits<std::filesystem::path> {
-    [[nodiscard]] static std::filesystem::path
-    convert(const std::string &value) {
-        return std::filesystem::path(value);
-    }
-};
-
-template<typename integer> struct integralTraits {
-    [[nodiscard]] static integer
-    convert(const std::string &value) {
-        integer result;
-        const auto status =
-            std::from_chars(start(value), value.data() + value.size(), result, base(value));
-        switch (status.ec) {
-        case std::errc::invalid_argument:
-            throw std::runtime_error("Invalid integer string '" + value + "' for type " +
-                                     typeid(integer).name());
-        case std::errc::result_out_of_range:
-            throw std::runtime_error("Integer string '" + value + "' out of range for type " +
-                                     typeid(integer).name());
-        default:
-            if (status.ptr != value.data() + value.size()) {
-                throw std::runtime_error("Trailing garbage in integer string '" + value + "'");
-            }
-            break;
-        }
-        return result;
-    }
-
-private:
-    [[nodiscard]] static bool
-    isHex(const std::string &value) noexcept {
-        return std::is_unsigned_v<integer> && (value.size() > 2) && (value[0] == '0') &&
-            ((value[1] == 'x') || (value[1] == 'X'));
-    }
-
-    [[nodiscard]] static int
-    base(const std::string &value) noexcept {
-        return isHex(value) ? 16 : 10;
-    }
-
-    [[nodiscard]] static const char *
-    start(const std::string &value) noexcept {
-        return value.data() + (isHex(value) ? 2 : 0);
-    }
-};
-
-template<typename integer>
-struct convertTraits<integer, std::enable_if_t<std::is_integral_v<integer>>>
-    : integralTraits<integer> {};
-
-template<> struct convertTraits<std::chrono::milliseconds> {
-    [[nodiscard]] static std::chrono::milliseconds
-    convert(const std::string &value) {
-        return std::chrono::milliseconds(convertTraits<uint64_t>::convert(value));
-    }
-};
-
-template<typename type, template<typename...> class traits = convertTraits>
+template<typename type, template<typename...> class traits = internal::convertTraits>
 [[nodiscard]] nixl_status_t
 getValueWithStatus(type &result, const std::string &env) {
-    if (const auto opt = getenvOptional(env)) {
+    if (const auto opt = internal::getenvOptional(env)) {
         try {
             result = traits<std::decay_t<type>>::convert(*opt);
-            return NIXL_SUCCESS;
         }
         catch (const std::exception &e) {
-            NIXL_DEBUG << "Unable to convert value '" << *opt << "' from environment variable '"
-                       << env << "' to target type " << typeid(type).name();
+            NIXL_DEBUG << "Unable to convert environment variable '" << env << "' to target type "
+                       << typeid(type).name();
             return NIXL_ERR_MISMATCH;
         }
+        internal::warnIgnoreToml(env);
+        return NIXL_SUCCESS;
+    }
+
+    if (const auto view = internal::findTomlNode(env)) {
+        try {
+            result = traits<std::decay_t<type>>::convert(view);
+        }
+        catch (const std::exception &e) {
+            NIXL_DEBUG << "Unable to convert config value '" << env << "' to target type "
+                       << typeid(type).name();
+            return NIXL_ERR_MISMATCH;
+        }
+        return NIXL_SUCCESS;
     }
     return NIXL_ERR_NOT_FOUND;
 }
 
-template<typename type, template<typename...> class traits = convertTraits>
+template<typename type, template<typename...> class traits = internal::convertTraits>
 [[nodiscard]] type
 getValue(const std::string &env) {
-    if (const auto opt = getenvOptional(env)) {
-        return traits<type>::convert(*opt);
+    if (const auto opt = internal::getenvOptional(env)) {
+        auto result = traits<type>::convert(*opt);
+        internal::warnIgnoreToml(env);
+        return result;
     }
-    throw std::runtime_error("Missing environment variable '" + env + "'");
+
+    if (const auto view = internal::findTomlNode(env)) {
+        return traits<type>::convert(view);
+    }
+    throwRuntimeError("Missing config entry '", env, "'");
 }
 
-template<typename type, template<typename...> class traits = convertTraits>
+template<typename type, template<typename...> class traits = internal::convertTraits>
 [[nodiscard]] std::optional<type>
 getValueOptional(const std::string &env) {
-    if (const auto opt = getenvOptional(env)) {
-        return traits<type>::convert(*opt);
+    if (const auto opt = internal::getenvOptional(env)) {
+        auto result = traits<type>::convert(*opt);
+        internal::warnIgnoreToml(env);
+        return result;
+    }
+
+    if (const auto view = internal::findTomlNode(env)) {
+        return traits<type>::convert(view);
     }
     return std::nullopt;
 }
 
-template<typename type, template<typename...> class traits = convertTraits>
+template<typename type, template<typename...> class traits = internal::convertTraits>
 [[nodiscard]] type
 getValueDefaulted(const std::string &env, const type &fallback) {
     return getValueOptional<type, traits>(env).value_or(fallback);
@@ -203,15 +143,14 @@ getNonEmptyString(const std::string &env) {
     const std::string result = getValue<std::string>(env);
 
     if (result.empty()) {
-        throw std::runtime_error("Environment variable '" + env + "' needs non-empty value");
+        throwRuntimeError("Config parameter '", env, "' needs non-empty value");
     }
     return result;
 }
 
 [[nodiscard]] inline bool
 checkExistence(const std::string &env) {
-    // Will be less trivial with configuration files.
-    return std::getenv(env.c_str()) != nullptr;
+    return (std::getenv(env.c_str()) != nullptr) || bool(internal::findTomlNode(env));
 }
 
 } // namespace nixl::config

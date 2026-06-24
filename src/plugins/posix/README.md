@@ -20,6 +20,12 @@ limitations under the License.
 This backend provides POSIX-compliant I/O operations using either Linux AIO (libaio) by default
 Optionally POSIX plugin can also use liburing.
 
+## File registration
+
+`FILE_SEG` descriptors accept either fd-in-`devId` (fd-mode) or a
+`"<modes>:<path>"` string in `metaInfo` (path-mode, backend owns the
+open/close); see [`src/utils/file/README.md`](../../utils/file/README.md#path-mode-file-registration).
+
 ## Dependencies
 To enable Linux AIO support, you need to install the libaio package:
 
@@ -31,15 +37,9 @@ sudo apt-get install libaio-dev
 sudo dnf install libaio-devel
 ```
 
+### liburing
 
-To enable liburing support you need to install the liburing package:
-
-```bash
-# Ubuntu/Debian
-sudo apt install liburing-dev
-# RHEL/CentOS/Fedora
-sudo dnf install liburing-devel
-```
+liburing support is enabled automatically via the Meson wrap under `subprojects/liburing.wrap` (pinned to WrapDB `liburing_2.14-1`). `meson setup` builds it from source when a system `liburing` is not found via pkg-config, so no manual install is required.
 
 To use liburing with POSIX plugin use params["use_uring"] = "true"
 

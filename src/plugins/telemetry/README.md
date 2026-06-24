@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,17 +27,16 @@ NIXL telemetry plugins are dynamically loaded shared libraries that export telem
 
 NIXL generates the following telemetry events:
 
-| Category | Event Name | Type | Description |
-|----------|-----------|------|-------------|
-| MEMORY | `agent_memory_registered` | Gauge | Total bytes of memory registered |
-| MEMORY | `agent_memory_deregistered` | Gauge | Total bytes of memory deregistered |
-| TRANSFER | `agent_tx_bytes` | Counter | Total bytes transmitted |
-| TRANSFER | `agent_rx_bytes` | Counter | Total bytes received |
-| TRANSFER | `agent_tx_requests_num` | Counter | Number of transmit requests |
-| TRANSFER | `agent_rx_requests_num` | Counter | Number of receive requests |
-| PERFORMANCE | `agent_xfer_time` | Gauge | Transfer time in microseconds |
-| PERFORMANCE | `agent_xfer_post_time` | Gauge | Post time in microseconds |
-| BACKEND | Backend-specific events | Counter | Dynamic events from backends |
+| Event Name | Type | Description |
+|-----------|------|-------------|
+| `agent_memory_registered` | Gauge | Total bytes of memory registered |
+| `agent_memory_deregistered` | Gauge | Total bytes of memory deregistered |
+| `agent_tx_bytes` | Counter | Total bytes transmitted |
+| `agent_rx_bytes` | Counter | Total bytes received |
+| `agent_tx_requests_num` | Counter | Number of transmit requests |
+| `agent_rx_requests_num` | Counter | Number of receive requests |
+| `agent_xfer_time` | Gauge | Transfer time in microseconds |
+| `agent_xfer_post_time` | Gauge | Post time in microseconds |
 
 ## Quick Start
 
@@ -84,7 +83,7 @@ nixlTelemetryCsvExporter::nixlTelemetryCsvExporter(
     }
 
     // Write CSV header
-    file_ << "timestamp_us,category,event_name,value\n";
+    file_ << "event_type,value\n";
     NIXL_INFO << "CSV exporter initialized: " << file_path;
 }
 
@@ -95,10 +94,8 @@ nixlTelemetryCsvExporter::exportEvent(const nixlTelemetryEvent &event) {
     }
 
     try {
-        file_ << event.timestampUs_ << ","
-              << static_cast<int>(event.category_) << ","
-              << event.eventName_ << ","
-              << event.value_ << "\n";
+        file_ << nixlEnumStrings::telemetryEventTypeStr(event.eventType_) << "," << event.value_
+              << "\n";
         file_.flush();
         return NIXL_SUCCESS;
     }
@@ -122,7 +119,7 @@ using csv_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryCsvExporte
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
 nixl_telemetry_plugin_init() {
     return csv_exporter_plugin_t::create(
-        NIXL_TELEMETRY_PLUGIN_API_VERSION,
+        nixl_telemetry_plugin_api_version::V2,
         "csv",      // Plugin name
         "1.0.0"     // Plugin version
     );

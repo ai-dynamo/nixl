@@ -66,9 +66,10 @@ private:
 nixlPosixIOQueueUring::nixlPosixIOQueueUring(uint32_t ios_pool_size, uint32_t kernel_queue_size)
     : nixlPosixIOQueueImpl<nixlPosixIoUringIO>(ios_pool_size, kernel_queue_size) {
     io_uring_params params = {};
-    if (io_uring_queue_init_params(kernel_queue_size_, &uring, &params) < 0) {
+    int ret = io_uring_queue_init_params(kernel_queue_size_, &uring, &params);
+    if (ret < 0) {
         throw std::runtime_error(
-            absl::StrFormat("Failed to initialize io_uring instance: %s", nixl_strerror(errno)));
+            absl::StrFormat("Failed to initialize io_uring instance: %s", nixl_strerror(-ret)));
     }
 }
 
