@@ -107,8 +107,14 @@ private:
     void
     registerCounter(const std::string &name, const std::string &help);
 
+    // event_name is the lookup key exportEvent() uses (the telemetry event
+    // name); metric_name is the exposed Prometheus series name. They differ for
+    // last-operation gauges, e.g. the AGENT_TX_BYTES event ("agent_tx_bytes")
+    // drives a gauge published as "agent_tx_bytes_last".
     void
-    registerGauge(const std::string &name, const std::string &help);
+    registerGauge(const std::string &event_name,
+                  const std::string &metric_name,
+                  const std::string &help);
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H

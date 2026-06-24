@@ -166,6 +166,52 @@ TEST_F(docaNixlExporterTest, DistinguishesSeriesByAgentLabel) {
         << metric << " is exported by two agents; a name-only lookup must be ambiguous";
 }
 
+// Both byte directions drive a cumulative counter (agent_{tx,rx}_bytes) AND a
+// last-operation gauge (agent_{tx,rx}_bytes_last) from the same per-op value. TX
+// and RX use distinct deltas so the assertions also prove the directions map to
+// independent series (no cross-wiring): each counter reads the sum of its own
+// deltas while each *_last gauge reads only that direction's final op.
+TEST_F(docaNixlExporterTest, ByteEventsEmitCumulativeCountersAndLastGauges) {
+    constexpr char agentName[] = "nixl_doca_last_gauge_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const std::string txCounter = std::string(
+        nixlEnumStrings::telemetryEventTypeStr(nixl_telemetry_event_type_t::AGENT_TX_BYTES));
+    const std::string rxCounter = std::string(
+        nixlEnumStrings::telemetryEventTypeStr(nixl_telemetry_event_type_t::AGENT_RX_BYTES));
+    const std::string txLast = txCounter + "_last";
+    const std::string rxLast = rxCounter + "_last";
+
+    constexpr std::array<uint64_t, 3> tx_deltas{10, 20, 35}; // sum 65, last 35
+    for (const uint64_t delta : tx_deltas) {
+        const nixlTelemetryEvent event(nixl_telemetry_event_type_t::AGENT_TX_BYTES, delta);
+        ASSERT_EQ(exporter.exportEvent(event), NIXL_SUCCESS);
+    }
+    constexpr std::array<uint64_t, 2> rx_deltas{5, 15}; // sum 20, last 15
+    for (const uint64_t delta : rx_deltas) {
+        const nixlTelemetryEvent event(nixl_telemetry_event_type_t::AGENT_RX_BYTES, delta);
+        ASSERT_EQ(exporter.exportEvent(event), NIXL_SUCCESS);
+    }
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    // RX is pushed last and each event appends its counter sample before its
+    // gauge sample, so once agent_rx_bytes_last reads its final value (15) every
+    // earlier sample (all TX, plus the RX counter) has been served too -- read
+    // them all from that one settled scrape.
+    const auto metrics = scrapeUntilValue(port_, rxLast, 15.0, std::chrono::seconds(12), labels);
+
+    EXPECT_EQ(metrics.latestValue(txCounter, labels), std::optional<double>(65.0))
+        << "tx counter must sum every pushed delta (10+20+35)";
+    EXPECT_EQ(metrics.latestValue(txLast, labels), std::optional<double>(35.0))
+        << "tx last-op gauge must reflect only the final pushed value (35), not a sum";
+    EXPECT_EQ(metrics.latestValue(rxCounter, labels), std::optional<double>(20.0))
+        << "rx counter must sum every pushed delta (5+15)";
+    EXPECT_EQ(metrics.latestValue(rxLast, labels), std::optional<double>(15.0))
+        << "rx last-op gauge must reflect only the final pushed value (15), not a sum";
+}
+
 int
 main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);

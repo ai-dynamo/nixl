@@ -65,8 +65,8 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 | ---------- | ------- | ----- | --------- |
 | `agent_memory_registered` | No | Yes | No |
 | `agent_memory_deregistered` | No | Yes | No |
-| `agent_tx_bytes` | Yes | No | No |
-| `agent_rx_bytes` | Yes | No | No |
+| `agent_tx_bytes` | Yes | Yes | No |
+| `agent_rx_bytes` | Yes | Yes | No |
 | `agent_tx_requests_num` | Yes | No | No |
 | `agent_rx_requests_num` | Yes | No | No |
 | `agent_xfer_time` | No | Yes | No |
@@ -76,7 +76,7 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 **Counter, Gauge, Histogram** - as implemented by the DOCA Telemetry Exporter
 
 - **Counter**: Instance lifetime count of the related value. Summed over the separate events' values.
-- **Gauge**: Shows the value per the last event (transaction). E.g agent_memory_registered represents the memory amount registered by the last operation (and not the total memory registered during instance lifetime). The value is updated per each event (request) and can grow or decrease.
+- **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte events publish both a cumulative counter and a last-operation gauge: `agent_tx_bytes` / `agent_rx_bytes` carry the running total, while `agent_tx_bytes_last` / `agent_rx_bytes_last` carry the byte size of the latest TX/RX request. The memory gauges (`agent_memory_registered` / `agent_memory_deregistered`) report the size of the last (de)registration.
 - **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details.
 
 ### Metric labels

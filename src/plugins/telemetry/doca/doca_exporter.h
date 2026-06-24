@@ -53,8 +53,13 @@ private:
     appendCounterSample(const nixlTelemetryEvent &event, const char *label_values[]);
 
     // Appends a gauge sample to the time-series (absolute last-operation value).
+    // metric_name is passed explicitly so an event can publish a gauge under a
+    // name that differs from the event name (e.g. AGENT_TX_BYTES drives both the
+    // "agent_tx_bytes" counter and the "agent_tx_bytes_last" gauge).
     [[nodiscard]] doca_error_t
-    appendGaugeSample(const nixlTelemetryEvent &event, const char *label_values[]);
+    appendGaugeSample(const nixlTelemetryEvent &event,
+                      const std::string &metric_name,
+                      const char *label_values[]);
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_DOCA_EXPORTER_H
