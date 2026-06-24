@@ -1,0 +1,80 @@
+name: QA image export (throwaway)
+
+# One-off helper: pull the exact CI-built images from ECR (using the runner pod's
+# IRSA identity, same as the main CI) and hand them off to QA without anyone needing
+# AWS creds. Triggered by pushing this branch. Delete the branch when done.
+#
+# Run 28068000235, commit 7f97c034b7754ae4d2f8c2923fc04f2dd18f7e3b.
+# Exports the 4 manylinux variants: CUDA 12.9 + CUDA 13 for x86_64 and arm64.
+
+on:
+  push:
+    branches:
+      - qa-export-images
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  ECR: 210086341041.dkr.ecr.us-west-2.amazonaws.com/nixl
+  SHA: 7f97c034b7754ae4d2f8c2923fc04f2dd18f7e3b
+  RUN_ID: "28068000235"
+
+jobs:
+  export:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: build-nixl-manylinux
+            runner: amd
+          - name: build-nixl-manylinux-cuda13
+            runner: amd
+          - name: build-nixl-arm-manylinux
+            runner: arm
+          - name: build-nixl-arm-manylinux-cuda13
+            runner: arm
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-${{ matrix.runner }}-v1
+    timeout-minutes: 60
+    steps:
+      - name: Resolve image refs
+        run: |
+          set -euxo pipefail
+          echo "SRC_IMAGE=${ECR}:${{ matrix.name }}-${SHA}-${RUN_ID}" >> "$GITHUB_ENV"
+          echo "GHCR_IMAGE=ghcr.io/ai-dynamo/nixl-qa-export:${{ matrix.name }}-${RUN_ID}" >> "$GITHUB_ENV"
+
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Pull exact CI image from ECR
+        run: |
+          set -euxo pipefail
+          docker pull "$SRC_IMAGE"
+          echo "=== image size ==="
+          docker images "$SRC_IMAGE" --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+          docker image inspect "$SRC_IMAGE" --format 'digest={{index .RepoDigests 0}}'
+
+      - name: Re-push to GHCR for QA (best effort)
+        continue-on-error: true
+        run: |
+          set -euxo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag "$SRC_IMAGE" "$GHCR_IMAGE"
+          docker push "$GHCR_IMAGE"
+          echo "QA can now: docker pull $GHCR_IMAGE"
+
+      - name: Save image to tarball (fallback deliverable)
+        run: |
+          set -euxo pipefail
+          docker save "$SRC_IMAGE" | gzip > "${{ matrix.name }}.tar.gz"
+          ls -lh "${{ matrix.name }}.tar.gz"
+
+      - name: Upload tarball artifact (best effort)
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: nixl-image-${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
+          retention-days: 2
+          if-no-files-found: error
