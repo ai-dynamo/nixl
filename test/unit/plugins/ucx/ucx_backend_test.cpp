@@ -131,60 +131,12 @@ std::string memType2Str(nixl_mem_t mem_type)
 }
 
 
-#ifdef HAVE_GPU
-static int
-gpuQueryAddr(void *address, bool &is_dev, int &dev) {
-#ifdef HAVE_CUDA
-    CUdevice cu_dev;
-    CUcontext cu_ctx;
-    CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
-    uint32_t is_managed = 0;
-#define NUM_ATTRS 4
-    CUpointer_attribute attr_type[NUM_ATTRS];
-    void *attr_data[NUM_ATTRS];
-    CUresult result;
-
-    attr_type[0] = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
-    attr_data[0] = &mem_type;
-    attr_type[1] = CU_POINTER_ATTRIBUTE_IS_MANAGED;
-    attr_data[1] = &is_managed;
-    attr_type[2] = CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
-    attr_data[2] = &cu_dev;
-    attr_type[3] = CU_POINTER_ATTRIBUTE_CONTEXT;
-    attr_data[3] = &cu_ctx;
-
-    result = cuPointerGetAttributes(4, attr_type, attr_data, (CUdeviceptr)address);
-
-    is_dev = (mem_type == CU_MEMORYTYPE_DEVICE);
-    dev = cu_dev;
-
-    std::cout << "CUDA addr: " << std::hex << address << " dev=" << std::dec << dev
-              << " ctx=" << std::hex << cu_ctx << std::dec << std::endl;
-
-    return (CUDA_SUCCESS != result);
-#elif defined(HAVE_ROCM)
-    hipPointerAttribute_t attrs;
-    const hipError_t result = hipPointerGetAttributes(&attrs, address);
-
-    if (result == hipSuccess) {
-        is_dev = (attrs.type == hipMemoryTypeDevice);
-        dev = attrs.device;
-        std::cout << "HIP addr: " << std::hex << address << " dev=" << std::dec << dev << std::endl;
-        return 0;
-    }
-    return 1;
-#endif
-}
-#endif
-
-
 void allocateBuffer(nixl_mem_t mem_type, int dev_id, size_t len, void* &addr)
 {
     switch(mem_type) {
     case DRAM_SEG:
         addr = calloc(1, len);
         break;
-#ifdef HAVE_GPU
     case VRAM_SEG:{
         bool is_dev;
         int dev;
@@ -194,7 +146,6 @@ void allocateBuffer(nixl_mem_t mem_type, int dev_id, size_t len, void* &addr)
         gpuQueryAddr(addr, is_dev, dev);
         break;
     }
-#endif
     default:
         nixl_exit_on_failure(false, "Unsupported memory type!");
     }
@@ -207,12 +158,10 @@ void releaseBuffer(nixl_mem_t mem_type, int dev_id, void* &addr)
     case DRAM_SEG:
         free(addr);
         break;
-#ifdef HAVE_GPU
     case VRAM_SEG:
         gpuSetDevice(dev_id, "Failed to set device");
         gpuFree(addr, "Failed to free GPU buffer 0");
         break;
-#endif
     default:
         nixl_exit_on_failure(false, "Unsupported memory type!");
     }
@@ -224,12 +173,10 @@ void doMemset(nixl_mem_t mem_type, int dev_id, void *addr, char byte, size_t len
     case DRAM_SEG:
         memset(addr, byte, len);
         break;
-#ifdef HAVE_GPU
     case VRAM_SEG:
         gpuSetDevice(dev_id, "Failed to set device");
         gpuMemset(addr, byte, len, "Failed to memset");
         break;
-#endif
     default:
         nixl_exit_on_failure(false, "Unsupported memory type!");
     }
@@ -241,13 +188,11 @@ void *getValidationPtr(nixl_mem_t mem_type, void *addr, size_t len)
     case DRAM_SEG:
         return addr;
         break;
-#ifdef HAVE_GPU
     case VRAM_SEG: {
         void *ptr = calloc(len, 1);
         gpuMemcpyD2H(ptr, addr, len, "Failed to memcpy");
         return ptr;
     }
-#endif
     default:
         nixl_exit_on_failure(false, "Unsupported memory type!");
     }
@@ -259,11 +204,9 @@ void *releaseValidationPtr(nixl_mem_t mem_type, void *addr)
     switch(mem_type) {
     case DRAM_SEG:
         break;
-#ifdef HAVE_GPU
     case VRAM_SEG:
         free(addr);
         break;
-#endif
     default:
         nixl_exit_on_failure(false, "Unsupported memory type!");
     }
@@ -680,7 +623,6 @@ int main()
         }
     }
 
-#ifdef HAVE_GPU
     int dev_ids[2] = { 0 , 0 };
     int n_vram_dev = 0;
     gpuGetDeviceCount(&n_vram_dev, "Failed to get device count");
@@ -690,16 +632,13 @@ int main()
         dev_ids[1] = 1;
         dev_ids[0] = 0;
     }
-#endif
 
     for(int i = 0; i < 2; i++) {
         //Test local memory to local memory transfer
         test_intra_agent_transfer(thread_on[i], ucx[i][0], DRAM_SEG);
-#ifdef HAVE_GPU
         if (n_vram_dev > 0) {
             test_intra_agent_transfer(thread_on[i], ucx[i][0], VRAM_SEG);
         }
-#endif
     }
 
     for(int i = 0; i < 2; i++) {
@@ -710,7 +649,6 @@ int main()
                                   ucx[i][0], DRAM_SEG, 0,
                                   ucx[i][1], DRAM_SEG, 0);
 
-#ifdef HAVE_GPU
         if (n_vram_dev > 1) {
             test_inter_agent_transfer(thread_on[i], false,
                                       ucx[i][0], VRAM_SEG, dev_ids[0],
@@ -725,7 +663,6 @@ int main()
                                       ucx[i][0], VRAM_SEG, dev_ids[0],
                                       ucx[i][1], DRAM_SEG, dev_ids[1]);
         }
-#endif
     }
 
     // Deallocate UCX engines
