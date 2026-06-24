@@ -133,9 +133,10 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     EP_HOST_ASSERT(num_nvl_bytes % NUM_BUFFER_ALIGNMENT_BYTES == 0 and (num_nvl_bytes <= std::numeric_limits<int>::max() or num_rdma_bytes == 0));
     EP_HOST_ASSERT(num_rdma_bytes % NUM_BUFFER_ALIGNMENT_BYTES == 0 and (low_latency_mode or num_rdma_bytes <= std::numeric_limits<int>::max()));
     EP_HOST_ASSERT(0 <= rank and rank < num_ranks and (num_ranks <= nvl_group_size * NUM_MAX_RDMA_PEERS or low_latency_mode));
-    EP_HOST_ASSERT(num_ranks < nvl_group_size or num_ranks % nvl_group_size == 0);
-    if (num_rdma_bytes > 0)
-        EP_HOST_ASSERT(num_ranks > nvl_group_size or low_latency_mode);
+    if (!low_latency_mode) {
+        EP_HOST_ASSERT(num_ranks <= nvl_group_size or num_ranks % nvl_group_size == 0);
+        EP_HOST_ASSERT((num_ranks > nvl_group_size) == (num_rdma_bytes > 0));
+    }
 
     // Get ranks
     CUDA_CHECK(cudaGetDevice(&device_id));
@@ -1363,8 +1364,8 @@ void Buffer::_nixl_ep_memory_views_create(void) {
 
         const std::string remote_agent_name = nixl_agent_info->remote_agent_names[r];
         const int64_t remote_rdma_bytes = nixl_peer_info[r].rdma_buffer_bytes;
-        void* remote_rdma_ptr = nixl_peer_info[r].rdma_buffer_ptr;
-        void* remote_sync_ptr = nixl_peer_info[r].sync_buffer_ptr;
+        void *remote_rdma_ptr = nixl_peer_info[r].rdma_buffer_ptr;
+        void *remote_sync_ptr = nixl_peer_info[r].sync_buffer_ptr;
         int remote_device_id = nixl_peer_info[r].device_id;
         remote_mvh_indices[r] = 0;
 

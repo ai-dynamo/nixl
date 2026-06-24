@@ -1143,6 +1143,7 @@ __global__ void cache_p2p_ptr_kernel(nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr,
                                      int rank_id) {
     auto nixl_ctx = *nixl_ctx_ptr;
     EP_DEVICE_ASSERT(nixl_ctx.nvl_group_size > 0);
+    EP_DEVICE_ASSERT(rank_id >= 0 and rank_id < nixl_ctx.max_num_ranks);
     if (rank_id / nixl_ctx.nvl_group_size != nixl_ctx.rank / nixl_ctx.nvl_group_size) {
         nixl_ctx.p2p_ptrs[rank_id] = nullptr;
         return;
