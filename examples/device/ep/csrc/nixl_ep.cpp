@@ -21,7 +21,7 @@
  */
 
 #include "nixl_ep.hpp"
- 
+
 #include "cuda_warn.hpp"
 #include "kernels/api.cuh"
 
