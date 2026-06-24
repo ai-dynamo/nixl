@@ -36,6 +36,6 @@ RUN curl -fL --retry 3 --retry-delay 2 \
 
 # Pre-download model weights so CI tests don't hit HuggingFace at runtime.
 # vllm accuracy phase is a no-op, so only TinyLlama is needed here.
-RUN huggingface-cli download TinyLlama/TinyLlama-1.1B-Chat-v1.0
+RUN hf download TinyLlama/TinyLlama-1.1B-Chat-v1.0
 
 ENV HF_HUB_OFFLINE=1

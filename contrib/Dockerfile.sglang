@@ -27,7 +27,7 @@ RUN set -eux; \
 # Pre-download model weights so CI tests don't hit HuggingFace at runtime.
 # TinyLlama is used for smoke/perf; Qwen3-8B is required for the accuracy
 # phase (gsm8k target >= 0.9, which TinyLlama cannot clear).
-RUN huggingface-cli download TinyLlama/TinyLlama-1.1B-Chat-v1.0 && \
-    huggingface-cli download Qwen/Qwen3-8B
+RUN hf download TinyLlama/TinyLlama-1.1B-Chat-v1.0 && \
+    hf download Qwen/Qwen3-8B
 
 ENV HF_HUB_OFFLINE=1
