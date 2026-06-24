@@ -228,13 +228,15 @@ if [ -d "$NIXL_DIR/build" ]; then
     exit 1
 fi
 
-# The manylinux build path requires CUDA_VERSION: Dockerfile.manylinux feeds it into the
-# torch cuXXX index URL and the cu12/cu13 meta-wheel split. Empty yields a broken index
-# (https://download.pytorch.org/whl/cu) and a skipped meta-wheel, so fail fast here.
+# The manylinux build path requires CUDA_VERSION in MAJOR.MINOR form (e.g. 12.9, 13.0):
+# Dockerfile.manylinux derives the torch index (cu<major><minor>) and the cu12/cu13
+# meta-wheel split from it. Empty yields a broken index (https://download.pytorch.org/
+# whl/cu) and a skipped meta-wheel; a major-only value like "12" yields a nonexistent
+# "cu12" index instead of e.g. "cu129". Validate the shape (not just presence) up front.
 case "$DOCKER_FILE" in
     *manylinux*)
-        if [ -z "$CUDA_VERSION" ]; then
-            echo "ERROR: --cuda-version is required for manylinux builds (e.g. --cuda-version 12.9)" >&2
+        if ! echo "$CUDA_VERSION" | grep -qE '^[0-9]+\.[0-9]+$'; then
+            echo "ERROR: --cuda-version must be MAJOR.MINOR for manylinux builds (e.g. --cuda-version 12.9); got '${CUDA_VERSION}'" >&2
             exit 1
         fi
         ;;
