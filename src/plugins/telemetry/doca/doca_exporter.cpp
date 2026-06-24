@@ -298,16 +298,12 @@ nixlTelemetryDocaExporter::appendCounterSample(const nixlTelemetryEvent &event,
 
 doca_error_t
 nixlTelemetryDocaExporter::appendGaugeSample(const nixlTelemetryEvent &event,
-                                             const std::string &metric_name,
+                                             const char *metric_name,
                                              const char *label_values[]) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    return doca_telemetry_exporter_metrics_add_gauge(ctx_->source,
-                                                     docaTimestamp(),
-                                                     metric_name.c_str(),
-                                                     event.value_,
-                                                     ctx_->label_set_id,
-                                                     label_values);
+    return doca_telemetry_exporter_metrics_add_gauge(
+        ctx_->source, docaTimestamp(), metric_name, event.value_, ctx_->label_set_id, label_values);
 #pragma GCC diagnostic pop
 }
 
@@ -317,9 +313,6 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
         const std::lock_guard lock(g_metrics_mutex);
         const char *label_values[] = {agent_name_.c_str()};
 
-        // Counter and gauge are independent: the byte events publish BOTH a
-        // cumulative counter and a last-operation gauge from the same per-op
-        // value; every other metric is counter-only or gauge-only.
         if (isCounterEvent(event.eventType_)) {
             const auto result = appendCounterSample(event, label_values);
             if (result != DOCA_SUCCESS) {
