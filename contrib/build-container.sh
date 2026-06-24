@@ -41,6 +41,9 @@ OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
+# CUDA toolkit version (e.g. 12.9 / 13.0). Option B (manylinux on public PyPA base)
+# no longer inherits this from the base image's ENV, so it must be passed in.
+CUDA_VERSION=${CUDA_VERSION:-}
 
 get_options() {
     while :; do
@@ -87,6 +90,14 @@ get_options() {
         --build-type)
             if [ "$2" ]; then
                 BUILD_TYPE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --cuda-version)
+            if [ "$2" ]; then
+                CUDA_VERSION=$2
                 shift
             else
                 missing_requirement $1
@@ -187,6 +198,7 @@ show_help() {
     echo "usage: build-container.sh"
     echo "  [--base base image]"
     echo "  [--base-image-tag base image tag]"
+    echo "  [--cuda-version CUDA version, e.g. 12.9 (manylinux builds)]"
     echo "  [--wheel-base base platform for wheel builds]"
     echo "  [--no-cache disable docker build cache]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
@@ -217,6 +229,7 @@ if [ -d "$NIXL_DIR/build" ]; then
 fi
 
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
+BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
@@ -229,4 +242,9 @@ BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 
 show_build_options
 
+# Disable buildx's default provenance/sbom attestations (the attestation-manifest export
+# was tipping the ARM build over the job timeout; CI images don't need them). Use the env
+# var, which buildx honors and the classic docker build frontend ignores -- unlike the
+# --provenance/--sbom flags, which classic docker rejects as unknown.
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
 docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
