@@ -15,18 +15,18 @@
  * limitations under the License.
  */
 
- #pragma once
+#pragma once
 
- #include <cuda_runtime.h>
- 
- #include <iostream>
- 
- namespace nixl_ep::cuda {
- inline void
- warn(cudaError_t status, const char *caller, const char *operation) noexcept {
-     if (status != cudaSuccess) {
-         std::cerr << "WARNING: " << caller << " failed to " << operation << ": "
-                   << cudaGetErrorString(status) << '\n';
-     }
- }
- } // namespace nixl_ep
+#include <cuda_runtime.h>
+
+#include <iostream>
+
+namespace nixl_ep::cuda {
+inline void
+warn(cudaError_t status, const char *caller, const char *operation) noexcept {
+    if (status != cudaSuccess) {
+        std::cerr << "WARNING: " << caller << " failed to " << operation << ": "
+                  << cudaGetErrorString(status) << '\n';
+    }
+}
+} // namespace nixl_ep::cuda
