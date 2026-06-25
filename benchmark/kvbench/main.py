@@ -507,9 +507,13 @@ def kvcache_command(model, model_config, **kwargs):
 )
 @click.option(
     "--storage-backend",
-    type=click.Choice(["POSIX", "GDS", "GDS_MT"]),
+    type=click.Choice(["POSIX", "GDS", "GDS_MT", "DOCA_MEMOS"]),
     default="POSIX",
-    help="NIXL storage backend (POSIX, GDS, or GDS_MT for multi-threaded GDS)",
+    help="NIXL storage backend. POSIX/GDS/GDS_MT are FILE backends; DOCA_MEMOS "
+    "is an object/key (KV) backend. The --storage-path, --storage-block-size, "
+    "--storage-num-handles, --storage-posix-api and --storage-direct-io options "
+    "are FILE-only and are ignored for DOCA_MEMOS; DOCA_MEMOS requires "
+    "--doca-device-name and accepts the other --doca-* options.",
 )
 @click.option(
     "--storage-direct-io/--no-storage-direct-io",
@@ -551,6 +555,38 @@ def kvcache_command(model, model_config, **kwargs):
     "Each handle gets its own async I/O queue. "
     "Recommended: 8 with --storage-block-size 1M --storage-posix-api uring.",
 )
+@click.option(
+    "--doca-device-name",
+    type=str,
+    default=None,
+    help="DOCA_MEMOS only: path to the NVMe KV device (e.g. /dev/nvme0n1). "
+    "Required when --storage-backend DOCA_MEMOS.",
+)
+@click.option(
+    "--doca-num-tasks",
+    type=int,
+    default=None,
+    help="DOCA_MEMOS only: DOCA task-pool size (default unset -> plugin default 8192).",
+)
+@click.option(
+    "--doca-nguid",
+    type=str,
+    default=None,
+    help="DOCA_MEMOS only: 32-character hex NVMe namespace NGUID (default unset).",
+)
+@click.option(
+    "--doca-query-mem-mode",
+    type=click.Choice(["assume_success", "actual"]),
+    default="assume_success",
+    help="DOCA_MEMOS only: queryMem() behavior. assume_success=report success "
+    "without querying the device; actual=issue real DOCA EXIST operations.",
+)
+@click.option(
+    "--doca-ignore-read-not-found/--no-doca-ignore-read-not-found",
+    default=False,
+    help="DOCA_MEMOS only: when set, RETRIEVE of a missing key succeeds "
+    "(undefined buffer) instead of failing.",
+)
 def sequential_ct_perftest(
     config_file,
     verify_buffers,
@@ -564,6 +600,11 @@ def sequential_ct_perftest(
     storage_block_size,
     storage_posix_api,
     storage_num_handles,
+    doca_device_name,
+    doca_num_tasks,
+    doca_nguid,
+    doca_query_mem_mode,
+    doca_ignore_read_not_found,
 ):
     """Run sequential custom traffic performance test using patterns defined in YAML config."""
     from test.sequential_custom_traffic_perftest import SequentialCTPerftest
@@ -581,6 +622,13 @@ def sequential_ct_perftest(
 
     if "traffic_patterns" not in config:
         raise ValueError("Config file must contain 'traffic_patterns' key")
+
+    # DOCA_MEMOS is an object/key backend that requires a device path. Validate
+    # early so we fail before building any backend.
+    if storage_backend == "DOCA_MEMOS" and not doca_device_name:
+        raise click.UsageError(
+            "--doca-device-name is required when --storage-backend DOCA_MEMOS"
+        )
 
     # Determine storage base path (CLI override > default)
     if storage_path:
@@ -739,6 +787,11 @@ def sequential_ct_perftest(
         storage_block_size=block_size_bytes,
         storage_posix_api=storage_posix_api,
         storage_num_handles=storage_num_handles,
+        storage_doca_device_name=doca_device_name,
+        storage_doca_num_tasks=doca_num_tasks,
+        storage_doca_nguid=doca_nguid,
+        storage_doca_query_mem_mode=doca_query_mem_mode,
+        storage_doca_ignore_read_not_found=doca_ignore_read_not_found,
     )
     perftest.run(
         verify_buffers=verify_buffers,

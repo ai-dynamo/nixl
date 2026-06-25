@@ -24,7 +24,12 @@ from enum import Enum, auto
 from itertools import chain
 from pathlib import Path
 from test.custom_traffic_perftest import CTPerftest, NixlBuffer, StorageXferHandle
-from test.storage_backend import FilesystemBackend, StorageBackend, StorageHandle
+from test.storage_backend import (
+    DocaMemosBackend,
+    FilesystemBackend,
+    StorageBackend,
+    StorageHandle,
+)
 from test.traffic_pattern import TrafficPattern
 from typing import Any, Dict, List, Optional
 
@@ -65,6 +70,13 @@ class SequentialCTPerftest(CTPerftest):
         storage_block_size: int = 0,
         storage_posix_api: str = "auto",
         storage_num_handles: int = 1,
+        # DOCA_MEMOS (object/key) backend options (used only when
+        # storage_nixl_backend == "DOCA_MEMOS"; ignored otherwise)
+        storage_doca_device_name: Optional[str] = None,
+        storage_doca_num_tasks: Optional[int] = None,
+        storage_doca_nguid: Optional[str] = None,
+        storage_doca_query_mem_mode: str = "assume_success",
+        storage_doca_ignore_read_not_found: bool = False,
     ) -> None:
         """Initialize multi-pattern performance test.
 
@@ -78,6 +90,14 @@ class SequentialCTPerftest(CTPerftest):
             storage_posix_api: POSIX async I/O API ("auto", "aio", "uring")
             storage_num_handles: Number of concurrent transfer handles per storage op.
                                1 = legacy single handle. 8 = recommended for POSIX/URING.
+                               Forced to 1 for the DOCA_MEMOS object backend.
+            storage_doca_device_name: DOCA_MEMOS only. NVMe KV device path
+                               (required when backend is DOCA_MEMOS).
+            storage_doca_num_tasks: DOCA_MEMOS only. Optional task-pool size.
+            storage_doca_nguid: DOCA_MEMOS only. Optional 32-char hex NGUID.
+            storage_doca_query_mem_mode: DOCA_MEMOS only. "assume_success" or "actual".
+            storage_doca_ignore_read_not_found: DOCA_MEMOS only. RETRIEVE of a
+                               missing key succeeds instead of erroring.
         """
         self.my_rank = dist_rt.get_rank()
         self.world_size = dist_rt.get_world_size()
@@ -126,7 +146,31 @@ class SequentialCTPerftest(CTPerftest):
         self.recv_buf_by_mem_type: dict[str, NixlBuffer] = {}
 
         # Initialize storage backend if needed
-        if self._has_storage:
+        if self._has_storage and (storage_nixl_backend or "").upper() == "DOCA_MEMOS":
+            # Object/key backend: no file path / sharding. Local DRAM/VRAM
+            # buffers are registered with DOCA_MEMOS by _init_buffers (generic),
+            # and the OBJ objects are registered inside DocaMemosBackend.
+            self._storage_nixl_backend = "DOCA_MEMOS"
+            logger.info(
+                "[Rank %d] Storage: backend=DOCA_MEMOS, device=%s, query_mem_mode=%s",
+                self.my_rank,
+                storage_doca_device_name,
+                storage_doca_query_mem_mode,
+            )
+            self._storage_backend = DocaMemosBackend(
+                agent=self.nixl_agent,
+                device_name=storage_doca_device_name,
+                num_tasks=storage_doca_num_tasks,
+                nguid=storage_doca_nguid,
+                query_mem_mode=storage_doca_query_mem_mode,
+                ignore_read_not_found=storage_doca_ignore_read_not_found,
+            )
+            # OBJ backend has no file sharding; force a single transfer handle.
+            self._storage_num_handles = 1
+            # Only create UCX if we have RDMA traffic patterns
+            if self._has_rdma:
+                self.nixl_agent.create_backend("UCX")
+        elif self._has_storage:
             nixl_backend = storage_nixl_backend or "POSIX"
             self._storage_nixl_backend = nixl_backend
             use_direct_io = storage_direct_io or nixl_backend in ("GDS", "GDS_MT")
