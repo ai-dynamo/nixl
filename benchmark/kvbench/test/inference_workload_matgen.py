@@ -214,6 +214,7 @@ def gen_matrices_and_compute_time(
     prefill_worker_config: WorkerConfig,
     decode_worker_config: WorkerConfig,
     flops_per_gpu: float = 1000 * 1e12,
+    storage_only: bool = False,
 ) -> List[TransferMatrix]:
     """Generate communication matrices for all batches.
 
@@ -228,8 +229,14 @@ def gen_matrices_and_compute_time(
     Returns:
         List of TransferMatrix objects
     """
-    # Handle storage-only mode with no decode workers
-    storage_only_no_decode = len(decode_workers) == 0
+    # Storage-only mode is driven by the explicit flag, not inferred from an
+    # empty decode worker list (an empty list with storage_only=False would
+    # otherwise silently produce inactive zero-byte RDMA matrices).
+    storage_only_no_decode = storage_only
+    assert storage_only_no_decode == (len(decode_workers) == 0), (
+        f"storage_only={storage_only} is inconsistent with "
+        f"{len(decode_workers)} decode worker group(s)"
+    )
 
     workers_coupling: list[tuple[list[int], list[int] | None]]
     if not storage_only_no_decode:
@@ -433,6 +440,23 @@ def main(
     Returns:
         matrices
     """
+    # storage_only and decode workers are mutually exclusive: a storage-only
+    # workload has no decode side, while a workload with decode GPUs is not
+    # storage-only. Reject inconsistent combinations instead of silently
+    # emitting a workload that does not match the requested topology (e.g.
+    # building RDMA matrices internally but omitting the [rdma] section, or
+    # inferring storage-only mode from an empty decode worker list).
+    if storage_only and num_decode_gpus > 0:
+        raise ValueError(
+            f"storage_only=True is incompatible with num_decode_gpus={num_decode_gpus} "
+            "(> 0); storage-only runs have no decode workers."
+        )
+    if not storage_only and num_decode_gpus == 0:
+        raise ValueError(
+            "num_decode_gpus=0 requires storage_only=True; otherwise there is "
+            "no decode side to generate RDMA traffic."
+        )
+
     # Rules of thumb - only apply when there are decode workers
     if num_decode_gpus > 0:
         assert (
@@ -520,6 +544,7 @@ def main(
         prefill_worker_config,
         decode_worker_config,
         flops_per_gpu,
+        storage_only=storage_only,
     )
 
     # Save matrices and metadata to files
@@ -536,9 +561,13 @@ def main(
         matrices_dir.mkdir(parents=True, exist_ok=True)
 
     storage_enabled = prefix_hit_rate is not None or storage_only
+    # 100% read for storage_only (no compute sleep). When storage is disabled
+    # entirely, fall back to 0.0 so compute sleep is not silently zeroed.
     hit_rate = (
-        prefix_hit_rate if prefix_hit_rate is not None else 1.0
-    )  # 100% read for storage_only
+        prefix_hit_rate
+        if prefix_hit_rate is not None
+        else (1.0 if storage_only else 0.0)
+    )
 
     if storage_enabled:
         logger.info(

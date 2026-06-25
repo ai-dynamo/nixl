@@ -97,6 +97,14 @@ def load_tp_file(tp_file) -> dict:
                 continue
             if line.startswith("[") and line.endswith("]"):
                 current_section = line[1:-1].lower()
+                if current_section not in {"rdma", "read", "write"}:
+                    raise ValueError(
+                        f"{tp_file}: unsupported section [{current_section}]"
+                    )
+                if current_section in sections:
+                    raise ValueError(
+                        f"{tp_file}: duplicate section [{current_section}]"
+                    )
                 sections[current_section] = []
             elif current_section is not None:
                 sections[current_section].append(line.split())
@@ -606,6 +614,14 @@ def sequential_ct_perftest(
         storage_ops = None
 
         if "tp_file" in tp_config:
+            legacy_keys = [
+                key for key in ("matrix_file", "matrix", "storage") if key in tp_config
+            ]
+            if legacy_keys:
+                raise ValueError(
+                    f"Traffic pattern {idx} mixes 'tp_file' with legacy fields: "
+                    f"{', '.join(legacy_keys)}"
+                )
             # Unified TP file with [rdma], [read], [write] sections
             tp_file = tp_config["tp_file"]
             if not os.path.isabs(tp_file):
@@ -715,15 +731,9 @@ def sequential_ct_perftest(
     else:
         logger.info("Loaded %d traffic patterns, no storage", len(patterns))
 
-    # Parse block size string (supports K, M, G suffixes)
-    block_size_bytes = 0
-    if storage_block_size and storage_block_size != "0":
-        bs = storage_block_size.strip().upper()
-        multipliers = {"K": 1024, "M": 1024**2, "G": 1024**3}
-        if bs[-1] in multipliers:
-            block_size_bytes = int(float(bs[:-1]) * multipliers[bs[-1]])
-        else:
-            block_size_bytes = int(bs)
+    # Parse block size string (supports K, M, G suffixes via parse_size()).
+    block_size_bytes = parse_size(storage_block_size) if storage_block_size else 0
+    if block_size_bytes > 0:
         logger.info(
             "Storage block size: %d bytes (%s)", block_size_bytes, storage_block_size
         )

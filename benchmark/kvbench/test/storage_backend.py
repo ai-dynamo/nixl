@@ -243,6 +243,28 @@ class FilesystemBackend(StorageBackend):
             f.flush()
             os.fsync(f.fileno())
 
+    def _ensure_file(
+        self, file_path: Path, file_size: int, read_size: int, rank: int
+    ) -> None:
+        """Create the file, or recreate it if a stale one has the wrong size.
+
+        prepare() may be re-run with the same storage_path but different
+        read_size/write_size. Reusing a file whose on-disk size no longer
+        matches the region we are about to register would register the wrong
+        size/layout, so recreate it when the size differs.
+        """
+        if file_path.exists():
+            existing_size = file_path.stat().st_size
+            if existing_size == file_size:
+                return
+            logger.warning(
+                "Recreating storage file %s: existing size %d != expected %d",
+                file_path,
+                existing_size,
+                file_size,
+            )
+        self._create_file(file_path, file_size, read_size, rank)
+
     def _open_and_register_file(self, file_path: Path, file_size: int) -> int:
         """Open a file and register it with NIXL. Returns fd.
 
@@ -312,8 +334,7 @@ class FilesystemBackend(StorageBackend):
         if n_shards <= 1:
             # Legacy: single file
             file_path = self._get_file_path(tp_idx, rank)
-            if not file_path.exists():
-                self._create_file(file_path, file_size, read_size, rank)
+            self._ensure_file(file_path, file_size, read_size, rank)
             fd = self._open_and_register_file(file_path, file_size)
 
             handle = StorageHandle(
@@ -350,8 +371,7 @@ class FilesystemBackend(StorageBackend):
                     actual_size = actual_read + shard_write
                     if actual_size <= 0:
                         break
-                    if not fpath.exists():
-                        self._create_file(fpath, actual_size, actual_read, rank)
+                    self._ensure_file(fpath, actual_size, actual_read, rank)
                     fd = self._open_and_register_file(fpath, actual_size)
                     shard_fds.append(fd)
                     shard_paths.append(str(fpath))

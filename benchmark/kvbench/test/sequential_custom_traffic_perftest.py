@@ -29,11 +29,10 @@ from test.traffic_pattern import TrafficPattern
 from typing import Any, Dict, List, Optional
 
 import yaml
-from runtime.etcd_rt import etcd_dist_utils as dist_rt
-from tabulate import tabulate
-
 from nixl._api import nixl_agent, nixl_agent_config
 from nixl.logging import get_logger
+from runtime.etcd_rt import etcd_dist_utils as dist_rt
+from tabulate import tabulate
 
 logger = get_logger(__name__)
 
@@ -61,7 +60,7 @@ class SequentialCTPerftest(CTPerftest):
         # Storage options (optional)
         storage_path: Optional[Path] = None,
         storage_nixl_backend: Optional[str] = None,
-        storage_direct_io: bool = False,
+        storage_direct_io: Optional[bool] = None,
         storage_block_size: int = 0,
         storage_posix_api: str = "auto",
         storage_num_handles: int = 1,
@@ -129,7 +128,13 @@ class SequentialCTPerftest(CTPerftest):
         if self._has_storage:
             nixl_backend = storage_nixl_backend or "POSIX"
             self._storage_nixl_backend = nixl_backend
-            use_direct_io = storage_direct_io or nixl_backend in ("GDS", "GDS_MT")
+            # Honor an explicit flag (main.py already resolves the auto-enable
+            # rule); only fall back to backend-based auto-enable when unset.
+            use_direct_io = (
+                storage_direct_io
+                if storage_direct_io is not None
+                else nixl_backend in ("GDS", "GDS_MT")
+            )
 
             # Build backend-specific params (e.g., io_uring selection)
             backend_params = {}
@@ -1306,6 +1311,9 @@ class SequentialCTPerftest(CTPerftest):
 
                 if verify_buffers:
                     for i, tp in enumerate(self.traffic_patterns):
+                        # Storage-only TPs have no RDMA matrix to validate.
+                        if not tp.has_rdma():
+                            continue
                         send_bufs, recv_bufs = tp_bufs[i]
                         self._verify_tp(tp, recv_bufs, print_recv_buffers)
 
@@ -1471,8 +1479,8 @@ class SequentialCTPerftest(CTPerftest):
                             "mean_bw": tp_mean_bws[i],
                             "min_start_ts": min(starts) if starts else None,
                             "max_end_ts": max(ends) if ends else None,
-                            "storage_read_avg_ms": storage_read_max_ms[i],
-                            "storage_write_avg_ms": storage_write_max_ms[i],
+                            "storage_read_max_ms": storage_read_max_ms[i],
+                            "storage_write_max_ms": storage_write_max_ms[i],
                             "storage_read_start_ts": (
                                 min(stor_starts) if stor_starts else None
                             ),

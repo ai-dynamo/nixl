@@ -21,7 +21,6 @@ from collections import defaultdict
 from typing import Any, List, Optional
 
 import etcd3
-
 from nixl.logging import get_logger
 
 from .rt_base import ReduceOp, _RTUtils
@@ -283,24 +282,28 @@ class _EtcdDistUtils(_RTUtils):
         root: int = 0,
         timeout_sec: float = 600,
     ) -> List[float | int]:
+        allreduce_ix = self.ops_counter["all_reduce"]["world"]
+        self.ops_counter["all_reduce"]["world"] += 1
+        reduce_prefix = f"{self.prefix}/all_reduce/{allreduce_ix}"
+
         self.barrier(timeout_sec=timeout_sec)
-        self.client.put(f"{self.prefix}/all_reduce/{self.rank}", pickle.dumps(vals))
+        self.client.put(f"{reduce_prefix}/{self.rank}", pickle.dumps(vals))
         if self.rank == root:
-            self.client.delete(f"{self.prefix}/all_reduce/result")
+            self.client.delete(f"{reduce_prefix}/result")
         self.barrier(timeout_sec=timeout_sec)
 
         if self.rank == root:
             all_vals = []
             start_time = time.time()
             for dest_rank in range(self.world_size):
-                val = self.client.get(f"{self.prefix}/all_reduce/{dest_rank}")[0]
+                val = self.client.get(f"{reduce_prefix}/{dest_rank}")[0]
                 while val is None:
                     if time.time() - start_time > timeout_sec:
                         raise TimeoutError(
                             f"[Rank {self.rank}] all_reduce timeout waiting for rank {dest_rank} after {timeout_sec}s"
                         )
                     time.sleep(_POLL_INTERVAL_SEC)
-                    val = self.client.get(f"{self.prefix}/all_reduce/{dest_rank}")[0]
+                    val = self.client.get(f"{reduce_prefix}/{dest_rank}")[0]
                 all_vals.append(pickle.loads(val))
 
             logger.debug("All reduce values: %s", all_vals)
@@ -319,11 +322,11 @@ class _EtcdDistUtils(_RTUtils):
             else:
                 raise ValueError(f"Unsupported reduce operation: {op}")
 
-            self.client.put(f"{self.prefix}/all_reduce/result", pickle.dumps(final_val))
+            self.client.put(f"{reduce_prefix}/result", pickle.dumps(final_val))
 
         self.barrier(timeout_sec=timeout_sec)
 
-        val = self.client.get(f"{self.prefix}/all_reduce/result")[0]
+        val = self.client.get(f"{reduce_prefix}/result")[0]
         start_time = time.time()
         while val is None:
             if time.time() - start_time > timeout_sec:
@@ -331,7 +334,7 @@ class _EtcdDistUtils(_RTUtils):
                     f"[Rank {self.rank}] all_reduce timeout waiting for result after {timeout_sec}s"
                 )
             time.sleep(_POLL_INTERVAL_SEC)
-            val = self.client.get(f"{self.prefix}/all_reduce/result")[0]
+            val = self.client.get(f"{reduce_prefix}/result")[0]
         final_val = pickle.loads(val)
 
         return final_val
@@ -343,11 +346,14 @@ class _EtcdDistUtils(_RTUtils):
 
 
 _namespace_explicit = bool(os.environ.get("NIXL_ETCD_NAMESPACE"))
-if not _namespace_explicit:
+_scheduler_env_available = any(
+    os.environ.get(v) for v in ("SLURM_JOB_ID", "SLURM_JOBID", "PMIX_NAMESPACE")
+)
+if not _namespace_explicit and not _scheduler_env_available:
     logger.warning(
         "Environment variable NIXL_ETCD_NAMESPACE is not set; will try to "
-        "auto-namespace using SLURM_JOB_ID/PMIX_NAMESPACE. If none are set "
-        'either, export NIXL_ETCD_NAMESPACE="/nixl/kvbench/$(uuidgen)" to '
+        "auto-namespace using SLURM_JOB_ID/PMIX_NAMESPACE, but none were found. "
+        'Export NIXL_ETCD_NAMESPACE="/nixl/kvbench/$(uuidgen)" to '
         "avoid conflicts with other concurrent KVBench runs."
     )
 
