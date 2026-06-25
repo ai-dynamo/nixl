@@ -149,6 +149,18 @@ make_opt_args(const std::vector<uintptr_t> &backends) {
     return extra_params;
 }
 
+// Shared implementation for both nixlAgent::prepMemView overloads (local
+// nixl_xfer_dlist_t and remote nixl_remote_dlist_t), returning the
+// nixlMemViewH as a uintptr_t handle for Python.
+template <typename DlistT>
+static uintptr_t
+prep_mem_view(nixlAgent &agent, const DlistT &dlist, const std::vector<uintptr_t> &backends) {
+    nixl_opt_args_t extra_params = make_opt_args(backends);
+    nixlMemViewH mvh;
+    throw_nixl_exception(agent.prepMemView(dlist, mvh, &extra_params));
+    return reinterpret_cast<uintptr_t>(mvh);
+}
+
 PYBIND11_MODULE(_bindings, m) {
 
     // TODO: each nixl class and/or function can be documented in place
@@ -984,10 +996,7 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                const nixl_xfer_dlist_t &dlist,
                const std::vector<uintptr_t> &backends) -> uintptr_t {
-                nixl_opt_args_t extra_params = make_opt_args(backends);
-                nixlMemViewH mvh;
-                throw_nixl_exception(agent.prepMemView(dlist, mvh, &extra_params));
-                return reinterpret_cast<uintptr_t>(mvh);
+                return prep_mem_view(agent, dlist, backends);
             },
             py::arg("dlist"),
             py::arg("backends") = std::vector<uintptr_t>({}),
@@ -997,10 +1006,7 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                const nixl_remote_dlist_t &dlist,
                const std::vector<uintptr_t> &backends) -> uintptr_t {
-                nixl_opt_args_t extra_params = make_opt_args(backends);
-                nixlMemViewH mvh;
-                throw_nixl_exception(agent.prepMemView(dlist, mvh, &extra_params));
-                return reinterpret_cast<uintptr_t>(mvh);
+                return prep_mem_view(agent, dlist, backends);
             },
             py::arg("dlist"),
             py::arg("backends") = std::vector<uintptr_t>({}),
