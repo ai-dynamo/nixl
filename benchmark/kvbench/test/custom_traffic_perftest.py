@@ -21,11 +21,10 @@ from typing import Literal, Optional, Tuple
 
 import numpy as np
 import torch
-from runtime.etcd_rt import etcd_dist_utils as dist_rt
-from tabulate import tabulate
-
 from nixl._api import nixl_agent
 from nixl.logging import get_logger
+from runtime.etcd_rt import etcd_dist_utils as dist_rt
+from tabulate import tabulate
 
 logger = get_logger(__name__)
 
@@ -218,10 +217,16 @@ class NixlBuffer:
         ), "Failed to register memory"
         # Also register with additional backends if specified (e.g., POSIX for storage)
         if self._backends:
-            assert (
-                nixl_agent.register_memory(self.reg_descs, backends=self._backends)
-                is not None
-            ), f"Failed to register memory with backends {self._backends}"
+            # If the backend registration fails, deregister the default one we
+            # already made so we don't leak the registration.
+            try:
+                assert (
+                    nixl_agent.register_memory(self.reg_descs, backends=self._backends)
+                    is not None
+                ), f"Failed to register memory with backends {self._backends}"
+            except Exception:
+                nixl_agent.deregister_memory(self.reg_descs)
+                raise
 
     def get_chunk(
         self, size: int, offset: int, check_alignment: bool = True
@@ -387,12 +392,16 @@ class CTPerftest:
         try:
             md = self.nixl_agent.get_agent_metadata()
         except Exception as e:
-            logger.warning(
-                "[Rank %d] Skipping metadata exchange due to agent error: %s",
+            # RDMA metadata is required at this point (storage-only and
+            # single-rank runs already returned above). Failing here and
+            # continuing would leave remote agents unregistered and break
+            # transfer initialization later, so surface the error now.
+            logger.error(
+                "[Rank %d] Failed to get local agent metadata: %s",
                 self.my_rank,
                 e,
             )
-            return
+            raise
 
         logger.debug("[Rank %d] Exchanging metadata with all ranks...", self.my_rank)
         mds = dist_rt.allgather_obj(md)
