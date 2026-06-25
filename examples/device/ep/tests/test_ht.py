@@ -450,7 +450,9 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
 
     num_nodes = int(os.getenv("WORLD_SIZE", 1))
 
-    rank, num_ranks, group = init_dist(local_rank, num_local_ranks)
+    rank, num_ranks, group = init_dist(
+        local_rank, num_local_ranks, master_addr=args.tcp_server
+    )
     print(
         f"pid: {os.getpid()}, rank: {rank}, num_ranks: {num_ranks} ,local_rank: {local_rank}",
         flush=True,
@@ -464,7 +466,9 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     )
 
     # Create TCPStore client for NIXL metadata exchange
-    tcp_server = args.tcp_server if args.tcp_server else "127.0.0.1"
+    tcp_server = (
+        args.tcp_server if args.tcp_server else os.getenv("MASTER_ADDR", "127.0.0.1")
+    )
     tcp_store = store_group.create_client_store(
         master_addr=tcp_server,
         port=TCP_STORE_PORT,
@@ -555,7 +559,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--tcp-server",
         type=str,
-        help="TCP server address (for both TCPStore and rank server). If not set, both will be started locally.",
+        help="TCP server address for NIXL metadata exchange. Defaults to MASTER_ADDR env var, or 127.0.0.1 if unset.",
     )
     args = parser.parse_args()
 
@@ -571,8 +575,8 @@ if __name__ == "__main__":
         args.num_topk_groups = min(num_nodes, 4)
 
     num_processes = args.num_processes
-    # 2-node run (WORLD_SIZE=2): run on both nodes with same MASTER_ADDR/MASTER_PORT; node1 needs --tcp-server <node0_ip>.
-    # NVL/RDMA timeouts across nodes usually mean RDMA/IB/UCX between nodes is broken or slow (e.g. "accelerated IB support was not found" on one node).
+    # 2-node run (WORLD_SIZE=2): run on both nodes with same MASTER_ADDR/MASTER_PORT.
+    # --tcp-server defaults to MASTER_ADDR so no need to pass it separately.
     torch.multiprocessing.spawn(
         test_loop, args=(num_processes, args), nprocs=num_processes
     )
