@@ -45,7 +45,6 @@ env:
   SLURM_MINCPUS: 24
   SLURM_JOB_TIMEOUT: '01:30:00'
   SLURM_IMMEDIATE_TIMEOUT: "3600"
-  SLURM_EXCLUDE: mizu01
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   IMAGE_REGISTRY_HOST: "nbu-harbor.gtm.nvidia.com"
