@@ -22,10 +22,8 @@
 // (createNvtxBackend) builds one NVTX domain per agent on demand.
 extern "C" NIXL_TRACE_PLUGIN_EXPORT nixlTracePlugin *
 nixl_trace_plugin_init() {
-    static nixlTracePlugin plugin(nixl_trace_plugin_api_version::V1,
-                                  "nvtx",
-                                  "0.1.0",
-                                  &nixl::trace::createNvtxBackend);
+    static nixlTracePlugin plugin(
+        nixl_trace_plugin_api_version::V1, "nvtx", "0.1.0", &nixl::trace::createNvtxBackend);
     return &plugin;
 }
 
