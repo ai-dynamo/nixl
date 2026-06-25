@@ -113,6 +113,15 @@ public:
     nixl_status_t
     flushEp(nixlUcxReq &req);
 
+#ifdef HAVE_UCX_SGL_API
+    /* Scatter-gather list (SGL) operations */
+    [[nodiscard]] nixl_status_t
+    postSgl(const ucp_dt_local_sgl_t &local,
+            const ucp_dt_remote_sgl_t &remote,
+            size_t count,
+            nixlUcxReq &req);
+#endif
+
     [[nodiscard]] ucp_ep_h
     getEp() const noexcept {
         return eph;
