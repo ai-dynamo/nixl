@@ -74,7 +74,7 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::optional<xferBenchIOV>
         initBasicDescVram(size_t buffer_size, int mem_dev_id);
         std::optional<xferBenchIOV>
-        initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
+        initBasicDescFile(size_t buffer_size, xferFileState &fstate, int file_idx);
         std::optional<xferBenchIOV>
         initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
         std::optional<xferBenchIOV>

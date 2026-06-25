@@ -57,13 +57,15 @@ struct xferFileState {
     int fd = -1;
     uint64_t file_size = 0;
     uint64_t offset = 0;
+    std::string filename;
 
     xferFileState() = default;
 
-    xferFileState(int fd, uint64_t file_size, uint64_t offset) noexcept
+    xferFileState(int fd, uint64_t file_size, uint64_t offset, std::string filename = {}) noexcept
         : fd(fd),
           file_size(file_size),
-          offset(offset) {}
+          offset(offset),
+          filename(std::move(filename)) {}
 
     ~xferFileState() {
         closeFd();
@@ -72,7 +74,8 @@ struct xferFileState {
     xferFileState(xferFileState &&o) noexcept
         : fd(std::exchange(o.fd, -1)),
           file_size(o.file_size),
-          offset(o.offset) {}
+          offset(o.offset),
+          filename(std::move(o.filename)) {}
 
     xferFileState &
     operator=(xferFileState &&o) noexcept {
@@ -81,6 +84,7 @@ struct xferFileState {
             fd = std::exchange(o.fd, -1);
             file_size = o.file_size;
             offset = o.offset;
+            filename = std::move(o.filename);
         }
         return *this;
     }

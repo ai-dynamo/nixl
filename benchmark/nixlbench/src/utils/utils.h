@@ -187,6 +187,7 @@ public:
     static int posix_ios_pool_size;
     static int posix_kernel_queue_size;
     static bool storage_enable_direct;
+    static bool storage_enable_path_mode;
     static bool reregister_mem;
     static bool prepared_xfer;
     static int pipeline_depth;
@@ -234,6 +235,8 @@ public:
     isStorageBackend();
     static bool
     isObjStorageBackend();
+    static bool
+    isFileSegBackend();
 
 protected:
     static int
