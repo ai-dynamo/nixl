@@ -280,6 +280,16 @@ private:
                        size_t start_idx,
                        size_t end_idx);
 
+#ifdef HAVE_UCX_SGL_API
+    nixl_status_t
+    sendXferSgl(const nixl_meta_dlist_t &local,
+                const nixl_meta_dlist_t &remote,
+                const std::string &remote_agent,
+                nixlBackendReqH *handle,
+                size_t start_idx,
+                size_t end_idx) const;
+#endif
+
     /**
      * Get the worker ID from the optional arguments.
      * Returns std::nullopt if the 'worker_id' option extraction fails.
@@ -292,6 +302,7 @@ private:
     std::vector<std::unique_ptr<nixlUcxWorker>> uws;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
+    bool sglEnabled_ = false;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
