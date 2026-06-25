@@ -152,7 +152,7 @@ make_opt_args(const std::vector<uintptr_t> &backends) {
 // Shared implementation for both nixlAgent::prepMemView overloads (local
 // nixl_xfer_dlist_t and remote nixl_remote_dlist_t), returning the
 // nixlMemViewH as a uintptr_t handle for Python.
-template <typename DlistT>
+template<typename DlistT>
 static uintptr_t
 prep_mem_view(nixlAgent &agent, const DlistT &dlist, const std::vector<uintptr_t> &backends) {
     nixl_opt_args_t extra_params = make_opt_args(backends);
