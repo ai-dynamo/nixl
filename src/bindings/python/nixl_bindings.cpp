@@ -138,9 +138,8 @@ throw_nixl_exception(const nixl_status_t &status) {
     }
 }
 
-// Build a nixl_opt_args_t whose backend list is populated from the raw
-// nixlBackendH pointers (passed from Python as uintptr_t handles).
-static nixl_opt_args_t
+namespace {
+nixl_opt_args_t
 make_opt_args(const std::vector<uintptr_t> &backends) {
     nixl_opt_args_t extra_params;
     for (uintptr_t b : backends) {
@@ -149,17 +148,15 @@ make_opt_args(const std::vector<uintptr_t> &backends) {
     return extra_params;
 }
 
-// Shared implementation for both nixlAgent::prepMemView overloads (local
-// nixl_xfer_dlist_t and remote nixl_remote_dlist_t), returning the
-// nixlMemViewH as a uintptr_t handle for Python.
 template<typename DlistT>
-static uintptr_t
-prep_mem_view(nixlAgent &agent, const DlistT &dlist, const std::vector<uintptr_t> &backends) {
-    nixl_opt_args_t extra_params = make_opt_args(backends);
+uintptr_t
+prep_mem_view(const nixlAgent &agent, const DlistT &dlist, const std::vector<uintptr_t> &backends) {
+    const nixl_opt_args_t extra_params = make_opt_args(backends);
     nixlMemViewH mvh;
     throw_nixl_exception(agent.prepMemView(dlist, mvh, &extra_params));
     return reinterpret_cast<uintptr_t>(mvh);
 }
+} // namespace
 
 PYBIND11_MODULE(_bindings, m) {
 
