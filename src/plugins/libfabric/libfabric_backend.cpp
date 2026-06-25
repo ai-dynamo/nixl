@@ -1028,6 +1028,23 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
     size_t total_submitted = 0;
 
+    // Signal PT to yield while data thread is submitting.
+    // RAII guard clears the flag on any return path.
+    struct DataThreadGuard {
+        std::atomic<bool> &yield_flag;
+        std::atomic<unsigned int> &count;
+        DataThreadGuard(std::atomic<bool> &f, std::atomic<unsigned int> &c) : yield_flag(f), count(c) {
+            if (count.fetch_add(1, std::memory_order_relaxed) == 0) {
+                yield_flag.store(true, std::memory_order_relaxed);
+            }
+        }
+        ~DataThreadGuard() {
+            if (count.fetch_sub(1, std::memory_order_relaxed) == 1) {
+                yield_flag.store(false, std::memory_order_relaxed);
+            }
+        }
+    } data_thread_guard(pt_should_yield_, data_thread_count_);
+
     // Core transfer submission to process each descriptor with direct submission
     // Reserve base_offset once per transfer so all descriptors see a stable rail assignment
     const size_t xfer_base_offset = rail_manager.reserveBaseOffset();
@@ -1126,7 +1143,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     // Progress rails to kick off transfers
-    if (!progress_thread_enabled_) {
+    {
         nixl_status_t progress_status = rail_manager.progressActiveRails();
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in postXfer";
@@ -1157,7 +1174,22 @@ nixl_status_t
 nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
     auto backend_handle = static_cast<nixlLibfabricBackendH *>(handle);
 
-    if (!progress_thread_enabled_) {
+    struct DataThreadGuard {
+        std::atomic<bool> &yield_flag;
+        std::atomic<unsigned int> &count;
+        DataThreadGuard(std::atomic<bool> &f, std::atomic<unsigned int> &c) : yield_flag(f), count(c) {
+            if (count.fetch_add(1, std::memory_order_relaxed) == 0) {
+                yield_flag.store(true, std::memory_order_relaxed);
+            }
+        }
+        ~DataThreadGuard() {
+            if (count.fetch_sub(1, std::memory_order_relaxed) == 1) {
+                yield_flag.store(false, std::memory_order_relaxed);
+            }
+        }
+    } data_thread_guard(pt_should_yield_, data_thread_count_);
+
+    {
         nixl_status_t progress_status = rail_manager.progressActiveRails();
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in checkXfer";
@@ -1356,7 +1388,7 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
         }
 
         // Progress rail 0 to ensure the message is sent
-        if (!progress_thread_enabled_) {
+        {
             status = rail_manager.getRail(rail_id).progressCompletionQueue();
             if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
                 NIXL_ERROR << "Failed to progress rail 0 in notifSendPriv";
@@ -1385,7 +1417,7 @@ nixlLibfabricEngine::genNotif(const std::string &remote_agent, const std::string
 
 nixl_status_t
 nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
-    if (!progress_thread_enabled_) {
+    {
         nixl_status_t progress_status = rail_manager.progressActiveRails();
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in getNotifs";
@@ -1425,9 +1457,14 @@ nixlLibfabricEngine::progressThread() {
     NIXL_DEBUG << "PT: Thread started successfully for rails only";
     // Main progress loop - continuously process completions only on rails
     while (!progress_thread_stop_.load()) {
+        // Yield when data thread is actively submitting — it handles progress itself
+        if (pt_should_yield_.load(std::memory_order_relaxed)) {
+            continue;
+        }
+
         // Process completions only on rails (non-blocking)
         bool any_completions = false;
-        nixl_status_t status = rail_manager.progressActiveRails();
+        nixl_status_t status = rail_manager.progressActiveRails(true);
         if (status == NIXL_SUCCESS) {
             any_completions = true;
             NIXL_DEBUG << "PT: Processed completions on rails";

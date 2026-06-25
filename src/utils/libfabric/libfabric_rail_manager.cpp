@@ -992,7 +992,7 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
 }
 
 nixl_status_t
-nixlLibfabricRailManager::progressActiveRails() {
+nixlLibfabricRailManager::progressActiveRails(bool is_background) {
     std::unordered_set<size_t> rails_to_process;
 
     // Copy active rails under lock to avoid iterator invalidation
@@ -1014,7 +1014,7 @@ nixlLibfabricRailManager::progressActiveRails() {
             continue;
         }
         // Process completions on rails
-        nixl_status_t status = rails_[rail_id]->progressCompletionQueue();
+        nixl_status_t status = rails_[rail_id]->progressCompletionQueue(false, is_background);
         if (status == NIXL_SUCCESS) {
             any_completions = true;
             NIXL_DEBUG << "Processed completions on rail " << rail_id;
