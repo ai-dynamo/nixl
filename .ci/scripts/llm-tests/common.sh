@@ -127,3 +127,7 @@ EOF
 }
 
 MODEL="${MODEL:-TinyLlama/TinyLlama-1.1B-Chat-v1.0}"
+# Accuracy (gsm8k) needs a model that can actually clear the >0.9 bar;
+# TinyLlama-1.1B tops out well below that. Qwen3-8B clears it with margin.
+# Smoke/perf keep the lightweight default for fast startup.
+ACCURACY_MODEL="${ACCURACY_MODEL:-Qwen/Qwen3-8B}"

@@ -4,7 +4,7 @@
 # pre-built NIXL wheel set.
 #
 #   - vllm-nixl-<ver>         : Dockerfile.vllm   + vllm/vllm-openai:latest
-#   - vllm-cu12-nixl-<ver>    : Dockerfile.vllm   + vllm/vllm-openai:v0.22.1-cu129
+#   - vllm-cu12-nixl-<ver>    : Dockerfile.vllm   + vllm/vllm-openai:latest-cu129
 #   - sglang-nixl-<ver>       : Dockerfile.sglang + lmsysorg/sglang:latest
 #   - sglang-cu13-nixl-<ver>  : Dockerfile.sglang + lmsysorg/sglang:latest-cu130-runtime
 #
@@ -208,7 +208,7 @@ steps:
         *)       echo "Unsupported arch: ${arch}"; exit 1 ;;
       esac
       IMAGE="${ARTIFACTORY_REGISTRY_URL}/vllm-cu12-nixl:${IMAGE_TAG}-${arch}"
-      BASE="${BASE_IMAGE_VLLM_CU12:-docker.io/vllm/vllm-openai:v0.22.1-cu129}"
+      BASE="${BASE_IMAGE_VLLM_CU12:-docker.io/vllm/vllm-openai:latest-cu129}"
       podman build \
         --platform "${PLATFORM}" \
         --build-arg "BASE_IMAGE=${BASE}" \
@@ -393,6 +393,30 @@ pipeline_stop:
         sh """rm -rf "${stageDir}" || true"""
       }
 
+    }
+
+    // Optionally fan out to the downstream LLM container test job, one run per
+    // published variant. Passes the canonical multi-arch manifest tag (not a
+    // per-arch tag — only `manifest push --all` runs above, which does not
+    // create `-<arch>` tags); the manifest resolves to the x86_64 image when
+    // pulled on the x86_64-only mizu SLURM nodes.
+    // Fired asynchronously (wait:false) so the build pod is not held for the
+    // multi-hour SLURM test, and propagate:false so a test failure does not
+    // retroactively fail this build.
+    if (publishSucceeded && params.RUN_TEST) {
+      for (variant in variants) {
+        def imageUrl = "${reg}/${variant}:${tag}"
+        echo "Triggering nixl-ci-test-llm-container for ${imageUrl}"
+        build job: 'nixl-ci-test-llm-container',
+          parameters: [
+            string(name: 'IMAGE_URL', value: imageUrl),
+            booleanParam(name: 'RUN_SMOKE', value: params.TEST_RUN_SMOKE),
+            booleanParam(name: 'RUN_PERF', value: params.TEST_RUN_PERF),
+            booleanParam(name: 'RUN_ACCURACY', value: params.TEST_RUN_ACCURACY),
+            string(name: 'ci_refspec', value: params.ci_refspec)
+          ],
+          wait: false, propagate: false
+      }
     }
 
     if (params.MAIL_TO) {
