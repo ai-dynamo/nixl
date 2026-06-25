@@ -141,7 +141,3 @@ if enabled_plugins.get('GPUNETIO')
 endif
 
 subdir('telemetry')
-
-if nixl_trace_enabled
-    subdir('tracing')
-endif
