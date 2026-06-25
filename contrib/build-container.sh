@@ -44,6 +44,9 @@ BUILD_TYPE="release"
 # CUDA toolkit version (e.g. 12.9 / 13.0). Option B (manylinux on public PyPA base)
 # no longer inherits this from the base image's ENV, so it must be passed in.
 CUDA_VERSION=${CUDA_VERSION:-}
+# INFINIA build variant passed to Dockerfile.manylinux: "bundled" pulls the private DDN libs
+# image; "none" (via --no-infinia) skips it so external builds without access still work.
+INFINIA_VARIANT=${INFINIA_VARIANT:-bundled}
 
 get_options() {
     while :; do
@@ -138,6 +141,9 @@ get_options() {
         --build-nixl-ep)
             BUILD_NIXL_EP=true
             ;;
+        --no-infinia)
+            INFINIA_VARIANT=none
+            ;;
         --arch)
             if [ "$2" ]; then
                 ARCH=$2
@@ -207,6 +213,7 @@ show_help() {
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--ucx-ref ucx git reference (branch, tag, or sha)]"
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
+    echo "  [--no-infinia skip the INFINIA plugin (manylinux: don't pull the private DDN libs image)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     exit 0
@@ -253,6 +260,7 @@ BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
+BUILD_ARGS+=" --build-arg INFINIA_VARIANT=$INFINIA_VARIANT"
 
 show_build_options
 
