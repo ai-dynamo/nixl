@@ -48,13 +48,18 @@ This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend
 ### Building the wheels
 
 The release wheels are built inside a manylinux container by
-[`contrib/build-container.sh`](contrib/build-container.sh). Contributors and customers who
-need to build wheels manually can reproduce the release build with the same parameters used
-by the release pipeline (`.github/workflows/ci.yml`, the `build` job). Keep the commands
-below in sync with that workflow.
+[`contrib/build-container.sh`](contrib/build-container.sh), with the same parameters used by
+the release pipeline (`.github/workflows/ci.yml`, the `build` job). Keep the commands below in
+sync with that workflow.
+
+> **Note:** the `contrib/Dockerfile.manylinux` build below pulls an **NVIDIA-internal** INFINIA
+> (DDN) libs image, so it currently only builds inside NVIDIA. To build wheels **without** the
+> INFINIA plugin — works anywhere, no internal image required — see
+> [Building without INFINIA](#building-without-infinia).
 
 ```bash
-# CUDA 12, x86_64 — produces the cu12 manylinux_2_28 wheels
+# CUDA 12, x86_64 — produces the cu12 manylinux_2_28 release wheels
+# (NVIDIA-internal: pulls the INFINIA libs image)
 ./contrib/build-container.sh \
   --base-image nvcr.io/nvidia/cuda \
   --base-image-tag 12.9.1-devel-ubi8 \
@@ -78,6 +83,25 @@ docker cp "$cid:/workspace/nixl/dist" ./dist
 docker rm "$cid"
 ls dist/*.whl
 ```
+
+#### Building without INFINIA
+
+The INFINIA (DDN) plugin links against DDN's proprietary `libred` libraries, which are not
+publicly redistributable, so the manylinux build above requires an NVIDIA-internal image. To
+build nixl wheels manually **without** INFINIA — no internal image required — use the standard
+`contrib/Dockerfile`, which has no INFINIA stage:
+
+```bash
+./contrib/build-container.sh \
+  --dockerfile contrib/Dockerfile \
+  --python-versions "3.10,3.11,3.12,3.13,3.14" \
+  --arch x86_64 \
+  --tag nixl-wheel-build:no-infinia-x86_64
+```
+
+Extract the wheels the same way (`docker create` / `docker cp .../dist`). This produces the
+full nixl wheel minus the INFINIA backend; all other plugins are unaffected. (This is a
+temporary workaround — a flag to skip INFINIA in the manylinux build is planned.)
 
 ## Prerequisites for source build (Linux)
 
