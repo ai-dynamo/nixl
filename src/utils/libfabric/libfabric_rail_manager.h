@@ -195,6 +195,7 @@ public:
      * @param dest_addrs Destination addresses for each rail
      * @param agent_idx Remote agent index for immediate data
      * @param xfer_id Transfer ID for tracking
+     * @param device_id Device index for tracing
      * @param completion_callback Callback for completion notification
      * @param submitted_count_out Number of requests successfully submitted
      * @param desc_idx Index of current descriptor within the transfer
@@ -215,6 +216,7 @@ public:
                              const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
                              uint16_t agent_idx,
                              uint16_t xfer_id,
+                             int device_id,
                              std::function<void()> completion_callback,
                              size_t &submitted_count_out,
                              int desc_idx,

@@ -42,6 +42,7 @@ struct nixlLibfabricReq {
     size_t rail_id; ///< Rail ID that owns this request
     size_t pool_index; ///< Index in the pool for deque compatibility
     uint32_t xfer_id; ///< Pre-assigned globally unique transfer ID
+    int device_id; ///< Source device (GPU) index for tracing
     void *buffer; ///< Pre-assigned buffer for CONTROL operations, nullptr for DATA
     struct fid_mr *mr; ///< Pre-assigned memory registration for CONTROL, nullptr for DATA
     size_t buffer_size; ///< Pre-assigned buffer size for CONTROL (2KB), 0 for DATA
@@ -62,6 +63,7 @@ struct nixlLibfabricReq {
         : rail_id(0),
           pool_index(0),
           xfer_id(0),
+          device_id(-1),
           buffer(nullptr),
           mr(nullptr),
           buffer_size(0),
