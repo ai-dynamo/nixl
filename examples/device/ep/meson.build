@@ -127,10 +127,7 @@ if get_option('buildtype') == 'debug'
     nixl_ep_cpp_args += ['-g']
 endif
 
-# Disable fast-debug when the override above forces EP to release, so the
-# EP target uses the 100s NUM_CPU_TIMEOUT_SECS (e.g. CI's --buildtype=debug).
-ep_effective_buildtype = 'buildtype=release' in nixl_ep_override_options ? 'release' : get_option('buildtype')
-enable_fast_debug = ep_effective_buildtype != 'release'
+enable_fast_debug = get_option('buildtype') != 'release'
 
 if enable_fast_debug
     nixl_ep_cuda_args += ['-DENABLE_FAST_DEBUG']

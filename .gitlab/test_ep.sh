@@ -108,6 +108,7 @@ run_elastic_test() {
             --num-experts-per-rank 32 \
             --num-topk 8 \
             --num-tokens 256 \
+            --timeout-ms 10000 \
             --validate-phase-failures $extra_flags
     )
 }
@@ -116,8 +117,24 @@ run_elastic_test() {
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
 
+# Only run the --disable-ll-nvlink (RDMA) elastic tests when all four CX-7
+# NICs (mlx5_0..mlx5_3) report PORT_ACTIVE.
+all_rdma_nics_active() {
+    local hca
+    for hca in mlx5_0 mlx5_1 mlx5_2 mlx5_3; do
+        if ! ibv_devinfo -d "$hca" 2>/dev/null | grep -q "state:.*PORT_ACTIVE"; then
+            return 1
+        fi
+    done
+    return 0
+}
+
 # RDMA (--disable-ll-nvlink)
-run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json" "--disable-ll-nvlink"
-run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json" "--disable-ll-nvlink"
+if all_rdma_nics_active; then
+    run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json" "--disable-ll-nvlink"
+    run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json" "--disable-ll-nvlink"
+else
+    echo "Skipping RDMA elastic tests: not all of mlx5_0..mlx5_3 are PORT_ACTIVE on $(hostname)"
+fi
 
 echo "==== nixl_ep elastic tests done ===="
