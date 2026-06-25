@@ -394,11 +394,12 @@ if get_option('buildtype') == 'release'
 endif
 
 # ---- Tracing (nixl::trace) -------------------------------------------------
-# Two gates: compile-time (which backends are built into libnixl, below) and
-# runtime (which compiled-in backends the caller activates, via the Agent).
+# Two gates: build/packaging (which backend plugins are built, as separate .so
+# modules under src/plugins/tracing) and runtime (which built plugins the caller
+# activates via NIXL_TRACE_BACKENDS / nsys auto-load). The facade itself is
+# always compiled into libnixl.
 nixl_trace_enabled = get_option('with_trace')
 nixl_trace_nvtx_enabled = false
-nixl_trace_deps = []
 
 if nixl_trace_enabled
     add_project_arguments('-DNIXL_TRACE_ENABLED', language: ['cpp', 'cuda'])
@@ -412,16 +413,15 @@ if nixl_trace_enabled
     endforeach
 
     # NVTX: header-only; ships with the CUDA toolkit (nvtx3). Detect-then-disable
-    # gracefully so non-CUDA / werror builds stay green. A vendored nvtx3 wrap
-    # fallback can be added later if needed.
+    # gracefully so non-CUDA / werror builds stay green. Built as a separately
+    # loaded plugin (src/plugins/tracing/nvtx), not linked into libnixl; nvtx_inc_dep
+    # is consumed there.
     if 'nvtx' in requested_trace_backends
         if cuda_dep.found()
             nvtx_inc_dep = cuda_dep.partial_dependency(includes: true, compile_args: true)
             if cpp.has_header('nvtx3/nvToolsExt.h', dependencies: nvtx_inc_dep)
-                add_project_arguments('-DNIXL_TRACE_BACKEND_NVTX', language: ['cpp', 'cuda'])
-                nixl_trace_deps += [ nvtx_inc_dep ]
                 nixl_trace_nvtx_enabled = true
-                message('nixl::trace: NVTX backend enabled (CUDA-bundled nvtx3 headers)')
+                message('nixl::trace: NVTX backend plugin enabled (CUDA-bundled nvtx3 headers)')
             else
                 warning('nixl::trace: nvtx requested but nvtx3 headers not found; NVTX backend disabled')
             endif
@@ -431,8 +431,8 @@ if nixl_trace_enabled
     endif
 
     summary({
-        'Tracing facade'   : nixl_trace_enabled,
-        'NVTX backend'     : nixl_trace_nvtx_enabled,
+        'Tracing facade'      : nixl_trace_enabled,
+        'NVTX backend plugin' : nixl_trace_nvtx_enabled,
     }, section: 'Tracing', bool_yn: true)
 endif
 

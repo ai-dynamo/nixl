@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 #include <nvtx3/nvToolsExt.h>
 
@@ -165,8 +166,8 @@ namespace {
 } // namespace
 
 std::unique_ptr<TraceBackend>
-makeNvtxBackend(std::string_view domain) {
-    return std::make_unique<NvtxTraceBackend>(domain);
+createNvtxBackend(const nixlTraceBackendInitParams &init_params) {
+    return std::make_unique<NvtxTraceBackend>(init_params.agentName);
 }
 
 } // namespace nixl::trace

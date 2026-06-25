@@ -20,10 +20,7 @@
 #include "tracing/trace.h"
 
 #include "common/nixl_log.h"
-
-#ifdef NIXL_TRACE_BACKEND_NVTX
-#include "nvtx_backend.h"
-#endif
+#include "plugin_manager.h"
 
 namespace nixl::trace {
 
@@ -126,22 +123,34 @@ makeTracer(const TracerConfig &config) {
     std::vector<std::unique_ptr<TraceBackend>> backends;
     std::unordered_set<std::string> seen;
 
+    auto &plugin_manager = nixlPluginManager::getInstance();
+    const nixlTraceBackendInitParams init_params{config.agentName};
+
     for (const auto &requested : config.backends) {
         // Skip blanks and duplicates so e.g. "nvtx,nvtx" activates one backend.
         if (requested.empty() || !seen.insert(requested).second) {
             continue;
         }
-        if (requested == "nvtx") {
-#ifdef NIXL_TRACE_BACKEND_NVTX
-            backends.push_back(makeNvtxBackend(config.agentName));
-            NIXL_DEBUG << "nixl::trace: activated NVTX backend for agent '" << config.agentName
-                       << "'";
-#else
-            NIXL_WARN << "nixl::trace: backend 'nvtx' requested but not compiled in";
-#endif
-        } else {
-            NIXL_WARN << "nixl::trace: unknown backend '" << requested << "' requested";
+
+        // Each backend is an on-demand .so plugin (libtrace_backend_<name>.so).
+        // A missing plugin is not fatal: warn and skip so the rest still apply.
+        auto handle = plugin_manager.loadTracePlugin(requested);
+        if (!handle) {
+            NIXL_WARN << "nixl::trace: backend '" << requested
+                      << "' requested but plugin libtrace_backend_" << requested
+                      << ".so was not found";
+            continue;
         }
+
+        auto backend = handle->createBackend(init_params);
+        if (!backend) {
+            NIXL_WARN << "nixl::trace: backend '" << requested << "' failed to initialize";
+            continue;
+        }
+
+        NIXL_DEBUG << "nixl::trace: activated '" << requested << "' backend for agent '"
+                   << config.agentName << "'";
+        backends.push_back(std::move(backend));
     }
 
     if (backends.empty()) {

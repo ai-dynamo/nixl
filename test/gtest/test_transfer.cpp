@@ -20,10 +20,12 @@
 
 #include "nixl.h"
 #include "nixl_types.h"
+#include "plugin_manager.h"
 
 #include <absl/strings/str_format.h>
 #include <absl/time/clock.h>
 #include <gtest/gtest.h>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -673,6 +675,24 @@ NIXL_INSTANTIATE_TEST(ucx_telemetry_threadpool_no_pt,
 // the binary profiled under nsys to capture the NVTX timeline as an artifact.
 class TestTransferTracing : public TestTransfer {
 protected:
+    // The NVTX backend is an on-demand plugin (libtrace_backend_nvtx.so); point
+    // the manager at its build-tree location once for the whole suite. Guarded so
+    // a build without the NVTX plugin doesn't log a missing-directory error, and
+    // added a single time so re-entry across instantiations doesn't warn about a
+    // duplicate directory.
+    static void
+    SetUpTestSuite() {
+        static bool added = false;
+        if (added) {
+            return;
+        }
+        const std::string nvtx_plugin_dir = std::string(BUILD_DIR) + "/src/plugins/tracing/nvtx";
+        if (std::filesystem::exists(nvtx_plugin_dir)) {
+            nixlPluginManager::getInstance().addPluginDirectory(nvtx_plugin_dir);
+            added = true;
+        }
+    }
+
     void
     SetUp() override {
         // Activate NVTX tracing before the agents are created (the constructor

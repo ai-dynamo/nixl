@@ -222,12 +222,12 @@ TEST(Tracing, DefaultSpanIsInert) {
     EXPECT_EQ(span.id().value, 0u);
 }
 
-// makeTracer ignores empty entries and returns null when nothing resolves to a
-// compiled-in backend (so callers can cheaply null-check).
+// makeTracer ignores empty entries and returns null when no backend resolves to
+// a loadable plugin (so callers can cheaply null-check).
 TEST(Tracing, MakeTracerUnknownBackendReturnsNull) {
     {
-        // An unknown backend is expected to emit a warning and resolve to null.
-        const gtest::LogIgnoreGuard ignore("unknown backend");
+        // No plugin exists for this backend, so it resolves to null with a warning.
+        const gtest::LogIgnoreGuard ignore("requested but plugin");
         const auto tracer = nixl::trace::makeTracer({"agent", {"definitely-not-a-backend"}});
         EXPECT_EQ(tracer, nullptr);
     }
@@ -236,23 +236,23 @@ TEST(Tracing, MakeTracerUnknownBackendReturnsNull) {
     EXPECT_EQ(none, nullptr);
 }
 
-// NVTX smoke test: when compiled in, makeTracer({"nvtx"}) yields a working
-// tracer; begin/attr/mark/end must not crash with no profiler attached. When
-// NVTX is not compiled in, makeTracer returns null and we simply skip.
-TEST(Tracing, NvtxBackendSmoke) {
-    auto tracer = nixl::trace::makeTracer({"nvtx_smoke_agent", {"nvtx"}});
-#ifdef NIXL_TRACE_BACKEND_NVTX
-    ASSERT_NE(tracer, nullptr);
-    EXPECT_FALSE(tracer->empty());
+// The no-backend runtime path: a backend is requested but its plugin is not
+// available (no libtrace_backend_*.so is registered in this unit binary), so
+// makeTracer yields a null tracer. Call sites then fall back to a
+// default-constructed Span -- the stub path that does essentially nothing -- and
+// it must stay safe. NVTX's functional coverage lives in the e2e transfer tests,
+// which load the real plugin.
+TEST(Tracing, RequestedBackendWithoutPluginIsInert) {
     {
-        auto span = tracer->beginSpan("nixl::test.span", nixl::trace::Kind::CommSend);
-        span.addAttribute("bytes", std::int64_t{1024});
-        span.addAttribute("peer", std::string_view{"peer_agent"});
-        span.addAttribute("ratio", 0.5);
+        const gtest::LogIgnoreGuard ignore("requested but plugin");
+        const auto tracer = nixl::trace::makeTracer({"stub_agent", {"nvtx"}});
+        EXPECT_EQ(tracer, nullptr);
     }
-    tracer->mark("nixl::test.mark");
-#else
-    EXPECT_EQ(tracer, nullptr);
-    GTEST_SKIP() << "NVTX backend not compiled in";
-#endif
+
+    // What every traced call site binds to when the tracer is null.
+    nixl::trace::Span span;
+    EXPECT_FALSE(span.active());
+    span.addAttribute("bytes", std::int64_t{1024});
+    span.addAttribute("peer", std::string_view{"peer_agent"});
+    EXPECT_EQ(span.id().value, 0u);
 }

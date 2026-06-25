@@ -14,24 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_NVTX_BACKEND_H
-#define NIXL_SRC_CORE_TRACING_NVTX_BACKEND_H
+#ifndef NIXL_SRC_PLUGINS_TRACING_NVTX_NVTX_BACKEND_H
+#define NIXL_SRC_PLUGINS_TRACING_NVTX_NVTX_BACKEND_H
 
 #include <memory>
-#include <string_view>
 
-#include "tracing/trace.h"
+#include "tracing/trace_plugin.h"
 
 namespace nixl::trace {
 
 /**
  * @brief Create the NVTX trace backend. Header-only nvtx3 under the hood; ranges
  *        are cheap no-op stubs until a profiler (Nsight Systems) is attached via
- *        NVTX_INJECTION64_PATH. Each agent gets its own NVTX domain named @p domain.
+ *        NVTX_INJECTION64_PATH. Each agent gets its own NVTX domain named after
+ *        @p init_params.agentName. This is the factory the plugin hands to the
+ *        core via nixl_trace_plugin_init().
  */
 [[nodiscard]] std::unique_ptr<TraceBackend>
-makeNvtxBackend(std::string_view domain);
+createNvtxBackend(const nixlTraceBackendInitParams &init_params);
 
 } // namespace nixl::trace
 
-#endif // NIXL_SRC_CORE_TRACING_NVTX_BACKEND_H
+#endif // NIXL_SRC_PLUGINS_TRACING_NVTX_NVTX_BACKEND_H
