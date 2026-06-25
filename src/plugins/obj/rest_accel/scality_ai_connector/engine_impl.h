@@ -19,7 +19,7 @@
 #define NIXL_SRC_PLUGINS_OBJ_REST_ACCEL_SCALITY_AI_CONNECTOR_ENGINE_IMPL_H
 
 #include "obj_backend.h"
-#include "rest_accel/scality_ai_connector/client.h"
+#include "rest_accel/scality_ai_connector/rest_client.h"
 #include "rest_accel/scality_ai_connector/rdma_token_client.h"
 #include <unordered_map>
 
@@ -50,7 +50,7 @@ public:
      * @param connector_client Pre-configured client (can be mock for testing)
      */
     ScalityObjEngineImpl(const nixlBackendInitParams *init_params,
-                         std::shared_ptr<iRestClient> connector_client);
+                         const std::shared_ptr<iRestClient> &connector_client);
 
     nixl_mem_list_t
     getSupportedMems() const override {
@@ -93,9 +93,9 @@ private:
     /// Maps device IDs to object keys
     std::unordered_map<uint64_t, std::string> devIdToObjKey_;
     /// RDMA token client (DC via cuObjClient)
-    std::shared_ptr<iRdmaTokenClient> cuClient_;
+    const std::shared_ptr<iRdmaTokenClient> cuClient_;
     /// Scality AI Connector HTTP client with RDMA support
-    std::shared_ptr<iRestClient> connectorClient_;
+    const std::shared_ptr<iRestClient> connectorClient_;
     /// Number of CUDA devices, queried once at construction (0 if none).
     /// Used to spread DRAM MRs across GPUs so cuObject fans them across NICs.
     int gpuCount_ = 0;

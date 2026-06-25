@@ -39,7 +39,7 @@
 #include <vector>
 
 #include "nixl_types.h"
-#include "rest_accel/scality_ai_connector/client.h"
+#include "rest_accel/scality_ai_connector/rest_client.h"
 
 namespace gtest::obj {
 

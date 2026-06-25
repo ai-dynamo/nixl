@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef NIXL_SRC_PLUGINS_OBJ_REST_ACCEL_SCALITY_AI_CONNECTOR_CLIENT_H
-#define NIXL_SRC_PLUGINS_OBJ_REST_ACCEL_SCALITY_AI_CONNECTOR_CLIENT_H
+#ifndef NIXL_SRC_PLUGINS_OBJ_REST_ACCEL_SCALITY_AI_CONNECTOR_REST_CLIENT_H
+#define NIXL_SRC_PLUGINS_OBJ_REST_ACCEL_SCALITY_AI_CONNECTOR_REST_CLIENT_H
 
 #include <asio/thread_pool.hpp>
 #include <asio/post.hpp>
@@ -39,8 +39,6 @@
  */
 class iRestClient {
 public:
-    virtual ~iRestClient() = default;
-
     /**
      * Asynchronously put an object using RDMA.
      * @param key The object key
@@ -82,6 +80,12 @@ public:
      */
     virtual void
     checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) = 0;
+
+protected:
+    // Implementations are only ever owned through shared_ptr (never deleted via
+    // an iRestClient*), so a protected non-virtual destructor suffices and
+    // avoids the vtable cost of a public virtual one.
+    ~iRestClient() = default;
 };
 
 /**
@@ -101,7 +105,7 @@ public:
      */
     explicit RestClient(nixl_b_params_t *custom_params);
 
-    ~RestClient() override;
+    ~RestClient();
 
     void
     putObjectRdmaAsync(std::string_view key,
@@ -150,7 +154,7 @@ private:
      * @param key Object key
      * @return Full URL string
      */
-    std::string
+    [[nodiscard]] std::string
     buildUrl(std::string_view key) const;
 
     /**
@@ -185,10 +189,18 @@ private:
     void
     reapCompletions();
 
-    /// Map a finished transfer to its callback, dispatch it on the worker pool,
-    /// and free the context. Poller-thread only.
+    /// Map a finished transfer to its callback dispatcher and free the context.
+    /// Poller-thread only.
     void
     finishRequest(RequestCtx *ctx, CURLcode res, long http_code);
+
+    /// Dispatch a finished HEAD transfer's callback on the worker pool.
+    void
+    dispatchHeadResult(RequestCtx *ctx, CURLcode res, long http_code);
+
+    /// Dispatch a finished PUT/GET transfer's callback on the worker pool.
+    void
+    dispatchXferResult(RequestCtx *ctx, CURLcode res, long http_code);
 };
 
 #endif // NIXL_SRC_PLUGINS_OBJ_REST_ACCEL_SCALITY_AI_CONNECTOR_CLIENT_H

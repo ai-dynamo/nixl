@@ -30,50 +30,53 @@
  */
 class iRdmaTokenClient {
 public:
-    virtual ~iRdmaTokenClient() = default;
-
     /** Return true when the transport layer is ready for transfers. */
-    virtual bool
+    [[nodiscard]] virtual bool
     isConnected() const = 0;
 
     /**
      * Register a memory region and obtain an RDMA descriptor (token).
      * @return CU_OBJ_SUCCESS on success.
      */
-    virtual cuObjErr_t
+    [[nodiscard]] virtual cuObjErr_t
     cuMemObjGetDescriptor(void *ptr, size_t size) = 0;
 
     /**
      * Deregister a previously registered memory region.
      * @return CU_OBJ_SUCCESS on success.
      */
-    virtual cuObjErr_t
+    [[nodiscard]] virtual cuObjErr_t
     cuMemObjPutDescriptor(void *ptr) = 0;
 
     /**
      * Initiate a GET (read) transfer, calls the user-supplied get callback
      * with the RDMA token so that the remote side can perform the data transfer.
      */
-    virtual ssize_t
+    [[nodiscard]] virtual ssize_t
     cuObjGet(void *ctx, void *ptr, size_t size, loff_t offset, loff_t buf_offset = 0) = 0;
 
     /**
      * Initiate a PUT (write) transfer; calls the user-supplied put callback
      * with the RDMA token so that the remote side can perform the data transfer.
      */
-    virtual ssize_t
+    [[nodiscard]] virtual ssize_t
     cuObjPut(void *ctx, void *ptr, size_t size, loff_t offset, loff_t buf_offset = 0) = 0;
 
     /**
      * Extract the user context pointer from cuObjClient's opaque handle.
      */
-    static void *
+    [[nodiscard]] static void *
     getCtx(const void *handle) {
         if (!handle) {
             return nullptr;
         }
         return cuObjClient::getCtx(handle);
     }
+
+protected:
+    // Owned only through shared_ptr (never deleted via an iRdmaTokenClient*), so
+    // a protected non-virtual destructor suffices.
+    ~iRdmaTokenClient() = default;
 };
 
 #endif // NIXL_SRC_PLUGINS_OBJ_REST_ACCEL_SCALITY_AI_CONNECTOR_RDMA_TOKEN_CLIENT_H

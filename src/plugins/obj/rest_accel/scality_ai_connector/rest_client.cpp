@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "client.h"
+#include "rest_client.h"
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>
 #include <asio/post.hpp>
@@ -113,63 +113,75 @@ RestClient::buildEasy(RequestCtx *ctx) {
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 30000L);
 }
 
-// Map a finished transfer to its callback, dispatch it on the worker pool, and
-// free the context. Runs on the poller thread; the posted closure captures only
-// the moved callback plus the plain result, so the pool never touches curl state.
-// Callbacks are expected not to throw; the dispatch guards against it defensively
-// so a misbehaving callback cannot take down a pool worker.
+// Dispatch a finished HEAD transfer's callback on the worker pool. Runs on the
+// poller thread; the posted closure captures only the moved callback plus the
+// plain result, so the pool never touches curl state. An empty callback is
+// skipped rather than posted, and a throwing callback is contained so it cannot
+// take down a pool worker.
+void
+RestClient::dispatchHeadResult(RequestCtx *ctx, CURLcode res, long http_code) {
+    std::optional<bool> result;
+    if (res != CURLE_OK) {
+        NIXL_ERROR << absl::StrFormat(
+            "checkObjectExistsAsync: curl_code=%d for HEAD %s", static_cast<int>(res), ctx->url);
+    } else if (http_code >= 200 && http_code < 300) {
+        result = true;
+    } else if (http_code == 404) {
+        result = false;
+    } else {
+        NIXL_ERROR << absl::StrFormat(
+            "checkObjectExistsAsync: HTTP %ld for HEAD %s", http_code, ctx->url);
+    }
+    if (ctx->check_cb) {
+        asio::post(pool_, [cb = std::move(ctx->check_cb), result]() {
+            try {
+                cb(result);
+            }
+            catch (...) {
+                NIXL_WARN << "checkObjectExistsAsync: callback threw an exception";
+            }
+        });
+    }
+}
+
+// Dispatch a finished PUT/GET transfer's callback on the worker pool. Same
+// threading and safety contract as dispatchHeadResult. op_name is a string
+// literal (static storage), so the lambda captures the pointer by value and it
+// stays valid after ctx is freed.
+void
+RestClient::dispatchXferResult(RequestCtx *ctx, CURLcode res, long http_code) {
+    const bool success = (res == CURLE_OK) && (http_code >= 200 && http_code < 300);
+    if (!success) {
+        NIXL_ERROR << absl::StrFormat("%s: failed url=%s curl_code=%d http_code=%ld body=%s",
+                                      ctx->op_name,
+                                      ctx->url,
+                                      static_cast<int>(res),
+                                      http_code,
+                                      ctx->response_body.empty() ? "<empty>" : ctx->response_body);
+    } else {
+        NIXL_DEBUG << absl::StrFormat(
+            "%s: success url=%s http_code=%ld", ctx->op_name, ctx->url, http_code);
+    }
+    if (ctx->bool_cb) {
+        asio::post(pool_, [cb = std::move(ctx->bool_cb), success, op_name = ctx->op_name]() {
+            try {
+                cb(success);
+            }
+            catch (...) {
+                NIXL_WARN << absl::StrFormat("%s: callback threw an exception", op_name);
+            }
+        });
+    }
+}
+
+// Map a finished transfer to its callback dispatcher and free the context.
+// Poller-thread only.
 void
 RestClient::finishRequest(RequestCtx *ctx, CURLcode res, long http_code) {
     if (ctx->method == restMethod::HEAD) {
-        std::optional<bool> result;
-        if (res != CURLE_OK) {
-            NIXL_ERROR << absl::StrFormat("checkObjectExistsAsync: curl_code=%d for HEAD %s",
-                                          static_cast<int>(res),
-                                          ctx->url);
-            result = std::nullopt;
-        } else if (http_code >= 200 && http_code < 300) {
-            result = true;
-        } else if (http_code == 404) {
-            result = false;
-        } else {
-            NIXL_ERROR << absl::StrFormat(
-                "checkObjectExistsAsync: HTTP %ld for HEAD %s", http_code, ctx->url);
-            result = std::nullopt;
-        }
-        auto cb = std::move(ctx->check_cb);
-        asio::post(pool_, [cb = std::move(cb), result]() {
-            try {
-                if (cb) {
-                    cb(result);
-                }
-            }
-            catch (...) {
-            }
-        });
+        dispatchHeadResult(ctx, res, http_code);
     } else {
-        bool success = (res == CURLE_OK) && (http_code >= 200 && http_code < 300);
-        if (!success) {
-            NIXL_ERROR << absl::StrFormat("%s: failed url=%s curl_code=%d http_code=%ld body=%s",
-                                          ctx->op_name,
-                                          ctx->url,
-                                          static_cast<int>(res),
-                                          http_code,
-                                          ctx->response_body.empty() ? "<empty>" :
-                                                                       ctx->response_body);
-        } else {
-            NIXL_DEBUG << absl::StrFormat(
-                "%s: success url=%s http_code=%ld", ctx->op_name, ctx->url, http_code);
-        }
-        auto cb = std::move(ctx->bool_cb);
-        asio::post(pool_, [cb = std::move(cb), success]() {
-            try {
-                if (cb) {
-                    cb(success);
-                }
-            }
-            catch (...) {
-            }
-        });
+        dispatchXferResult(ctx, res, http_code);
     }
     delete ctx;
 }
@@ -289,7 +301,8 @@ RestClient::pollerLoop() {
         // 3. Hand finished transfers' callbacks to the worker pool.
         reapCompletions();
 
-        // 4. On shutdown, abort anything still in flight so every callback fires.
+        // 4. On shutdown, abort anything still in flight so every callback fires
+        //    and every request is freed (finishRequest deletes the context).
         if (stopping) {
             for (RequestCtx *ctx : inflight_) {
                 curl_multi_remove_handle(multi_, ctx->easy);
@@ -326,7 +339,7 @@ RestClient::submitRdmaRequest(const char *op_name,
         return;
     }
 
-    std::string rdma_header = absl::StrFormat("x-scal-rdma: %s", rdma_desc);
+    const std::string rdma_header = absl::StrFormat("x-scal-rdma: %s", rdma_desc);
     ctx->headers = curl_slist_append(ctx->headers, rdma_header.c_str());
     if (is_upload) {
         // Content-Length: 0; data is transferred via RDMA, not the HTTP body.

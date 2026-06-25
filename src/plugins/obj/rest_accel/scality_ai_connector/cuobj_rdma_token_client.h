@@ -26,7 +26,7 @@
 class CuObjRdmaTokenClient : public iRdmaTokenClient {
 public:
     explicit CuObjRdmaTokenClient(CUObjOps_t &ops);
-    ~CuObjRdmaTokenClient() override = default;
+    ~CuObjRdmaTokenClient() = default;
 
     bool
     isConnected() const override;

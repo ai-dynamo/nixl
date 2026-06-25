@@ -65,8 +65,8 @@ if cuobj_dep.found()
         scality_connector_lib = static_library(
             'scality_ai_connector',
             [
-                'rest_accel/scality_ai_connector/client.cpp',
-                'rest_accel/scality_ai_connector/client.h',
+                'rest_accel/scality_ai_connector/rest_client.cpp',
+                'rest_accel/scality_ai_connector/rest_client.h',
                 'rest_accel/scality_ai_connector/engine_impl.cpp',
                 'rest_accel/scality_ai_connector/engine_impl.h',
                 'rest_accel/scality_ai_connector/rdma_token_client.h',

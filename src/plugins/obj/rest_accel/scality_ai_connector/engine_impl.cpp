@@ -16,7 +16,7 @@
  */
 
 #include "engine_impl.h"
-#include "client.h"
+#include "rest_client.h"
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>
 #include "cuobj_rdma_token_client.h"
@@ -80,10 +80,10 @@ objAccelEngineRegistrar reg_scality(
 /**
  * RDMA context structure for cuObject operations.
  */
-typedef struct rdma_ctx {
+struct rdma_ctx_t {
     /// RDMA descriptor string
     std::string rdma_desc;
-} rdma_ctx_t;
+};
 
 std::string
 objKeyFor(const std::string &metaInfo, uint64_t devId) {
@@ -146,14 +146,9 @@ public:
     std::string obj_key;
     rdma_ctx_t ctx;
 
-    scalityObjTransferRequestH() : addr(0), size(0), offset(0), rdma_desc(""), obj_key("") {}
+    scalityObjTransferRequestH() : addr(0), size(0), offset(0) {}
 
-    scalityObjTransferRequestH(uintptr_t a, size_t s, size_t off)
-        : addr(a),
-          size(s),
-          offset(off),
-          rdma_desc(""),
-          obj_key("") {}
+    scalityObjTransferRequestH(uintptr_t a, size_t s, size_t off) : addr(a), size(s), offset(off) {}
 
     ~scalityObjTransferRequestH() = default;
 };
@@ -273,23 +268,31 @@ objectPut(const void *handle,
 /// cuObject I/O operations for Scality AI Connector
 CUObjIOOps scality_ops = {.get = objectGet, .put = objectPut};
 
+// Return the injected client when provided (the test seam), otherwise build the
+// production RestClient. Lets connectorClient_ be initialized as const in the
+// member initializer list.
+std::shared_ptr<iRestClient>
+makeConnectorClient(const nixlBackendInitParams *init_params,
+                    const std::shared_ptr<iRestClient> &injected) {
+    if (injected) {
+        return injected;
+    }
+    // init_params is only optional when a client is injected (the test seam);
+    // the production constructor always supplies a non-null init_params.
+    assert(init_params != nullptr && "init_params must be non-null when no RestClient is injected");
+    return std::make_shared<RestClient>(init_params->customParams);
+}
+
 } // namespace
 
 ScalityObjEngineImpl::ScalityObjEngineImpl(const nixlBackendInitParams *init_params)
     : ScalityObjEngineImpl(init_params, nullptr) {}
 
 ScalityObjEngineImpl::ScalityObjEngineImpl(const nixlBackendInitParams *init_params,
-                                           std::shared_ptr<iRestClient> connector_client) {
-    if (connector_client) {
-        connectorClient_ = connector_client;
-    } else {
-        // init_params is only optional when a client is injected (the test seam);
-        // the production constructor always supplies a non-null init_params.
-        assert(init_params != nullptr &&
-               "init_params must be non-null when no RestClient is injected");
-        connectorClient_ = std::make_shared<RestClient>(init_params->customParams);
-    }
-
+                                           const std::shared_ptr<iRestClient> &connector_client)
+    // DC transport via NVIDIA cuObject (CUOBJ_PROTO_RDMA_DC_V1).
+    : cuClient_(std::make_shared<CuObjRdmaTokenClient>(scality_ops)),
+      connectorClient_(makeConnectorClient(init_params, connector_client)) {
     NIXL_INFO << "Object storage backend initialized with Scality AI Connector RDMA client";
 
     // Number of GPUs, used to spread DRAM MRs across NICs (see targetCudaDevice).
@@ -297,9 +300,6 @@ ScalityObjEngineImpl::ScalityObjEngineImpl(const nixlBackendInitParams *init_par
     if (cudaGetDeviceCount(&gpuCount_) != cudaSuccess || gpuCount_ < 0) {
         gpuCount_ = 0;
     }
-
-    // DC transport via NVIDIA cuObject (CUOBJ_PROTO_RDMA_DC_V1).
-    cuClient_ = std::make_shared<CuObjRdmaTokenClient>(scality_ops);
 
     if (!cuClient_ || !cuClient_->isConnected()) {
         NIXL_ERROR << "RDMA token client failed to connect.";
