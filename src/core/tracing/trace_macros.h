@@ -22,20 +22,22 @@
  *
  * When tracing is compiled out (NIXL_TRACE_ENABLED undefined) every macro
  * expands to `do {} while (0)` so call sites cost nothing. When compiled in,
- * the scope macros bind the returned Span to a named variable (satisfying its
- * [[nodiscard]]) and take a predictable null-check branch on the tracer.
+ * NIXL_TRACE_SCOPE declares a caller-named RAII Span and takes a predictable
+ * null-check branch on the tracer.
  *
- * Usage contract: at most one NIXL_TRACE_SCOPE per lexical scope (the span is
- * bound to a fixed variable name). Use NIXL_TRACE_ATTR afterwards to annotate
- * it; attribute arguments are only evaluated when a backend is actually active.
+ * Usage: NIXL_TRACE_SCOPE(span, tracer, name, kind) declares the local `span`;
+ * pass that same `span` to NIXL_TRACE_ATTR(span, key, value) to annotate it.
+ * The explicit name avoids any hidden coupling/shadowing and allows more than
+ * one span per scope. Attribute arguments are only evaluated when a backend is
+ * actually active.
  */
 
 #include "tracing/trace.h"
 
 #if defined(NIXL_TRACE_ENABLED)
 
-#define NIXL_TRACE_SCOPE(tracer_ptr, span_name, span_kind)                                    \
-    ::nixl::trace::Span nixl_trace_span_ = [&]() -> ::nixl::trace::Span {                     \
+#define NIXL_TRACE_SCOPE(span, tracer_ptr, span_name, span_kind)                              \
+    ::nixl::trace::Span span = [&]() -> ::nixl::trace::Span {                                 \
         auto *nixl_trace_tracer_ = (tracer_ptr);                                              \
         return nixl_trace_tracer_ ? nixl_trace_tracer_->beginSpan((span_name), (span_kind)) : \
                                     ::nixl::trace::Span{};                                    \
@@ -48,23 +50,23 @@
         }                                                       \
     } while (0)
 
-#define NIXL_TRACE_ATTR(attr_key, attr_value)                        \
-    do {                                                             \
-        if (nixl_trace_span_.active()) {                             \
-            nixl_trace_span_.addAttribute((attr_key), (attr_value)); \
-        }                                                            \
+#define NIXL_TRACE_ATTR(span, attr_key, attr_value)        \
+    do {                                                   \
+        if ((span).active()) {                             \
+            (span).addAttribute((attr_key), (attr_value)); \
+        }                                                  \
     } while (0)
 
 #else // !NIXL_TRACE_ENABLED
 
-#define NIXL_TRACE_SCOPE(tracer_ptr, span_name, span_kind) \
-    do {                                                   \
+#define NIXL_TRACE_SCOPE(span, tracer_ptr, span_name, span_kind) \
+    do {                                                         \
     } while (0)
 #define NIXL_TRACE_MARK(tracer_ptr, mark_name, mark_kind) \
     do {                                                  \
     } while (0)
-#define NIXL_TRACE_ATTR(attr_key, attr_value) \
-    do {                                      \
+#define NIXL_TRACE_ATTR(span, attr_key, attr_value) \
+    do {                                            \
     } while (0)
 
 #endif // NIXL_TRACE_ENABLED
