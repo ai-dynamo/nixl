@@ -28,14 +28,18 @@ The assertions are real: they fail if the backend behavior is wrong. The
 backend source is never modified to make them pass.
 """
 
-import os
 import sys
 import types
+from pathlib import Path
 
 import pytest  # type: ignore
 
-p = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, p)
+# This test lives in nixl/test/unit/kvbench/; the module under test
+# (storage_backend.py) lives in the KVBench source dir
+# nixl/benchmark/kvbench/test/. Resolve that dir relative to this file
+# (repo root == parents[3]) so the import works from any rootdir.
+_KVBENCH_SRC = Path(__file__).resolve().parents[3] / "benchmark" / "kvbench" / "test"
+sys.path.insert(0, str(_KVBENCH_SRC))
 
 
 # --------------------------------------------------------------------------- #
