@@ -20,6 +20,7 @@ if [[ "${PHASE}" == "accuracy" ]]; then
     MODEL="${ACCURACY_MODEL}"
 fi
 echo "Using model: ${MODEL}"
+prefetch_model "${MODEL}"
 
 PREFILL_PORT=30000
 DECODE_PORT=30001

@@ -131,3 +131,18 @@ MODEL="${MODEL:-TinyLlama/TinyLlama-1.1B-Chat-v1.0}"
 # TinyLlama-1.1B tops out well below that. Qwen3-8B clears it with margin.
 # Smoke/perf keep the lightweight default for fast startup.
 ACCURACY_MODEL="${ACCURACY_MODEL:-Qwen/Qwen3-8B}"
+
+# Download model weights to the HuggingFace cache before launching servers.
+# sglang/vllm spend several minutes discovering a cache miss inside their own
+# startup path, which burns the health-check timeout; an explicit download step
+# fails fast and clearly instead.
+prefetch_model() {
+    local model="$1"
+    echo "=== pre-fetching model weights: ${model} ==="
+    if command -v huggingface-cli >/dev/null 2>&1; then
+        huggingface-cli download "${model}"
+    else
+        python3 -c "from huggingface_hub import snapshot_download; snapshot_download('${model}')"
+    fi
+    echo "=== model weights ready ==="
+}

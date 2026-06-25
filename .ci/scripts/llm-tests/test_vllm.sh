@@ -40,6 +40,8 @@ trap cleanup EXIT
 
 mkdir -p /tmp/vllm-logs
 
+prefetch_model "${MODEL}"
+
 echo "=== launching prefill on GPU 0 ==="
 CUDA_VISIBLE_DEVICES=0 \
 UCX_PROTO_INFO=used \
