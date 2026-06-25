@@ -15,13 +15,8 @@ requested.
 
 The first backend is **NVTX** (NVIDIA Tools Extension), which makes NIXL operations
 visible as ranges on an [NVIDIA Nsight Systems](https://docs.nvidia.com/nsight-systems/)
-timeline; it ships as `libtrace_backend_nvtx.so` in a follow-up change. Additional
-backends (e.g. MLCommons **Chakra** execution traces) are planned and plug into the
-same call sites.
-
-> Scope: this page describes the tracing facade and the backend-plugin mechanism.
-> No backend ships in the base; backend-specific usage (NVTX profiling with Nsight
-> Systems, etc.) is documented alongside each backend plugin.
+timeline; it ships as `libtrace_backend_nvtx.so`. Additional backends (e.g. MLCommons
+**Chakra** execution traces) are planned and plug into the same call sites.
 
 Tracing is independent of the [telemetry](telemetry.md) system: telemetry collects
 numeric metrics/events, while tracing records spans/markers for profiling and
@@ -117,19 +112,61 @@ dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with
 backend (e.g. NVTX surfaces attributes as `key=value` marks inside the range and
 ignores dependencies; offline backends such as Chakra record them).
 
-## Running the tracing tests
+## Profiling with NVTX / Nsight Systems
 
-The facade unit tests run as part of the normal gtest suite (CTest); they exercise
-the fan-out, attribute, and inert/no-backend paths against mock backends, so they
-need no backend plugin:
+NVTX is a lazy, online API: when no profiler is attached, ranges are near-zero-cost
+no-op stubs. Run the process under `nsys` to capture the ranges into a `.nsys-rep`
+you can open in the Nsight Systems GUI. The NVTX backend is sourced from the CUDA
+toolkit's header-only `nvtx3` (CUDA-toolkit-only — there is no non-CUDA build).
 
 ```bash
-ninja -C build test/gtest/unit/unit
-./build/test/gtest/unit/unit --gtest_filter='Tracing.*'
+# Build with tracing + the NVTX backend plugin (both on by default)
+meson setup build -Dbuildtype=debug -Dwith_trace=true -Dtrace_backends=nvtx
+ninja -C build
+
+# Profile a tracing-enabled run (here: the tracing gtest)
+NIXL_TRACE_BACKENDS=nvtx nsys profile --trace=nvtx,cuda,osrt --force-overwrite true \
+    --output /tmp/nixl_nvtx \
+    ./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
+    --gtest_filter='*Tracing*'
+
+# Summarize from the CLI, or open /tmp/nixl_nvtx.nsys-rep in Nsight Systems:
+nsys stats --report nvtx_sum --format csv /tmp/nixl_nvtx.nsys-rep | grep 'nixl::'
 ```
 
-Real-agent tracing tests and an `nsys` timeline-capture test ship with the NVTX
-backend.
+Each agent uses its **own NVTX domain named after the agent**, so ranges appear as
+`<agent_name>:<span_name>`, e.g.:
+
+```text
+agent_0:nixl::postXferReq.write
+agent_0:nixl::createXferReq
+agent_0:nixl::registerMem
+agent_1:nixl::registerMem
+```
+
+For GPU transfers the host-side NVTX ranges line up on the Nsight timeline with the
+GPU activity Nsight captures via CUDA tracing (`--trace=cuda,nvtx`), i.e. a GPU-aware
+view by correlation. In-kernel / device-side tracing is out of scope (NVTX cannot run
+in `__device__` code).
+
+## Running the tracing tests
+
+The facade unit tests run against mock backends (no plugin needed); the real-agent
+`TestTransferTracing` tests load the NVTX plugin and exercise live UCX transfers with
+NVTX active:
+
+```bash
+ninja -C build test/gtest/unit/unit test/gtest/gtest
+# facade unit suite (no backend plugin needed):
+./build/test/gtest/unit/unit --gtest_filter='Tracing.*'
+# real-agent NVTX suite (loads libtrace_backend_nvtx.so from the build tree):
+./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
+    --gtest_filter='*TestTransferTracing*'
+```
+
+When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
+test and writes `build/test/gtest/artifacts/nixl_nvtx.nsys-rep` (skipped automatically
+if profiling is not permitted in the environment).
 
 ## Correlation
 
@@ -149,8 +186,8 @@ backend.
 
 ## Planned work
 
-- **NVTX backend plugin** (`libtrace_backend_nvtx.so`) — ranges/marks on the Nsight
-  Systems timeline, plus an `nsys` capture test (immediate follow-up).
+- **NVTX completeness** — structured, typed NVTX payload attributes (vs the current
+  `key=value` marks), hot-path registered-string labels, and broader call-site coverage.
 - **Chakra backend** — serialize MLCommons Chakra execution traces (one ET per rank),
   recording the span attributes and dependencies the NVTX backend ignores.
 - **Cross-rank correlation** — propagate a global request id on the wire so sender and
