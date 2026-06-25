@@ -271,7 +271,7 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     size_t request_count = local.descCount();
-    transfer_request_t *request = new transfer_request_t[request_count];
+    std::vector<transfer_request_t> request(request_count);
     for (size_t index = 0; index < request_count; ++index) {
         if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
         request[index].opcode = (operation == NIXL_READ) ? OPCODE_READ : OPCODE_WRITE;
@@ -285,11 +285,11 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         notify_msg_t notify_msg;
         notify_msg.name = const_cast<char *>(local_agent_name_.c_str());
         notify_msg.msg = const_cast<char *>(opt_args->notifMsg.c_str());
-        rc = submitTransferWithNotify(engine_, priv->batch_id, request, request_count, notify_msg);
+        rc = submitTransferWithNotify(
+            engine_, priv->batch_id, request.data(), request_count, notify_msg);
     } else {
-        rc = submitTransfer(engine_, priv->batch_id, request, request_count);
+        rc = submitTransfer(engine_, priv->batch_id, request.data(), request_count);
     }
-    delete[] request;
     if (rc) return NIXL_ERR_BACKEND;
     priv->request_count += request_count;
     return NIXL_IN_PROG;
