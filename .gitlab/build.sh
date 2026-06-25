@@ -181,21 +181,6 @@ else
     $SUDO apt-get upgrade -y
     $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
 
-    # DOCA GPUNetIO headers install under /opt/mellanox/doca/include (with a few
-    # co-installed headers under /usr/include), which nvcc does not search. Stage
-    # doca_gpunetio* into the CUDA include dir so device compilation finds the full
-    # chain pulled in via UCX device headers (doca_gpunetio_dev_verbs_qp.cuh ...).
-    if [ -d "${CUDA_HOME}/include" ]; then
-        DOCA_HEADERS=$(find /usr/include /opt -name "doca_gpunetio*" 2>/dev/null)
-        if [ -n "$DOCA_HEADERS" ]; then
-            if echo "$DOCA_HEADERS" | xargs -I{} $SUDO cp {} "${CUDA_HOME}/include/"; then
-                echo "Copied DOCA GPUNetIO headers to ${CUDA_HOME}/include/"
-            else
-                echo "Failed to copy some DOCA GPUNetIO headers to ${CUDA_HOME}/include/ - EP device compilation may fail" >&2
-            fi
-        fi
-    fi
-
     # Force reinstall of RDMA packages from DOCA repository
     # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
     # Upgrade is not sufficient if the version is the same since apt skips the installation.
