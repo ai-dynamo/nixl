@@ -36,6 +36,7 @@ WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 UCX_REF=${UCX_REF:-v1.21.x}
+DOCA_SRC=""
 BUILD_NIXL_EP="true"
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
@@ -127,6 +128,15 @@ get_options() {
         --build-nixl-ep)
             BUILD_NIXL_EP=true
             ;;
+        --doca)
+            if [ "$2" ]; then
+                DOCA_SRC=$2
+                BUILD_ARGS+="--build-context doca=$2 --build-arg DOCA=custom"
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --arch)
             if [ "$2" ]; then
                 ARCH=$2
@@ -175,6 +185,11 @@ show_build_options() {
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
     echo "UCX Ref: ${UCX_REF}"
+    if [ -n "$DOCA_SRC" ]; then
+        echo "DOCA: custom (source: ${DOCA_SRC})"
+    else
+        echo "DOCA: upstream (host repo packages)"
+    fi
     if [ "$BUILD_NIXL_EP" = "true" ]; then
         echo "NIXL EP: Enabled"
     else
@@ -195,6 +210,7 @@ show_help() {
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--ucx-ref ucx git reference (branch, tag, or sha)]"
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
+    echo "  [--doca path/to/doca/source/dir to build DOCA from source instead of host repo packages]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     exit 0

@@ -43,6 +43,9 @@ credentials:
   - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USERNAME'
     passwordVariable: 'ARTIFACTORY_PASSWORD'
+  - credentialsId: 'nbu-swx_gitlab_token'
+    usernameVariable: 'GITLAB_USERNAME'
+    passwordVariable: 'GITLAB_TOKEN'
 
 pipeline_start:
   shell: action
@@ -57,6 +60,7 @@ pipeline_start:
     echo "ENABLE_NIXLBENCH_BUILD: ${env.ENABLE_NIXLBENCH_BUILD}"
     echo "BUILD_TARGET: ${params.BUILD_TARGET}"
     echo "BUILD_NIXL_EP: ${params.BUILD_NIXL_EP}"
+    echo "DOCA_VERSION: ${params.DOCA_VERSION}"
 
 # Build pipeline
 steps:
@@ -99,6 +103,16 @@ steps:
           NIXL_EP_FLAG="--build-nixl-ep"
       fi
 
+      # Optionally build against a custom DOCA.
+      DOCA_FLAG=""
+      if [[ "${DOCA_VERSION}" != "upstream" ]]; then
+          echo "Cloning custom DOCA (ref: ${DOCA_VERSION})"
+          rm -rf "$WORKSPACE/doca-src"
+          git clone "https://${GITLAB_USERNAME}:${GITLAB_TOKEN}@gitlab-master.nvidia.com/storage/doca.git" "$WORKSPACE/doca-src"
+          git -C "$WORKSPACE/doca-src" checkout "${DOCA_VERSION}"
+          DOCA_FLAG="--doca $WORKSPACE/doca-src"
+      fi
+
       "contrib/build-container.sh" \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_IMAGE_TAG}" \
@@ -106,7 +120,8 @@ steps:
         --arch "${arch}" \
         --build-type debug \
         --no-cache \
-        ${NIXL_EP_FLAG}
+        ${NIXL_EP_FLAG} \
+        ${DOCA_FLAG}
 
   - name: Add Version Info
     containerSelector: "{name: 'podman'}"
@@ -227,6 +242,7 @@ pipeline_stop:
                 <p>Build Target: <b>${params.BUILD_TARGET}</b></p>
                 <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
                 <p>UCX Version: <b>${params.UCX_VERSION}</b></p>
+                <p>DOCA Version: <b>${params.DOCA_VERSION}</b></p>
                 <p>Base Image: <b>${params.BASE_IMAGE}:${params.BASE_IMAGE_TAG}</b></p>
                 <p>Architectures: <b>x86_64, aarch64</b></p>
                 ${params.UPDATE_LATEST ? '<p>Latest tag updated: <b>Yes</b></p>' : ''}
