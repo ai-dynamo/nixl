@@ -145,6 +145,7 @@ Source layout (see the code for details):
 | File | Role |
 |---|---|
 | `engine_impl.{h,cpp}` | `ScalityObjEngineImpl`: the engine (register / prepare / post / check). |
+| `device_select.h` | `targetCudaDevice()`: maps a buffer to the CUDA device whose closest NIC its MR binds to. |
 | `client.{h,cpp}` | `RestClient`: the libcurl HTTP control-plane client, an event-driven `curl_multi` poller with a callback worker pool (behind the `iRestClient` interface, which is also the test-injection seam). See [Concurrency model](#concurrency-model). |
 | `rdma_token_client.h` | `iRdmaTokenClient`: the data-plane interface and the `getCtx()` helper. |
 | `cuobj_rdma_token_client.{h,cpp}` | `CuObjRdmaTokenClient`: the DC RDMA implementation, a thin wrapper over NVIDIA `cuObjClient` (`CUOBJ_PROTO_RDMA_DC_V1`). |

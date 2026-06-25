@@ -20,6 +20,7 @@
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>
 #include "cuobj_rdma_token_client.h"
+#include "device_select.h"
 #include <cassert>
 #include <cstdlib>
 #include <memory>
@@ -291,6 +292,12 @@ ScalityObjEngineImpl::ScalityObjEngineImpl(const nixlBackendInitParams *init_par
 
     NIXL_INFO << "Object storage backend initialized with Scality AI Connector RDMA client";
 
+    // Number of GPUs, used to spread DRAM MRs across NICs (see targetCudaDevice).
+    // On error, leave gpuCount_ at 0 so DRAM registration keeps the current device.
+    if (cudaGetDeviceCount(&gpuCount_) != cudaSuccess || gpuCount_ < 0) {
+        gpuCount_ = 0;
+    }
+
     // DC transport via NVIDIA cuObject (CUOBJ_PROTO_RDMA_DC_V1).
     cuClient_ = std::make_shared<CuObjRdmaTokenClient>(scality_ops);
 
@@ -333,9 +340,12 @@ ScalityObjEngineImpl::registerMem(const nixlBlobDesc &mem,
         std::unique_ptr<nixlScalityObjMetadata> mem_md =
             std::make_unique<nixlScalityObjMetadata>(nixl_mem, mem.addr, mem.devId);
 
+        // Bind this MR (and its primary GID/NIC) to a CUDA device: VRAM to its own
+        // GPU, DRAM round-robin across GPUs so host buffers fan across NICs.
         std::optional<CudaDeviceGuard> dev_guard;
-        if (nixl_mem == VRAM_SEG) {
-            dev_guard.emplace((int)mem.devId);
+        int target = targetCudaDevice(nixl_mem, mem.devId, gpuCount_);
+        if (target >= 0) {
+            dev_guard.emplace(target);
         }
 
         cuObjErr_t cuda_status = cuClient_->cuMemObjGetDescriptor((void *)(mem.addr), mem.len);
@@ -362,9 +372,12 @@ ScalityObjEngineImpl::deregisterMem(nixlBackendMD *meta) {
         } else if ((md->nixlMem == DRAM_SEG) || (md->nixlMem == VRAM_SEG)) {
             std::unique_ptr<nixlScalityObjMetadata> mem_md_ptr =
                 std::unique_ptr<nixlScalityObjMetadata>(md);
+            // Deregister under the same device the MR was registered on so
+            // cuObject releases it against the matching context (see registerMem).
             std::optional<CudaDeviceGuard> dev_guard;
-            if (mem_md_ptr->nixlMem == VRAM_SEG) {
-                dev_guard.emplace((int)mem_md_ptr->devId);
+            int target = targetCudaDevice(mem_md_ptr->nixlMem, mem_md_ptr->devId, gpuCount_);
+            if (target >= 0) {
+                dev_guard.emplace(target);
             }
             cuObjErr_t cuda_status =
                 cuClient_->cuMemObjPutDescriptor((void *)(mem_md_ptr->localAddr));

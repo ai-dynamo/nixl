@@ -96,6 +96,9 @@ private:
     std::shared_ptr<iRdmaTokenClient> cuClient_;
     /// Scality AI Connector HTTP client with RDMA support
     std::shared_ptr<iRestClient> connectorClient_;
+    /// Number of CUDA devices, queried once at construction (0 if none).
+    /// Used to spread DRAM MRs across GPUs so cuObject fans them across NICs.
+    int gpuCount_ = 0;
 };
 
 #endif // NIXL_SRC_PLUGINS_OBJ_REST_ACCEL_SCALITY_AI_CONNECTOR_ENGINE_IMPL_H
