@@ -116,7 +116,7 @@ class nixlAgentData {
         nixl_status_t
         loadRemoteSections(const std::string &remote_name, nixlSerDes &sd);
         nixl_status_t
-        invalidateRemoteData(const std::string &remote_name, uint64_t generation = 0);
+        invalidateRemoteData(const std::string &remote_name, uint64_t generation);
         [[nodiscard]] static backend_set_t
         getBackends(const nixl_opt_args_t *opt_args,
                     const nixlMemSection &section,

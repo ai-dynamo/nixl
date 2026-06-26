@@ -93,33 +93,7 @@ class nixlLock {
         absl::Mutex m;
 };
 
-// RAII helper that temporarily escalates an already-held shared (reader) lock to
-// an exclusive (writer) lock, then restores the shared lock when it goes out of
-// scope. Must only be instantiated inside a scope that already holds `lock` via
-// NIXL_SHARED_LOCK_GUARD.
-class nixlLockUpgradeGuard {
-public:
-    explicit nixlLockUpgradeGuard(nixlLock &lock) : lock_(lock) {
-        lock_.assertHeld(false);
-        lock_.unlock_shared();
-        lock_.lock();
-    }
-
-    ~nixlLockUpgradeGuard() {
-        lock_.unlock();
-        lock_.lock_shared();
-    }
-
-    nixlLockUpgradeGuard(const nixlLockUpgradeGuard &) = delete;
-    nixlLockUpgradeGuard &
-    operator=(const nixlLockUpgradeGuard &) = delete;
-
-private:
-    nixlLock &lock_;
-};
-
 #define NIXL_LOCK_GUARD(lock) const std::lock_guard<nixlLock> UNIQUE_NAME(lock_guard) (lock)
 #define NIXL_SHARED_LOCK_GUARD(lock) const std::shared_lock<nixlLock> UNIQUE_NAME(lock_guard) (lock)
-#define NIXL_UPGRADE_LOCK_GUARD(lock) const nixlLockUpgradeGuard UNIQUE_NAME(upgrade_guard)(lock)
 
 #endif /* SYNC_H */
