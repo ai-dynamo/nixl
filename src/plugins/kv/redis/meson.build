@@ -120,4 +120,7 @@ else
     endif
 endif
 
-redis_backend_interface = declare_dependency(link_with: redis_backend_lib)
+redis_backend_interface = declare_dependency(
+    link_with: redis_backend_lib,
+    dependencies: redis_plugin_deps,
+)
