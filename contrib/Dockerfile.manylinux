@@ -206,14 +206,16 @@ ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
 # system install is found ahead of that meson wrap and also satisfies the prebuilt libred_client's
 # transitive liburing.so.2 link/runtime need (the wrap is an internal subproject not on the
 # system linker/loader path, so it can't resolve libred's NEEDED — hence the system build here).
+# Build/install ONLY the library (make -C src): liburing 2.14's examples (e.g. zcrx.c) pull in
+# linux/udmabuf.h, which isn't in the manylinux_2_28 (EL8) kernel headers, so a full `make` fails.
 RUN cd /tmp && \
     LIBURING_VERSION=2.14 && \
     wget -q "https://github.com/axboe/liburing/archive/refs/tags/liburing-${LIBURING_VERSION}.tar.gz" && \
     tar -xzf "liburing-${LIBURING_VERSION}.tar.gz" && \
     cd "liburing-liburing-${LIBURING_VERSION}" && \
     ./configure --prefix=/usr/local && \
-    make -j"${NPROC:-$(nproc)}" && \
-    make install && \
+    make -j"${NPROC:-$(nproc)}" -C src && \
+    make -C src install && \
     echo "/usr/local/lib"   >  /etc/ld.so.conf.d/usrlocal.conf && \
     echo "/usr/local/lib64" >> /etc/ld.so.conf.d/usrlocal.conf && \
     ldconfig && \
