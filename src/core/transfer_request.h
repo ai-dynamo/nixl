@@ -69,6 +69,8 @@ private:
     nixl_meta_dlist_t targetDescs;
 
     const std::string remoteAgent;
+    // Generation of the remote-connection
+    uint64_t remoteGeneration_ = 0;
     nixl_blob_t notifMsg;
     bool hasNotif = false;
 

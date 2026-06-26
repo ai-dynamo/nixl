@@ -755,6 +755,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
                                                  desc_count);
+    handle->remoteGeneration_ = rem_sec_it->second.getGeneration();
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
@@ -916,6 +917,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
                                                  local_descs.descCount());
+    handle->remoteGeneration_ = rem_sec_it->second.getGeneration();
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -1062,7 +1064,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
             NIXL_UPGRADE_LOCK_GUARD(data->lock);
-            data->invalidateRemoteData(req_hndl->remoteAgent);
+            data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
             return NIXL_ERR_REMOTE_DISCONNECT;
@@ -1113,7 +1115,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
             NIXL_UPGRADE_LOCK_GUARD(data->lock);
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
-            data->invalidateRemoteData(req_hndl->remoteAgent);
+            data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
             return NIXL_ERR_REMOTE_DISCONNECT;
         } else {
             NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
@@ -1155,7 +1157,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         if (req_hndl->status < 0) {
             if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
                 NIXL_UPGRADE_LOCK_GUARD(data->lock);
-                data->invalidateRemoteData(req_hndl->remoteAgent);
+                data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
                 return NIXL_ERR_REMOTE_DISCONNECT;
             } else {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()

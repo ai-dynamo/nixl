@@ -198,12 +198,18 @@ class nixlLocalSection : public nixlMemSection {
 class nixlRemoteSection : public nixlMemSection {
     private:
         std::string agentName;
+        uint64_t generation_;
 
         nixl_status_t addDescList (
                            const nixl_reg_dlist_t &mem_elms,
                            nixlBackendEngine *backend);
     public:
         explicit nixlRemoteSection(std::string agent_name) noexcept;
+
+        [[nodiscard]] uint64_t
+        getGeneration() const noexcept {
+            return generation_;
+        }
 
         nixl_status_t loadRemoteData (nixlSerDes* deserializer,
                                       backend_map_t &backendToEngineMap);

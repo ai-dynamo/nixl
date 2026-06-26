@@ -792,7 +792,7 @@ nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd
 }
 
 nixl_status_t
-nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
+nixlAgentData::invalidateRemoteData(const std::string &remote_name, uint64_t generation) {
     lock.assertHeld();
 
     if (remote_name == name_) {
@@ -800,10 +800,13 @@ nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixl_status_t ret = NIXL_ERR_NOT_FOUND;
-    if (remoteSections_.erase(remote_name) > 0) {
-        ret = NIXL_SUCCESS;
+    const auto sec_it = remoteSections_.find(remote_name);
+    if (sec_it == remoteSections_.end() || generation == 0 ||
+        sec_it->second.getGeneration() != generation) {
+        return NIXL_ERR_NOT_FOUND;
     }
+
+    remoteSections_.erase(sec_it);
 
     auto it_backends = remoteBackends_.find(remote_name);
     if (it_backends != remoteBackends_.end()) {
@@ -812,8 +815,7 @@ nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
         }
 
         remoteBackends_.erase(it_backends);
-        ret = NIXL_SUCCESS;
     }
 
-    return ret;
+    return NIXL_SUCCESS;
 }
