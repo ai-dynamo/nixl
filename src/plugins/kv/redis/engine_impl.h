@@ -20,8 +20,8 @@
  * @brief nixlRedisKVEngineImpl — NIXL protocol layer over iRedisClient.
  */
 
-#ifndef KV_PLUGIN_REDIS_ENGINE_IMPL_H
-#define KV_PLUGIN_REDIS_ENGINE_IMPL_H
+#ifndef NIXL_SRC_PLUGINS_KV_REDIS_ENGINE_IMPL_H
+#define NIXL_SRC_PLUGINS_KV_REDIS_ENGINE_IMPL_H
 
 #include "../kv_backend.h"
 #include "redis_engine.h"
@@ -42,14 +42,16 @@ public:
 
     ~nixlRedisKVEngineImpl() override;
 
-    nixl_mem_list_t getSupportedMems() const override {
+    nixl_mem_list_t
+    getSupportedMems() const override {
         return {OBJ_SEG, DRAM_SEG};
     }
 
     nixl_status_t
     registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
 
-    nixl_status_t deregisterMem(nixlBackendMD *meta) override;
+    nixl_status_t
+    deregisterMem(nixlBackendMD *meta) override;
 
     nixl_status_t
     queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
@@ -71,9 +73,11 @@ public:
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args) const override;
 
-    nixl_status_t checkXfer(nixlBackendReqH *handle) const override;
+    nixl_status_t
+    checkXfer(nixlBackendReqH *handle) const override;
 
-    nixl_status_t releaseReqH(nixlBackendReqH *handle) const override;
+    nixl_status_t
+    releaseReqH(nixlBackendReqH *handle) const override;
 
 protected:
     virtual iRedisClient *
@@ -86,4 +90,4 @@ protected:
     std::unordered_map<uint64_t, std::string> devIdToRedisKey_;
 };
 
-#endif // KV_PLUGIN_REDIS_ENGINE_IMPL_H
+#endif // NIXL_SRC_PLUGINS_KV_REDIS_ENGINE_IMPL_H

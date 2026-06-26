@@ -1037,7 +1037,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     const size_t seed_size = xferBenchConfig::max_block_size;
                     if (!xferBenchUtils::putRedis(seed_size, unique_name)) {
                         std::cerr << "Failed to seed Redis key: " << unique_name << std::endl;
-                        continue;
+                        exit(EXIT_FAILURE);
                     }
                 }
 
@@ -1258,7 +1258,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 } else if (XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend) {
                     xferBenchIOV redis_remote(iov);
                     redis_remote.addr = 0;
-                    redis_remote.metaInfo = iov.metaInfo;
+                    redis_remote.len = block_size;
                     remote_iov_list.push_back(redis_remote);
                 } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
                     xferBenchIOV iov_remote(iov);

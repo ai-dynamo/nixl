@@ -27,7 +27,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS os_setup_stage
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION
 RUN apt-get update -y && \
-    DEBIAN_FRONTEND=noninteractive apt-get -y install \
+    DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends \
     ninja-build \
     pybind11-dev \
     libclang-dev \
@@ -50,7 +50,8 @@ RUN apt-get update -y && \
     build-essential \
     libhiredis-dev \
     libevent-dev \
-    redis-tools
+    redis-tools && \
+    rm -rf /var/lib/apt/lists/*
 
 # Add DOCA repository and install packages
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
@@ -122,8 +123,8 @@ ARG LIBFABRIC_VERSION="v1.21.0"
 ARG NPROC
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
-ARG NIXL_ENABLE_PLUGINS="REDIS"
-ARG NIXL_STATIC_PLUGINS="REDIS"
+ARG NIXL_ENABLE_PLUGINS=""
+ARG NIXL_STATIC_PLUGINS=""
 
 WORKDIR /workspace
 

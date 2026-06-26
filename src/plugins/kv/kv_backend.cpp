@@ -17,11 +17,15 @@
 
 #include "kv_backend.h"
 #include <cassert>
+#include <stdexcept>
 
 nixlKVEngine::nixlKVEngine(const nixlBackendInitParams *init_params,
                            std::unique_ptr<nixlKVEngineImpl> impl)
     : nixlBackendEngine(init_params),
       impl_(std::move(impl)) {
+    if (!impl_) {
+        throw std::invalid_argument("nixlKVEngine requires a non-null nixlKVEngineImpl");
+    }
     assert(impl_ && "nixlKVEngine requires a non-null nixlKVEngineImpl");
 }
 

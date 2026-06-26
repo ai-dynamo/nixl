@@ -65,9 +65,9 @@ The shared KV facade has no storage-system dependency. The REDIS backend require
 | `libevent_pthreads` | Thread-safe libevent setup |
 | `asio` | Thread pool used by the Redis executor |
 
-If REDIS is enabled but hiredis or libevent is not found, the dynamic plugin build is skipped. If
-`REDIS` is requested as a static plugin, missing hiredis/libevent is treated as a configuration
-error.
+If REDIS is explicitly enabled or requested as a static plugin, missing hiredis/libevent is treated
+as a configuration error. When building all plugins by default, a missing Redis dependency skips the
+dynamic REDIS plugin with a warning.
 
 ## Configuration
 
