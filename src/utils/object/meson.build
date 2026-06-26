@@ -24,17 +24,30 @@ if aws_s3.found() and aws_s3_crt.found() and aws_core.found()
     partial_aws_s3_crt = aws_s3_crt.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)
     partial_aws_core = aws_core.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)
 
+    # Shared S3-over-RDMA infrastructure (NVIDIA cuObject / proposed aws-c-s3
+    # protocol). rdma.cpp is internally guarded by HAVE_CUOBJ_CLIENT and compiles
+    # to nothing when the cuObjClient library is absent; rdma_protocol.h is
+    # dependency-free. These live here (not in the OBJ plugin) so the accel
+    # engines — and any future vendor engine — can compose them.
+    obj_utils_sources = ['s3/utils.cpp', 's3/utils.h', 'rdma_protocol.h', 'rdma.cpp', 'rdma.h']
+    obj_utils_deps = [nixl_common_dep, partial_aws_s3, partial_aws_s3_crt, partial_aws_core]
+    if cuobj_dep.found()
+        obj_utils_deps += [cuobj_dep]
+    endif
+
     # Generic object utilities library containing S3 utilities and other object storage utilities
     obj_utils_lib = library('obj_utils',
-               's3/utils.cpp', 's3/utils.h',
+               obj_utils_sources,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
-               dependencies: [nixl_common_dep, partial_aws_s3, partial_aws_s3_crt, partial_aws_core],
+               dependencies: obj_utils_deps,
                install: true)
 
+    # rdma.h is part of the public surface and pulls in nixl_types.h, so consumers
+    # need nixl_common_dep too (alongside the AWS deps).
     obj_utils_interface = declare_dependency(
         link_with: obj_utils_lib,
         include_directories: [include_directories('.'), include_directories('s3')],
-        dependencies: [partial_aws_s3, partial_aws_s3_crt, partial_aws_core]
+        dependencies: [nixl_common_dep, partial_aws_s3, partial_aws_s3_crt, partial_aws_core]
     )
 else
     warning('AWS SDK dependencies not found, skipping obj_utils library build')
