@@ -18,13 +18,8 @@ name: NIXL CI
 #     ARTIFACTORY_URL       - JFrog Artifactory base URL (release uploads)
 #     ARTIFACTORY_PYPI_TOKEN
 #     ARTIFACTORY_CARGO_TOKEN
-#     ARTIFACTORY_DOCKER_REGISTRY - "<host>/<repo>/<path>" registry base for the runtime
-#                                   container push (kept secret so the internal URL is
-#                                   masked in public CI logs), e.g.
-#                                   artifactory.nvidia.com/sw-dynamo-nixl-docker-local
-#     ARTIFACTORY_DOCKER_USERNAME - docker-registry user for the container push
-#     ARTIFACTORY_DOCKER_TOKEN      identity token, used for both docker login and the
-#                                   storage-properties REST call
+#   (The runtime-container push reuses ARTIFACTORY_URL + ARTIFACTORY_PYPI_TOKEN — same
+#    sw-dynamo project as the wheel upload — with docker login as user 'nmailhot'.)
 # AWS/ECR push auth comes from the runner pod's IRSA service account, not a secret.
 
 on:
@@ -207,10 +202,12 @@ jobs:
       - name: Push runtime container to Artifactory
         if: ${{ matrix.dockerfile == 'contrib/Dockerfile' && env.RELEASE_BUILD == 'true' }}
         env:
-          # Full registry base "<host>/<repo>/<path>" in a secret; masked in public logs.
-          AF_REGISTRY: ${{ secrets.ARTIFACTORY_DOCKER_REGISTRY }}
-          AF_USERNAME: ${{ secrets.ARTIFACTORY_DOCKER_USERNAME }}
-          AF_TOKEN: ${{ secrets.ARTIFACTORY_DOCKER_TOKEN }}
+          # Reuse the existing sw-dynamo Artifactory secrets (same project + token as the wheel
+          # upload) — host derived from ARTIFACTORY_URL, token = ARTIFACTORY_PYPI_TOKEN.
+          ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+          ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_PYPI_TOKEN }}
+          AF_USERNAME: nmailhot
+          AF_REPO: sw-dynamo-nixl-docker-local
           UCX_REF: v1.21.x
           BASE_IMAGE_TAG: ${{ matrix.base_image_tag }}
           ARCH: ${{ matrix.arch }}
@@ -228,18 +225,16 @@ jobs:
           # Suffix = release version (mirrors the Jenkins TAG_SUFFIX, e.g. -v1.0.1-rc2).
           SUFFIX="${RELEASE_VERSION:+-v${RELEASE_VERSION}}"
           TAG="${BASE_IMAGE_TAG}-nixl-${NIXL_SHA}-ucx-${UCX_SHA}-${ARCH}${SUFFIX}"
-          # AF_REGISTRY (secret) = <host>/<repo>/<path>; derive the bare host for docker login
-          # and the repo/path for the storage API. Don't echo these so the link stays masked.
-          AF_HOST="${AF_REGISTRY%%/*}"
-          AF_REPO_PATH="${AF_REGISTRY#*/}"
-          AF_IMAGE="${AF_REGISTRY}/nixl:${TAG}"
-          echo "$AF_TOKEN" | docker login "$AF_HOST" -u "$AF_USERNAME" --password-stdin
+          # Docker registry host = ARTIFACTORY_URL host (strip scheme + the /artifactory path).
+          AF_HOST="$(printf '%s' "$ARTIFACTORY_URL" | sed -E 's#^https?://##; s#/.*##')"
+          AF_IMAGE="${AF_HOST}/${AF_REPO}/nixl:${TAG}"
+          echo "$ARTIFACTORY_TOKEN" | docker login "$AF_HOST" -u "$AF_USERNAME" --password-stdin
           docker tag "$IMAGE_NAME" "$AF_IMAGE"
           docker push "$AF_IMAGE"
           # Set item properties (parity with the Jenkins push step); non-fatal.
           PROPS="component_name=nixl;NIXL_VERSION=${NIXL_SHA};UCX_VERSION=${UCX_SHA};arch=${ARCH};BASE_IMAGE_TAG=${BASE_IMAGE_TAG};version=${RELEASE_VERSION}"
-          curl -fsSL -H "Authorization: Bearer ${AF_TOKEN}" -X PUT \
-            "https://${AF_HOST}/artifactory/api/storage/${AF_REPO_PATH}/nixl/${TAG}?properties=${PROPS}" \
+          curl -fsSL -H "Authorization: Bearer ${ARTIFACTORY_TOKEN}" -X PUT \
+            "${ARTIFACTORY_URL}/api/storage/${AF_REPO}/nixl/${TAG}?properties=${PROPS}" \
             || echo "WARN: failed to set Artifactory properties (non-fatal)"
 
   # ----------------------------------------------------------------------------
