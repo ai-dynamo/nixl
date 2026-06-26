@@ -60,8 +60,8 @@ if not hiredis_async_dep.found() or not libevent_dep.found()
 endif
 
 if not hiredis_async_dep.found() or not libevent_dep.found()
-    if 'REDIS' in static_plugins
-        error('REDIS static plugin requested but hiredis and libevent are required. Install libhiredis-dev and libevent-dev (or equivalent), then reconfigure.')
+    if is_explicit_enable or 'REDIS' in static_plugins
+        error('REDIS plugin requested but hiredis and libevent are required. Install libhiredis-dev and libevent-dev (or equivalent), then reconfigure.')
     endif
     warning('hiredis-async or libevent not available, skipping REDIS plugin build')
     subdir_done()
@@ -106,7 +106,7 @@ else
         'REDIS',
         redis_sources,
         dependencies: redis_plugin_deps,
-        cpp_args: compile_defs_redis + ['-fPIC'],
+        cpp_args: compile_defs_redis + compile_flags + ['-fPIC'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
         name_prefix: 'libplugin_',

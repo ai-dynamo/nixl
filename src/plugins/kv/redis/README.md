@@ -58,7 +58,7 @@ class iRedisClient {
 };
 ```
 
-Connection settings (constructor): `host`, `port`, `password`, `db` via NIXL custom params or env vars `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`.
+Connection settings (constructor): `host`, `port`, and `password` can come from NIXL custom params or `REDIS_HOST`, `REDIS_PORT`, and `REDIS_PASSWORD`; `db` is a NIXL custom param only.
 
 ## Transfer call path
 
@@ -156,6 +156,7 @@ Expected log lines:
 **Notes:**
 
 - `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` are read by `hiredisAsyncClient` at plugin init.
+- Redis `db` selection is configured only through the NIXL `db` custom param.
 - nixlbench may adjust `--num_iter` / `--warmup_iter` for thread alignment (warnings are normal).
 - For a one-shot run without an interactive shell, pass `nixlbench ...` as the `docker run` command
   instead of `bash`.

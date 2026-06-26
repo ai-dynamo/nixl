@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef KV_BACKEND_H
-#define KV_BACKEND_H
+#ifndef NIXL_SRC_PLUGINS_KV_KV_BACKEND_H
+#define NIXL_SRC_PLUGINS_KV_KV_BACKEND_H
 
 #include "backend/backend_engine.h"
 #include <cstddef>
@@ -76,7 +76,7 @@ public:
 
 class nixlKVEngine : public nixlBackendEngine {
 public:
-    virtual ~nixlKVEngine();
+    ~nixlKVEngine() override;
 
     bool
     supportsRemote() const override {
@@ -158,4 +158,4 @@ private:
     std::unique_ptr<nixlKVEngineImpl> impl_;
 };
 
-#endif // KV_BACKEND_H
+#endif // NIXL_SRC_PLUGINS_KV_KV_BACKEND_H

@@ -88,11 +88,12 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
         return false;
     }
 
-    if (remote_agent != local_agent)
+    if (remote_agent != local_agent) {
         NIXL_WARN << absl::StrFormat(
             "Warning: Remote agent doesn't match the requesting agent (%s). Got %s",
             local_agent,
             remote_agent);
+    }
 
     if (local.getType() != DRAM_SEG) {
         NIXL_ERROR << absl::StrFormat("Error: Local memory type must be DRAM_SEG, got %d",
@@ -101,8 +102,8 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
     }
 
     if (remote.getType() != DRAM_SEG && remote.getType() != OBJ_SEG) {
-        NIXL_ERROR << absl::StrFormat("Error: Remote memory type must be DRAM_SEG or OBJ_SEG, got %d",
-                                      remote.getType());
+        NIXL_ERROR << absl::StrFormat(
+            "Error: Remote memory type must be DRAM_SEG or OBJ_SEG, got %d", remote.getType());
         return false;
     }
 
@@ -169,7 +170,7 @@ nixlRedisKVEngineImpl::nixlRedisKVEngineImpl(const nixlBackendInitParams *init_p
 
 nixlRedisKVEngineImpl::~nixlRedisKVEngineImpl() {
     if (executor_) {
-        executor_->WaitUntilStopped();
+        executor_->waitUntilStopped();
     }
 }
 
@@ -179,6 +180,7 @@ nixlRedisKVEngineImpl::registerMem(const nixlBlobDesc &mem,
                                    nixlBackendMD *&out) {
     auto supported_mems = getSupportedMems();
     if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end()) {
+        out = nullptr;
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -295,8 +297,10 @@ nixlRedisKVEngineImpl::postXfer(const nixl_xfer_op_t &operation,
     req_h->statusFutures_.clear();
     req_h->statusPromises_.clear();
 
-    for (int i = 0; i < local.descCount(); ++i) {
-        const auto &local_desc = local[i];
+    std::vector<std::string> redis_keys;
+    redis_keys.reserve(local.descCount());
+
+    for (int i = 0; i < remote.descCount(); ++i) {
         const auto &remote_desc = remote[i];
 
         std::string redis_key;
@@ -318,6 +322,12 @@ nixlRedisKVEngineImpl::postXfer(const nixl_xfer_op_t &operation,
             }
             redis_key = it->second;
         }
+        redis_keys.push_back(std::move(redis_key));
+    }
+
+    for (int i = 0; i < local.descCount(); ++i) {
+        const auto &local_desc = local[i];
+        const auto &redis_key = redis_keys[i];
 
         auto status_promise = std::make_shared<std::promise<nixl_status_t>>();
         req_h->statusPromises_.push_back(status_promise);

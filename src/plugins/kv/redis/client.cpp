@@ -20,12 +20,22 @@
 #include <absl/strings/str_format.h>
 #include <chrono>
 #include <cstring>
+#include <functional>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 #ifdef HAVE_HIREDIS_ASYNC
 
 namespace {
+
+using redis_event_task_t = std::function<void()>;
+
+void
+runEventTask(evutil_socket_t, short, void *arg) {
+    std::unique_ptr<redis_event_task_t> task(static_cast<redis_event_task_t *>(arg));
+    (*task)();
+}
 
 std::string
 getRedisHost(nixl_b_params_t *custom_params) {
@@ -36,23 +46,37 @@ getRedisHost(nixl_b_params_t *custom_params) {
     return env_host ? std::string(env_host) : "localhost";
 }
 
+std::optional<int>
+parseRedisPort(const std::string &value, const char *source) {
+    try {
+        size_t parsed = 0;
+        int port = std::stoi(value, &parsed);
+        if (parsed != value.size() || port <= 0 || port > 65535) {
+            NIXL_WARN << absl::StrFormat(
+                "Invalid %s value '%s', using default 6379", source, value);
+            return std::nullopt;
+        }
+        return port;
+    }
+    catch (const std::exception &) {
+        NIXL_WARN << absl::StrFormat("Invalid %s value '%s', using default 6379", source, value);
+        return std::nullopt;
+    }
+}
+
 int
 getRedisPort(nixl_b_params_t *custom_params) {
     if (custom_params && custom_params->count("port") > 0) {
-        try {
-            return std::stoi(custom_params->at("port"));
-        }
-        catch (const std::exception &) {
-            NIXL_WARN << "Invalid port value, using default 6379";
+        auto port = parseRedisPort(custom_params->at("port"), "Redis port");
+        if (port) {
+            return *port;
         }
     }
     const char *env_port = getenv("REDIS_PORT");
     if (env_port) {
-        try {
-            return std::stoi(env_port);
-        }
-        catch (const std::exception &) {
-            NIXL_WARN << "Invalid REDIS_PORT, using default 6379";
+        auto port = parseRedisPort(env_port, "REDIS_PORT");
+        if (port) {
+            return *port;
         }
     }
     return 6379;
@@ -125,7 +149,9 @@ hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params,
       syncContext_(nullptr),
       eventBase_(nullptr),
       executor_(executor),
-      connected_(false) {
+      connected_(false),
+      initDone_(false),
+      initSucceeded_(false) {
     evthread_use_pthreads();
 
     eventBase_ = event_base_new();
@@ -159,28 +185,15 @@ hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params,
     redisAsyncSetConnectCallback(asyncContext_, connectCallback);
     redisAsyncSetDisconnectCallback(asyncContext_, disconnectCallback);
 
-    if (!password_.empty()) {
-        redisAsyncCommand(asyncContext_, nullptr, nullptr, "AUTH %s", password_.c_str());
-    }
-    if (db_ != 0) {
-        redisAsyncCommand(asyncContext_, nullptr, nullptr, "SELECT %d", db_);
-    }
-
     eventLoopThread_ = std::thread(&hiredisAsyncClient::processEventLoop, this);
 
     int retries = 100;
-    while (!connected_.load() && retries-- > 0) {
+    while (!initDone_.load() && retries-- > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    if (!connected_.load()) {
-        redisAsyncDisconnect(asyncContext_);
-        event_base_loopbreak(eventBase_);
-        if (eventLoopThread_.joinable()) {
-            eventLoopThread_.join();
-        }
-        redisAsyncFree(asyncContext_);
-        event_base_free(eventBase_);
+    if (!initSucceeded_.load()) {
+        stopEventLoop();
         throw std::runtime_error("Failed to connect to Redis within timeout");
     }
 
@@ -238,21 +251,10 @@ hiredisAsyncClient::connectSyncContext() {
 }
 
 hiredisAsyncClient::~hiredisAsyncClient() {
-    if (asyncContext_) {
-        redisAsyncDisconnect(asyncContext_);
-    }
-    if (eventBase_) {
-        event_base_loopbreak(eventBase_);
-        if (eventLoopThread_.joinable()) {
-            eventLoopThread_.join();
-        }
-        event_base_free(eventBase_);
-    }
-    if (asyncContext_) {
-        redisAsyncFree(asyncContext_);
-    }
+    stopEventLoop();
     if (syncContext_) {
         redisFree(syncContext_);
+        syncContext_ = nullptr;
     }
 }
 
@@ -266,14 +268,102 @@ hiredisAsyncClient::processEventLoop() {
     event_base_dispatch(eventBase_);
 }
 
+bool
+hiredisAsyncClient::scheduleOnEventLoop(std::function<void()> task) {
+    if (!eventBase_) {
+        return false;
+    }
+
+    auto *owned_task = new redis_event_task_t(std::move(task));
+    timeval immediate = {0, 0};
+    if (event_base_once(eventBase_, -1, EV_TIMEOUT, runEventTask, owned_task, &immediate) != 0) {
+        delete owned_task;
+        return false;
+    }
+    return true;
+}
+
+void
+hiredisAsyncClient::freeAsyncContextInEventLoop() {
+    redisAsyncContext *ctx = asyncContext_;
+    asyncContext_ = nullptr;
+    if (ctx) {
+        redisAsyncFree(ctx);
+    }
+}
+
+void
+hiredisAsyncClient::stopEventLoop() {
+    connected_.store(false);
+
+    if (eventBase_ && eventLoopThread_.joinable()) {
+        bool scheduled = scheduleOnEventLoop([this]() {
+            freeAsyncContextInEventLoop();
+            event_base_loopbreak(eventBase_);
+        });
+        if (!scheduled) {
+            event_base_loopbreak(eventBase_);
+        }
+        eventLoopThread_.join();
+    }
+
+    if (eventBase_) {
+        event_base_free(eventBase_);
+        eventBase_ = nullptr;
+    }
+    asyncContext_ = nullptr;
+}
+
+void
+hiredisAsyncClient::completeAsyncInitialization(bool success) {
+    connected_.store(success);
+    initSucceeded_.store(success);
+    initDone_.store(true);
+}
+
+void
+hiredisAsyncClient::startAsyncSelect() {
+    if (db_ == 0) {
+        completeAsyncInitialization(true);
+        return;
+    }
+
+    int ret = redisAsyncCommand(asyncContext_, selectCallback, this, "SELECT %d", db_);
+    if (ret != REDIS_OK) {
+        NIXL_ERROR << "Failed to queue Redis SELECT command";
+        completeAsyncInitialization(false);
+        freeAsyncContextInEventLoop();
+        event_base_loopbreak(eventBase_);
+    }
+}
+
+void
+hiredisAsyncClient::startAsyncInitialization() {
+    if (!password_.empty()) {
+        int ret =
+            redisAsyncCommand(asyncContext_, authCallback, this, "AUTH %s", password_.c_str());
+        if (ret != REDIS_OK) {
+            NIXL_ERROR << "Failed to queue Redis AUTH command";
+            completeAsyncInitialization(false);
+            freeAsyncContextInEventLoop();
+            event_base_loopbreak(eventBase_);
+        }
+        return;
+    }
+
+    startAsyncSelect();
+}
+
 void
 hiredisAsyncClient::connectCallback(const redisAsyncContext *c, int status) {
     auto *client = static_cast<hiredisAsyncClient *>(c->data);
     if (status != REDIS_OK) {
         NIXL_ERROR << absl::StrFormat("Redis connection error: %s", c->errstr);
-        client->connected_.store(false);
+        client->completeAsyncInitialization(false);
+        client->freeAsyncContextInEventLoop();
+        event_base_loopbreak(client->eventBase_);
     } else {
-        client->connected_.store(true);
+        client->startAsyncInitialization();
     }
 }
 
@@ -284,6 +374,36 @@ hiredisAsyncClient::disconnectCallback(const redisAsyncContext *c, int status) {
         NIXL_WARN << absl::StrFormat("Redis disconnection error: %s", c->errstr);
     }
     client->connected_.store(false);
+}
+
+void
+hiredisAsyncClient::authCallback(redisAsyncContext *c, void *reply, void *privdata) {
+    auto *client = static_cast<hiredisAsyncClient *>(privdata);
+    auto *r = static_cast<redisReply *>(reply);
+
+    if (!checkRedisReplyOk(r, "AUTH")) {
+        client->completeAsyncInitialization(false);
+        client->freeAsyncContextInEventLoop();
+        event_base_loopbreak(client->eventBase_);
+        return;
+    }
+
+    client->startAsyncSelect();
+}
+
+void
+hiredisAsyncClient::selectCallback(redisAsyncContext *c, void *reply, void *privdata) {
+    auto *client = static_cast<hiredisAsyncClient *>(privdata);
+    auto *r = static_cast<redisReply *>(reply);
+
+    if (!checkRedisReplyOk(r, "SELECT")) {
+        client->completeAsyncInitialization(false);
+        client->freeAsyncContextInEventLoop();
+        event_base_loopbreak(client->eventBase_);
+        return;
+    }
+
+    client->completeAsyncInitialization(true);
 }
 
 void
@@ -311,11 +431,16 @@ hiredisAsyncClient::getCallback(redisAsyncContext *c, void *reply, void *privdat
 
     bool success = false;
     if (r && r->type == REDIS_REPLY_STRING) {
-        size_t copy_len = std::min(static_cast<size_t>(r->len), ctx->data_len);
-        if (copy_len == 0) {
+        const size_t reply_len = static_cast<size_t>(r->len);
+        if (reply_len != ctx->data_len) {
+            NIXL_ERROR << absl::StrFormat(
+                "Redis GET size mismatch: expected %zu bytes, got %zu bytes",
+                ctx->data_len,
+                reply_len);
+        } else if (ctx->data_len == 0) {
             success = true;
         } else if (ctx->data_ptr) {
-            std::memcpy(reinterpret_cast<void *>(ctx->data_ptr), r->str, copy_len);
+            std::memcpy(reinterpret_cast<void *>(ctx->data_ptr), r->str, ctx->data_len);
             success = true;
         }
     } else if (r && r->type == REDIS_REPLY_NIL) {
@@ -340,23 +465,41 @@ hiredisAsyncClient::putKeyAsync(std::string_view key,
         return;
     }
 
-    auto *ctx = new CallbackContext;
-    ctx->executor = executor_;
-    ctx->promise_ptr = std::move(promise);
+    std::string key_copy(key);
+    auto executor = executor_;
+    bool scheduled = scheduleOnEventLoop([this,
+                                          key = std::move(key_copy),
+                                          data_ptr,
+                                          data_len,
+                                          promise,
+                                          executor]() mutable {
+        if (!connected_.load() || !asyncContext_) {
+            setPromiseStatus(executor, promise, false);
+            return;
+        }
 
-    int ret = redisAsyncCommand(asyncContext_,
-                                setCallback,
-                                ctx,
-                                "SET %b %b",
-                                key.data(),
-                                key.size(),
-                                reinterpret_cast<const char *>(data_ptr),
-                                data_len);
+        auto *ctx = new CallbackContext;
+        ctx->executor = executor;
+        ctx->promise_ptr = promise;
 
-    if (ret != REDIS_OK) {
-        auto promise_ptr = ctx->promise_ptr;
-        delete ctx;
-        setPromiseStatus(executor_, promise_ptr, false);
+        int ret = redisAsyncCommand(asyncContext_,
+                                    setCallback,
+                                    ctx,
+                                    "SET %b %b",
+                                    key.data(),
+                                    key.size(),
+                                    reinterpret_cast<const char *>(data_ptr),
+                                    data_len);
+
+        if (ret != REDIS_OK) {
+            auto promise_ptr = ctx->promise_ptr;
+            delete ctx;
+            setPromiseStatus(executor, promise_ptr, false);
+        }
+    });
+
+    if (!scheduled) {
+        setPromiseStatus(executor_, promise, false);
     }
 }
 
@@ -370,19 +513,37 @@ hiredisAsyncClient::getKeyAsync(std::string_view key,
         return;
     }
 
-    auto *ctx = new CallbackContext;
-    ctx->executor = executor_;
-    ctx->data_ptr = data_ptr;
-    ctx->data_len = data_len;
-    ctx->promise_ptr = std::move(promise);
+    std::string key_copy(key);
+    auto executor = executor_;
+    bool scheduled = scheduleOnEventLoop([this,
+                                          key = std::move(key_copy),
+                                          data_ptr,
+                                          data_len,
+                                          promise,
+                                          executor]() mutable {
+        if (!connected_.load() || !asyncContext_) {
+            setPromiseStatus(executor, promise, false);
+            return;
+        }
 
-    int ret = redisAsyncCommand(
-        asyncContext_, getCallback, ctx, "GET %b", key.data(), key.size());
+        auto *ctx = new CallbackContext;
+        ctx->executor = executor;
+        ctx->data_ptr = data_ptr;
+        ctx->data_len = data_len;
+        ctx->promise_ptr = promise;
 
-    if (ret != REDIS_OK) {
-        auto promise_ptr = ctx->promise_ptr;
-        delete ctx;
-        setPromiseStatus(executor_, promise_ptr, false);
+        int ret =
+            redisAsyncCommand(asyncContext_, getCallback, ctx, "GET %b", key.data(), key.size());
+
+        if (ret != REDIS_OK) {
+            auto promise_ptr = ctx->promise_ptr;
+            delete ctx;
+            setPromiseStatus(executor, promise_ptr, false);
+        }
+    });
+
+    if (!scheduled) {
+        setPromiseStatus(executor_, promise, false);
     }
 }
 

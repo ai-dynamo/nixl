@@ -24,12 +24,13 @@
  *   - sync  (blocking hiredis):         EXISTS for queryMem
  */
 
-#ifndef KV_PLUGIN_REDIS_CLIENT_H
-#define KV_PLUGIN_REDIS_CLIENT_H
+#ifndef NIXL_SRC_PLUGINS_KV_REDIS_CLIENT_H
+#define NIXL_SRC_PLUGINS_KV_REDIS_CLIENT_H
 
 #include "redis_engine.h"
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -100,6 +101,12 @@ private:
     disconnectCallback(const redisAsyncContext *c, int status);
 
     static void
+    authCallback(redisAsyncContext *c, void *reply, void *privdata);
+
+    static void
+    selectCallback(redisAsyncContext *c, void *reply, void *privdata);
+
+    static void
     setCallback(redisAsyncContext *c, void *reply, void *privdata);
 
     static void
@@ -111,6 +118,24 @@ private:
     void
     connectSyncContext();
 
+    void
+    startAsyncInitialization();
+
+    void
+    startAsyncSelect();
+
+    void
+    completeAsyncInitialization(bool success);
+
+    void
+    freeAsyncContextInEventLoop();
+
+    bool
+    scheduleOnEventLoop(std::function<void()> task);
+
+    void
+    stopEventLoop();
+
     std::string host_;
     int port_;
     std::string password_;
@@ -121,7 +146,9 @@ private:
     std::shared_ptr<redisThreadPoolExecutor> executor_;
     std::thread eventLoopThread_;
     std::atomic<bool> connected_;
+    std::atomic<bool> initDone_;
+    std::atomic<bool> initSucceeded_;
     mutable std::mutex syncMutex_;
 };
 
-#endif // KV_PLUGIN_REDIS_CLIENT_H
+#endif // NIXL_SRC_PLUGINS_KV_REDIS_CLIENT_H

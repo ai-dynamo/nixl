@@ -31,7 +31,7 @@ public:
     explicit redisThreadPoolExecutor(std::size_t num_threads) : pool_(num_threads) {}
 
     void
-    WaitUntilStopped() {
+    waitUntilStopped() {
         pool_.stop();
         pool_.join();
     }
