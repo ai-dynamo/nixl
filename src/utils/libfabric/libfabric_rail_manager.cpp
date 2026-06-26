@@ -395,7 +395,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     size_t &submitted_count_out,
     int desc_idx,
     int desc_count,
-    size_t base_offset) {
+    size_t base_offset,
+    int device_id) {
     // Initialize output parameter
     submitted_count_out = 0;
 
@@ -448,10 +449,32 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         req->local_mr = local_mrs[rail_id];
         req->remote_key = remote_keys[remote_ep_id];
         req->rail_id = rail_id;
-        // Submit immediately
+        // Submit: either enqueue for PT (zero contention) or post directly
         nixl_status_t status;
-        if (op_type == nixlLibfabricReq::WRITE) {
-            // Generate next SEQ_ID for this specific write operation
+        if (rails_[rail_id]->isProgressThreadEnabled()) {
+            // PT-owns-endpoint: enqueue for progress thread to post
+            uint8_t seq_id =
+                (op_type == nixlLibfabricReq::WRITE) ? LibfabricUtils::getNextSeqId() : 0;
+            uint64_t imm_data = (op_type == nixlLibfabricReq::WRITE) ?
+                NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id) :
+                0;
+            nixlLibfabricPostRequest pr{};
+            pr.type = (op_type == nixlLibfabricReq::WRITE) ? nixlLibfabricPostRequest::WRITE :
+                                                             nixlLibfabricPostRequest::READ;
+            pr.local_addr = req->local_addr;
+            pr.length = req->chunk_size;
+            pr.local_desc = fi_mr_desc(req->local_mr);
+            pr.immediate_data = imm_data;
+            pr.dest_addr = dest_addrs.at(rail_id)[remote_ep_id];
+            pr.remote_addr = req->remote_addr;
+            pr.remote_key = req->remote_key;
+            pr.req = req;
+            pr.fi_flags = fi_flags;
+            pr.device_id = device_id;
+            rails_[rail_id]->enqueuePost(pr);
+            status = NIXL_SUCCESS;
+        } else if (op_type == nixlLibfabricReq::WRITE) {
+            // Direct post (PT OFF path)
             uint8_t seq_id = LibfabricUtils::getNextSeqId();
             uint64_t imm_data =
                 NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);

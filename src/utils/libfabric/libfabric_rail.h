@@ -23,6 +23,8 @@
 #include <string>
 #include <functional>
 #include <mutex>
+#include <atomic>
+#include <thread>
 #include <ostream>
 #include <stack>
 
@@ -232,7 +234,83 @@ operator<<(std::ostream &os, const ConnectionState &state) {
     }
 }
 
-/** Individual libfabric rail managing fabric, domain, endpoint, CQ, and AV */
+/**
+ * @brief Lock-free Multi-Producer Single-Consumer ring buffer.
+ * Multiple producer threads (postXfer) push concurrently.
+ * Single consumer (progress thread) pops and posts.
+ * Uses CAS on head for multi-producer safety.
+ */
+template<typename T, size_t Capacity> class MpscRing {
+public:
+    bool
+    push(const T &item) {
+        size_t head, next;
+        do {
+            head = head_.load(std::memory_order_relaxed);
+            next = (head + 1) % Capacity;
+            if (next == tail_.load(std::memory_order_acquire)) {
+                return false;
+            }
+        } while (!head_.compare_exchange_weak(
+            head, next, std::memory_order_acq_rel, std::memory_order_relaxed));
+        // head slot is now reserved for us
+        ring_[head] = item;
+        // Signal that this slot is written (use a separate committed array)
+        committed_[head].store(true, std::memory_order_release);
+        return true;
+    }
+
+    bool
+    pop(T &item) {
+        size_t tail = tail_.load(std::memory_order_relaxed);
+        if (tail == head_.load(std::memory_order_acquire)) {
+            return false;
+        }
+        // Wait for the slot to be committed (producer might still be writing)
+        if (!committed_[tail].load(std::memory_order_acquire)) {
+            return false;
+        }
+        item = ring_[tail];
+        committed_[tail].store(false, std::memory_order_release);
+        tail_.store((tail + 1) % Capacity, std::memory_order_release);
+        return true;
+    }
+
+    bool
+    empty() const {
+        size_t tail = tail_.load(std::memory_order_acquire);
+        if (tail == head_.load(std::memory_order_acquire)) {
+            return true;
+        }
+        return !committed_[tail].load(std::memory_order_acquire);
+    }
+
+private:
+    alignas(64) std::atomic<size_t> head_{0};
+    alignas(64) std::atomic<size_t> tail_{0};
+    T ring_[Capacity];
+    std::atomic<bool> committed_[Capacity] = {};
+};
+
+/**
+ * @brief Queued post request for PT-owns-endpoint model
+ * Main thread enqueues; progress thread dequeues and posts.
+ */
+struct nixlLibfabricPostRequest {
+    enum Type { WRITE, READ, SEND } type;
+
+    void *local_addr;
+    size_t length;
+    void *local_desc;
+    uint64_t immediate_data; // WRITE only
+    fi_addr_t dest_addr;
+    uint64_t remote_addr;
+    uint64_t remote_key;
+    nixlLibfabricReq *req;
+    uint64_t fi_flags;
+    int device_id; // CUDA device ordinal for cudaSetDevice in PT
+};
+
 class nixlLibfabricRail {
 public:
     uint16_t rail_id; ///< Unique rail identifier
@@ -303,7 +381,7 @@ public:
 
     /** Post send operation with immediate data */
     nixl_status_t
-    postSend(uint64_t immediate_data, fi_addr_t dest_addr, nixlLibfabricReq *req) const;
+    postSend(uint64_t immediate_data, fi_addr_t dest_addr, nixlLibfabricReq *req);
 
     /** Post RDMA write operation with immediate data */
     nixl_status_t
@@ -315,7 +393,7 @@ public:
               uint64_t remote_addr,
               uint64_t remote_key,
               nixlLibfabricReq *req,
-              uint64_t fi_flags = 0) const;
+              uint64_t fi_flags = 0);
 
     /** Post RDMA read operation */
     nixl_status_t
@@ -325,11 +403,19 @@ public:
              fi_addr_t dest_addr,
              uint64_t remote_addr,
              uint64_t remote_key,
-             nixlLibfabricReq *req) const;
+             nixlLibfabricReq *req);
 
     /** Process completion queue with batching support */
     nixl_status_t
-    progressCompletionQueue() const;
+    progressCompletionQueue();
+
+    /** Enqueue a post request for the progress thread to execute */
+    void
+    enqueuePost(const nixlLibfabricPostRequest &req);
+
+    /** Drain pending posts (called by progress thread) */
+    nixl_status_t
+    drainPostQueue();
 
     // Callback registration methods
     /** Set callback for notification message processing */
@@ -344,6 +430,12 @@ public:
      */
     void
     setProgressThreadEnabled(bool enabled);
+
+    /** Check if progress thread is enabled for this rail */
+    bool
+    isProgressThreadEnabled() const {
+        return progress_thread_enabled_;
+    }
 
     /** Set callback for XFER_ID tracking */
     void
@@ -379,6 +471,10 @@ private:
 
     // EP mutex to protect endpoint and CQ operations
     mutable std::mutex ep_mutex_;
+
+    // Lock-free SPSC ring: main thread pushes, PT pops and posts
+    static constexpr size_t POST_RING_CAPACITY = 2048;
+    MpscRing<nixlLibfabricPostRequest, POST_RING_CAPACITY> post_ring_;
 
     // Whether a progress thread is handling CQ draining
     bool progress_thread_enabled_ = false;
