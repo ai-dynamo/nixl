@@ -1,12 +1,11 @@
-# Throwaway reachability test: can the velonix AWS runners reach, authenticate to, and
-# push to the SWX Artifactory docker registry? Triggers on push to this test branch
+# Throwaway reachability test: can the velonix AWS runners reach, authenticate to, and push to
+# the sw-dynamo Artifactory docker registry? Triggers on push to this test branch
 # (workflow_dispatch would require the file to live on the default branch first).
 # Delete this branch/file once the answer is known.
 #
-# Requires three repo secrets (same ones the ci.yml runtime-container push uses):
-#   ARTIFACTORY_DOCKER_REGISTRY - "<host>/<repo>/<path>" (kept secret so the URL is masked)
-#   ARTIFACTORY_DOCKER_USERNAME - docker-registry user (svc-nixl)
-#   ARTIFACTORY_DOCKER_TOKEN    - svc-nixl identity token
+# Reuses the EXISTING repo secrets (no new secrets needed) — same ones PR3's container push uses:
+#   ARTIFACTORY_URL        - JFrog Artifactory base URL (host derived from it)
+#   ARTIFACTORY_PYPI_TOKEN - identity token (docker login as user 'nmailhot')
 name: Artifactory Push Test
 
 on:
@@ -22,20 +21,20 @@ jobs:
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     timeout-minutes: 15
     env:
-      AF_REGISTRY: ${{ secrets.ARTIFACTORY_DOCKER_REGISTRY }}
-      AF_USERNAME: ${{ secrets.ARTIFACTORY_DOCKER_USERNAME }}
-      AF_TOKEN: ${{ secrets.ARTIFACTORY_DOCKER_TOKEN }}
+      ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+      ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_PYPI_TOKEN }}
+      AF_USERNAME: nmailhot
+      AF_REPO: sw-dynamo-nixl-docker-local
     steps:
       - name: Probe reachability, login, and push a tiny image
         run: |
           set -e
-          if [ -z "$AF_REGISTRY" ] || [ -z "$AF_USERNAME" ] || [ -z "$AF_TOKEN" ]; then
-            echo "ERROR: set the ARTIFACTORY_DOCKER_REGISTRY / _USERNAME / _TOKEN repo secrets first"
+          if [ -z "$ARTIFACTORY_URL" ] || [ -z "$ARTIFACTORY_TOKEN" ]; then
+            echo "ERROR: ARTIFACTORY_URL / ARTIFACTORY_PYPI_TOKEN repo secrets are not set"
             exit 1
           fi
-          # AF_REGISTRY (secret) = <host>/<repo>/<path>; derive the bare host. Don't echo the
-          # host/registry so the internal link stays masked in these public logs.
-          AF_HOST="${AF_REGISTRY%%/*}"
+          # Docker registry host = ARTIFACTORY_URL host (strip scheme + the /artifactory path).
+          AF_HOST="$(printf '%s' "$ARTIFACTORY_URL" | sed -E 's#^https?://##; s#/.*##')"
 
           echo "== Step 1: TCP/TLS reachability to the registry host (port 443) =="
           if timeout 10 bash -c ": </dev/tcp/${AF_HOST}/443" 2>/dev/null; then
@@ -45,16 +44,16 @@ jobs:
             exit 1
           fi
 
-          echo "== Step 2: docker login =="
-          echo "$AF_TOKEN" | docker login "$AF_HOST" -u "$AF_USERNAME" --password-stdin
+          echo "== Step 2: docker login (user ${AF_USERNAME}) =="
+          echo "$ARTIFACTORY_TOKEN" | docker login "$AF_HOST" -u "$AF_USERNAME" --password-stdin
           echo "  OK: docker login succeeded"
 
-          echo "== Step 3: build a tiny image and push it =="
+          echo "== Step 3: build a tiny image and push it to ${AF_REPO} =="
           work="$(mktemp -d)"
           echo "velonix->artifactory reachability test, run ${{ github.run_id }}" > "$work/test.txt"
           printf 'FROM scratch\nCOPY test.txt /test.txt\n' > "$work/Dockerfile"
           docker build -t local-reach-test:latest "$work"
-          AF_IMAGE="${AF_REGISTRY}/ci-reachability-test:${{ github.run_id }}"
+          AF_IMAGE="${AF_HOST}/${AF_REPO}/ci-reachability-test:${{ github.run_id }}"
           docker tag local-reach-test:latest "$AF_IMAGE"
           docker push "$AF_IMAGE"
 
