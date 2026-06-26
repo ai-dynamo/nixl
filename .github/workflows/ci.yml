@@ -195,10 +195,10 @@ jobs:
       # Push the runtime nixl container to the Artifactory docker registry, lifting the
       # tag scheme + push flow from the legacy Jenkins job (.ci/jenkins/lib/build-container-matrix.yaml):
       #   <base-image-tag>-nixl-<nixl_sha8>-ucx-<ucx_sha8>-<arch>[-v<release_version>]
-      #   -> <ARTIFACTORY_DOCKER_REGISTRY>/nixl:<tag>   (registry base kept in a secret so the
-      #      internal URL is masked in these public CI logs)
-      # Scoped to the contrib/Dockerfile runtime build (the manylinux matrix entries are
-      # wheel builders, not the verification container) and to release builds only.
+      #   -> <artifactory-host>/sw-dynamo-nixl-docker-local/nixl:<tag>
+      # Reuses the existing sw-dynamo Artifactory creds (ARTIFACTORY_URL + ARTIFACTORY_PYPI_TOKEN,
+      # same project as the wheel upload). Scoped to the contrib/Dockerfile runtime build (the
+      # manylinux matrix entries are wheel builders, not the container) and to release builds only.
       - name: Push runtime container to Artifactory
         if: ${{ matrix.dockerfile == 'contrib/Dockerfile' && env.RELEASE_BUILD == 'true' }}
         env:
