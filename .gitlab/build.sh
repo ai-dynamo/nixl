@@ -42,6 +42,30 @@ UCCL_COMMIT_SHA="0cdb740cf369a4f4dd63b9b773c8937f187b179a"
 AZURITE_VER="3.35.0"
 TMPDIR=$(mktemp -d)
 
+# DEPS_SANITIZE, when set (e.g. "address"), builds the C++ dependency stack that
+# shares Abseil's ABI with NIXL (abseil, protobuf/gRPC, etcd-cpp) using the
+# matching -fsanitize flags. Required for AddressSanitizer: Abseil changes its
+# SwissTable layout under ASan, so a prebuilt non-instrumented Abseil would
+# mismatch NIXL's instrumented one at runtime (new-delete-type-mismatch during
+# gRPC static init). Only ASan changes ABI (UBSan/TSan do not), so callers pass
+# DEPS_SANITIZE=address. The array expands to nothing when unset.
+DEPS_SANITIZE=${DEPS_SANITIZE:-""}
+DEPS_SANITIZE_CMAKE_ARGS=()
+if [ -n "$DEPS_SANITIZE" ]; then
+    _deps_san_cxxflags="-fsanitize=${DEPS_SANITIZE}"
+    case ",${DEPS_SANITIZE}," in
+        # Abseil's headers hit a GCC constexpr bug under UBSan's null checks
+        # (GCC #71962); drop those sub-checks if undefined is requested.
+        *,undefined,*) _deps_san_cxxflags="${_deps_san_cxxflags} -fno-sanitize=null,nonnull-attribute,returns-nonnull-attribute" ;;
+    esac
+    DEPS_SANITIZE_CMAKE_ARGS=(
+        "-DCMAKE_C_FLAGS=-fsanitize=${DEPS_SANITIZE}"
+        "-DCMAKE_CXX_FLAGS=${_deps_san_cxxflags}"
+        "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}"
+        "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}"
+    )
+fi
+
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
     exit 1
@@ -152,11 +176,11 @@ else
     # Add DOCA repository and install packages
     ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${TMPDIR}/doca-host.deb
+    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${TMPDIR}/doca-host.deb
     $SUDO dpkg -i ${TMPDIR}/doca-host.deb
     $SUDO apt-get update
     $SUDO apt-get upgrade -y
-    $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+    $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
 
     # Force reinstall of RDMA packages from DOCA repository
     # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
@@ -210,6 +234,7 @@ else
       git checkout "${ABSL_TAG}" && \
       mkdir -p build && cd build && \
       cmake .. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_BUILD_TYPE=Release \
@@ -231,6 +256,7 @@ else
       mkdir -p cmake/build && \
       cd cmake/build && \
       cmake ../.. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
           -DgRPC_INSTALL=ON \
           -DgRPC_BUILD_TESTS=OFF \
           -DBUILD_SHARED_LIBS=ON \
@@ -258,6 +284,7 @@ else
       sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
       mkdir build && cd build && \
       cmake .. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
           -DBUILD_ETCD_CORE_ONLY=ON \
           -DCMAKE_BUILD_TYPE=Release \
           -DETCD_CMAKE_CXX_STANDARD=20 \

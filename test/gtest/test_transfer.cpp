@@ -628,18 +628,27 @@ TEST_P(TestTransferTelemetry, GetXferTelemetryFile) {
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryAPI) {
-    // Enable telemetry without file output
+    // Telemetry explicitly enabled via NIXL_TELEMETRY_ENABLE=y but with no sink
+    // (no NIXL_TELEMETRY_DIR/EXPORTER) collects in-process via the collect-only
+    // NOP fallback, so getXferTelemetry() still works.
     env.addVar("NIXL_TELEMETRY_ENABLE", "y");
     runTelemetryTransferTest(1024, NIXL_SUCCESS, false);
 }
 
+TEST_P(TestTransferTelemetry, GetXferTelemetryCaptureNoSink) {
+    // Telemetry requested only via capture_telemetry=true (no
+    // NIXL_TELEMETRY_ENABLE, no sink): the in-process NOP fallback keeps
+    // getXferTelemetry() working.
+    runTelemetryTransferTest(1024, NIXL_SUCCESS, true);
+}
+
 TEST_P(TestTransferTelemetry, GetXferTelemetryAPICfg) {
-    // Disable telemetry from env var but through config, expecting a warning
+    // An explicit disabled environment variable overrides agent config telemetry.
     env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
-    const LogIgnoreGuard lig("ignoring the NIXL_TELEMETRY_ENABLE environment variable");
+    const LogIgnoreGuard lig("ignoring telemetry requested through agent config");
 
-    runTelemetryTransferTest(1024, NIXL_SUCCESS, true);
+    runTelemetryTransferTest(1024, NIXL_ERR_NO_TELEMETRY, true);
 
     EXPECT_EQ(lig.getIgnoredCount(), 2);
 }

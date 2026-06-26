@@ -29,6 +29,7 @@
 #include <variant>
 #include <future>
 #include <atomic>
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "gds_mt_backend.h"
 #include "gds_mt_utils.h"
@@ -42,8 +43,11 @@ const size_t default_thread_count = std::max (1u, std::thread::hardware_concurre
 
 struct FileSegData {
     std::shared_ptr<gdsMtFileHandle> handle;
+    uint64_t devId;
 
-    FileSegData(std::shared_ptr<gdsMtFileHandle> h) : handle(std::move(h)) {}
+    FileSegData(std::shared_ptr<gdsMtFileHandle> h, uint64_t devid)
+        : handle(std::move(h)),
+          devId(devid) {}
 };
 
 struct MemSegData {
@@ -73,9 +77,9 @@ struct GdsMtTransferRequestH {
 
 class nixlGdsMtMetadata : public nixlBackendMD {
 public:
-    explicit nixlGdsMtMetadata (std::shared_ptr<gdsMtFileHandle> file_handle)
-        : nixlBackendMD (true),
-          data_ (FileSegData{std::move (file_handle)}) {}
+    nixlGdsMtMetadata(std::shared_ptr<gdsMtFileHandle> file_handle, uint64_t devid)
+        : nixlBackendMD(true),
+          data_(FileSegData{std::move(file_handle), devid}) {}
 
     explicit nixlGdsMtMetadata (void *addr, size_t size, int flags)
         : nixlBackendMD (true),
@@ -104,26 +108,12 @@ public:
     std::atomic<nixl_status_t> overall_status;
 };
 
-size_t
-getThreadCount (const nixlBackendInitParams *init_params) {
-    size_t thread_count = default_thread_count;
-
-    nixl_b_params_t *custom_params = init_params->customParams;
-    if (custom_params) {
-        if (custom_params->count ("thread_count") > 0) {
-            try {
-                size_t tcount = std::stoul ((*custom_params)["thread_count"]);
-                if (tcount != 0) {
-                    thread_count = tcount;
-                }
-            }
-            catch (const std::exception &e) {
-                throw std::runtime_error ("GDS_MT: Invalid thread_count parameter: " +
-                                          std::string (e.what()));
-            }
-        }
-    }
-    return thread_count;
+[[nodiscard]] size_t
+getThreadCount(const nixlBackendInitParams *init_params) {
+    nixl_b_params_t *params = init_params->customParams;
+    const size_t count =
+        nixl::getBackendParamDefaulted(params, "thread_count", default_thread_count);
+    return (count > 0) ? count : default_thread_count;
 }
 
 void
@@ -202,6 +192,12 @@ nixlGdsMtEngine::registerMem (const nixlBlobDesc &mem,
                               nixlBackendMD *&out) {
     switch (nixl_mem) {
     case FILE_SEG: {
+        auto resv = path_mode_devids_.reserve(mem.devId, mem.metaInfo);
+        if (!resv.ok()) {
+            NIXL_ERROR << "GDS_MT: path-mode requires a unique devId per file (devId=" << mem.devId
+                       << " already registered)";
+            return NIXL_ERR_INVALID_PARAM;
+        }
         nixl::FileFd file_fd;
         try {
             file_fd = nixl::FileFd(mem.devId, mem.metaInfo);
@@ -230,7 +226,8 @@ nixlGdsMtEngine::registerMem (const nixlBlobDesc &mem,
             }
             gds_mt_file_map_[fd] = handle;
         }
-        out = new nixlGdsMtMetadata(std::move(handle));
+        out = new nixlGdsMtMetadata(std::move(handle), mem.devId);
+        resv.commit();
         return NIXL_SUCCESS;
     }
 
@@ -267,6 +264,9 @@ nixlGdsMtEngine::deregisterMem (nixlBackendMD *meta) {
     if (auto *file_data = std::get_if<FileSegData> (&md->data_)) {
         if (file_data->handle) {
             int key = file_data->handle->file_fd.fd();
+            if (!file_data->handle->file_fd.path().empty()) {
+                path_mode_devids_.release(file_data->devId);
+            }
             md.reset(); // Release metadata first
 
             auto it = gds_mt_file_map_.find (key);
