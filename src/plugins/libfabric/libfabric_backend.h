@@ -36,6 +36,7 @@
 
 #include "libfabric/libfabric_rail_manager.h"
 #include "libfabric/libfabric_common.h"
+#include "libfabric_connection.h"
 
 #ifdef HAVE_CUDA
 #include <cuda.h>
@@ -105,25 +106,6 @@ public:
     derive_remote_selected_endpoints();
 
     friend class nixlLibfabricEngine;
-};
-
-/** Multi-rail connection metadata for remote agents */
-class nixlLibfabricConnection : public nixlBackendConnMD {
-private:
-    size_t agent_index_; // Unique agent identifier in agent_names vector
-    std::string remoteAgent_; // Remote agent name
-    std::unordered_map<size_t, std::vector<fi_addr_t>>
-        rail_remote_addr_list_; // Rail libfabric addresses. key=rail id.
-    std::vector<char *> src_ep_names_; // Rail endpoint names
-    ConnectionState overall_state_; // Current connection state
-    std::mutex conn_state_mutex_; // Protects connection state
-    std::condition_variable cv_; // For blocking connection establishment
-    size_t num_connected_rails_; // Number of successfully connected rails
-    std::string initiator_addr_; // Local endpoint address
-    std::string remote_addr_; // Remote endpoint address
-public:
-    friend class nixlLibfabricEngine;
-    friend class nixlLibfabricRail;
 };
 
 /** Request handle for multi-rail transfer operations */
@@ -243,8 +225,23 @@ private:
               agent_name_length(0) {}
     };
 
-    // O(1) lookup with postXferID key
-    std::unordered_map<uint16_t, PendingNotification> pending_notifications_;
+    // O(1) lookup with composite key = (sender_peer_idx << 16) | notif_xfer_id.
+    // The peer_idx half of the key is the SENDER's local index in OUR
+    // agent_names_ table, which the sender learned via the handshake protocol
+    // (NIXL_LIBFABRIC_MSG_HANDSHAKE). The sender embeds that value as the
+    // agent_idx field of every imm_data.
+    static inline uint64_t
+    makePendingKey(uint16_t sender_peer_idx, uint16_t notif_xfer_id) {
+        return (static_cast<uint64_t>(sender_peer_idx) << 16) | notif_xfer_id;
+    }
+
+    std::unordered_map<uint64_t, PendingNotification> pending_notifications_;
+
+    // Handshake messagess that arrived before the local createAgentConnection had
+    // registered the originator in connections_. Drained inside
+    // createAgentConnection.
+    std::unordered_map<std::string, uint16_t> pending_inbound_handshakes_;
+    std::mutex pending_handshake_mutex_;
 
     // Connection management helpers
     nixl_status_t
@@ -283,9 +280,32 @@ private:
     progressThread();
 
 
-    // Engine message processing methods
+    // Engine message processing methods.
+    // sender_peer_idx is the SENDER's index in OUR agent_names_ table,
+    // decoded from the imm_data.
     void
-    processNotification(const std::string &serialized_notif);
+    processNotification(const std::string &serialized_notif, uint16_t sender_peer_idx);
+
+    // Send the per-peer handshake message to a peer we just created a connection
+    // with, telling them what index we have assigned them in our agent_names_.
+    // When we decide the peer may not have seen us, i.e. have never sent us a handshake,
+    // embed our own connection info in the message.
+    nixl_status_t
+    sendHandshakeTo(const nixlLibfabricConnection &conn) const;
+
+    // Resolve the agent_idx the sender should ship to a given remote peer in
+    // every imm_data field. Returns the handshake-supplied value.
+    // establishConnection() guarantees the handshake is received before
+    // marking the connection as CONNECTED; this function should never be
+    // called without a valid handshake. Sending to ourselves (same-process
+    // self-connection) returns 0 immediately.
+    uint16_t
+    senderImmDataAgentIdx(nixlLibfabricConnection &conn) const;
+
+    // Looks up the peer by agent_name and stores the assigned index on its connection
+    // record. Will load peer's connection info from the handshake payload, if it's a new peer.
+    void
+    handleHandshake(const std::string &raw_payload);
     nixl_status_t
     loadMetadataHelper(const std::vector<uint64_t> &rail_keys,
                        void *buffer,
@@ -581,9 +601,12 @@ public:
      * Thread-safe method to track received data transfers.
      *
      * @param[in] xfer_id 16-bit transfer ID that was received
+     * @param[in] sender_peer_idx The SENDER's index in our agent_names_ table,
+     *            extracted from the imm_data the sender shipped. Combined with
+     *            xfer_id to form the pending_notifications_ joint key.
      */
     void
-    addReceivedXferId(uint16_t xfer_id);
+    addReceivedXferId(uint16_t xfer_id, uint16_t sender_peer_idx);
 
     // Notification Queuing Helper Methods
     /**
