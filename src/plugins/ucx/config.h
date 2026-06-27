@@ -43,6 +43,12 @@ public:
     void
     modifyAlways(std::string_view key, std::string_view value) const;
 
+    void
+    validateTlsEnvironment() const;
+
+    void
+    validateTlsCudaSupport(ucp_context_h ctx) const;
+
 private:
     [[nodiscard]] static ucp_config_t *
     readUcpConfig();

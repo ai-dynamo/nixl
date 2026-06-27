@@ -18,6 +18,7 @@
 #define NIXL_SRC_UTILS_UCX_UCX_UTILS_H
 
 #include <memory>
+#include <optional>
 #include <type_traits>
 
 extern "C" {
@@ -182,6 +183,9 @@ public:
 
 [[nodiscard]] bool
 nixlUcxMtLevelIsSupported(const nixl::ucx::mt_mode_t) noexcept;
+
+[[nodiscard]] std::optional<bool>
+nixlUcpContextSupportsMemoryType(ucp_context_h ctx, ucs_memory_type_t mem_type) noexcept;
 
 class nixlUcxWorker {
 public:
