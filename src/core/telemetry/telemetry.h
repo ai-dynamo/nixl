@@ -84,6 +84,17 @@ public:
     updateMemoryRegistered(uint64_t memory_registered);
     void
     updateMemoryDeregistered(uint64_t memory_deregistered);
+    /**
+     * @brief Records one completed transfer's stats as a single telemetry batch.
+     *
+     * Appends the four per-transfer events (transfer time, bytes, request count,
+     * post time) under one lock. The batch is all-or-none: if the buffer cannot
+     * hold all four, none are recorded.
+     * @param xfer_time Start-to-complete transfer duration.
+     * @param is_write True for TX events (agent_tx_*), false for RX (agent_rx_*).
+     * @param bytes Bytes transferred by the request.
+     * @param post_time Start-to-post (backend submit) duration.
+     */
     void
     addXferStats(std::chrono::microseconds xfer_time,
                  bool is_write,

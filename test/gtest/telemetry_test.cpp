@@ -239,6 +239,36 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     envHelper_.popVar();
 }
 
+// addXferStats RX branch (is_write == false): covers the AGENT_RX_BYTES /
+// AGENT_RX_REQUESTS_NUM mapping that TransferBytesTracking (write path) does not.
+TEST_F(telemetryTest, AddXferStatsRxBranch) {
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    nixlTelemetry telemetry(testFile_, "BUFFER");
+
+    EXPECT_NO_THROW(telemetry.addXferStats(
+        std::chrono::microseconds(50), false, 3000, std::chrono::microseconds(7)));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
+    EXPECT_EQ(buffer->size(), 4);
+    nixlTelemetryEvent event;
+    buffer->pop(event);
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_TIME);
+    EXPECT_EQ(event.value_, 50);
+    buffer->pop(event);
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_RX_BYTES);
+    EXPECT_EQ(event.value_, 3000);
+    buffer->pop(event);
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM);
+    EXPECT_EQ(event.value_, 1);
+    buffer->pop(event);
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME);
+    EXPECT_EQ(event.value_, 7);
+    envHelper_.popVar();
+}
+
 TEST_F(telemetryTest, TelemetryEventStructure) {
     nixlTelemetryEvent event1(nixl_telemetry_event_type_t::AGENT_TX_BYTES, 42);
 
