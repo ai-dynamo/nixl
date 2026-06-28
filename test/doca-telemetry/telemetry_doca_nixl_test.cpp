@@ -196,11 +196,11 @@ TEST_F(docaNixlExporterTest, ByteEventsEmitCumulativeCountersAndLastGauges) {
     }
     ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
 
-    // RX is pushed last and each event appends its counter sample before its
-    // gauge sample, so once agent_rx_last_bytes reads its final value (15) every
-    // earlier sample (all TX, plus the RX counter) has been served too -- read
-    // them all from that one settled scrape.
-    const auto metrics = scrapeUntilValue(port_, rxLast, 15.0, std::chrono::seconds(12), labels);
+    // RX is pushed last and each event appends its gauge sample before its
+    // counter sample, so the RX counter is the final sample; once agent_rx_bytes
+    // reads its total (20) every earlier sample (all TX, plus the RX gauge) has
+    // been served too -- read them all from that one settled scrape.
+    const auto metrics = scrapeUntilValue(port_, rxCounter, 20.0, std::chrono::seconds(12), labels);
 
     EXPECT_EQ(metrics.latestValue(txCounter, labels), std::optional<double>(65.0))
         << "tx counter must sum every pushed delta (10+20+35)";

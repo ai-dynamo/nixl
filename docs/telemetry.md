@@ -59,11 +59,14 @@ stream:
 - **Last-operation gauges**: the value of the most recent operation, re-emitted
   unchanged (e.g. `agent_tx_last_bytes`). For example, TX byte sizes `10, 20, 35`
   yield a counter `agent_tx_bytes_total` of `65` and a gauge `agent_tx_last_bytes`
-  of `35`. The Prometheus and DOCA exporters publish `agent_tx_last_bytes` /
-  `agent_rx_last_bytes` alongside the cumulative `agent_tx_bytes` /
-  `agent_rx_bytes` counters; the memory events also expose a last-operation gauge
-  (`agent_memory_registered` / `agent_memory_deregistered`, pending a rename to
-  the `_last_<unit>` form). This is purely an exporter-side derivation: no new
+  of `35`. Both the Prometheus and DOCA exporters publish `agent_tx_last_bytes` /
+  `agent_rx_last_bytes` alongside the cumulative byte counters; the counter series
+  name differs per exporter -- Prometheus exposes `agent_tx_bytes_total` /
+  `agent_rx_bytes_total` (the OpenMetrics `_total` suffix) while DOCA serves the
+  raw event name `agent_tx_bytes` / `agent_rx_bytes`. The memory events also expose
+  a last-operation gauge (`agent_memory_registered` / `agent_memory_deregistered`,
+  pending a rename to the `_last_<unit>` form). This is purely an exporter-side
+  derivation: no new
   event type is emitted and the buffer format is unchanged.
 
 ### Metric naming convention

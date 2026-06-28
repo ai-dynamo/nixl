@@ -308,18 +308,19 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
         const std::lock_guard lock(g_metrics_mutex);
         const char *label_values[] = {agent_name_.c_str()};
 
-        if (isCounterEvent(event.eventType_)) {
-            const auto result = appendCounterSample(event, label_values);
-            if (result != DOCA_SUCCESS) {
-                NIXL_ERROR << "Failed to add counter: " << result;
-                return NIXL_ERR_UNKNOWN;
-            }
-        }
-
+        // Idempotent gauge first, non-idempotent counter increment last.
         if (const char *const gauge_name = gaugeMetricName(event.eventType_)) {
             const auto result = appendGaugeSample(event, gauge_name, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add gauge: " << result;
+                return NIXL_ERR_UNKNOWN;
+            }
+        }
+
+        if (isCounterEvent(event.eventType_)) {
+            const auto result = appendCounterSample(event, label_values);
+            if (result != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to add counter: " << result;
                 return NIXL_ERR_UNKNOWN;
             }
         }
