@@ -68,7 +68,8 @@ stream:
 
 ### Metric naming convention
 
-Exporter metric names follow Prometheus/OpenMetrics conventions:
+These conventions follow Prometheus/OpenMetrics and apply to the byte metrics
+described above; they are the target for new metrics:
 
 - The base unit is the **terminal** suffix, in base units (`_bytes`, `_seconds`).
 - **Cumulative counter**: `agent_<subject>_<unit>_total` (e.g.
@@ -77,8 +78,13 @@ Exporter metric names follow Prometheus/OpenMetrics conventions:
 - **Last-operation gauge**: `agent_<subject>_last_<unit>` (e.g.
   `agent_tx_last_bytes`) -- the `_last` qualifier precedes the unit, so the name
   stays convention-compliant (unit last) and sorts next to its sibling counter.
-- The metric type (counter vs gauge) is conveyed via the `# TYPE` / `# HELP`
-  metadata, never encoded in the name (apart from the conventional `_total`).
+- The metric type (counter vs gauge) is conveyed by the `# TYPE` metadata
+  (`# HELP` is descriptive only), never encoded in the name apart from the
+  conventional `_total`.
+
+Known exceptions (predating this convention): the transfer-time metrics
+`agent_xfer_time_total` / `agent_xfer_post_time_total` report microseconds and do
+not carry a base-unit suffix; aligning them is a separate change.
 
 The **Shared Memory Buffer** plug-in, contains the data per transaction event, without summarizing between events.
 
