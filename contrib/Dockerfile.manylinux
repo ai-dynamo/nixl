@@ -14,110 +14,12 @@
 # limitations under the License.
 
 
-# === Manylinux wheel build (public PyPA base + NGC CUDA) =====================
-# Build wheels on the PUBLIC PyPA manylinux_2_28 image and bring CUDA in from a
-# public NGC CUDA image, instead of the internal
-# gitlab-master.nvidia.com:5005/dl/dgx/cuda manylinux image (NOT reachable from
-# the velonix AWS runners — no DNS/PrivateLink). Mirrors dynamo's
-# container/templates/wheel_builder.Dockerfile pattern. Key moving parts:
-# gcc-toolset for CUDA, the CUDA COPY, and the DOCA el8 rpms.
-# ARCH must be declared before the FROM lines that interpolate it.
-ARG ARCH="x86_64"
-
-# Pin the manylinux base to a specific PyPA release so the toolchain (gcc, CMake,
-# bundled CPython) is reproducible; the implicit :latest would drift between builds.
-# Declared in the global pre-FROM scope because it's interpolated in a FROM line below.
-ARG MANYLINUX_VERSION="2026.06.06-1"
-
-# CUDA toolkit provider: a public NGC CUDA *devel* image, el8/ubi8 to match the
-# AlmaLinux-8 manylinux base (e.g. nvcr.io/nvidia/cuda:12.9.1-devel-ubi8).
-# Reachable from the AWS runners; replaces the internal GitLab base image.
-ARG BASE_IMAGE="nvcr.io/nvidia/cuda"
+ARG BASE_IMAGE
 ARG BASE_IMAGE_TAG
-# INFINIA libs image — declared here in the global (pre-first-FROM) scope because an ARG
-# used in a FROM line is only visible if declared before the first FROM. See the INFINIA
-# block below for what this is and how it's mirrored.
-ARG INFINIA_LIBS_IMAGE="210086341041.dkr.ecr.us-west-2.amazonaws.com/nixl/infinia-libs:v2.4.0-beta.1"
-# INFINIA build variant: "bundled" (default) pulls the private libs image above; "none" uses
-# an empty stub so external builds WITHOUT access to that image can skip INFINIA — meson then
-# finds no red_client and silently drops the plugin. build-container.sh exposes --no-infinia.
-ARG INFINIA_VARIANT=bundled
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS cuda
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
-# --- INFINIA plugin libs (DDN "red") — bundled by default; skippable via INFINIA_VARIANT=none ---
-# The INFINIA plugin only builds when libred_client.so is found at /opt/ddn/red/lib
-# (src/plugins/meson.build does cc.find_library('red_client', dirs:['/opt/ddn/red/lib'])
-# and silently skips the plugin otherwise — which is what the stage below provides).
-# The libs live in harbor.mellanox.com/nixl/infinia-libs (NOT reachable from the AWS CI
-# runners), so mirror that image into ECR — one time per INFINIA version, from a host
-# that sees both harbor and AWS:
-#   docker pull harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1
-#   ECR=210086341041.dkr.ecr.us-west-2.amazonaws.com/nixl/infinia-libs
-#   docker tag harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1 $ECR:v2.4.0-beta.1
-#   aws ecr get-login-password --region us-west-2 | docker login --username AWS \
-#     --password-stdin 210086341041.dkr.ecr.us-west-2.amazonaws.com
-#   docker push $ECR:v2.4.0-beta.1
-# The dedicated nixl/infinia-libs ECR repo (no-delete lifecycle) is provisioned in
-# velonix terraform/aws/envs/staging/ecr.tf. The runner's existing IRSA already grants
-# pull (account-wide ECR), so no workflow/IAM change is needed. Bump the tag when DDN
-# bumps the INFINIA version (and re-run the mirror push). The ARG is declared in the
-# global pre-FROM block at the top of this file (required to use it in a FROM line).
-FROM ${INFINIA_LIBS_IMAGE} AS infinia-bundled
-# Empty stub for INFINIA_VARIANT=none: a public base carrying an empty /infinia/${ARCH}/ so the
-# COPY below still succeeds without the private image. With variant=none BuildKit prunes the
-# infinia-bundled stage above and never pulls it; meson finds no red_client and skips INFINIA.
-FROM quay.io/pypa/manylinux_2_28_${ARCH}:${MANYLINUX_VERSION} AS infinia-none
-ARG ARCH
-RUN mkdir -p /infinia/${ARCH}
-# Select the source the COPY pulls from based on the INFINIA_VARIANT build arg.
-FROM infinia-${INFINIA_VARIANT} AS infinia
-
-# Manylinux build base — official PyPA image (public on quay.io; velonix also has
-# a quay ECR pull-through). AlmaLinux 8 / glibc 2.28 => manylinux_2_28 wheels.
-FROM quay.io/pypa/manylinux_2_28_${ARCH}:${MANYLINUX_VERSION}
-
-# Re-declare args needed inside this build stage (args before the first FROM are
-# only visible to FROM lines).
-ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.14"
-
-# CUDA version (e.g. 12.9 / 13.0) — was provided as an ENV by the old GitLab base;
-# now passed explicitly. Used for the torch cuXXX index and the cu12/cu13 wheel split.
-ARG CUDA_VERSION
-ENV CUDA_VERSION=${CUDA_VERSION}
-
-# Bring the CUDA toolkit onto the manylinux base (dynamo wheel_builder pattern).
-COPY --from=cuda /usr/local/cuda /usr/local/cuda
-ENV CUDA_HOME=/usr/local/cuda \
-    PATH=/usr/local/cuda/bin:${PATH} \
-    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH:-}
-
-# INFINIA libs (paired with the `infinia` stage above). The mirrored image lays the libs
-# out per-arch under /infinia/${ARCH}/ (lib/ + include/); copying that to /opt/ddn/red
-# puts libred_client.so / libred_async.so + headers where meson looks, so it auto-detects
-# and builds the INFINIA plugin into the wheel (default -Dinfinia_path=/opt/ddn/red).
-# NOTE: libred_client/libred_async are DDN proprietary and are intentionally NOT
-# redistributed — contrib/build-wheel.sh already auditwheel --excludes them, so the wheel
-# ships only the INFINIA plugin (libplugin_INFINIA.so), which loads libred_* at runtime
-# from a customer's DDN install via its RUNPATH (/opt/ddn/red/lib). The plugin's other
-# transitive deps (liburing.so.2, libldap.so.2, etc.) are why this Dockerfile installs/
-# builds them above: they must resolve at link time even though libred itself is excluded.
-ARG INFINIA_DEST=/opt/ddn/red
-COPY --from=infinia /infinia/${ARCH}/ ${INFINIA_DEST}/
-
-# CUDA needs gcc <= 14. The PyPA manylinux base + system "Development Tools" can
-# pull in a gcc that CUDA rejects, so pin gcc-toolset-14 on PATH ahead of the
-# system gcc (same approach as dynamo's wheel_builder). gcc-toolset-14 is added to
-# the dnf install list below.
-ENV PATH=/opt/rh/gcc-toolset-14/root/usr/bin:${PATH} \
-    LD_LIBRARY_PATH=/opt/rh/gcc-toolset-14/root/usr/lib64:${LD_LIBRARY_PATH:-}
-
-# The PyPA manylinux_2_28 image ships CMake 4.x, which removed support for
-# cmake_minimum_required(VERSION < 3.5). Some bundled deps (e.g. gRPC's c-ares)
-# still declare ancient minimums. This tells CMake 4.x to accept them. (Harmless
-# on the older CMake that the previous GitLab base shipped.)
-ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
-# === end Option B header ======================================================
+ARG ARCH="x86_64"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
@@ -127,7 +29,7 @@ ARG GRPC_TAG="v1.73.0"
 ARG NPROC
 
 RUN yum groupinstall -y 'Development Tools' &&  \
-    dnf install -y almalinux-release-synergy epel-release && \
+    dnf install -y almalinux-release-synergy && \
     dnf config-manager --set-enabled powertools && \
     dnf install -y \
     boost \
@@ -140,14 +42,9 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     gflags \
     glibc-headers \
     gcc-c++ \
-    gcc-toolset-14 \
     libaio \
     libaio-devel \
     libtool-ltdl \
-    libuuid-devel \
-    jansson \
-    libjose \
-    xxhash-libs \
     ninja-build \
     openssl \
     openssl-devel \
@@ -199,47 +96,6 @@ ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:/usr/local/openssl3/lib:$LD_LIBRA
 ENV OPENSSL_ROOT_DIR="/usr/local/openssl3"
 ENV OPENSSL_LIBRARIES="/usr/local/openssl3/lib64:/usr/local/openssl3/lib"
 ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
-
-# --- INFINIA (libred_client) transitive deps not packaged at the right soname on EL8 ---
-# liburing 2.x: EL8 only ships liburing.so.1 (1.0.7); libred_client needs liburing.so.2.
-# Pinned to 2.14 to match subprojects/liburing.wrap (the version NIXL's own build uses); this
-# system install is found ahead of that meson wrap and also satisfies the prebuilt libred_client's
-# transitive liburing.so.2 link/runtime need (the wrap is an internal subproject not on the
-# system linker/loader path, so it can't resolve libred's NEEDED — hence the system build here).
-RUN cd /tmp && \
-    LIBURING_VERSION=2.14 && \
-    wget -q "https://github.com/axboe/liburing/archive/refs/tags/liburing-${LIBURING_VERSION}.tar.gz" && \
-    tar -xzf "liburing-${LIBURING_VERSION}.tar.gz" && \
-    cd "liburing-liburing-${LIBURING_VERSION}" && \
-    ./configure --prefix=/usr/local && \
-    make -j"${NPROC:-$(nproc)}" && \
-    make install && \
-    echo "/usr/local/lib"   >  /etc/ld.so.conf.d/usrlocal.conf && \
-    echo "/usr/local/lib64" >> /etc/ld.so.conf.d/usrlocal.conf && \
-    ldconfig && \
-    rm -rf /tmp/liburing*
-
-# OpenLDAP 2.6 client libs: EL8 ships 2.4 (libldap-2.4.so.2); libred_client needs the
-# 2.6 soname libldap.so.2 (+ liblber.so.2). Build client libs only, against openssl3.
-RUN cd /tmp && \
-    OPENLDAP_VERSION=2.6.8 && \
-    wget -q "https://www.openldap.org/software/download/OpenLDAP/openldap-release/openldap-${OPENLDAP_VERSION}.tgz" && \
-    tar -xzf "openldap-${OPENLDAP_VERSION}.tgz" && \
-    cd "openldap-${OPENLDAP_VERSION}" && \
-    ./configure --prefix=/usr/local --enable-shared --disable-static --disable-slapd \
-        --without-cyrus-sasl --with-tls=openssl \
-        CPPFLAGS="-I/usr/local/openssl3/include" \
-        LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
-    make depend && \
-    make -j"${NPROC:-$(nproc)}" && \
-    make install && \
-    ldconfig && \
-    rm -rf /tmp/openldap-${OPENLDAP_VERSION}*
-
-# Let the linker (gcc LIBRARY_PATH) and loader/auditwheel (LD_LIBRARY_PATH) find the
-# INFINIA libs at /opt/ddn/red/lib and the source-built transitive deps in /usr/local.
-ENV LD_LIBRARY_PATH="/opt/ddn/red/lib:/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH"
-ENV LIBRARY_PATH="/opt/ddn/red/lib:/usr/local/lib:/usr/local/lib64:${LIBRARY_PATH:-}"
 
 WORKDIR /workspace
 
