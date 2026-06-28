@@ -249,7 +249,7 @@ nixlTelemetry::updateData(nixl_telemetry_event_type_t event_type, uint64_t value
     events_.emplace_back(event_type, value);
 }
 
-// The next 4 methods might be removed, as addXferTime covers them.
+// The next 4 methods might be removed, as addXferStats covers them.
 void
 nixlTelemetry::updateTxBytes(uint64_t tx_bytes) {
     updateData(nixl_telemetry_event_type_t::AGENT_TX_BYTES, tx_bytes);
@@ -289,24 +289,25 @@ nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
 }
 
 void
-nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
+nixlTelemetry::addXferStats(std::chrono::microseconds xfer_time,
+                            bool is_write,
+                            uint64_t bytes,
+                            std::chrono::microseconds post_time) {
     const auto bytes_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_BYTES :
                                        nixl_telemetry_event_type_t::AGENT_RX_BYTES;
     const auto requests_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM :
                                           nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM;
 
+    // One lock for all four per-transfer events keeps the completion hot path to
+    // a single lock/unlock pair; the batch is recorded atomically (all or none).
     const std::lock_guard lock(mutex_);
-    if (events_.size() + 3 > maxBufferedEvents_) {
+    if (events_.size() + 4 > maxBufferedEvents_) {
         return;
     }
     events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_TIME,
                          static_cast<uint64_t>(xfer_time.count()));
     events_.emplace_back(bytes_type, bytes);
     events_.emplace_back(requests_type, 1);
-}
-
-void
-nixlTelemetry::addPostTime(std::chrono::microseconds post_time) {
-    updateData(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
-               static_cast<uint64_t>(post_time.count()));
+    events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
+                         static_cast<uint64_t>(post_time.count()));
 }

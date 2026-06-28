@@ -85,9 +85,10 @@ public:
     void
     updateMemoryDeregistered(uint64_t memory_deregistered);
     void
-    addXferTime(std::chrono::microseconds transaction_time, bool is_write, uint64_t bytes);
-    void
-    addPostTime(std::chrono::microseconds post_time);
+    addXferStats(std::chrono::microseconds xfer_time,
+                 bool is_write,
+                 uint64_t bytes,
+                 std::chrono::microseconds post_time);
 
 private:
     // Load the named telemetry plugin and create its exporter. Throws on a
