@@ -1,12 +1,12 @@
 ---
 #
-# DLCluster GPU Test Matrix Configuration for dlcluster.nvidia.com
+# Lyris GPU Test Matrix Configuration
 #
 # Key Components:
 # - Job Configuration: Defines timeout, failure behavior, and server resources
 # - Docker Images: Specifies the container images used for different build stages
-# - Matrix Axes: Defines build variations for dlcluster testing (multi-node, multi-GPU)
-# - Run Steps: Sequential steps for running dlcluster GPU tests
+# - Matrix Axes: Defines build variations for Lyris testing (multi-node, multi-GPU)
+# - Run Steps: Sequential steps - build image, then trigger Lyris pipeline and wait
 #
 # When Modified:
 # - Adding/removing Docker images: Affects available test environments
@@ -38,23 +38,19 @@ kubernetes:
 
 credentials:
   - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+  - {credentialsId: 'lyris-trigger-token', type: string, variable: 'LYRIS_TRIGGER_TOKEN'}
+  - {credentialsId: 'lyris-api-token', type: string, variable: 'LYRIS_API_TOKEN'}
 
 env:
   ARTIFACTORY_PATH: /sw-nbu-swx-nixl-docker-local/ci
   NIXL_INSTALL_DIR: /opt/nixl
   NIXL_BUILD_DIR: nixl_build
-  SLURM_NODES: 1
-  SLURM_PARTITION: gb200nvl72_ci
-  SLURM_HEAD_NODE: dlcluster.nvidia.com
-  SLURM_HEAD_USER: svc-nixl
-  SLURM_ACCOUNT: 'oberon-gb-ci'
-  SLURM_JOB_TIMEOUT: '01:30:00'
-  SLURM_IMMEDIATE_TIMEOUT: 3600
-  SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
-  JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   TEST_TIMEOUT: 50
   STORAGE_DRIVER: overlay
   CI_IMAGE_TAG: "20260607-1"
+  LYRIS_PARTITION: gb200
+  # TODO: flip to main once precluster-poc lyris-exec is merged
+  LYRIS_PIPELINE_REF: feat/nixl-srun-gb200-gb300
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
@@ -110,104 +106,55 @@ steps:
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       podman push --creds ${REPO_USER}:${REPO_PASS} ${PR_IMAGE}
 
-  - name: Allocate DL Environment
-    containerSelector: "{name: 'build_helper_dl'}"
-    parallel: false
-    shell: action
-    module: slurmCI
-    run: allocation
-    args:
-      partition: "${SLURM_PARTITION}"
-      headNode: "${SLURM_HEAD_NODE}"
-      headUser: "${SLURM_HEAD_USER}"
-      nodes: "${SLURM_NODES}"
-      jobTimeout: "${SLURM_JOB_TIMEOUT}"
-      immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
-      jobName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
-      credentialsId: "${SSH_CREDENTIALS_ID}"
-      extraArgs: [
-        "--account=${SLURM_ACCOUNT}"
-      ]
-
-  - name: Run DL Python tests
+  # Runs all four tests in ONE Lyris allocation and downloads per-test results
+  # into ./results/. Gates on infra only (trigger_and_wait exits 90 on
+  # allocation/runner failure); per-test pass/fail is gated by the stages below.
+  - name: Run DL tests on Lyris
     containerSelector: "{name: 'build_helper_dl'}"
     timeout: "${TEST_TIMEOUT}"
     parallel: false
-    shell: action
-    module: slurmCI
-    run: run
-    args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_python.sh ${NIXL_INSTALL_DIR}"
-      headNode: "${SLURM_HEAD_NODE}"
-      headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
-      credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+    credentialsId: ['lyris-trigger-token', 'lyris-api-token']
+    run: |
+      set -x
+      # test-cmds: "name<TAB>command" per line; per-test env inlined as a prefix.
+      printf "python\t.gitlab/test_python.sh ${NIXL_INSTALL_DIR}\n" > tc.txt
+      printf "rust\t.gitlab/test_rust.sh ${NIXL_INSTALL_DIR}\n" >> tc.txt
+      printf "cpp\tUCX_IB_REG_METHODS=rcache .gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}\n" >> tc.txt
+      printf "nixlbench\tHAS_GPU=false .gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}\n" >> tc.txt
+      TRIGGER_TOKEN=${LYRIS_TRIGGER_TOKEN} GITLAB_TOKEN=${LYRIS_API_TOKEN} \
+      .ci/scripts/trigger_and_wait.sh \
+        --ref ${LYRIS_PIPELINE_REF} \
+        --partition ${LYRIS_PARTITION} \
+        --image "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}" \
+        --test-cmds-file tc.txt \
+        --retries 2
 
-  - name: Run DL Rust tests
+  # Per-test result stages: surface each test's pass/fail from the single run
+  # above (they read ./results/<name>.rc, they do not re-run anything).
+  - name: Python
     containerSelector: "{name: 'build_helper_dl'}"
-    timeout: "${TEST_TIMEOUT}"
     parallel: false
-    shell: action
-    module: slurmCI
-    run: run
-    args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_rust.sh ${NIXL_INSTALL_DIR}"
-      headNode: "${SLURM_HEAD_NODE}"
-      headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
-      credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+    run: |
+      tail -n 40 results/python.log 2>/dev/null || true
+      exit "$(cat results/python.rc 2>/dev/null || echo 1)"
 
-  - name: Run DL CPP tests
+  - name: Rust
     containerSelector: "{name: 'build_helper_dl'}"
-    timeout: "${TEST_TIMEOUT}"
     parallel: false
-    shell: action
-    module: slurmCI
-    run: run
-    args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}"
-      headNode: "${SLURM_HEAD_NODE}"
-      headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
-      credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
-      slurmEnv: [
-        'UCX_IB_REG_METHODS=rcache'
-      ]
+    run: |
+      tail -n 40 results/rust.log 2>/dev/null || true
+      exit "$(cat results/rust.rc 2>/dev/null || echo 1)"
 
-  - name: Run DL Nixlbench tests
+  - name: CPP
     containerSelector: "{name: 'build_helper_dl'}"
-    timeout: "${TEST_TIMEOUT}"
     parallel: false
-    shell: action
-    module: slurmCI
-    run: run
-    args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}"
-      headNode: "${SLURM_HEAD_NODE}"
-      headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
-      credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
-      slurmEnv: [
-        'HAS_GPU=false'
-      ]
+    run: |
+      tail -n 40 results/cpp.log 2>/dev/null || true
+      exit "$(cat results/cpp.rc 2>/dev/null || echo 1)"
 
-pipeline_stop:
-  containerSelector: "{name: 'build_helper_dl'}"
-  parallel: false
-  shell: action
-  module: slurmCI
-  run: stopAllForBuild
-  args:
-    credentialsId: "${SSH_CREDENTIALS_ID}"
-    headNode: "${SLURM_HEAD_NODE}"
-    headUser: "${SLURM_HEAD_USER}"
-    jobIdDir: "${JOB_ID_FILE_ROOT}"
+  - name: Nixlbench
+    containerSelector: "{name: 'build_helper_dl'}"
+    parallel: false
+    run: |
+      tail -n 40 results/nixlbench.log 2>/dev/null || true
+      exit "$(cat results/nixlbench.rc 2>/dev/null || echo 1)"
