@@ -116,7 +116,7 @@ private:
     void
     updateData(nixl_telemetry_event_type_t event_type, uint64_t value);
     bool
-    writeEventHelper();
+    flushPendingEvents();
 
     // Declared in initialization order: agentName_ and maxBufferedEvents_ are
     // consumed by makeExporter() when constructing exporter_.

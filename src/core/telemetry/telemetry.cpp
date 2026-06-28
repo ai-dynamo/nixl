@@ -127,7 +127,7 @@ nixlTelemetry::~nixlTelemetry() {
     }
 
     if (buffer_) {
-        writeEventHelper();
+        flushPendingEvents();
         buffer_.reset();
     }
 }
@@ -199,14 +199,14 @@ nixlTelemetry::startExportTask() {
     const auto run_interval =
         nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
 
-    writeTask_.callback_ = [this]() { return writeEventHelper(); };
+    writeTask_.callback_ = [this]() { return flushPendingEvents(); };
     writeTask_.interval_ = run_interval;
     writeTask_.enabled_ = true;
     registerPeriodicTask(writeTask_);
 }
 
 bool
-nixlTelemetry::writeEventHelper() {
+nixlTelemetry::flushPendingEvents() {
     std::vector<nixlTelemetryEvent> next_queue;
     next_queue.reserve(maxBufferedEvents_);
     {
