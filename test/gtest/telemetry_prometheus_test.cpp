@@ -274,10 +274,10 @@ TEST_F(prometheusTelemetryTest, AgentMetricsAppearInScrape) {
         << "Missing agent_memory_registered gauge";
     EXPECT_NE(body.find("\nagent_memory_deregistered{"), std::string::npos)
         << "Missing agent_memory_deregistered gauge";
-    EXPECT_NE(body.find("\nagent_tx_bytes_last{"), std::string::npos)
-        << "Missing agent_tx_bytes_last gauge";
-    EXPECT_NE(body.find("\nagent_rx_bytes_last{"), std::string::npos)
-        << "Missing agent_rx_bytes_last gauge";
+    EXPECT_NE(body.find("\nagent_tx_last_bytes{"), std::string::npos)
+        << "Missing agent_tx_last_bytes gauge";
+    EXPECT_NE(body.find("\nagent_rx_last_bytes{"), std::string::npos)
+        << "Missing agent_rx_last_bytes gauge";
 
     // Each metric must carry the two labels the exporter attaches.
     EXPECT_NE(body.find("agent_name=\"" + agent_name + "\""), std::string::npos)
@@ -417,8 +417,8 @@ TEST_F(prometheusTelemetryTest, ByteCounterSumsWhileLastGaugeTracksFinalOp) {
         << "tx counter must sum every exported delta (1000+2000+3500)";
 
     PrometheusSample tx_last_sample;
-    ASSERT_TRUE(findAgentMetricSample(body, "agent_tx_bytes_last", agent_name, tx_last_sample))
-        << "agent_tx_bytes_last gauge for this agent is not in scrape body";
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_tx_last_bytes", agent_name, tx_last_sample))
+        << "agent_tx_last_bytes gauge for this agent is not in scrape body";
     EXPECT_EQ(tx_last_sample.value, 3500.0)
         << "tx last-op gauge must equal the final exported value (3500), not the sum";
 
@@ -429,8 +429,8 @@ TEST_F(prometheusTelemetryTest, ByteCounterSumsWhileLastGaugeTracksFinalOp) {
         << "rx counter must sum every exported delta (500+1500)";
 
     PrometheusSample rx_last_sample;
-    ASSERT_TRUE(findAgentMetricSample(body, "agent_rx_bytes_last", agent_name, rx_last_sample))
-        << "agent_rx_bytes_last gauge for this agent is not in scrape body";
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_rx_last_bytes", agent_name, rx_last_sample))
+        << "agent_rx_last_bytes gauge for this agent is not in scrape body";
     EXPECT_EQ(rx_last_sample.value, 1500.0)
         << "rx last-op gauge must equal the final exported value (1500), not the sum";
 }

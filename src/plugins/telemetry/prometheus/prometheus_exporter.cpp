@@ -126,12 +126,8 @@ nixlTelemetryPrometheusExporter::initializeMetrics() {
     registerCounter("agent_xfer_time", "Start to Complete (per request)");
     registerCounter("agent_xfer_post_time", "Start to posting to Back-End (per request)");
 
-    // Last-operation gauges. The byte gauges expose the value of the latest
-    // request (the per-op event value), distinct from the cumulative *_total
-    // counter of the same name. Memory gauges keep their current (non-suffixed)
-    // names; renaming them to *_last is deferred to avoid a breaking change.
-    registerGauge("agent_tx_bytes", "agent_tx_bytes_last", "Bytes sent by the last request");
-    registerGauge("agent_rx_bytes", "agent_rx_bytes_last", "Bytes received by the last request");
+    registerGauge("agent_tx_bytes", "agent_tx_last_bytes", "Bytes sent by the last request");
+    registerGauge("agent_rx_bytes", "agent_rx_last_bytes", "Bytes received by the last request");
     registerGauge("agent_memory_registered", "agent_memory_registered", "Memory registered");
     registerGauge("agent_memory_deregistered", "agent_memory_deregistered", "Memory deregistered");
 }

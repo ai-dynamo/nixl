@@ -76,7 +76,7 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 **Counter, Gauge, Histogram** - as implemented by the DOCA Telemetry Exporter
 
 - **Counter**: Instance lifetime count of the related value. Summed over the separate events' values.
-- **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte events publish both a cumulative counter and a last-operation gauge: `agent_tx_bytes` / `agent_rx_bytes` carry the running total, while `agent_tx_bytes_last` / `agent_rx_bytes_last` carry the byte size of the latest TX/RX request. The memory gauges (`agent_memory_registered` / `agent_memory_deregistered`) report the size of the last (de)registration.
+- **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte events publish both a cumulative counter and a last-operation gauge: `agent_tx_bytes` / `agent_rx_bytes` carry the running total, while `agent_tx_last_bytes` / `agent_rx_last_bytes` (the `agent_<subject>_last_<unit>` convention) carry the byte size of the latest TX/RX request. The memory gauges (`agent_memory_registered` / `agent_memory_deregistered`) report the size of the last (de)registration.
 - **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details.
 
 ### Metric labels

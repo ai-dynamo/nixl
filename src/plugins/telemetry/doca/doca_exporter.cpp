@@ -96,18 +96,13 @@ isCounterEvent(nixl_telemetry_event_type_t event_type) noexcept {
 }
 
 // Gauge series name for an event, or nullptr if the event has no gauge.
-// Returning the name (rather than a bool) lets a counter and its companion
-// last-operation gauge use distinct, non-colliding series names: the byte
-// events publish "agent_tx_bytes_last"/"agent_rx_bytes_last" alongside their
-// cumulative counters, while memory and transfer-time events stay gauge-only
-// under their event name.
 [[nodiscard]] constexpr const char *
 gaugeMetricName(nixl_telemetry_event_type_t event_type) noexcept {
     switch (event_type) {
     case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
-        return "agent_tx_bytes_last";
+        return "agent_tx_last_bytes";
     case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
-        return "agent_rx_bytes_last";
+        return "agent_rx_last_bytes";
     case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
         return "agent_memory_registered";
     case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:

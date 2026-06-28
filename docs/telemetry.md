@@ -54,15 +54,31 @@ Every event value is a single per-operation reading (e.g. the bytes moved by one
 request), never a running total. Exporters derive two views from that same
 stream:
 
-- **Cumulative counters** (`*_total`): the sum of all per-operation values over
-  the instance lifetime, accumulated by the exporter.
-- **Last-operation gauges** (`*_last`): the value of the most recent operation,
-  re-emitted unchanged. For example, TX byte sizes `10, 20, 35` yield a counter
-  of `65` and a last-operation gauge of `35`. The Prometheus and DOCA exporters
-  publish `agent_tx_bytes_last` / `agent_rx_bytes_last` alongside the cumulative
-  `agent_tx_bytes` / `agent_rx_bytes` counters; the memory events expose a
-  last-operation gauge as well. This is purely an exporter-side derivation: no
-  new event type is emitted and the buffer format is unchanged.
+- **Cumulative counters**: the sum of all per-operation values over the instance
+  lifetime, accumulated by the exporter (e.g. `agent_tx_bytes_total`).
+- **Last-operation gauges**: the value of the most recent operation, re-emitted
+  unchanged (e.g. `agent_tx_last_bytes`). For example, TX byte sizes `10, 20, 35`
+  yield a counter `agent_tx_bytes_total` of `65` and a gauge `agent_tx_last_bytes`
+  of `35`. The Prometheus and DOCA exporters publish `agent_tx_last_bytes` /
+  `agent_rx_last_bytes` alongside the cumulative `agent_tx_bytes` /
+  `agent_rx_bytes` counters; the memory events also expose a last-operation gauge
+  (`agent_memory_registered` / `agent_memory_deregistered`, pending a rename to
+  the `_last_<unit>` form). This is purely an exporter-side derivation: no new
+  event type is emitted and the buffer format is unchanged.
+
+### Metric naming convention
+
+Exporter metric names follow Prometheus/OpenMetrics conventions:
+
+- The base unit is the **terminal** suffix, in base units (`_bytes`, `_seconds`).
+- **Cumulative counter**: `agent_<subject>_<unit>_total` (e.g.
+  `agent_tx_bytes_total`). `_total` is reserved for counters; gauges never end in
+  `_total`.
+- **Last-operation gauge**: `agent_<subject>_last_<unit>` (e.g.
+  `agent_tx_last_bytes`) -- the `_last` qualifier precedes the unit, so the name
+  stays convention-compliant (unit last) and sorts next to its sibling counter.
+- The metric type (counter vs gauge) is conveyed via the `# TYPE` / `# HELP`
+  metadata, never encoded in the name (apart from the conventional `_total`).
 
 The **Shared Memory Buffer** plug-in, contains the data per transaction event, without summarizing between events.
 

@@ -167,7 +167,7 @@ TEST_F(docaNixlExporterTest, DistinguishesSeriesByAgentLabel) {
 }
 
 // Both byte directions drive a cumulative counter (agent_{tx,rx}_bytes) AND a
-// last-operation gauge (agent_{tx,rx}_bytes_last) from the same per-op value. TX
+// last-operation gauge (agent_{tx,rx}_last_bytes) from the same per-op value. TX
 // and RX use distinct deltas so the assertions also prove the directions map to
 // independent series (no cross-wiring): each counter reads the sum of its own
 // deltas while each *_last gauge reads only that direction's final op.
@@ -181,8 +181,8 @@ TEST_F(docaNixlExporterTest, ByteEventsEmitCumulativeCountersAndLastGauges) {
         nixlEnumStrings::telemetryEventTypeStr(nixl_telemetry_event_type_t::AGENT_TX_BYTES));
     const std::string rxCounter = std::string(
         nixlEnumStrings::telemetryEventTypeStr(nixl_telemetry_event_type_t::AGENT_RX_BYTES));
-    const std::string txLast = txCounter + "_last";
-    const std::string rxLast = rxCounter + "_last";
+    const std::string txLast = "agent_tx_last_bytes";
+    const std::string rxLast = "agent_rx_last_bytes";
 
     constexpr std::array<uint64_t, 3> tx_deltas{10, 20, 35}; // sum 65, last 35
     for (const uint64_t delta : tx_deltas) {
@@ -197,7 +197,7 @@ TEST_F(docaNixlExporterTest, ByteEventsEmitCumulativeCountersAndLastGauges) {
     ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
 
     // RX is pushed last and each event appends its counter sample before its
-    // gauge sample, so once agent_rx_bytes_last reads its final value (15) every
+    // gauge sample, so once agent_rx_last_bytes reads its final value (15) every
     // earlier sample (all TX, plus the RX counter) has been served too -- read
     // them all from that one settled scrape.
     const auto metrics = scrapeUntilValue(port_, rxLast, 15.0, std::chrono::seconds(12), labels);
