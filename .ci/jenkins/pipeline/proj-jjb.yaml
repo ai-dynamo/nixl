@@ -832,7 +832,7 @@
             # Build NIXL wheels nightly ~10 AM for CUDA 13 and CUDA 12 (the cu12
             # run also produces the nixl meta wheel). Both publish to the repo.
             H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.21.x;BASE_TAG=13.0-devel-manylinux--25.09
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.21.x;BASE_TAG=12.9-devel-manylinux--26.06
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.21.x;BASE_TAG=12.9-devel-manylinux--25.06
     # Manual build parameters
     parameters:
       - string:
@@ -850,7 +850,7 @@
       - string:
           name: "BASE_TAG"
           default: "13.0-devel-manylinux--25.09"
-          description: "Base image tag = CUDA version (e.g. 13.0-devel-manylinux--25.09 or 12.9-devel-manylinux--26.06; see .ci/dockerfiles/Dockerfile.cuda-manylinux)"
+          description: "Base image tag = CUDA version (e.g. 13.0-devel-manylinux--25.09 or 12.9-devel-manylinux--25.06). Mirrored into base/cuda from the dl/dgx/cuda registry."
       - string:
           name: "DEBUG"
           default: 0
