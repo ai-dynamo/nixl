@@ -118,10 +118,12 @@ nixl_ep_rpath += ':' + nixl_lib_dir
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'core')
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'plugins')
 
-# For now, nixl ep cannot be built with -G due to register usage limits
+# For now, nixl ep cannot be built with -G due to register usage limits;
+# build the EP target as release even in a global debug build (same flags
+# we ship in release wheels), and add -g back so we keep debug symbols.
 nixl_ep_override_options = []
 if get_option('buildtype') == 'debug'
-    nixl_ep_override_options = ['optimization=3']
+    nixl_ep_override_options = ['buildtype=release']
     nixl_ep_cpp_args += ['-g']
 endif
 

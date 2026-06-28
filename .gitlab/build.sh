@@ -181,6 +181,18 @@ else
     $SUDO apt-get upgrade -y
     $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
 
+    # DOCA GPUNetIO headers install under /opt/mellanox/doca/include (with a few
+    # co-installed headers under /usr/include), which nvcc does not search. Stage
+    # doca_gpunetio* into the CUDA include dir so device compilation finds the full
+    # chain pulled in via UCX device headers (doca_gpunetio_dev_verbs_qp.cuh ...).
+    if [ -d "${CUDA_HOME}/include" ]; then
+        DOCA_HEADERS=$(find /usr/include /opt -name "doca_gpunetio*" 2>/dev/null)
+        if [ -n "$DOCA_HEADERS" ]; then
+            echo "$DOCA_HEADERS" | xargs -I{} $SUDO cp {} "${CUDA_HOME}/include/" 2>/dev/null || true
+            echo "Copied DOCA GPUNetIO headers to ${CUDA_HOME}/include/"
+        fi
+    fi
+
     # Force reinstall of RDMA packages from DOCA repository
     # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
     # Upgrade is not sufficient if the version is the same since apt skips the installation.
@@ -406,6 +418,9 @@ export UCX_TLS=^cuda_ipc
 if [ -n "$PRE_INSTALLED_NIXL_ENV" ]; then
     echo "PRE_INSTALLED_NIXL_ENV is set, skipping compilation"
 else
+    if [ "${BUILD_NIXL_EP}" = "true" ]; then
+        EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
+    fi
     # shellcheck disable=SC2086
     meson setup ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
