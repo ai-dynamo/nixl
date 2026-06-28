@@ -315,12 +315,16 @@ RUN cd src/bindings/rust && cargo build --release --locked
 RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
     mkdir -p dist && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then EP_BUILD_FLAG="--build-nixl-ep"; else EP_BUILD_FLAG=""; fi && \
+    if [ -n "$UCX_SONAME_SUFFIX" ]; then \
+        UCX_PLUGIN_SONAME_FLAG="--plugin-soname-suffix $UCX_SONAME_SUFFIX"; \
+    else UCX_PLUGIN_SONAME_FLAG=""; fi && \
     ./contrib/build-wheel.sh \
     --python-version $DEFAULT_PYTHON_VERSION \
     --platform manylinux_2_39_$ARCH \
     --ucx-plugins-dir $UCX_PLUGIN_DIR \
     --nixl-plugins-dir $NIXL_PLUGIN_DIR \
     --output-dir /workspace/nixl/dist \
+    $UCX_PLUGIN_SONAME_FLAG \
     $EP_BUILD_FLAG
 
 RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
