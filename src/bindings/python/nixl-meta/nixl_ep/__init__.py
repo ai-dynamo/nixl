@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""nixl_ep meta-dispatcher: selects the correct CUDA backend."""
+"""nixl_ep meta-dispatcher: selects the correct CUDA and torch ABI backend."""
 
 import importlib
 import sys
