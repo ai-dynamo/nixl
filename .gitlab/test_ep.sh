@@ -49,12 +49,14 @@ export PYTHONPATH="${INSTALL_DIR}/lib/python3/dist-packages${PYTHONPATH:+:$PYTHO
 # Install the nixl meta wheel (provides the nixl_ep dispatcher package that
 # re-exports from nixl_ep_cu13). The wheel is staged in dist/ by the PR image
 # build; without this install `import nixl_ep` fails with ModuleNotFoundError.
+# The CUDA backend is already installed from source in the PR image, so avoid
+# fetching matching nixl-cu* release wheels that may not be published yet.
 if [ -n "$VIRTUAL_ENV" ] && grep -q '^uv =' "$VIRTUAL_ENV/pyvenv.cfg" 2>/dev/null; then
     pip3="uv pip"
 else
     pip3="python3 -m pip"
 fi
-$pip3 install --break-system-packages dist/nixl-*none-any.whl
+$pip3 install --break-system-packages --no-deps dist/nixl-*none-any.whl
 
 echo "==== Show system info ===="
 env
