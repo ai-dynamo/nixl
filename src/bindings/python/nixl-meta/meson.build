@@ -38,21 +38,27 @@ subdir('nixl')
 subdir('nixl_ep')
 
 uv = find_program('uv', required: false)
-if uv.found()
-  wheel_name = 'nixl-@0@-py3-none-any.whl'.format(meson.project_version())
-  # Inputs point at build-dir copies (return values of fs.copyfile in subdirs)
-  # so ninja runs copies before `uv build` and picks up source edits.
-  meta_wheel = custom_target(
-    'build_nixl_meta',
-    input: [
+
+meta_inputs = [
       pyproject_toml,
       readme_md,
       license_path,
       nixl_init_copy,
       nixl_api_copy,
       nixl_logging_copy,
-      nixl_ep_init_copy,
-    ],
+    ]
+
+if get_option('build_nixl_ep')
+  meta_inputs +=  [nixl_ep_init_copy]
+endif
+
+if uv.found()
+  wheel_name = 'nixl-@0@-py3-none-any.whl'.format(meson.project_version())
+  # Inputs point at build-dir copies (return values of fs.copyfile in subdirs)
+  # so ninja runs copies before `uv build` and picks up source edits.
+  meta_wheel = custom_target(
+    'build_nixl_meta',
+    input: meta_inputs,
     output: [wheel_name],
     command: [uv, 'build', '--wheel', '--out-dir', build_dir, build_dir],
     install: false,
