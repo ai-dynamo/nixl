@@ -25,6 +25,7 @@
 #include <string>
 #include <stdexcept>
 #include <absl/strings/str_format.h>
+#include "common/backend.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "nixl_types.h"
@@ -32,55 +33,49 @@
 
 namespace {
 
-constexpr std::string_view ubuntu_ca_bundle = "/etc/ssl/certs/ca-certificates.crt";
+const std::string ubuntu_ca_bundle = "/etc/ssl/certs/ca-certificates.crt";
 
-std::string
+[[nodiscard]] std::string
 getAccountUrl(nixl_b_params_t *custom_params) {
-    if (custom_params) {
-        auto account_it = custom_params->find("account_url");
-        if (account_it != custom_params->end() && !account_it->second.empty()) {
-            return account_it->second;
-        }
+    const auto str = nixl::getBackendParamDefaulted(custom_params, "account_url", std::string());
+    if (!str.empty()) {
+        return str;
     }
 
     return nixl::config::getValueDefaulted("AZURE_STORAGE_ACCOUNT_URL", std::string());
 }
 
-std::string
+[[nodiscard]] std::string
 getContainerName(nixl_b_params_t *custom_params) {
-    if (custom_params) {
-        auto container_it = custom_params->find("container_name");
-        if (container_it != custom_params->end() && !container_it->second.empty()) {
-            return container_it->second;
-        }
+    const auto str = nixl::getBackendParamDefaulted(custom_params, "container_name", std::string());
+    if (!str.empty()) {
+        return str;
     }
 
     return nixl::config::getNonEmptyString("AZURE_STORAGE_CONTAINER_NAME");
 }
 
-std::string
+[[nodiscard]] std::string
 getConnectionString(nixl_b_params_t *custom_params) {
-    if (custom_params) {
-        auto conn_it = custom_params->find("connection_string");
-        if (conn_it != custom_params->end() && !conn_it->second.empty()) {
-            return conn_it->second;
-        }
+    const auto str =
+        nixl::getBackendParamDefaulted(custom_params, "connection_string", std::string());
+    if (!str.empty()) {
+        return str;
     }
 
     return nixl::config::getValueDefaulted("AZURE_STORAGE_CONNECTION_STRING", std::string());
 }
 
-std::string
+[[nodiscard]] std::string
 getCaBundle(nixl_b_params_t *custom_params) {
-    if (custom_params) {
-        auto ca_bundle_it = custom_params->find("ca_bundle");
-        if (ca_bundle_it != custom_params->end() && !ca_bundle_it->second.empty()) {
-            return ca_bundle_it->second;
-        }
+    const auto str = nixl::getBackendParamDefaulted(custom_params, "ca_bundle", std::string());
+    if (!str.empty()) {
+        return str;
     }
 
     // Return empty string if not provided, which means use default CA bundle
-    std::string ca_bundle = nixl::config::getValueDefaulted<std::string>("AZURE_CA_BUNDLE", "");
+    const std::string ca_bundle =
+        nixl::config::getValueDefaulted<std::string>("AZURE_CA_BUNDLE", "");
     if (!ca_bundle.empty()) {
         return ca_bundle;
     }
@@ -92,7 +87,7 @@ getCaBundle(nixl_b_params_t *custom_params) {
     // we find a way to build libcurl to search for certs in a more cross-distro compatible way.
     if (std::filesystem::exists(ubuntu_ca_bundle)) {
         NIXL_DEBUG << "Using detected CA bundle at: " << ubuntu_ca_bundle;
-        return std::string(ubuntu_ca_bundle);
+        return ubuntu_ca_bundle;
     }
 
     return "";
@@ -103,13 +98,13 @@ getCaBundle(nixl_b_params_t *custom_params) {
 azureBlobClient::azureBlobClient(nixl_b_params_t *custom_params,
                                  std::shared_ptr<asio::thread_pool> executor) {
     executor_ = executor;
-    std::string accountUrl = ::getAccountUrl(custom_params);
-    std::string containerName = ::getContainerName(custom_params);
-    std::string connectionString = ::getConnectionString(custom_params);
+    const std::string accountUrl = ::getAccountUrl(custom_params);
+    const std::string containerName = ::getContainerName(custom_params);
+    const std::string connectionString = ::getConnectionString(custom_params);
     Azure::Storage::Blobs::BlobClientOptions options;
     options.Telemetry.ApplicationId = "azpartner-nixl/0.1.0";
 
-    std::string caBundle = ::getCaBundle(custom_params);
+    const std::string caBundle = ::getCaBundle(custom_params);
     if (!caBundle.empty()) {
         Azure::Core::Http::CurlTransportOptions curlOptions;
         curlOptions.CAInfo = caBundle;

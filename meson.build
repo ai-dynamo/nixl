@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.2.0',
+project('nixl', 'CPP', version: '1.3.1',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -88,6 +88,30 @@ thread_dep = dependency('threads')
 if get_option('buildtype') == 'release'
   abseil_flags = cpp.get_supported_arguments('-Wno-error=maybe-uninitialized', '-Wno-maybe-uninitialized')
   add_global_arguments(abseil_flags, language: 'cpp')
+endif
+
+# Sanitizer build, selected with -Dsanitizer=. Maps to -fsanitize and folds in
+# the third-party build workarounds so a plain `-Dsanitizer=...` build compiles:
+#  - undefined: GCC's UBSan null checks break Abseil's constexpr function-pointer
+#    comparison (GCC #71962, abseil-cpp#1634); drop those sub-checks. ASan still
+#    catches real null dereferences at runtime.
+#  - thread: GCC cannot instrument std::atomic_thread_fence in the Taskflow
+#    headers and -Werror turns the -Wtsan warning fatal; downgrade it.
+sanitizer = get_option('sanitizer')
+if sanitizer != 'none'
+  sanitizer_flag = '-fsanitize=' + sanitizer
+  add_project_arguments(sanitizer_flag, language: 'cpp')
+  add_project_link_arguments(sanitizer_flag, language: 'cpp')
+  sanitizer_parts = sanitizer.split(',')
+  if sanitizer_parts.contains('address')
+    add_project_arguments('-fno-omit-frame-pointer', language: 'cpp')
+  endif
+  if sanitizer_parts.contains('undefined')
+    add_project_arguments(cpp.get_supported_arguments('-fno-sanitize=null,nonnull-attribute,returns-nonnull-attribute'), language: 'cpp')
+  endif
+  if sanitizer_parts.contains('thread')
+    add_project_arguments(cpp.get_supported_arguments('-Wno-error=tsan'), language: 'cpp')
+  endif
 endif
 
 # Check for libaio (for LINUX AIO plugin and test)

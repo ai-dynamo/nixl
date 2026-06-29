@@ -23,6 +23,7 @@
 #include <filesystem>
 #include "hf3fs_backend.h"
 #include "hf3fs_log.h"
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "file/file_path_mode.h"
 #include "file/file_utils.h"
@@ -48,12 +49,15 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
 
     // Get mount point from parameters if available
     std::string mount_point = "/mnt/3fs/"; // default
-    if (init_params && init_params->customParams) {
-        if (init_params->customParams->count("mount_point") > 0) {
-            mount_point = init_params->customParams->at("mount_point");
+    if (init_params) {
+        nixl_b_params_t *params = init_params->customParams;
+
+        if (const auto opt = nixl::getBackendParamOptional<std::string>(params, "mount_point")) {
+            mount_point = *opt;
         }
-        if (init_params->customParams->count("mem_config") > 0) {
-            std::string mem_config_str = init_params->customParams->at("mem_config");
+
+        if (const auto opt = nixl::getBackendParamOptional<std::string>(params, "mem_config")) {
+            const std::string &mem_config_str = *opt;
             if (mem_config_str == "dram") {
                 mem_config = NIXL_HF3FS_MEM_CONFIG_DRAM;
             } else if (mem_config_str == "dram_zc") {
@@ -64,8 +68,9 @@ nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
                 return;
             }
         }
-        if (init_params->customParams->count("iopool_size") > 0) {
-            int size = atoi(init_params->customParams->at("iopool_size").c_str());
+
+        if (const auto opt = nixl::getBackendParamOptional<unsigned>(params, "iopool_size")) {
+            const unsigned int size = *opt;
             if (size > 0) {
                 if (size < HF3FS_MAX_IOPOOL_SIZE) {
                     iopool_size = size;
@@ -186,9 +191,16 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
         break;
     }
     case FILE_SEG: {
+        auto resv = path_mode_devids_.reserve(mem.devId, mem.metaInfo);
+        if (!resv.ok()) {
+            HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
+                             absl::StrFormat("HF3FS path-mode requires a unique devId per file "
+                                             "(devId=%llu already registered)",
+                                             static_cast<unsigned long long>(mem.devId)));
+        }
         std::unique_ptr<nixlHf3fsFileMetadata> md;
         try {
-            md = std::make_unique<nixlHf3fsFileMetadata>(nixl::FileFd(mem.devId, mem.metaInfo));
+            md = std::make_unique<nixlHf3fsFileMetadata>(mem.devId, mem.metaInfo);
         }
         catch (const std::system_error &e) {
             HF3FS_LOG_RETURN(NIXL_ERR_BACKEND,
@@ -207,6 +219,7 @@ nixl_status_t nixlHf3fsEngine::registerMem (const nixlBlobDesc &mem,
             hf3fs_file_set.insert(fd);
         }
 
+        resv.commit();
         md->handle.fd = fd;
         md->handle.size = mem.len;
         md->handle.metadata = mem.metaInfo;
@@ -225,6 +238,9 @@ nixl_status_t nixlHf3fsEngine::deregisterMem (nixlBackendMD* meta)
     nixlHf3fsMetadata *md = (nixlHf3fsMetadata *)meta;
     if (md->type == NIXL_HF3FS_MEM_TYPE_FILE) {
         nixlHf3fsFileMetadata *file_md = (nixlHf3fsFileMetadata *)md;
+        if (!file_md->file_fd.path().empty()) {
+            path_mode_devids_.release(file_md->devId);
+        }
         hf3fs_file_set.erase(file_md->handle.fd);
         hf3fs_utils->deregisterFileHandle(file_md->handle.fd);
     } else if (md->type != NIXL_HF3FS_MEM_TYPE_DRAM && md->type != NIXL_HF3FS_MEM_TYPE_DRAM_ZC) {

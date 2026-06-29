@@ -17,3 +17,8 @@ subdir('nixl')
 subdir('unit')
 
 subdir('gtest')
+
+# Standalone DOCA telemetry exporter test (self-contained; only built when the
+# DOCA telemetry headers are present). Kept out of the main gtest target so the
+# DOCA/CollectX gRPC stack is not linked into every test.
+subdir('doca-telemetry')

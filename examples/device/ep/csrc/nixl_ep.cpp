@@ -504,6 +504,9 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std:
 
         _nixl_ep_memory_views_create();
 
+        for (int remote_rank : new_ranks)
+            ep_kernels::cache_p2p_ptr(gpu_ctx_ptr, remote_rank, comm_stream);
+
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 
@@ -529,6 +532,7 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
         EP_HOST_ASSERT(removed_rank != rank);
         EP_HOST_ASSERT(_is_rank_connected(removed_rank));
         update_mask_buffer(removed_rank, true);  // mask=true
+        CUDA_CHECK(cudaMemset(gpu_ctx.p2p_ptrs + removed_rank, 0, sizeof(void*)));
     }
 
     _nixl_ep_memory_views_destroy();
@@ -1360,16 +1364,23 @@ void Buffer::_nixl_ep_init(void) {
         .last_ht_barrier_counter = last_ht_barrier_counter,
         .local_ht_barrier_counter_ptr = local_ht_barrier_counter,
         .rdma_buffer_ptr = rdma_buffer_ptr,
+        .p2p_ptrs = nullptr,
         .max_num_ranks = max_num_ranks,
         .num_rdma_ranks = num_rdma_ranks,
         .rank = rank,
     };
+    CUDA_CHECK(cudaMalloc(&gpu_ctx.p2p_ptrs, max_num_ranks * sizeof(void*)));
+    CUDA_CHECK(cudaMemset(gpu_ctx.p2p_ptrs, 0, max_num_ranks * sizeof(void*)));
     CUDA_CHECK(cudaMalloc(&gpu_ctx_ptr, sizeof(gpu_nixl_ctx)));
     CUDA_CHECK(cudaMemcpy(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx), cudaMemcpyHostToDevice));
 }
 
 void Buffer::_nixl_ep_destroy(void) {
     _nixl_ep_memory_views_destroy();
+    if (gpu_ctx.p2p_ptrs != nullptr) {
+        cudaFree(gpu_ctx.p2p_ptrs);
+        gpu_ctx.p2p_ptrs = nullptr;
+    }
     if (gpu_ctx_ptr != nullptr) {
         cudaFree(gpu_ctx_ptr);
         gpu_ctx_ptr = nullptr;
