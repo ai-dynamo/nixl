@@ -52,7 +52,7 @@ env:
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260607-1"
+  CI_IMAGE_TAG: "20260608-1"
 
 empty_volumes:
   - {mountPath: /root, memory: false}
