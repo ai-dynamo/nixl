@@ -75,8 +75,8 @@ runCuFileOp(const GdsXferReq *req, std::atomic<nixl_status_t> *overall_status) {
 
 nixlGdsMtReqH::~nixlGdsMtReqH() {
     if (running_transfer.valid()) {
-        // TODO: Make active request release nonblocking by moving this wait to
-        // asynchronous progress or returning a retryable release status.
+        // TODO: A follow-up should make active release nonblocking. This wait
+        // preserves the pre-consolidation GDS_MT request-lifetime behavior.
         running_transfer.wait();
     }
 }
