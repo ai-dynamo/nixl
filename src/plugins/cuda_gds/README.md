@@ -37,6 +37,12 @@ simultaneously within a single agent.
 | `batch_limit` | `128` | Maximum entries in one cuFile batch. |
 | `max_request_size` | `16777216` | Maximum bytes in one prepared I/O chunk. |
 
+## GDS_MT configuration
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `thread_count` | `max(1, hardware concurrency / 2)` | Number of persistent TaskFlow workers. The plugin advertises the computed value as a decimal string. |
+
 [NVIDIA GDS](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html)<br />
 [CUDA GDS Install and Setup](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html)
 

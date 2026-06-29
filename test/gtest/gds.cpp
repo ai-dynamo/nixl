@@ -28,11 +28,13 @@
 // the rest of the storage tests gate on CUDA availability.
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <fcntl.h>
@@ -49,6 +51,8 @@
 namespace {
 
 constexpr unsigned char kPattern = 0xAB;
+constexpr auto kTransferTimeout = std::chrono::seconds(30);
+constexpr auto kPollInterval = std::chrono::milliseconds(50);
 
 bool
 hasMem(const nixl_mem_list_t &mems, nixl_mem_t m) {
@@ -83,11 +87,17 @@ runTransfer(nixlAgent &agent,
         return status;
     }
     status = agent.postXferReq(req);
-    while (status == NIXL_IN_PROG) {
+    const auto deadline = std::chrono::steady_clock::now() + kTransferTimeout;
+    while (status == NIXL_IN_PROG && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(kPollInterval);
         status = agent.getXferStatus(req);
     }
-    agent.releaseXferReq(req);
-    return status;
+    if (status == NIXL_IN_PROG) {
+        status = NIXL_ERR_BACKEND;
+    }
+
+    const nixl_status_t release_status = agent.releaseXferReq(req);
+    return (release_status == NIXL_SUCCESS) ? status : release_status;
 }
 
 nixl_status_t
@@ -209,6 +219,22 @@ TEST(GdsBatchOptions, AdvertisesBatchConfiguration) {
     EXPECT_EQ(params["max_request_size"], "16777216");
     EXPECT_EQ(params.find("submit_threads"), params.end());
     EXPECT_EQ(params.find("submit_cpus"), params.end());
+}
+
+TEST(GdsMtOptions, AdvertisesThreadCount) {
+    nixlAgentConfig cfg;
+    nixlAgent agent("gds_mt_options", cfg);
+
+    nixl_mem_list_t mems;
+    nixl_b_params_t params;
+    if (agent.getPluginParams("GDS_MT", mems, params) != NIXL_SUCCESS) {
+        GTEST_SKIP() << "GDS_MT plugin not available in this build";
+    }
+
+    const auto thread_count = params.find("thread_count");
+    ASSERT_NE(thread_count, params.end());
+    EXPECT_EQ(thread_count->second,
+              std::to_string(std::max(1u, std::thread::hardware_concurrency() / 2)));
 }
 
 // ---------------------------------------------------------------------------

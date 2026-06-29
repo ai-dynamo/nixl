@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -24,12 +25,18 @@
 #include "common/nixl_log.h"
 #include "gds_mt_engine.h"
 
-namespace {
-const size_t default_thread_count = std::max(1u, std::thread::hardware_concurrency() / 2);
+size_t
+defaultGdsMtThreadCount() noexcept {
+    static const size_t thread_count =
+        std::max(1u, std::thread::hardware_concurrency() / 2);
+    return thread_count;
+}
 
+namespace {
 [[nodiscard]] size_t
 getThreadCount(const nixlBackendInitParams *init_params) {
     nixl_b_params_t *params = init_params->customParams;
+    const size_t default_thread_count = defaultGdsMtThreadCount();
     const size_t count =
         nixl::getBackendParamDefaulted(params, "thread_count", default_thread_count);
     return (count > 0) ? count : default_thread_count;
@@ -68,6 +75,8 @@ runCuFileOp(const GdsXferReq *req, std::atomic<nixl_status_t> *overall_status) {
 
 nixlGdsMtReqH::~nixlGdsMtReqH() {
     if (running_transfer.valid()) {
+        // TODO: Make active request release nonblocking by moving this wait to
+        // asynchronous progress or returning a retryable release status.
         running_transfer.wait();
     }
 }
