@@ -801,8 +801,7 @@ nixlAgentData::invalidateRemoteData(const std::string &remote_name, uint64_t gen
     }
 
     const auto sec_it = remoteSections_.find(remote_name);
-    if (sec_it == remoteSections_.end() || generation == 0 ||
-        sec_it->second.getGeneration() != generation) {
+    if (sec_it == remoteSections_.end() || sec_it->second.getGeneration() != generation) {
         return NIXL_ERR_NOT_FOUND;
     }
 

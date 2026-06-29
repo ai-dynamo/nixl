@@ -198,6 +198,8 @@ class nixlLocalSection : public nixlMemSection {
 class nixlRemoteSection : public nixlMemSection {
     private:
         std::string agentName;
+        // Per-connection id: a peer may reconnect under the same agentName, so
+        // invalidation matches this generation to avoid tearing down a newer connection.
         uint64_t generation_;
 
         nixl_status_t addDescList (

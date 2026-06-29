@@ -61,10 +61,12 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_xfer_op_t backend_op,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
+                           const uint64_t remote_generation,
                            const size_t desc_count)
     : initiatorDescs(local_type),
       targetDescs(remote_type),
       remoteAgent(remote_agent),
+      remoteGeneration_(remote_generation),
       backendOp(backend_op) {
     initiatorDescs.reserve(desc_count);
     targetDescs.reserve(desc_count);
@@ -775,7 +777,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // The remote was invalidated in between prepXferDlist and this call
-    auto rem_sec_it = data->remoteSections_.find(remote_side->remoteAgent);
+    const auto rem_sec_it = data->remoteSections_.find(remote_side->remoteAgent);
     if (rem_sec_it == data->remoteSections_.end()) {
         NIXL_ERROR_FUNC << "remote agent '" << remote_side->remoteAgent
                         << "' was invalidated in between prepXferDlist and this call";
@@ -792,8 +794,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
+                                                 rem_sec_it->second.getGeneration(),
                                                  desc_count);
-    handle->remoteGeneration_ = rem_sec_it->second.getGeneration();
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
@@ -960,8 +962,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
+                                                 rem_sec_it->second.getGeneration(),
                                                  local_descs.descCount());
-    handle->remoteGeneration_ = rem_sec_it->second.getGeneration();
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
