@@ -90,8 +90,8 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
     }
 
     if (telemetry_pub && (stat_status != NIXL_TELEMETRY_POST)) {
-        telemetry_pub->addPostTime(telemetry.postDuration);
-        telemetry_pub->addXferTime(duration, backendOp == NIXL_WRITE, telemetry.totalBytes);
+        telemetry_pub->addXferStats(
+            duration, backendOp == NIXL_WRITE, telemetry.totalBytes, telemetry.postDuration);
     }
 
     NIXL_TRACE << "[NIXL TELEMETRY]: From backend " << engine->getType()
