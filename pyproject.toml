@@ -42,6 +42,7 @@ explicit_package_bases = true
 
 [tool.isort]
 profile = "black"
+known_first_party = ["nixl"]
 
 [tool.meson-python.args]
 setup = ["-Dinstall_headers=false"]

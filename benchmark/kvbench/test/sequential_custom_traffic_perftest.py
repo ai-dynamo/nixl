@@ -29,10 +29,11 @@ from test.traffic_pattern import TrafficPattern
 from typing import Any, Dict, List, Optional
 
 import yaml
-from nixl._api import nixl_agent, nixl_agent_config
-from nixl.logging import get_logger
 from runtime.etcd_rt import etcd_dist_utils as dist_rt
 from tabulate import tabulate
+
+from nixl._api import nixl_agent, nixl_agent_config
+from nixl.logging import get_logger
 
 logger = get_logger(__name__)
 

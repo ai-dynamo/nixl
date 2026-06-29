@@ -21,6 +21,7 @@ from collections import defaultdict
 from typing import Any, List, Optional
 
 import etcd3
+
 from nixl.logging import get_logger
 
 from .rt_base import ReduceOp, _RTUtils
