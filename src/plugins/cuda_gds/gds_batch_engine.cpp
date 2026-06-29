@@ -131,7 +131,7 @@ nixlGdsIOBatch::checkStatus() {
 
     unsigned int nr = batch_size - entries_completed;
     const CUfileError_t errBatch =
-        cuFileBatchIOGetStatus(batch_handle, 0, &nr, io_batch_events.get(), nullptr);
+        cuFileBatchIOGetStatus(batch_handle, nr, &nr, io_batch_events.get(), nullptr);
     if (errBatch.err != 0) {
         NIXL_ERROR << "Error in IO Batch Get Status";
         current_status = NIXL_ERR_BACKEND;
