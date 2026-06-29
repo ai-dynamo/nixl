@@ -556,9 +556,6 @@ def main(
     results_dir.mkdir(parents=True, exist_ok=True)
     tps_dir = results_dir / "tps"
     tps_dir.mkdir(parents=True, exist_ok=True)
-    if not storage_only:
-        matrices_dir = results_dir / "matrices"
-        matrices_dir.mkdir(parents=True, exist_ok=True)
 
     storage_enabled = prefix_hit_rate is not None or storage_only
     # 100% read for storage_only (no compute sleep). When storage is disabled
@@ -676,15 +673,10 @@ def main(
                 f.write("\n[write]\n")
                 f.write(" ".join(write_sizes) + "\n")
 
-        # Also write legacy matrix file for backward compatibility
-        if not storage_only:
-            matrix_path = matrices_dir / f"matrix_{idx}.txt"
-            with open(matrix_path, "w") as f:
-                for row in matrix.matrix:
-                    f.write(" ".join(format_size(val) for val in row) + "\n")
-
-        # Build YAML entry with BOTH tp_file (new) and matrix_file+storage (legacy)
-        # New main.py checks tp_file first; old main.py ignores tp_file, uses matrix_file
+        # Emit ONLY the unified tp_file. It already carries [rdma]/[read]/[write],
+        # and the runner rejects entries that set tp_file alongside the legacy
+        # matrix_file/matrix/storage keys, so do not duplicate that data here.
+        # (mem_type is not a legacy key and is still read by the runner.)
         tp_entry: Dict[str, Any] = {
             "tp_file": f"tps/tp_{idx}.tp",
             "sleep_before_launch_sec": matrix.compute_time * (1 - hit_rate),
@@ -692,18 +684,8 @@ def main(
                 "isl": matrix.isl,
             },
         }
-        # Legacy keys for backward compatibility with old main.py
-        if not storage_only:
-            tp_entry["matrix_file"] = f"matrices/matrix_{idx}.txt"
         if storage_only or storage_enabled:
             tp_entry["mem_type"] = mem_type
-        if has_read or has_write:
-            storage_entry: Dict[str, List[str]] = {}
-            if has_read:
-                storage_entry["read"] = read_sizes
-            if has_write:
-                storage_entry["write"] = write_sizes
-            tp_entry["storage"] = storage_entry
 
         metadata["traffic_patterns"].append(tp_entry)
 

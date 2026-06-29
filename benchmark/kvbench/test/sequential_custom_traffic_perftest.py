@@ -1184,9 +1184,24 @@ class SequentialCTPerftest(CTPerftest):
 
             # Isolated storage read/write measurements
             if self._has_storage:
-                # Check if any TP has read/write ops
-                has_reads = any(h for h in storage_read_handles)
-                has_writes = any(h for h in storage_write_handles)
+                # _run_isolated_storage_benchmark() runs a per-TP dist_rt.barrier()
+                # over ALL ranks, so whether to call it must be decided identically
+                # on every rank. Derive it from the globally-replicated traffic
+                # patterns, NOT this rank's local handles: gating on per-rank
+                # handles makes ranks without storage skip the call and deadlocks
+                # the barrier (mirrors the unconditional isolated RDMA benchmark).
+                has_reads = any(
+                    op.read_size > 0
+                    for tp in self.traffic_patterns
+                    if tp.storage_ops
+                    for op in tp.storage_ops.values()
+                )
+                has_writes = any(
+                    op.write_size > 0
+                    for tp in self.traffic_patterns
+                    if tp.storage_ops
+                    for op in tp.storage_ops.values()
+                )
 
                 if has_reads:
                     logger.info(

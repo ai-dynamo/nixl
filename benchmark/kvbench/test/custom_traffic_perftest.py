@@ -376,7 +376,11 @@ class CTPerftest:
         """Share agent metadata between all ranks. (Need to be run after registering buffers)"""
         # Storage-only patterns have no remote peers to talk to. Skipping
         # the metadata exchange both saves time and avoids requiring UCX.
-        if not self.traffic_pattern.has_rdma():
+        # Only CTPerftest binds a single self.traffic_pattern; SequentialCTPerftest
+        # holds many patterns and gates this call on self._has_rdma instead, so
+        # tolerate the attribute being absent there.
+        single_tp = getattr(self, "traffic_pattern", None)
+        if single_tp is not None and not single_tp.has_rdma():
             logger.debug(
                 "[Rank %d] Storage-only pattern, skipping metadata exchange",
                 self.my_rank,
