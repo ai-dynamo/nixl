@@ -119,7 +119,8 @@ jobs:
     # Same fork-PR guard as `version` (explicit; not just inherited via needs).
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-${{ matrix.runner }}-v1
-    timeout-minutes: 120  # ARM manylinux builds everything from source (~60min); was timing out at the push step
+    timeout-minutes: 240  # manylinux builds everything from source AND now builds the NIXL-EP wheel
+                          # for 3 torch versions x 5 python versions (#1775); cu13 hit the old 120m cap.
     strategy:
       fail-fast: false
       matrix:
