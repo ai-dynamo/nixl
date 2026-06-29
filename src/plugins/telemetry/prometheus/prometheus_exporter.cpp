@@ -128,8 +128,12 @@ nixlTelemetryPrometheusExporter::initializeMetrics() {
 
     registerGauge("agent_tx_bytes", "agent_tx_last_bytes", "Bytes sent by the last request");
     registerGauge("agent_rx_bytes", "agent_rx_last_bytes", "Bytes received by the last request");
-    registerGauge("agent_memory_registered", "agent_memory_registered", "Memory registered");
-    registerGauge("agent_memory_deregistered", "agent_memory_deregistered", "Memory deregistered");
+    registerGauge("agent_memory_registered",
+                  "agent_memory_registered_last_bytes",
+                  "Memory registered by the last operation");
+    registerGauge("agent_memory_deregistered",
+                  "agent_memory_deregistered_last_bytes",
+                  "Memory deregistered by the last operation");
 }
 
 void
