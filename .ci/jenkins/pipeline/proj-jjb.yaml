@@ -869,6 +869,81 @@
               parent-credentials: true
       script-path: "{jjb_jenkinsfile}"
 
+# Wheel verification job: builds and publishes NIXL wheels to Artifactory. Runs on
+# a nightly schedule (from main) and on manual runs (any branch/tag/PR/SHA).
+- job-template:
+    name: "{jjb_proj}-build-wheel-nightly"
+    project-type: pipeline
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 30
+          num-to-keep: 30
+      - inject:
+          keep-system-variables: true
+          properties-content: |
+            jjb_proj={jjb_proj}-build-wheel-nightly
+            conf_file=.ci/jenkins/lib/build-wheel-nightly-matrix.yaml
+    description: >
+      <b>NIXL nightly wheel verification build</b><br/>
+      • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code> and the
+      corresponding UCX version, and publishes them to the verification Artifactory space<br/>
+      • Run manually from any NIXL branch / tag / PR / SHA via <code>NIXL_VERSION</code><br/>
+      • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
+    concurrent: true
+    sandbox: true
+    # Nightly scheduler; manual runs use the parameter defaults below
+    triggers:
+      - parameterized-timer:
+          cron: |
+            # Build NIXL wheels nightly ~10 AM for CUDA 13 and CUDA 12 (the cu12
+            # run also produces the nixl meta wheel). Both publish to the repo.
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.21.x;BASE_TAG=13.0-devel-manylinux--25.09
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.21.x;BASE_TAG=12.9-devel-manylinux--25.06
+    # Manual build parameters
+    parameters:
+      - string:
+          name: "NIXL_VERSION"
+          default: "{jjb_branch}"
+          description: "NIXL version to build wheels from (tag like 1.2.0, branch name, PR ref, or commit hash)"
+      - string:
+          name: "UCX_VERSION"
+          default: "v1.21.x"
+          description: "UCX version to build against (tag like v1.21.x, branch name, or commit hash)"
+      - string:
+          name: "BASE_IMAGE"
+          default: "artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda"
+          description: "Manylinux base image for the wheel build"
+      - string:
+          name: "BASE_TAG"
+          default: "13.0-devel-manylinux--25.09"
+          description: "Base image tag = CUDA version (e.g. 13.0-devel-manylinux--25.09 or 12.9-devel-manylinux--25.06). Mirrored into base/cuda from the dl/dgx/cuda registry."
+      - string:
+          name: "DEBUG"
+          default: 0
+          description: "Enable debug prints and traces, valid values are 0-9"
+      - string:
+          name: "MAIL_TO"
+          default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
+          description: "Email address to send build results to (optional)"
+    # SCM configuration - resolves branch/tag/PR/SHA from NIXL_VERSION
+    pipeline-scm:
+      scm:
+        - git:
+            url: "{jjb_git}"
+            branches: ['$NIXL_VERSION']
+            shallow-clone: false
+            do-not-fetch-tags: false
+            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/remotes/origin/tags/* +$NIXL_VERSION:refs/remotes/origin/$NIXL_VERSION"
+            browser: githubweb
+            browser-url: "{jjb_git}"
+            submodule:
+              disable: false
+              recursive: true
+              tracking: true
+              parent-credentials: true
+      script-path: "{jjb_jenkinsfile}"
+
 # Project definition that instantiates the job templates
 # This section defines the actual jobs that will be created
 - project:
@@ -890,3 +965,4 @@
         - "{jjb_proj}-dl-gpu"   # Create dl-gpu job for dlcluster.nvidia.com
         - "{jjb_proj}-dl-gpu-ep"  # Create dl-gpu-ep job for nixl_ep elastic tests on dlcluster.nvidia.com
         - "{jjb_proj}-build-wheel"  # Create build wheel job
+        - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
