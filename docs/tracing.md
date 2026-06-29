@@ -116,11 +116,17 @@ ignores dependencies; offline backends such as Chakra record them).
 
 NVTX is a lazy, online API: when no profiler is attached, ranges are near-zero-cost
 no-op stubs. Run the process under `nsys` to capture the ranges into a `.nsys-rep`
-you can open in the Nsight Systems GUI. The NVTX backend is sourced from the CUDA
-toolkit's header-only `nvtx3` (CUDA-toolkit-only — there is no non-CUDA build).
+you can open in the Nsight Systems GUI.
+
+The NVTX backend plugin is **optional at build time**: it is built only when the CUDA
+toolkit's header-only `nvtx3` headers are present, and is silently skipped otherwise
+(there is no separate non-CUDA NVTX build). When it isn't built, requesting it at
+runtime (`NIXL_TRACE_BACKENDS=nvtx`) just logs a warning and tracing stays off — the
+rest of NIXL is unaffected.
 
 ```bash
-# Build with tracing + the NVTX backend plugin (both on by default)
+# Build with tracing + the NVTX backend plugin (both on by default; the NVTX
+# plugin is built when the CUDA-toolkit nvtx3 headers are found, else skipped)
 meson setup build -Dbuildtype=debug -Dwith_trace=true -Dtrace_backends=nvtx
 ninja -C build
 

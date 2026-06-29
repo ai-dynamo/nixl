@@ -13,10 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Entered only when the NVTX backend was detected (nixl_trace_nvtx_enabled, set
-# in the root meson.build). nvtx_inc_dep comes from that detection. Built as an
-# on-demand `.so` plugin (prefix libtrace_backend_) like NIXL's data backends
-# and telemetry exporters, not linked into libnixl.
+# Reached only when nixl_trace_nvtx_enabled is set (root meson.build), which also
+# provides nvtx_inc_dep.
 shared_library(
     'libtrace_backend_nvtx',
     'nvtx_plugin.cpp',

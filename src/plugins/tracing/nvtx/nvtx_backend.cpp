@@ -17,6 +17,8 @@
 
 #include "nvtx_backend.h"
 
+#include "common/nixl_log.h"
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -167,7 +169,13 @@ namespace {
 
 std::unique_ptr<TraceBackend>
 createNvtxBackend(const nixlTraceBackendInitParams &init_params) {
-    return std::make_unique<NvtxTraceBackend>(init_params.agentName);
+    try {
+        return std::make_unique<NvtxTraceBackend>(init_params.agentName);
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Failed to create NVTX trace backend: " << e.what();
+        return nullptr;
+    }
 }
 
 } // namespace nixl::trace

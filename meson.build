@@ -426,7 +426,13 @@ nixl_trace_enabled = get_option('with_trace')
 nixl_trace_nvtx_enabled = false
 
 if nixl_trace_enabled
-    add_project_arguments('-DNIXL_TRACE_ENABLED', language: ['cpp', 'cuda'])
+    # 'cuda' is only an enabled language when cuda_dep.found() (add_languages('CUDA')
+    # above); passing it unconditionally breaks a non-CUDA with_trace configure.
+    nixl_trace_arg_langs = ['cpp']
+    if cuda_dep.found()
+        nixl_trace_arg_langs += ['cuda']
+    endif
+    add_project_arguments('-DNIXL_TRACE_ENABLED', language: nixl_trace_arg_langs)
 
     requested_trace_backends = []
     foreach b : get_option('trace_backends').split(',')

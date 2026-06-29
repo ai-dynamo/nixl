@@ -683,6 +683,9 @@ NIXL_INSTANTIATE_TEST(ucx_telemetry_threadpool_no_pt,
 // the binary profiled under nsys to capture the NVTX timeline as an artifact.
 class TestTransferTracing : public TestTransfer {
 protected:
+    // False when this build did not produce libtrace_backend_nvtx.so.
+    static bool nvtxPluginAvailable_;
+
     // The NVTX backend is an on-demand plugin (libtrace_backend_nvtx.so); point
     // the manager at its build-tree location once for the whole suite. Guarded so
     // a build without the NVTX plugin doesn't log a missing-directory error, and
@@ -692,17 +695,25 @@ protected:
     SetUpTestSuite() {
         static bool added = false;
         if (added) {
+            nvtxPluginAvailable_ = true;
             return;
         }
         const std::string nvtx_plugin_dir = std::string(BUILD_DIR) + "/src/plugins/tracing/nvtx";
         if (std::filesystem::exists(nvtx_plugin_dir)) {
             nixlPluginManager::getInstance().addPluginDirectory(nvtx_plugin_dir);
             added = true;
+            nvtxPluginAvailable_ = true;
+        } else {
+            nvtxPluginAvailable_ = false;
         }
     }
 
     void
     SetUp() override {
+        // Nothing to validate without the plugin -- skip instead of running blind.
+        if (!nvtxPluginAvailable_) {
+            GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+        }
         // Activate NVTX tracing before the agents are created (the constructor
         // reads NIXL_TRACE_BACKENDS). Keep telemetry off.
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
@@ -742,6 +753,8 @@ protected:
         deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
     }
 };
+
+bool TestTransferTracing::nvtxPluginAvailable_ = false;
 
 TEST_P(TestTransferTracing, NvtxTransferLoop) {
     runTracingTransferTest();

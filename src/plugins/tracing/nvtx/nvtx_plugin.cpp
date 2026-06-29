@@ -18,8 +18,7 @@
 #include "nvtx_backend.h"
 #include "tracing/trace_plugin.h"
 
-// Loaded by nixlPluginManager (prefix `libtrace_backend_`). The factory itself
-// (createNvtxBackend) builds one NVTX domain per agent on demand.
+// Loaded by nixlPluginManager via the `libtrace_backend_` prefix.
 extern "C" NIXL_TRACE_PLUGIN_EXPORT nixlTracePlugin *
 nixl_trace_plugin_init() {
     static nixlTracePlugin plugin(
