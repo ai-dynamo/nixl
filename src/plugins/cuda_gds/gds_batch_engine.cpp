@@ -130,6 +130,10 @@ nixlGdsIOBatch::checkStatus() {
     }
 
     unsigned int nr = batch_size - entries_completed;
+    // TODO: Prevent active request release from blocking. Since min_nr equals
+    // nr, checkStatus() can wait for every remaining event, and releaseXferReq()
+    // calls checkXfer() before releaseReqH(). Decouple release from this status
+    // check or move completion waiting to asynchronous progress.
     const CUfileError_t errBatch =
         cuFileBatchIOGetStatus(batch_handle, nr, &nr, io_batch_events.get(), nullptr);
     if (errBatch.err != 0) {
@@ -357,6 +361,8 @@ nixlGdsBatchEngine::cancelAndReclaimBatches(
             continue;
         }
         if (batch->cancelBatch() == NIXL_SUCCESS) {
+            // TODO: Establish and test cancel-to-resubmit semantics for every
+            // cuFile I/O path before immediately reusing a batch handle.
             returnBatchToPool(batch);
         } else {
             *keep++ = batch;

@@ -26,6 +26,9 @@
 #include "taskflow/core/executor.hpp"
 #include "taskflow/taskflow.hpp"
 
+[[nodiscard]] size_t
+defaultGdsMtThreadCount() noexcept;
+
 class nixlGdsMtReqH : public nixlBackendReqH {
 public:
     ~nixlGdsMtReqH() override;
