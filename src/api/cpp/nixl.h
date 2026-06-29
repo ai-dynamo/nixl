@@ -26,7 +26,6 @@
 #include "nixl_descriptors.h"
 #include <chrono>
 #include <memory>
-#include <string>
 
 /**
  * @class nixlAgent
@@ -52,14 +51,6 @@ class nixlAgent {
          * @brief Destructor for nixlAgent object
          */
         ~nixlAgent ();
-
-        /**
-         * @brief Return this agent's name.
-         *
-         * @return const std::string& Agent name passed to the constructor.
-         */
-        [[nodiscard]] const std::string &
-        getName() const noexcept;
 
         /* It is unsafe to move nixlAgent object */
         nixlAgent(nixlAgent&&) noexcept = delete;
@@ -569,6 +560,7 @@ class nixlAgent {
         nixl_status_t
         checkRemoteMD (const std::string remote_name,
                        const nixl_xfer_dlist_t &descs) const;
+
 };
 
 #endif

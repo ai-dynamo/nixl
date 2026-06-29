@@ -17,16 +17,19 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <thread>
 #include <vector>
 
 #include "common.h"
 #include "nixl.h"
-#include "nixl_md_manager.h"
 
+// Exercises the agent-owned metadata manager: with NIXL_USE_MD_MANAGER set, the
+// agent's public P2P metadata methods route through nixlMDManager + the P2P
+// backend (which reuses getLocalMD and the comm-thread queue) instead of the
+// inline path. The observable behavior must match the inline path.
 namespace gtest::md_manager {
 
 class MemBuffer {
@@ -53,21 +56,28 @@ private:
 
 namespace {
 
+    nixl_opt_args_t
+    peerArgs(const std::string &ip, int port) {
+        nixl_opt_args_t args;
+        args.ipAddr = ip;
+        args.port = port;
+        return args;
+    }
+
     // Bounded polling around checkRemoteMD: avoids fixed sleeps that make
-    // async assertions slow and timing-sensitive. Returns the last observed
-    // status (== `expected` on success, or the most recent value on timeout).
+    // async assertions slow and timing-sensitive.
     nixl_status_t
-    waitForRemoteMD(nixlMDManager *mdm,
+    waitForRemoteMD(nixlAgent *agent,
                     const std::string &remote_name,
                     const nixl_xfer_dlist_t &descs,
                     nixl_status_t expected,
                     std::chrono::milliseconds timeout = std::chrono::seconds(3),
                     std::chrono::milliseconds interval = std::chrono::milliseconds(25)) {
         const auto deadline = std::chrono::steady_clock::now() + timeout;
-        nixl_status_t last = mdm->checkRemoteMD(remote_name, descs);
+        nixl_status_t last = agent->checkRemoteMD(remote_name, descs);
         while (last != expected && std::chrono::steady_clock::now() < deadline) {
             std::this_thread::sleep_for(interval);
-            last = mdm->checkRemoteMD(remote_name, descs);
+            last = agent->checkRemoteMD(remote_name, descs);
         }
         return last;
     }
@@ -80,13 +90,9 @@ protected:
         std::string name;
         std::string ip = "127.0.0.1";
         int port;
-        nixlMDManager *mdm = nullptr;
         nixlBackendH *backend_handle = nullptr;
         std::vector<MemBuffer> buffers;
         std::unique_ptr<nixlAgent> agent;
-        // Declared after `agent` so it is destroyed first: the manager holds a
-        // reference to the agent and must not outlive it.
-        std::unique_ptr<nixlMDManager> mdmOwner;
 
         void
         createBackend() {
@@ -111,6 +117,9 @@ protected:
 
     void
     SetUp() override {
+        // Route the agent's P2P metadata methods through the manager.
+        setenv("NIXL_USE_MD_MANAGER", "1", 1);
+
         for (int i = 0; i < AGENT_COUNT_; i++) {
             AgentContext ctx;
             ctx.port = PortAllocator::next_tcp_port();
@@ -121,9 +130,6 @@ protected:
             cfg.listenPort = ctx.port;
             cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
             ctx.agent = std::make_unique<nixlAgent>(ctx.name, cfg);
-
-            ctx.mdmOwner = std::make_unique<nixlMDManager>(*ctx.agent);
-            ctx.mdm = ctx.mdmOwner.get();
 
             ctx.createBackend();
             ctx.initAndRegisterBuffers(BUFF_COUNT_, BUFF_SIZE_);
@@ -136,6 +142,7 @@ protected:
     TearDown() override {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         agents_.clear();
+        unsetenv("NIXL_USE_MD_MANAGER");
     }
 
     static constexpr int AGENT_COUNT_ = 2;
@@ -145,59 +152,17 @@ protected:
     std::vector<AgentContext> agents_;
 };
 
-TEST_F(MDManagerFixture, RegisterRejectsEmptyInputs) {
-    auto &a = agents_[0];
-    EXPECT_EQ(a.mdm->registerMDPeer("", "127.0.0.1", 1234), NIXL_ERR_INVALID_PARAM);
-    EXPECT_EQ(a.mdm->registerMDPeer("peer", "", 1234), NIXL_ERR_INVALID_PARAM);
-}
-
-TEST_F(MDManagerFixture, RegisterRejectsMalformedIp) {
-    auto &a = agents_[0];
-    EXPECT_EQ(a.mdm->registerMDPeer("peer", "not-an-ip", 1234), NIXL_ERR_INVALID_PARAM);
-    EXPECT_EQ(a.mdm->registerMDPeer("peer", "256.0.0.1", 1234), NIXL_ERR_INVALID_PARAM);
-    EXPECT_EQ(a.mdm->registerMDPeer("peer", "127.0.0.1.5", 1234), NIXL_ERR_INVALID_PARAM);
-}
-
-TEST_F(MDManagerFixture, UnregisterUnknownPeerIsOk) {
-    auto &a = agents_[0];
-    EXPECT_EQ(a.mdm->unregisterMDPeer("never_registered"), NIXL_SUCCESS);
-}
-
-TEST_F(MDManagerFixture, ReRegisterSameAddressIsIdempotent) {
-    auto &a = agents_[0];
-    EXPECT_EQ(a.mdm->registerMDPeer("peer", "127.0.0.1", 1234), NIXL_SUCCESS);
-    EXPECT_EQ(a.mdm->registerMDPeer("peer", "127.0.0.1", 1234), NIXL_SUCCESS);
-}
-
-TEST_F(MDManagerFixture, ReRegisterDifferentAddressIsRejected) {
-    auto &a = agents_[0];
-    EXPECT_EQ(a.mdm->registerMDPeer("peer", "127.0.0.1", 1234), NIXL_SUCCESS);
-    EXPECT_EQ(a.mdm->registerMDPeer("peer", "127.0.0.1", 5678), NIXL_ERR_NOT_ALLOWED);
-    EXPECT_EQ(a.mdm->registerMDPeer("peer", "10.0.0.1", 1234), NIXL_ERR_NOT_ALLOWED);
-}
-
-TEST_F(MDManagerFixture, NetworkOpsRequireRegistration) {
-    auto &a = agents_[0];
-    EXPECT_EQ(a.mdm->sendLocalMD("unregistered_peer"), NIXL_ERR_NOT_FOUND);
-    EXPECT_EQ(a.mdm->fetchRemoteMD("unregistered_peer"), NIXL_ERR_NOT_FOUND);
-    EXPECT_EQ(a.mdm->invalidateLocalMD("unregistered_peer"), NIXL_ERR_NOT_FOUND);
-
-    nixl_reg_dlist_t descs(DRAM_SEG);
-    EXPECT_EQ(a.mdm->sendLocalPartialMD("unregistered_peer", descs), NIXL_ERR_NOT_FOUND);
-}
-
 TEST_F(MDManagerFixture, SendLocalAndInvalidateLocal) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
-    ASSERT_EQ(src.mdm->registerMDPeer(dst.name, dst.ip, static_cast<uint16_t>(dst.port)),
-              NIXL_SUCCESS);
+    const nixl_opt_args_t args = peerArgs(dst.ip, dst.port);
 
-    ASSERT_EQ(src.mdm->sendLocalMD(dst.name), NIXL_SUCCESS);
-    EXPECT_EQ(waitForRemoteMD(dst.mdm, src.name, {DRAM_SEG}, NIXL_SUCCESS), NIXL_SUCCESS);
+    ASSERT_EQ(src.agent->sendLocalMD(&args), NIXL_SUCCESS);
+    EXPECT_EQ(waitForRemoteMD(dst.agent.get(), src.name, {DRAM_SEG}, NIXL_SUCCESS), NIXL_SUCCESS);
 
-    ASSERT_EQ(src.mdm->invalidateLocalMD(dst.name), NIXL_SUCCESS);
-    EXPECT_EQ(waitForRemoteMD(dst.mdm, src.name, {DRAM_SEG}, NIXL_ERR_NOT_FOUND),
+    ASSERT_EQ(src.agent->invalidateLocalMD(&args), NIXL_SUCCESS);
+    EXPECT_EQ(waitForRemoteMD(dst.agent.get(), src.name, {DRAM_SEG}, NIXL_ERR_NOT_FOUND),
               NIXL_ERR_NOT_FOUND);
 }
 
@@ -205,35 +170,10 @@ TEST_F(MDManagerFixture, FetchRemote) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
-    ASSERT_EQ(dst.mdm->registerMDPeer(src.name, src.ip, static_cast<uint16_t>(src.port)),
-              NIXL_SUCCESS);
+    const nixl_opt_args_t args = peerArgs(src.ip, src.port);
 
-    ASSERT_EQ(dst.mdm->fetchRemoteMD(src.name), NIXL_SUCCESS);
-    EXPECT_EQ(waitForRemoteMD(dst.mdm, src.name, {DRAM_SEG}, NIXL_SUCCESS), NIXL_SUCCESS);
-}
-
-TEST_F(MDManagerFixture, UnregisterTriggersInvalidate) {
-    auto &src = agents_[0];
-    auto &dst = agents_[1];
-
-    ASSERT_EQ(src.mdm->registerMDPeer(dst.name, dst.ip, static_cast<uint16_t>(dst.port)),
-              NIXL_SUCCESS);
-
-    ASSERT_EQ(src.mdm->sendLocalMD(dst.name), NIXL_SUCCESS);
-    ASSERT_EQ(waitForRemoteMD(dst.mdm, src.name, {DRAM_SEG}, NIXL_SUCCESS), NIXL_SUCCESS);
-
-    ASSERT_EQ(src.mdm->unregisterMDPeer(dst.name), NIXL_SUCCESS);
-    EXPECT_EQ(waitForRemoteMD(dst.mdm, src.name, {DRAM_SEG}, NIXL_ERR_NOT_FOUND),
-              NIXL_ERR_NOT_FOUND);
-
-    // After unregister, the registry entry is gone; subsequent sends to
-    // the same name should fail until the peer is re-registered.
-    EXPECT_EQ(src.mdm->sendLocalMD(dst.name), NIXL_ERR_NOT_FOUND);
-}
-
-TEST_F(MDManagerFixture, BackendIsP2P) {
-    auto &a = agents_[0];
-    EXPECT_EQ(a.mdm->getBackend(), std::string_view("P2P"));
+    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &args), NIXL_SUCCESS);
+    EXPECT_EQ(waitForRemoteMD(dst.agent.get(), src.name, {DRAM_SEG}, NIXL_SUCCESS), NIXL_SUCCESS);
 }
 
 } // namespace gtest::md_manager

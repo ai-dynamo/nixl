@@ -16,205 +16,40 @@
  */
 #include "nixl_md_manager.h"
 
-#include "nixl.h"
-#include "common/nixl_log.h"
+#include "nixl_p2p_metadata_backend.h"
 
-#include <arpa/inet.h>
-
-#include <cstdint>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <string_view>
-#include <unordered_map>
-#include <utility>
 
-namespace {
-
-// Build the nixl_opt_args_t for a peer. Takes ip by value and moves it in to
-// avoid a redundant copy. Kept .cpp-local rather than passing the manager's
-// private Peer struct, which would pull this helper into the installed header.
-[[nodiscard]]
-nixl_opt_args_t
-makePeerArgs(std::string ip, std::uint16_t port, const nixl_opt_args_t *base = nullptr) {
-    nixl_opt_args_t args = base ? *base : nixl_opt_args_t{};
-    args.ipAddr = std::move(ip);
-    args.port = port;
-    return args;
-}
-
-} // namespace
-
-// Holds the registry/mutex so the installed nixl_md_manager.h stays free of
-// those details (mirrors nixlAgent/nixlAgentData).
-struct nixlMDManagerData {
-    explicit nixlMDManagerData(nixlAgent &agent) noexcept : agent(agent) {}
-
-    // Registry entry for a tracked agent. The registry itself (name -> entry)
-    // is backend-agnostic; the ip/port are P2P-only addressing and are unused
-    // by centralized backends. They belong with the P2P transport long term
-    // (a future P2P backend), not in shared manager state.
-    struct Peer {
-        std::string ip;
-        std::uint16_t port;
-
-        [[nodiscard]] bool
-        operator==(const Peer &other) const noexcept {
-            return ip == other.ip && port == other.port;
-        }
-    };
-
-    // Snapshot {ip, port} under the lock so callers can release it before any
-    // network call.
-    [[nodiscard]] bool
-    lookupPeer(const std::string &agent_name, Peer &out) const {
-        const std::lock_guard lock(mutex);
-        auto it = peers.find(agent_name);
-        if (it == peers.end()) {
-            return false;
-        }
-        out = it->second;
-        return true;
-    }
-
-    nixlAgent &agent;
-    mutable std::mutex mutex;
-    std::unordered_map<std::string, Peer> peers;
-};
-
-nixlMDManager::nixlMDManager(nixlAgent &agent)
-    : data_(std::make_unique<nixlMDManagerData>(agent)) {}
+nixlMDManager::nixlMDManager(nixlMetadataContext &ctx)
+    : backend_(std::make_unique<nixlP2PMetadataBackend>(ctx)) {}
 
 nixlMDManager::~nixlMDManager() = default;
 
 nixl_status_t
-nixlMDManager::registerMDPeer(const std::string &agent_name,
-                              const std::string &ip,
-                              std::uint16_t port) {
-    if (agent_name.empty() || ip.empty()) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-    // The metadata listener path is IPv4-only (inet_pton(AF_INET, ...) in
-    // nixl_listener.cpp), so reject malformed addresses up front.
-    in_addr parsed;
-    if (inet_pton(AF_INET, ip.c_str(), &parsed) != 1) {
-        NIXL_DEBUG << "[" << data_->agent.getName() << "] registerMDPeer: invalid IPv4 address '"
-                   << ip << "' for " << agent_name;
-        return NIXL_ERR_INVALID_PARAM;
-    }
-    // 0 means "use the listener-side default", matching the existing
-    // nixl_opt_args_t::port default.
-    const std::uint16_t resolved_port = (port == 0) ? default_comm_port : port;
-    const std::lock_guard lock(data_->mutex);
-    // Same address is idempotent; rebinding a name is rejected (unregister first).
-    const auto it = data_->peers.find(agent_name);
-    if (it != data_->peers.end()) {
-        if (it->second.ip == ip && it->second.port == resolved_port) {
-            NIXL_DEBUG << "[" << data_->agent.getName() << "] registerMDPeer: " << agent_name
-                       << " already bound to " << ip << ":" << resolved_port << " (idempotent)";
-            return NIXL_SUCCESS;
-        }
-        NIXL_DEBUG << "[" << data_->agent.getName() << "] registerMDPeer: rejecting rebind of "
-                   << agent_name << " from " << it->second.ip << ":" << it->second.port << " to "
-                   << ip << ":" << resolved_port;
-        return NIXL_ERR_NOT_ALLOWED;
-    }
-    data_->peers[agent_name] = nixlMDManagerData::Peer{ip, resolved_port};
-    NIXL_DEBUG << "[" << data_->agent.getName() << "] registerMDPeer: " << agent_name << " -> "
-               << ip << ":" << resolved_port;
-    return NIXL_SUCCESS;
+nixlMDManager::sendLocalMD(const nixl_opt_args_t *extra_params) const {
+    return backend_->sendLocal(extra_params);
 }
 
 nixl_status_t
-nixlMDManager::unregisterMDPeer(const std::string &agent_name) {
-    nixlMDManagerData::Peer peer;
-    if (!data_->lookupPeer(agent_name, peer)) {
-        NIXL_DEBUG << "[" << data_->agent.getName() << "] unregisterMDPeer: " << agent_name
-                   << " not registered (no-op)";
-        return NIXL_SUCCESS;
-    }
-    // Tell the remote to drop our metadata before removing the local entry.
-    // Keep the entry if the call is rejected so the caller can retry.
-    // peer.ip is reused below for the compare-then-erase, so it is copied
-    // (not moved) into the args here.
-    const auto args = makePeerArgs(peer.ip, peer.port);
-    const nixl_status_t s = data_->agent.invalidateLocalMD(&args);
-    if (s != NIXL_SUCCESS) {
-        NIXL_DEBUG << "[" << data_->agent.getName() << "] unregisterMDPeer: invalidate for "
-                   << agent_name << " failed: " << s;
-        return s;
-    }
-    // Compare-then-erase: guard against a concurrent registerMDPeer
-    // having replaced the entry while invalidate was in flight.
-    const std::lock_guard lock(data_->mutex);
-    auto it = data_->peers.find(agent_name);
-    if (it != data_->peers.end() && it->second == peer) {
-        data_->peers.erase(it);
-    }
-    NIXL_DEBUG << "[" << data_->agent.getName() << "] unregisterMDPeer: " << agent_name
-               << " removed";
-    return NIXL_SUCCESS;
+nixlMDManager::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
+                                  const nixl_opt_args_t *extra_params) const {
+    return backend_->sendLocalPartial(descs, extra_params);
 }
 
 nixl_status_t
-nixlMDManager::sendLocalMD(const std::string &agent_name) const {
-    nixlMDManagerData::Peer peer;
-    if (!data_->lookupPeer(agent_name, peer)) {
-        return NIXL_ERR_NOT_FOUND;
-    }
-    // lookupPeer copies {ip, port}, so the lock is released before the call
-    // below. A concurrent unregister/re-register can change the registry in
-    // this gap; we intentionally use the snapshot rather than hold the lock
-    // across a network call. Worst case the send targets the just-removed
-    // address, which is acceptable.
-    const auto args = makePeerArgs(std::move(peer.ip), peer.port);
-    NIXL_DEBUG << "[" << data_->agent.getName() << "] sendLocalMD: " << agent_name;
-    return data_->agent.sendLocalMD(&args);
+nixlMDManager::fetchRemoteMD(const std::string &remote_name,
+                             const nixl_opt_args_t *extra_params) const {
+    return backend_->fetchRemote(remote_name, extra_params);
 }
 
 nixl_status_t
-nixlMDManager::sendLocalPartialMD(const std::string &agent_name,
-                                  const nixl_reg_dlist_t &descs,
-                                  const nixl_opt_args_t *md_extra_params) const {
-    nixlMDManagerData::Peer peer;
-    if (!data_->lookupPeer(agent_name, peer)) {
-        return NIXL_ERR_NOT_FOUND;
-    }
-    const auto args = makePeerArgs(std::move(peer.ip), peer.port, md_extra_params);
-    NIXL_DEBUG << "[" << data_->agent.getName() << "] sendLocalPartialMD: " << agent_name;
-    return data_->agent.sendLocalPartialMD(descs, &args);
-}
-
-nixl_status_t
-nixlMDManager::fetchRemoteMD(const std::string &agent_name) const {
-    nixlMDManagerData::Peer peer;
-    if (!data_->lookupPeer(agent_name, peer)) {
-        return NIXL_ERR_NOT_FOUND;
-    }
-    const auto args = makePeerArgs(std::move(peer.ip), peer.port);
-    NIXL_DEBUG << "[" << data_->agent.getName() << "] fetchRemoteMD: " << agent_name;
-    return data_->agent.fetchRemoteMD(agent_name, &args);
-}
-
-nixl_status_t
-nixlMDManager::invalidateLocalMD(const std::string &agent_name) const {
-    nixlMDManagerData::Peer peer;
-    if (!data_->lookupPeer(agent_name, peer)) {
-        return NIXL_ERR_NOT_FOUND;
-    }
-    const auto args = makePeerArgs(std::move(peer.ip), peer.port);
-    NIXL_DEBUG << "[" << data_->agent.getName() << "] invalidateLocalMD: " << agent_name;
-    return data_->agent.invalidateLocalMD(&args);
-}
-
-nixl_status_t
-nixlMDManager::checkRemoteMD(const std::string &agent_name, const nixl_xfer_dlist_t &descs) const {
-    // TRACE (not DEBUG): callers typically poll this in a loop.
-    NIXL_TRACE << "[" << data_->agent.getName() << "] checkRemoteMD: " << agent_name;
-    return data_->agent.checkRemoteMD(agent_name, descs);
+nixlMDManager::invalidateLocalMD(const nixl_opt_args_t *extra_params) const {
+    return backend_->invalidateLocal(extra_params);
 }
 
 std::string_view
 nixlMDManager::getBackend() const noexcept {
-    return "P2P";
+    return backend_->name();
 }
