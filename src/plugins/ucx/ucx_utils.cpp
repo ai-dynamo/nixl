@@ -31,6 +31,21 @@
 #include "config.h"
 #include "serdes/serdes.h"
 
+namespace {
+[[nodiscard]] uint32_t
+ucp_ep_close_flags(ucp_err_handling_mode_t err_handling_mode) {
+    switch (err_handling_mode) {
+    case UCP_ERR_HANDLING_MODE_NONE:
+        return 0;
+    case UCP_ERR_HANDLING_MODE_PEER:
+        return UCP_EP_CLOSE_FLAG_FORCE;
+    default:
+        throw std::invalid_argument("Unsupported error handling mode: " +
+                                    std::to_string(err_handling_mode));
+    }
+}
+} // namespace
+
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
     nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
@@ -121,9 +136,10 @@ nixlUcxEp::setState(nixl::ucx::ep_state_t new_state) {
 }
 
 nixl_status_t
-nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags) {
+nixlUcxEp::closeImpl() {
     ucs_status_ptr_t request = nullptr;
-    ucp_request_param_t req_param = {.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS, .flags = flags};
+    const ucp_request_param_t req_param = {.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
+                                           .flags = closeFlags_};
 
     switch (state) {
     case nixl::ucx::ep_state_t::UNINITIALIZED:
@@ -156,7 +172,8 @@ nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags) {
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode) {
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode)
+    : closeFlags_{ucp_ep_close_flags(err_handling_mode)} {
     ucp_ep_params_t ep_params;
     nixl_status_t status;
 
@@ -185,7 +202,7 @@ nixlUcxEp::~nixlUcxEp() {
 
 nixl_status_t
 nixlUcxEp::disconnect_nb() {
-    nixl_status_t status = closeImpl(ucp_ep_close_flags_t(0));
+    const nixl_status_t status = closeImpl();
 
     // At step of disconnect we can ignore the remote disconnect error.
     return (status == NIXL_ERR_REMOTE_DISCONNECT) ? NIXL_SUCCESS : status;

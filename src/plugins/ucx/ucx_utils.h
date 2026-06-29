@@ -45,11 +45,12 @@ class nixlUcxEp {
 private:
     ucp_ep_h eph{nullptr};
     nixl::ucx::ep_state_t state = nixl::ucx::ep_state_t::UNINITIALIZED;
+    const uint32_t closeFlags_;
 
     void
     setState(nixl::ucx::ep_state_t new_state);
     nixl_status_t
-    closeImpl(ucp_ep_close_flags_t flags);
+    closeImpl();
 
     /* Connection */
     nixl_status_t
