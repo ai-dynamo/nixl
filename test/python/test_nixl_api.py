@@ -224,6 +224,10 @@ def test_improper_get_reg_descs(one_empty_agent, one_xfer_list):
     assert ret is None
 
 
+@pytest.mark.skipif(
+    not bindings.HAVE_UCX_GPU_DEVICE_API,
+    reason="prep_mem_view requires NIXL built against a UCX with the GPU device API",
+)
 def test_prep_mem_view(two_connected_agents):
     agent1, agent2 = two_connected_agents
 

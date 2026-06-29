@@ -717,6 +717,9 @@ class nixl_agent:
     @param dlist A local (nixlXferDList) or remote (nixlRemoteDList) dlist.
     @param backends Optional list of backend names to limit the preparation to.
     @return Opaque uintptr handle for the memory view.
+    @note Requires NIXL built against a UCX with the GPU device API; otherwise
+          the backend raises nixlBackendError. Probe support via
+          nixl._bindings.HAVE_UCX_GPU_DEVICE_API.
     """
 
     def prep_mem_view(
