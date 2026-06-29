@@ -717,9 +717,13 @@ class nixl_agent:
     @param dlist A local (nixlXferDList) or remote (nixlRemoteDList) dlist.
     @param backends Optional list of backend names to limit the preparation to.
     @return Opaque uintptr handle for the memory view.
-    @note Requires NIXL built against a UCX with the GPU device API; otherwise
-          the backend raises nixlBackendError. Probe support via
-          nixl._bindings.HAVE_UCX_GPU_DEVICE_API.
+    @note Requires NIXL built against a UCX with the GPU device API (probe via
+          nixl._bindings.HAVE_UCX_GPU_DEVICE_API); otherwise the backend raises
+          nixlBackendError. The descriptors must reference device (VRAM) memory,
+          and an active CUDA context must already exist when the owning agent is
+          created. For a remote dlist, the remote agent's metadata -- including
+          the registered region being viewed -- must be loaded first via
+          add_remote_agent.
     """
 
     def prep_mem_view(

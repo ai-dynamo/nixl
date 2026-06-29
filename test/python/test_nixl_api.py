@@ -224,42 +224,60 @@ def test_improper_get_reg_descs(one_empty_agent, one_xfer_list):
     assert ret is None
 
 
+@pytest.mark.timeout(30)
 @pytest.mark.skipif(
     not bindings.HAVE_UCX_GPU_DEVICE_API,
     reason="prep_mem_view requires NIXL built against a UCX with the GPU device API",
 )
-def test_prep_mem_view(two_connected_agents):
-    agent1, agent2 = two_connected_agents
+@pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="prep_mem_view exercises the UCX GPU device API, which needs a CUDA device",
+)
+def test_prep_mem_view(backend_name):
+    # The UCX GPU device API operates on device (VRAM) memory and requires an
+    # active CUDA context. Establish the context and allocate the VRAM buffers
+    # BEFORE creating the agents, so their UCX workers come up with a GPU-capable
+    # transport -- otherwise the remote device mem-list fails with "no lane found
+    # for ep". Host DRAM is also rejected ("mismatched local sys_dev").
+    dev = torch.cuda.current_device()
+    buf1 = torch.zeros(1024, dtype=torch.uint8, device=f"cuda:{dev}")
+    buf2 = torch.zeros(1024, dtype=torch.uint8, device=f"cuda:{dev}")
+    torch.cuda.synchronize()
+    addr1, addr2, size = buf1.data_ptr(), buf2.data_ptr(), buf1.numel()
 
-    size = 1024
-    addr1 = utils.malloc_passthru(size)
-    addr2 = utils.malloc_passthru(size)
-    try:
-        reg1 = agent1.get_reg_descs([(addr1, size, 0, "")], mem_type="DRAM")
-        reg2 = agent2.get_reg_descs([(addr2, size, 0, "")], mem_type="DRAM")
-        agent1.register_memory(reg1)
-        agent2.register_memory(reg2)
+    agent1 = nixl_agent(str(uuid.uuid4()), nixl_agent_config(backends=[backend_name]))
+    agent2 = nixl_agent(str(uuid.uuid4()), nixl_agent_config(backends=[backend_name]))
 
-        # Local overload: pass a nixlXferDList describing agent1's own buffer.
-        local_xfer = agent1.get_xfer_descs([(addr1, size, 0)], mem_type="DRAM")
-        local_mvh = agent1.prep_mem_view(local_xfer)
-        assert isinstance(local_mvh, int)
-        assert local_mvh != 0
+    # Register memory BEFORE exchanging metadata: get_agent_metadata() snapshots
+    # the local section at call time, so agent2's buffer must already be
+    # registered for it to appear in the metadata agent1 loads -- otherwise the
+    # remote prep_mem_view finds no matching backend (NIXL_ERR_NOT_FOUND).
+    agent1.register_memory(
+        agent1.get_reg_descs([(addr1, size, dev, "")], mem_type="VRAM")
+    )
+    agent2.register_memory(
+        agent2.get_reg_descs([(addr2, size, dev, "")], mem_type="VRAM")
+    )
+    agent1.add_remote_agent(agent2.get_agent_metadata())
+    agent2.add_remote_agent(agent1.get_agent_metadata())
 
-        # Remote overload: pass a nixlRemoteDList describing agent2's buffer
-        # with agent2's name.
-        remote_descs = agent1.get_remote_descs(
-            [(addr2, size, 0, agent2.name)], mem_type="DRAM"
-        )
-        remote_mvh = agent1.prep_mem_view(remote_descs)
-        assert isinstance(remote_mvh, int)
-        assert remote_mvh != 0
+    # Local overload: pass a nixlXferDList describing agent1's own buffer.
+    local_xfer = agent1.get_xfer_descs([(addr1, size, dev)], mem_type="VRAM")
+    local_mvh = agent1.prep_mem_view(local_xfer)
+    assert isinstance(local_mvh, int)
+    assert local_mvh != 0
 
-        agent1.release_mem_view(local_mvh)
-        agent1.release_mem_view(remote_mvh)
-    finally:
-        utils.free_passthru(addr1)
-        utils.free_passthru(addr2)
+    # Remote overload: pass a nixlRemoteDList describing agent2's buffer
+    # with agent2's name.
+    remote_descs = agent1.get_remote_descs(
+        [(addr2, size, dev, agent2.name)], mem_type="VRAM"
+    )
+    remote_mvh = agent1.prep_mem_view(remote_descs)
+    assert isinstance(remote_mvh, int)
+    assert remote_mvh != 0
+
+    agent1.release_mem_view(local_mvh)
+    agent1.release_mem_view(remote_mvh)
 
 
 def test_noncontiguous_tensor(one_empty_agent):
