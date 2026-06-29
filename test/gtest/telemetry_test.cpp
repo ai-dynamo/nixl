@@ -225,6 +225,9 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED);
     EXPECT_EQ(event.value_, 1024);
     buffer->pop(event);
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME);
+    EXPECT_EQ(event.value_, 10);
+    buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_TIME);
     EXPECT_EQ(event.value_, 100);
     buffer->pop(event);
@@ -233,9 +236,6 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM);
     EXPECT_EQ(event.value_, 1);
-    buffer->pop(event);
-    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME);
-    EXPECT_EQ(event.value_, 10);
     envHelper_.popVar();
 }
 
@@ -255,6 +255,9 @@ TEST_F(telemetryTest, AddXferStatsRxBranch) {
     EXPECT_EQ(buffer->size(), 4);
     nixlTelemetryEvent event;
     buffer->pop(event);
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME);
+    EXPECT_EQ(event.value_, 7);
+    buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_TIME);
     EXPECT_EQ(event.value_, 50);
     buffer->pop(event);
@@ -263,9 +266,6 @@ TEST_F(telemetryTest, AddXferStatsRxBranch) {
     buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM);
     EXPECT_EQ(event.value_, 1);
-    buffer->pop(event);
-    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME);
-    EXPECT_EQ(event.value_, 7);
     envHelper_.popVar();
 }
 

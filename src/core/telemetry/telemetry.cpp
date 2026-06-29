@@ -302,10 +302,11 @@ nixlTelemetry::addXferStats(std::chrono::microseconds xfer_time,
     if (events_.size() + 4 > maxBufferedEvents_) {
         return;
     }
+    // Post time first, preserving the original addPostTime + addXferTime order.
+    events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
+                         static_cast<uint64_t>(post_time.count()));
     events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_TIME,
                          static_cast<uint64_t>(xfer_time.count()));
     events_.emplace_back(bytes_type, bytes);
     events_.emplace_back(requests_type, 1);
-    events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
-                         static_cast<uint64_t>(post_time.count()));
 }
