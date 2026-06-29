@@ -41,30 +41,20 @@ if enabled_plugins.get('LIBFABRIC')
     endif
 endif
 
+# The "GDS" and "GDS_MT" backends are now produced by a single unified plugin
+# directory (cuda_gds), which shares one engine and exposes both names. The
+# subdir is entered once if either name is enabled; it builds the per-name
+# entry points internally based on enabled_plugins.
 disable_gds_backend = get_option('disable_gds_backend')
-if enabled_plugins.get('GDS')
+if enabled_plugins.get('GDS') or enabled_plugins.get('GDS_MT')
     if (disable_gds_backend or not cuda_dep.found()) and is_explicit_enable
         if disable_gds_backend
-            error('GDS plugin requested but GDS backend is disabled')
+            error('GDS/GDS_MT plugin requested but GDS backend is disabled')
         else
-            error('GDS plugin requested but CUDA dependency not found')
+            error('GDS/GDS_MT plugin requested but CUDA dependency not found')
         endif
     elif not disable_gds_backend and cuda_dep.found()
         subdir('cuda_gds')
-    endif
-endif
-
-if enabled_plugins.get('GDS_MT')
-    if (disable_gds_backend or not cuda_dep.found() or not taskflow_proj.found()) and is_explicit_enable
-        if disable_gds_backend
-            error('GDS_MT plugin requested but GDS backend is disabled')
-        elif not cuda_dep.found()
-            error('GDS_MT plugin requested but CUDA dependency not found')
-        else
-            error('GDS_MT plugin requested but Taskflow dependency not found')
-        endif
-    elif not disable_gds_backend and cuda_dep.found() and taskflow_proj.found()
-        subdir('gds_mt')
     endif
 endif
 
