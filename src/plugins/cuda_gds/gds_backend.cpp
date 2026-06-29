@@ -14,399 +14,226 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <cassert>
-#include <cufile.h>
-#include <absl/strings/str_format.h>
-#include "gds_backend.h"
-#include "gds_utils.h"
-#include "common/backend.h"
-#include "common/nixl_log.h"
-#include "file/file_path_mode.h"
-#include "file/file_utils.h"
-#include <unordered_map>
+#include <exception>
 #include <memory>
+#include <system_error>
+#include <utility>
+#include <variant>
+
 #include <cuda_runtime.h>
 
+#include "common/nixl_log.h"
+#include "file/file_utils.h"
+#include "gds_backend.h"
+
 namespace {
-/** Setting the default values to check the batch limit */
-constexpr unsigned DEFAULT_BATCH_LIMIT = 128;
-/** Setting the max request size to 16 MB */
-constexpr unsigned DEFAULT_MAX_REQUEST_SIZE = 16 * 1024 * 1024; // 16MB
-/** Create a batch pool of size 16 */
-constexpr unsigned DEFAULT_BATCH_POOL_SIZE = 16;
+
+struct FileSegData {
+    std::shared_ptr<gdsFileHandle> handle;
+    uint64_t dev_id;
+
+    FileSegData(std::shared_ptr<gdsFileHandle> h, uint64_t id)
+        : handle(std::move(h)),
+          dev_id(id) {}
+};
+
+struct MemSegData {
+    gdsMemBuf buf;
+
+    MemSegData(void *addr, size_t size, int flags) : buf(addr, size, flags) {}
+};
+
+class nixlGdsMetadata : public nixlBackendMD {
+public:
+    nixlGdsMetadata(std::shared_ptr<gdsFileHandle> file_handle, uint64_t dev_id)
+        : nixlBackendMD(true),
+          data_(std::in_place_type<FileSegData>, std::move(file_handle), dev_id) {}
+
+    explicit nixlGdsMetadata(void *addr, size_t size, int flags)
+        : nixlBackendMD(true),
+          data_(std::in_place_type<MemSegData>, addr, size, flags) {}
+
+    ~nixlGdsMetadata() override = default;
+
+    nixlGdsMetadata(const nixlGdsMetadata &) = delete;
+    nixlGdsMetadata &
+    operator=(const nixlGdsMetadata &) = delete;
+
+    std::variant<FileSegData, MemSegData> data_;
+};
+
 } // namespace
 
-nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
-    : nixlBackendEngine(init_params)
-{
-    gds_utils = new gdsUtil();
-
+nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams *init_params)
+    : nixlBackendEngine(init_params) {
     try {
-        nixl_b_params_t *custom_params = init_params->customParams;
-        batch_pool_size = nixl::getBackendParamDefaulted(
-            custom_params, "batch_pool_size", DEFAULT_BATCH_POOL_SIZE);
-        batch_limit =
-            nixl::getBackendParamDefaulted(custom_params, "batch_limit", DEFAULT_BATCH_LIMIT);
-        max_request_size = nixl::getBackendParamDefaulted(
-            custom_params, "max_request_size", DEFAULT_MAX_REQUEST_SIZE);
+        driver_ = std::make_unique<gdsDriverHandle>();
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
         this->initErr = true;
-        return;
     }
-
-    this->initErr = false;
-    if (gds_utils->openGdsDriver() == NIXL_ERR_BACKEND) {
-        this->initErr = true;
-        return;
-    }
-
-    // Initialize the batch pool
-    for (unsigned int i = 0; i < batch_pool_size; i++) {
-        batch_pool.push_back(new nixlGdsIOBatch(batch_limit));
-    }
-
 }
 
-nixl_status_t nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
-                                         const nixl_mem_t &nixl_mem,
-                                         nixlBackendMD* &out)
-{
-    if (nixl_mem == FILE_SEG) {
-        auto resv = path_mode_devids_.reserve(mem.devId, mem.metaInfo);
-        if (!resv.ok()) {
-            NIXL_ERROR << "GDS path-mode requires a unique devId per file (devId=" << mem.devId
+nixl_status_t
+nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
+                           const nixl_mem_t &nixl_mem,
+                           nixlBackendMD *&out) {
+    switch (nixl_mem) {
+    case FILE_SEG: {
+        auto reservation = path_mode_devids_.reserve(mem.devId, mem.metaInfo);
+        if (!reservation.ok()) {
+            NIXL_ERROR << "GDS: path-mode requires a unique devId per file (devId=" << mem.devId
                        << " already registered)";
             return NIXL_ERR_INVALID_PARAM;
         }
-        std::unique_ptr<nixlGdsMetadata> md;
+
+        nixl::FileFd file_fd;
         try {
-            md = std::make_unique<nixlGdsMetadata>(mem.devId, mem.metaInfo);
+            file_fd = nixl::FileFd(mem.devId, mem.metaInfo);
         }
         catch (const std::system_error &e) {
-            NIXL_ERROR << "GDS path-mode open failed: " << e.what();
+            NIXL_ERROR << "GDS: path-mode open failed: " << e.what();
             return NIXL_ERR_BACKEND;
         }
-        int fd = md->file_fd.fd();
+        int fd = file_fd.fd();
 
-        if (auto it = gds_file_map.find(fd); it != gds_file_map.end()) {
-            md->handle = it->second;
-            md->handle.size = mem.len;
-            md->handle.metadata = mem.metaInfo;
-        } else {
-            nixl_status_t s = gds_utils->registerFileHandle(fd, mem.len, mem.metaInfo, md->handle);
-            if (s != NIXL_SUCCESS) {
-                return s; // ~FileFd via unique_ptr drop closes the owned fd
+        std::shared_ptr<gdsFileHandle> handle;
+        if (auto it = gds_file_map_.find(fd); it != gds_file_map_.end()) {
+            handle = it->second.lock();
+            if (!handle) {
+                gds_file_map_.erase(it);
             }
-            gds_file_map[fd] = md->handle;
+            // Cache hit: drop file_fd (~FileFd closes any duplicate owned fd).
         }
-        resv.commit();
-        out = md.release();
+        if (!handle) {
+            try {
+                handle = std::make_shared<gdsFileHandle>(std::move(file_fd));
+            }
+            catch (const std::exception &e) {
+                NIXL_ERROR << "GDS: failed to create file handle: " << e.what();
+                return NIXL_ERR_BACKEND;
+            }
+            gds_file_map_[fd] = handle;
+        }
+        out = new nixlGdsMetadata(std::move(handle), mem.devId);
+        reservation.commit();
         return NIXL_SUCCESS;
     }
 
-    auto md = std::make_unique<nixlGdsMetadata>();
-    md->type = nixl_mem;
-
-    if (nixl_mem == VRAM_SEG) {
-        if (cudaError_t e = cudaSetDevice(mem.devId); e != cudaSuccess) {
-            NIXL_ERROR << "cudaSetDevice returned " << cudaGetErrorString(e) << " for device ID "
-                       << mem.devId;
+    case VRAM_SEG: {
+        const cudaError_t error_id = cudaSetDevice(mem.devId);
+        if (error_id != cudaSuccess) {
+            NIXL_ERROR << "GDS: error: cudaSetDevice returned " << cudaGetErrorString(error_id)
+                       << " for device ID " << mem.devId;
             return NIXL_ERR_BACKEND;
         }
-    } else if (nixl_mem != DRAM_SEG) {
+        [[fallthrough]];
+    }
+
+    case DRAM_SEG: {
+        try {
+            out = new nixlGdsMetadata((void *)mem.addr, mem.len, 0);
+            return NIXL_SUCCESS;
+        }
+        catch (const std::exception &e) {
+            NIXL_ERROR << "GDS: failed to create memory buffer: " << e.what();
+            return NIXL_ERR_BACKEND;
+        }
+    }
+
+    default:
         return NIXL_ERR_BACKEND;
     }
-
-    if (nixl_status_t s = gds_utils->registerBufHandle((void *)mem.addr, mem.len, 0);
-        s != NIXL_SUCCESS) {
-        return s;
-    }
-    md->buf.base = (void *)mem.addr;
-    md->buf.size = mem.len;
-    out = md.release();
-    return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlGdsEngine::deregisterMem (nixlBackendMD* meta)
-{
-    nixlGdsMetadata *md = (nixlGdsMetadata *)meta;
-    if (md->type == FILE_SEG) {
-        if (!md->file_fd.path().empty()) {
-            path_mode_devids_.release(md->devId);
+nixl_status_t
+nixlGdsEngine::deregisterMem(nixlBackendMD *meta) {
+    std::unique_ptr<nixlGdsMetadata> md((nixlGdsMetadata *)meta);
+
+    if (auto *file_data = std::get_if<FileSegData>(&md->data_)) {
+        if (file_data->handle) {
+            const int key = file_data->handle->file_fd.fd();
+            const bool path_mode = !file_data->handle->file_fd.path().empty();
+            const uint64_t dev_id = file_data->dev_id;
+            md.reset(); // Release metadata first (drops this registration's ref).
+
+            auto it = gds_file_map_.find(key);
+            if (it != gds_file_map_.end() && it->second.expired()) {
+                gds_file_map_.erase(it);
+            }
+            // owned fds: closed by ~FileFd (RAII) on last shared_ptr drop.
+            if (path_mode) {
+                path_mode_devids_.release(dev_id);
+            }
         }
-        gds_utils->deregisterFileHandle(md->handle);
-        gds_file_map.erase(md->handle.fd);
-    } else {
-        gds_utils->deregisterBufHandle(md->buf.base);
     }
-    delete md;
+
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlGdsEngine::resolveFileHandle(const nixlMetaDesc &d, gdsFileHandle &fh) const {
-    auto *md = static_cast<const nixlGdsMetadata *>(d.metadataP);
-    if (!md || md->type != FILE_SEG) {
-        NIXL_ERROR << "GDS: missing FILE_SEG metadata at xfer time";
-        return NIXL_ERR_NOT_FOUND;
-    }
-    fh = md->handle;
-    return NIXL_SUCCESS;
-}
+nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
+                        const nixl_meta_dlist_t &local,
+                        const nixl_meta_dlist_t &remote,
+                        const std::string &remote_agent,
+                        nixlBackendReqH *&handle,
+                        const nixl_opt_b_args_t *opt_args) const {
+    const size_t buf_cnt = local.descCount();
+    const size_t file_cnt = remote.descCount();
 
-nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
-                                       const nixl_meta_dlist_t &local,
-                                       const nixl_meta_dlist_t &remote,
-                                       const std::string &remote_agent,
-                                       nixlBackendReqH* &handle,
-                                       const nixl_opt_b_args_t* opt_args) const
-{
-    nixlGdsBackendReqH* gds_handle = new nixlGdsBackendReqH();
-    size_t buf_cnt = local.descCount();
-    size_t file_cnt = remote.descCount();
-
-    // Basic validation
-    if ((buf_cnt != file_cnt) ||
-        ((operation != NIXL_READ) && (operation != NIXL_WRITE))) {
-        NIXL_ERROR << "Error in count or operation selection";
-        delete gds_handle;
+    if ((buf_cnt != file_cnt) || ((operation != NIXL_READ) && (operation != NIXL_WRITE))) {
+        NIXL_ERROR << "GDS: error: incorrect count or operation selection";
         return NIXL_ERR_INVALID_PARAM;
     }
 
     if ((remote.getType() != FILE_SEG) && (local.getType() != FILE_SEG)) {
-        NIXL_ERROR << "Only support I/O between memory (DRAM/VRAM) and file type";
-        delete gds_handle;
+        NIXL_ERROR << "GDS: error: backend only supports I/O between memory (DRAM/VRAM_SEG) and "
+                      "files (FILE_SEG)";
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Clear any existing requests before populating
-    gds_handle->request_list.clear();
+    const bool is_local_file = (local.getType() == FILE_SEG);
 
-    // Determine if local is the file segment
-    bool is_local_file = (local.getType() == FILE_SEG);
-
-    // Create list of all transfer requests
+    std::vector<GdsXferReq> reqs;
+    reqs.reserve(buf_cnt);
     for (size_t i = 0; i < buf_cnt; i++) {
-        void* base_addr;
-        size_t total_size;
-        size_t base_offset;
-        gdsFileHandle fh;
+        const nixlMetaDesc &mem_desc = is_local_file ? remote[i] : local[i];
+        const nixlMetaDesc &file_desc = is_local_file ? local[i] : remote[i];
 
-        // Get transfer parameters based on whether local is file or memory
-        if (is_local_file) {
-            base_addr = (void*)remote[i].addr;
-            if (!base_addr) {
-                delete gds_handle;
-                return NIXL_ERR_INVALID_PARAM;
-            }
-            total_size = remote[i].len;
-            base_offset = (size_t)local[i].addr;
-
-            if (resolveFileHandle(local[i], fh) != NIXL_SUCCESS) {
-                delete gds_handle;
-                return NIXL_ERR_NOT_FOUND;
-            }
-        } else {
-            base_addr = (void*)local[i].addr;
-            if (!base_addr) {
-                delete gds_handle;
-                return NIXL_ERR_INVALID_PARAM;
-            }
-            total_size = local[i].len;
-            base_offset = (size_t)remote[i].addr;
-
-            if (resolveFileHandle(remote[i], fh) != NIXL_SUCCESS) {
-                delete gds_handle;
-                return NIXL_ERR_NOT_FOUND;
-            }
-        }
-
-        // Split large transfers into multiple requests
-        size_t remaining_size = total_size;
-        size_t current_offset = 0;
-
-        while (remaining_size > 0) {
-            size_t request_size = std::min(remaining_size,
-                                       (size_t)max_request_size);
-
-            GdsTransferRequestH req;
-            req.addr = (char*)base_addr + current_offset;
-            req.size = request_size;
-            req.file_offset = base_offset + current_offset;
-            req.fh = fh.cu_fhandle;
-            req.op = (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE;
-
-            gds_handle->request_list.push_back(req);
-
-            remaining_size -= request_size;
-            current_offset += request_size;
-        }
-    }
-
-    // Validate that we have requests before proceeding
-    if (gds_handle->request_list.empty()) {
-        delete gds_handle;
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    gds_handle->needs_prep = false;  // Just prepared, no need for prep
-    handle = gds_handle;
-    return NIXL_SUCCESS;
-}
-
-nixlGdsIOBatch* nixlGdsEngine::getBatchFromPool(unsigned int size) const {
-    const std::lock_guard<std::mutex> lock(batch_pool_lock);
-    // Use a pre-allocated batch if available
-    if (!batch_pool.empty()) {
-        nixlGdsIOBatch* batch = batch_pool.back();
-        batch_pool.pop_back();
-        batch->reset();
-        return batch;
-    }
-    // Return nullptr if pool is empty - don't create new batches in the data path
-    return nullptr;
-}
-
-void nixlGdsEngine::returnBatchToPool(nixlGdsIOBatch* batch) const {
-    const std::lock_guard<std::mutex> lock(batch_pool_lock);
-    // Only keep up to batch_pool_size batches
-        batch_pool.push_back(batch);
-}
-
-nixl_status_t nixlGdsEngine::postXfer(const nixl_xfer_op_t &operation,
-                                      const nixl_meta_dlist_t &local,
-                                      const nixl_meta_dlist_t &remote,
-                                      const std::string &remote_agent,
-                                      nixlBackendReqH* &handle,
-                                      const nixl_opt_b_args_t* opt_args) const
-{
-    nixlGdsBackendReqH* gds_handle = (nixlGdsBackendReqH*)handle;
-
-    // Validate request_list before proceeding
-    if (gds_handle->request_list.empty()) {
-        NIXL_ERROR << "Empty request list";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    // Process requests in batches
-    const auto& request_list = gds_handle->request_list;
-    size_t current_req = 0;
-
-    while (current_req < request_list.size()) {
-        size_t batch_size = std::min(request_list.size() - current_req,
-                                     (size_t)batch_limit);
-        nixl_status_t status = createAndSubmitBatch(request_list, current_req,
-                                                    batch_size, gds_handle->batch_io_list);
-
-        if (status != NIXL_SUCCESS) {
-            // Clean up on error
-            for (auto* batch : gds_handle->batch_io_list) {
-                batch->cancelBatch();
-                returnBatchToPool(batch);
-            }
-            gds_handle->batch_io_list.clear();
-            return status;
-        }
-        current_req += batch_size;
-    }
-
-    return NIXL_IN_PROG;
-}
-
-nixl_status_t nixlGdsEngine::createAndSubmitBatch(const std::vector<GdsTransferRequestH>& requests,
-                                                  size_t start_idx, size_t batch_size,
-                                                  std::vector<nixlGdsIOBatch*>& batch_list) const
-{
-    nixlGdsIOBatch* batch = getBatchFromPool(batch_size);
-    if (!batch) {
-        NIXL_ERROR << "GDS batch pool exhausted";
-        return NIXL_ERR_BACKEND;
-    }
-
-    // Add all requests to batch
-    for (size_t i = 0; i < batch_size; i++) {
-        const auto& req = requests[start_idx + i];
-        if (!req.addr || !req.fh) {
-            returnBatchToPool(batch);
+        void *base_addr = (void *)mem_desc.addr;
+        if (!base_addr) {
             return NIXL_ERR_INVALID_PARAM;
         }
 
-        nixl_status_t status = batch->addToBatch(req.fh, req.addr, req.size,
-                                               req.file_offset, 0, req.op);
-        if (status != NIXL_SUCCESS) {
-            returnBatchToPool(batch);
-            return NIXL_ERR_INVALID_PARAM;
+        const auto *md = static_cast<const nixlGdsMetadata *>(file_desc.metadataP);
+        if (!md) {
+            NIXL_ERROR << "GDS: missing FILE_SEG metadata at xfer time";
+            return NIXL_ERR_NOT_FOUND;
         }
-    }
-
-    nixl_status_t status = batch->submitBatch(0);
-    if (status != NIXL_SUCCESS) {
-        returnBatchToPool(batch);
-        return NIXL_ERR_BACKEND;
-    }
-
-    batch_list.push_back(batch);
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle) const
-{
-    nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *)handle;
-
-    if (gds_handle->batch_io_list.empty()) {
-        gds_handle->needs_prep = true;
-        return NIXL_SUCCESS;
-    }
-
-    nixl_status_t status = NIXL_SUCCESS;
-    for (auto* batch : gds_handle->batch_io_list) {
-        status = batch->checkStatus();
-
-        if (status == NIXL_IN_PROG) {
-            return status;
+        const auto *file_data = std::get_if<FileSegData>(&md->data_);
+        if (!file_data || !file_data->handle) {
+            NIXL_ERROR << "GDS: file metadata is not a FILE_SEG variant";
+            return NIXL_ERR_NOT_FOUND;
         }
 
-        if (status < 0) {
-            batch->cancelBatch();
-        }
-        returnBatchToPool(batch);
+        reqs.push_back(GdsXferReq{base_addr,
+                                  mem_desc.len,
+                                  (size_t)file_desc.addr,
+                                  file_data->handle->cu_fhandle,
+                                  (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE});
     }
 
-    gds_handle->batch_io_list.clear();
-    gds_handle->needs_prep = true;
-    return status;
-}
-
-nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle) const
-{
-
-    nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *) handle;
-
-    delete gds_handle;
-    gds_handle = nullptr;
-
-    return NIXL_SUCCESS;
-}
-
-nixlGdsEngine::~nixlGdsEngine() {
-    // Clean up the batch pool
-    for (auto* batch : batch_pool) {
-        if (batch) {
-            delete batch;
-        }
+    if (reqs.empty()) {
+        return NIXL_ERR_INVALID_PARAM;
     }
-    batch_pool.clear();
 
-    if (gds_utils) {
-        gds_utils->closeGdsDriver();
-        delete gds_utils;
-    }
+    return finalizePrep(std::move(reqs), handle);
 }
 
 nixl_status_t
-nixlGdsEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const {
+nixlGdsEngine::queryMem(const nixl_reg_dlist_t &descs,
+                        std::vector<nixl_query_resp_t> &resp) const {
     // Extract metadata from descriptors which are file names
     // Different plugins might customize parsing of metaInfo to get the file names
     std::vector<nixl_blob_t> metadata(descs.descCount());

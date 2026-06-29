@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,24 +15,61 @@
  * limitations under the License.
  */
 
+#include <exception>
+
 #include "backend/backend_plugin.h"
-#include "gds_backend.h"
+#include "common/nixl_log.h"
+#include "gds_batch_engine.h"
 
+// The plugin struct is hand-written (rather than
+// nixlBackendPluginCreator<...>) so that, in static builds, GDS and GDS_MT do
+// not share a template's function-local static plugin instance.
+namespace {
 
-// Plugin type alias for convenience
-using gds_plugin_t = nixlBackendPluginCreator<nixlGdsEngine>;
+nixlBackendEngine *
+createGdsEngine(const nixlBackendInitParams *init_params) {
+    try {
+        return new nixlGdsBatchEngine(init_params);
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Failed to create GDS engine: " << e.what();
+        return nullptr;
+    }
+}
+
+void
+destroyGdsEngine(nixlBackendEngine *engine) {
+    delete engine;
+}
+
+nixl_b_params_t
+getGdsBackendOptions() {
+    return {{"batch_pool_size", "16"},
+            {"batch_limit", "128"},
+            {"max_request_size", "16777216"}};
+}
+
+nixlBackendPlugin gds_plugin = {NIXL_PLUGIN_API_VERSION,
+                                createGdsEngine,
+                                destroyGdsEngine,
+                                []() { return "GDS"; },
+                                []() { return "0.1.1"; },
+                                getGdsBackendOptions,
+                                []() {
+                                    return nixl_mem_list_t{DRAM_SEG, VRAM_SEG, FILE_SEG};
+                                }};
+
+} // namespace
 
 #ifdef STATIC_PLUGIN_GDS
 nixlBackendPlugin *
 createStaticGDSPlugin() {
-    return gds_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "GDS", "0.1.1", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+    return &gds_plugin;
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return gds_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "GDS", "0.1.1", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+    return &gds_plugin;
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
