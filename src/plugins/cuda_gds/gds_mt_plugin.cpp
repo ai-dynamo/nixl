@@ -16,6 +16,7 @@
  */
 
 #include <exception>
+#include <string>
 
 #include "backend/backend_plugin.h"
 #include "common/nixl_log.h"
@@ -43,12 +44,17 @@ destroyGdsMtEngine(nixlBackendEngine *engine) {
     delete engine;
 }
 
+nixl_b_params_t
+getGdsMtBackendOptions() {
+    return {{"thread_count", std::to_string(defaultGdsMtThreadCount())}};
+}
+
 nixlBackendPlugin gds_mt_plugin = {NIXL_PLUGIN_API_VERSION,
                                    createGdsMtEngine,
                                    destroyGdsMtEngine,
                                    []() { return "GDS_MT"; },
                                    []() { return "0.1.0"; },
-                                   []() { return nixl_b_params_t{}; },
+                                   getGdsMtBackendOptions,
                                    []() {
                                        return nixl_mem_list_t{DRAM_SEG, VRAM_SEG, FILE_SEG};
                                    }};
