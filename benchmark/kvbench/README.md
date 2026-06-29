@@ -428,7 +428,7 @@ traffic_patterns:
     mem_type: cpu
 ```
 
-`inference_workload_matgen.py` emits this format alongside the legacy `matrix_file` + inline `storage:` block, so generated workloads stay compatible with older runners.
+`inference_workload_matgen.py` emits this unified `tp_file` format exclusively (one `tps/tp_<idx>.tp` per pattern); it does not also write the legacy `matrix_file` + inline `storage:` block, since the runner treats `tp_file` and the legacy keys as mutually exclusive.
 
 #### Generate Traffic Pattern Matrices
 
