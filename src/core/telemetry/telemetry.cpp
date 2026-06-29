@@ -249,7 +249,7 @@ nixlTelemetry::updateData(nixl_telemetry_event_type_t event_type, uint64_t value
     events_.emplace_back(event_type, value);
 }
 
-// The next 4 methods might be removed, as addXferStats covers them.
+// TODO: the next 4 update* methods may be removable -- addXferStats covers them.
 void
 nixlTelemetry::updateTxBytes(uint64_t tx_bytes) {
     updateData(nixl_telemetry_event_type_t::AGENT_TX_BYTES, tx_bytes);
@@ -298,8 +298,6 @@ nixlTelemetry::addXferStats(std::chrono::microseconds xfer_time,
     const auto requests_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM :
                                           nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM;
 
-    // One lock for all four per-transfer events keeps the completion hot path to
-    // a single lock/unlock pair; the batch is recorded atomically (all or none).
     const std::lock_guard lock(mutex_);
     if (events_.size() + 4 > maxBufferedEvents_) {
         return;
