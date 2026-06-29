@@ -17,8 +17,7 @@ The QueryMem API has been implemented for these file backends:
 
 - **POSIX Backend** (`src/plugins/posix/`)
 - **HF3FS Backend** (`src/plugins/hf3fs/`)
-- **GDS MT Backend** (`src/plugins/gds_mt/`)
-- **CUDA GDS Backend** (`src/plugins/cuda_gds/`)
+- **CUDA GDS Backend** (`src/plugins/cuda_gds/`, provides both the `GDS` and `GDS_MT` backends)
 
 The backend extracts the filenames from the input descriptors (`nixl_reg_dlist_t`) and passes them to queryFileInfoList.
 Then queryFileInfoList returns a vector of `nixl_query_resp_t` structures containing:

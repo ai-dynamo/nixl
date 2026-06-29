@@ -14,172 +14,120 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #ifndef __GDS_BACKEND_H
 #define __GDS_BACKEND_H
 
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include <cufile.h>
+
 #include <nixl.h>
 #include <nixl_types.h>
-#include <cuda_runtime.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <list>
-#include <vector>
-#include <mutex>
-#include "gds_utils.h"
+
 #include "backend/backend_engine.h"
 #include "file/file_path_mode.h"
+#include "gds_utils.h"
 
-class nixlGdsMetadata : public nixlFilePathMD {
-public:
-    gdsFileHandle handle;
-    gdsMemBuf buf;
-    nixl_mem_t type;
-
-    nixlGdsMetadata() = default;
-
-    nixlGdsMetadata(uint64_t devid, const std::string &metaInfo)
-        : nixlFilePathMD(devid, metaInfo),
-          type(FILE_SEG) {}
+// One logical mem<->file I/O produced by the shared preparation path. The
+// concrete engines turn these into their own posted, pollable request handles.
+struct GdsXferReq {
+    void *addr;
+    size_t size;
+    size_t file_offset;
+    CUfileHandle_t fh;
+    CUfileOpcode_t op;
 };
 
-class GdsTransferRequestH {
-    public:
-        void*           addr;
-        size_t          size;
-        size_t          file_offset;
-        CUfileHandle_t  fh;
-        CUfileOpcode_t  op;
-
-        // Default constructor
-        GdsTransferRequestH() {
-            addr = nullptr;
-            size = 0;
-            file_offset = 0;
-            fh = nullptr;
-            op = CUFILE_READ;
-        }
-
-        // Constructor with parameters
-        GdsTransferRequestH(void* a, size_t s, size_t offset,
-			    CUfileHandle_t handle, CUfileOpcode_t operation) {
-            addr = a;
-            size = s;
-            file_offset = offset;
-            fh = handle;
-            op = operation;
-        }
-};
-
-class nixlGdsBackendReqH : public nixlBackendReqH {
-    public:
-        std::vector<GdsTransferRequestH> request_list;
-        std::vector<nixlGdsIOBatch*> batch_io_list;
-        bool needs_prep;
-
-        nixlGdsBackendReqH() {
-            needs_prep = true;
-        }
-        ~nixlGdsBackendReqH() {
-            for (auto* batch : batch_io_list) {
-                delete batch;
-            }
-            batch_io_list.clear();
-        }
-};
-
+// Abstract base for the GDS family of backends. It owns everything that is
+// identical between "GDS" and "GDS_MT": the cuFile driver lifecycle, memory and
+// file registration (refcounted handle cache + buffer RAII), queryMem, and the
+// prepXfer preamble (validation + descriptor->GdsXferReq translation). The only
+// backend-specific step in preparation is finalizePrep(); the concrete engines
+// additionally implement the transfer-execution virtuals (postXfer/checkXfer/
+// releaseReqH) directly.
 class nixlGdsEngine : public nixlBackendEngine {
-    private:
-        gdsUtil *gds_utils;
-        std::unordered_map<int, gdsFileHandle> gds_file_map;
-        nixl::PathModeDevIdRegistry path_mode_devids_;
+public:
+    explicit nixlGdsEngine(const nixlBackendInitParams *init_params);
+    ~nixlGdsEngine() override = default;
 
-        mutable std::mutex batch_pool_lock;
-        mutable std::list<nixlGdsIOBatch*> batch_pool;
-        unsigned int batch_pool_size;  // Renamed from pool_size
-        unsigned int batch_limit;      // Added for configurable batch limit
-        unsigned int max_request_size; // Added for configurable request size
+    nixlGdsEngine(const nixlGdsEngine &) = delete;
+    nixlGdsEngine &
+    operator=(const nixlGdsEngine &) = delete;
 
-        nixlGdsIOBatch* getBatchFromPool(unsigned int size) const;
-        void returnBatchToPool(nixlGdsIOBatch* batch) const;
-        nixl_status_t
-        createAndSubmitBatch(const std::vector<GdsTransferRequestH> &requests,
-                             size_t start_idx,
-                             size_t batch_size,
-                             std::vector<nixlGdsIOBatch *> &batch_list) const;
-        nixl_status_t
-        resolveFileHandle(const nixlMetaDesc &d, gdsFileHandle &fh) const;
-        nixl_status_t createBatches(const nixl_xfer_op_t &operation,
-                                   const nixl_meta_dlist_t &local,
-                                   const nixl_meta_dlist_t &remote,
-                                   nixlGdsBackendReqH* gds_handle);
+    bool
+    supportsNotif() const override {
+        return false;
+    }
+    bool
+    supportsRemote() const override {
+        return false;
+    }
+    bool
+    supportsLocal() const override {
+        return true;
+    }
 
-    public:
-        nixlGdsEngine(const nixlBackendInitParams* init_params);
-        ~nixlGdsEngine();
+    nixl_mem_list_t
+    getSupportedMems() const override {
+        return {DRAM_SEG, VRAM_SEG, FILE_SEG};
+    }
 
-        // File operations - target is the distributed FS
-        // So no requirements to connect to target.
-        // Just treat it locally.
-        bool supportsNotif() const {
-            return false;
-        }
-        bool supportsRemote() const {
-            return false;
-        }
-        bool supportsLocal() const {
-            return true;
-        }
+    nixl_status_t
+    connect(const std::string &remote_agent) override {
+        return NIXL_SUCCESS;
+    }
 
-        nixl_mem_list_t getSupportedMems() const {
-            nixl_mem_list_t mems;
-            mems.push_back(DRAM_SEG);
-            mems.push_back(VRAM_SEG);
-            mems.push_back(FILE_SEG);
-            return mems;
-        }
+    nixl_status_t
+    disconnect(const std::string &remote_agent) override {
+        return NIXL_SUCCESS;
+    }
 
-        nixl_status_t connect(const std::string &remote_agent) {
-            return NIXL_SUCCESS;
-        }
+    nixl_status_t
+    loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) override {
+        output = input;
+        return NIXL_SUCCESS;
+    }
 
-        nixl_status_t disconnect(const std::string &remote_agent) {
-            return NIXL_SUCCESS;
-        }
+    nixl_status_t
+    unloadMD(nixlBackendMD *input) override {
+        return NIXL_SUCCESS;
+    }
 
-        nixl_status_t loadLocalMD(nixlBackendMD* input,
-                                 nixlBackendMD* &output) {
-            output = input;
-            return NIXL_SUCCESS;
-        }
+    nixl_status_t
+    registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
+    nixl_status_t
+    deregisterMem(nixlBackendMD *meta) override;
 
-        nixl_status_t unloadMD(nixlBackendMD* input) {
-            return NIXL_SUCCESS;
-        }
-        nixl_status_t registerMem(const nixlBlobDesc &mem,
-                                 const nixl_mem_t &nixl_mem,
-                                 nixlBackendMD* &out);
-        nixl_status_t deregisterMem(nixlBackendMD *meta);
+    // Shared: validates the request and translates descriptors into a
+    // GdsXferReq list, then defers the concrete handle creation to finalizePrep.
+    nixl_status_t
+    prepXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
-        nixl_status_t prepXfer(const nixl_xfer_op_t &operation,
-                              const nixl_meta_dlist_t &local,
-                              const nixl_meta_dlist_t &remote,
-                              const std::string &remote_agent,
-                              nixlBackendReqH* &handle,
-                              const nixl_opt_b_args_t* opt_args=nullptr) const;
+    nixl_status_t
+    queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
 
-        nixl_status_t postXfer(const nixl_xfer_op_t &operation,
-                              const nixl_meta_dlist_t &local,
-                              const nixl_meta_dlist_t &remote,
-                              const std::string &remote_agent,
-                              nixlBackendReqH* &handle,
-                              const nixl_opt_b_args_t* opt_args=nullptr) const;
+    // postXfer / checkXfer / releaseReqH remain pure virtual here (inherited from
+    // nixlBackendEngine) and are implemented by the concrete engines.
 
-        nixl_status_t checkXfer(nixlBackendReqH* handle) const;
-        nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
+protected:
+    // The single backend-specific step of preparation: build a concrete,
+    // posted-ready request handle from the validated logical request list.
+    virtual nixl_status_t
+    finalizePrep(std::vector<GdsXferReq> &&reqs, nixlBackendReqH *&handle) const = 0;
 
-        nixl_status_t
-        queryMem(const nixl_reg_dlist_t &descs,
-                 std::vector<nixl_query_resp_t> &resp) const override;
+private:
+    std::unique_ptr<gdsDriverHandle> driver_;
+    std::unordered_map<int, std::weak_ptr<gdsFileHandle>> gds_file_map_;
+    nixl::PathModeDevIdRegistry path_mode_devids_;
 };
-#endif
+
+#endif // __GDS_BACKEND_H

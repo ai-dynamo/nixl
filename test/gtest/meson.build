@@ -87,6 +87,7 @@ gtest_sources = [
     'metadata_exchange.cpp',
     'common.cpp',
     'query_mem.cpp',
+    'gds.cpp',
     'telemetry_test.cpp',
     'telemetry_prometheus_test.cpp',
     'configuration.cpp'

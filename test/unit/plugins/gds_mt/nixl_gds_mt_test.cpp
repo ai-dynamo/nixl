@@ -345,6 +345,10 @@ main (int argc, char *argv[]) {
         if (int rc = runPathModeSmoke(); rc != 0) {
             return rc;
         }
+        // Meson registers the no-argument invocation as the path-mode smoke test.
+        if (argc == 1) {
+            return 0;
+        }
     }
 
     // Check if directory path is provided
