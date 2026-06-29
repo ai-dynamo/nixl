@@ -20,7 +20,9 @@ shared_library(
     'nvtx_plugin.cpp',
     'nvtx_backend.cpp',
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
-    dependencies: [nixl_infra, nixl_common_dep, absl_log_dep, nvtx_inc_dep],
+    # dl_dep: nvtx3 injection thunks call dlopen/dlsym/dlclose, so with --no-undefined
+    # libdl must be linked where dl* isn't merged into libc (e.g. the manylinux wheel build).
+    dependencies: [nixl_infra, nixl_common_dep, absl_log_dep, nvtx_inc_dep, dl_dep],
     install: true,
     install_dir: plugin_install_dir,
     name_prefix: '',
