@@ -291,16 +291,19 @@ ENV PYTHONPATH=/workspace/nixl/build/examples/device/ep
 RUN cd src/bindings/rust && cargo build --release --locked
 
 # Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
+# build-wheel.sh requires --torch-versions with --build-nixl-ep (main #1775); pass it here too —
+# the runtime Dockerfile wasn't updated by #1775, so this keeps the NIXL EP build working.
+ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13"
 RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
     mkdir -p dist && \
-    if [ "$BUILD_NIXL_EP" = "true" ]; then EP_BUILD_FLAG="--build-nixl-ep"; else EP_BUILD_FLAG=""; fi && \
+    if [ "$BUILD_NIXL_EP" = "true" ]; then EP_BUILD_FLAGS="--build-nixl-ep --torch-versions $WHL_TORCH_VERSIONS"; else EP_BUILD_FLAGS=""; fi && \
     ./contrib/build-wheel.sh \
     --python-version $DEFAULT_PYTHON_VERSION \
     --platform manylinux_2_39_$ARCH \
     --ucx-plugins-dir $UCX_PLUGIN_DIR \
     --nixl-plugins-dir $NIXL_PLUGIN_DIR \
     --output-dir /workspace/nixl/dist \
-    $EP_BUILD_FLAG
+    $EP_BUILD_FLAGS
 
 RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
 RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl dist/nixl-*-none-any.whl
