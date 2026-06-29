@@ -19,6 +19,7 @@
 
 #include "mem_section.h"
 #include "telemetry.h"
+#include "tracing/trace.h"
 #include "stream/metadata_stream.h"
 #include "sync.h"
 
@@ -101,6 +102,9 @@ class nixlAgentData {
         backend_map_t backendEngines_;
         std::unordered_map<std::string, nixlRemoteSection> remoteSections_;
         std::unique_ptr<nixlTelemetry> telemetry_;
+        // Composite tracer (fans out to every enabled backend); null when no
+        // backend is active.
+        const std::unique_ptr<nixl::trace::Tracer> tracer_;
         nixlLocalSection localSection_;
 
         void

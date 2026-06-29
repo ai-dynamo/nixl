@@ -417,6 +417,19 @@ if get_option('buildtype') == 'release'
     add_project_arguments('-DNDEBUG', language: 'cpp')
 endif
 
+# ---- Tracing (nixl::trace) -------------------------------------------------
+# The tracing facade + plugin loader are compiled into libnixl when with_trace is
+# set. Tracing backends (NVTX, ...) ship as separate on-demand .so plugins under
+# src/plugins/tracing, added in a follow-up PR; only the facade lands here.
+nixl_trace_enabled = get_option('with_trace')
+
+if nixl_trace_enabled
+    add_project_arguments('-DNIXL_TRACE_ENABLED', language: ['cpp', 'cuda'])
+    summary({
+        'Tracing facade' : nixl_trace_enabled,
+    }, section: 'Tracing', bool_yn: true)
+endif
+
 static_plugins = []
 
 # Check for static plugins, then set compiler flags to enable
