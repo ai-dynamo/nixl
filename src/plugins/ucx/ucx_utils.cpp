@@ -33,7 +33,7 @@
 
 namespace {
 [[nodiscard]] uint32_t
-ucp_ep_close_flags(ucp_err_handling_mode_t err_handling_mode) {
+ucpEpCloseFlags(ucp_err_handling_mode_t err_handling_mode) {
     switch (err_handling_mode) {
     case UCP_ERR_HANDLING_MODE_NONE:
         return 0;
@@ -173,7 +173,7 @@ nixlUcxEp::closeImpl() {
 }
 
 nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode)
-    : closeFlags_{ucp_ep_close_flags(err_handling_mode)} {
+    : closeFlags_{ucpEpCloseFlags(err_handling_mode)} {
     ucp_ep_params_t ep_params;
     nixl_status_t status;
 
