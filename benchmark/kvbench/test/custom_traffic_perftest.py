@@ -21,10 +21,11 @@ from typing import Literal, Optional, Tuple
 
 import numpy as np
 import torch
-from nixl._api import nixl_agent
-from nixl.logging import get_logger
 from runtime.etcd_rt import etcd_dist_utils as dist_rt
 from tabulate import tabulate
+
+from nixl._api import nixl_agent
+from nixl.logging import get_logger
 
 logger = get_logger(__name__)
 
