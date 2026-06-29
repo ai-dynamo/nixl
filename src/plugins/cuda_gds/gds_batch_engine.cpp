@@ -130,10 +130,10 @@ nixlGdsIOBatch::checkStatus() {
     }
 
     unsigned int nr = batch_size - entries_completed;
-    // TODO: Prevent active request release from blocking. Since min_nr equals
-    // nr, checkStatus() can wait for every remaining event, and releaseXferReq()
-    // calls checkXfer() before releaseReqH(). Decouple release from this status
-    // check or move completion waiting to asynchronous progress.
+    // TODO: A follow-up should make status polling and active release
+    // nonblocking. min_nr intentionally remains equal to nr here to preserve
+    // the pre-consolidation GDS completion behavior; changing it needs separate
+    // API and performance validation.
     const CUfileError_t errBatch =
         cuFileBatchIOGetStatus(batch_handle, nr, &nr, io_batch_events.get(), nullptr);
     if (errBatch.err != 0) {
