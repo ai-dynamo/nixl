@@ -47,9 +47,14 @@ def _rtld_deepbind_import():
 
 
 with _rtld_deepbind_import():
-    _nixl_ep_cpp = importlib.import_module(f"{__name__}.nixl_ep_cpp")
-nixl_ep_cpp = _nixl_ep_cpp
+    _torch_mm = "".join(torch.__version__.split(".")[:2])
+    _nixl_ep_cpp = importlib.import_module(f".nixl_ep_cpp_torch{_torch_mm}", __package__)
+# Alias the torch-versioned extension as `nixl_ep_cpp` so the static
+# `from .nixl_ep_cpp import ...` imports in buffer.py / utils.py resolve.
+sys.modules[f"{__package__}.nixl_ep_cpp"] = _nixl_ep_cpp
 
+# The submodules below import names from `nixl_ep_cpp`, so the dynamic
+# import above must run first; that's why these aren't at the top.
 from .buffer import Buffer  # noqa: E402
 from .utils import EventOverlap  # noqa: E402
 
