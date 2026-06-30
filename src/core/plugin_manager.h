@@ -233,8 +233,10 @@ private:
     // Private constructor for singleton pattern
     nixlPluginManager();
 
-    void processPluginDir();
-    void processPluginFile();
+    void
+    processPluginDir();
+    void
+    processPluginFile();
 };
 
 #endif

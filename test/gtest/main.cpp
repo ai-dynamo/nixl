@@ -31,104 +31,105 @@ namespace gtest {
 
 namespace {
 
-[[nodiscard]] std::optional<std::string>
-CheckArgument(const std::string &arg, const std::string &prefix) {
-    if (arg.starts_with(prefix)) {
-        return arg.substr(prefix.size());
+    [[nodiscard]] std::optional<std::string>
+    CheckArgument(const std::string &arg, const std::string &prefix) {
+        if (arg.starts_with(prefix)) {
+            return arg.substr(prefix.size());
+        }
+        return std::nullopt;
     }
-    return std::nullopt;
-}
 
-void
-ParseTcpPortRange(const std::string &arg) {
-    if (const auto val = CheckArgument(arg, "--min-tcp-port=")) {
-        PortAllocator::instance().set_min_port(std::stoi(*val));
-    } else if (const auto val = CheckArgument(arg, "--max-tcp-port=")) {
-        PortAllocator::instance().set_max_port(std::stoi(*val));
-    }
-}
-
-std::vector<std::string> test_plugin_dirs;
-
-void
-ParsePluginDirs(const std::string &arg) {
-    if (const auto val = CheckArgument(arg, "--tests_plugin_dirs="); val && !val->empty()) {
-        const std::vector<std::string> plugin_dirs = absl::StrSplit(*val, ',');
-        for (const auto &dir : plugin_dirs) {
-            std::cout << "Adding plugin directory:" << dir << std::endl;
-            test_plugin_dirs.emplace_back(dir);
+    void
+    ParseTcpPortRange(const std::string &arg) {
+        if (const auto val = CheckArgument(arg, "--min-tcp-port=")) {
+            PortAllocator::instance().set_min_port(std::stoi(*val));
+        } else if (const auto val = CheckArgument(arg, "--max-tcp-port=")) {
+            PortAllocator::instance().set_max_port(std::stoi(*val));
         }
     }
-}
 
-void
-ParseArguments(int argc, char **argv) {
-    for (int i = 1; i < argc; ++i) {
-        const std::string arg = argv[i];
-        ParsePluginDirs(arg);
-        ParseTcpPortRange(arg);
-    }
-}
+    std::vector<std::string> test_plugin_dirs;
 
-class PluginReinitializer
-    : public testing::EmptyTestEventListener
-{
-    void OnTestStart(const testing::TestInfo&) override {
-        std::cout << "Reinitializing plugin manager" << std::endl;
-
-        auto& pm = nixlPluginManager::getInstance();
-
-        pm.reinitializeForUnitTest();
-
-        for (const std::string &dir : test_plugin_dirs) {
-            pm.addPluginDirectory(dir);
+    void
+    ParsePluginDirs(const std::string &arg) {
+        if (const auto val = CheckArgument(arg, "--tests_plugin_dirs="); val && !val->empty()) {
+            const std::vector<std::string> plugin_dirs = absl::StrSplit(*val, ',');
+            for (const auto &dir : plugin_dirs) {
+                std::cout << "Adding plugin directory:" << dir << std::endl;
+                test_plugin_dirs.emplace_back(dir);
+            }
         }
     }
-};
 
-const std::regex
-    ib_regex("IB device\\(s\\) were detected, but accelerated IB support was not found");
-const std::regex aws_regex("UCX version is less than 1.19, CUDA support is limited, including"
-                           " the lack of support for multi-GPU within a single process.");
-const std::regex non_gpu_regex("[0-9]+ NVIDIA GPU\\(s\\) were detected, but UCX CUDA support "
-                               "was not found! GPU memory is not supported.");
-
-int
-RunAllTests() {
-    LogProblemCounter lpc;
-    std::list<LogIgnoreGuard> ligs;
-
-    // TODO: Remove after the CI issues spuriously triggering this message are fixed.
-    ligs.emplace_back(ib_regex);
-
-    if (std::getenv("AWS_BATCH_JOB_ID") != nullptr) {
-        ligs.emplace_back(aws_regex);
+    void
+    ParseArguments(int argc, char **argv) {
+        for (int i = 1; i < argc; ++i) {
+            const std::string arg = argv[i];
+            ParsePluginDirs(arg);
+            ParseTcpPortRange(arg);
+        }
     }
 
-    if (std::getenv("NIXL_CI_NON_GPU") != nullptr) {
-        ligs.emplace_back(non_gpu_regex);
+    class PluginReinitializer : public testing::EmptyTestEventListener {
+        void
+        OnTestStart(const testing::TestInfo &) override {
+            std::cout << "Reinitializing plugin manager" << std::endl;
+
+            auto &pm = nixlPluginManager::getInstance();
+
+            pm.reinitializeForUnitTest();
+
+            for (const std::string &dir : test_plugin_dirs) {
+                pm.addPluginDirectory(dir);
+            }
+        }
+    };
+
+    const std::regex
+        ib_regex("IB device\\(s\\) were detected, but accelerated IB support was not found");
+    const std::regex aws_regex("UCX version is less than 1.19, CUDA support is limited, including"
+                               " the lack of support for multi-GPU within a single process.");
+    const std::regex non_gpu_regex("[0-9]+ NVIDIA GPU\\(s\\) were detected, but UCX CUDA support "
+                                   "was not found! GPU memory is not supported.");
+
+    int
+    RunAllTests() {
+        LogProblemCounter lpc;
+        std::list<LogIgnoreGuard> ligs;
+
+        // TODO: Remove after the CI issues spuriously triggering this message are fixed.
+        ligs.emplace_back(ib_regex);
+
+        if (std::getenv("AWS_BATCH_JOB_ID") != nullptr) {
+            ligs.emplace_back(aws_regex);
+        }
+
+        if (std::getenv("NIXL_CI_NON_GPU") != nullptr) {
+            ligs.emplace_back(non_gpu_regex);
+        }
+
+        return RUN_ALL_TESTS();
     }
 
-    return RUN_ALL_TESTS();
-}
+    int
+    RunTests(int argc, char **argv) {
+        testing::InitGoogleTest(&argc, argv);
+        ParseArguments(argc, argv);
 
-int RunTests(int argc, char **argv) {
-    testing::InitGoogleTest(&argc, argv);
-    ParseArguments(argc, argv);
+        auto *instance = testing::UnitTest::GetInstance();
+        auto &listeners = instance->listeners();
+        listeners.Append(new PluginReinitializer);
 
-    auto *instance = testing::UnitTest::GetInstance();
-    auto &listeners = instance->listeners();
-    listeners.Append(new PluginReinitializer);
+        const int result = RunAllTests();
 
-    const int result = RunAllTests();
-
-    if (const size_t problems = LogProblemCounter::getProblemCount(); problems > 0) {
-        std::cerr << "ATTENTION: Unexpected NIXL warning(s) and/or error(s) detected!" << std::endl;
-        std::cerr << "ATTENTION: Problem count is " << problems << std::endl;
-        return 42;
+        if (const size_t problems = LogProblemCounter::getProblemCount(); problems > 0) {
+            std::cerr << "ATTENTION: Unexpected NIXL warning(s) and/or error(s) detected!"
+                      << std::endl;
+            std::cerr << "ATTENTION: Problem count is " << problems << std::endl;
+            return 42;
+        }
+        return result;
     }
-    return result;
-}
 
 } // namespace
 
