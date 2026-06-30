@@ -195,8 +195,8 @@ nixlGdsBatchEngine::nixlGdsBatchEngine(const nixlBackendInitParams *init_params)
 
     try {
         nixl_b_params_t *custom_params = init_params->customParams;
-        batch_pool_size_ =
-            nixl::getBackendParamDefaulted(custom_params, "batch_pool_size", DEFAULT_BATCH_POOL_SIZE);
+        batch_pool_size_ = nixl::getBackendParamDefaulted(
+            custom_params, "batch_pool_size", DEFAULT_BATCH_POOL_SIZE);
         batch_limit_ =
             nixl::getBackendParamDefaulted(custom_params, "batch_limit", DEFAULT_BATCH_LIMIT);
         max_request_size_ = nixl::getBackendParamDefaulted(
@@ -250,8 +250,7 @@ nixlGdsBatchEngine::returnBatchToPool(nixlGdsIOBatch *batch) const {
 }
 
 nixl_status_t
-nixlGdsBatchEngine::finalizePrep(std::vector<GdsXferReq> &&reqs,
-                                 nixlBackendReqH *&handle) const {
+nixlGdsBatchEngine::finalizePrep(std::vector<GdsXferReq> &&reqs, nixlBackendReqH *&handle) const {
     auto gds_handle = std::make_unique<nixlGdsBatchReqH>();
 
     size_t chunk_count = 0;
@@ -262,8 +261,7 @@ nixlGdsBatchEngine::finalizePrep(std::vector<GdsXferReq> &&reqs,
             return NIXL_ERR_INVALID_PARAM;
         }
 
-        const size_t chunks =
-            (req.size / max_request_size) + ((req.size % max_request_size) != 0);
+        const size_t chunks = (req.size / max_request_size) + ((req.size % max_request_size) != 0);
         can_reuse_requests &= (chunks == 1);
         if (chunks > std::numeric_limits<size_t>::max() - chunk_count) {
             return NIXL_ERR_INVALID_PARAM;
@@ -351,8 +349,7 @@ nixlGdsBatchEngine::createAndSubmitBatch(const std::vector<GdsXferReq> &requests
 }
 
 nixl_status_t
-nixlGdsBatchEngine::cancelAndReclaimBatches(
-    std::vector<nixlGdsIOBatch *> &batch_list) const {
+nixlGdsBatchEngine::cancelAndReclaimBatches(std::vector<nixlGdsIOBatch *> &batch_list) const {
     nixl_status_t status = NIXL_SUCCESS;
     auto keep = batch_list.begin();
 
@@ -402,12 +399,10 @@ nixlGdsBatchEngine::postXfer(const nixl_xfer_op_t &operation,
 
     size_t current_req = 0;
     for (size_t batch_index = 0; batch_index < batch_count; ++batch_index) {
-        const size_t batch_size = std::min(request_list.size() - current_req,
-                                           static_cast<size_t>(batch_limit_));
-        const nixl_status_t status = createAndSubmitBatch(request_list,
-                                                          current_req,
-                                                          batch_size,
-                                                          gds_handle->batch_io_list[batch_index]);
+        const size_t batch_size =
+            std::min(request_list.size() - current_req, static_cast<size_t>(batch_limit_));
+        const nixl_status_t status = createAndSubmitBatch(
+            request_list, current_req, batch_size, gds_handle->batch_io_list[batch_index]);
         if (status != NIXL_SUCCESS) {
             gds_handle->overall_status = status;
             if (cancelAndReclaimBatches(gds_handle->batch_io_list) != NIXL_SUCCESS) {

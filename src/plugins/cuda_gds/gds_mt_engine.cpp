@@ -27,8 +27,7 @@
 
 size_t
 defaultGdsMtThreadCount() noexcept {
-    static const size_t thread_count =
-        std::max(1u, std::thread::hardware_concurrency() / 2);
+    static const size_t thread_count = std::max(1u, std::thread::hardware_concurrency() / 2);
     return thread_count;
 }
 

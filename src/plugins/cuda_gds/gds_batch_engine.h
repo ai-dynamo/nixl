@@ -46,6 +46,7 @@ public:
     cancelBatch();
     void
     reset();
+
     bool
     isValid() const {
         return batch_handle != nullptr && init_err.err == CU_FILE_SUCCESS;
