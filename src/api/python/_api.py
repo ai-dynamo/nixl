@@ -706,6 +706,47 @@ class nixl_agent:
         handle.release()
 
     """
+    @brief Prepare a memory view handle for either a local or remote
+           descriptor list. The underlying pybind11 overloads of
+           nixlAgent::prepMemView are dispatched by the descriptor list type:
+             - Local : prep_mem_view(dlist: nixlXferDList, backends=[])
+             - Remote: prep_mem_view(dlist: nixlRemoteDList, backends=[])
+           Build the remote list with get_remote_descs.
+           Returns the raw uintptr handle; pair with release_mem_view to free.
+
+    @param dlist A local (nixlXferDList) or remote (nixlRemoteDList) dlist.
+    @param backends Optional list of backend names to limit the preparation to.
+    @return Opaque uintptr handle for the memory view.
+    @note Requires NIXL built against a UCX with the GPU device API (probe via
+          nixl._bindings.HAVE_UCX_GPU_DEVICE_API); otherwise the backend raises
+          nixlBackendError. The descriptors must reference device (VRAM) memory,
+          and an active CUDA context must already exist when the owning agent is
+          created. For a remote dlist, the remote agent's metadata -- including
+          the registered region being viewed -- must be loaded first via
+          add_remote_agent.
+    """
+
+    def prep_mem_view(
+        self,
+        dlist: Union[nixlBind.nixlXferDList, nixlBind.nixlRemoteDList],
+        *,
+        backends: list[str] = [],
+    ) -> int:
+        handle_list = []
+        for backend_string in backends:
+            handle_list.append(self.backends[backend_string])
+        return self.agent.prepMemView(dlist, handle_list)
+
+    """
+    @brief Release a memory view handle previously returned by prep_mem_view.
+
+    @param mvh uintptr handle returned by prep_mem_view.
+    """
+
+    def release_mem_view(self, mvh: int) -> None:
+        self.agent.releaseMemView(mvh)
+
+    """
     @brief Get new notifications that have come to the agent.
 
     @param backends Optional list of backend names to limit which backends are checked for notifications.
@@ -1015,6 +1056,40 @@ class nixl_agent:
                 dlist[i, :] = (base_addr, region_len, gpu_id)
             mem_type = self._tensor_mem_type(descs[0])
             new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], dlist)
+        else:
+            new_descs = None
+
+        return new_descs
+
+    """
+    @brief Get nixlRemoteDList from different input types:
+            a) list of 4 element tuples (address, len, device ID, remote agent name)
+               alongside a mandatory memory type.
+            b) passes along if a nixlRemoteDList is given.
+
+    @param descs List of any of the above types.
+    @param mem_type Optional memory type necessary for (a).
+    @return Remote descriptor list, nixlRemoteDList.
+    """
+
+    def get_remote_descs(
+        self,
+        descs,
+        mem_type: Optional[str] = None,
+    ) -> nixlBind.nixlRemoteDList:
+        if isinstance(descs, nixlBind.nixlRemoteDList):
+            return descs
+        elif isinstance(descs[0], tuple):
+            if mem_type is not None and len(descs[0]) == 4:
+                new_descs = nixlBind.nixlRemoteDList(self.nixl_mems[mem_type], descs)
+            elif mem_type is None:
+                logger.error("Please specify a mem type")
+                new_descs = None
+            else:
+                logger.error(
+                    "4-tuple list (addr, len, dev_id, agent_name) needed for remote descriptors"
+                )
+                new_descs = None
         else:
             new_descs = None
 
