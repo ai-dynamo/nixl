@@ -18,7 +18,6 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 
-#include <array>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -52,26 +51,6 @@ std::mutex s_mutex;
 std::weak_ptr<prometheus::Exposer> s_exposer_weak;
 std::weak_ptr<prometheus::Registry> s_registry_weak;
 std::unordered_set<std::string> s_agent_names;
-
-struct ErrorMetric {
-    nixl_telemetry_event_type_t event_type;
-    const char *status;
-};
-
-constexpr std::array<ErrorMetric, 12> error_metrics{{
-    {nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED, "not_posted"},
-    {nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM, "invalid_param"},
-    {nixl_telemetry_event_type_t::AGENT_ERR_BACKEND, "backend"},
-    {nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND, "not_found"},
-    {nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH, "mismatch"},
-    {nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED, "not_allowed"},
-    {nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE, "repost_active"},
-    {nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN, "unknown"},
-    {nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED, "not_supported"},
-    {nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT, "remote_disconnect"},
-    {nixl_telemetry_event_type_t::AGENT_ERR_CANCELED, "canceled"},
-    {nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY, "no_telemetry"},
-}};
 } // namespace
 
 nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
@@ -176,12 +155,11 @@ nixlTelemetryPrometheusExporter::registerErrorCounters() {
                        .Help("Cumulative error count by status")
                        .Register(*registry_);
 
-    for (const auto &error_metric : error_metrics) {
-        auto &metric = family.Add({{"hostname", hostname_},
-                                   {"agent_name", agent_name_},
-                                   {"status", error_metric.status}});
-        const std::string event_name(
-            nixlEnumStrings::telemetryEventTypeStr(error_metric.event_type));
+    for (const auto event_type : nixlEnumStrings::telemetryErrorEventTypes) {
+        const char *const status = nixlEnumStrings::telemetryErrorStatusLabel(event_type);
+        auto &metric =
+            family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}, {"status", status}});
+        const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event_type));
         const auto inserted = counters_.try_emplace(event_name, &family, &metric).second;
         if (!inserted) {
             family.Remove(&metric);

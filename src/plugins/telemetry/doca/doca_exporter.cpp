@@ -95,46 +95,6 @@ isCounterEvent(nixl_telemetry_event_type_t event_type) noexcept {
     return false;
 }
 
-[[nodiscard]] constexpr const char *
-errorStatusLabel(nixl_telemetry_event_type_t event_type) noexcept {
-    switch (event_type) {
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:
-        return "not_posted";
-    case nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM:
-        return "invalid_param";
-    case nixl_telemetry_event_type_t::AGENT_ERR_BACKEND:
-        return "backend";
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND:
-        return "not_found";
-    case nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH:
-        return "mismatch";
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED:
-        return "not_allowed";
-    case nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE:
-        return "repost_active";
-    case nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN:
-        return "unknown";
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED:
-        return "not_supported";
-    case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
-        return "remote_disconnect";
-    case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
-        return "canceled";
-    case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
-        return "no_telemetry";
-    case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
-    case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
-    case nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM:
-    case nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM:
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
-    case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
-    case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
-        return nullptr;
-    }
-    return nullptr;
-}
-
 // Gauge series name for an event, or nullptr if the event has no gauge.
 [[nodiscard]] constexpr const char *
 gaugeMetricName(nixl_telemetry_event_type_t event_type) noexcept {
@@ -371,7 +331,8 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
         const std::lock_guard lock(g_metrics_mutex);
         const char *label_values[] = {agent_name_.c_str()};
 
-        if (const char *const status = errorStatusLabel(event.eventType_)) {
+        if (const char *const status =
+                nixlEnumStrings::telemetryErrorStatusLabel(event.eventType_)) {
             const auto result = appendErrorCounterSample(event, status);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add error counter: " << result;

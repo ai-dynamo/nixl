@@ -237,6 +237,12 @@ TEST_F(docaNixlExporterTest, ErrorCountersUseBoundedStatusLabel) {
         << "invalid_param errors must accumulate under a bounded status label";
     EXPECT_EQ(metrics.latestValue(metric, backendLabels), std::optional<double>(1.0))
         << "backend errors must use a distinct status label on the same metric";
+
+    for (const auto &[id, samples] : metrics.series()) {
+        (void)samples;
+        EXPECT_NE(id.name.rfind("agent_err_", 0), 0)
+            << "legacy per-type error counter must not be published: " << id.name;
+    }
 }
 
 int
