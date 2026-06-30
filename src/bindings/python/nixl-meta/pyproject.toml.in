@@ -37,3 +37,4 @@ cu13 = ["nixl-cu13==@VERSION@"]
 
 [tool.setuptools]
 packages = ["nixl", "nixl_ep"]
+py-modules = ["nixl_utils"]
