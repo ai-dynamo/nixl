@@ -44,8 +44,11 @@ uv = find_program('uv', required: false)
 
 if uv.found()
   wheel_name = 'nixl-@0@-py3-none-any.whl'.format(meson.project_version())
-  # Inputs point at build-dir copies (return values of fs.copyfile in subdirs)
-  # so ninja runs copies before `uv build` and picks up source edits.
+  
+  # Inputs intentionally point at the build-dir COPIES (return values of
+  # fs.copyfile() captured in the subdirs), not the source files. This way
+  # ninja runs the copies before `uv build` and incremental rebuilds pick
+  # up edits to the source __init__.py files.
   meta_inputs = [
         pyproject_toml,
         readme_md,
