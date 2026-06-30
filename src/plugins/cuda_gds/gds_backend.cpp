@@ -32,9 +32,7 @@ struct FileSegData {
     std::shared_ptr<gdsFileHandle> handle;
     uint64_t dev_id;
 
-    FileSegData(std::shared_ptr<gdsFileHandle> h, uint64_t id)
-        : handle(std::move(h)),
-          dev_id(id) {}
+    FileSegData(std::shared_ptr<gdsFileHandle> h, uint64_t id) : handle(std::move(h)), dev_id(id) {}
 };
 
 struct MemSegData {
@@ -232,8 +230,7 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
-nixlGdsEngine::queryMem(const nixl_reg_dlist_t &descs,
-                        std::vector<nixl_query_resp_t> &resp) const {
+nixlGdsEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const {
     // Extract metadata from descriptors which are file names
     // Different plugins might customize parsing of metaInfo to get the file names
     std::vector<nixl_blob_t> metadata(descs.descCount());

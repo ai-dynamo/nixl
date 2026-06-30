@@ -62,10 +62,12 @@ public:
     supportsNotif() const override {
         return false;
     }
+
     bool
     supportsRemote() const override {
         return false;
     }
+
     bool
     supportsLocal() const override {
         return true;
