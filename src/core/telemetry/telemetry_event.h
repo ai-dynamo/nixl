@@ -106,7 +106,7 @@ telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
     return "unknown_event";
 }
 
-constexpr std::array<nixl_telemetry_event_type_t, 12> telemetryErrorEventTypes{{
+constexpr std::array<nixl_telemetry_event_type_t, 12> telemetry_error_event_types{{
     nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED,
     nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM,
     nixl_telemetry_event_type_t::AGENT_ERR_BACKEND,

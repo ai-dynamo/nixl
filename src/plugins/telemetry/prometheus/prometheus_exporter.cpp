@@ -155,7 +155,7 @@ nixlTelemetryPrometheusExporter::registerErrorCounters() {
                        .Help("Cumulative error count by status")
                        .Register(*registry_);
 
-    for (const auto event_type : nixlEnumStrings::telemetryErrorEventTypes) {
+    for (const auto event_type : nixlEnumStrings::telemetry_error_event_types) {
         const char *const status = nixlEnumStrings::telemetryErrorStatusLabel(event_type);
         auto &metric =
             family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}, {"status", status}});
