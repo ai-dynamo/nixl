@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -153,6 +153,7 @@ memType2Str(nixl_mem_t mem_type) {
     default:
         std::cout << "Unsupported memory type!" << std::endl;
         assert(0);
+        return std::string("UNKNOWN");
     }
 }
 
@@ -267,6 +268,7 @@ getValidationPtr(nixl_mem_t mem_type, void *addr, size_t len) {
     default:
         std::cout << "Unsupported memory type!" << std::endl;
         assert(0);
+        return nullptr;
     }
 }
 
@@ -293,12 +295,13 @@ allocateWrongGPUTest(nixlBackendEngine *mooncake, int dev_id) {
     nixlBackendMD *md;
     void *buf;
 
+    desc.len = 1 * 1024 * 1024;
     allocateBuffer(VRAM_SEG, dev_id, desc.len, buf);
 
     desc.devId = dev_id;
     desc.addr = (uint64_t)buf;
 
-    int ret = mooncake->registerMem(desc, VRAM_SEG, md);
+    [[maybe_unused]] int ret = mooncake->registerMem(desc, VRAM_SEG, md);
 
     assert(ret == NIXL_ERR_NOT_SUPPORTED);
 
@@ -320,7 +323,7 @@ allocateAndRegister(nixlBackendEngine *mooncake,
     desc.len = len;
     desc.devId = dev_id;
 
-    int ret = mooncake->registerMem(desc, mem_type, md);
+    [[maybe_unused]] int ret = mooncake->registerMem(desc, mem_type, md);
 
     assert(ret == NIXL_SUCCESS);
 }
@@ -354,7 +357,7 @@ loadRemote(nixlBackendEngine *mooncake,
     // assert(info.metaInfo.size() > 0);
 
     // We get the data from the cetnral location and populate the backend, and receive remote_meta
-    int ret = mooncake->loadRemoteMD(info, mem_type, agent, rmd);
+    [[maybe_unused]] int ret = mooncake->loadRemoteMD(info, mem_type, agent, rmd);
     assert(NIXL_SUCCESS == ret);
 }
 
@@ -493,7 +496,7 @@ test_intra_agent_transfer(bool p_thread, nixlBackendEngine *mooncake, nixl_mem_t
     std::cout << std::endl << std::endl;
 
     std::string agent1("Agent1");
-    nixl_status_t ret1;
+    [[maybe_unused]] nixl_status_t ret1;
 
     int iter = 10;
 
@@ -576,7 +579,7 @@ test_inter_agent_transfer(bool p_thread,
                           nixlBackendEngine *mooncake2,
                           nixl_mem_t dst_mem_type,
                           int dst_dev_id) {
-    int ret;
+    [[maybe_unused]] int ret;
     int iter = 10;
 
     std::cout << std::endl << std::endl;
@@ -616,7 +619,7 @@ test_inter_agent_transfer(bool p_thread,
     int ret_gen = 0;
     notif_list_t target_notif_gen;
     while (ret_gen == 0) {
-        int ret3_gen = mooncake2->getNotifs(target_notif_gen);
+        [[maybe_unused]] int ret3_gen = mooncake2->getNotifs(target_notif_gen);
         ret_gen = target_notif_gen.size();
         assert(ret3_gen == NIXL_SUCCESS);
     }
