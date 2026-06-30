@@ -297,6 +297,15 @@ BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 BUILD_ARGS+=" --build-arg INFINIA_VARIANT=$INFINIA_VARIANT"
+# With --no-infinia the COPY pulls from the empty infinia-none stub, never the private
+# infinia-bundled image. BuildKit prunes the unreferenced bundled FROM, but not every
+# builder does (e.g. podman/buildah in some configs may still resolve it), and the
+# default points at a private registry the builder may not be able to auth to. Repoint
+# the bundled image at the (already-pulled, already-authed) base image so an infinia-free
+# build never depends on the private registry, regardless of stage-pruning behavior.
+if [ "$INFINIA_VARIANT" = "none" ]; then
+    BUILD_ARGS+=" --build-arg INFINIA_LIBS_IMAGE=$BASE_IMAGE:$BASE_IMAGE_TAG"
+fi
 
 show_build_options
 
