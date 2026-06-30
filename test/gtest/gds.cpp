@@ -106,11 +106,9 @@ runWriteThenRead(nixlAgent &agent,
                  nixlBackendH *be,
                  const nixl_xfer_dlist_t &mem,
                  const nixl_xfer_dlist_t &file) {
-    const nixl_status_t write_status =
-        runTransfer(agent, self, be, NIXL_WRITE, mem, file);
-    return (write_status == NIXL_SUCCESS)
-               ? runTransfer(agent, self, be, NIXL_READ, mem, file)
-               : write_status;
+    const nixl_status_t write_status = runTransfer(agent, self, be, NIXL_WRITE, mem, file);
+    return (write_status == NIXL_SUCCESS) ? runTransfer(agent, self, be, NIXL_READ, mem, file) :
+                                            write_status;
 }
 
 // Round-trip a DRAM buffer through a path-mode file; returns true if the bytes
@@ -305,8 +303,7 @@ TEST_P(GdsBackend, RejectsMemToMemTransfer) {
     bd.devId = 0;
     db.addDesc(bd);
 
-    if (agent.registerMem(da, &ep) == NIXL_SUCCESS &&
-        agent.registerMem(db, &ep) == NIXL_SUCCESS) {
+    if (agent.registerMem(da, &ep) == NIXL_SUCCESS && agent.registerMem(db, &ep) == NIXL_SUCCESS) {
         nixl_xfer_dlist_t ax = da.trim();
         nixl_xfer_dlist_t bx = db.trim();
         nixlXferReqH *req = nullptr;
