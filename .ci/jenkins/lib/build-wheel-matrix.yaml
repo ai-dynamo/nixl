@@ -139,12 +139,20 @@ steps:
       set -x
       export NPROC=$NPROC
       export GRPC_NPROC=$GRPC_NPROC
+      # --cuda-version matches BASE_TAG (13.0-devel-manylinux); it drives the cu13 torch
+      # index and meta-wheel split in Dockerfile.manylinux.
+      # --no-infinia: this blossom runner authenticates only to artifactory.nvidia.com and
+      # cannot pull the private INFINIA libs image, so build the wheel without the INFINIA
+      # plugin (all other plugins are unaffected). The GHA pipeline (.github/workflows/ci.yml)
+      # builds bundled INFINIA via its ECR login; this Jenkins path does not.
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_TAG}" \
+        --cuda-version 13.0 \
         --wheel-base "manylinux_${manylinux}" \
         --python-versions "${python_version}" \
         --arch ${arch} \
+        --no-infinia \
         --dockerfile contrib/Dockerfile.manylinux
 
 # =============================================================================
