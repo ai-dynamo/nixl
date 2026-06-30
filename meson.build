@@ -421,11 +421,11 @@ plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
 subdir('src')
-# Do not build tests in release builds: they carry latent -Werror debt (assert()
-# is a no-op under NDEBUG, so checked-only vars go unused and assert(0) defaults fall
-# off non-void functions) and aren't needed for the release wheel. Build them only in
-# non-release buildtypes. (Reverts the #1803 unconditional gate, matching #896.)
-if get_option('build_tests') and get_option('buildtype') != 'release'
+# Build tests whenever build_tests is set. (Previously also required a non-release
+# buildtype, but CI builds the image as --buildtype=release and test_cpp.sh runs the
+# installed test binaries, e.g. /usr/local/nixl/bin/desc_example — so release builds
+# must include them.)
+if get_option('build_tests')
   subdir('test')
 endif
 
