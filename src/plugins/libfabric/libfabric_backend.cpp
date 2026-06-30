@@ -1857,6 +1857,9 @@ nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id) {
 void
 nixlLibfabricEngine::checkPendingNotifications() {
     std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
+
+    // First, evict stale entries to prevent xfer_id wraparound collision
+    evictStalePendingNotifications();
     auto it = pending_notifications_.begin();
     while (it != pending_notifications_.end()) {
         // Check BOTH conditions: fragments complete AND writes complete
@@ -1902,6 +1905,31 @@ nixlLibfabricEngine::checkPendingNotifications() {
                        << " message_len=" << message.length();
 
             // Remove from pending list
+            it = pending_notifications_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void
+nixlLibfabricEngine::evictStalePendingNotifications() {
+    // Called with receiver_tracking_mutex_ already held.
+    // Evict entries that have been pending longer than kPendingNotificationTimeout.
+    // This prevents xfer_id wraparound (16-bit, ~65K) from colliding with stale entries
+    // that will never complete (e.g., due to lost RDMA Write CQs or missing notification
+    // fragments).
+    auto now = std::chrono::steady_clock::now();
+    auto it = pending_notifications_.begin();
+    while (it != pending_notifications_.end()) {
+        auto age = now - it->second.created_at;
+        if (age > kPendingNotificationTimeout) {
+            NIXL_WARN << "Evicting stale pending notification: xfer_id=" << it->second.notif_xfer_id
+                      << " age=" << std::chrono::duration_cast<std::chrono::seconds>(age).count()
+                      << "s, received_completions=" << it->second.received_completions << "/"
+                      << it->second.expected_completions
+                      << ", received_fragments=" << it->second.received_msg_fragments << "/"
+                      << it->second.expected_msg_fragments;
             it = pending_notifications_.erase(it);
         } else {
             ++it;
