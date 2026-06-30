@@ -42,7 +42,7 @@ getThreadCount(const nixlBackendInitParams *init_params) {
 }
 
 void
-runCuFileOp(const GdsXferReq *req, std::atomic<nixl_status_t> *overall_status) {
+runCuFileOp(const gdsXferReq *req, std::atomic<nixl_status_t> *overall_status) {
     ssize_t nbytes = 0;
     if (req->op == CUFILE_READ) {
         nbytes = cuFileRead(req->fh, req->addr, req->size, req->file_offset, 0);
@@ -100,7 +100,7 @@ nixlGdsMtEngine::nixlGdsMtEngine(const nixlBackendInitParams *init_params)
 }
 
 nixl_status_t
-nixlGdsMtEngine::finalizePrep(std::vector<GdsXferReq> &&reqs, nixlBackendReqH *&handle) const {
+nixlGdsMtEngine::finalizePrep(std::vector<gdsXferReq> &&reqs, nixlBackendReqH *&handle) const {
     if (reqs.empty()) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -108,8 +108,8 @@ nixlGdsMtEngine::finalizePrep(std::vector<GdsXferReq> &&reqs, nixlBackendReqH *&
     auto gds_handle = std::make_unique<nixlGdsMtReqH>();
     gds_handle->request_list = std::move(reqs);
 
-    for (GdsXferReq &req : gds_handle->request_list) {
-        GdsXferReq *captured_req = &req;
+    for (gdsXferReq &req : gds_handle->request_list) {
+        gdsXferReq *captured_req = &req;
         gds_handle->taskflow.emplace(
             [captured_req, overall_status = &gds_handle->overall_status]() {
                 runCuFileOp(captured_req, overall_status);

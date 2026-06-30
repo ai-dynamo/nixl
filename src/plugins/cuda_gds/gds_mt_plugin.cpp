@@ -20,12 +20,14 @@
 #include "backend/backend_plugin.h"
 #include "gds_mt_engine.h"
 
+namespace {
 nixl_b_params_t
 getGdsMtBackendOptions() {
     return {{"thread_count", std::to_string(defaultGdsMtThreadCount())}};
 }
 
 using gds_mt_plugin_t = nixlBackendPluginCreator<nixlGdsMtEngine>;
+} // namespace
 
 #ifdef STATIC_PLUGIN_GDS_MT
 nixlBackendPlugin *

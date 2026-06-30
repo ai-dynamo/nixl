@@ -18,12 +18,14 @@
 #include "backend/backend_plugin.h"
 #include "gds_batch_engine.h"
 
+namespace {
 nixl_b_params_t
 getGdsBackendOptions() {
     return {{"batch_pool_size", "16"}, {"batch_limit", "128"}, {"max_request_size", "16777216"}};
 }
 
 using gds_plugin_t = nixlBackendPluginCreator<nixlGdsBatchEngine>;
+} // namespace
 
 #ifdef STATIC_PLUGIN_GDS
 nixlBackendPlugin *

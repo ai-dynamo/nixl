@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __GDS_UTILS_H
-#define __GDS_UTILS_H
+#ifndef NIXL_SRC_PLUGINS_CUDA_GDS_GDS_UTILS_H
+#define NIXL_SRC_PLUGINS_CUDA_GDS_GDS_UTILS_H
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -79,4 +79,4 @@ public:
     operator=(gdsDriverHandle &&) = delete;
 };
 
-#endif // __GDS_UTILS_H
+#endif // NIXL_SRC_PLUGINS_CUDA_GDS_GDS_UTILS_H

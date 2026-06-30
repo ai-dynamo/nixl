@@ -100,17 +100,6 @@ runTransfer(nixlAgent &agent,
     return (release_status == NIXL_SUCCESS) ? status : release_status;
 }
 
-nixl_status_t
-runWriteThenRead(nixlAgent &agent,
-                 const std::string &self,
-                 nixlBackendH *be,
-                 const nixl_xfer_dlist_t &mem,
-                 const nixl_xfer_dlist_t &file) {
-    const nixl_status_t write_status = runTransfer(agent, self, be, NIXL_WRITE, mem, file);
-    return (write_status == NIXL_SUCCESS) ? runTransfer(agent, self, be, NIXL_READ, mem, file) :
-                                            write_status;
-}
-
 // Round-trip a DRAM buffer through a path-mode file; returns true if the bytes
 // survive write+read.
 bool
@@ -303,20 +292,26 @@ TEST_P(GdsBackend, RejectsMemToMemTransfer) {
     bd.devId = 0;
     db.addDesc(bd);
 
-    if (agent.registerMem(da, &ep) == NIXL_SUCCESS && agent.registerMem(db, &ep) == NIXL_SUCCESS) {
+    const bool da_registered = agent.registerMem(da, &ep) == NIXL_SUCCESS;
+    const bool db_registered = da_registered && agent.registerMem(db, &ep) == NIXL_SUCCESS;
+    if (da_registered && db_registered) {
         nixl_xfer_dlist_t ax = da.trim();
         nixl_xfer_dlist_t bx = db.trim();
         nixlXferReqH *req = nullptr;
         const gtest::LogIgnoreGuard validation_error(
-            "GDS: error: backend only supports I/O between memory");
+            "GDS: backend only supports I/O between memory and files");
         const gtest::LogIgnoreGuard prepare_error("createXferReq: backend '" + GetParam() +
                                                   "' failed to prepare the transfer request");
         // Neither side is FILE_SEG: GDS must not accept this.
         EXPECT_NE(agent.createXferReq(NIXL_WRITE, ax, bx, self, req, &ep), NIXL_SUCCESS);
         EXPECT_EQ(validation_error.getIgnoredCount(), 1);
         EXPECT_EQ(prepare_error.getIgnoredCount(), 1);
-        agent.deregisterMem(db, &ep);
-        agent.deregisterMem(da, &ep);
+    }
+    if (db_registered) {
+        EXPECT_EQ(agent.deregisterMem(db, &ep), NIXL_SUCCESS);
+    }
+    if (da_registered) {
+        EXPECT_EQ(agent.deregisterMem(da, &ep), NIXL_SUCCESS);
     }
     free(a);
     free(b);
@@ -366,8 +361,10 @@ TEST_P(GdsBackend, SharedFdPartialDeregisterStillTransfers) {
 
     void *buf = nullptr;
     bool transferred = false;
-    if (agent.registerMem(file_a, &ep) == NIXL_SUCCESS &&
-        agent.registerMem(file_b, &ep) == NIXL_SUCCESS &&
+    bool file_a_registered = agent.registerMem(file_a, &ep) == NIXL_SUCCESS;
+    const bool file_b_registered =
+        file_a_registered && agent.registerMem(file_b, &ep) == NIXL_SUCCESS;
+    if (file_a_registered && file_b_registered &&
         posix_memalign(&buf, sysconf(_SC_PAGESIZE), blk) == 0) {
 
         nixl_reg_dlist_t mem(DRAM_SEG);
@@ -380,16 +377,31 @@ TEST_P(GdsBackend, SharedFdPartialDeregisterStillTransfers) {
         if (agent.registerMem(mem, &ep) == NIXL_SUCCESS) {
             // Drop the first registration; the shared fd handle must stay valid
             // for the still-registered second registration.
-            ASSERT_EQ(agent.deregisterMem(file_a, &ep), NIXL_SUCCESS);
+            const nixl_status_t deregister_status = agent.deregisterMem(file_a, &ep);
+            EXPECT_EQ(deregister_status, NIXL_SUCCESS);
+            if (deregister_status == NIXL_SUCCESS) {
+                file_a_registered = false;
 
-            std::memset(buf, kPattern, blk);
-            nixl_xfer_dlist_t mx = mem.trim();
-            nixl_xfer_dlist_t fx = file_b.trim();
-            transferred = (runWriteThenRead(agent, self, be, mx, fx) == NIXL_SUCCESS);
+                std::memset(buf, kPattern, blk);
+                nixl_xfer_dlist_t mx = mem.trim();
+                nixl_xfer_dlist_t fx = file_b.trim();
+                if (runTransfer(agent, self, be, NIXL_WRITE, mx, fx) == NIXL_SUCCESS) {
+                    std::memset(buf, 0, blk);
+                    transferred = runTransfer(agent, self, be, NIXL_READ, mx, fx) == NIXL_SUCCESS &&
+                        std::all_of(static_cast<unsigned char *>(buf),
+                                    static_cast<unsigned char *>(buf) + blk,
+                                    [](unsigned char byte) { return byte == kPattern; });
+                }
+            }
 
-            agent.deregisterMem(mem, &ep);
+            EXPECT_EQ(agent.deregisterMem(mem, &ep), NIXL_SUCCESS);
         }
-        agent.deregisterMem(file_b, &ep);
+    }
+    if (file_b_registered) {
+        EXPECT_EQ(agent.deregisterMem(file_b, &ep), NIXL_SUCCESS);
+    }
+    if (file_a_registered) {
+        EXPECT_EQ(agent.deregisterMem(file_a, &ep), NIXL_SUCCESS);
     }
     if (buf != nullptr) {
         free(buf);
