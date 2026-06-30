@@ -61,10 +61,12 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_xfer_op_t backend_op,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
+                           const uint64_t remote_generation,
                            const size_t desc_count)
     : initiatorDescs(local_type),
       targetDescs(remote_type),
       remoteAgent(remote_agent),
+      remoteGeneration_(remote_generation),
       backendOp(backend_op) {
     initiatorDescs.reserve(desc_count);
     targetDescs.reserve(desc_count);
@@ -775,7 +777,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // The remote was invalidated in between prepXferDlist and this call
-    if (data->remoteSections_.count(remote_side->remoteAgent) == 0) {
+    const auto rem_sec_it = data->remoteSections_.find(remote_side->remoteAgent);
+    if (rem_sec_it == data->remoteSections_.end()) {
         NIXL_ERROR_FUNC << "remote agent '" << remote_side->remoteAgent
                         << "' was invalidated in between prepXferDlist and this call";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
@@ -791,6 +794,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
+                                                 rem_sec_it->second.getGeneration(),
                                                  desc_count);
 
     size_t total_bytes = 0;
@@ -958,6 +962,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
+                                                 rem_sec_it->second.getGeneration(),
                                                  local_descs.descCount());
 
     // Currently we loop through and find first local match. Can use a
@@ -1095,7 +1100,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         req_hndl->telemetry.startTime = std::chrono::steady_clock::now();
     }
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
+    std::shared_lock<nixlLock> read_lock(data->lock);
     // Check if the remote was invalidated before post/repost
     if (data->remoteSections_.count(req_hndl->remoteAgent) == 0) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
@@ -1114,7 +1119,9 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         }
 
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
-            data->invalidateRemoteData(req_hndl->remoteAgent);
+            read_lock.unlock();
+            NIXL_LOCK_GUARD(data->lock);
+            data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
             return NIXL_ERR_REMOTE_DISCONNECT;
@@ -1162,9 +1169,11 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     if (req_hndl->status < 0) {
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
+            read_lock.unlock();
+            NIXL_LOCK_GUARD(data->lock);
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
-            data->invalidateRemoteData(req_hndl->remoteAgent);
+            data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
             return NIXL_ERR_REMOTE_DISCONNECT;
         } else {
             NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
@@ -1191,7 +1200,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 nixl_status_t
 nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
+    std::shared_lock<nixlLock> read_lock(data->lock);
     // If the status is done, no need to recheck and no state changes.
     // Same for users incorrectly recalling this method in error/done.
     if (req_hndl->status == NIXL_IN_PROG) {
@@ -1205,7 +1214,9 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
         if (req_hndl->status < 0) {
             if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
-                data->invalidateRemoteData(req_hndl->remoteAgent);
+                read_lock.unlock();
+                NIXL_LOCK_GUARD(data->lock);
+                data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
                 return NIXL_ERR_REMOTE_DISCONNECT;
             } else {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
