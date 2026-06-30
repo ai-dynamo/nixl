@@ -19,9 +19,11 @@
 
 #include "mem_section.h"
 #include "telemetry.h"
+#include "tracing/trace.h"
 #include "stream/metadata_stream.h"
 #include "sync.h"
 
+#include <atomic>
 #include <memory>
 
 #if HAVE_ETCD
@@ -68,8 +70,7 @@ class nixlAgentData {
         const bool useEtcd_;
         const bool needsCommThread_;
         nixlLock        lock;
-        bool telemetryEnabled = false;
-        bool efaWarningChecked = false;
+        std::atomic<bool> efaWarningChecked = false;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
@@ -101,6 +102,9 @@ class nixlAgentData {
         backend_map_t backendEngines_;
         std::unordered_map<std::string, nixlRemoteSection> remoteSections_;
         std::unique_ptr<nixlTelemetry> telemetry_;
+        // Composite tracer (fans out to every enabled backend); null when no
+        // backend is active.
+        const std::unique_ptr<nixl::trace::Tracer> tracer_;
         nixlLocalSection localSection_;
 
         void

@@ -50,7 +50,23 @@ struct periodicTask {
 
 class nixlTelemetry {
 public:
-    explicit nixlTelemetry(const std::string &agent_name);
+    /**
+     * @brief Creates a telemetry instance that records transfer events.
+     *
+     * Only called when telemetry is explicitly requested (NIXL_TELEMETRY_ENABLE
+     * or the agent's captureTelemetry config), so it always returns a non-null
+     * instance. With an output sink configured it exports events there; without
+     * one it falls back to the collect-only NOP sink, which still records events
+     * in process (so getXferTelemetry() returns data) but writes nothing.
+     * @param agent_name Non-empty agent name.
+     * @return A non-null telemetry instance.
+     * @throws std::invalid_argument / std::runtime_error on genuine
+     *         configuration or plugin-load errors.
+     */
+    [[nodiscard]] static std::unique_ptr<nixlTelemetry>
+    create(const std::string &agent_name);
+
+    nixlTelemetry(const std::string &agent_name, const std::string &exporter_name);
 
     ~nixlTelemetry();
 
@@ -68,28 +84,50 @@ public:
     updateMemoryRegistered(uint64_t memory_registered);
     void
     updateMemoryDeregistered(uint64_t memory_deregistered);
+    /**
+     * @brief Records one completed transfer's stats as a single telemetry batch.
+     *
+     * Appends the four per-transfer events (transfer time, bytes, request count,
+     * post time) under one lock. The batch is all-or-none: if the buffer cannot
+     * hold all four, none are recorded.
+     * @param xfer_time Start-to-complete transfer duration.
+     * @param is_write True for TX events (agent_tx_*), false for RX (agent_rx_*).
+     * @param bytes Bytes transferred by the request.
+     * @param post_time Start-to-post (backend submit) duration.
+     */
     void
-    addXferTime(std::chrono::microseconds transaction_time, bool is_write, uint64_t bytes);
-    void
-    addPostTime(std::chrono::microseconds post_time);
+    addXferStats(std::chrono::microseconds xfer_time,
+                 bool is_write,
+                 uint64_t bytes,
+                 std::chrono::microseconds post_time);
 
 private:
+    // Load the named telemetry plugin and create its exporter. Throws on a
+    // genuine plugin-load / exporter-creation failure. Used to initialize the
+    // const exporter_ from the member-initializer list, so a constructed
+    // nixlTelemetry always has a valid exporter (create() decides up front
+    // whether telemetry should exist at all).
+    [[nodiscard]] std::unique_ptr<nixlTelemetryExporter>
+    makeExporter(const std::string &exporter_name) const;
     void
-    initializeTelemetry();
+    startExportTask();
     void
     registerPeriodicTask(periodicTask &task);
     void
     updateData(nixl_telemetry_event_type_t event_type, uint64_t value);
     bool
-    writeEventHelper();
-    std::unique_ptr<nixlTelemetryExporter> exporter_;
+    flushPendingEvents();
+
+    // Declared in initialization order: agentName_ and maxBufferedEvents_ are
+    // consumed by makeExporter() when constructing exporter_.
+    const std::string agentName_;
+    const size_t maxBufferedEvents_;
+    const std::unique_ptr<nixlTelemetryExporter> exporter_;
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
     std::vector<nixlTelemetryEvent> events_;
-    size_t maxBufferedEvents_;
     std::mutex mutex_;
     asio::thread_pool pool_;
     periodicTask writeTask_;
-    std::string agentName_;
 };
 
 #endif

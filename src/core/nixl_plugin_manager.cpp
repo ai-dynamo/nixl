@@ -32,6 +32,7 @@ using lock_guard = const std::lock_guard<std::mutex>;
 
 const std::string backendPluginPrefix = "libplugin_";
 const std::string telemetryPluginPrefix = "libtelemetry_exporter_";
+const std::string tracePluginPrefix = "libtrace_backend_";
 const std::string kPluginSuffix = ".so";
 
 // pluginHandle implementation
@@ -195,6 +196,79 @@ telemetryLoader(void *handle, const std::string &plugin_path) {
     }
 
     return std::make_shared<const nixlTelemetryPluginHandle>(handle, plugin);
+}
+} // namespace
+
+nixlTracePluginHandle::nixlTracePluginHandle(void *handle, nixlTracePlugin *plugin)
+    : nixlPluginHandle(handle),
+      plugin_(plugin) {}
+
+nixlTracePluginHandle::~nixlTracePluginHandle() {
+    if (handle_) {
+        typedef void (*fini_func_t)();
+        fini_func_t fini = (fini_func_t)dlsym(handle_, "nixl_trace_plugin_fini");
+        if (fini) {
+            fini();
+        }
+        dlclose(handle_);
+        handle_ = nullptr;
+        plugin_ = nullptr;
+    }
+}
+
+std::unique_ptr<nixl::trace::TraceBackend>
+nixlTracePluginHandle::createBackend(const nixlTraceBackendInitParams &init_params) const {
+    if (plugin_ && plugin_->create_backend) {
+        return plugin_->create_backend(init_params);
+    }
+    return nullptr;
+}
+
+const char *
+nixlTracePluginHandle::getName() const {
+    if (plugin_) {
+        return plugin_->getName().c_str();
+    }
+    return "unknown";
+}
+
+const char *
+nixlTracePluginHandle::getVersion() const {
+    if (plugin_) {
+        return plugin_->getVersion().c_str();
+    }
+    return "unknown";
+}
+
+namespace {
+// Trace plugin loader
+std::shared_ptr<const nixlPluginHandle>
+traceLoader(void *handle, const std::string &plugin_path) {
+    typedef nixlTracePlugin *(*init_func_t)();
+    init_func_t init = (init_func_t)dlsym(handle, "nixl_trace_plugin_init");
+    if (!init) {
+        NIXL_ERROR << "Failed to find nixl_trace_plugin_init in " << plugin_path << ": "
+                   << dlerror();
+        dlclose(handle);
+        return nullptr;
+    }
+
+    nixlTracePlugin *plugin = init();
+    if (!plugin) {
+        NIXL_ERROR << "Plugin initialization failed for " << plugin_path;
+        dlclose(handle);
+        return nullptr;
+    }
+
+    if (plugin->api_version != nixl_trace_plugin_api_version::V1) {
+        NIXL_ERROR << "Plugin API version mismatch for " << plugin_path << ": expected "
+                   << static_cast<unsigned int>(nixl_trace_plugin_api_version::V1) << ", got "
+                   << static_cast<unsigned int>(plugin->api_version);
+        dlclose(handle);
+        return nullptr;
+    }
+
+    return std::make_shared<const nixlTracePluginHandle>(handle, plugin);
 }
 } // namespace
 
@@ -454,6 +528,36 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
     return nullptr;
 }
 
+std::shared_ptr<const nixlTracePluginHandle>
+nixlPluginManager::loadTracePlugin(const std::string &plugin_name) {
+    lock_guard lg(lock);
+
+    // Check if the plugin is already loaded
+    auto it = loaded_trace_plugins_.find(plugin_name);
+    if (it != loaded_trace_plugins_.end()) {
+        return it->second;
+    }
+
+    // Try to load the plugin from all registered directories
+    for (const auto &dir : plugin_dirs_) {
+        std::string plugin_path = composePluginPath(dir, tracePluginPrefix, plugin_name);
+        if (plugin_path.empty() || !std::filesystem::exists(plugin_path)) {
+            continue;
+        }
+
+        auto plugin_handle = loadPluginFromPath(plugin_path, traceLoader);
+        if (plugin_handle) {
+            auto trace_plugin =
+                std::dynamic_pointer_cast<const nixlTracePluginHandle>(plugin_handle);
+            loaded_trace_plugins_[plugin_name] = trace_plugin;
+            return trace_plugin;
+        }
+    }
+
+    NIXL_INFO << "Failed to load trace plugin '" << plugin_name << "' from any directory";
+    return nullptr;
+}
+
 namespace {
 static bool
 startsWith(const std::string &str, const std::string &prefix) {
@@ -493,6 +597,14 @@ nixlPluginManager::discoverTelemetryPlugin(const std::string &filename) {
 }
 
 void
+nixlPluginManager::discoverTracePlugin(const std::string &filename) {
+    if (startsWith(filename, tracePluginPrefix) && endsWith(filename, kPluginSuffix)) {
+        std::string plugin_name = extractPluginName(filename, tracePluginPrefix);
+        NIXL_INFO << "Discovered trace plugin: " << plugin_name;
+    }
+}
+
+void
 nixlPluginManager::discoverPluginsFromDir(const std::filesystem::path &dirpath) {
     std::error_code ec;
     std::filesystem::directory_iterator dir_iter(dirpath, ec);
@@ -505,6 +617,7 @@ nixlPluginManager::discoverPluginsFromDir(const std::filesystem::path &dirpath) 
         std::string filename = entry.path().filename().string();
         discoverBackendPlugin(filename);
         discoverTelemetryPlugin(filename);
+        discoverTracePlugin(filename);
     }
 }
 
@@ -712,4 +825,5 @@ void nixlPluginManager::registerBuiltinPlugins() {
 #endif
 
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, BUFFER)
+    NIXL_REGISTER_STATIC_PLUGIN(Telemetry, NOP)
 }

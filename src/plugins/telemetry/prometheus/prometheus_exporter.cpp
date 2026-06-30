@@ -126,8 +126,10 @@ nixlTelemetryPrometheusExporter::initializeMetrics() {
     registerCounter("agent_xfer_time", "Start to Complete (per request)");
     registerCounter("agent_xfer_post_time", "Start to posting to Back-End (per request)");
 
-    registerGauge("agent_memory_registered", "Memory registered");
-    registerGauge("agent_memory_deregistered", "Memory deregistered");
+    registerGauge("agent_tx_bytes", "agent_tx_last_bytes", "Bytes sent by the last request");
+    registerGauge("agent_rx_bytes", "agent_rx_last_bytes", "Bytes received by the last request");
+    registerGauge("agent_memory_registered", "agent_memory_registered", "Memory registered");
+    registerGauge("agent_memory_deregistered", "agent_memory_deregistered", "Memory deregistered");
 }
 
 void
@@ -142,10 +144,12 @@ nixlTelemetryPrometheusExporter::registerCounter(const std::string &name, const 
 }
 
 void
-nixlTelemetryPrometheusExporter::registerGauge(const std::string &name, const std::string &help) {
-    auto &family = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
+nixlTelemetryPrometheusExporter::registerGauge(const std::string &event_name,
+                                               const std::string &metric_name,
+                                               const std::string &help) {
+    auto &family = prometheus::BuildGauge().Name(metric_name).Help(help).Register(*registry_);
     auto &metric = family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}});
-    const auto inserted = gauges_.try_emplace(name, &family, &metric).second;
+    const auto inserted = gauges_.try_emplace(event_name, &family, &metric).second;
     if (!inserted) {
         family.Remove(&metric);
     }

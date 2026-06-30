@@ -22,9 +22,9 @@
 ---
 job: nixl-ci-non-gpu
 
-registry_host: harbor.mellanox.com
-registry_auth: nixl_harbor_credentials
-registry_path: /nixl/base
+registry_host: artifactory.nvidia.com
+registry_auth: svc-nixl-new-artifactory-token
+registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 # Fail job if one of the steps fails or continue
 failFast: false
@@ -34,6 +34,7 @@ timeout_minutes: 240
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
+  imagePullSecrets: "['artifactory-pull-secret']"
   limits: "{memory: 16Gi, cpu: 16000m}"
   requests: "{memory: 8Gi, cpu: 8000m}"
 
@@ -43,7 +44,7 @@ env:
   TEST_TIMEOUT: 30
   UCX_TLS: "^shm"
   STORAGE_DRIVER: 'overlay'
-  CI_IMAGE_TAG: "20260604-1"
+  CI_IMAGE_TAG: "20260625-1"
 
 runs_on_dockers:
   - {

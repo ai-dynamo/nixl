@@ -27,6 +27,7 @@
 #include "posix_backend.h"
 #include <absl/log/log.h>
 #include <absl/strings/str_format.h>
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include "file/file_utils.h"
@@ -79,58 +80,19 @@ castPosixHandle(nixlBackendReqH *handle) {
 
 static std::string_view
 getIoQueueType(const nixl_b_params_t *custom_params) {
-    // Check for explicit backend request
-    if (custom_params) {
-        // First check if AIO is explicitly requested
-        if (custom_params->count("use_aio") > 0) {
-            const auto &value = custom_params->at("use_aio");
-            if (value == "true" || value == "1") {
-                return "AIO";
-            }
-        }
+    if (nixl::getBackendParamDefaulted(custom_params, "use_aio", false)) {
+        return "AIO";
+    }
 
-        // Then check if io_uring is explicitly requested
-        if (custom_params->count("use_uring") > 0) {
-            const auto &value = custom_params->at("use_uring");
-            if (value == "true" || value == "1") {
-                return "URING";
-            }
-        }
-        // Then check if linux_aio is explicitly requested
-        if (custom_params->count("use_posix_aio") > 0) {
-            const auto &value = custom_params->at("use_posix_aio");
-            if (value == "true" || value == "1") {
-                return "POSIXAIO";
-            }
-        }
+    if (nixl::getBackendParamDefaulted(custom_params, "use_uring", false)) {
+        return "URING";
+    }
+
+    if (nixl::getBackendParamDefaulted(custom_params, "use_posix_aio", false)) {
+        return "POSIXAIO";
     }
 
     return nixlPosixIOQueue::getDefaultIoQueueType();
-}
-
-static uint32_t
-getIOSPoolSize(const nixl_b_params_t *custom_params) {
-    uint32_t ios_pool_size = 0;
-    if (custom_params) {
-        if (custom_params->count("ios_pool_size") > 0) {
-            const auto &value = custom_params->at("ios_pool_size");
-            ios_pool_size = std::stoi(value);
-        }
-    }
-    return ios_pool_size;
-}
-
-static uint32_t
-getKernelQueueSize(const nixl_b_params_t *custom_params) {
-    int kernel_queue_size = 0;
-    if (custom_params) {
-        if (custom_params->count("kernel_queue_size") > 0) {
-            const auto &value = custom_params->at("kernel_queue_size");
-            kernel_queue_size = std::stoi(value);
-        }
-    }
-
-    return kernel_queue_size;
 }
 
 // Log completion percentage at regular intervals (every log_percent_step percent)
@@ -242,9 +204,10 @@ nixlPosixBackendReqH::postXfer() {
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       io_queue_type_(getIoQueueType(init_params->customParams)),
-      io_queue_(nixlPosixIOQueue::instantiate(io_queue_type_,
-                                              getIOSPoolSize(init_params->customParams),
-                                              getKernelQueueSize(init_params->customParams))),
+      io_queue_(nixlPosixIOQueue::instantiate(
+          io_queue_type_,
+          nixl::getBackendParamDefaulted(init_params->customParams, "ios_pool_size", 0u),
+          nixl::getBackendParamDefaulted(init_params->customParams, "kernel_queue_size", 0u))),
       io_queue_lock_(init_params->syncMode) {
     if (io_queue_type_.empty()) {
         initErr = true;
@@ -269,13 +232,20 @@ nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
     if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) != supported_mems.end()) {
         out = nullptr;
         if (nixl_mem == FILE_SEG) {
+            auto resv = path_mode_devids_.reserve(mem.devId, mem.metaInfo);
+            if (!resv.ok()) {
+                NIXL_ERROR << "POSIX path-mode requires a unique devId per file (devId="
+                           << mem.devId << " already registered)";
+                return NIXL_ERR_INVALID_PARAM;
+            }
             try {
-                out = new nixlPosixFileMD(nixl::FileFd(mem.devId, mem.metaInfo));
+                out = new nixlPosixFileMD(mem.devId, mem.metaInfo);
             }
             catch (const std::system_error &e) {
                 NIXL_ERROR << "POSIX path-mode open failed: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
+            resv.commit();
         }
         return NIXL_SUCCESS;
     }
@@ -285,6 +255,14 @@ nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
 
 nixl_status_t
 nixlPosixEngine::deregisterMem(nixlBackendMD *meta) {
+    // non-null meta is always a file MD. Release the path-mode reservation (path() empty in
+    // fd-mode)
+    if (meta) {
+        auto *file_md = static_cast<nixlPosixFileMD *>(meta);
+        if (!file_md->file_fd.path().empty()) {
+            path_mode_devids_.release(file_md->devId);
+        }
+    }
     delete meta;
     return NIXL_SUCCESS;
 }
