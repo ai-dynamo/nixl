@@ -22,7 +22,7 @@
 # Set initial port number for client/server applications to be updated with
 # function below
 #
-tcp_port_range=1000
+tcp_port_range=300
 min_port_number=10500
 max_port_number=32500
 
