@@ -14,23 +14,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#ifndef NIXL_SRC_PLUGINS_TRACING_NVTX_NVTX_PAYLOAD_SCHEMAS_H
+#define NIXL_SRC_PLUGINS_TRACING_NVTX_NVTX_PAYLOAD_SCHEMAS_H
 
-#include "nvtx_backend.h"
+#include <cstdint>
 
-#include "common/nixl_log.h"
-#include "nvtx_trace_backend.h"
+#include <nvtx3/nvToolsExt.h>
 
-namespace nixl::trace {
+namespace nixl::trace::nvtx_internal {
 
-std::unique_ptr<TraceBackend>
-createNvtxBackend(const nixlTraceBackendInitParams &init_params) {
-    try {
-        return std::make_unique<nvtx_internal::NvtxTraceBackend>(init_params.agentName);
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to create NVTX trace backend: " << e.what();
-        return nullptr;
-    }
-}
+/** @brief Domain-registered schema IDs for typed span attribute payloads. */
+struct PayloadSchemaIds {
+    std::uint64_t int64_attr{};
+    std::uint64_t double_attr{};
+    std::uint64_t str_attr{};
+};
 
-} // namespace nixl::trace
+/** @brief Register the static attribute payload schemas on @p domain. */
+[[nodiscard]] PayloadSchemaIds
+registerPayloadSchemas(nvtxDomainHandle_t domain);
+
+} // namespace nixl::trace::nvtx_internal
+
+#endif // NIXL_SRC_PLUGINS_TRACING_NVTX_NVTX_PAYLOAD_SCHEMAS_H

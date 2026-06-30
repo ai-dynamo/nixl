@@ -770,6 +770,22 @@ TEST_P(TestTransferTracing, NvtxNotifications) {
                        /*num_threads=*/1);
 }
 
+// Exercises loadRemoteMD via direct metadata blob exchange (exchangeMD path).
+TEST_P(TestTransferTracing, NvtxMetadataExchange) {
+    constexpr size_t size = 4096;
+    constexpr size_t count = 1;
+
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
+    createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
+
+    exchangeMD(0, 1);
+
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
+    deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+}
+
 // Single clean pass through every traced agent op in lifecycle order, so the
 // nsys capture is an easy-to-narrate demo timeline (see the demo plan in
 // docs/proposals/shared-tracing-api-plan.md). makeConnection is invoked

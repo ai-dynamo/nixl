@@ -1542,6 +1542,9 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
                          std::string &agent_name) {
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::loadRemoteMD", nixl::trace::Kind::Metadata);
+
     nixlSerDes sd;
     nixl_blob_t conn_info;
     nixl_backend_t nixl_backend;
@@ -1567,6 +1570,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     }
 
     NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
+    NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{remote_agent});
 
     size_t conn_cnt;
     ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
@@ -1715,6 +1719,10 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlAgent::fetchRemoteMD (const std::string remote_name,
                           const nixl_opt_args_t* extra_params) {
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::fetchRemoteMD", nixl::trace::Kind::Metadata);
+    NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{remote_name});
+
     // If IP is provided, use socket-based communication
     if (extra_params && !extra_params->ipAddr.empty()) {
         data->enqueueCommWork(std::make_tuple(SOCK_FETCH, extra_params->ipAddr, extra_params->port, ""));
@@ -1810,6 +1818,11 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
                        const nixl_opt_args_t *extra_params) const {
     const auto desc_count = static_cast<size_t>(dlist.descCount());
     const auto mem_type = dlist.getType();
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::prepMemView", nixl::trace::Kind::MemoryR);
+    NIXL_TRACE_ATTR(trace_span, "mem_type", static_cast<std::int64_t>(mem_type));
+    NIXL_TRACE_ATTR(trace_span, "desc_count", static_cast<std::int64_t>(desc_count));
+
     nixl_remote_meta_dlist_t remote_meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
 
@@ -1879,6 +1892,11 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
                        nixlMemViewH &mvh,
                        const nixl_opt_args_t *extra_params) const {
     const auto mem_type = dlist.getType();
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::prepMemView", nixl::trace::Kind::MemoryR);
+    NIXL_TRACE_ATTR(trace_span, "mem_type", static_cast<std::int64_t>(mem_type));
+    NIXL_TRACE_ATTR(trace_span, "desc_count", static_cast<std::int64_t>(dlist.descCount()));
+
     nixl_meta_dlist_t meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
 
@@ -1914,6 +1932,9 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
 
 void
 nixlAgent::releaseMemView(nixlMemViewH mvh) const {
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::releaseMemView", nixl::trace::Kind::Generic);
+
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
     const auto it = data->mvhToEngine.find(mvh);
