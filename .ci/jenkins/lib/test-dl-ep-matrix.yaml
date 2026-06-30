@@ -1,23 +1,29 @@
 ---
 #
-# DLCluster GPU Test Matrix Configuration for dlcluster.nvidia.com
+# DLCluster GPU EP Test Matrix Configuration for dlcluster.nvidia.com
+#
+# Runs the nixl_ep elastic tests on the DL cluster. This job is split out from
+# nixl-ci-dl-gpu so the EP-specific image build (BUILD_NIXL_EP=true) and EP
+# Slurm reservation do not affect the existing DL test flow.
 #
 # Key Components:
 # - Job Configuration: Defines timeout, failure behavior, and server resources
-# - Docker Images: Specifies the container images used for different build stages
-# - Matrix Axes: Defines build variations for dlcluster testing (multi-node, multi-GPU)
-# - Run Steps: Sequential steps for running dlcluster GPU tests
+# - Docker Images: Dedicated EP base + build_helper (nixl-ci-dl-gpu-ep-base-... and
+#                  build_helper_dl_ep)
+# - Matrix Axes: aarch64, UCX master + v1.21.x
+# - Run Steps: build PR image with BUILD_NIXL_EP=true, allocate Slurm, run
+#              .gitlab/test_ep.sh (elastic.py NVLink + RDMA on 4 GPUs)
 #
 # When Modified:
 # - Adding/removing Docker images: Affects available test environments
-# - Modifying matrix axes: Changes test variations (e.g., adding architectures)
+# - Modifying matrix axes: Changes test variations
 # - Adjusting resource limits: Impacts test performance and resource allocation
 # - Adding/removing steps: Changes the test pipeline sequence
 #
 # Note: Changes to this file are tested as part of the PR CI flow no need to test them manually.
 
 
-job: nixl-ci-dl-gpu
+job: nixl-ci-dl-gpu-ep
 
 # Fail job if one of the steps fails or continue
 failFast: false
@@ -44,10 +50,10 @@ env:
   NIXL_INSTALL_DIR: /opt/nixl
   NIXL_BUILD_DIR: nixl_build
   SLURM_NODES: 1
-  SLURM_PARTITION: gb200nvl72_ci
+  SLURM_PARTITION: gb200nvl72_cx8
   SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
-  SLURM_ACCOUNT: 'oberon-gb-ci'
+  SLURM_ACCOUNT: 'blackwell'
   SLURM_JOB_TIMEOUT: '01:30:00'
   SLURM_IMMEDIATE_TIMEOUT: 3600
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
@@ -62,11 +68,13 @@ empty_volumes:
 pvc_volumes:
   - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
-# Docker images for DL testing
+# Docker images for DL EP testing.
+# Dedicated EP base + build_helper images (separate artifactory paths from the
+# nixl-ci-dl-gpu job).
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
-     name: 'nixl-ci-dl-gpu-base-25.10-cuda13.0-ubuntu24.04',
+     name: 'nixl-ci-dl-gpu-ep-base-25.10-cuda13.0-ubuntu24.04',
      tag: "${CI_IMAGE_TAG}",
      arch: "aarch64",
      build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
@@ -74,7 +82,7 @@ runs_on_dockers:
 
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
-     name: 'build_helper_dl',
+     name: 'build_helper_dl_ep',
      arch: "aarch64",
      tag: "${CI_IMAGE_TAG}",
      build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04 --build-arg ARCH=${arch}'
@@ -91,13 +99,13 @@ matrix:
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
 steps:
-  - name: Compiling NIXL Docker Image for DL
-    containerSelector: "{name: 'build_helper_dl'}"
+  - name: Compiling NIXL EP Docker Image for DL
+    containerSelector: "{name: 'build_helper_dl_ep'}"
     credentialsId: "svc-nixl-new-artifactory-token"
     parallel: false
     run: |
       set -x
-      export PR_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}
+      export PR_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-ci-dl-gpu-ep-test-${ucx_version}:${BUILD_NUMBER}
       rm -rf /etc/containers/storage.conf && rm -f /usr/share/containers/storage.conf
       podman build --network host --creds ${REPO_USER}:${REPO_PASS} \
       --build-arg UCX_VERSION=${ucx_version} \
@@ -105,13 +113,14 @@ steps:
       --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} \
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
-      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-base-25.10-cuda13.0-ubuntu24.04:${CI_IMAGE_TAG} \
+      --build-arg BUILD_NIXL_EP=true \
+      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-ep-base-25.10-cuda13.0-ubuntu24.04:${CI_IMAGE_TAG} \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       podman push --creds ${REPO_USER}:${REPO_PASS} ${PR_IMAGE}
 
-  - name: Allocate DL Environment
-    containerSelector: "{name: 'build_helper_dl'}"
+  - name: Allocate DL EP Environment
+    containerSelector: "{name: 'build_helper_dl_ep'}"
     parallel: false
     shell: action
     module: slurmCI
@@ -123,85 +132,31 @@ steps:
       nodes: "${SLURM_NODES}"
       jobTimeout: "${SLURM_JOB_TIMEOUT}"
       immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
-      jobName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      jobName: "nixl-ci-ep-${ucx_version}-${BUILD_NUMBER}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_ep_${ucx_version}_${BUILD_NUMBER}.txt"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       extraArgs: [
         "--account=${SLURM_ACCOUNT}"
       ]
 
-  - name: Run DL Python tests
-    containerSelector: "{name: 'build_helper_dl'}"
+  - name: Run DL EP elastic tests
+    containerSelector: "{name: 'build_helper_dl_ep'}"
     timeout: "${TEST_TIMEOUT}"
     parallel: false
     shell: action
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_python.sh ${NIXL_INSTALL_DIR}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_ep_${ucx_version}_${BUILD_NUMBER}.txt"
+      testScript: ".gitlab/test_ep.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-ep-test-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
-
-  - name: Run DL Rust tests
-    containerSelector: "{name: 'build_helper_dl'}"
-    timeout: "${TEST_TIMEOUT}"
-    parallel: false
-    shell: action
-    module: slurmCI
-    run: run
-    args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_rust.sh ${NIXL_INSTALL_DIR}"
-      headNode: "${SLURM_HEAD_NODE}"
-      headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
-      credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
-
-  - name: Run DL CPP tests
-    containerSelector: "{name: 'build_helper_dl'}"
-    timeout: "${TEST_TIMEOUT}"
-    parallel: false
-    shell: action
-    module: slurmCI
-    run: run
-    args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}"
-      headNode: "${SLURM_HEAD_NODE}"
-      headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
-      credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
-      slurmEnv: [
-        'UCX_IB_REG_METHODS=rcache'
-      ]
-
-  - name: Run DL Nixlbench tests
-    containerSelector: "{name: 'build_helper_dl'}"
-    timeout: "${TEST_TIMEOUT}"
-    parallel: false
-    shell: action
-    module: slurmCI
-    run: run
-    args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}"
-      headNode: "${SLURM_HEAD_NODE}"
-      headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test-${ucx_version}:${BUILD_NUMBER}"
-      credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
-      slurmEnv: [
-        'HAS_GPU=false'
-      ]
+      containerName: "nixl-ci-ep-${ucx_version}-${BUILD_NUMBER}"
 
 pipeline_stop:
-  containerSelector: "{name: 'build_helper_dl'}"
+  containerSelector: "{name: 'build_helper_dl_ep'}"
   parallel: false
   shell: action
   module: slurmCI
