@@ -28,28 +28,28 @@
 
 namespace {
 
-struct FileSegData {
+struct fileSegData {
     std::shared_ptr<gdsFileHandle> handle;
     uint64_t dev_id;
 
-    FileSegData(std::shared_ptr<gdsFileHandle> h, uint64_t id) : handle(std::move(h)), dev_id(id) {}
+    fileSegData(std::shared_ptr<gdsFileHandle> h, uint64_t id) : handle(std::move(h)), dev_id(id) {}
 };
 
-struct MemSegData {
+struct memSegData {
     gdsMemBuf buf;
 
-    MemSegData(void *addr, size_t size, int flags) : buf(addr, size, flags) {}
+    memSegData(void *addr, size_t size, int flags) : buf(addr, size, flags) {}
 };
 
 class nixlGdsMetadata : public nixlBackendMD {
 public:
     nixlGdsMetadata(std::shared_ptr<gdsFileHandle> file_handle, uint64_t dev_id)
         : nixlBackendMD(true),
-          data_(std::in_place_type<FileSegData>, std::move(file_handle), dev_id) {}
+          data_(std::in_place_type<fileSegData>, std::move(file_handle), dev_id) {}
 
     explicit nixlGdsMetadata(void *addr, size_t size, int flags)
         : nixlBackendMD(true),
-          data_(std::in_place_type<MemSegData>, addr, size, flags) {}
+          data_(std::in_place_type<memSegData>, addr, size, flags) {}
 
     ~nixlGdsMetadata() override = default;
 
@@ -57,7 +57,7 @@ public:
     nixlGdsMetadata &
     operator=(const nixlGdsMetadata &) = delete;
 
-    std::variant<FileSegData, MemSegData> data_;
+    std::variant<fileSegData, memSegData> data_;
 };
 
 } // namespace
@@ -149,7 +149,7 @@ nixl_status_t
 nixlGdsEngine::deregisterMem(nixlBackendMD *meta) {
     std::unique_ptr<nixlGdsMetadata> md((nixlGdsMetadata *)meta);
 
-    if (auto *file_data = std::get_if<FileSegData>(&md->data_)) {
+    if (auto *file_data = std::get_if<fileSegData>(&md->data_)) {
         if (file_data->handle) {
             const int key = file_data->handle->file_fd.fd();
             const bool path_mode = !file_data->handle->file_fd.path().empty();
@@ -185,15 +185,13 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    if ((remote.getType() != FILE_SEG) && (local.getType() != FILE_SEG)) {
-        NIXL_ERROR << "GDS: error: backend only supports I/O between memory (DRAM/VRAM_SEG) and "
-                      "files (FILE_SEG)";
+    const bool is_local_file = (local.getType() == FILE_SEG);
+    if (is_local_file == (remote.getType() == FILE_SEG)) {
+        NIXL_ERROR << "GDS: backend only supports I/O between memory and files";
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const bool is_local_file = (local.getType() == FILE_SEG);
-
-    std::vector<GdsXferReq> reqs;
+    std::vector<gdsXferReq> reqs;
     reqs.reserve(buf_cnt);
     for (size_t i = 0; i < buf_cnt; i++) {
         const nixlMetaDesc &mem_desc = is_local_file ? remote[i] : local[i];
@@ -209,13 +207,13 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
             NIXL_ERROR << "GDS: missing FILE_SEG metadata at xfer time";
             return NIXL_ERR_NOT_FOUND;
         }
-        const auto *file_data = std::get_if<FileSegData>(&md->data_);
+        const auto *file_data = std::get_if<fileSegData>(&md->data_);
         if (!file_data || !file_data->handle) {
             NIXL_ERROR << "GDS: file metadata is not a FILE_SEG variant";
             return NIXL_ERR_NOT_FOUND;
         }
 
-        reqs.push_back(GdsXferReq{base_addr,
+        reqs.push_back(gdsXferReq{base_addr,
                                   mem_desc.len,
                                   (size_t)file_desc.addr,
                                   file_data->handle->cu_fhandle,

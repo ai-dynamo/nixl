@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __GDS_MT_ENGINE_H
-#define __GDS_MT_ENGINE_H
+#ifndef NIXL_SRC_PLUGINS_CUDA_GDS_GDS_MT_ENGINE_H
+#define NIXL_SRC_PLUGINS_CUDA_GDS_GDS_MT_ENGINE_H
 
 #include <atomic>
 #include <future>
@@ -33,7 +33,7 @@ class nixlGdsMtReqH : public nixlBackendReqH {
 public:
     ~nixlGdsMtReqH() override;
 
-    std::vector<GdsXferReq> request_list;
+    std::vector<gdsXferReq> request_list;
     tf::Taskflow taskflow;
     std::future<void> running_transfer;
     std::atomic<nixl_status_t> overall_status{NIXL_SUCCESS};
@@ -44,7 +44,7 @@ public:
 //
 // Inherits from nixlGdsEngine (see gds_backend.h): registerMem/deregisterMem,
 // queryMem, the cuFile driver lifecycle, and the prepXfer preamble (validation +
-// descriptor->GdsXferReq, which then calls finalizePrep below). This class only
+// descriptor->gdsXferReq, which then calls finalizePrep below). This class only
 // implements the transfer mechanism: finalizePrep + postXfer/checkXfer/
 // releaseReqH.
 class nixlGdsMtEngine : public nixlGdsEngine {
@@ -66,11 +66,11 @@ public:
 
 protected:
     nixl_status_t
-    finalizePrep(std::vector<GdsXferReq> &&reqs, nixlBackendReqH *&handle) const override;
+    finalizePrep(std::vector<gdsXferReq> &&reqs, nixlBackendReqH *&handle) const override;
 
 private:
     size_t thread_count_;
     std::unique_ptr<tf::Executor> executor_;
 };
 
-#endif // __GDS_MT_ENGINE_H
+#endif // NIXL_SRC_PLUGINS_CUDA_GDS_GDS_MT_ENGINE_H

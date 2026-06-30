@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __GDS_BACKEND_H
-#define __GDS_BACKEND_H
+#ifndef NIXL_SRC_PLUGINS_CUDA_GDS_GDS_BACKEND_H
+#define NIXL_SRC_PLUGINS_CUDA_GDS_GDS_BACKEND_H
 
 #include <cstddef>
 #include <memory>
@@ -34,7 +34,7 @@
 
 // One logical mem<->file I/O produced by the shared preparation path. The
 // concrete engines turn these into their own posted, pollable request handles.
-struct GdsXferReq {
+struct gdsXferReq {
     void *addr;
     size_t size;
     size_t file_offset;
@@ -45,7 +45,7 @@ struct GdsXferReq {
 // Abstract base for the GDS family of backends. It owns everything that is
 // identical between "GDS" and "GDS_MT": the cuFile driver lifecycle, memory and
 // file registration (refcounted handle cache + buffer RAII), queryMem, and the
-// prepXfer preamble (validation + descriptor->GdsXferReq translation). The only
+// prepXfer preamble (validation + descriptor->gdsXferReq translation). The only
 // backend-specific step in preparation is finalizePrep(); the concrete engines
 // additionally implement the transfer-execution virtuals (postXfer/checkXfer/
 // releaseReqH) directly.
@@ -105,7 +105,7 @@ public:
     deregisterMem(nixlBackendMD *meta) override;
 
     // Shared: validates the request and translates descriptors into a
-    // GdsXferReq list, then defers the concrete handle creation to finalizePrep.
+    // gdsXferReq list, then defers the concrete handle creation to finalizePrep.
     nixl_status_t
     prepXfer(const nixl_xfer_op_t &operation,
              const nixl_meta_dlist_t &local,
@@ -124,7 +124,7 @@ protected:
     // The single backend-specific step of preparation: build a concrete,
     // posted-ready request handle from the validated logical request list.
     virtual nixl_status_t
-    finalizePrep(std::vector<GdsXferReq> &&reqs, nixlBackendReqH *&handle) const = 0;
+    finalizePrep(std::vector<gdsXferReq> &&reqs, nixlBackendReqH *&handle) const = 0;
 
 private:
     std::unique_ptr<gdsDriverHandle> driver_;
@@ -132,4 +132,4 @@ private:
     nixl::PathModeDevIdRegistry path_mode_devids_;
 };
 
-#endif // __GDS_BACKEND_H
+#endif // NIXL_SRC_PLUGINS_CUDA_GDS_GDS_BACKEND_H
