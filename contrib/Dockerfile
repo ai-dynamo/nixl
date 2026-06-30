@@ -50,7 +50,6 @@ RUN apt-get update -y && \
     libgflags-dev \
     libprotobuf-dev \
     libaio-dev \
-    liburing-dev \
     libcpprest-dev \
     etcd-server \
     etcd-client \
@@ -71,18 +70,22 @@ RUN apt-get update -y && \
     # azure-sdk-for-cpp dependencies
     libxml2-dev
 
-# Add DOCA repository and install packages
+# Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
+# Skip only the DOCA SDK install when the base image already ships it.
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+    if dpkg -s doca-sdk-gpunetio >/dev/null 2>&1; then \
+        echo "DOCA SDK already installed in base image, skipping SDK install"; \
+    else \
+        apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev; \
+    fi
 
-# Force reinstall of RDMA packages from DOCA repository
-# Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
-# Upgrade is not sufficient if the version is the same since apt skips the installation.
+# Reinstall RDMA build deps (libfabric --enable-efa needs libibverbs-dev), required even when
+# DOCA is from the base image. --reinstall because apt skips equal versions.
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
     libnuma-dev librdmacm-dev ibverbs-providers
@@ -98,6 +101,7 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
     cmake .. \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_STANDARD=20 \
         -DBUILD_SHARED_LIBS=ON \
         -DABSL_PROPAGATE_CXX_STD=ON \
         -DABSL_ENABLE_INSTALL=ON && \
@@ -116,7 +120,7 @@ RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules
         -DgRPC_INSTALL=ON \
         -DgRPC_BUILD_TESTS=OFF \
         -DBUILD_SHARED_LIBS=ON \
-        -DCMAKE_CXX_STANDARD=17 \
+        -DCMAKE_CXX_STANDARD=20 \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DCMAKE_PREFIX_PATH=/usr/local \
@@ -133,24 +137,24 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
-    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=17 -DCMAKE_PREFIX_PATH=/usr/local && \
+    cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=20 -DCMAKE_CXX_STANDARD=20 -DCMAKE_PREFIX_PATH=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
-    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_CXX_STANDARD=20 && \
     make -j${NPROC:-$(nproc)} && make install
 
 RUN git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
-     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 CXX="g++ -std=c++20" && \
      cd ..
 
 RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
     mkdir build && cd build && \
-    AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
-    cmake --build . --target azure-storage-blobs azure-identity && \
+    AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON -DCMAKE_CXX_STANDARD=20 && \
+    cmake --build . --parallel ${NPROC:-$(nproc)} --target azure-storage-blobs azure-identity && \
     cmake --install sdk/core && \
     cmake --install sdk/storage/azure-storage-common && \
     cmake --install sdk/storage/azure-storage-blobs && \
@@ -229,11 +233,7 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
-# By default, uv downloads python packages to $HOME/.cache/uv and hard links them
-# from the virtual environment. This means that the files reside in /root/.cache/uv,
-# which is not what we want since some systems mount user home dir into /root,
-# in which case the venv is broken when the container is started.
-# Set a custom cache directory inside /workspace to avoid this.
+# Keep uv's cache in /workspace, not /root (some hosts mount $HOME over /root).
 ENV UV_CACHE_DIR=/workspace/.cache/uv
 RUN mkdir -p $UV_CACHE_DIR
 # Disable build isolation, i.e. uv should not create a new virtual environment for
@@ -241,18 +241,22 @@ RUN mkdir -p $UV_CACHE_DIR
 ENV UV_NO_BUILD_ISOLATION=1
 # Disable syncing, i.e. uv will not download packages outside uv pip commands.
 ENV UV_NO_SYNC=1
-# Create a new virtual environment
-ENV VIRTUAL_ENV=/workspace/.venv
-RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
-# Activate the virtual environment
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-# Install python dependencies
-RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
-# Install PyTorch
-RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
-    uv pip install torch torchvision torchaudio
-# Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
-RUN uv pip install --upgrade 'setuptools>=80.9.0'
+# Allow installs into PEP 668 externally-managed system Python.
+ENV UV_BREAK_SYSTEM_PACKAGES=1
+# All uv pip commands target the system interpreter.
+ENV UV_PYTHON=python${DEFAULT_PYTHON_VERSION}
+# Build tools into system Python (no venv).
+RUN uv pip install --system --upgrade \
+    meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
+# Use system torch if present (>=2.7), else install it.
+RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then \
+        echo "Using PyTorch from system site-packages"; \
+    else \
+        export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+        uv pip install --system torch torchvision torchaudio; \
+    fi
+# setuptools for PEP 639 license metadata
+RUN uv pip install --system --upgrade 'setuptools>=80.9.0'
 
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
@@ -277,7 +281,7 @@ RUN rm -rf build && \
     fi && \
     meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
     cd build && \
-    ninja && \
+    ninja -j${NPROC:-$(nproc)} && \
     ninja install
 
 RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
@@ -291,8 +295,7 @@ ENV PYTHONPATH=/workspace/nixl/build/examples/device/ep
 RUN cd src/bindings/rust && cargo build --release --locked
 
 # Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
-RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
-    mkdir -p dist && \
+RUN mkdir -p dist && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then EP_BUILD_FLAG="--build-nixl-ep"; else EP_BUILD_FLAG=""; fi && \
     ./contrib/build-wheel.sh \
     --python-version $DEFAULT_PYTHON_VERSION \
@@ -303,4 +306,5 @@ RUN export PATH=$VIRTUAL_ENV/bin:$PATH && \
     $EP_BUILD_FLAG
 
 RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
-RUN uv pip install dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl dist/nixl-*-none-any.whl
+RUN uv pip install --system \
+    dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl dist/nixl-*-none-any.whl

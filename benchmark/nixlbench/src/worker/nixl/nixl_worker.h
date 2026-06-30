@@ -21,19 +21,16 @@
 #include "config.h"
 #include <iostream>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 #include <optional>
 #include <memory>
+#include <unistd.h>
 #include <nixl.h>
 #include "utils/utils.h"
 #include "worker/worker.h"
-
-struct xferFileState {
-    int fd;
-    uint64_t file_size;
-    uint64_t offset;
-};
+#include "worker/nixl/nixl_mem_region.h"
 
 // Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
 
@@ -43,7 +40,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
         nixlBackendH* backend_engine;
         nixl_mem_t seg_type;
         std::vector<xferFileState> remote_fds;
-        std::vector<std::vector<xferBenchIOV>> remote_iovs;
+        std::vector<NixlMemRegion> remote_regs_;
+        std::vector<NixlMemRegion> local_regs_;
         std::vector<GusliDeviceConfig> gusli_devices;
         std::vector<LibblkioDeviceConfig> libblkio_devices;
 
@@ -74,22 +72,14 @@ class xferBenchNixlWorker: public xferBenchWorker {
     private:
         std::optional<xferBenchIOV>
         initBasicDescDram(size_t buffer_size, int mem_dev_id);
-        void
-        cleanupBasicDescDram(xferBenchIOV &basic_desc);
-        std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);
-        void
-        cleanupBasicDescVram(xferBenchIOV &basic_desc);
+        std::optional<xferBenchIOV>
+        initBasicDescVram(size_t buffer_size, int mem_dev_id);
         std::optional<xferBenchIOV>
         initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
-        void cleanupBasicDescFile(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
         initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
-        void
-        cleanupBasicDescObj(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
         initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
-        void
-        cleanupBasicDescBlk(xferBenchIOV &basic_desc);
         bool
         ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
 };

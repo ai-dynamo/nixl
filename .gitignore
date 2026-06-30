@@ -21,3 +21,6 @@ cufile.log
 
 # Asio
 subprojects/asio-*
+
+# liburing
+subprojects/liburing-*

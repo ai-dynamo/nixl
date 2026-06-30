@@ -148,8 +148,8 @@ class Buffer:
         Arguments:
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
             hidden: the hidden dimension of each token.
-            num_ranks: the number of EP group ranks.
-            num_experts: the number of all experts.
+            num_ranks: rank capacity used to size the low-latency buffers.
+            num_experts: expert capacity, normally num_ranks * num_experts_per_rank.
 
         Returns:
             size: the RDMA buffer size recommended.
@@ -290,7 +290,7 @@ class Buffer:
         Arguments:
             topk_idx: `[num_tokens, num_topk]`, dtype must be `torch.int64`, the expert indices selected by each token,
                 `-1` means no selections.
-            num_experts: the number of experts.
+            num_experts: active expert bound for the active rank set.
             previous_event: the event to wait before actually executing the kernel.
             async_finish: the current stream will not wait for the communication kernels to be finished if set.
             allocate_on_comm_stream: control whether all the allocated tensors' ownership to be on the communication stream.
@@ -324,27 +324,13 @@ class Buffer:
             EventOverlap(event),
         )
 
-    def clean_buffer(
-        self, num_max_dispatch_tokens_per_rank: int, hidden: int, num_experts: int
-    ) -> None:
-        """
-        As the kernels require part of the buffer to be zero-initialized, so it is vital to clean the buffer
-            if the buffer is dirty at some time.
-
-        Arguments:
-            num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
-            hidden: the hidden dimension of each token.
-            num_experts: the number of all experts.
-        """
-        self.runtime.clean_buffer(num_max_dispatch_tokens_per_rank, hidden, num_experts)
-
     # noinspection PyTypeChecker
     def low_latency_dispatch(
         self,
         x: torch.Tensor,
         topk_idx: torch.Tensor,
         num_max_dispatch_tokens_per_rank: int,
-        num_experts: int,
+        num_experts: Optional[int] = None,
         cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
         dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
         use_fp8: bool = True,
@@ -367,7 +353,9 @@ class Buffer:
             topk_idx: `torch.Tensor` with `nixl_ep.topk_idx_t`, shaped as `[num_tokens, num_topk]`, only several top-k shapes
                 are supported. `-1` indices (not selecting any expert) are supported.
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
-            num_experts: the number of all experts.
+            num_experts: deprecated optional parameter. This value is ignored by low-latency
+                dispatch; the number of experts is determined from the `num_experts_per_rank`
+                passed to `update_memory_buffers()` and the currently active ranks.
             cumulative_local_expert_recv_stats: a cumulative expert count tensor for statistics, which should have shape
                 `[num_local_experts]` and be typed as `torch.int`. This is useful for online service EP load balance
                 monitoring.
@@ -415,7 +403,6 @@ class Buffer:
             cumulative_local_expert_recv_stats,
             dispatch_wait_recv_cost_stats,
             num_max_dispatch_tokens_per_rank,
-            num_experts,
             use_fp8,
             round_scale,
             use_ue8m0,
@@ -427,7 +414,6 @@ class Buffer:
             packed_recv_layout_range,
             num_max_dispatch_tokens_per_rank,
             x.size(1),
-            num_experts,
         )
         tensors_to_record = (
             x,
@@ -501,7 +487,6 @@ class Buffer:
             layout_range,
             num_max_dispatch_tokens_per_rank,
             hidden,
-            num_experts,
         ) = handle
         combined_x, event, hook = self.runtime.combine(
             x,
@@ -511,7 +496,6 @@ class Buffer:
             layout_range,
             combine_wait_recv_cost_stats,
             num_max_dispatch_tokens_per_rank,
-            num_experts,
             use_logfmt,
             zero_copy,
             async_finish,
@@ -728,17 +712,19 @@ class Buffer:
 
     def update_mask_buffer(self, rank_to_mask: int, mask: bool = False):
         """
-        Mask (unmask) a rank during communication (dispatch, combine, and clean)
+        Mask or unmask a rank during low-latency communication.
 
         Arguments:
-            rank: the rank to mask (unmask).
-            mask: if True, will mask the rank (do not recvfrom/sendto the rank), otherwise will unmask the rank.
+            rank_to_mask: the rank to mask or unmask.
+            mask: if True, will mask the rank (do not recvfrom/sendto the
+                rank), otherwise will unmask the rank. The local rank cannot
+                be masked, and unmasking requires an already-connected rank.
         """
         self.runtime.update_mask_buffer(rank_to_mask, mask)
 
     def query_mask_buffer(self, mask_status: torch.Tensor):
         """
-        Query the mask status of all ranks
+        Query the runtime device mask status of all ranks.
 
         Arguments:
             mask_status: `[num_ranks]` with `torch.int`, the mask status of each rank. `1` means mask and `0` means unmasked.
@@ -747,13 +733,12 @@ class Buffer:
 
     def clean_mask_buffer(self):
         """
-        Clean the mask buffer
-
+        Unmask connected ranks plus the local rank, and mask unconnected ranks.
         """
         self.runtime.clean_mask_buffer()
 
     def get_next_combine_buffer(
-        self, handle: Tuple[torch.Tensor, torch.Tensor, int, int, int]
+        self, handle: Tuple[torch.Tensor, torch.Tensor, int, int]
     ):
         """
         Get the raw registered RDMA buffer tensor for next combine, so that the next combine kernel can skip the copying.
@@ -771,10 +756,9 @@ class Buffer:
             layout_range,
             num_max_dispatch_tokens_per_rank,
             hidden,
-            num_experts,
         ) = handle
         return self.runtime.get_next_combine_buffer(
-            num_max_dispatch_tokens_per_rank, hidden, num_experts
+            num_max_dispatch_tokens_per_rank, hidden
         )
 
     def update_memory_buffers(
@@ -788,7 +772,7 @@ class Buffer:
         Allocate remote memory for the communication buffer.
 
         Arguments:
-            num_ranks: the number of ranks.
+            num_ranks: rank capacity used to size the communication buffers.
             num_experts_per_rank: the number of experts per rank.
             num_rdma_bytes: the buffer size for RDMA communication.
             num_nvl_bytes: the buffer size for intranode NVLink communication (default: 0).

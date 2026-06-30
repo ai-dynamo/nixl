@@ -33,6 +33,11 @@ if 'POSIX' in static_plugins
     nixl_lib_deps += [ posix_backend_interface ]
 endif
 
+disable_infinia_backend = get_option('disable_infinia_backend')
+if infinia_lib_found.found() and not disable_infinia_backend and 'INFINIA' in static_plugins
+    nixl_lib_deps += [ infinia_backend_interface ]
+endif
+
 if 'OBJ' in static_plugins
     nixl_lib_deps += [ obj_backend_interface ]
 endif
@@ -57,15 +62,24 @@ if libtransfer_engine.found() and not disable_mooncake_backend and 'Mooncake' in
     nixl_lib_deps += [ mooncake_backend_interface, cuda_dep ]
 endif
 
+# Tracing (nixl::trace). Only the facade (tracer.cpp) and the plugin loader are
+# compiled into libnixl; each backend ships as a separate .so plugin under
+# src/plugins/tracing, loaded on demand by nixlPluginManager.
+nixl_lib_sources = [
+    'nixl_agent.cpp',
+    'nixl_enum_strings.cpp',
+    'nixl_plugin_manager.cpp',
+    'nixl_listener.cpp',
+    'telemetry/telemetry.cpp',
+    'telemetry/buffer_exporter.cpp',
+    'telemetry/buffer_plugin.cpp',
+    'telemetry/nop_plugin.cpp',
+    'tracing/tracer.cpp',
+]
+
 nixl_lib = library('nixl',
-                   'nixl_agent.cpp',
-                   'nixl_enum_strings.cpp',
-                   'nixl_plugin_manager.cpp',
-                   'nixl_listener.cpp',
-                   'telemetry/telemetry.cpp',
-                   'telemetry/buffer_exporter.cpp',
-                   'telemetry/buffer_plugin.cpp',
-                   include_directories: [ nixl_inc_dirs, utils_inc_dirs ],
+                   nixl_lib_sources,
+                   include_directories: [ nixl_inc_dirs, utils_inc_dirs, include_directories('tracing') ],
                    link_args: ['-lstdc++fs'],
                    dependencies: nixl_lib_deps,
                    install: true,

@@ -32,6 +32,7 @@ using lock_guard = const std::lock_guard<std::mutex>;
 
 const std::string backendPluginPrefix = "libplugin_";
 const std::string telemetryPluginPrefix = "libtelemetry_exporter_";
+const std::string tracePluginPrefix = "libtrace_backend_";
 const std::string kPluginSuffix = ".so";
 
 // pluginHandle implementation
@@ -459,6 +460,36 @@ nixlPluginManager::loadTelemetryPlugin(const std::string &plugin_name) {
     return nullptr;
 }
 
+std::shared_ptr<const nixlTracePluginHandle>
+nixlPluginManager::loadTracePlugin(const std::string &plugin_name) {
+    lock_guard lg(lock);
+
+    // Check if the plugin is already loaded
+    auto it = loaded_trace_plugins_.find(plugin_name);
+    if (it != loaded_trace_plugins_.end()) {
+        return it->second;
+    }
+
+    // Try to load the plugin from all registered directories
+    for (const auto &dir : plugin_dirs_) {
+        std::string plugin_path = composePluginPath(dir, tracePluginPrefix, plugin_name);
+        if (plugin_path.empty() || !std::filesystem::exists(plugin_path)) {
+            continue;
+        }
+
+        auto plugin_handle = loadPluginFromPath(plugin_path, traceLoader);
+        if (plugin_handle) {
+            auto trace_plugin =
+                std::dynamic_pointer_cast<const nixlTracePluginHandle>(plugin_handle);
+            loaded_trace_plugins_[plugin_name] = trace_plugin;
+            return trace_plugin;
+        }
+    }
+
+    NIXL_INFO << "Failed to load trace plugin '" << plugin_name << "' from any directory";
+    return nullptr;
+}
+
 namespace {
 bool
 startsWith(const std::string &str, const std::string &prefix) {
@@ -498,6 +529,14 @@ nixlPluginManager::discoverTelemetryPlugin(const std::string &filename) {
 }
 
 void
+nixlPluginManager::discoverTracePlugin(const std::string &filename) {
+    if (startsWith(filename, tracePluginPrefix) && endsWith(filename, kPluginSuffix)) {
+        std::string plugin_name = extractPluginName(filename, tracePluginPrefix);
+        NIXL_INFO << "Discovered trace plugin: " << plugin_name;
+    }
+}
+
+void
 nixlPluginManager::discoverPluginsFromDir(const std::filesystem::path &dirpath) {
     std::error_code ec;
     std::filesystem::directory_iterator dir_iter(dirpath, ec);
@@ -510,6 +549,7 @@ nixlPluginManager::discoverPluginsFromDir(const std::filesystem::path &dirpath) 
         std::string filename = entry.path().filename().string();
         discoverBackendPlugin(filename);
         discoverTelemetryPlugin(filename);
+        discoverTracePlugin(filename);
     }
 }
 
@@ -711,5 +751,11 @@ void nixlPluginManager::registerBuiltinPlugins() {
 #ifdef STATIC_PLUGIN_HF3FS
     NIXL_REGISTER_STATIC_PLUGIN(Backend, HF3FS)
 #endif
+
+#ifdef STATIC_PLUGIN_INFINIA
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, INFINIA)
+#endif
+
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, BUFFER)
+    NIXL_REGISTER_STATIC_PLUGIN(Telemetry, NOP)
 }

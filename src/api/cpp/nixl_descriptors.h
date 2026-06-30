@@ -381,6 +381,16 @@ public:
     resize(const size_t &count);
 
     /**
+     * @brief Reserve space for nixlDescList object.
+     *
+     * @param count Number of elements to reserve
+     */
+    inline void
+    reserve(size_t count) {
+        descs.reserve(count);
+    }
+
+    /**
      * @brief Empty the descriptors list
      */
     inline void
@@ -393,6 +403,18 @@ public:
      */
     virtual void
     addDesc(const T &desc);
+
+    /**
+     * @brief Emplace a new descriptor into the descriptor list
+     *
+     * @param args Arguments to construct the descriptor
+     * @return     Reference to the newly emplaced descriptor
+     */
+    template<class... Args>
+    T &
+    emplace(Args &&...args) {
+        return descs.emplace_back(std::forward<Args>(args)...);
+    }
 
     /**
      * @brief Remove descriptor from list at index
