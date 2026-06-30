@@ -40,23 +40,9 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
 export NIXL_DEBUG_LOGGING=yes
 
-# The PR image installs the CUDA-versioned bindings (nixl_ep_cu*) under
-# ${INSTALL_DIR}/lib/python3/dist-packages via meson's --prefix, which is not
-# on Python's default sys.path. Expose it so the nixl_ep dispatcher can load
-# nixl_ep_cu13 at runtime.
-export PYTHONPATH="${INSTALL_DIR}/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
-
-# Install the nixl meta wheel (provides the nixl_ep dispatcher package that
-# re-exports from nixl_ep_cu13). The wheel is staged in dist/ by the PR image
-# build; without this install `import nixl_ep` fails with ModuleNotFoundError.
-# The CUDA backend is already installed from source in the PR image, so avoid
-# fetching matching nixl-cu* release wheels that may not be published yet.
-if [ -n "$VIRTUAL_ENV" ] && grep -q '^uv =' "$VIRTUAL_ENV/pyvenv.cfg" 2>/dev/null; then
-    pip3="uv pip"
-else
-    pip3="python3 -m pip"
-fi
-$pip3 install --break-system-packages --no-deps dist/nixl-*none-any.whl
+# Make `import nixl_ep` resolve the source-tree dispatcher, which loads the
+# CUDA-versioned backend (nixl_ep_cu*) from the source install under ${INSTALL_DIR}.
+export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta:${INSTALL_DIR}/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
 
 echo "==== Show system info ===="
 env
@@ -64,29 +50,6 @@ nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
-
-echo "==== NVIDIA Peermem check ===="
-if ! lsmod | grep -q nvidia_peermem; then
-    echo "nvidia_peermem module not loaded"
-fi
-
-if [ -f /sys/kernel/mm/memory_peers/nv_mem/version ]; then
-    cat /sys/kernel/mm/memory_peers/nv_mem/version
-else
-    echo "/sys/kernel/mm/memory_peers/nv_mem/version not found "
-fi
-
-if [ -f /sys/module/nvidia_peermem/version ]; then
-    cat /sys/module/nvidia_peermem/version
-else
-    echo "/sys/module/nvidia_peermem/version not found"
-fi
-
-if [ -f /sys/module/nv_peer_mem/version ]; then
-    cat /sys/module/nv_peer_mem/version
-else
-    echo "/sys/module/nv_peer_mem/version not found"
-fi
 
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
