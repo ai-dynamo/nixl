@@ -90,6 +90,10 @@ public:
     void
     remDescs(std::vector<size_t> indices, order ord = order::UNSORTED);
 
+    template<class... Args>
+    nixlSectionDesc &
+    emplace(Args &&...args) = delete;
+
     // Shadow the parent's non-const operator[] to return a const ref,
     // this prevents mutation of descriptor fields after insertion
     const nixlSectionDesc &
@@ -158,6 +162,11 @@ class nixlMemSection {
                                 nixlBackendEngine* backend,
                                 nixl_meta_dlist_t &resp) const;
 
+        nixl_status_t
+        populate(const nixl_xfer_dlist_t &query,
+                 nixlBackendEngine *backend,
+                 nixl_stride_dlist_t &resp) const;
+
         [[nodiscard]] nixl_status_t
         addElement(const nixlRemoteDesc &query,
                    nixlBackendEngine *backend,
@@ -189,12 +198,20 @@ class nixlLocalSection : public nixlMemSection {
 class nixlRemoteSection : public nixlMemSection {
     private:
         std::string agentName;
+        // Per-connection id: a peer may reconnect under the same agentName, so
+        // invalidation matches this generation to avoid tearing down a newer connection.
+        uint64_t generation_;
 
         nixl_status_t addDescList (
                            const nixl_reg_dlist_t &mem_elms,
                            nixlBackendEngine *backend);
     public:
         explicit nixlRemoteSection(std::string agent_name) noexcept;
+
+        [[nodiscard]] uint64_t
+        getGeneration() const noexcept {
+            return generation_;
+        }
 
         nixl_status_t loadRemoteData (nixlSerDes* deserializer,
                                       backend_map_t &backendToEngineMap);

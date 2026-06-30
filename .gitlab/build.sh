@@ -42,6 +42,30 @@ UCCL_COMMIT_SHA="0cdb740cf369a4f4dd63b9b773c8937f187b179a"
 AZURITE_VER="3.35.0"
 TMPDIR=$(mktemp -d)
 
+# DEPS_SANITIZE, when set (e.g. "address"), builds the C++ dependency stack that
+# shares Abseil's ABI with NIXL (abseil, protobuf/gRPC, etcd-cpp) using the
+# matching -fsanitize flags. Required for AddressSanitizer: Abseil changes its
+# SwissTable layout under ASan, so a prebuilt non-instrumented Abseil would
+# mismatch NIXL's instrumented one at runtime (new-delete-type-mismatch during
+# gRPC static init). Only ASan changes ABI (UBSan/TSan do not), so callers pass
+# DEPS_SANITIZE=address. The array expands to nothing when unset.
+DEPS_SANITIZE=${DEPS_SANITIZE:-""}
+DEPS_SANITIZE_CMAKE_ARGS=()
+if [ -n "$DEPS_SANITIZE" ]; then
+    _deps_san_cxxflags="-fsanitize=${DEPS_SANITIZE}"
+    case ",${DEPS_SANITIZE}," in
+        # Abseil's headers hit a GCC constexpr bug under UBSan's null checks
+        # (GCC #71962); drop those sub-checks if undefined is requested.
+        *,undefined,*) _deps_san_cxxflags="${_deps_san_cxxflags} -fno-sanitize=null,nonnull-attribute,returns-nonnull-attribute" ;;
+    esac
+    DEPS_SANITIZE_CMAKE_ARGS=(
+        "-DCMAKE_C_FLAGS=-fsanitize=${DEPS_SANITIZE}"
+        "-DCMAKE_CXX_FLAGS=${_deps_san_cxxflags}"
+        "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}"
+        "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}"
+    )
+fi
+
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
     exit 1
@@ -209,6 +233,7 @@ else
       git checkout "${ABSL_TAG}" && \
       mkdir -p build && cd build && \
       cmake .. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_BUILD_TYPE=Release \
@@ -230,6 +255,7 @@ else
       mkdir -p cmake/build && \
       cd cmake/build && \
       cmake ../.. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
           -DgRPC_INSTALL=ON \
           -DgRPC_BUILD_TESTS=OFF \
           -DBUILD_SHARED_LIBS=ON \
@@ -257,6 +283,7 @@ else
       sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
       mkdir build && cd build && \
       cmake .. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
           -DBUILD_ETCD_CORE_ONLY=ON \
           -DCMAKE_BUILD_TYPE=Release \
           -DETCD_CMAKE_CXX_STANDARD=20 \
@@ -379,6 +406,9 @@ export UCX_TLS=^cuda_ipc
 if [ -n "$PRE_INSTALLED_NIXL_ENV" ]; then
     echo "PRE_INSTALLED_NIXL_ENV is set, skipping compilation"
 else
+    if [ "${BUILD_NIXL_EP}" = "true" ]; then
+        EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
+    fi
     # shellcheck disable=SC2086
     meson setup ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
