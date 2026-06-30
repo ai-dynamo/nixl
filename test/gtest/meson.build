@@ -128,6 +128,21 @@ if get_option('sanitizer') != 'none'
 endif
 test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer')
 
+# Best-effort NVTX capture: when nsys is available, profile the tracing tests
+# and write a .nsys-rep that CI can publish as an artifact. Skips (exit 77) when
+# profiling is denied, so it never fails CI on its own.
+if nixl_trace_nvtx_enabled
+    nsys_prog = find_program('nsys', required: false)
+    if nsys_prog.found()
+        nsys_wrapper = find_program(meson.current_source_dir() / 'run_nsys_tracing.sh')
+        test('tracing_nsys',
+             nsys_wrapper,
+             args: [nsys_prog.full_path(), test_exe, meson.current_build_dir(), plugin_dirs_arg],
+             is_parallel: false,
+             timeout: 600)
+    endif
+endif
+
 if get_option('b_sanitize').split(',').contains('thread')
     test_env = environment()
     test_env.set('TSAN_OPTIONS', 'halt_on_error=1')
