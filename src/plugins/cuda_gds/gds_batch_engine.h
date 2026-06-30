@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __GDS_BATCH_ENGINE_H
-#define __GDS_BATCH_ENGINE_H
+#ifndef NIXL_SRC_PLUGINS_CUDA_GDS_GDS_BATCH_ENGINE_H
+#define NIXL_SRC_PLUGINS_CUDA_GDS_GDS_BATCH_ENGINE_H
 
 #include <memory>
 #include <mutex>
@@ -68,7 +68,7 @@ class nixlGdsBatchReqH : public nixlBackendReqH {
 public:
     ~nixlGdsBatchReqH() override = default;
 
-    std::vector<GdsXferReq> request_list;
+    std::vector<gdsXferReq> request_list;
     std::vector<nixlGdsIOBatch *> batch_io_list;
     nixl_status_t overall_status = NIXL_SUCCESS;
 };
@@ -78,7 +78,7 @@ public:
 //
 // Inherits from nixlGdsEngine (see gds_backend.h): registerMem/deregisterMem,
 // queryMem, the cuFile driver lifecycle, and the prepXfer preamble (validation +
-// descriptor->GdsXferReq, which then calls finalizePrep below). This class only
+// descriptor->gdsXferReq, which then calls finalizePrep below). This class only
 // implements the transfer mechanism: finalizePrep + postXfer/checkXfer/
 // releaseReqH.
 class nixlGdsBatchEngine : public nixlGdsEngine {
@@ -100,7 +100,7 @@ public:
 
 protected:
     nixl_status_t
-    finalizePrep(std::vector<GdsXferReq> &&reqs, nixlBackendReqH *&handle) const override;
+    finalizePrep(std::vector<gdsXferReq> &&reqs, nixlBackendReqH *&handle) const override;
 
 private:
     nixlGdsIOBatch *
@@ -108,7 +108,7 @@ private:
     void
     returnBatchToPool(nixlGdsIOBatch *batch) const;
     nixl_status_t
-    createAndSubmitBatch(const std::vector<GdsXferReq> &requests,
+    createAndSubmitBatch(const std::vector<gdsXferReq> &requests,
                          size_t start_idx,
                          size_t batch_size,
                          nixlGdsIOBatch *&batch_out) const;
@@ -123,4 +123,4 @@ private:
     unsigned int max_request_size_ = 0;
 };
 
-#endif // __GDS_BATCH_ENGINE_H
+#endif // NIXL_SRC_PLUGINS_CUDA_GDS_GDS_BATCH_ENGINE_H

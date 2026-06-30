@@ -129,7 +129,8 @@ nixlGdsIOBatch::checkStatus() {
         return current_status;
     }
 
-    unsigned int nr = batch_size - entries_completed;
+    const unsigned int entries_remaining = batch_size - entries_completed;
+    unsigned int nr = entries_remaining;
     // TODO: A follow-up should make status polling and active release
     // nonblocking. min_nr intentionally remains equal to nr here to preserve
     // the pre-consolidation GDS completion behavior; changing it needs separate
@@ -142,15 +143,19 @@ nixlGdsIOBatch::checkStatus() {
         return current_status;
     }
 
-    if (nr > batch_size - entries_completed) {
+    if (nr > entries_remaining) {
         current_status = NIXL_ERR_UNKNOWN;
         return current_status;
     }
 
+    const bool all_entries_reported = (nr == entries_remaining);
     for (unsigned int i = 0; i < nr; ++i) {
         const CUfileIOEvents_t &event = io_batch_events[i];
         if (event.status != CUFILE_COMPLETE || event.cookie == nullptr) {
             NIXL_ERROR << "GDS batch entry failed with status " << event.status;
+            if (all_entries_reported) {
+                active = false;
+            }
             current_status = NIXL_ERR_BACKEND;
             return current_status;
         }
@@ -159,6 +164,9 @@ nixlGdsIOBatch::checkStatus() {
         if (event.ret != params->u.batch.size) {
             NIXL_ERROR << "GDS batch entry completed " << event.ret << " of "
                        << params->u.batch.size << " bytes";
+            if (all_entries_reported) {
+                active = false;
+            }
             current_status = NIXL_ERR_BACKEND;
             return current_status;
         }
@@ -250,13 +258,13 @@ nixlGdsBatchEngine::returnBatchToPool(nixlGdsIOBatch *batch) const {
 }
 
 nixl_status_t
-nixlGdsBatchEngine::finalizePrep(std::vector<GdsXferReq> &&reqs, nixlBackendReqH *&handle) const {
+nixlGdsBatchEngine::finalizePrep(std::vector<gdsXferReq> &&reqs, nixlBackendReqH *&handle) const {
     auto gds_handle = std::make_unique<nixlGdsBatchReqH>();
 
     size_t chunk_count = 0;
     bool can_reuse_requests = true;
     const size_t max_request_size = max_request_size_;
-    for (const GdsXferReq &req : reqs) {
+    for (const gdsXferReq &req : reqs) {
         if (!req.addr) {
             return NIXL_ERR_INVALID_PARAM;
         }
@@ -278,13 +286,13 @@ nixlGdsBatchEngine::finalizePrep(std::vector<GdsXferReq> &&reqs, nixlBackendReqH
     } else {
         // Split large transfers into multiple requests bounded by max_request_size.
         gds_handle->request_list.reserve(chunk_count);
-        for (const GdsXferReq &req : reqs) {
+        for (const gdsXferReq &req : reqs) {
             size_t remaining_size = req.size;
             size_t current_offset = 0;
             while (remaining_size > 0) {
                 const size_t request_size = std::min(remaining_size, max_request_size);
 
-                GdsXferReq chunk;
+                gdsXferReq chunk;
                 chunk.addr = (char *)req.addr + current_offset;
                 chunk.size = request_size;
                 chunk.file_offset = req.file_offset + current_offset;
@@ -312,7 +320,7 @@ nixlGdsBatchEngine::finalizePrep(std::vector<GdsXferReq> &&reqs, nixlBackendReqH
 }
 
 nixl_status_t
-nixlGdsBatchEngine::createAndSubmitBatch(const std::vector<GdsXferReq> &requests,
+nixlGdsBatchEngine::createAndSubmitBatch(const std::vector<gdsXferReq> &requests,
                                          size_t start_idx,
                                          size_t batch_size,
                                          nixlGdsIOBatch *&batch_out) const {
