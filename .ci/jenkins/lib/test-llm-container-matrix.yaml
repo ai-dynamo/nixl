@@ -1,0 +1,230 @@
+# NIXL LLM Container Test Configuration
+#
+# Smoke- / perf- / accuracy-tests a single published LLM inference container
+# (vllm-nixl, sglang-nixl, or sglang-cu13-nixl) on the mizu SLURM partition.
+# The job allocates ONE 2-GPU node and runs each enabled phase sequentially.
+#
+# Image selection: a single IMAGE_URL parameter. The framework (vllm vs sglang)
+# is auto-detected from the URL — "vllm" → test_vllm.sh, "sglang" → test_sglang.sh.
+# vllm has no built-in accuracy harness, so the accuracy phase no-ops for vllm.
+#
+# Test scripts live at .ci/scripts/llm-tests/{test_vllm.sh,test_sglang.sh}.
+# The slurmCI module mounts the workspace into the running container, so these
+# scripts are reachable from inside the LLM image at runtime.
+
+---
+job: nixl-ci-test-llm-container
+
+failFast: false
+timeout_minutes: 240
+
+# Harbor is only used for the build_helper_llm container that drives SLURM —
+# the LLM image under test is pulled directly by SLURM from artifactory.
+registry_host: nbu-harbor.gtm.nvidia.com
+registry_auth: nixl_harbor_credentials
+registry_path: /nixl/base
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: "{memory: 8Gi, cpu: 4000m}"
+  requests: "{memory: 4Gi, cpu: 2000m}"
+  privileged: true
+
+credentials:
+  - {credentialsId: 'nixl_harbor_credentials', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'ARTIFACTORY_USERNAME', passwordVariable: 'ARTIFACTORY_PASSWORD'}
+  - {credentialsId: 'svc-nixl-scctl', usernameVariable: 'SERVICE_USER_USERNAME', passwordVariable: 'SERVICE_USER_PASSWORD'}
+
+env:
+  SLURM_NODES: 1
+  SLURM_PARTITION: mizu
+  SLURM_HEAD_NODE: scctl
+  SLURM_GRES: gpu:2
+  SLURM_MEM: 128G
+  SLURM_MINCPUS: 24
+  SLURM_JOB_TIMEOUT: '01:30:00'
+  SLURM_IMMEDIATE_TIMEOUT: "3600"
+  SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
+  JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
+  IMAGE_REGISTRY_HOST: "nbu-harbor.gtm.nvidia.com"
+  IMAGE_REGISTRY_PATH: "nixl/base"
+  CONFIG_PATH: /labhome/svc-nixl/.config/enroot
+  CI_IMAGE_TAG: "20260518-1"
+
+empty_volumes:
+  - {mountPath: /root, memory: false}
+  - {mountPath: /var/lib/containers/storage, memory: false}
+
+pvc_volumes:
+  - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
+
+runs_on_dockers:
+  - {
+     file: '.ci/dockerfiles/Dockerfile.build_helper',
+     name: 'build_helper_llm',
+     tag: "${CI_IMAGE_TAG}",
+     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+    }
+
+# Matrix kept to a single arch axis because the framework requires `arch` to
+# be defined when `runs_on_dockers` is set (it scopes the per-arch build_helper
+# image build). Mizu SLURM nodes are x86_64-only.
+matrix:
+  axes:
+    arch:
+      - x86_64
+
+taskName: "${arch}"
+
+# Per-phase gating computed up front. The framework's `enable:` field only
+# supports literal env-var refs (no $(...) command sub, no conditional logic),
+# so disabled phases run /bin/true inside the sentinel image as a fast no-op.
+pipeline_start:
+  shell: action
+  module: groovy
+  run: |
+    def url = (params.IMAGE_URL ?: '').trim()
+    if (!url) {
+      error("IMAGE_URL is required.")
+    }
+
+    // Test scripts are pulled fresh from the nixl repo at ci_refspec on the
+    // SLURM node (see Copy Tests step), so a rerun against a different ref
+    // does not require rebuilding the LLM image.
+    env.CI_REFSPEC = (params.ci_refspec ?: 'main').trim()
+
+    // Convert "registry/path:tag" → "registry#path:tag" for the slurmCI module.
+    def slash = url.indexOf('/')
+    def dockerImage = slash < 0 ? url : url.substring(0, slash) + '#' + url.substring(slash + 1)
+    env.DOCKER_IMAGE = dockerImage
+
+    // Auto-detect framework from the image URL. The published images are named
+    // vllm-nixl / sglang-nixl / sglang-cu13-nixl, so a substring match suffices.
+    def lower = url.toLowerCase()
+    def framework
+    if (lower.contains('vllm')) {
+      framework = 'vllm'
+    } else if (lower.contains('sglang')) {
+      framework = 'sglang'
+    } else {
+      error("Cannot detect framework from IMAGE_URL: ${url} (expected 'vllm' or 'sglang' in the URL).")
+    }
+    env.FRAMEWORK = framework
+
+    def testScript = "/llm-tests/test_${framework}.sh"
+    def SENTINEL_SCRIPT = "/bin/true"
+
+    env.SMOKE_SCRIPT = params.RUN_SMOKE ? "${testScript} smoke" : SENTINEL_SCRIPT
+    env.PERF_SCRIPT  = params.RUN_PERF  ? "${testScript} perf"  : SENTINEL_SCRIPT
+    // vllm has no built-in accuracy harness, so accuracy always no-ops for vllm.
+    env.ACCURACY_SCRIPT = (params.RUN_ACCURACY && framework == 'sglang') ?
+        "${testScript} accuracy" : SENTINEL_SCRIPT
+
+    currentBuild.displayName += "-${framework}"
+
+    echo "IMAGE_URL:       ${url}"
+    echo "DOCKER_IMAGE:    ${env.DOCKER_IMAGE}"
+    echo "FRAMEWORK:       ${framework}"
+    echo "CI_REFSPEC:      ${env.CI_REFSPEC}"
+    echo "SMOKE_SCRIPT:    ${env.SMOKE_SCRIPT}"
+    echo "PERF_SCRIPT:     ${env.PERF_SCRIPT}"
+    echo "ACCURACY_SCRIPT: ${env.ACCURACY_SCRIPT}"
+
+steps:
+
+  - name: Allocate Environment
+    containerSelector: "{name: 'build_helper_llm'}"
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: allocation
+    args:
+      partition: "${SLURM_PARTITION}"
+      headNode: "${SLURM_HEAD_NODE}"
+      nodes: "${SLURM_NODES}"
+      jobTimeout: "${SLURM_JOB_TIMEOUT}"
+      immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
+      jobName: "nixl-llm-${BUILD_NUMBER}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      extraArgs: [
+        "--gres=${SLURM_GRES}",
+        "--mincpus=${SLURM_MINCPUS}",
+        "--mem=${SLURM_MEM}",
+        "--exclude=${SLURM_EXCLUDE}"
+      ]
+
+  - name: Copy Tests
+    containerSelector: "{name: 'build_helper_llm'}"
+    timeout: 30
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: "rm -rf /llm-tests /nixl-src && git clone https://github.com/ai-dynamo/nixl.git /nixl-src && git -C /nixl-src fetch origin '+refs/pull/*:refs/pull/*' && git -C /nixl-src checkout ${CI_REFSPEC} && cp -r /nixl-src/.ci/scripts/llm-tests /llm-tests && rm -rf /nixl-src"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${DOCKER_IMAGE}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-llm-${FRAMEWORK}-${BUILD_NUMBER}"
+      extraArgs: [
+        "--container-mount-home"
+      ]
+
+  - name: Smoke
+    containerSelector: "{name: 'build_helper_llm'}"
+    timeout: 30
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: "${SMOKE_SCRIPT}"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${DOCKER_IMAGE}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-llm-${FRAMEWORK}-${BUILD_NUMBER}"
+
+  - name: Perf
+    containerSelector: "{name: 'build_helper_llm'}"
+    timeout: 40
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: "${PERF_SCRIPT}"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${DOCKER_IMAGE}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-llm-${FRAMEWORK}-${BUILD_NUMBER}"
+
+  - name: Accuracy
+    containerSelector: "{name: 'build_helper_llm'}"
+    timeout: 50
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: "${ACCURACY_SCRIPT}"
+      headNode: "${SLURM_HEAD_NODE}"
+      dockerImage: "${DOCKER_IMAGE}"
+      credentialsId: "${SCCTL_CREDENTIALS_ID}"
+      containerName: "nixl-llm-${FRAMEWORK}-${BUILD_NUMBER}"
+
+pipeline_stop:
+  containerSelector: "{name: 'build_helper_llm'}"
+  parallel: false
+  shell: action
+  module: slurmCI
+  run: stopAllForBuild
+  args:
+    credentialsId: "${SCCTL_CREDENTIALS_ID}"
+    headNode: "${SLURM_HEAD_NODE}"
+    jobIdDir: "${JOB_ID_FILE_ROOT}"

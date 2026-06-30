@@ -78,9 +78,19 @@ nixl_ep_inc_dirs = [
     torch_inc_dirs,
 ]
 
+# Torch-versioned .so name so multiple torch ABIs coexist in a single
+# wheel. Defined up here because TORCH_EXTENSION_NAME (consumed by
+# pybind11's PYBIND11_MODULE macro to generate the PyInit_<name> symbol)
+# must match the .so filename Python loads, otherwise import fails with
+# "dynamic module does not define module export function".
+torch_ver = run_command(py, '-c',
+    'import torch; print("".join(torch.__version__.split(".")[:2]))',
+    check: true).stdout().strip()
+nixl_ep_ext_name = 'nixl_ep_cpp_torch' + torch_ver
+
 nixl_ep_cpp_args = [
     '-DHAVE_CUDA',
-    '-DTORCH_EXTENSION_NAME=nixl_ep_cpp',
+    '-DTORCH_EXTENSION_NAME=' + nixl_ep_ext_name,
     '-Wno-deprecated-declarations',
     '-Wno-unused-variable',
     '-Wno-sign-compare',
@@ -90,7 +100,8 @@ nixl_ep_cpp_args = [
 
 nixl_ep_cuda_args = [
     '-DHAVE_CUDA',
-    '-DTORCH_EXTENSION_NAME=nixl_ep_cpp',
+    '-DTORCH_EXTENSION_NAME=' + nixl_ep_ext_name,
+    '-DDISABLE_AGGRESSIVE_PTX_INSTRS',
     '--expt-relaxed-constexpr',  # Allow calling constexpr __host__ functions from __device__ functions
     '--ptxas-options=--register-usage-level=10',  # Allow more register usage (matches setup.py)
     '-Xcompiler', '-Wno-deprecated-declarations',
@@ -100,7 +111,7 @@ nixl_ep_cuda_args = [
     '-Xcompiler', '-Wno-attributes',
 ]
 
-topk_idx_bits = meson.get_external_property('topk_idx_bits', '64')
+topk_idx_bits = meson.get_external_property('topk_idx_bits', '32')
 nixl_ep_cpp_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]
 nixl_ep_cuda_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]
 
@@ -117,10 +128,12 @@ nixl_ep_rpath += ':' + nixl_lib_dir
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'core')
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'plugins')
 
-# For now, nixl ep cannot be built with -G due to register usage limits
+# For now, nixl ep cannot be built with -G due to register usage limits;
+# build the EP target as release even in a global debug build (same flags
+# we ship in release wheels), and add -g back so we keep debug symbols.
 nixl_ep_override_options = []
 if get_option('buildtype') == 'debug'
-    nixl_ep_override_options = ['optimization=3']
+    nixl_ep_override_options = ['buildtype=release']
     nixl_ep_cpp_args += ['-g']
 endif
 
@@ -137,7 +150,7 @@ nixl_ep_install_rpath += ':' + torch_lib_dir
 # CUDA-versioned install dir so cu12 and cu13 wheels don't collide.
 nixl_ep_install_dir = 'nixl_ep_' + cuda_wheel_dir.split('_')[-1]  # nixl_ep_cu12 or nixl_ep_cu13
 
-nixl_ep_ext = py.extension_module('nixl_ep_cpp',
+nixl_ep_ext = py.extension_module(nixl_ep_ext_name,
     nixl_ep_sources,
     subdir: nixl_ep_install_dir,
     dependencies: [

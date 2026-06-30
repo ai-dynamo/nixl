@@ -19,67 +19,37 @@
 
 #include <chrono>
 #include <cstdint>
-#include <sstream>
 #include <string>
 #include <thread>
 
 #include "loopback_connection.h"
+#include "open_metrics_text_parser.h"
+#include "timeseries.h"
 
 namespace nixl::doca_test {
 
-// Poll /metrics until it contains `needle`, or timeout.
-inline std::string
-scrapeUntil(uint16_t port, const std::string &needle, std::chrono::seconds timeout) {
+// Poll /metrics until the series `name` (matching optional label subset `where`)
+// reads exactly `expected`, or until timeout. Each poll parses the body once into
+// a timeSeries; the final scrape is returned so the caller can assert that series
+// and any others without rescanning. Cumulative counters settle asynchronously
+// after a flush, so a single read can observe a stale value.
+[[nodiscard]] inline timeSeries
+scrapeUntilValue(uint16_t port,
+                 const std::string &name,
+                 double expected,
+                 std::chrono::seconds timeout,
+                 const labelSet &where = {}) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
-    std::string body;
+    timeSeries metrics{seriesMap{}};
     do {
-        body = loopbackConnection::httpGet(port, "/metrics");
-        if (body.find(needle) != std::string::npos) {
-            return body;
+        metrics =
+            timeSeries(open_metrics_text::parse(loopbackConnection::httpGet(port, "/metrics")));
+        if (metrics.latestValue(name, where) == expected) {
+            return metrics;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     } while (std::chrono::steady_clock::now() < deadline);
-    return body;
-}
-
-// Value on the first non-comment exposition line that starts with `metric`.
-// Exposition format is: name{labels} VALUE [TIMESTAMP]  (or  name VALUE [TS]).
-// The value is the token right after the label set, NOT the trailing timestamp.
-inline double
-metricValue(const std::string &body, const std::string &metric) {
-    std::istringstream lines(body);
-    std::string line;
-    while (std::getline(lines, line)) {
-        if (line.empty() || line[0] == '#') {
-            continue;
-        }
-        if (line.rfind(metric, 0) != 0) {
-            continue;
-        }
-
-        size_t value_start;
-        const auto labels_end = line.find("} ");
-        if (labels_end != std::string::npos) {
-            value_start = labels_end + 2;
-        } else {
-            const auto sp = line.find(' ');
-            if (sp == std::string::npos) {
-                continue;
-            }
-            value_start = sp + 1;
-        }
-
-        const auto value_end = line.find(' ', value_start);
-        const std::string token = line.substr(
-            value_start,
-            value_end == std::string::npos ? std::string::npos : value_end - value_start);
-        try {
-            return std::stod(token);
-        }
-        catch (const std::exception &) {
-        }
-    }
-    return -1.0;
+    return metrics;
 }
 
 } // namespace nixl::doca_test
