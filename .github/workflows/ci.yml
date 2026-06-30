@@ -80,10 +80,7 @@ jobs:
             BASE_VERSION=$(echo "$RELEASE_TAG" | awk -F. '{$NF = $NF + 1;} 1' OFS=.)
             VERSION="${BASE_VERSION}.dev${{ github.run_id }}+$(git rev-parse --short HEAD)"
           else
-            # Use the static package version (pyproject.toml), NOT the latest git tag.
-            # Leftover/RC tags (e.g. v1.3.0-rc2) must not override the real release
-            # version, and VERSION must match the wheel + Artifactory upload path.
-            VERSION=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/^version = "(.*)"/\1/')
+            VERSION="${RELEASE_TAG}"
           fi
           echo -n "$VERSION" > version.txt
           echo "Computed VERSION=$VERSION"
@@ -190,6 +187,49 @@ jobs:
           path: dist
           retention-days: 1
           if-no-files-found: error
+
+  # ----------------------------------------------------------------------------
+  # scan-wheels: GitLab "security scan" stage. Runs only on release builds or
+  # when security_scan is explicitly requested.
+  # ----------------------------------------------------------------------------
+  scan-wheels:
+    needs: build
+    if: ${{ github.event.inputs.security_scan == 'true' || github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/heads/release/') }}
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    env:
+      PACKAGE_LICENSE: "Apache-2.0"
+      SKIPPED_SECURITY_RULES: "B404,B603,B108"
+      ALLOWED_NOSEC_COUNT: "0"
+      IGNORE_FAILED_PIP_INSTALL: "1"
+    steps:
+      - name: Download manylinux wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-build-nixl-manylinux
+          path: dist
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Scan wheels with wheeltamer
+        run: |
+          set -e
+          # wheeltamer is mirrored into ECR (gitlab-master is unreachable from the
+          # AWS runners). Mirror with: crane copy
+          #   gitlab-master.nvidia.com:5005/dl/pypi/wheel-ci-cd:wheeltamer
+          #   ${NIXL_ECR_IMAGE}:wheeltamer
+          CN="wheeltamer_${{ github.run_id }}"
+          docker rm -f "$CN" || true
+          docker create --name="$CN" \
+            -e EXPECTED_PKG_LICENSE="${PACKAGE_LICENSE}" \
+            -e SKIPPED_SECURITY_RULES="${SKIPPED_SECURITY_RULES}" \
+            -e ALLOWED_NOSEC_COUNT="${ALLOWED_NOSEC_COUNT}" \
+            -e IGNORE_FAILED_PIP_INSTALL="${IGNORE_FAILED_PIP_INSTALL}" \
+            --pull=always \
+            "${{ vars.NIXL_ECR_IMAGE }}:wheeltamer"
+          docker cp "$PWD/dist/." "$CN:/workspace"
+          docker start -a "$CN"
+      - name: Cleanup
+        if: always()
+        run: docker rm -f "wheeltamer_${{ github.run_id }}" || true
 
   # ----------------------------------------------------------------------------
   # upload: GitLab upload stage. Release-only. Wheels -> Artifactory (JFrog CLI),
