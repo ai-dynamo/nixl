@@ -16,6 +16,9 @@
  */
 #include "plugin_manager.h"
 #include "common.h"
+
+#include <absl/strings/str_split.h>
+
 #include <gtest/gtest.h>
 #include <cstdlib>
 #include <iostream>
@@ -25,57 +28,70 @@
 #include <string>
 
 namespace gtest {
-std::vector<std::string> SplitWithDelimiter(const std::string &str,
-                                            char delimiter) {
-  std::istringstream tokenStream(str);
-  std::vector<std::string> tokens;
-  std::string token;
 
-  while (std::getline(tokenStream, token, delimiter))
-    tokens.push_back(token);
+namespace {
 
-  return tokens;
+[[nodiscard]] std::optional<std::string>
+CheckArgument(const std::string &arg, const std::string &prefix) {
+    if (arg.starts_with(prefix)) {
+        return arg.substr(prefix.size());
+    }
+    return std::nullopt;
 }
 
 void
 ParseTcpPortRange(const std::string &arg) {
-    if (arg.find("--min-tcp-port=") == 0) {
-        const std::string min_port = SplitWithDelimiter(arg, '=').back();
-        PortAllocator::instance().set_min_port(std::stoi(min_port));
-    }
-
-    if (arg.find("--max-tcp-port=") == 0) {
-        const std::string max_port = SplitWithDelimiter(arg, '=').back();
-        PortAllocator::instance().set_max_port(std::stoi(max_port));
+    if (const auto val = CheckArgument(arg, "--min-tcp-port=")) {
+        PortAllocator::instance().set_min_port(std::stoi(*val));
+    } else if (const auto val = CheckArgument(arg, "--max-tcp-port=")) {
+        PortAllocator::instance().set_max_port(std::stoi(*val));
     }
 }
 
-void ParseArguments(int argc, char **argv) {
-  for (int i = 1; i < argc; ++i) {
-    if (std::string(argv[i]).find("--tests_plugin_dirs=") == 0) {
-      const std::string plugin_dirs = SplitWithDelimiter(argv[i], '=').back();
+std::vector<std::string> test_plugin_dirs;
 
-      if (!plugin_dirs.empty()) {
-        for (const auto &dir : SplitWithDelimiter(plugin_dirs, ',')) {
-          std::cout << "Adding plugin directory:" << dir << std::endl;
-          nixlPluginManager::getInstance().addPluginDirectory(dir);
+void
+ParsePluginDirs(const std::string &arg) {
+    if (const auto val = CheckArgument(arg, "--tests_plugin_dirs="); val && !val->empty()) {
+        const std::vector<std::string> plugin_dirs = absl::StrSplit(*val, ',');
+        for (const auto &dir : plugin_dirs) {
+            std::cout << "Adding plugin directory:" << dir << std::endl;
+            test_plugin_dirs.emplace_back(dir);
         }
-      }
     }
-
-    ParseTcpPortRange(argv[i]);
-  }
 }
 
-namespace {
-    const std::regex
-        ib_regex("IB device\\(s\\) were detected, but accelerated IB support was not found");
-    const std::regex aws_regex("UCX version is less than 1.19, CUDA support is limited, including"
-                               " the lack of support for multi-GPU within a single process.");
-    const std::regex non_gpu_regex("[0-9]+ NVIDIA GPU\\(s\\) were detected, but UCX CUDA support "
-                                   "was not found! GPU memory is not supported.");
+void
+ParseArguments(int argc, char **argv) {
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        ParsePluginDirs(arg);
+        ParseTcpPortRange(arg);
+    }
+}
 
-} // namespace
+class PluginReinitializer
+    : public testing::EmptyTestEventListener
+{
+    void OnTestStart(const testing::TestInfo&) override {
+        std::cout << "Reinitializing plugin manager" << std::endl;
+
+        auto& pm = nixlPluginManager::getInstance();
+
+        pm.reinitializeForUnitTest();
+
+        for (const std::string &dir : test_plugin_dirs) {
+            pm.addPluginDirectory(dir);
+        }
+    }
+};
+
+const std::regex
+    ib_regex("IB device\\(s\\) were detected, but accelerated IB support was not found");
+const std::regex aws_regex("UCX version is less than 1.19, CUDA support is limited, including"
+                           " the lack of support for multi-GPU within a single process.");
+const std::regex non_gpu_regex("[0-9]+ NVIDIA GPU\\(s\\) were detected, but UCX CUDA support "
+                               "was not found! GPU memory is not supported.");
 
 int
 RunAllTests() {
@@ -99,6 +115,11 @@ RunAllTests() {
 int RunTests(int argc, char **argv) {
     testing::InitGoogleTest(&argc, argv);
     ParseArguments(argc, argv);
+
+    auto *instance = testing::UnitTest::GetInstance();
+    auto &listeners = instance->listeners();
+    listeners.Append(new PluginReinitializer);
+
     const int result = RunAllTests();
 
     if (const size_t problems = LogProblemCounter::getProblemCount(); problems > 0) {
@@ -108,6 +129,9 @@ int RunTests(int argc, char **argv) {
     }
     return result;
 }
+
+} // namespace
+
 } // namespace gtest
 
 int main(int argc, char **argv) { return gtest::RunTests(argc, argv); }

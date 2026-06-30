@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef __PLUGIN_MANAGER_H
-#define __PLUGIN_MANAGER_H
+#ifndef NIXL_SRC_CORE_PLUGIN_MANAGER_H
+#define NIXL_SRC_CORE_PLUGIN_MANAGER_H
 
 #include <filesystem>
 #include <string>
@@ -25,6 +25,7 @@
 #include <memory>
 #include <vector>
 #include <mutex>
+
 #include "backend/backend_plugin.h"
 #include "telemetry/telemetry_plugin.h"
 #include "tracing/trace_plugin.h"
@@ -181,6 +182,9 @@ public:
     const std::vector<nixlTelemetryStaticPluginInfo> &
     getTelemetryStaticPlugins();
 
+    void
+    reinitializeForUnitTest();
+
 private:
     std::map<nixl_backend_t, std::shared_ptr<const nixlBackendPluginHandle>>
         loaded_backend_plugins_;
@@ -228,6 +232,9 @@ private:
 
     // Private constructor for singleton pattern
     nixlPluginManager();
+
+    void processPluginDir();
+    void processPluginFile();
 };
 
-#endif // __PLUGIN_MANAGER_H
+#endif
