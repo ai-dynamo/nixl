@@ -95,16 +95,22 @@ isCounterEvent(nixl_telemetry_event_type_t event_type) noexcept {
     return false;
 }
 
-[[nodiscard]] constexpr bool
-isGaugeEvent(nixl_telemetry_event_type_t event_type) noexcept {
+// Gauge series name for an event, or nullptr if the event has no gauge.
+[[nodiscard]] constexpr const char *
+gaugeMetricName(nixl_telemetry_event_type_t event_type) noexcept {
     switch (event_type) {
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
-    case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
-    case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
-        return true;
     case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
+        return "agent_tx_last_bytes";
     case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
+        return "agent_rx_last_bytes";
+    case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
+        return "agent_memory_registered";
+    case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
+        return "agent_memory_deregistered";
+    case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
+        return "agent_xfer_time";
+    case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
+        return "agent_xfer_post_time";
     case nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM:
     case nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM:
     case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:
@@ -119,9 +125,9 @@ isGaugeEvent(nixl_telemetry_event_type_t event_type) noexcept {
     case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
     case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
     case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
-        return false;
+        return nullptr;
     }
-    return false;
+    return nullptr;
 }
 
 std::mutex g_ctx_mutex;
@@ -287,16 +293,12 @@ nixlTelemetryDocaExporter::appendCounterSample(const nixlTelemetryEvent &event,
 
 doca_error_t
 nixlTelemetryDocaExporter::appendGaugeSample(const nixlTelemetryEvent &event,
+                                             const char *metric_name,
                                              const char *label_values[]) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
-    return doca_telemetry_exporter_metrics_add_gauge(ctx_->source,
-                                                     docaTimestamp(),
-                                                     event_name.c_str(),
-                                                     event.value_,
-                                                     ctx_->label_set_id,
-                                                     label_values);
+    return doca_telemetry_exporter_metrics_add_gauge(
+        ctx_->source, docaTimestamp(), metric_name, event.value_, ctx_->label_set_id, label_values);
 #pragma GCC diagnostic pop
 }
 
@@ -306,16 +308,19 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
         const std::lock_guard lock(g_metrics_mutex);
         const char *label_values[] = {agent_name_.c_str()};
 
+        // Idempotent gauge first, non-idempotent counter increment last.
+        if (const char *const gauge_name = gaugeMetricName(event.eventType_)) {
+            const auto result = appendGaugeSample(event, gauge_name, label_values);
+            if (result != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to add gauge: " << result;
+                return NIXL_ERR_UNKNOWN;
+            }
+        }
+
         if (isCounterEvent(event.eventType_)) {
             const auto result = appendCounterSample(event, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add counter: " << result;
-                return NIXL_ERR_UNKNOWN;
-            }
-        } else if (isGaugeEvent(event.eventType_)) {
-            const auto result = appendGaugeSample(event, label_values);
-            if (result != DOCA_SUCCESS) {
-                NIXL_ERROR << "Failed to add gauge: " << result;
                 return NIXL_ERR_UNKNOWN;
             }
         }

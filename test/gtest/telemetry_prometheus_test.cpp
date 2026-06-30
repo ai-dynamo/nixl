@@ -25,6 +25,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <sstream>
@@ -266,12 +267,17 @@ TEST_F(prometheusTelemetryTest, AgentMetricsAppearInScrape) {
             << "Missing counter family \"" << c << "\" in /metrics body";
     }
 
-    // Gauges share a name with their counter; they are serialized without the
-    // "_total" suffix, so match via the opening label brace.
+    // The memory gauges share a name with their counter, serialized without the
+    // "_total" suffix, so match via the opening label brace. The byte gauges use
+    // the distinct "_last" series name (the counter keeps "agent_tx_bytes_total").
     EXPECT_NE(body.find("\nagent_memory_registered{"), std::string::npos)
         << "Missing agent_memory_registered gauge";
     EXPECT_NE(body.find("\nagent_memory_deregistered{"), std::string::npos)
         << "Missing agent_memory_deregistered gauge";
+    EXPECT_NE(body.find("\nagent_tx_last_bytes{"), std::string::npos)
+        << "Missing agent_tx_last_bytes gauge";
+    EXPECT_NE(body.find("\nagent_rx_last_bytes{"), std::string::npos)
+        << "Missing agent_rx_last_bytes gauge";
 
     // Each metric must carry the two labels the exporter attaches.
     EXPECT_NE(body.find("agent_name=\"" + agent_name + "\""), std::string::npos)
@@ -374,4 +380,57 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     EXPECT_EQ(remaining_sample.value, static_cast<double>(kIncrement * kEventCount));
     EXPECT_FALSE(hasAnyAgentMetricSample(after_peer_teardown_body, peer_agent_name))
         << "Peer agent metrics remained after peer exporter was destroyed";
+}
+
+// A byte event drives BOTH a cumulative "_total" counter and a last-operation
+// "_last" gauge from the same per-op value. TX and RX are exercised with
+// distinct values so the assertions also prove the two byte directions map to
+// independent series (no cross-wiring): the counter must read the sum of its
+// deltas while the gauge must read only the final op, not a running total.
+TEST_F(prometheusTelemetryTest, ByteCounterSumsWhileLastGaugeTracksFinalOp) {
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
+    ASSERT_NE(handle, nullptr);
+
+    const std::string agent_name = "prometheus_last_gauge_agent";
+    const nixlTelemetryExporterInitParams params{agent_name, 4096};
+    auto exporter = handle->createExporter(params);
+    ASSERT_NE(exporter, nullptr);
+
+    constexpr std::array<uint64_t, 3> tx_values{1000, 2000, 3500}; // sum 6500, last 3500
+    for (const uint64_t v : tx_values) {
+        const nixlTelemetryEvent event{nixl_telemetry_event_type_t::AGENT_TX_BYTES, v};
+        EXPECT_EQ(exporter->exportEvent(event), NIXL_SUCCESS);
+    }
+    constexpr std::array<uint64_t, 2> rx_values{500, 1500}; // sum 2000, last 1500
+    for (const uint64_t v : rx_values) {
+        const nixlTelemetryEvent event{nixl_telemetry_event_type_t::AGENT_RX_BYTES, v};
+        EXPECT_EQ(exporter->exportEvent(event), NIXL_SUCCESS);
+    }
+
+    const std::string body = waitForMetricsBody(port_);
+    ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
+
+    PrometheusSample tx_total_sample;
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_tx_bytes_total", agent_name, tx_total_sample))
+        << "agent_tx_bytes_total for this agent is not in scrape body";
+    EXPECT_EQ(tx_total_sample.value, 6500.0)
+        << "tx counter must sum every exported delta (1000+2000+3500)";
+
+    PrometheusSample tx_last_sample;
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_tx_last_bytes", agent_name, tx_last_sample))
+        << "agent_tx_last_bytes gauge for this agent is not in scrape body";
+    EXPECT_EQ(tx_last_sample.value, 3500.0)
+        << "tx last-op gauge must equal the final exported value (3500), not the sum";
+
+    PrometheusSample rx_total_sample;
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_rx_bytes_total", agent_name, rx_total_sample))
+        << "agent_rx_bytes_total for this agent is not in scrape body";
+    EXPECT_EQ(rx_total_sample.value, 2000.0)
+        << "rx counter must sum every exported delta (500+1500)";
+
+    PrometheusSample rx_last_sample;
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_rx_last_bytes", agent_name, rx_last_sample))
+        << "agent_rx_last_bytes gauge for this agent is not in scrape body";
+    EXPECT_EQ(rx_last_sample.value, 1500.0)
+        << "rx last-op gauge must equal the final exported value (1500), not the sum";
 }
