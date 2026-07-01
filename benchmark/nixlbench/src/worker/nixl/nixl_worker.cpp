@@ -993,8 +993,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     }
                 }
             }
-            nixl_reg_dlist_t desc_list(OBJ_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             total_keys += iov_list.size();
             remote_iovs.push_back(iov_list);
@@ -1184,8 +1183,7 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
         nixl_opt_args_t opt_args;
         opt_args.backends.push_back(backend_engine);
         for (auto &iov_list : remote_iovs) {
-            nixl_reg_dlist_t desc_list(OBJ_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
         remote_iovs.clear();
@@ -1829,8 +1827,7 @@ execQuery(nixlAgent *agent,
                 break;
             }
 
-            nixl_reg_dlist_t desc_list(getRemoteSegType());
-            iovListToNixlRegDlist(remote_iov, desc_list);
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
 
             std::vector<nixl_query_resp_t> resp;
             nixl_status_t rc = agent->queryMem(desc_list, resp, &opt_args);
