@@ -154,11 +154,8 @@ namespace {
 
 [[nodiscard]] bool
 detectEtcd() {
-#if HAVE_ETCD
-    return nixl::config::checkExistence("NIXL_ETCD_ENDPOINTS");
-#else
-    return false;
-#endif
+    // Single source of truth (shared with the manager's backend selection).
+    return nixlMDManager::etcdConfigured();
 }
 
 // Opt-in routing of the public metadata methods through the agent-owned
@@ -197,11 +194,13 @@ makeAgentTracer(const std::string &name) {
     return nixl::trace::makeTracer(nixl::trace::TracerConfig{name, std::move(requested_backends)});
 }
 
-// Build the manager (via the nixlMetadataContext interface) when metadata
-// exchange is enabled; null otherwise, so nixlAgentData can hold it as const.
+// Build the manager (via the nixlMetadataContext interface) only when metadata
+// exchange is opted in; null otherwise, so nixlAgentData can hold it as const.
+// The manager selects its backend from the environment; the agent passes no
+// per-backend flags.
 [[nodiscard]] std::unique_ptr<nixlMDManager>
-makeMDManager(nixlMetadataContext &ctx, bool needs_comm_thread) {
-    if (!needs_comm_thread) {
+makeMDManager(nixlMetadataContext &ctx, bool build) {
+    if (!build) {
         return nullptr;
     }
     return std::make_unique<nixlMDManager>(ctx);
@@ -216,7 +215,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
       needsCommThread_(useEtcd_ || config.useListenThread),
       useMdManager_(detectMdManager()),
       lock(effectiveSyncMode(config.syncMode, needsCommThread_)),
-      md_(makeMDManager(*this, needsCommThread_)),
+      md_(makeMDManager(*this, useMdManager_)),
       tracer_(makeAgentTracer(name)) {
 #if HAVE_ETCD
     NIXL_DEBUG << "NIXL ETCD is " << (useEtcd_ ? "enabled" : "disabled");
@@ -1879,8 +1878,9 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
 
 nixl_status_t
 nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
-    // Opt-in: route P2P sends through the agent-owned metadata manager.
-    if (data->md_ && data->useMdManager_ && extra_params && !extra_params->ipAddr.empty()) {
+    // Opt-in: route through the agent-owned metadata manager (P2P when an
+    // address is given, otherwise the centralized-store backend).
+    if (data->md_) {
         return data->md_->sendLocalMD(extra_params);
     }
 
@@ -1915,8 +1915,9 @@ nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
 nixl_status_t
 nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
                               const nixl_opt_args_t* extra_params) const {
-    // Opt-in: route P2P sends through the agent-owned metadata manager.
-    if (data->md_ && data->useMdManager_ && extra_params && !extra_params->ipAddr.empty()) {
+    // Opt-in: route through the agent-owned metadata manager (P2P when an
+    // address is given, otherwise the centralized-store backend).
+    if (data->md_) {
         return data->md_->sendLocalPartialMD(descs, extra_params);
     }
 
@@ -1958,8 +1959,9 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
         trace_span, data->tracer_.get(), "nixl::fetchRemoteMD", nixl::trace::Kind::Metadata);
     NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{remote_name});
 
-    // Opt-in: route P2P fetches through the agent-owned metadata manager.
-    if (data->md_ && data->useMdManager_ && extra_params && !extra_params->ipAddr.empty()) {
+    // Opt-in: route through the agent-owned metadata manager (P2P when an
+    // address is given, otherwise the centralized-store backend).
+    if (data->md_) {
         return data->md_->fetchRemoteMD(remote_name, extra_params);
     }
 
@@ -1988,8 +1990,9 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
 
 nixl_status_t
 nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
-    // Opt-in: route P2P invalidations through the agent-owned metadata manager.
-    if (data->md_ && data->useMdManager_ && extra_params && !extra_params->ipAddr.empty()) {
+    // Opt-in: route through the agent-owned metadata manager (P2P when an
+    // address is given, otherwise the centralized-store backend).
+    if (data->md_) {
         return data->md_->invalidateLocalMD(extra_params);
     }
 

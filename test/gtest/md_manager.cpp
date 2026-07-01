@@ -27,9 +27,10 @@
 #include "nixl.h"
 
 // Exercises the agent-owned metadata manager: with NIXL_USE_MD_MANAGER set, the
-// agent's public P2P metadata methods route through nixlMDManager + the P2P
-// backend (which reuses getLocalMD and the comm-thread queue) instead of the
-// inline path. The observable behavior must match the inline path.
+// agent's public metadata methods route through nixlMDManager + a backend (P2P
+// when an address is given, else the KV/ETCD backend) instead of the inline
+// path. The observable behavior must match the inline path. The ETCD cases are
+// gated on NIXL_ETCD_ENDPOINTS and skip when no live store is configured.
 namespace gtest::md_manager {
 
 class MemBuffer {
@@ -174,6 +175,98 @@ TEST_F(MDManagerFixture, FetchRemote) {
 
     ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &args), NIXL_SUCCESS);
     EXPECT_EQ(waitForRemoteMD(dst.agent.get(), src.name, {DRAM_SEG}, NIXL_SUCCESS), NIXL_SUCCESS);
+}
+
+// ETCD (KV) backend: a no-address metadata call routes through the manager's KV
+// backend, which reuses the same ETCD comm-thread work items as the inline path.
+// Gated on a live store via NIXL_ETCD_ENDPOINTS.
+class MDManagerEtcdFixture : public testing::Test {
+protected:
+    struct AgentContext {
+        std::string name;
+        nixlBackendH *backend_handle = nullptr;
+        std::vector<MemBuffer> buffers;
+        std::unique_ptr<nixlAgent> agent;
+    };
+
+    void
+    SetUp() override {
+        if (std::getenv("NIXL_ETCD_ENDPOINTS") == nullptr) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS not set; skipping ETCD backend tests";
+        }
+        // No-address metadata routes through the manager (to the KV backend).
+        setenv("NIXL_USE_MD_MANAGER", "1", 1);
+
+        // Unique per-run names so stale ETCD keys from earlier runs cannot leak in.
+        const std::string suffix =
+            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+
+        for (int i = 0; i < AGENT_COUNT_; i++) {
+            AgentContext ctx;
+            ctx.name = "mdm_etcd_agent_" + std::to_string(i) + "_" + suffix;
+
+            // No listen thread: the ETCD path drives the comm thread on its own.
+            nixlAgentConfig cfg;
+            cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
+            ctx.agent = std::make_unique<nixlAgent>(ctx.name, cfg);
+
+            ASSERT_EQ(ctx.agent->createBackend("UCX", {}, ctx.backend_handle), NIXL_SUCCESS);
+            ASSERT_NE(ctx.backend_handle, nullptr);
+
+            for (size_t b = 0; b < BUFF_COUNT_; b++) {
+                ctx.buffers.emplace_back(BUFF_SIZE_);
+            }
+            nixl_reg_dlist_t dlist(DRAM_SEG);
+            for (const auto &buf : ctx.buffers) {
+                dlist.addDesc(buf.getBlobDesc());
+            }
+            const LogIgnoreGuard lig_efa_warn(
+                "Amazon EFA\\(s\\) were detected, but the UCX backend was configured");
+            ASSERT_EQ(ctx.agent->registerMem(dlist), NIXL_SUCCESS);
+
+            agents_.push_back(std::move(ctx));
+        }
+    }
+
+    void
+    TearDown() override {
+        // Drop each agent's published metadata so the shared store does not
+        // accumulate orphaned keys across CI runs (names are unique per run).
+        for (auto &ctx : agents_) {
+            ctx.agent->invalidateLocalMD(nullptr);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        agents_.clear();
+        unsetenv("NIXL_USE_MD_MANAGER");
+    }
+
+    static constexpr int AGENT_COUNT_ = 2;
+    static constexpr size_t BUFF_COUNT_ = 4;
+    static constexpr size_t BUFF_SIZE_ = 1024;
+
+    std::vector<AgentContext> agents_;
+};
+
+TEST_F(MDManagerEtcdFixture, SendAndFetchByName) {
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    ASSERT_EQ(src.agent->sendLocalMD(nullptr), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, nullptr), NIXL_SUCCESS);
+    EXPECT_EQ(waitForRemoteMD(dst.agent.get(), src.name, {DRAM_SEG}, NIXL_SUCCESS), NIXL_SUCCESS);
+}
+
+TEST_F(MDManagerEtcdFixture, InvalidateLocalRemovesRemote) {
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    ASSERT_EQ(src.agent->sendLocalMD(nullptr), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, nullptr), NIXL_SUCCESS);
+    ASSERT_EQ(waitForRemoteMD(dst.agent.get(), src.name, {DRAM_SEG}, NIXL_SUCCESS), NIXL_SUCCESS);
+
+    ASSERT_EQ(src.agent->invalidateLocalMD(nullptr), NIXL_SUCCESS);
+    EXPECT_EQ(waitForRemoteMD(dst.agent.get(), src.name, {DRAM_SEG}, NIXL_ERR_NOT_FOUND),
+              NIXL_ERR_NOT_FOUND);
 }
 
 } // namespace gtest::md_manager

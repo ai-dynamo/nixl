@@ -40,23 +40,23 @@ class nixlMetadataBackend {
 public:
     virtual ~nixlMetadataBackend() = default;
 
-    /// Stable transport name reported by nixlMDManager::backendName().
+    /** Stable transport name reported by nixlMDManager::backendName(). */
     [[nodiscard]] virtual std::string_view
     name() const = 0;
 
-    /// Make our full local metadata available through this backend.
+    /** Make our full local metadata available through this backend. */
     [[nodiscard]] virtual nixl_status_t
     sendLocal(const nixl_opt_args_t *extra_params) = 0;
 
-    /// Make a partial local metadata blob available through this backend.
+    /** Make a partial local metadata blob available through this backend. */
     [[nodiscard]] virtual nixl_status_t
     sendLocalPartial(const nixl_reg_dlist_t &descs, const nixl_opt_args_t *extra_params) = 0;
 
-    /// Initiate retrieval of a remote agent's metadata into the agent cache.
+    /** Initiate retrieval of a remote agent's metadata into the agent cache. */
     [[nodiscard]] virtual nixl_status_t
     fetchRemote(const std::string &remote_name, const nixl_opt_args_t *extra_params) = 0;
 
-    /// Withdraw our metadata through this backend.
+    /** Withdraw our metadata through this backend. */
     [[nodiscard]] virtual nixl_status_t
     invalidateLocal(const nixl_opt_args_t *extra_params) = 0;
 };

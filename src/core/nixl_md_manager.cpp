@@ -18,38 +18,120 @@
 
 #include "nixl_p2p_metadata_backend.h"
 
+#if HAVE_ETCD
+#include "nixl_etcd_metadata_backend.h"
+#endif
+
+#include "common/configuration.h"
+#include "common/nixl_log.h"
+
 #include <memory>
 #include <string>
 #include <string_view>
 
+namespace {
+
+// The name-addressed backend for this run, chosen from the environment (null
+// when none is configured, i.e. address-only / P2P). Adding a name-addressed
+// transport is one class plus a branch here; it is not tied to any storage kind.
+[[nodiscard]] std::unique_ptr<nixlMetadataBackend>
+makeBackend([[maybe_unused]] nixlMetadataContext &ctx) {
+#if HAVE_ETCD
+    if (nixlMDManager::etcdConfigured()) {
+        return std::make_unique<nixlEtcdMetadataBackend>(ctx);
+    }
+#endif
+    return nullptr;
+}
+
+// A call is address-routed (P2P) when it carries a peer address; otherwise it is
+// name-addressed and handled by the configured backend.
+[[nodiscard]] bool
+hasAddress(const nixl_opt_args_t *extra_params) {
+    return extra_params && !extra_params->ipAddr.empty();
+}
+
+// Error when a call carries no peer address and no name-addressed backend is
+// configured; matches the agent's legacy inline path.
+[[nodiscard]] nixl_status_t
+noTransport() {
+#if HAVE_ETCD
+    NIXL_ERROR_FUNC << "invalid parameters to be used for either socket or ETCD";
+    return NIXL_ERR_INVALID_PARAM;
+#else
+    NIXL_ERROR_FUNC << "no socket address provided and ETCD is not supported";
+    return NIXL_ERR_NOT_SUPPORTED;
+#endif
+}
+
+} // namespace
+
+bool
+nixlMDManager::etcdConfigured() {
+#if HAVE_ETCD
+    return nixl::config::checkExistence("NIXL_ETCD_ENDPOINTS");
+#else
+    return false;
+#endif
+}
+
+// The manager holds the P2P backend (always) plus an optional name-addressed
+// backend, and routes each call by precedence: a peer address selects P2P,
+// otherwise the configured backend. This preserves the agent's original per-call
+// precedence (address wins over a configured backend).
 nixlMDManager::nixlMDManager(nixlMetadataContext &ctx)
-    : backend_(std::make_unique<nixlP2PMetadataBackend>(ctx)) {}
+    : p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx)),
+      backend_(makeBackend(ctx)) {}
 
 nixlMDManager::~nixlMDManager() = default;
 
 nixl_status_t
 nixlMDManager::sendLocalMD(const nixl_opt_args_t *extra_params) const {
-    return backend_->sendLocal(extra_params);
+    if (hasAddress(extra_params)) {
+        return p2pBackend_->sendLocal(extra_params);
+    }
+    if (backend_) {
+        return backend_->sendLocal(extra_params);
+    }
+    return noTransport();
 }
 
 nixl_status_t
 nixlMDManager::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
                                   const nixl_opt_args_t *extra_params) const {
-    return backend_->sendLocalPartial(descs, extra_params);
+    if (hasAddress(extra_params)) {
+        return p2pBackend_->sendLocalPartial(descs, extra_params);
+    }
+    if (backend_) {
+        return backend_->sendLocalPartial(descs, extra_params);
+    }
+    return noTransport();
 }
 
 nixl_status_t
 nixlMDManager::fetchRemoteMD(const std::string &remote_name,
                              const nixl_opt_args_t *extra_params) const {
-    return backend_->fetchRemote(remote_name, extra_params);
+    if (hasAddress(extra_params)) {
+        return p2pBackend_->fetchRemote(remote_name, extra_params);
+    }
+    if (backend_) {
+        return backend_->fetchRemote(remote_name, extra_params);
+    }
+    return noTransport();
 }
 
 nixl_status_t
 nixlMDManager::invalidateLocalMD(const nixl_opt_args_t *extra_params) const {
-    return backend_->invalidateLocal(extra_params);
+    if (hasAddress(extra_params)) {
+        return p2pBackend_->invalidateLocal(extra_params);
+    }
+    if (backend_) {
+        return backend_->invalidateLocal(extra_params);
+    }
+    return noTransport();
 }
 
 std::string_view
 nixlMDManager::backendName() const noexcept {
-    return backend_->name();
+    return backend_ ? backend_->name() : p2pBackend_->name();
 }

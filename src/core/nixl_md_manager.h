@@ -31,13 +31,17 @@
 
 class nixlMetadataContext;
 class nixlMetadataBackend;
+class nixlP2PMetadataBackend;
 
 /**
  * @class nixlMDManager
- * @brief Core-internal: owns the active backend and routes each call to it.
+ * @brief Core-internal: owns the metadata backends and routes each call.
  *
  * Built and owned by nixlAgentData when metadata exchange is enabled. Depends
  * only on the nixlMetadataContext interface (not nixlAgent), so there is no cycle.
+ * Holds the address-routed backend (P2P) plus an optional name-addressed backend
+ * chosen from the environment; a peer address selects P2P, otherwise the name
+ * backend (address wins per call).
  */
 class nixlMDManager {
 public:
@@ -50,6 +54,14 @@ public:
     operator=(const nixlMDManager &) = delete;
     nixlMDManager &
     operator=(nixlMDManager &&) = delete;
+
+    /**
+     * @brief Whether the ETCD backend is selected (NIXL_ETCD_ENDPOINTS set and
+     *        this build has ETCD support). Single source of truth: the manager
+     *        uses it to pick the name backend, the agent to gate the comm thread.
+     */
+    [[nodiscard]] static bool
+    etcdConfigured();
 
     /**
      * @brief Publish the full local metadata blob through the active backend.
@@ -88,12 +100,16 @@ public:
     invalidateLocalMD(const nixl_opt_args_t *extra_params = nullptr) const;
 
     /**
-     * @brief Name of the active metadata backend (e.g. "P2P").
+     * @brief Name of the active metadata backend: the name backend when one is
+     *        configured, otherwise "P2P".
      */
     [[nodiscard]] std::string_view
     backendName() const noexcept;
 
 private:
+    // P2P (address-routed), always present, held as the concrete type.
+    const std::unique_ptr<nixlP2PMetadataBackend> p2pBackend_;
+    // Name-addressed backend (etcd/tcpstore/future), or null when none configured.
     const std::unique_ptr<nixlMetadataBackend> backend_;
 };
 
