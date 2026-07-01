@@ -63,6 +63,7 @@ class Buffer:
         comm: Optional["mpi4py.MPI.Comm"] = None,
         tcp_store_group: Optional[dist.TCPStore] = None,
         timeout_ms: int = DEFAULT_TIMEOUT_MS,
+        nvl_group_size: int = 8,
     ) -> None:
         """
         Initialize the nixl communication buffer.
@@ -81,11 +82,20 @@ class Buffer:
                 In low-latency paths, a timeout marks the rank invalid and masks it out.
                 In high-throughput paths, a timeout is fatal and traps.
                 Default: 30000 ms.
+            nvl_group_size: number of ranks in one CUDA-IPC/NVLink-local group for high-throughput EP.
+                Defaults to 8 for backward compatibility. GB200 deployments that expose 4 GPUs per
+                worker should pass 4 so CUDA IPC is only opened within the local worker group.
         """
+        if not (0 < nvl_group_size <= 8 and 8 % nvl_group_size == 0):
+            raise ValueError(
+                "nvl_group_size must satisfy 0 < nvl_group_size <= 8 and "
+                "divide the fixed 8-lane NVL scratch layout"
+            )
         self.rank = rank
         self.group_size = 0  # Will be updated by `update_memory_buffers`
         self.low_latency_mode = low_latency_mode
         self.timeout_ms = timeout_ms
+        self.nvl_group_size = nvl_group_size
 
         self.explicitly_destroy = explicitly_destroy
         self.group = group
@@ -97,7 +107,7 @@ class Buffer:
             os.environ["UCX_TLS"] = "^cuda_ipc"
 
         self.runtime = nixl_ep_cpp.Buffer(
-            self.rank, explicitly_destroy, low_latency_mode, timeout_ms
+            self.rank, explicitly_destroy, low_latency_mode, timeout_ms, nvl_group_size
         )
 
     def destroy(self):
