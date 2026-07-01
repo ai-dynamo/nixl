@@ -120,7 +120,6 @@ else
                                  libgmock-dev \
                                  libjsoncpp-dev \
                                  libpython3-dev \
-                                 libboost-all-dev \
                                  libssl-dev \
                                  libprotobuf-dev \
                                  libcpprest-dev \
