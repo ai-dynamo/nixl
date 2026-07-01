@@ -31,21 +31,6 @@
 #include "config.h"
 #include "serdes/serdes.h"
 
-namespace {
-[[nodiscard]] uint32_t
-ucpEpCloseFlags(ucp_err_handling_mode_t err_handling_mode) {
-    switch (err_handling_mode) {
-    case UCP_ERR_HANDLING_MODE_NONE:
-        return 0;
-    case UCP_ERR_HANDLING_MODE_PEER:
-        return UCP_EP_CLOSE_FLAG_FORCE;
-    default:
-        throw std::invalid_argument("Unsupported error handling mode: " +
-                                    std::to_string(err_handling_mode));
-    }
-}
-} // namespace
-
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
     nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
@@ -172,8 +157,11 @@ nixlUcxEp::closeImpl() {
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode)
-    : closeFlags_{ucpEpCloseFlags(err_handling_mode)} {
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker,
+                     void *addr,
+                     ucp_err_handling_mode_t err_handling_mode,
+                     uint32_t close_flags)
+    : closeFlags_{close_flags} {
     ucp_ep_params_t ep_params;
     nixl_status_t status;
 
@@ -531,9 +519,12 @@ nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
     return worker;
 }
 
-nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx, ucp_err_handling_mode_t err_handling_mode)
+nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
+                             ucp_err_handling_mode_t err_handling_mode,
+                             uint32_t ep_close_flags)
     : worker(createUcpWorker(ctx), &ucp_worker_destroy),
-      err_handling_mode_(err_handling_mode) {}
+      err_handling_mode_(err_handling_mode),
+      epCloseFlags_(ep_close_flags) {}
 
 std::string
 nixlUcxWorker::epAddr() {
@@ -554,7 +545,7 @@ nixlUcxWorker::epAddr() {
 std::unique_ptr<nixlUcxEp>
 nixlUcxWorker::connect(void *addr, std::size_t size) {
     try {
-        return std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_);
+        return std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_, epCloseFlags_);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "UCX endpoint create failed: " << e.what();

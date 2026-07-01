@@ -68,7 +68,10 @@ public:
         return nixl::ucx::toNixlStatus(state);
     }
 
-    nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
+    nixlUcxEp(ucp_worker_h worker,
+              void *addr,
+              ucp_err_handling_mode_t err_handling_mode,
+              uint32_t close_flags);
     ~nixlUcxEp();
     nixlUcxEp(const nixlUcxEp &) = delete;
     nixlUcxEp &
@@ -188,7 +191,8 @@ class nixlUcxWorker {
 public:
     explicit nixlUcxWorker(
         const nixlUcxContext &,
-        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE);
+        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
+        uint32_t ep_close_flags = 0);
 
     nixlUcxWorker(nixlUcxWorker &&) = delete;
     nixlUcxWorker(const nixlUcxWorker &) = delete;
@@ -242,7 +246,8 @@ private:
     createUcpWorker(const nixlUcxContext &);
 
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
-    ucp_err_handling_mode_t err_handling_mode_;
+    const ucp_err_handling_mode_t err_handling_mode_;
+    const uint32_t epCloseFlags_;
 };
 
 [[nodiscard]] nixl_b_params_t
