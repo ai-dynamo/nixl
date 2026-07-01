@@ -136,6 +136,17 @@ ARG NPROC
 ENV MAKEFLAGS="-j${NPROC}"
 ENV CMAKE_BUILD_PARALLEL_LEVEL="${NPROC}"
 
+# ccache: cache C/C++ object compilation so repeated builds (CI PRs, retries, RC
+# re-runs) don't recompile the from-source deps from scratch. The compile-heavy CMake
+# deps (gRPC, abseil, aws-sdk, Azure SDK) and the nixl build below run through ccache
+# via CMAKE_*_COMPILER_LAUNCHER; the cache lives on a BuildKit cache mount (target=/ccache)
+# on those RUNs, so it persists across builds on the same builder. Cold cache = no change;
+# warm cache turns recompiles into ~100% cache hits (measured: abseil 9s->0s on a rebuild).
+ENV CCACHE_DIR=/ccache
+ENV CCACHE_MAXSIZE=5G
+ENV CMAKE_C_COMPILER_LAUNCHER=ccache
+ENV CMAKE_CXX_COMPILER_LAUNCHER=ccache
+
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy epel-release && \
     dnf config-manager --set-enabled powertools && \
@@ -158,6 +169,7 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     jansson \
     libjose \
     xxhash-libs \
+    ccache \
     ninja-build \
     openssl \
     openssl-devel \
@@ -258,7 +270,7 @@ ENV LIBRARY_PATH="/opt/ddn/red/lib:/usr/local/lib:/usr/local/lib64:${LIBRARY_PAT
 WORKDIR /workspace
 
 # Build Abseil from source (required for absl/log).
-RUN git clone --depth 1 --branch ${ABSL_TAG} https://github.com/abseil/abseil-cpp.git && \
+RUN --mount=type=cache,target=/ccache,sharing=locked git clone --depth 1 --branch ${ABSL_TAG} https://github.com/abseil/abseil-cpp.git && \
     cd abseil-cpp && \
     mkdir -p build && cd build && \
     cmake .. \
@@ -273,7 +285,7 @@ RUN git clone --depth 1 --branch ${ABSL_TAG} https://github.com/abseil/abseil-cp
     ldconfig
 
 ARG GRPC_NPROC
-RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+RUN --mount=type=cache,target=/ccache,sharing=locked git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
     mkdir -p cmake/build && \
     cd cmake/build && \
@@ -313,7 +325,7 @@ RUN wget --tries=3 --waitretry=5 https://curl.se/download/curl-8.19.0.tar.gz && 
     make -j${NPROC:-$(nproc)} && make install
 
 RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760
-RUN mkdir aws_sdk_build && cd aws_sdk_build && \
+RUN --mount=type=cache,target=/ccache,sharing=locked mkdir aws_sdk_build && cd aws_sdk_build && \
     export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
     export CFLAGS="-I/usr/local/openssl3/include" && \
     export CXXFLAGS="-I/usr/local/openssl3/include" && \
@@ -339,7 +351,7 @@ RUN git clone --depth 1 https://gitlab.gnome.org/GNOME/libxml2.git --branch 2.15
     ACLOCAL_PATH=/usr/share/aclocal ./autogen.sh && make -j${NPROC:-$(nproc)} && \
     make install
 
-RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
+RUN --mount=type=cache,target=/ccache,sharing=locked git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
     mkdir build && cd build && \
     export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
@@ -477,7 +489,7 @@ RUN cd /usr/local/src && \
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
 
-RUN rm -rf build && \
+RUN --mount=type=cache,target=/ccache,sharing=locked rm -rf build && \
     mkdir build && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \
         echo "=== BUILD_NIXL_EP=true: Building NIXL with NIXL EP support ===" && \
