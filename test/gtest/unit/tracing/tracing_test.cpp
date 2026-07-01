@@ -27,7 +27,15 @@
 
 #include "common.h"
 #include "tracing/trace.h"
-#include "tracing/trace_selection.h"
+
+namespace nixl::trace {
+// Agent-wiring backend-selection policy, defined in nixl_agent.cpp (not exposed
+// via a header — declared here so the unit test can exercise it directly).
+[[nodiscard]] bool
+runningUnderNsys();
+[[nodiscard]] std::vector<std::string>
+resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under_nsys);
+} // namespace nixl::trace
 
 namespace {
 
@@ -227,14 +235,15 @@ TEST(Tracing, DefaultSpanIsInert) {
 // NVTX auto-enable precedence (NIX-1576). resolveTraceBackends is the pure
 // policy behind makeAgentTracer: an explicit NIXL_TRACE_BACKENDS list is always
 // honored, nsys auto-enables NVTX *in addition to* it, and a set-but-empty value
-// forces tracing off.
+// forces tracing off. The result is deduplicated (backends are collected in a
+// std::set), so the returned list is sorted.
 TEST(Tracing, ResolveBackendsExplicitListIsHonored) {
     using nixl::trace::resolveTraceBackends;
 
     EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"nvtx"}, /*under_nsys=*/false),
               (std::vector<std::string>{"nvtx"}));
     EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"nvtx,chakra"}, false),
-              (std::vector<std::string>{"nvtx", "chakra"}));
+              (std::vector<std::string>{"chakra", "nvtx"}));
     EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"chakra"}, false),
               (std::vector<std::string>{"chakra"}));
 }
@@ -250,7 +259,7 @@ TEST(Tracing, ResolveBackendsNsysAddsNvtxToExplicitList) {
     EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"nvtx"}, /*under_nsys=*/true),
               (std::vector<std::string>{"nvtx"}));
     EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"nvtx,chakra"}, /*under_nsys=*/true),
-              (std::vector<std::string>{"nvtx", "chakra"}));
+              (std::vector<std::string>{"chakra", "nvtx"}));
 }
 
 TEST(Tracing, ResolveBackendsExplicitEmptyIsOff) {
@@ -271,7 +280,7 @@ TEST(Tracing, ResolveBackendsTrimsWhitespace) {
 
     EXPECT_EQ(
         resolveTraceBackends(std::optional<std::string>{" nvtx , chakra "}, /*under_nsys=*/false),
-        (std::vector<std::string>{"nvtx", "chakra"}));
+        (std::vector<std::string>{"chakra", "nvtx"}));
     // Trimmed "nvtx" is recognized by the dedup, so nsys does not add it again.
     EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"chakra, nvtx"}, /*under_nsys=*/true),
               (std::vector<std::string>{"chakra", "nvtx"}));
