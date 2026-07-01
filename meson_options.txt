@@ -42,6 +42,10 @@ option('sanitizer', type: 'combo',
        value: 'none',
        description: 'Enable a sanitizer build (-fsanitize). Combine ASan+UBSan with address,undefined; thread is mutually exclusive with address.')
 
+# Tracing (nixl::trace)
+option('with_trace', type: 'boolean', value: true, description: 'Build the nixl::trace tracing facade')
+option('trace_backends', type: 'string', value: 'nvtx', description: 'Comma-separated tracing backends to compile in (e.g. nvtx, chakra)')
+
 # Tests
 option('build_tests', type: 'boolean', value: true, description: 'Build all tests')
 option('build_examples', type: 'boolean', value: true, description: 'Build all examples')
