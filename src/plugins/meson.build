@@ -148,3 +148,7 @@ if enabled_plugins.get('DOCA_MEMOS')
 endif
 
 subdir('telemetry')
+
+if nixl_trace_enabled
+    subdir('tracing')
+endif
