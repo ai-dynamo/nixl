@@ -26,6 +26,7 @@
 #include <condition_variable>
 #include <atomic>
 #include <chrono>
+#include <ostream>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -84,23 +85,35 @@ public:
 #endif
 
 #ifdef HAVE_ROCM
+/** ROCm/HIP device identifier. */
+enum class RocmDeviceId : int {};
+
+/** Sentinel meaning "no device selected" */
+inline constexpr RocmDeviceId kInvalidRocmDeviceId{-1};
+
+/** Stream insertion so RocmDeviceId can be logged like a plain int */
+inline std::ostream &
+operator<<(std::ostream &os, RocmDeviceId id) {
+    return os << static_cast<int>(id);
+}
+
 /** ROCm/HIP context management for libfabric backend */
 class nixlLibfabricRocmCtx {
 private:
-    int devId_;
+    RocmDeviceId devId_;
 
 public:
-    nixlLibfabricRocmCtx() noexcept : devId_(-1) {}
+    nixlLibfabricRocmCtx() noexcept : devId_(kInvalidRocmDeviceId) {}
 
     /** Reset ROCm device selection to initial state */
     void
     rocmResetCtxPtr() noexcept {
-        devId_ = -1;
+        devId_ = kInvalidRocmDeviceId;
     }
 
     /** Update ROCm device selection for given memory address and device */
     [[nodiscard]] nixl_status_t
-    rocmUpdateCtxPtr(void *address, int expected_dev);
+    rocmUpdateCtxPtr(void *address, RocmDeviceId expected_dev);
 
     /** Set the current HIP device */
     [[nodiscard]] nixl_status_t

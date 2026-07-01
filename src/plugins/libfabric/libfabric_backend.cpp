@@ -338,15 +338,15 @@ nixlLibfabricEngine::vramFiniCtx() {
 namespace {
 struct RocmAddrInfo {
     bool is_dev;
-    int dev_id;
+    RocmDeviceId dev_id;
     std::string pci_bus_id;
 
     explicit RocmAddrInfo(const hipPointerAttribute_t &attr)
         : is_dev(attr.type == hipMemoryTypeDevice),
-          dev_id(attr.device) {
+          dev_id{attr.device} {
         if (is_dev) {
             char buf[32];
-            if (hipDeviceGetPCIBusId(buf, sizeof(buf), dev_id) == hipSuccess) {
+            if (hipDeviceGetPCIBusId(buf, sizeof(buf), static_cast<int>(dev_id)) == hipSuccess) {
                 pci_bus_id = buf;
             }
         }
@@ -364,12 +364,12 @@ rocmQueryAddr(void *address) {
 
 } // namespace
 
-nixl_status_t
-nixlLibfabricRocmCtx::rocmUpdateCtxPtr(void *address, int expected_dev) {
-    if (expected_dev == -1) {
+[[nodiscard]] nixl_status_t
+nixlLibfabricRocmCtx::rocmUpdateCtxPtr(void *address, RocmDeviceId expected_dev) {
+    if (static_cast<int>(expected_dev) < 0) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    if (devId_ != -1 && expected_dev != devId_) {
+    if (devId_ != kInvalidRocmDeviceId && expected_dev != devId_) {
         return NIXL_ERR_MISMATCH;
     }
 
@@ -384,18 +384,18 @@ nixlLibfabricRocmCtx::rocmUpdateCtxPtr(void *address, int expected_dev) {
         return NIXL_ERR_MISMATCH;
     }
 
-    if (devId_ == -1) {
+    if (devId_ == kInvalidRocmDeviceId) {
         devId_ = expected_dev;
     }
     return NIXL_SUCCESS;
 }
 
-nixl_status_t
+[[nodiscard]] nixl_status_t
 nixlLibfabricRocmCtx::rocmSetCtx() {
-    if (devId_ < 0) {
+    if (devId_ == kInvalidRocmDeviceId) {
         return NIXL_SUCCESS;
     }
-    hipError_t result = hipSetDevice(devId_);
+    hipError_t result = hipSetDevice(static_cast<int>(devId_));
     return (result == hipSuccess) ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
 }
 
@@ -989,7 +989,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
                 return NIXL_ERR_BACKEND;
             }
             pci_bus_id = info->pci_bus_id;
-            if (info->dev_id != static_cast<int>(mem.devId)) {
+            if (info->dev_id != static_cast<RocmDeviceId>(mem.devId)) {
                 NIXL_ERROR << "ROCm pointer/device mismatch: pointer on GPU " << info->dev_id
                            << ", metadata requests GPU " << mem.devId;
                 return NIXL_ERR_INVALID_PARAM;
