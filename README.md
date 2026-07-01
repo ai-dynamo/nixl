@@ -70,7 +70,7 @@ NIXL was tested with UCX version 1.22.x.
 ```
 $ git clone https://github.com/openucx/ucx.git
 $ cd ucx
-$ git checkout v1.21.x
+$ git checkout v1.22.x
 $ ./autogen.sh
 $ ./contrib/configure-release-mt       \
     --enable-shared                    \
