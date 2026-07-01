@@ -34,11 +34,14 @@ upload_arch () {  # $1 = arch label, $2 = artifact-name glob pattern
   echo "== [$arch] uploading $n wheels (version $ver) to Artifactory =="
   local cn="upload_nixl_${arch}_${RUN_ID}"
   docker rm -f "$cn" >/dev/null 2>&1 || true
-  docker create --name "$cn" -w /workspace -e CI=true -e JFROG_CLI_LOG_LEVEL=INFO "$JF_IMAGE" bash -cx "
+  # Pass the token via env (not the command line) and don't use `set -x`, so the secret
+  # is never echoed into logs.
+  docker create --name "$cn" -w /workspace -e CI=true -e JFROG_CLI_LOG_LEVEL=INFO \
+    -e ART_TOKEN="$ARTIFACTORY_PYPI_TOKEN" -e ART_URL="$ARTIFACTORY_URL" "$JF_IMAGE" bash -c "
       TARGET_PROPS=\"CI_PIPELINE_ID=${RUN_ID};component_name=nixl;os=linux;arch=${arch};version=${ver}\" &&
       jf rt upload '*.whl' 'sw-dynamo-nixl-pypi-local/release/${ver}/${RUN_ID}/${arch}/' \
         --target-props=\"\$TARGET_PROPS\" \
-        --access-token ${ARTIFACTORY_PYPI_TOKEN} --url ${ARTIFACTORY_URL} \
+        --access-token \"\$ART_TOKEN\" --url \"\$ART_URL\" \
         --flat --fail-no-op=true --detailed-summary"
   docker cp "$dir/." "$cn:/workspace/"
   docker start -a "$cn"
