@@ -369,9 +369,6 @@ nixlLibfabricRocmCtx::rocmUpdateCtxPtr(void *address, RocmDeviceId expected_dev)
     if (static_cast<int>(expected_dev) < 0) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    if (devId_ != kInvalidRocmDeviceId && expected_dev != devId_) {
-        return NIXL_ERR_MISMATCH;
-    }
 
     const auto info = rocmQueryAddr(address);
     if (!info) {
@@ -384,9 +381,9 @@ nixlLibfabricRocmCtx::rocmUpdateCtxPtr(void *address, RocmDeviceId expected_dev)
         return NIXL_ERR_MISMATCH;
     }
 
-    if (devId_ == kInvalidRocmDeviceId) {
-        devId_ = expected_dev;
-    }
+    // Refresh to the current device so buffers on a different, valid AMD GPU
+    // aren't rejected due to a device id latched from a previous call.
+    devId_ = expected_dev;
     return NIXL_SUCCESS;
 }
 
