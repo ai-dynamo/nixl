@@ -178,21 +178,31 @@ else
             --index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
     fi
 
-    # Add DOCA repository and install packages
-    ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
-    MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${TMPDIR}/doca-host.deb
-    $SUDO dpkg -i ${TMPDIR}/doca-host.deb
-    $SUDO apt-get update
-    $SUDO apt-get upgrade -y
-    $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
+    # DOCA + RDMA build dependencies.
+    #  - Bases without DOCA (cuda-dl-base, nvidia/cuda, ubuntu22.04): add the DOCA
+    #    3.3.0 host repo, install the SDK + headers, then reinstall the RDMA packages
+    #    to repair cuda-dl-base's broken libibverbs-dev.
+    #  - Bases that already ship DOCA (nvcr.io/nvidia/pytorch bundles >=3.4): use that
+    #    stack as-is. Adding the older 3.3 repo would only downgrade/mismatch it, so
+    #    skip the whole repo add + SDK install + RDMA reinstall.
+    if dpkg -s doca-sdk-gpunetio >/dev/null 2>&1; then
+        echo "DOCA $(dpkg-query -W -f='${Version}' doca-sdk-gpunetio) provided by base image; skipping DOCA 3.3 repo, SDK install, and RDMA reinstall"
+    else
+        ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
+        MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
+        wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${TMPDIR}/doca-host.deb
+        $SUDO dpkg -i ${TMPDIR}/doca-host.deb
+        $SUDO apt-get update
+        $SUDO apt-get upgrade -y
+        $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
 
-    # Force reinstall of RDMA packages from DOCA repository
-    # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
-    # Upgrade is not sufficient if the version is the same since apt skips the installation.
-    $SUDO apt-get -qq -y install \
-        --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
-        libnuma-dev librdmacm-dev ibverbs-providers
+        # Force reinstall of RDMA packages from DOCA repository
+        # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
+        # Upgrade is not sufficient if the version is the same since apt skips the installation.
+        $SUDO apt-get -qq -y install \
+            --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+            libnuma-dev librdmacm-dev ibverbs-providers
+    fi
 
     wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init -O ${TMPDIR}/rustup-init
     chmod +x ${TMPDIR}/rustup-init
