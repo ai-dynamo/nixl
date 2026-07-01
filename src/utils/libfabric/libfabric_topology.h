@@ -214,6 +214,10 @@ public:
         return num_nvidia_accel;
     }
 
+    /**
+     * @brief Retrieves the number of AMD GPU accelerators discovered on the system.
+     * @return The number of AMD GPU accelerators (num_amd_accel).
+     */
     int
     getNumAmdAccel() const {
         return num_amd_accel;
