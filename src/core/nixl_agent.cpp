@@ -21,6 +21,7 @@
 #include <iostream>
 #include <numeric>
 
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
 
 #include "nixl.h"
@@ -162,9 +163,16 @@ resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under
     std::vector<std::string> backends;
     bool explicit_off = false;
     if (explicit_spec) {
-        backends = absl::StrSplit(*explicit_spec, ',', absl::SkipEmpty());
-        // A set-but-empty NIXL_TRACE_BACKENDS is an explicit "off" that must beat
-        // the nsys auto-enable below.
+        // Trim entries so a padded value like "chakra, nvtx" matches backend
+        // names (and the "nvtx" dedup below).
+        for (const absl::string_view raw : absl::StrSplit(*explicit_spec, ',')) {
+            const absl::string_view name = absl::StripAsciiWhitespace(raw);
+            if (!name.empty()) {
+                backends.emplace_back(name.data(), name.size());
+            }
+        }
+        // A set-but-empty (or all-blank) NIXL_TRACE_BACKENDS is an explicit "off"
+        // that must beat the nsys auto-enable below.
         explicit_off = backends.empty();
     }
 
