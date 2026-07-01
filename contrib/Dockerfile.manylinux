@@ -126,6 +126,16 @@ ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
 ARG NPROC
 
+# Parallelize every from-source dependency build. Most `make` calls already pass
+# -j${NPROC}, but a few ran single-threaded and dominated wall-clock: the Azure SDK's
+# `cmake --build` (Unix Makefiles generator, serial by default) and gusli's `make all`
+# (no -j). Setting these globally parallelizes those (and any sub-make) without editing
+# each step. Bounded to NPROC (CI always passes --build-arg NPROC) to avoid the OOM an
+# unbounded `make -j` risks on the 24GB runners; an explicit `-jN` on a command line
+# still overrides MAKEFLAGS, so gRPC's GRPC_NPROC cap is unaffected.
+ENV MAKEFLAGS="-j${NPROC}"
+ENV CMAKE_BUILD_PARALLEL_LEVEL="${NPROC}"
+
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy epel-release && \
     dnf config-manager --set-enabled powertools && \
@@ -248,10 +258,8 @@ ENV LIBRARY_PATH="/opt/ddn/red/lib:/usr/local/lib:/usr/local/lib64:${LIBRARY_PAT
 WORKDIR /workspace
 
 # Build Abseil from source (required for absl/log).
-RUN git clone https://github.com/abseil/abseil-cpp.git && \
+RUN git clone --depth 1 --branch ${ABSL_TAG} https://github.com/abseil/abseil-cpp.git && \
     cd abseil-cpp && \
-    git fetch --depth 1 origin ${ABSL_TAG} && \
-    git checkout ${ABSL_TAG} && \
     mkdir -p build && cd build && \
     cmake .. \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
