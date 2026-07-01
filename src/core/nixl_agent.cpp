@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <iostream>
 #include <chrono>
 #include <iostream>
@@ -36,6 +37,7 @@
 #include "telemetry_event.h"
 #include "tracing/trace.h"
 #include "tracing/trace_macros.h"
+#include "tracing/trace_selection.h"
 
 namespace {
 
@@ -130,20 +132,16 @@ effectiveSyncMode(nixl_thread_sync_t requested, bool needs_comm_thread) {
     return requested;
 }
 
-// Split a comma-separated backend list (e.g. "nvtx,chakra") into non-empty
-// names. Used for the tracing runtime gate.
-[[nodiscard]] std::vector<std::string>
-splitTraceBackends(const std::string &spec) {
-    return absl::StrSplit(spec, ',', absl::SkipEmpty());
-}
-
-// Build the agent's composite tracer from NIXL_TRACE_BACKENDS. Returns null when
-// nothing is requested or none of the requested backends is compiled in, so the
-// agent can hold the result in a const member.
+// Build the agent's composite tracer. Backend selection follows
+// nixl::trace::resolveTraceBackends (explicit NIXL_TRACE_BACKENDS wins; unset +
+// running under nsys auto-enables NVTX). Returns null when nothing resolves, so
+// the agent can hold the result in a const member and call sites take the no-op
+// branch.
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
 makeAgentTracer(const std::string &name) {
     const auto trace_env = nixl::config::getValueOptional<std::string>("NIXL_TRACE_BACKENDS");
-    auto requested_backends = splitTraceBackends(trace_env.value_or(std::string{}));
+    auto requested_backends =
+        nixl::trace::resolveTraceBackends(trace_env, nixl::trace::runningUnderNsys());
     if (requested_backends.empty()) {
         return nullptr;
     }
@@ -151,6 +149,36 @@ makeAgentTracer(const std::string &name) {
 }
 
 } // namespace
+
+namespace nixl::trace {
+
+bool
+runningUnderNsys() {
+    return nixl::config::checkExistence("NVTX_INJECTION64_PATH");
+}
+
+std::vector<std::string>
+resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under_nsys) {
+    std::vector<std::string> backends;
+    bool explicit_off = false;
+    if (explicit_spec) {
+        backends = absl::StrSplit(*explicit_spec, ',', absl::SkipEmpty());
+        // A set-but-empty NIXL_TRACE_BACKENDS is an explicit "off" that must beat
+        // the nsys auto-enable below.
+        explicit_off = backends.empty();
+    }
+
+    // Running under nsys auto-enables NVTX *in addition to* any explicitly
+    // requested backends (so specifying e.g. "chakra" still yields the NVTX
+    // timeline). Dedup so an explicit "nvtx" is not loaded twice.
+    if (under_nsys && !explicit_off &&
+        std::find(backends.begin(), backends.end(), "nvtx") == backends.end()) {
+        backends.emplace_back("nvtx");
+    }
+    return backends;
+}
+
+} // namespace nixl::trace
 
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
     : name_(name),

@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -26,6 +27,7 @@
 
 #include "common.h"
 #include "tracing/trace.h"
+#include "tracing/trace_selection.h"
 
 namespace {
 
@@ -220,6 +222,60 @@ TEST(Tracing, DefaultSpanIsInert) {
     EXPECT_FALSE(span.active());
     span.addAttribute("k", std::string_view{"v"});
     EXPECT_EQ(span.id().value, 0u);
+}
+
+// NVTX auto-enable precedence (NIX-1576). resolveTraceBackends is the pure
+// policy behind makeAgentTracer: an explicit NIXL_TRACE_BACKENDS list is always
+// honored, nsys auto-enables NVTX *in addition to* it, and a set-but-empty value
+// forces tracing off.
+TEST(Tracing, ResolveBackendsExplicitListIsHonored) {
+    using nixl::trace::resolveTraceBackends;
+
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"nvtx"}, /*under_nsys=*/false),
+              (std::vector<std::string>{"nvtx"}));
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"nvtx,chakra"}, false),
+              (std::vector<std::string>{"nvtx", "chakra"}));
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"chakra"}, false),
+              (std::vector<std::string>{"chakra"}));
+}
+
+// nsys auto-enable must not suppress an explicitly requested backend: it adds
+// NVTX to the explicit list (and dedups when NVTX is already requested).
+TEST(Tracing, ResolveBackendsNsysAddsNvtxToExplicitList) {
+    using nixl::trace::resolveTraceBackends;
+
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"chakra"}, /*under_nsys=*/true),
+              (std::vector<std::string>{"chakra", "nvtx"}));
+    // Already-requested NVTX is not loaded twice.
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"nvtx"}, /*under_nsys=*/true),
+              (std::vector<std::string>{"nvtx"}));
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"nvtx,chakra"}, /*under_nsys=*/true),
+              (std::vector<std::string>{"nvtx", "chakra"}));
+}
+
+TEST(Tracing, ResolveBackendsExplicitEmptyIsOff) {
+    using nixl::trace::resolveTraceBackends;
+
+    // Set-but-empty is an explicit "off" that must beat the nsys auto-enable.
+    EXPECT_TRUE(resolveTraceBackends(std::optional<std::string>{""}, /*under_nsys=*/true).empty());
+    EXPECT_TRUE(resolveTraceBackends(std::optional<std::string>{""}, /*under_nsys=*/false).empty());
+}
+
+TEST(Tracing, ResolveBackendsAutoEnablesNvtxUnderNsys) {
+    using nixl::trace::resolveTraceBackends;
+
+    // Unset + under nsys -> auto-enable NVTX; unset + not under nsys -> inert.
+    EXPECT_EQ(resolveTraceBackends(std::nullopt, /*under_nsys=*/true),
+              (std::vector<std::string>{"nvtx"}));
+    EXPECT_TRUE(resolveTraceBackends(std::nullopt, /*under_nsys=*/false).empty());
+}
+
+// runningUnderNsys keys off NVTX_INJECTION64_PATH, the variable nsys injects
+// into the profiled process's environment.
+TEST(Tracing, RunningUnderNsysDetectsInjectionVar) {
+    gtest::ScopedEnv env;
+    env.addVar("NVTX_INJECTION64_PATH", "/opt/nvidia/nsight/libInjectionNvtx64.so");
+    EXPECT_TRUE(nixl::trace::runningUnderNsys());
 }
 
 // makeTracer ignores empty entries and returns null when no backend resolves to
