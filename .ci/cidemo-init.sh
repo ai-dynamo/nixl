@@ -7,6 +7,7 @@ CI_FILES=(
     ".ci/dockerfiles/Dockerfile.build_helper"
     ".gitlab/build.sh"
     ".ci/scripts/common.sh"
+    "contrib/Dockerfile.manylinux"
 )
 
 # YAML files containing CI_IMAGE_TAG
@@ -15,6 +16,7 @@ TEST_MATRIX_YAML=".ci/jenkins/lib/test-matrix.yaml"
 TEST_DL_MATRIX_YAML=".ci/jenkins/lib/test-dl-matrix.yaml"
 TEST_DL_EP_MATRIX_YAML=".ci/jenkins/lib/test-dl-ep-matrix.yaml"
 SANITIZER_MATRIX_YAML=".ci/jenkins/lib/test-sanitizer-matrix.yaml"
+WHEEL_BUILD_MATRIX_YAML=".ci/jenkins/lib/build-wheel-matrix.yaml"
 
 # Function to extract CI_IMAGE_TAG from a YAML file
 get_ci_image_tag() {
@@ -64,18 +66,21 @@ current_test_image_tag=$(get_ci_image_tag "$TEST_MATRIX_YAML" "")
 current_test_dl_image_tag=$(get_ci_image_tag "$TEST_DL_MATRIX_YAML" "")
 current_test_dl_ep_image_tag=$(get_ci_image_tag "$TEST_DL_EP_MATRIX_YAML" "")
 current_sanitizer_image_tag=$(get_ci_image_tag "$SANITIZER_MATRIX_YAML" "")
+current_wheel_image_tag=$(get_ci_image_tag "$WHEEL_BUILD_MATRIX_YAML" "")
 
 previous_build_image_tag=$(get_ci_image_tag "$BUILD_MATRIX_YAML" "HEAD~1")
 previous_test_image_tag=$(get_ci_image_tag "$TEST_MATRIX_YAML" "HEAD~1")
 previous_test_dl_image_tag=$(get_ci_image_tag "$TEST_DL_MATRIX_YAML" "HEAD~1")
 previous_test_dl_ep_image_tag=$(get_ci_image_tag "$TEST_DL_EP_MATRIX_YAML" "HEAD~1")
 previous_sanitizer_image_tag=$(get_ci_image_tag "$SANITIZER_MATRIX_YAML" "HEAD~1")
+previous_wheel_image_tag=$(get_ci_image_tag "$WHEEL_BUILD_MATRIX_YAML" "HEAD~1")
 
 echo "Build Matrix CI_IMAGE_TAG:     $previous_build_image_tag -> $current_build_image_tag"
 echo "Test Matrix CI_IMAGE_TAG:      $previous_test_image_tag -> $current_test_image_tag"
 echo "Test DL Matrix CI_IMAGE_TAG:   $previous_test_dl_image_tag -> $current_test_dl_image_tag"
 echo "Test DL EP Matrix CI_IMAGE_TAG: $previous_test_dl_ep_image_tag -> $current_test_dl_ep_image_tag"
 echo "Sanitizer Matrix CI_IMAGE_TAG: $previous_sanitizer_image_tag -> $current_sanitizer_image_tag"
+echo "Wheel Build Matrix CI_IMAGE_TAG: $previous_wheel_image_tag -> $current_wheel_image_tag"
 
 # Check if CI_IMAGE_TAG was changed in all files
 build_tag_changed=false
@@ -83,6 +88,7 @@ test_tag_changed=false
 test_dl_tag_changed=false
 test_dl_ep_tag_changed=false
 sanitizer_tag_changed=false
+wheel_tag_changed=false
 
 if [ "$current_build_image_tag" != "$previous_build_image_tag" ]; then
     echo "✓ CI_IMAGE_TAG in build-matrix.yaml was updated"
@@ -109,7 +115,12 @@ if [ "$current_sanitizer_image_tag" != "$previous_sanitizer_image_tag" ]; then
     sanitizer_tag_changed=true
 fi
 
-if [ "$build_tag_changed" = false ] || [ "$test_tag_changed" = false ] || [ "$test_dl_tag_changed" = false ] || [ "$test_dl_ep_tag_changed" = false ] || [ "$sanitizer_tag_changed" = false ]; then
+if [ "$current_wheel_image_tag" != "$previous_wheel_image_tag" ]; then
+    echo "✓ CI_IMAGE_TAG in build-wheel-matrix.yaml was updated"
+    wheel_tag_changed=true
+fi
+
+if [ "$build_tag_changed" = false ] || [ "$test_tag_changed" = false ] || [ "$test_dl_tag_changed" = false ] || [ "$test_dl_ep_tag_changed" = false ] || [ "$sanitizer_tag_changed" = false ] || [ "$wheel_tag_changed" = false ]; then
     echo ""
     echo "❌ ERROR: You have changed CI files but forgot to increase CI_IMAGE_TAG!"
     echo ""
@@ -128,6 +139,7 @@ if [ "$build_tag_changed" = false ] || [ "$test_tag_changed" = false ] || [ "$te
     echo "  - $TEST_DL_MATRIX_YAML (line 52)"
     echo "  - $TEST_DL_EP_MATRIX_YAML"
     echo "  - $SANITIZER_MATRIX_YAML"
+    echo "  - $WHEEL_BUILD_MATRIX_YAML"
     echo ""
     exit 1
 fi
