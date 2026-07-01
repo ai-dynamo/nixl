@@ -1828,7 +1828,7 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
         opt_args.customParam = extra_params->customParam;
     }
 
-    const std::lock_guard<nixlLock> lock_guard(data->lock);
+    const std::lock_guard lock_guard(data->lock);
     for (size_t i = 0; i < desc_count; ++i) {
         const auto &desc = dlist[i];
         if (desc.remoteAgent == nixl_null_agent) {
@@ -1896,7 +1896,7 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
         opt_args.customParam = extra_params->customParam;
     }
 
-    const std::lock_guard<nixlLock> lock_guard(data->lock);
+    const std::lock_guard lock_guard(data->lock);
     const auto backends = data->getBackends(extra_params, data->localSection_, mem_type);
     for (const auto &backend : backends) {
         const auto status = data->localSection_.populate(dlist, backend, meta_dlist);
@@ -1923,7 +1923,7 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
 
 void
 nixlAgent::releaseMemView(nixlMemViewH mvh) const {
-    const std::lock_guard<nixlLock> lock_guard(data->lock);
+    const std::lock_guard lock_guard(data->lock);
     const auto it = data->mvhToEngine.find(mvh);
     if (it == data->mvhToEngine.end()) {
         NIXL_WARN << "Invalid memory view handle: " << mvh;
