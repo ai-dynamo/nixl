@@ -1,0 +1,593 @@
+name: NIXL CI
+
+# Native GitHub Actions replacement for the GitLab pipeline that previously ran
+# in nixl-ci (.gitlab-ci.yml). Builds run on self-hosted velonix ARC runners
+# (prod-nixl-builder-amd-v1 / prod-nixl-builder-arm-v1), which provide an
+# in-pod Docker daemon (dind sidecar), so the build/test docker commands below
+# work just as they did under GitLab.
+#
+# Repository configuration required (Settings -> Secrets and variables -> Actions):
+#   Variables:
+#     NIXL_ECR_IMAGE        - ECR image base, e.g.
+#                             210086341041.dkr.ecr.us-west-2.amazonaws.com/nixl-ci
+#     ENABLE_GPU_CI         - set to "true" to enable the (currently deferred)
+#                             GPU test/verify jobs once GPU runners exist.
+#   Secrets:
+#     GITLAB_REGISTRY_USER  - user for gitlab-master.nvidia.com:5005 (manylinux
+#     GITLAB_REGISTRY_TOKEN   base images + wheeltamer scan image)
+#     ARTIFACTORY_URL       - JFrog Artifactory base URL (release uploads)
+#     ARTIFACTORY_PYPI_TOKEN
+#     ARTIFACTORY_CARGO_TOKEN
+#   (The runtime-container push reuses ARTIFACTORY_URL + ARTIFACTORY_PYPI_TOKEN — same
+#    sw-dynamo project as the wheel upload — with docker login as user 'nmailhot'.)
+# AWS/ECR push auth comes from the runner pod's IRSA service account, not a secret.
+
+on:
+  pull_request:
+    # 'labeled' so adding the ci-release-test label triggers a run with the label in context
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_build:
+        description: "Build/publish release artifacts (maps to GitLab RELEASE_BUILD)"
+        type: boolean
+        default: false
+      security_scan:
+        description: "Run the wheel security scan (maps to GitLab SECURITY_SCAN)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  REPO_NAME: nixl
+  WHL_PYTHON_VERSIONS: "3.10,3.11,3.12,3.13,3.14"
+  IMAGE_BASE: ${{ vars.NIXL_ECR_IMAGE }}
+  # Release flag, normalized to a plain "true"/"false" string usable in shells.
+  # True on: workflow_dispatch release_build input, an RC/release tag push
+  # (refs/tags/v*), or — TEMPORARY (remove before merge) — a PR carrying the
+  # 'ci-release-test' label (forces the wheel/crate PUBLISH path on a labeled PR).
+  RELEASE_BUILD: ${{ github.event.inputs.release_build == true || github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # version: replicate the GitLab before_script version computation.
+  # ----------------------------------------------------------------------------
+  version:
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute version
+        id: compute
+        run: |
+          set -e
+          git fetch --tags --force || true
+          RELEASE_TAG=$(git tag --sort=-v:refname | head -n 1 | sed 's/^v//' | tr -d '\n')
+          if [ -z "$RELEASE_TAG" ]; then RELEASE_TAG="0.0.1"; fi
+          if [ "${RELEASE_BUILD}" != "true" ]; then
+            BASE_VERSION=$(echo "$RELEASE_TAG" | awk -F. '{$NF = $NF + 1;} 1' OFS=.)
+            VERSION="${BASE_VERSION}.dev${{ github.run_id }}+$(git rev-parse --short HEAD)"
+          else
+            VERSION="${RELEASE_TAG}"
+          fi
+          echo -n "$VERSION" > version.txt
+          echo "Computed VERSION=$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: version
+          path: version.txt
+          retention-days: 1
+
+  # ----------------------------------------------------------------------------
+  # build: five container builds (the GitLab build stage), pushed to ECR with a
+  # unique per-variant tag; dist/ extracted and uploaded as an artifact.
+  # ----------------------------------------------------------------------------
+  build:
+    needs: version
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-${{ matrix.runner }}-v1
+    # ARM manylinux builds everything from source (UCX + abseil + gRPC + nixl + the
+    # INFINIA liburing/openldap deps); the cu12.9 arm build alone runs ~1h43m and cu13
+    # arm exceeded the old 2h cap. Match the legacy Jenkins container job's 240m budget.
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: build-nixl
+            dockerfile: contrib/Dockerfile
+            base_image: nvcr.io/nvidia/cuda-dl-base
+            base_image_tag: 25.06-cuda12.9-devel-ubuntu24.04
+            whl_base: manylinux_2_39
+            cuda_version: "12.9"
+            arch: x86_64
+            runner: amd
+          # Option B: manylinux jobs build on the public PyPA manylinux_2_28 base
+          # (Dockerfile.manylinux) and pull CUDA from a public NGC image — no GitLab.
+          # VERIFY the nvcr.io/nvidia/cuda el8/ubi8 devel tags below actually exist.
+          - name: build-nixl-manylinux
+            dockerfile: contrib/Dockerfile.manylinux
+            base_image: nvcr.io/nvidia/cuda
+            base_image_tag: 12.9.1-devel-ubi8
+            whl_base: manylinux_2_28
+            cuda_version: "12.9"
+            arch: x86_64
+            runner: amd
+          - name: build-nixl-manylinux-cuda13
+            dockerfile: contrib/Dockerfile.manylinux
+            base_image: nvcr.io/nvidia/cuda
+            base_image_tag: 13.0.1-devel-ubi8
+            whl_base: manylinux_2_28
+            cuda_version: "13.0"
+            arch: x86_64
+            runner: amd
+          - name: build-nixl-arm-manylinux
+            dockerfile: contrib/Dockerfile.manylinux
+            base_image: nvcr.io/nvidia/cuda
+            base_image_tag: 12.9.1-devel-ubi8
+            whl_base: manylinux_2_28
+            cuda_version: "12.9"
+            arch: aarch64
+            runner: arm
+          - name: build-nixl-arm-manylinux-cuda13
+            dockerfile: contrib/Dockerfile.manylinux
+            base_image: nvcr.io/nvidia/cuda
+            base_image_tag: 13.0.1-devel-ubi8
+            whl_base: manylinux_2_28
+            cuda_version: "13.0"
+            arch: aarch64
+            runner: arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push image
+        run: |
+          set -e
+          IMAGE_NAME="${IMAGE_BASE}:${{ matrix.name }}-${{ github.sha }}-${{ github.run_id }}"
+          echo "IMAGE_NAME=$IMAGE_NAME" >> "$GITHUB_ENV"
+          chmod +x contrib/build-container.sh
+          bash contrib/build-container.sh \
+            --base-image "${{ matrix.base_image }}" \
+            --base-image-tag "${{ matrix.base_image_tag }}" \
+            --cuda-version "${{ matrix.cuda_version }}" \
+            --wheel-base "${{ matrix.whl_base }}" \
+            --python-versions "${WHL_PYTHON_VERSIONS}" \
+            --tag "${IMAGE_NAME}" \
+            --os "ubuntu24" \
+            --arch "${{ matrix.arch }}" \
+            --dockerfile "${{ matrix.dockerfile }}"
+          docker push "$IMAGE_NAME"
+      - name: Extract build artifacts
+        run: |
+          CN="nixl-extract-${{ github.run_id }}-${{ strategy.job-index }}"
+          docker rm -f "$CN" || true
+          docker create --name "$CN" "$IMAGE_NAME"
+          docker cp "$CN:/workspace/nixl/dist" ./dist || true
+          docker cp "$CN:/usr/local/nixl" ./nixl_install || true
+          docker rm -f "$CN" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.name }}
+          path: dist
+          retention-days: 1
+          if-no-files-found: warn
+      # Push the runtime nixl container to the Artifactory docker registry, lifting the
+      # tag scheme + push flow from the legacy Jenkins job (.ci/jenkins/lib/build-container-matrix.yaml):
+      #   <base-image-tag>-nixl-<nixl_sha8>-ucx-<ucx_sha8>-<arch>[-v<release_version>]
+      #   -> <artifactory-host>/sw-dynamo-nixl-docker-local/nixl:<tag>
+      # Reuses the existing sw-dynamo Artifactory creds (ARTIFACTORY_URL + ARTIFACTORY_PYPI_TOKEN,
+      # same project as the wheel upload). Scoped to the contrib/Dockerfile runtime build (the
+      # manylinux matrix entries are wheel builders, not the container) and to release builds only.
+      - name: Push runtime container to Artifactory
+        if: ${{ matrix.dockerfile == 'contrib/Dockerfile' && env.RELEASE_BUILD == 'true' }}
+        env:
+          # Reuse the existing sw-dynamo Artifactory secrets (same project + token as the wheel
+          # upload) — host derived from ARTIFACTORY_URL, token = ARTIFACTORY_PYPI_TOKEN.
+          ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+          ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_PYPI_TOKEN }}
+          AF_USERNAME: nmailhot
+          AF_REPO: sw-dynamo-nixl-docker-local
+          UCX_REF: v1.21.x
+          BASE_IMAGE_TAG: ${{ matrix.base_image_tag }}
+          ARCH: ${{ matrix.arch }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -e
+          # 8-char nixl + UCX commit SHAs (matches the Jenkins tag scheme).
+          NIXL_SHA="$(git rev-parse --short=8 HEAD)"
+          if [[ "$UCX_REF" =~ ^[a-f0-9]{8,40}$ ]]; then
+            UCX_SHA="${UCX_REF:0:8}"
+          else
+            UCX_SHA="$(git ls-remote https://github.com/openucx/ucx.git "$UCX_REF" | head -n1 | cut -c1-8)"
+          fi
+          [ -n "$UCX_SHA" ] || { echo "ERROR: could not resolve UCX_REF=$UCX_REF"; exit 1; }
+          # Suffix = release version (mirrors the Jenkins TAG_SUFFIX, e.g. -v1.0.1-rc2).
+          SUFFIX="${RELEASE_VERSION:+-v${RELEASE_VERSION}}"
+          TAG="${BASE_IMAGE_TAG}-nixl-${NIXL_SHA}-ucx-${UCX_SHA}-${ARCH}${SUFFIX}"
+          # Docker registry host = ARTIFACTORY_URL host (strip scheme + the /artifactory path).
+          AF_HOST="$(printf '%s' "$ARTIFACTORY_URL" | sed -E 's#^https?://##; s#/.*##')"
+          AF_IMAGE="${AF_HOST}/${AF_REPO}/nixl:${TAG}"
+          echo "$ARTIFACTORY_TOKEN" | docker login "$AF_HOST" -u "$AF_USERNAME" --password-stdin
+          docker tag "$IMAGE_NAME" "$AF_IMAGE"
+          docker push "$AF_IMAGE"
+          # Set item properties (parity with the Jenkins push step); non-fatal.
+          PROPS="component_name=nixl;NIXL_VERSION=${NIXL_SHA};UCX_VERSION=${UCX_SHA};arch=${ARCH};BASE_IMAGE_TAG=${BASE_IMAGE_TAG};version=${RELEASE_VERSION}"
+          curl -fsSL -H "Authorization: Bearer ${ARTIFACTORY_TOKEN}" -X PUT \
+            "${ARTIFACTORY_URL}/api/storage/${AF_REPO}/nixl/${TAG}?properties=${PROPS}" \
+            || echo "WARN: failed to set Artifactory properties (non-fatal)"
+
+  # ----------------------------------------------------------------------------
+  # scan-wheels: GitLab "security scan" stage. Runs only on release builds or
+  # when security_scan is explicitly requested.
+  # ----------------------------------------------------------------------------
+  scan-wheels:
+    needs: build
+    if: ${{ github.event.inputs.security_scan == 'true' || github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    env:
+      PACKAGE_LICENSE: "Apache-2.0"
+      SKIPPED_SECURITY_RULES: "B404,B603,B108"
+      ALLOWED_NOSEC_COUNT: "0"
+      IGNORE_FAILED_PIP_INSTALL: "1"
+    steps:
+      - name: Download manylinux wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-build-nixl-manylinux
+          path: dist
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Scan wheels with wheeltamer
+        run: |
+          set -e
+          # wheeltamer is mirrored into ECR (gitlab-master is unreachable from the
+          # AWS runners). Mirror with: crane copy
+          #   gitlab-master.nvidia.com:5005/dl/pypi/wheel-ci-cd:wheeltamer
+          #   ${NIXL_ECR_IMAGE}:wheeltamer
+          CN="wheeltamer_${{ github.run_id }}"
+          docker rm -f "$CN" || true
+          docker create --name="$CN" \
+            -e EXPECTED_PKG_LICENSE="${PACKAGE_LICENSE}" \
+            -e SKIPPED_SECURITY_RULES="${SKIPPED_SECURITY_RULES}" \
+            -e ALLOWED_NOSEC_COUNT="${ALLOWED_NOSEC_COUNT}" \
+            -e IGNORE_FAILED_PIP_INSTALL="${IGNORE_FAILED_PIP_INSTALL}" \
+            --pull=always \
+            "${{ vars.NIXL_ECR_IMAGE }}:wheeltamer"
+          docker cp "$PWD/dist/." "$CN:/workspace"
+          docker start -a "$CN"
+      - name: Cleanup
+        if: always()
+        run: docker rm -f "wheeltamer_${{ github.run_id }}" || true
+
+  # ----------------------------------------------------------------------------
+  # CPU tests: GitLab test stage (no-GPU variants). Each runs the test script
+  # inside the freshly built image, exactly as the GitLab .test-template did.
+  # ----------------------------------------------------------------------------
+  test-cpp-no-gpu:
+    needs: build
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    timeout-minutes: 75
+    steps:
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Run C++ tests (CPU-only)
+        run: |
+          set -e
+          IMAGE_NAME="${IMAGE_BASE}:build-nixl-${{ github.sha }}-${{ github.run_id }}"
+          CN="nixl-test-cpp-no-gpu-${{ github.run_id }}"
+          docker run --name "$CN" --privileged -w /workspace/${REPO_NAME} "$IMAGE_NAME" \
+            /bin/bash -c "set -e && echo 'No additional setup required' && ./.gitlab/test_cpp.sh /usr/local/nixl"
+      - name: Cleanup
+        if: always()
+        run: docker rm -f "nixl-test-cpp-no-gpu-${{ github.run_id }}" || true
+
+  test-python-no-gpu:
+    needs: build
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    timeout-minutes: 75
+    steps:
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Run Python tests (CPU-only)
+        run: |
+          set -e
+          IMAGE_NAME="${IMAGE_BASE}:build-nixl-${{ github.sha }}-${{ github.run_id }}"
+          CN="nixl-test-python-no-gpu-${{ github.run_id }}"
+          docker run --name "$CN" --privileged -w /workspace/${REPO_NAME} "$IMAGE_NAME" \
+            /bin/bash -c "set -e && apt-get update && apt-get install -y python3-pip python3-pytest && ./.gitlab/test_python.sh /usr/local/nixl"
+      - name: Cleanup
+        if: always()
+        run: docker rm -f "nixl-test-python-no-gpu-${{ github.run_id }}" || true
+
+  # ----------------------------------------------------------------------------
+  # GPU tests / wheel verification: DEFERRED.
+  # The GitLab A100 / ARM-A100 GPU jobs have no velonix runner yet. They are
+  # kept here (gated off) so they can be re-enabled with one repo variable once
+  # GPU runner scale sets exist. Set repo variable ENABLE_GPU_CI=true and create
+  # the referenced runners (e.g. prod-nixl-tester-gpu-v1) to turn them on.
+  # The GitLab GPU test jobs were allow_failure:true; continue-on-error mirrors that.
+  # ----------------------------------------------------------------------------
+  test-cpp-gpu:
+    needs: build
+    if: ${{ vars.ENABLE_GPU_CI == 'true' }}
+    runs-on: prod-nixl-tester-gpu-v1   # TODO: create this GPU runner scale set
+    continue-on-error: true
+    timeout-minutes: 75
+    steps:
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Run C++ tests (GPU)
+        run: |
+          set -e
+          IMAGE_NAME="${IMAGE_BASE}:build-nixl-${{ github.sha }}-${{ github.run_id }}"
+          CN="nixl-test-cpp-gpu-${{ github.run_id }}"
+          docker run --name "$CN" --privileged --gpus all -w /workspace/${REPO_NAME} "$IMAGE_NAME" \
+            /bin/bash -c "set -e && echo 'GPU-enabled C++ tests' && ./.gitlab/test_cpp.sh /usr/local/nixl"
+      - name: Cleanup
+        if: always()
+        run: docker rm -f "nixl-test-cpp-gpu-${{ github.run_id }}" || true
+
+  test-python-gpu:
+    needs: build
+    if: ${{ vars.ENABLE_GPU_CI == 'true' }}
+    runs-on: prod-nixl-tester-gpu-v1   # TODO: create this GPU runner scale set
+    continue-on-error: true
+    timeout-minutes: 75
+    steps:
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Run Python tests (GPU)
+        run: |
+          set -e
+          IMAGE_NAME="${IMAGE_BASE}:build-nixl-${{ github.sha }}-${{ github.run_id }}"
+          CN="nixl-test-python-gpu-${{ github.run_id }}"
+          docker run --name "$CN" --privileged --gpus all -w /workspace/${REPO_NAME} "$IMAGE_NAME" \
+            /bin/bash -c "set -e && apt-get update && apt-get install -y python3-pip python3-pytest && ./.gitlab/test_python.sh /usr/local/nixl"
+      - name: Cleanup
+        if: always()
+        run: docker rm -f "nixl-test-python-gpu-${{ github.run_id }}" || true
+
+  # verify-python-wheel: GitLab release-only GPU wheel verification. DEFERRED for
+  # the same reason (needs GPU + InfiniBand runners). Re-enable via ENABLE_GPU_CI
+  # and a GPU runner; the container invocation below mirrors GitLab .verify-python-wheel.
+  verify-python-wheel:
+    needs: build
+    if: ${{ vars.ENABLE_GPU_CI == 'true' && github.event.inputs.release_build == 'true' }}
+    runs-on: prod-nixl-tester-gpu-v1   # TODO: create this GPU runner scale set
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86
+            dist: dist-build-nixl-manylinux
+            cuda_image: nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04
+            torch_index: https://download.pytorch.org/whl/cu129
+          - name: x86-cuda13
+            dist: dist-build-nixl-manylinux-cuda13
+            cuda_image: nvcr.io/nvidia/cuda-dl-base:25.09-cuda13.0-devel-ubuntu24.04
+            torch_index: https://download.pytorch.org/whl/cu130
+          # ARM variants additionally require an ARM GPU runner (no AWS equivalent).
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.dist }}
+          path: dist
+      - name: Verify wheel end-to-end
+        run: |
+          set -e
+          CN="verify-python-wheel-${{ github.run_id }}-${{ strategy.job-index }}"
+          docker create --name "$CN" -w /workspace -e CI=true --privileged \
+            --device=/dev/infiniband --net=host --ipc=host --gpus all \
+            -e NVIDIA_VISIBLE_DEVICES=all \
+            "${{ matrix.cuda_image }}" \
+            bash -c "set -x && apt update && \
+              curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/bin sh && \
+              uv venv venv --python 3.14 && source venv/bin/activate && \
+              uv pip install torch torchvision --index-url ${{ matrix.torch_index }} && \
+              uv pip install /workspace/nixl*314*whl /workspace/nixl-*none-any.whl ; \
+              python3 /workspace/examples/python/expanded_two_peers.py --mode=target --use_cuda=true --ip=127.0.0.1 --port=4242 & \
+              sleep 5 ; \
+              python3 /workspace/examples/python/expanded_two_peers.py --mode=initiator --use_cuda=true --ip=127.0.0.1 --port=4242"
+          docker cp . "$CN:/workspace/"
+          docker cp "$PWD/dist/." "$CN:/workspace"
+          docker start -a "$CN"
+      - name: Cleanup
+        if: always()
+        run: docker rm -f "verify-python-wheel-${{ github.run_id }}-${{ strategy.job-index }}" || true
+
+  # ----------------------------------------------------------------------------
+  # upload: GitLab upload stage. Release-only. Wheels -> Artifactory (JFrog CLI),
+  # crates -> Artifactory cargo registry (manual approval via environment).
+  # ----------------------------------------------------------------------------
+  upload-x86-wheels:
+    needs: build
+    if: ${{ github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    timeout-minutes: 30
+    env:
+      ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+      ARTIFACTORY_PYPI_TOKEN: ${{ secrets.ARTIFACTORY_PYPI_TOKEN }}
+      ARCH: x86_64
+    steps:
+      - name: Download x86 wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-build-nixl-manylinux*
+          path: dist
+          merge-multiple: true
+      - name: Upload wheels to Artifactory
+        run: |
+          set -e
+          cd dist
+          ls -la *.whl
+          WHEEL_VERSION=$(ls nixl*.whl | head -n 1 | cut -d'-' -f2)
+          CN="upload_nixl_build_${{ github.run_id }}"
+          docker rm -f "$CN" || true
+          docker create --name "$CN" -w /workspace -e CI=true -e JFROG_CLI_LOG_LEVEL=INFO \
+            releases-docker.jfrog.io/jfrog/jfrog-cli-v2-jf bash -cx "
+              TARGET_PROPS=\"CI_PIPELINE_ID=${{ github.run_id }};component_name=nixl;os=linux;arch=${ARCH};version=${WHEEL_VERSION}\" &&
+              jf rt upload '*.whl' 'sw-dynamo-nixl-pypi-local/release/${WHEEL_VERSION}/${{ github.run_id }}/${ARCH}/' \
+                --target-props=\"\$TARGET_PROPS\" \
+                --access-token ${ARTIFACTORY_PYPI_TOKEN} --url ${ARTIFACTORY_URL} \
+                --flat --fail-no-op=true --detailed-summary
+            "
+          docker cp . "$CN:/workspace/"
+          docker start -a "$CN"
+      - name: Cleanup
+        if: always()
+        run: docker rm -f "upload_nixl_build_${{ github.run_id }}" || true
+
+  upload-arm-wheels:
+    needs: build
+    if: ${{ github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    # amd runner: the jfrog-cli-v2-jf image is amd64-only. This job only uploads the
+    # already-built arm wheel files (downloaded as artifacts), so the host arch is irrelevant.
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    timeout-minutes: 30
+    env:
+      ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+      ARTIFACTORY_PYPI_TOKEN: ${{ secrets.ARTIFACTORY_PYPI_TOKEN }}
+      ARCH: aarch64
+    steps:
+      - name: Download arm wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-build-nixl-arm-manylinux*
+          path: dist
+          merge-multiple: true
+      - name: Upload wheels to Artifactory
+        run: |
+          set -e
+          cd dist
+          ls -la *.whl
+          WHEEL_VERSION=$(ls nixl*.whl | head -n 1 | cut -d'-' -f2)
+          CN="upload_arm_nixl_build_${{ github.run_id }}"
+          docker rm -f "$CN" || true
+          docker create --name "$CN" -w /workspace -e CI=true -e JFROG_CLI_LOG_LEVEL=INFO \
+            releases-docker.jfrog.io/jfrog/jfrog-cli-v2-jf bash -cx "
+              TARGET_PROPS=\"CI_PIPELINE_ID=${{ github.run_id }};component_name=nixl;os=linux;arch=${ARCH};version=${WHEEL_VERSION}\" &&
+              jf rt upload '*.whl' 'sw-dynamo-nixl-pypi-local/release/${WHEEL_VERSION}/${{ github.run_id }}/${ARCH}/' \
+                --target-props=\"\$TARGET_PROPS\" \
+                --access-token ${ARTIFACTORY_PYPI_TOKEN} --url ${ARTIFACTORY_URL} \
+                --flat --fail-no-op=true --detailed-summary
+            "
+          docker cp . "$CN:/workspace/"
+          docker start -a "$CN"
+      - name: Cleanup
+        if: always()
+        run: docker rm -f "upload_arm_nixl_build_${{ github.run_id }}" || true
+
+  upload-crates:
+    needs: build
+    # Crates auto-publish to Artifactory on a release/RC build (no manual-approval
+    # gate) — same as the wheel uploads. Reuses the repo-level ARTIFACTORY_* secrets.
+    if: ${{ github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    env:
+      ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+      ARTIFACTORY_CARGO_TOKEN: ${{ secrets.ARTIFACTORY_CARGO_TOKEN }}
+    steps:
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Publish crates to Artifactory
+        run: |
+          set -e
+          IMAGE_NAME="${IMAGE_BASE}:build-nixl-${{ github.sha }}-${{ github.run_id }}"
+          docker run -e ARTIFACTORY_CARGO_TOKEN="$ARTIFACTORY_CARGO_TOKEN" \
+            -e CI_PIPELINE_ID="${{ github.run_id }}" "$IMAGE_NAME" /bin/bash -c "set -x &&
+            grep '^version = ' Cargo.toml &&
+            sed -i -E 's/^(version = \"([^\"]+)\")/version = \"\2-rc.${{ github.run_id }}\"/' Cargo.toml &&
+            grep '^version = ' Cargo.toml &&
+            cargo check --manifest-path src/bindings/rust/Cargo.toml &&
+            cargo publish --manifest-path src/bindings/rust/Cargo.toml \
+              --token 'Bearer $ARTIFACTORY_CARGO_TOKEN' \
+              --index 'sparse+${ARTIFACTORY_URL}/api/cargo/sw-dynamo-nixl-cargo-local/index/' \
+              --no-verify --allow-dirty"
+
+  # ----------------------------------------------------------------------------
+  # trigger-gitlab-nspect: on an RC/release tag (refs/tags/v<ver>-rcN), kick the
+  # nixl-ci GitLab pipeline to run nSpect registration + security scans against
+  # the wheels just uploaded to Artifactory. The nSpect tooling/credentials live
+  # GitLab-side, so this is a thin trigger (modeled on dynamo's
+  # trigger-gitlab-release-pipeline). The triggered pipeline reads PIPELINE_TYPE=rc
+  # and runs ONLY its nspect + scan jobs (the build stays here on GitHub).
+  # Required secrets (Settings -> Secrets -> Actions / 'release' environment):
+  #   GITLAB_NIXL_PIPELINE_URL   - nixl-ci pipeline trigger API URL
+  #                                (…/api/v4/projects/<id>/trigger/pipeline)
+  #   GITLAB_NIXL_TRIGGER_TOKEN  - the pipeline trigger token for that project
+  # ----------------------------------------------------------------------------
+  trigger-gitlab-nspect:
+    needs: [upload-x86-wheels, upload-arm-wheels]
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    # MUST run on a runner with NVIDIA-internal reach: the AWS velonix builders
+    # cannot resolve gitlab-master.nvidia.com. This is the same org runner group
+    # dynamo's trigger-gitlab-release-pipeline uses.
+    runs-on:
+      group: gitlab_ci_runners
+    environment: release
+    env:
+      GITLAB_TRIGGER_URL: ${{ secrets.GITLAB_NIXL_PIPELINE_URL }}
+      GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_NIXL_TRIGGER_TOKEN }}
+      NSPECT_ID: NSPECT-WO64-8O3P
+      # Branch of nixl-ci to trigger. Defaults to main; set repo variable
+      # NIXL_CI_REF to a feature branch (e.g. nmailhot/rc-nspect-scan) to test the
+      # nspect/scan jobs before they're merged to nixl-ci main.
+      NIXL_CI_REF: ${{ vars.NIXL_CI_REF || 'main' }}
+    steps:
+      - name: Trigger nixl-ci nSpect + scan pipeline
+        run: |
+          set -euo pipefail
+          # Tag is v<base>-rc<N>, e.g. v1.3.0-rc1. Derive base version + rc number.
+          RC_TAG="${GITHUB_REF_NAME}"
+          VER="${RC_TAG#v}"                 # 1.3.0-rc1
+          BASE_VERSION="${VER%%-rc*}"       # 1.3.0
+          RC_NUMBER="${VER##*-rc}"          # 1  (== VER if no -rc suffix)
+          [ "${RC_NUMBER}" = "${VER}" ] && RC_NUMBER=""
+          # Trigger token via @file so it never lands in process listings / set -x.
+          TOKEN_FILE=$(mktemp); trap 'rm -f "${TOKEN_FILE}"' EXIT; chmod 600 "${TOKEN_FILE}"
+          printf '%s' "${GITLAB_TRIGGER_TOKEN}" > "${TOKEN_FILE}"
+          RESPONSE=$(curl -fsSL --request POST \
+            --form "token=<${TOKEN_FILE}" \
+            --form "ref=${NIXL_CI_REF}" \
+            --form "variables[PIPELINE_TYPE]=rc" \
+            --form "variables[DRY_RUN]=false" \
+            --form "variables[NSPECT_ID]=${NSPECT_ID}" \
+            --form "variables[NSPECT_RELEASE_VERSION]=${BASE_VERSION}" \
+            --form "variables[NSPECT_REGISTERED]=false" \
+            --form "variables[WHEEL_VERSION]=${BASE_VERSION}" \
+            --form "variables[RC_TAG]=${RC_TAG}" \
+            --form "variables[RC_NUMBER]=${RC_NUMBER}" \
+            --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
+            --form "variables[COMMIT_SHA]=${GITHUB_SHA}" \
+            --form "variables[ENABLE_WHEEL_SCAN]=true" \
+            "${GITLAB_TRIGGER_URL}")
+          PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
+          PIPELINE_URL=$(echo "${RESPONSE}" | jq -r '.web_url // empty')
+          if [ -z "${PIPELINE_ID}" ]; then
+            echo "::error::Failed to trigger nixl-ci GitLab pipeline"
+            echo "Response: ${RESPONSE}"
+            exit 1
+          fi
+          echo "Triggered nixl-ci nSpect pipeline ${PIPELINE_ID}: ${PIPELINE_URL}"
+          {
+            echo "## nixl-ci nSpect + scan pipeline"
+            echo "| Pipeline | ${PIPELINE_URL:-$PIPELINE_ID} |"
+            echo "|--|--|"
+            echo "| nSpect ID | ${NSPECT_ID} |"
+            echo "| Version | ${BASE_VERSION} (rc${RC_NUMBER}) |"
+            echo "| Commit | ${GITHUB_SHA} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
