@@ -143,6 +143,12 @@
                     string(name: 'sha1', value: githubHelper.getMergedSHA()),
                     string(name: 'githubData', value: VARIABLE_FROM_POST)
                 ], propagate: false, wait: true
+            }}, 'build-container': {{
+                def jobName = 'nixl-ci-build-container-pr'
+                build job: jobName, parameters: [
+                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
+                    string(name: 'githubData', value: VARIABLE_FROM_POST)
+                ], propagate: false, wait: true
             }}
 
             githubHelper.updateCommitStatus(blueOceanUrl, "NIXL CI ended", GitHubCommitState.SUCCESS)
@@ -206,6 +212,66 @@
                 browser: githubweb
                 browser-url: "{jjb_git}"
                 # Handle git submodules
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
+
+# Template for the PR container-build gate.
+# Build-only verification (no push) of the nixl (EP+debug) and nixlbench container
+# images on every PR, so container/packaging breakage is caught before merge instead
+# of only by the nightly nixl-ci-build-container job. Skips the heavy build when a PR
+# touches no build-affecting files (see build-container-pr-matrix.yaml).
+- job-template:
+    name: "{jjb_proj}-build-container-pr"      # Will be expanded to 'nixl-ci-build-container-pr'
+    project-type: pipeline
+    disabled: false
+    properties:
+        - github:
+            url: "{jjb_gh_url}"
+        - build-discarder:
+            days-to-keep: 14
+            num-to-keep: 1000
+        - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-build-container-pr
+    description: Do NOT edit this job through the Web GUI !
+    concurrent: true
+    sandbox: true
+    parameters:
+        - string:
+            name: "sha1"
+            default: "{jjb_branch}"    # Default to 'main' branch
+            description: "Commit to be checked, usually set by PR"
+        - string:
+            name: "githubData"
+            default: ""
+            description: "Variables from post"
+        - string:
+            name: "conf_file"
+            default: ".ci/jenkins/lib/build-container-pr-matrix.yaml"  # PR container-build matrix
+            description: "Job config file"
+        - bool:
+            name: "build_dockers"
+            default: false
+            description: "Force rebuild docker containers"
+        - string:
+            name: "DEBUG"
+            default: 0
+            description: "Enable debug prints and traces, valid values are 0-9"
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                branches: ['$sha1']
+                shallow-clone: false
+                do-not-fetch-tags: false
+                refspec: "{jjb_gh_refspec}"
+                browser: githubweb
+                browser-url: "{jjb_git}"
                 submodule:
                     disable: false
                     recursive: true
@@ -961,6 +1027,7 @@
     jobs:
         - "{jjb_proj}-dispatcher"  # Create dispatcher job
         - "{jjb_proj}-non-gpu"       # Create non-gpu job
+        - "{jjb_proj}-build-container-pr"  # Create PR container-build gate job
         - "{jjb_proj}-test-sanitizers"  # Create sanitizer test job
         - "{jjb_proj}-build-container"  # Create container builder job
         - "{jjb_proj}-build-llm-container"  # Create LLM (vllm/sglang) container builder job

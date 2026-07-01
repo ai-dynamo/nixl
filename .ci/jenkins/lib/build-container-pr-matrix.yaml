@@ -1,0 +1,106 @@
+# NIXL PR container-build gate: build-only (no push) verification of the nixl (EP+debug)
+# and nixlbench images, so container/packaging breakage is caught on the PR, not just by
+# the nightly nixl-ci-build-container job. Skips the build when a PR touches no
+# build-affecting files (BUILD_PATHS_RE), still reporting green fast. One matrix cell
+# per target (nixl, nixlbench) so they build in parallel with independent status.
+
+---
+job: nixl-ci-build-container-pr
+
+failFast: false
+timeout_minutes: 180
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: "{memory: 24Gi, cpu: 12000m}"
+  requests: "{memory: 24Gi, cpu: 12000m}"
+
+runs_on_dockers:
+  - { name: "podman", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+
+# x86_64 only to keep per-PR cost down; the nightly job still covers both arches.
+# One cell per target so nixl and nixlbench build in parallel with independent status.
+matrix:
+  axes:
+    arch:
+      - x86_64
+    target:
+      - nixl
+      - nixlbench
+
+env:
+  NPROC: 24
+  UCX_VERSION: "v1.21.x"
+  BASE_IMAGE: "nvcr.io/nvidia/cuda-dl-base"
+  BASE_IMAGE_TAG: "25.10-cuda13.0-devel-ubuntu24.04"
+  LOCAL_TAG_BASE: "nixl-ci-pr:build-"
+  # Files that can affect the container/packaging build; a PR touching none of them skips.
+  BUILD_PATHS_RE: '^(contrib/|benchmark/|\.ci/|pyproject\.toml$|setup\.py$|(.*/)?meson\.build$|(.*/)?meson\.options$|(.*/)?meson_options\.txt$)'
+  # Doc-only paths that never affect the build, carved out of BUILD_PATHS_RE.
+  BUILD_PATHS_EXCLUDE_RE: '^\.ci/docs/'
+
+taskName: "container-build/${target}/${arch}"
+
+# Read-only creds to pull the base images. Nothing is pushed.
+credentials:
+  - credentialsId: 'svc-nixl-new-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USERNAME'
+    passwordVariable: 'ARTIFACTORY_PASSWORD'
+  - credentialsId: 'nixl-gitlab-registry-token'
+    type: 'string'
+    variable: 'GITLAB_REGISTRY_TOKEN'
+
+steps:
+  - name: Container build
+    containerSelector: "{name: 'podman'}"
+    credentialsId:
+      - 'svc-nixl-new-artifactory-token'
+      - 'nixl-gitlab-registry-token'
+    run: |
+      set -e
+      git config --global --add safe.directory '*'
+
+      # Path filter: skip the build when the PR touches no build-affecting files.
+      # On a PR merge commit HEAD^1 is the base, so this diff is the PR's change set.
+      # If we cannot tell (non-merge ref / shallow clone) we build, to be safe.
+      if git rev-parse --verify -q HEAD^2 >/dev/null; then
+        CHANGED=$(git diff --name-only HEAD^1 HEAD 2>/dev/null || true)
+        if [ -n "$CHANGED" ] && ! echo "$CHANGED" | grep -vE "$BUILD_PATHS_EXCLUDE_RE" | grep -qE "$BUILD_PATHS_RE"; then
+          echo "No build-affecting files changed - skipping $target container build."
+          exit 0
+        fi
+      fi
+
+      # Prepare podman and log in so the base images can be pulled.
+      rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
+      podman system reset -f || true
+      ln -sfT "$(type -p podman)" /usr/bin/docker
+      echo "$ARTIFACTORY_PASSWORD" | docker login artifactory.nvidia.com -u "$ARTIFACTORY_USERNAME" --password-stdin
+      if [ -n "${GITLAB_REGISTRY_TOKEN:-}" ]; then
+        echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 -u nixl-ci --password-stdin
+      fi
+
+      case "$target" in
+        nixl)
+          # nixl container, debug build. build-container.sh enables EP by default.
+          # debug + EP exercises the EP device link and the torch-version wheel
+          # packaging - the parts most sensitive to build/packaging changes.
+          export UCX_REF="$UCX_VERSION"
+          contrib/build-container.sh \
+            --base-image "$BASE_IMAGE" --base-image-tag "$BASE_IMAGE_TAG" \
+            --tag "${LOCAL_TAG_BASE}${target}-${arch}" --arch "$arch" \
+            --build-type debug --no-cache
+          ;;
+        nixlbench)
+          rm -rf ucx-src
+          git clone https://github.com/openucx/ucx.git ucx-src
+          git -C ucx-src checkout "$UCX_VERSION"
+          benchmark/nixlbench/contrib/build.sh \
+            --base-image "$BASE_IMAGE" --base-image-tag "$BASE_IMAGE_TAG" \
+            --tag "${LOCAL_TAG_BASE}${target}-${arch}" --arch "$arch" \
+            --no-cache --nixl "$WORKSPACE" --ucx "$WORKSPACE/ucx-src"
+          ;;
+      esac
+
+      echo "Container build verification passed ($target) on ${arch}. No images pushed."
