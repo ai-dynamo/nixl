@@ -86,3 +86,4 @@ Each telemetry metric is provided with the following labels:
 
 - Hostname where the agent runs
 - Agent name (as provided during initialization, may be deprecated in future versions)
+- `status` (only on `agent_errors_total`): the error kind, bounded by the fixed `AGENT_ERR_*` event set

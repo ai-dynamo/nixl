@@ -498,4 +498,6 @@ TEST_F(prometheusTelemetryTest, ErrorCountersUseBoundedStatusLabel) {
 
     EXPECT_EQ(body.find("\nagent_err_invalid_param_total{"), std::string::npos)
         << "Error counters must use the bounded status label, not per-type families";
+    EXPECT_EQ(body.find("\nagent_err_backend_total{"), std::string::npos)
+        << "Error counters must use the bounded status label, not per-type families";
 }
