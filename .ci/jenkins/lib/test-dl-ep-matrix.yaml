@@ -10,7 +10,7 @@
 # - Job Configuration: Defines timeout, failure behavior, and server resources
 # - Docker Images: Dedicated EP base + build_helper (nixl-ci-dl-gpu-ep-base-... and
 #                  build_helper_dl_ep)
-# - Matrix Axes: aarch64, UCX master + v1.21.x
+# - Matrix Axes: aarch64, UCX master + v1.22.x
 # - Run Steps: build PR image with BUILD_NIXL_EP=true, allocate Slurm, run
 #              .gitlab/test_ep.sh (elastic.py NVLink + RDMA on 4 GPUs)
 #

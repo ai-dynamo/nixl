@@ -300,7 +300,7 @@ RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | c
 # Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
-ARG UCX_REF="v1.21.x"
+ARG UCX_REF="v1.22.x"
 RUN cd /usr/local/src && \
      git clone https://github.com/openucx/ucx.git && \
      cd ucx &&                       \
