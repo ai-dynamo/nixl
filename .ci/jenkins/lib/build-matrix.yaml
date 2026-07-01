@@ -6,7 +6,8 @@
 # Key Components:
 # - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
 # - Docker Images: Specifies the container images used for different build stages
-#   - cuda-dl-base images (25.10 for Ubuntu 24.04, 13.0.1 for Ubuntu 22.04) for building and testing
+#   - Build/test images: cuda-dl-base 25.06-cuda12.9 (Ubuntu 24.04), the PyTorch
+#     NGC container 26.06-py3 (CUDA 13.3, Ubuntu 24.04), and nvidia/cuda 13.0.1 (Ubuntu 22.04)
 #   - Podman image for container builds
 # - Matrix Axes: Defines build variations (currently x86_64 architecture)
 # - Build Steps: Sequential steps for building, testing, and container creation
@@ -44,7 +45,7 @@ env:
   TEST_TIMEOUT: 30
   UCX_TLS: "^shm"
   STORAGE_DRIVER: 'overlay'
-  CI_IMAGE_TAG: "20260625-1"
+  CI_IMAGE_TAG: "20260701-1"
 
 runs_on_dockers:
   - {
@@ -52,8 +53,8 @@ runs_on_dockers:
      build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
     }
   - {
-     file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-25.10-cuda13.0-ubuntu24.04", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
+     file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-pytorch26.06-cuda13.3-ubuntu24.04", tag: "${CI_IMAGE_TAG}",
+     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-13.0.1-ubuntu22.04", tag: "${CI_IMAGE_TAG}",

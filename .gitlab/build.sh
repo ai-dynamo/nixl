@@ -163,14 +163,20 @@ else
         mpmath typing-extensions sympy numpy \
         networkx MarkupSafe fsspec filelock jinja2 nanobind
 
-    # Install torch from the CUDA-matched PyTorch index
-    cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
-    if [ -z "$cuda_version" ]; then
-        echo "ERROR: unable to determine CUDA version from nvcc" >&2
-        exit 1
+    # Use system torch if present (>=2.7), else install it from the CUDA-matched
+    # PyTorch index. Detection mirrors contrib/Dockerfile (#1383); the
+    # nvcr.io/nvidia/pytorch base ships torch and has no cu133 wheel index.
+    if python3 -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then
+        echo "Using PyTorch from system site-packages"
+    else
+        cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
+        if [ -z "$cuda_version" ]; then
+            echo "ERROR: unable to determine CUDA version from nvcc" >&2
+            exit 1
+        fi
+        $SUDO pip3 --no-cache-dir install --break-system-packages \
+            --index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
     fi
-    $SUDO pip3 --no-cache-dir install --break-system-packages \
-        --index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
 
     # Add DOCA repository and install packages
     ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
