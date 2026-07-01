@@ -104,9 +104,9 @@ gaugeMetricName(nixl_telemetry_event_type_t event_type) noexcept {
     case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
         return "agent_rx_last_bytes";
     case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
-        return "agent_memory_registered";
+        return "agent_memory_registered_last_bytes";
     case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
-        return "agent_memory_deregistered";
+        return "agent_memory_deregistered_last_bytes";
     case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
         return "agent_xfer_time";
     case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:

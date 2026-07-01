@@ -111,8 +111,9 @@ TEST_F(docaNixlExporterTest, GaugeReflectsLastPushedValue) {
     const nixlTelemetryExporterInitParams params{agentName, 4096};
     nixlTelemetryDocaExporter exporter(params);
 
-    const std::string metric = std::string(nixlEnumStrings::telemetryEventTypeStr(
-        nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED));
+    // The memory gauge is served under its last-operation series name, which is
+    // distinct from the AGENT_MEMORY_REGISTERED event string.
+    const std::string metric = "agent_memory_registered_last_bytes";
     const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
 
     constexpr std::array<uint64_t, 4> values{4096, 65536, 1024, 8192};
