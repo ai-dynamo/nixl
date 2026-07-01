@@ -35,12 +35,16 @@ ARCH=$(uname -m)
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
-UCX_REF=${UCX_REF:-v1.21.x}
+UCX_REF=${UCX_REF:-940c1c1d9}
 BUILD_NIXL_EP="true"
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
+DOCKER_TARGET=""
+WHEEL_NAME=""
+BACKEND_DIR=""
+PYTORCH_INDEX_URL=""
 
 get_options() {
     while :; do
@@ -83,6 +87,9 @@ get_options() {
             ;;
         --no-cache)
             NO_CACHE=" --no-cache"
+            ;;
+        --check-only)
+            CHECK_ONLY=1
             ;;
         --build-type)
             if [ "$2" ]; then
@@ -127,6 +134,17 @@ get_options() {
         --build-nixl-ep)
             BUILD_NIXL_EP=true
             ;;
+        --rocm)
+            DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
+            BASE_IMAGE=rocm/dev-ubuntu-24.04
+            BASE_IMAGE_TAG=7.2.4-complete
+            ARCH=x86_64
+            DOCKER_TARGET="--target rocm-build"
+            WHEEL_NAME=nixl_rocm
+            BACKEND_DIR=nixl_rocm
+            PYTORCH_INDEX_URL=https://download.pytorch.org/whl/rocm7.2
+            BUILD_NIXL_EP=false
+            ;;
         --arch)
             if [ "$2" ]; then
                 ARCH=$2
@@ -160,7 +178,9 @@ get_options() {
 
     WHL_PLATFORM=${WHL_BASE}_${ARCH}
 
-    if [ -z "$TAG" ]; then
+    if [ -z "$TAG" ] && [ "$WHEEL_NAME" = "nixl_rocm" ]; then
+        TAG="--tag nixl-rocm:${VERSION}"
+    elif [ -z "$TAG" ]; then
         TAG="--tag nixl:${VERSION}"
     fi
 }
@@ -180,6 +200,18 @@ show_build_options() {
     else
         echo "NIXL EP: Disabled"
     fi
+    if [ -n "$WHEEL_NAME" ]; then
+        echo "Wheel Name: ${WHEEL_NAME}"
+    fi
+    if [ -n "$BACKEND_DIR" ]; then
+        echo "Backend Dir: ${BACKEND_DIR}"
+    fi
+    if [ -n "$PYTORCH_INDEX_URL" ]; then
+        echo "PyTorch Index URL: ${PYTORCH_INDEX_URL}"
+    fi
+    if [ -n "$DOCKER_TARGET" ]; then
+        echo "Docker Target: ${DOCKER_TARGET#--target }"
+    fi
     echo "Build Type: ${BUILD_TYPE}"
 }
 
@@ -189,12 +221,14 @@ show_help() {
     echo "  [--base-image-tag base image tag]"
     echo "  [--wheel-base base platform for wheel builds]"
     echo "  [--no-cache disable docker build cache]"
+    echo "  [--check-only build via buildx without exporting an image (CI validation)]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--build-type [debug|release] to select build type (default: release)]"
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--ucx-ref ucx git reference (branch, tag, or sha)]"
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
+    echo "  [--rocm build the ROCm image and nixl_rocm wheel]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     exit 0
@@ -226,7 +260,22 @@ BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
+if [ -n "$WHEEL_NAME" ]; then
+    BUILD_ARGS+=" --build-arg WHEEL_NAME=$WHEEL_NAME"
+fi
+if [ -n "$BACKEND_DIR" ]; then
+    BUILD_ARGS+=" --build-arg BACKEND_DIR=$BACKEND_DIR"
+fi
+if [ -n "$PYTORCH_INDEX_URL" ]; then
+    BUILD_ARGS+=" --build-arg PYTORCH_INDEX_URL=$PYTORCH_INDEX_URL"
+fi
 
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
+if [ -n "$CHECK_ONLY" ]; then
+    # Build the full graph (incl. in-Dockerfile smoke RUNs) but do not export an
+    # image. Skipping the multi-GB image export avoids OOM-ing hosted CI runners.
+    docker buildx build --platform linux/$ARCH -f $DOCKER_FILE $DOCKER_TARGET $BUILD_ARGS --output type=cacheonly $NO_CACHE $BUILD_CONTEXT
+else
+    docker build --platform linux/$ARCH -f $DOCKER_FILE $DOCKER_TARGET $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
+fi

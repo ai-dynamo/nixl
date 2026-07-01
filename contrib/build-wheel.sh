@@ -23,6 +23,8 @@ NIXL_PLUGINS_DIR="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins"
 OUTPUT_DIR="dist"
 BUILD_NIXL_EP="false"
 TORCH_VERSIONS=""
+WHEEL_NAME=""
+BACKEND_DIR=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -51,13 +53,25 @@ while [[ $# -gt 0 ]]; do
             shift
             shift
             ;;
+        --wheel-name)
+            WHEEL_NAME=$2
+            shift
+            shift
+            ;;
+        --backend-dir)
+            BACKEND_DIR=$2
+            shift
+            shift
+            ;;
         --help)
-            echo "Usage: $0 [--python-version <python-version>] [--platform <platform>] [--output-dir <output-dir>] [--ucx-plugins-dir <ucx-plugins-dir>] [--nixl-plugins-dir <nixl-plugins-dir>]"
+            echo "Usage: $0 [--python-version <python-version>] [--platform <platform>] [--output-dir <output-dir>] [--ucx-plugins-dir <ucx-plugins-dir>] [--nixl-plugins-dir <nixl-plugins-dir>] [--wheel-name <wheel-name>] [--backend-dir <backend-dir>]"
             echo "  --python-version: Python version to build the wheel for (default: $PYTHON_VERSION)"
             echo "  --platform: Platform to build the wheel for (default: $WHL_PLATFORM)"
             echo "  --output-dir: Directory to output the wheel to (default: $OUTPUT_DIR)"
             echo "  --ucx-plugins-dir: Directory to find UCX plugins in (default: $UCX_PLUGINS_DIR)"
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
+            echo "  --wheel-name: Python wheel distribution name (default: auto-detected CUDA wheel)"
+            echo "  --backend-dir: Python import package directory (default: wheel name with '-' replaced by '_')"
             echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires a CUDA sm_90 or newer target environment)"
             echo "  --torch-versions: Comma-separated list of torch versions to build the wheel for (default: $TORCH_VERSIONS)"
             echo "  --help: Show this help message"
@@ -91,12 +105,56 @@ set -x
 
 TMP_DIR=$(mktemp -d)
 
-CUDA_MAJOR=$(nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2 | cut -d'.' -f1)
-# Must be 12 or 13
-if [ "$CUDA_MAJOR" -ne 12 ] && [ "$CUDA_MAJOR" -ne 13 ]; then
-    echo "Invalid CUDA_MAJOR: '$CUDA_MAJOR'"
-    exit 1
+if [ -z "$WHEEL_NAME" ]; then
+    CUDA_MAJOR=$(nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2 | cut -d'.' -f1)
+    # Must be 12 or 13
+    if [ "$CUDA_MAJOR" -ne 12 ] && [ "$CUDA_MAJOR" -ne 13 ]; then
+        echo "Invalid CUDA_MAJOR: '$CUDA_MAJOR'"
+        exit 1
+    fi
+    WHEEL_NAME="nixl-cu${CUDA_MAJOR}"
+    BACKEND_DIR="nixl_cu${CUDA_MAJOR}"
+elif [ -z "$BACKEND_DIR" ]; then
+    BACKEND_DIR="${WHEEL_NAME//-/_}"
 fi
+
+# ROCm (or any explicit --wheel-name) build: nixl and torch are already built
+# and installed in the build stage, so do one self-contained wheel build and
+# skip the CUDA-only nvcc / multi-torch machinery below.
+if [ -z "$CUDA_MAJOR" ]; then
+    ./contrib/tomlutil.py --wheel-name "$WHEEL_NAME" pyproject.toml
+
+    UV_BUILD_ARGS=(
+        --wheel
+        --out-dir "$TMP_DIR"
+        --python "$PYTHON_VERSION"
+        -Csetup-args="-Dpython_backend_dir=$BACKEND_DIR"
+        -Csetup-args="-Dpython_backend_package=$WHEEL_NAME"
+    )
+    if [ "$BUILD_NIXL_EP" = "true" ]; then
+        UV_BUILD_ARGS+=(
+            -Csetup-args=-Dbuild_nixl_ep=true
+            -Csetup-args=-Dbuild_examples=true
+        )
+    fi
+    uv build "${UV_BUILD_ARGS[@]}"
+
+    mkdir "$TMP_DIR/dist"
+    auditwheel repair \
+        --exclude 'libcuda*' --exclude 'libcufile*' \
+        --exclude 'libssl*' --exclude 'libcrypto*' \
+        --exclude 'libefa*' --exclude 'libhwloc*' --exclude 'libfabric*' \
+        --exclude 'libtorch*' --exclude 'libc10*' --exclude 'libdoca*' \
+        --exclude 'libred_client*' --exclude 'libred_async*' --exclude 'liblz4*' \
+        --exclude 'libamdhip64*' --exclude 'libhsa-runtime64*' \
+        --exclude 'libroc*' --exclude 'librocm*' --exclude 'libhip*' --exclude 'libamd_comgr*' \
+        "$TMP_DIR"/nixl*.whl --plat "$WHL_PLATFORM" --wheel-dir "$TMP_DIR/dist"
+    ./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir "$UCX_PLUGINS_DIR" --nixl-plugins-dir "$NIXL_PLUGINS_DIR" "$TMP_DIR"/dist/*.whl
+    cp "$TMP_DIR"/dist/*.whl "$OUTPUT_DIR"
+    rm -rf "$TMP_DIR"
+    exit 0
+fi
+
 AUDITWHEEL_EXCLUDES="--exclude libcuda* --exclude libcufile* --exclude libssl* --exclude libcrypto* --exclude libefa* --exclude libhwloc* --exclude libfabric* --exclude libtorch* --exclude libc10* --exclude libdoca* --exclude libred_client* --exclude libred_async* --exclude liblz4*"
 
 PKG_NAME="nixl-cu${CUDA_MAJOR}"

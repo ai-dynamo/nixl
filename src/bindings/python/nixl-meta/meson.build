@@ -24,7 +24,7 @@ pyproject_toml = configure_file(
     'VERSION': meson.project_version(),
     'WHEEL_DEPS': get_option('release_wheel') \
       ? '"nixl-cu12==' + meson.project_version() + '", "nixl-cu13==' + meson.project_version() + '"' \
-      : '"' + cuda_wheel_dir.replace('_', '-') + '==' + meson.project_version() + '"',
+      : '"' + python_backend_package + '==' + meson.project_version() + '"',
   }
 )
 

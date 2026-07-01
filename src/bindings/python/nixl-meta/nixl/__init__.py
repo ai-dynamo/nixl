@@ -25,7 +25,25 @@ def _get_torch_cuda_major() -> int | None:
     return int(_torch_cuda_ver.split(".")[0]) if _torch_cuda_ver else None
 
 
-def _load_cuda_backend() -> str:
+def _get_torch_rocm_version() -> str | None:
+    """Return the ROCm/HIP version that torch was built for, or None."""
+    from torch import version as _torch_version
+
+    return getattr(_torch_version, "hip", None)
+
+
+def _load_backend() -> str:
+    rocm_version = _get_torch_rocm_version()
+    if rocm_version is not None:
+        try:
+            return importlib.import_module("nixl_rocm").__name__
+        except ModuleNotFoundError as e:
+            if e.name != "nixl_rocm":
+                raise
+            raise ImportError(
+                f"torch reports ROCm {rocm_version} but nixl_rocm is not installed"
+            ) from e
+
     cuda_major = _get_torch_cuda_major()
     if cuda_major is not None:
         pip_name = f"nixl-cu{cuda_major}"
@@ -39,7 +57,7 @@ def _load_cuda_backend() -> str:
                 f"torch reports CUDA {cuda_major} but {pip_name} is not installed"
             ) from e
     # CPU-only torch — use whatever backend is installed
-    for mod_name in ("nixl_cu13", "nixl_cu12"):
+    for mod_name in ("nixl_rocm", "nixl_cu13", "nixl_cu12"):
         try:
             return importlib.import_module(mod_name).__name__
         except ModuleNotFoundError as e:
@@ -47,10 +65,10 @@ def _load_cuda_backend() -> str:
                 # Re-raise if the error is not about the module we're trying to import
                 raise
             continue
-    raise ImportError("No NIXL CUDA backend found")
+    raise ImportError("No NIXL backend found")
 
 
-_pkg = sys.modules[_load_cuda_backend()]
+_pkg = sys.modules[_load_backend()]
 
 submodules = ["_api", "_bindings", "_utils", "logging"]
 for sub_name in submodules:

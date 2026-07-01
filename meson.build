@@ -309,12 +309,19 @@ else
     cuda_wheel_dir = 'nixl_cu12'
 endif
 
-# Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix
-# without otherwise affecting the build. Non-empty value wins over the
-# autodetected CUDA-major value above: e.g. -Dwheel_variant=rocm -> nixl_rocm.
 wheel_variant = get_option('wheel_variant').strip()
 if wheel_variant != ''
     cuda_wheel_dir = 'nixl_' + wheel_variant
+endif
+
+python_backend_dir_opt = get_option('python_backend_dir')
+if python_backend_dir_opt != ''
+    cuda_wheel_dir = python_backend_dir_opt
+endif
+
+python_backend_package = get_option('python_backend_package')
+if python_backend_package == ''
+    python_backend_package = cuda_wheel_dir.replace('_', '-')
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
