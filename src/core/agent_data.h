@@ -89,11 +89,14 @@ public:
                       const nixl_opt_args_t *extra_params) = 0;
 
     /// Post a metadata request to the agent's communication thread.
-    virtual void enqueueCommWork(nixl_comm_req_t request) = 0;
+    virtual void
+    enqueueCommWork(nixl_comm_req_t request) = 0;
 };
 
 // Implements nixlMetadataContext so metadata backends reach the serialization
 // primitives and the comm thread without referencing nixlAgent.
+// Preserve the grandfathered 8-space class layout below.
+// clang-format off
 class nixlAgentData : public nixlMetadataContext {
     private:
         const std::string name_;
@@ -183,6 +186,8 @@ class nixlAgentData : public nixlMetadataContext {
 
     friend class nixlAgent;
 };
+
+// clang-format on
 
 class nixlBackendEngine;
 

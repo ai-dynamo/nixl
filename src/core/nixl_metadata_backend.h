@@ -40,7 +40,7 @@ class nixlMetadataBackend {
 public:
     virtual ~nixlMetadataBackend() = default;
 
-    /// Stable transport name reported by nixlMDManager::getBackend().
+    /// Stable transport name reported by nixlMDManager::backendName().
     [[nodiscard]] virtual std::string_view
     name() const = 0;
 

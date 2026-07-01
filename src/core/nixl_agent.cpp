@@ -203,9 +203,8 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 }
 
 /*** nixlAgent implementation ***/
-nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
-    data(std::make_unique<nixlAgentData>(name, cfg))
-{
+nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
+    : data(std::make_unique<nixlAgentData>(name, cfg)) {
     if(cfg.useListenThread) {
         data->listener = std::make_unique<nixlMDStreamListener>(cfg.listenPort);
         data->listener->setupListener(); // throws on bind/listen failure
@@ -1436,13 +1435,12 @@ nixlAgent::genNotif(const std::string &remote_agent,
 
 nixl_status_t
 nixlAgentData::getLocalMD(nixl_blob_t &str) {
-    size_t conn_cnt;
     nixl_backend_t nixl_backend;
     nixl_status_t ret;
 
     NIXL_LOCK_GUARD(lock);
     // connMd_ was populated when the backend was created
-    conn_cnt = connMd_.size();
+    const size_t conn_cnt = connMd_.size();
 
     if (conn_cnt == 0) { // Error, no backend supports remote
         NIXL_ERROR_FUNC << "no backends support remote operations";
@@ -1452,37 +1450,37 @@ nixlAgentData::getLocalMD(nixl_blob_t &str) {
     nixlSerDes sd;
     ret = sd.addStr("Agent", name_);
     // Always returns SUCCESS, serdes class logs errors if necessary
-    if (ret) {
+    if (ret != NIXL_SUCCESS) {
         return NIXL_ERR_UNKNOWN;
     }
 
     ret = sd.addBuf("Conns", &conn_cnt, sizeof(conn_cnt));
-    if (ret) {
+    if (ret != NIXL_SUCCESS) {
         return NIXL_ERR_UNKNOWN;
     }
 
     for (auto &c : connMd_) {
         nixl_backend = c.first;
         ret = sd.addStr("t", nixl_backend);
-        if (ret) {
+        if (ret != NIXL_SUCCESS) {
             break;
         }
         ret = sd.addStr("c", c.second);
-        if (ret) {
+        if (ret != NIXL_SUCCESS) {
             break;
         }
     }
-    if (ret) {
+    if (ret != NIXL_SUCCESS) {
         return NIXL_ERR_UNKNOWN;
     }
 
     ret = sd.addStr("", "MemSection");
-    if (ret) {
+    if (ret != NIXL_SUCCESS) {
         return NIXL_ERR_UNKNOWN;
     }
 
     ret = localSection_.serialize(&sd);
-    if (ret) {
+    if (ret != NIXL_SUCCESS) {
         NIXL_ERROR_FUNC << "serialization failed";
         return ret;
     }
@@ -1547,7 +1545,7 @@ nixlAgentData::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     NIXL_LOCK_GUARD(lock);
 
     if (!extra_params || extra_params->backends.size() == 0) {
-        if (descs.descCount() != 0) {
+        if (!descs.isEmpty()) {
             // Non-empty dlist, return backends that support the memory type
             backend_list = &memToBackend[descs.getType()];
             if (backend_list->empty()) {
@@ -1589,7 +1587,7 @@ nixlAgentData::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     nixlSerDes sd;
     ret = sd.addStr("Agent", name_);
     // Always returns SUCCESS, serdes class logs errors if necessary
-    if (ret) {
+    if (ret != NIXL_SUCCESS) {
         return NIXL_ERR_UNKNOWN;
     }
 
@@ -1598,31 +1596,31 @@ nixlAgentData::getLocalPartialMD(const nixl_reg_dlist_t &descs,
         found_iters.size() :
         0;
     ret = sd.addBuf("Conns", &conn_cnt, sizeof(conn_cnt));
-    if (ret) {
+    if (ret != NIXL_SUCCESS) {
         return NIXL_ERR_UNKNOWN;
     }
 
     for (size_t i = 0; i < conn_cnt; i++) {
         ret = sd.addStr("t", found_iters[i]->first);
-        if (ret) {
+        if (ret != NIXL_SUCCESS) {
             break;
         }
         ret = sd.addStr("c", found_iters[i]->second);
-        if (ret) {
+        if (ret != NIXL_SUCCESS) {
             break;
         }
     }
-    if (ret) {
+    if (ret != NIXL_SUCCESS) {
         return NIXL_ERR_UNKNOWN;
     }
 
     ret = sd.addStr("", "MemSection");
-    if (ret) {
+    if (ret != NIXL_SUCCESS) {
         return NIXL_ERR_UNKNOWN;
     }
 
     ret = localSection_.serializePartial(&sd, selected_engines, descs);
-    if (ret) {
+    if (ret != NIXL_SUCCESS) {
         NIXL_ERROR_FUNC << "serialization failed";
         return ret;
     }
@@ -1634,7 +1632,7 @@ nixlAgentData::getLocalPartialMD(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
                              nixl_blob_t &str,
-                             const nixl_opt_args_t* extra_params) const {
+                             const nixl_opt_args_t *extra_params) const {
     backend_list_t tmp_list;
     backend_list_t *backend_list;
     nixl_status_t ret;

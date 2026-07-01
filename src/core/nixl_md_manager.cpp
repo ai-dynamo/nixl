@@ -50,6 +50,6 @@ nixlMDManager::invalidateLocalMD(const nixl_opt_args_t *extra_params) const {
 }
 
 std::string_view
-nixlMDManager::getBackend() const noexcept {
+nixlMDManager::backendName() const noexcept {
     return backend_->name();
 }

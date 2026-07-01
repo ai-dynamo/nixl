@@ -91,7 +91,7 @@ public:
      * @brief Name of the active metadata backend (e.g. "P2P").
      */
     [[nodiscard]] std::string_view
-    getBackend() const noexcept;
+    backendName() const noexcept;
 
 private:
     const std::unique_ptr<nixlMetadataBackend> backend_;
