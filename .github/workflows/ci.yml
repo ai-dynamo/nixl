@@ -95,7 +95,10 @@ jobs:
   build:
     needs: version
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-${{ matrix.runner }}-v1
-    timeout-minutes: 120  # ARM manylinux builds everything from source (~60min); was timing out at the push step
+    # ARM manylinux builds everything from source (UCX + abseil + gRPC + nixl + the
+    # INFINIA liburing/openldap deps); the cu12.9 arm build alone runs ~1h43m and cu13
+    # arm exceeded the old 2h cap. Match the legacy Jenkins container job's 240m budget.
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
