@@ -159,11 +159,11 @@ makeAgentTracer(const std::string &name) {
 // Build the manager (via the nixlMetadataContext interface) when metadata
 // exchange is enabled; null otherwise, so nixlAgentData can hold it as const.
 [[nodiscard]] std::unique_ptr<nixlMDManager>
-makeMDManager(nixlMetadataContext &ctx, bool needs_comm_thread) {
+makeMDManager(nixlMetadataContext &ctx, bool needs_comm_thread, bool use_etcd) {
     if (!needs_comm_thread) {
         return nullptr;
     }
-    return std::make_unique<nixlMDManager>(ctx);
+    return std::make_unique<nixlMDManager>(ctx, use_etcd);
 }
 
 } // namespace
@@ -175,7 +175,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
       needsCommThread_(useEtcd_ || config.useListenThread),
       useMdManager_(detectMdManager()),
       lock(effectiveSyncMode(config.syncMode, needsCommThread_)),
-      md_(makeMDManager(*this, needsCommThread_)),
+      md_(makeMDManager(*this, needsCommThread_, useEtcd_)),
       tracer_(makeAgentTracer(name)) {
 #if HAVE_ETCD
     NIXL_DEBUG << "NIXL ETCD is " << (useEtcd_ ? "enabled" : "disabled");
@@ -1820,8 +1820,10 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
 
 nixl_status_t
 nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
-    // Opt-in: route P2P sends through the agent-owned metadata manager.
-    if (data->md_ && data->useMdManager_ && extra_params && !extra_params->ipAddr.empty()) {
+    // Opt-in: route through the agent-owned metadata manager (P2P when an
+    // address is given, otherwise the centralized-store backend).
+    if (data->md_ && data->useMdManager_ &&
+        ((extra_params && !extra_params->ipAddr.empty()) || data->useEtcd_)) {
         return data->md_->sendLocalMD(extra_params);
     }
 
@@ -1856,8 +1858,10 @@ nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
 nixl_status_t
 nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
                               const nixl_opt_args_t* extra_params) const {
-    // Opt-in: route P2P sends through the agent-owned metadata manager.
-    if (data->md_ && data->useMdManager_ && extra_params && !extra_params->ipAddr.empty()) {
+    // Opt-in: route through the agent-owned metadata manager (P2P when an
+    // address is given, otherwise the centralized-store backend).
+    if (data->md_ && data->useMdManager_ &&
+        ((extra_params && !extra_params->ipAddr.empty()) || data->useEtcd_)) {
         return data->md_->sendLocalPartialMD(descs, extra_params);
     }
 
@@ -1895,8 +1899,10 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlAgent::fetchRemoteMD (const std::string remote_name,
                           const nixl_opt_args_t* extra_params) {
-    // Opt-in: route P2P fetches through the agent-owned metadata manager.
-    if (data->md_ && data->useMdManager_ && extra_params && !extra_params->ipAddr.empty()) {
+    // Opt-in: route through the agent-owned metadata manager (P2P when an
+    // address is given, otherwise the centralized-store backend).
+    if (data->md_ && data->useMdManager_ &&
+        ((extra_params && !extra_params->ipAddr.empty()) || data->useEtcd_)) {
         return data->md_->fetchRemoteMD(remote_name, extra_params);
     }
 
@@ -1925,8 +1931,10 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
 
 nixl_status_t
 nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
-    // Opt-in: route P2P invalidations through the agent-owned metadata manager.
-    if (data->md_ && data->useMdManager_ && extra_params && !extra_params->ipAddr.empty()) {
+    // Opt-in: route through the agent-owned metadata manager (P2P when an
+    // address is given, otherwise the centralized-store backend).
+    if (data->md_ && data->useMdManager_ &&
+        ((extra_params && !extra_params->ipAddr.empty()) || data->useEtcd_)) {
         return data->md_->invalidateLocalMD(extra_params);
     }
 

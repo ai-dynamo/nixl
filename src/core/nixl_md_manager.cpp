@@ -18,12 +18,34 @@
 
 #include "nixl_p2p_metadata_backend.h"
 
+#if HAVE_ETCD
+#include "nixl_etcd_metadata_backend.h"
+#endif
+
 #include <memory>
 #include <string>
 #include <string_view>
 
-nixlMDManager::nixlMDManager(nixlMetadataContext &ctx)
-    : backend_(std::make_unique<nixlP2PMetadataBackend>(ctx)) {}
+namespace {
+
+// Select the single backend for this run. `use_etcd` mirrors the agent's cached
+// NIXL_ETCD_ENDPOINTS check, so the env is not read again here. The centralized
+// store wins when configured; P2P is the default. A later PR adds TCPStore as
+// another store option, selected here.
+[[nodiscard]] std::unique_ptr<nixlMetadataBackend>
+makeBackend([[maybe_unused]] bool use_etcd, nixlMetadataContext &ctx) {
+#if HAVE_ETCD
+    if (use_etcd) {
+        return std::make_unique<nixlEtcdMetadataBackend>(ctx);
+    }
+#endif
+    return std::make_unique<nixlP2PMetadataBackend>(ctx);
+}
+
+} // namespace
+
+nixlMDManager::nixlMDManager(nixlMetadataContext &ctx, bool use_etcd)
+    : backend_(makeBackend(use_etcd, ctx)) {}
 
 nixlMDManager::~nixlMDManager() = default;
 
