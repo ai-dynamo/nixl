@@ -260,7 +260,8 @@ TEST(Tracing, ResolveBackendsExplicitEmptyIsOff) {
     EXPECT_TRUE(resolveTraceBackends(std::optional<std::string>{""}, /*under_nsys=*/true).empty());
     EXPECT_TRUE(resolveTraceBackends(std::optional<std::string>{""}, /*under_nsys=*/false).empty());
     // All-whitespace entries are dropped, so this is still an explicit "off".
-    EXPECT_TRUE(resolveTraceBackends(std::optional<std::string>{" , "}, /*under_nsys=*/true).empty());
+    EXPECT_TRUE(
+        resolveTraceBackends(std::optional<std::string>{" , "}, /*under_nsys=*/true).empty());
 }
 
 // Entries are trimmed, so surrounding whitespace does not create bogus backend
@@ -268,8 +269,9 @@ TEST(Tracing, ResolveBackendsExplicitEmptyIsOff) {
 TEST(Tracing, ResolveBackendsTrimsWhitespace) {
     using nixl::trace::resolveTraceBackends;
 
-    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{" nvtx , chakra "}, /*under_nsys=*/false),
-              (std::vector<std::string>{"nvtx", "chakra"}));
+    EXPECT_EQ(
+        resolveTraceBackends(std::optional<std::string>{" nvtx , chakra "}, /*under_nsys=*/false),
+        (std::vector<std::string>{"nvtx", "chakra"}));
     // Trimmed "nvtx" is recognized by the dedup, so nsys does not add it again.
     EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"chakra, nvtx"}, /*under_nsys=*/true),
               (std::vector<std::string>{"chakra", "nvtx"}));
