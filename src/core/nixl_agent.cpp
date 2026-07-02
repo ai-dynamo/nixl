@@ -19,7 +19,10 @@
 #include <chrono>
 #include <iostream>
 #include <numeric>
+#include <optional>
+#include <set>
 
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
 
 #include "nixl.h"
@@ -106,6 +109,46 @@ nixlDlistH::nixlDlistH(const std::string &remote_agent, descs_t &&descs)
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 
+namespace nixl::trace {
+
+// True when the process runs under Nsight Systems: nsys injects
+// NVTX_INJECTION64_PATH into the profiled process's environment (its presence
+// means "running under nsys", not merely that nsys is installed).
+[[nodiscard]] bool
+runningUnderNsys() {
+    return nixl::config::checkExistence("NVTX_INJECTION64_PATH");
+}
+
+// Backend-selection policy for the agent-wiring layer (kept out of the
+// backend-agnostic facade so nsys/NVTX specifics never reach makeTracer()).
+// Running under nsys auto-enables NVTX *in addition to* any explicitly requested
+// backends; a set-but-empty NIXL_TRACE_BACKENDS is a hard "off" that beats it.
+[[nodiscard]] std::vector<std::string>
+resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under_nsys) {
+    std::set<std::string> backends;
+    bool explicit_off = false;
+    if (explicit_spec) {
+        // Trim entries so a padded value like "chakra, nvtx" matches backend
+        // names; the set dedups them.
+        for (const absl::string_view raw : absl::StrSplit(*explicit_spec, ',')) {
+            const absl::string_view name = absl::StripAsciiWhitespace(raw);
+            if (!name.empty()) {
+                backends.emplace(name);
+            }
+        }
+        // Set-but-empty (or all-blank) is an explicit "off" that must beat the
+        // nsys auto-enable below.
+        explicit_off = backends.empty();
+    }
+
+    if (under_nsys && !explicit_off) {
+        backends.emplace("nvtx");
+    }
+    return {backends.begin(), backends.end()};
+}
+
+} // namespace nixl::trace
+
 namespace {
 
 [[nodiscard]] bool
@@ -130,20 +173,16 @@ effectiveSyncMode(nixl_thread_sync_t requested, bool needs_comm_thread) {
     return requested;
 }
 
-// Split a comma-separated backend list (e.g. "nvtx,chakra") into non-empty
-// names. Used for the tracing runtime gate.
-[[nodiscard]] std::vector<std::string>
-splitTraceBackends(const std::string &spec) {
-    return absl::StrSplit(spec, ',', absl::SkipEmpty());
-}
-
-// Build the agent's composite tracer from NIXL_TRACE_BACKENDS. Returns null when
-// nothing is requested or none of the requested backends is compiled in, so the
-// agent can hold the result in a const member.
+// Build the agent's composite tracer. Backend selection follows
+// nixl::trace::resolveTraceBackends (explicit NIXL_TRACE_BACKENDS wins; unset +
+// running under nsys auto-enables NVTX). Returns null when nothing resolves, so
+// the agent can hold the result in a const member and call sites take the no-op
+// branch.
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
 makeAgentTracer(const std::string &name) {
     const auto trace_env = nixl::config::getValueOptional<std::string>("NIXL_TRACE_BACKENDS");
-    auto requested_backends = splitTraceBackends(trace_env.value_or(std::string{}));
+    auto requested_backends =
+        nixl::trace::resolveTraceBackends(trace_env, nixl::trace::runningUnderNsys());
     if (requested_backends.empty()) {
         return nullptr;
     }
