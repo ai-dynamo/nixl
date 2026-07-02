@@ -51,6 +51,10 @@ public:
     post(void) = 0;
     virtual nixl_status_t
     poll(void) = 0;
+    // Abort the ios owned by ctx without waiting on the kernel. Scoped to ctx so
+    // other transfers sharing this queue keep running.
+    virtual nixl_status_t
+    cancel(void *ctx) = 0;
 
     static std::unique_ptr<nixlPosixIOQueue>
     instantiate(std::string_view io_queue_type, uint32_t ios_pool_size, uint32_t kernel_queue_size);
@@ -86,6 +90,25 @@ public:
         for (uint32_t i = 0; i < ios_pool_size; i++) {
             free_ios_.push_back(&ios_[i]);
         }
+    }
+
+    // Drop ctx's un-submitted ios (firing their callback with an error so the owner
+    // still accounts for them). io_uring overrides to also abort in-flight ios.
+    nixl_status_t
+    cancel(void *ctx) override {
+        for (auto it = ios_to_submit_.begin(); it != ios_to_submit_.end();) {
+            Entry *io = *it;
+            if (io->ctx_ == ctx) {
+                if (io->clb_) {
+                    io->clb_(io->ctx_, 0, 1);
+                }
+                it = ios_to_submit_.erase(it);
+                free_ios_.push_back(io);
+            } else {
+                ++it;
+            }
+        }
+        return NIXL_SUCCESS;
     }
 
 protected:
