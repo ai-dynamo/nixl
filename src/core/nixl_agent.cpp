@@ -19,7 +19,10 @@
 #include <chrono>
 #include <iostream>
 #include <numeric>
+#include <optional>
+#include <set>
 
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
 
 #include "nixl.h"
@@ -61,10 +64,12 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_xfer_op_t backend_op,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
+                           const uint64_t remote_generation,
                            const size_t desc_count)
     : initiatorDescs(local_type),
       targetDescs(remote_type),
       remoteAgent(remote_agent),
+      remoteGeneration_(remote_generation),
       backendOp(backend_op) {
     initiatorDescs.reserve(desc_count);
     targetDescs.reserve(desc_count);
@@ -104,6 +109,46 @@ nixlDlistH::nixlDlistH(const std::string &remote_agent, descs_t &&descs)
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 
+namespace nixl::trace {
+
+// True when the process runs under Nsight Systems: nsys injects
+// NVTX_INJECTION64_PATH into the profiled process's environment (its presence
+// means "running under nsys", not merely that nsys is installed).
+[[nodiscard]] bool
+runningUnderNsys() {
+    return nixl::config::checkExistence("NVTX_INJECTION64_PATH");
+}
+
+// Backend-selection policy for the agent-wiring layer (kept out of the
+// backend-agnostic facade so nsys/NVTX specifics never reach makeTracer()).
+// Running under nsys auto-enables NVTX *in addition to* any explicitly requested
+// backends; a set-but-empty NIXL_TRACE_BACKENDS is a hard "off" that beats it.
+[[nodiscard]] std::vector<std::string>
+resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under_nsys) {
+    std::set<std::string> backends;
+    bool explicit_off = false;
+    if (explicit_spec) {
+        // Trim entries so a padded value like "chakra, nvtx" matches backend
+        // names; the set dedups them.
+        for (const absl::string_view raw : absl::StrSplit(*explicit_spec, ',')) {
+            const absl::string_view name = absl::StripAsciiWhitespace(raw);
+            if (!name.empty()) {
+                backends.emplace(name);
+            }
+        }
+        // Set-but-empty (or all-blank) is an explicit "off" that must beat the
+        // nsys auto-enable below.
+        explicit_off = backends.empty();
+    }
+
+    if (under_nsys && !explicit_off) {
+        backends.emplace("nvtx");
+    }
+    return {backends.begin(), backends.end()};
+}
+
+} // namespace nixl::trace
+
 namespace {
 
 [[nodiscard]] bool
@@ -128,20 +173,16 @@ effectiveSyncMode(nixl_thread_sync_t requested, bool needs_comm_thread) {
     return requested;
 }
 
-// Split a comma-separated backend list (e.g. "nvtx,chakra") into non-empty
-// names. Used for the tracing runtime gate.
-[[nodiscard]] std::vector<std::string>
-splitTraceBackends(const std::string &spec) {
-    return absl::StrSplit(spec, ',', absl::SkipEmpty());
-}
-
-// Build the agent's composite tracer from NIXL_TRACE_BACKENDS. Returns null when
-// nothing is requested or none of the requested backends is compiled in, so the
-// agent can hold the result in a const member.
+// Build the agent's composite tracer. Backend selection follows
+// nixl::trace::resolveTraceBackends (explicit NIXL_TRACE_BACKENDS wins; unset +
+// running under nsys auto-enables NVTX). Returns null when nothing resolves, so
+// the agent can hold the result in a const member and call sites take the no-op
+// branch.
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
 makeAgentTracer(const std::string &name) {
     const auto trace_env = nixl::config::getValueOptional<std::string>("NIXL_TRACE_BACKENDS");
-    auto requested_backends = splitTraceBackends(trace_env.value_or(std::string{}));
+    auto requested_backends =
+        nixl::trace::resolveTraceBackends(trace_env, nixl::trace::runningUnderNsys());
     if (requested_backends.empty()) {
         return nullptr;
     }
@@ -775,7 +816,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // The remote was invalidated in between prepXferDlist and this call
-    if (data->remoteSections_.count(remote_side->remoteAgent) == 0) {
+    const auto rem_sec_it = data->remoteSections_.find(remote_side->remoteAgent);
+    if (rem_sec_it == data->remoteSections_.end()) {
         NIXL_ERROR_FUNC << "remote agent '" << remote_side->remoteAgent
                         << "' was invalidated in between prepXferDlist and this call";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
@@ -791,6 +833,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
+                                                 rem_sec_it->second.getGeneration(),
                                                  desc_count);
 
     size_t total_bytes = 0;
@@ -958,6 +1001,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
+                                                 rem_sec_it->second.getGeneration(),
                                                  local_descs.descCount());
 
     // Currently we loop through and find first local match. Can use a
@@ -1095,7 +1139,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         req_hndl->telemetry.startTime = std::chrono::steady_clock::now();
     }
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
+    std::shared_lock<nixlLock> read_lock(data->lock);
     // Check if the remote was invalidated before post/repost
     if (data->remoteSections_.count(req_hndl->remoteAgent) == 0) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
@@ -1114,7 +1158,9 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         }
 
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
-            data->invalidateRemoteData(req_hndl->remoteAgent);
+            read_lock.unlock();
+            NIXL_LOCK_GUARD(data->lock);
+            data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
             return NIXL_ERR_REMOTE_DISCONNECT;
@@ -1162,9 +1208,11 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     if (req_hndl->status < 0) {
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
+            read_lock.unlock();
+            NIXL_LOCK_GUARD(data->lock);
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
-            data->invalidateRemoteData(req_hndl->remoteAgent);
+            data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
             return NIXL_ERR_REMOTE_DISCONNECT;
         } else {
             NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
@@ -1191,7 +1239,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 nixl_status_t
 nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
+    std::shared_lock<nixlLock> read_lock(data->lock);
     // If the status is done, no need to recheck and no state changes.
     // Same for users incorrectly recalling this method in error/done.
     if (req_hndl->status == NIXL_IN_PROG) {
@@ -1205,7 +1253,9 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
         if (req_hndl->status < 0) {
             if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
-                data->invalidateRemoteData(req_hndl->remoteAgent);
+                read_lock.unlock();
+                NIXL_LOCK_GUARD(data->lock);
+                data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
                 return NIXL_ERR_REMOTE_DISCONNECT;
             } else {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
