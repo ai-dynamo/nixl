@@ -44,6 +44,7 @@ private:
     // System information
     int num_aws_accel; // AWS Trainium accelerators
     int num_nvidia_accel; // NVIDIA GPU accelerators
+    int num_amd_accel; // AMD GPU accelerators
     int num_numa_nodes;
     int num_devices;
 
@@ -141,10 +142,12 @@ private:
     getPcieAddressFromHwlocPcidev(const hwloc_obj_attr_u::hwloc_pcidev_attr_s &pcidev) const;
     std::string
     getPcieAddressFromHwlocObj(hwloc_obj_t obj) const;
-    bool
+    [[nodiscard]] bool
     isNvidiaAccel(hwloc_obj_t obj) const;
-    bool
+    [[nodiscard]] bool
     isNeuronAccel(hwloc_obj_t obj) const;
+    [[nodiscard]] bool
+    isAmdAccel(hwloc_obj_t obj) const noexcept;
     bool
     isEfaDevice(hwloc_obj_t obj) const;
 
@@ -211,6 +214,15 @@ public:
         return num_nvidia_accel;
     }
 
+    /**
+     * @brief Retrieves the number of AMD GPU accelerators discovered on the system.
+     * @return The number of AMD GPU accelerators (num_amd_accel).
+     */
+    int
+    getNumAmdAccel() const {
+        return num_amd_accel;
+    }
+
     const std::vector<std::string> &
     getAllDevices() const {
         return all_devices;
@@ -229,11 +241,6 @@ public:
 
     bool
     isValidDevice(const std::string &efa_device) const;
-
-    enum fi_hmem_iface
-    getMrAttrIface(int device_id) const {
-        return (device_id < num_nvidia_accel) ? FI_HMEM_CUDA : FI_HMEM_NEURON;
-    }
 
     /** @brief Invalid NUMA node id constant. */
     static const uint16_t INVALID_NUMA_NODE_ID = UINT16_MAX;
