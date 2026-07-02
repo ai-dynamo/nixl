@@ -165,7 +165,10 @@ else
     # Use system torch if present (>=2.7), else install it from the CUDA-matched
     # PyTorch index. Detection mirrors contrib/Dockerfile (#1383); the
     # nvcr.io/nvidia/pytorch base ships torch and has no cu133 wheel index.
-    if python3 -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then
+    if _torch_check_err=$(python3 -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>&1); then
+        echo "Using PyTorch from system site-packages"
+    else
+        echo "System torch check failed: ${_torch_check_err}" >&2
         echo "Using PyTorch from system site-packages"
     else
         cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
