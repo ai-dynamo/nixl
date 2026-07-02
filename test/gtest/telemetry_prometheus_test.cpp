@@ -267,13 +267,13 @@ TEST_F(prometheusTelemetryTest, AgentMetricsAppearInScrape) {
             << "Missing counter family \"" << c << "\" in /metrics body";
     }
 
-    // The memory gauges share a name with their counter, serialized without the
-    // "_total" suffix, so match via the opening label brace. The byte gauges use
-    // the distinct "_last" series name (the counter keeps "agent_tx_bytes_total").
-    EXPECT_NE(body.find("\nagent_memory_registered{"), std::string::npos)
-        << "Missing agent_memory_registered gauge";
-    EXPECT_NE(body.find("\nagent_memory_deregistered{"), std::string::npos)
-        << "Missing agent_memory_deregistered gauge";
+    // All last-operation gauges use the distinct "_last_bytes" series name, kept
+    // separate from the cumulative "_total" counter of the same subject. Match via
+    // the opening label brace so the "# HELP"/"# TYPE" header lines are skipped.
+    EXPECT_NE(body.find("\nagent_memory_registered_last_bytes{"), std::string::npos)
+        << "Missing agent_memory_registered_last_bytes gauge";
+    EXPECT_NE(body.find("\nagent_memory_deregistered_last_bytes{"), std::string::npos)
+        << "Missing agent_memory_deregistered_last_bytes gauge";
     EXPECT_NE(body.find("\nagent_tx_last_bytes{"), std::string::npos)
         << "Missing agent_tx_last_bytes gauge";
     EXPECT_NE(body.find("\nagent_rx_last_bytes{"), std::string::npos)
