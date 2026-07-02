@@ -88,6 +88,31 @@ The variable is read when the agent is constructed, so set it before creating th
 the agent holds no tracer and call sites take a cheap null-check branch — no `dlopen`,
 no allocation.
 
+#### Auto-enable under Nsight Systems
+
+When `NIXL_TRACE_BACKENDS` is **unset**, NIXL auto-enables the **NVTX** backend if it
+detects that the process is running under Nsight Systems — so a profiled run produces a
+timeline without anyone setting the variable by hand. Detection keys off
+`NVTX_INJECTION64_PATH`, which `nsys` injects into the environment of the process it
+profiles (it is **not** set merely because `nsys` is installed). Outside an `nsys` run
+the agent stays inert (no plugin load, no NVTX domain).
+
+Auto-enabling NVTX under nsys is **additive**: it never suppresses a backend you
+requested explicitly. The only hard override is a set-but-empty value, which
+forces tracing off. Selection when the agent is constructed:
+
+| `NIXL_TRACE_BACKENDS` | Running under nsys | Active backends |
+| --------------------- | ------------------ | --------------- |
+| set, non-empty (e.g. `chakra`) | no | as listed (`chakra`) |
+| set, non-empty (e.g. `chakra`) | yes | as listed **plus** `nvtx` (`chakra,nvtx`; deduplicated) |
+| set but empty (`NIXL_TRACE_BACKENDS=`) | either | none (explicit "off" beats auto-enable) |
+| unset | yes | `nvtx` |
+| unset | no | none |
+
+So `nsys profile ... ./app` needs no NIXL-specific flags to get an NVTX timeline
+(and still records any other backend you asked for), while `NIXL_TRACE_BACKENDS=`
+force-disables tracing even under a profiler.
+
 ## Instrumented operations
 
 The following Agent operations emit spans/markers (more will be added in later
@@ -130,7 +155,9 @@ rest of NIXL is unaffected.
 meson setup build -Dbuildtype=debug -Dwith_trace=true -Dtrace_backends=nvtx
 ninja -C build
 
-# Profile a tracing-enabled run (here: the tracing gtest)
+# Profile a tracing-enabled run (here: the tracing gtest). Running under nsys
+# auto-enables NVTX (see "Auto-enable under Nsight Systems"), so the explicit
+# NIXL_TRACE_BACKENDS=nvtx below is optional — kept here to be explicit.
 NIXL_TRACE_BACKENDS=nvtx nsys profile --trace=nvtx,cuda,osrt --force-overwrite true \
     --output /tmp/nixl_nvtx \
     ./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
