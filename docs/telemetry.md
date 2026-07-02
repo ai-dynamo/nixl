@@ -63,11 +63,16 @@ stream:
   `agent_rx_last_bytes` alongside the cumulative byte counters; the counter series
   name differs per exporter -- Prometheus exposes `agent_tx_bytes_total` /
   `agent_rx_bytes_total` (the OpenMetrics `_total` suffix) while DOCA serves the
-  raw event name `agent_tx_bytes` / `agent_rx_bytes`. The memory events also expose
-  a last-operation gauge (`agent_memory_registered` / `agent_memory_deregistered`,
-  pending a rename to the `_last_<unit>` form). This is purely an exporter-side
-  derivation: no new
-  event type is emitted and the buffer format is unchanged.
+  raw event name `agent_tx_bytes` / `agent_rx_bytes`. The memory events likewise
+  expose a last-operation gauge -- `agent_memory_registered_last_bytes` /
+  `agent_memory_deregistered_last_bytes` -- on both exporters. This is purely an
+  exporter-side derivation: no new event type is emitted and the buffer format is
+  unchanged.
+- **Error counters**: the Prometheus and DOCA exporters expose error events as
+  `agent_errors_total{status="<status>"}`. The `status` label is bounded by the
+  fixed `AGENT_ERR_*` event set: `not_posted`, `invalid_param`, `backend`,
+  `not_found`, `mismatch`, `not_allowed`, `repost_active`, `unknown`,
+  `not_supported`, `remote_disconnect`, `canceled`, and `no_telemetry`.
 
 ### Metric naming convention
 
