@@ -18,14 +18,19 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <memory>
+#include <mutex>
 #include <numeric>
 #include <sstream>
 #include <sys/time.h>
+#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <iomanip>
 #include <omp.h>
 #include <set>
+#include <vector>
+#include <curl/curl.h>
 
 #if HAVE_CUDA
 #include <cuda_runtime.h>
@@ -185,7 +190,7 @@ NB_ARG_STRING(obj_endpoint_override, "", "Endpoint override for S3 backend");
 NB_ARG_STRING(obj_req_checksum,
               XFERBENCH_OBJ_REQ_CHECKSUM_SUPPORTED,
               "Required checksum for S3 backend [supported, required]");
-NB_ARG_STRING(obj_ca_bundle, "", "Path to CA bundle for S3 backend");
+NB_ARG_STRING(obj_ca_bundle, "", "Path to CA bundle for OBJ backend (S3 and REST)");
 NB_ARG_UINT64(obj_crt_min_limit,
               0,
               "Minimum object size (bytes) to use S3 CRT client for high-performance transfers. "
@@ -198,6 +203,10 @@ NB_ARG_STRING(obj_accelerated_type,
               "",
               "S3 Accelerated client vendor type to use. "
               "Only used when obj_accelerated_enable=true");
+NB_ARG_UINT64(obj_num_threads,
+              0,
+              "HTTP worker pool size for the accelerated OBJ connector. "
+              "0 means use the engine default. Only used when obj_accelerated_enable=true");
 
 // AZURE BLOB options - only used when backend is AZURE_BLOB
 NB_ARG_STRING(azure_blob_account_url, "", "Account URL for Azure Blob backend");
@@ -302,6 +311,7 @@ std::string xferBenchConfig::obj_ca_bundle = "";
 size_t xferBenchConfig::obj_crt_min_limit = 0;
 bool xferBenchConfig::obj_accelerated_enable = false;
 std::string xferBenchConfig::obj_accelerated_type = "";
+size_t xferBenchConfig::obj_num_threads = 0;
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 std::string xferBenchConfig::azure_blob_connection_string = "";
@@ -453,6 +463,7 @@ xferBenchConfig::loadParams(void) {
             obj_crt_min_limit = NB_ARG(obj_crt_min_limit);
             obj_accelerated_enable = NB_ARG(obj_accelerated_enable);
             obj_accelerated_type = NB_ARG(obj_accelerated_type);
+            obj_num_threads = NB_ARG(obj_num_threads);
 
             // Validate OBJ S3 scheme
             if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
@@ -729,7 +740,7 @@ xferBenchConfig::printConfig() {
                         obj_endpoint_override);
             printOption("OBJ S3 required checksum (--obj_req_checksum=[supported, required])",
                         obj_req_checksum);
-            printOption("OBJ S3 CA bundle (--obj_ca_bundle=cert-path)", obj_ca_bundle);
+            printOption("OBJ CA bundle (--obj_ca_bundle=cert-path)", obj_ca_bundle);
             printOption("OBJ S3 CRT min limit (--obj_crt_min_limit=N bytes)",
                         obj_crt_min_limit > 0 ?
                             std::to_string(obj_crt_min_limit) + " (CRT enabled)" :
@@ -739,6 +750,9 @@ xferBenchConfig::printConfig() {
                                                  "false (Accelerated disabled)");
             printOption("OBJ S3 Accelerated type (--obj_accelerated_type=type)",
                         obj_accelerated_type.empty() ? "(default)" : obj_accelerated_type);
+            printOption("OBJ accelerated connector threads (--obj_num_threads=N)",
+                        obj_num_threads > 0 ? std::to_string(obj_num_threads) :
+                                              "0 (engine default)");
         }
 
         if (backend == XFERBENCH_BACKEND_AZURE_BLOB) {
@@ -833,6 +847,15 @@ xferBenchConfig::isObjStorageBackend() {
     return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
+};
+
+bool
+xferBenchConfig::isRestBackend() {
+    return XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend &&
+        // CRT takes precedence over acceleration in the worker, so don't route
+        // pre-population/cleanup through REST when CRT is active.
+        xferBenchConfig::obj_crt_min_limit == 0 && xferBenchConfig::obj_accelerated_enable &&
+        xferBenchConfig::obj_accelerated_type == "scality_ai_connector";
 };
 
 
@@ -1303,6 +1326,191 @@ xferBenchUtils::buildAwsCredentials() {
     return env_setup;
 }
 
+// --- libcurl helpers for the REST object setup/cleanup path ---
+
+namespace {
+
+void
+restLogLine(std::ostream &os, const std::string &line) {
+    static std::mutex log_mutex;
+    std::lock_guard<std::mutex> lock(log_mutex);
+    os << line << std::endl;
+}
+
+size_t
+restCurlCaptureBody(void *ptr, size_t size, size_t nmemb, void *userdata) {
+    auto *body = static_cast<std::string *>(userdata);
+    body->append(static_cast<char *>(ptr), size * nmemb);
+    return size * nmemb;
+}
+
+struct restUploadCtx {
+    size_t remaining;
+};
+
+size_t
+restCurlReadBody(char *buffer, size_t size, size_t nitems, void *userdata) {
+    auto *ctx = static_cast<restUploadCtx *>(userdata);
+    size_t want = size * nitems;
+    size_t n = std::min(want, ctx->remaining);
+    if (n > 0) {
+        // Generate the fixed payload byte on the fly so we never materialize a
+        // full buffer_size buffer per (parallel) request.
+        std::memset(buffer, XFERBENCH_TARGET_BUFFER_ELEMENT, n);
+        ctx->remaining -= n;
+    }
+    return n;
+}
+
+// curl_global_init is not thread-safe; serialize it before the OpenMP regions
+// spawn worker threads.
+void
+restCurlGlobalInit() {
+    static std::once_flag flag;
+    std::call_once(flag, []() { curl_global_init(CURL_GLOBAL_DEFAULT); });
+}
+
+// Per-thread handle; curl_easy_reset() clears options while keeping the
+// connection cache so successive requests on a thread reuse the keep-alive.
+CURL *
+restAcquireHandle() {
+    restCurlGlobalInit();
+    thread_local std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> handle(curl_easy_init(),
+                                                                            &curl_easy_cleanup);
+    if (handle) {
+        curl_easy_reset(handle.get());
+    }
+    return handle.get();
+}
+
+} // namespace
+
+bool
+xferBenchUtils::putObjRest(size_t buffer_size, const std::string &name) {
+    std::string endpoint = xferBenchConfig::obj_endpoint_override;
+    if (endpoint.empty()) {
+        std::cerr << "Error: obj_endpoint_override required for REST object put" << std::endl;
+        return false;
+    }
+
+    CURL *curl = restAcquireHandle();
+    if (!curl) {
+        restLogLine(std::cerr, "Failed to put REST object " + name + ": curl handle unavailable");
+        return false;
+    }
+
+    restUploadCtx upload{buffer_size};
+
+    std::string url = endpoint + "/" + name;
+    std::string response_body;
+
+    restLogLine(std::cout,
+                "Putting REST object: " + name + " (size: " + std::to_string(buffer_size) +
+                    " bytes)");
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    if (!xferBenchConfig::obj_ca_bundle.empty()) {
+        curl_easy_setopt(curl, CURLOPT_CAINFO, xferBenchConfig::obj_ca_bundle.c_str());
+    }
+    // These handles run on OpenMP worker threads; disable libcurl signal use to
+    // avoid signal-handler races across threads.
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+    curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)buffer_size);
+    curl_easy_setopt(curl, CURLOPT_READFUNCTION, restCurlReadBody);
+    curl_easy_setopt(curl, CURLOPT_READDATA, &upload);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, restCurlCaptureBody);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
+    // Bound a stalled endpoint: cap connection setup, and abort if the transfer
+    // makes no progress for a while. A no-progress guard (rather than a hard
+    // total cap) avoids killing a legitimately large but still-advancing upload.
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 30000L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
+
+    CURLcode res = curl_easy_perform(curl);
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+    bool ok = (res == CURLE_OK) && (http_code >= 200 && http_code < 300);
+    if (!ok) {
+        std::string msg = "Failed to put REST object " + name + " (curl_code " +
+            std::to_string((int)res) + ", HTTP " + std::to_string(http_code) + ") PUT " + url;
+        if (!response_body.empty()) {
+            msg += "\n  response: " + response_body;
+        }
+        restLogLine(std::cerr, msg);
+    }
+    return ok;
+}
+
+bool
+xferBenchUtils::rmObjRest(const std::string &name) {
+    std::string endpoint = xferBenchConfig::obj_endpoint_override;
+    if (endpoint.empty()) {
+        std::cerr << "Error: obj_endpoint_override required for REST object cleanup" << std::endl;
+        return false;
+    }
+
+    CURL *curl = restAcquireHandle();
+    if (!curl) {
+        restLogLine(std::cerr,
+                    "Warning: Failed to delete REST object " + name + ": curl handle unavailable");
+        return false;
+    }
+
+    std::string url = endpoint + "/" + name;
+    std::string response_body;
+
+    restLogLine(std::cout, "Removing REST object: " + name);
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    if (!xferBenchConfig::obj_ca_bundle.empty()) {
+        curl_easy_setopt(curl, CURLOPT_CAINFO, xferBenchConfig::obj_ca_bundle.c_str());
+    }
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, restCurlCaptureBody);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
+    // Bound a stalled endpoint: the DELETE carries no body, so a hard total
+    // timeout is safe here in addition to the connection-setup cap.
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 30000L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 30000L);
+
+    // DELETE is idempotent, so retry connect-class failures. A burst of cold
+    // connections at teardown can overflow the endpoint's accept backlog,
+    // surfacing as CURLE_COULDNT_CONNECT / CURLE_OPERATION_TIMEDOUT.
+    constexpr int kMaxAttempts = 4;
+    CURLcode res = CURLE_OK;
+    long http_code = 0;
+    for (int attempt = 0; attempt < kMaxAttempts; attempt++) {
+        response_body.clear();
+        res = curl_easy_perform(curl);
+        http_code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+        bool transient = (res == CURLE_COULDNT_CONNECT) || (res == CURLE_OPERATION_TIMEDOUT) ||
+            (res == CURLE_COULDNT_RESOLVE_HOST) || (res == CURLE_SEND_ERROR) ||
+            (res == CURLE_RECV_ERROR);
+        if (!transient || attempt == kMaxAttempts - 1) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50 << attempt));
+    }
+
+    // A missing object (404) is acceptable for best-effort cleanup.
+    bool ok = (res == CURLE_OK) && ((http_code >= 200 && http_code < 300) || http_code == 404);
+    if (!ok) {
+        std::string msg = "Warning: Failed to delete REST object " + name + " (curl_code " +
+            std::to_string((int)res) + ", HTTP " + std::to_string(http_code) + ") DELETE " + url;
+        if (!response_body.empty()) {
+            msg += "\n  response: " + response_body;
+        }
+        restLogLine(std::cerr, msg);
+    }
+    return ok;
+}
+
 bool
 xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
@@ -1310,6 +1518,9 @@ xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+        if (xferBenchConfig::isRestBackend()) {
+            return putObjRest(buffer_size, name);
+        }
         return putObjS3(buffer_size, name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
         return putObjAzure(buffer_size, name);
@@ -1343,6 +1554,9 @@ xferBenchUtils::rmObj(const std::string &name) {
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+        if (xferBenchConfig::isRestBackend()) {
+            return rmObjRest(name);
+        }
         return rmObjS3(name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
         return rmObjAzure(name);
