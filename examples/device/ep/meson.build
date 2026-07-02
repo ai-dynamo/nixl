@@ -131,9 +131,11 @@ nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'plugins')
 # For now, nixl ep cannot be built with -G due to register usage limits;
 # build the EP target as release even in a global debug build (same flags
 # we ship in release wheels), and add -g back so we keep debug symbols.
+# Override buildtype, optimization, and debug explicitly so a global
+# buildtype=debug cannot leak --device-debug (-G) onto the EP nvcc line.
 nixl_ep_override_options = []
 if get_option('buildtype') == 'debug'
-    nixl_ep_override_options = ['buildtype=release']
+    nixl_ep_override_options = ['buildtype=release', 'optimization=3', 'debug=false']
     nixl_ep_cpp_args += ['-g']
 endif
 
