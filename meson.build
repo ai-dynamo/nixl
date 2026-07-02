@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
 
 enabled_plugins = {}
 
@@ -488,7 +488,7 @@ if get_option('buildtype') == 'debug'
     run_command('truncate', '-s 0', plugfile, check: true)
 endif
 
-nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core', 'src/core/telemetry')
+nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core', 'src/core/telemetry', 'src/plugins/kv')
 nixl_gpu_inc_dirs = include_directories('src/api/gpu/ucx')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
@@ -518,6 +518,7 @@ if get_option('install_headers')
   install_headers('src/core/transfer_request.h', install_dir: prefix_inc)
   install_headers('src/core/agent_data.h', install_dir: prefix_inc)
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
+  install_headers('src/plugins/kv/kv_backend.h', install_dir: prefix_inc + '/plugins/kv')
   install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
 
   if ucx_gpu_device_api_available

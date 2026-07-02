@@ -13,36 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-utils_sources = [
-  'neuron.cpp',
-  'neuron.h',
-  'utils.cpp',
-  'utils.h',
-  'scope_guard.h'
-]
+# Shared KV backend interfaces live in kv/.
+# REDIS plugin sources are entirely under kv/redis/.
 
-utils_deps = [
-  openmp_dep,
-  gflags_dep,
-  tomlplusplus_dep,
-  dependency('dl', required: true),
-  dependency('hiredis', required: true),
-]
-
-if cuda_available
-  utils_deps += [cuda_dep]
-elif rocm_available
-  utils_deps += [rocm_dep]
+if enabled_plugins.get('REDIS')
+    subdir('redis')
 endif
-
-utils_lib = static_library('utils',
-  utils_sources,
-  dependencies: utils_deps,
-  include_directories: inc_dir
-)
-utils_dep = declare_dependency(
-  link_with: utils_lib,
-  dependencies: utils_deps,
-  include_directories: inc_dir
-)
-
